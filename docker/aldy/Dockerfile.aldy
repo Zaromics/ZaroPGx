@@ -6,6 +6,7 @@ WORKDIR /aldy
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libz-dev \
+    wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -17,7 +18,17 @@ RUN pip install --no-cache-dir \
     scikit-learn==1.2.2 \
     scipy==1.10.1 \
     flask==3.1.0 \
-    gunicorn==21.2.0
+    gunicorn==21.2.0 \
+    pandas==2.0.3 \
+    requests==2.31.0
+
+# Download additional gene definitions for Aldy
+RUN mkdir -p /usr/local/lib/python3.10/site-packages/aldy/resources/genes/ && \
+    cd /usr/local/lib/python3.10/site-packages/aldy/resources/genes/ && \
+    for gene in cyp2c19 cyp2c9 cyp2c8 cyp2b6 cyp1a2 cyp2a6 cyp3a4 cyp3a5 ugt1a1 tpmt dpyd nudt15 slco1b1; do \
+        echo "Downloading ${gene} definition..." && \
+        wget -q -O ${gene}.json https://github.com/0xTCG/aldy-recipes/raw/main/genes/${gene}/${gene}.json || echo "Failed to download ${gene}"; \
+    done
 
 # Copy wrapper script
 COPY aldy_wrapper.py .

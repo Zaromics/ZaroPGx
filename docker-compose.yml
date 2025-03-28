@@ -69,7 +69,7 @@ services:
     networks:
       - pgx-network
 
-  # Aldy Service for CYP2D6 calling
+  # Aldy Service for pharmacogenomic gene calling
   aldy:
     build:
       context: ./docker/aldy
@@ -80,11 +80,14 @@ services:
       - ./data:/data
     ports:
       - "5002:5000"
+    environment:
+      - MAX_WORKERS=4  # Limit workers for multi-gene analysis
     healthcheck:
-      test: ["CMD", "echo", "Healthcheck disabled for debugging"]
-      interval: 10s
-      timeout: 5s
-      retries: 1
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - pgx-network
 
