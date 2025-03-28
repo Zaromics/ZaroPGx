@@ -217,4 +217,4 @@ Services communicate with each other using their service names as hostnames:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the AGPLv3 License.
