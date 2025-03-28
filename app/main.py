@@ -6,7 +6,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import os
 import shutil
 from pathlib import Path
@@ -15,6 +15,9 @@ import logging
 import requests
 import json
 import aiohttp
+import uuid
+import tempfile
+import subprocess
 
 from app.api.routes import upload_router, report_router
 from app.api.models import Token, TokenData
@@ -22,8 +25,12 @@ from app.pharmcat_wrapper.pharmcat_client import call_pharmcat_service
 from app.reports.generator import generate_pdf_report, create_interactive_html_report
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("app")
 
 # Load environment variables
 load_dotenv()
@@ -36,8 +43,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 # Directory setup
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / "templates"
-UPLOAD_DIR = Path("/data/uploads")
+UPLOAD_DIR = Path("/tmp")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR = Path("/data/reports")
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -128,46 +137,167 @@ async def health_check():
     logger.info("Health check called")
     return {"status": "healthy", "timestamp": str(datetime.utcnow())}
 
-@app.post("/upload-vcf")
-async def upload_vcf_file(
-    request: Request,
-    vcfFile: UploadFile = File(...),
-    sampleId: str = Form(None)
-):
-    logger.info(f"Received VCF file upload: {vcfFile.filename}, Sample ID: {sampleId}")
+def detect_file_type(file_path, filename):
+    """
+    Detect the file type based on extension and header
     
-    # Generate a unique filename if no sample ID provided
-    filename = f"{sampleId or 'sample'}-{datetime.now().strftime('%Y%m%d%H%M%S')}.vcf"
+    Args:
+        file_path: Path to the uploaded file
+        filename: Original filename with extension
+        
+    Returns:
+        Tuple of (file_type, file_extension, is_compressed)
+    """
+    lower_filename = filename.lower()
+    is_compressed = False
+    
+    # Check by extension first
+    if lower_filename.endswith('.bam'):
+        return 'BAM', 'bam', False
+    elif lower_filename.endswith('.sam'):
+        return 'SAM', 'sam', False
+    elif lower_filename.endswith('.cram'):
+        return 'CRAM', 'cram', False
+    elif lower_filename.endswith('.vcf.gz'):
+        return 'VCF', 'vcf.gz', True
+    elif lower_filename.endswith('.vcf'):
+        return 'VCF', 'vcf', False
+    
+    # Check file header for more accurate detection
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(10)  # Read first few bytes
+            
+            # BAM magic header
+            if header.startswith(b'BAM\x01'):
+                return 'BAM', 'bam', False
+            
+            # Gzip magic header
+            if header.startswith(b'\x1f\x8b'):
+                is_compressed = True
+                # Likely a compressed VCF
+                return 'VCF', 'vcf.gz', True
+                
+            # Check if it looks like a SAM/VCF text file
+            if header.startswith(b'@HD\t') or header.startswith(b'@SQ\t'):
+                return 'SAM', 'sam', False
+            
+            # Check for VCF header
+            if header.startswith(b'##fileformat=VCF'):
+                return 'VCF', 'vcf', False
+    except Exception as e:
+        logger.warning(f"Error checking file header: {str(e)}")
+    
+    # Default to VCF if can't determine
+    return 'VCF', 'vcf', False
+
+def determine_sequencing_profile(file_type, reference_genome='hg19'):
+    """
+    Determine the appropriate sequencing profile for Aldy
+    
+    Args:
+        file_type: Type of the genomic file (BAM, SAM, CRAM, VCF)
+        reference_genome: Reference genome used (default: hg19)
+        
+    Returns:
+        Appropriate sequencing profile string for Aldy
+    """
+    # For most WGS/WXS data, illumina is the default profile
+    return "illumina"
+
+def sanitize_filename(filename):
+    """
+    Sanitize a filename to remove invalid characters
+    
+    Args:
+        filename: Original filename
+        
+    Returns:
+        Sanitized filename
+    """
+    if not filename:
+        return None
+    # Replace invalid characters with underscores
+    for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']:
+        filename = filename.replace(char, '_')
+    return filename
+
+@app.post("/upload-vcf")
+async def upload_genomic_file(
+    request: Request,
+    genomicFile: UploadFile = File(...),
+    sampleId: str = Form(None),
+    referenceGenome: str = Form("hg19")  # For CRAM files
+):
+    logger.info(f"Received genomic file upload: {genomicFile.filename}, Sample ID: {sampleId}")
+    
+    # Create a temporary file to store the upload
+    temp_file_path = UPLOAD_DIR / f"temp_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    with open(temp_file_path, "wb") as buffer:
+        shutil.copyfileobj(genomicFile.file, buffer)
+    
+    # Detect file type
+    file_type, file_ext, is_compressed = detect_file_type(temp_file_path, genomicFile.filename)
+    logger.info(f"Detected file type: {file_type}, extension: {file_ext}, compressed: {is_compressed}")
+    
+    # Generate a unique filename with the correct extension
+    filename = f"{sampleId or 'sample'}-{datetime.now().strftime('%Y%m%d%H%M%S')}.{file_ext}"
     file_path = UPLOAD_DIR / filename
     
-    # Save the uploaded file
+    # Rename the temporary file
+    shutil.move(temp_file_path, file_path)
+    logger.info(f"Saved uploaded file to {file_path}")
+    
+    # Determine the appropriate sequencing profile
+    profile = determine_sequencing_profile(file_type, referenceGenome)
+    logger.info(f"Using sequencing profile: {profile}")
+    
+    # Prepare file for analysis
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(vcfFile.file, buffer)
+        # For BAM files, ensure they're indexed
+        if file_type == 'BAM':
+            logger.info(f"Indexing BAM file: {file_path}")
+            try:
+                index_cmd = f"samtools index {file_path}"
+                subprocess.run(index_cmd, shell=True, check=True)
+                logger.info(f"BAM indexing completed for {filename}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error indexing BAM file: {str(e)}")
+                return templates.TemplateResponse(
+                    "index.html", 
+                    {
+                        "request": request, 
+                        "message": f"Error indexing BAM file: {str(e)}",
+                        "success": False
+                    }
+                )
         
         # Call PharmCAT service for analysis
         pharmcat_results = call_pharmcat_service(str(file_path))
         logger.info(f"PharmCAT analysis completed for {filename}")
         
-        # Process with Aldy service (for multiple genes)
+        # Process with Aldy service for CYP2D6 and other genes
+        aldy_results = {"status": "unknown"}
         try:
-            with open(file_path, 'rb') as f:
-                # Ensure we're using the correct URL for the Aldy service
-                aldy_url = os.environ.get("ALDY_API_URL", "http://aldy:5000")
-                logger.info(f"Calling Aldy service at {aldy_url}/multi_genotype")
-                
-                # Call Aldy's multi_genotype endpoint to analyze multiple genes
-                # Note: The actual sample name in the VCF is used by Aldy wrapper,
-                # regardless of what we pass here
+            # Prepare file for Aldy
+            aldy_file = file_path
+            
+            # Ensure we're using the correct URL for the Aldy service
+            aldy_url = os.environ.get("ALDY_API_URL", "http://aldy:5000")
+            logger.info(f"Calling Aldy service at {aldy_url}/multi_genotype")
+            
+            # Call Aldy's multi_genotype endpoint to analyze multiple genes
+            with open(aldy_file, 'rb') as f:
                 aldy_response = requests.post(
                     f"{aldy_url}/multi_genotype",
-                    files={"file": f},
+                    files={"file": (os.path.basename(aldy_file), f)},
                     data={
                         "genes": "CYP2D6,CYP2C19,CYP2C9,CYP2B6,CYP1A2",
-                        "sequencing_profile": "illumina"
-                        # Removed profile parameter - the Aldy wrapper will use the sample name from the VCF
+                        "sequencing_profile": profile,
+                        "file_type": file_type.lower(),
+                        "reference_genome": referenceGenome if file_type == 'CRAM' else None
                     },
-                    timeout=180  # Increased timeout for processing multiple genes
+                    timeout=300  # Increased timeout for processing multiple genes
                 )
                 
                 logger.info(f"Aldy response status code: {aldy_response.status_code}")
@@ -187,7 +317,15 @@ async def upload_vcf_file(
                 # Log all status values to help debug issues
                 for gene, gene_data in aldy_results.get('genes', {}).items():
                     gene_status = gene_data.get('status', 'unknown')
-                    logger.info(f"Aldy gene {gene} status: {gene_status}")
+                    diplotype = gene_data.get('diplotype')
+                    output_format = gene_data.get('output_format', 'json')
+                    
+                    logger.info(f"Aldy gene {gene} status: {gene_status}, format: {output_format}, diplotype: {diplotype}")
+                    
+                    # For TSV output, also log the solution data
+                    if output_format == 'tsv' and 'solution_data' in gene_data:
+                        logger.info(f"Aldy gene {gene} solution data: {gene_data.get('solution_data')}")
+                    
                     if gene_status != 'success':
                         logger.warning(f"Aldy gene {gene} error: {gene_data.get('error', 'unknown error')}")
                         
@@ -235,12 +373,14 @@ async def upload_vcf_file(
                 
                 # Log the full error for debugging
                 if gene_data.get("status") != "success":
-                    logger.error(f"Aldy error details for {gene_name}: {gene_data.get('error', 'No error message')}")
+                    logger.error(f"Aldy error details for {gene_name}: {gene_data.get('error', 'No error')}")
                     logger.error(f"Aldy stderr for {gene_name}: {gene_data.get('stderr', 'No stderr')}")
                     
             # Process successful gene results
             for gene, gene_data in aldy_results.get("genes", {}).items():
-                if gene_data.get("status") == "success":
+                # Accept both "success" and "partial" status for gene calls
+                # partial means we have a diplotype but might be missing some details
+                if gene_data.get("status") in ["success", "partial"] and gene_data.get("diplotype"):
                     # Skip if the gene is already in diplotypes from PharmCAT
                     if gene not in added_genes:
                         diplotype_value = gene_data.get("diplotype", "Unknown")
@@ -267,45 +407,15 @@ async def upload_vcf_file(
                         })
                         added_genes.add(gene)
                         logger.info(f"Added Aldy gene: {gene} with diplotype {diplotype_value}")
-                else:
-                    logger.warning(f"Skipping Aldy gene {gene} due to status: {gene_data.get('status')}")
-        elif aldy_results.get("status") == "success":
-            # Backward compatibility for single gene response
-            if "CYP2D6" not in added_genes:
-                diplotype_value = aldy_results.get("diplotype", "Unknown")
-                activity_score = aldy_results.get("activity_score")
-                
-                # Generate a phenotype based on activity score if available
-                phenotype = "Unknown"
-                if activity_score is not None:
-                    if activity_score == 0:
-                        phenotype = "Poor Metabolizer"
-                    elif 0 < activity_score < 1.0:
-                        phenotype = "Intermediate Metabolizer"
-                    elif 1.0 <= activity_score < 2.0:
-                        phenotype = "Normal Metabolizer"
-                    elif activity_score >= 2.0:
-                        phenotype = "Ultra-rapid Metabolizer"
-                
-                diplotypes.append({
-                    "gene": "CYP2D6",
-                    "diplotype": diplotype_value,
-                    "phenotype": phenotype,
-                    "activity_score": activity_score,
-                    "source": "Aldy"
-                })
-                added_genes.add("CYP2D6")
-                logger.info(f"Added single Aldy gene: CYP2D6 with diplotype {diplotype_value}")
         
-        # Log final diplotype count
-        logger.info(f"Final diplotype count: {len(diplotypes)}")
-        logger.info(f"Genes in report: {[d['gene'] for d in diplotypes]}")
+        # Generate a report ID for linking related files
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        report_id = f"PGX_{timestamp}"
         
         # Generate report paths
         reports_dir = Path("/data/reports") / patient_id
         reports_dir.mkdir(parents=True, exist_ok=True)
         
-        report_id = f"PGX_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         pdf_path = reports_dir / f"{report_id}.pdf"
         html_path = reports_dir / f"{report_id}.html"
         
@@ -333,7 +443,7 @@ async def upload_vcf_file(
             "index.html", 
             {
                 "request": request, 
-                "message": f"File {vcfFile.filename} processed successfully! Reports generated." + 
+                "message": f"File {genomicFile.filename} processed successfully! Reports generated." + 
                            (" (PDF generation failed, HTML fallback used)" if is_pdf_fallback else ""),
                 "success": True,
                 "report_id": report_id,

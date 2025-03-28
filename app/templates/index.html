@@ -66,17 +66,25 @@
                 </div>
 
                 <div class="card">
-                    <div class="card-header">Upload VCF File for Analysis</div>
+                    <div class="card-header">Upload Genomic File for Analysis</div>
                     <div class="card-body">
                         <form action="/upload-vcf" method="post" enctype="multipart/form-data">
                             <div class="mb-3">
-                                <label for="vcfFile" class="form-label">VCF File</label>
-                                <input class="form-control" type="file" id="vcfFile" name="vcfFile" accept=".vcf,.vcf.gz" required>
-                                <div class="form-text">Upload a VCF file for pharmacogenomic analysis</div>
+                                <label for="genomicFile" class="form-label">Genomic File</label>
+                                <input class="form-control" type="file" id="genomicFile" name="genomicFile" accept=".vcf,.vcf.gz,.bam,.sam,.cram" required>
+                                <div class="form-text">Upload a VCF, BAM, SAM, or CRAM file for pharmacogenomic analysis</div>
                             </div>
                             <div class="mb-3">
                                 <label for="sampleId" class="form-label">Sample ID (optional)</label>
                                 <input type="text" class="form-control" id="sampleId" name="sampleId" placeholder="Enter a sample identifier">
+                            </div>
+                            <div class="mb-3">
+                                <label for="referenceGenome" class="form-label">Reference Genome (required for CRAM files)</label>
+                                <select class="form-select" id="referenceGenome" name="referenceGenome">
+                                    <option value="hg19" selected>hg19 (GRCh37)</option>
+                                    <option value="hg38">hg38 (GRCh38)</option>
+                                </select>
+                                <div class="form-text">Specify the reference genome used for mapping</div>
                             </div>
                             <button type="submit" class="btn btn-primary">Upload and Analyze</button>
                         </form>
