@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import logging
 import requests
 import json
+import aiohttp
 
 from app.api.routes import upload_router, report_router
 from app.api.models import Token, TokenData
@@ -148,20 +149,57 @@ async def upload_vcf_file(
         pharmcat_results = call_pharmcat_service(str(file_path))
         logger.info(f"PharmCAT analysis completed for {filename}")
         
-        # Process with Aldy service (for CYP2D6)
+        # Process with Aldy service (for multiple genes)
         try:
             with open(file_path, 'rb') as f:
+                # Ensure we're using the correct URL for the Aldy service
                 aldy_url = os.environ.get("ALDY_API_URL", "http://aldy:5000")
+                logger.info(f"Calling Aldy service at {aldy_url}/multi_genotype")
+                
+                # Call Aldy's multi_genotype endpoint to analyze multiple genes
+                # Note: The actual sample name in the VCF is used by Aldy wrapper,
+                # regardless of what we pass here
                 aldy_response = requests.post(
-                    f"{aldy_url}/genotype",
+                    f"{aldy_url}/multi_genotype",
                     files={"file": f},
-                    data={"gene": "CYP2D6"}
+                    data={
+                        "genes": "CYP2D6,CYP2C19,CYP2C9,CYP2B6,CYP1A2",
+                        "sequencing_profile": "illumina"
+                        # Removed profile parameter - the Aldy wrapper will use the sample name from the VCF
+                    },
+                    timeout=180  # Increased timeout for processing multiple genes
                 )
+                
+                logger.info(f"Aldy response status code: {aldy_response.status_code}")
+                
+                # Try to log the raw response content for debugging
+                try:
+                    logger.info(f"Aldy raw response: {aldy_response.text[:500]}...")
+                except:
+                    logger.info("Could not log Aldy raw response")
+                
                 aldy_response.raise_for_status()
                 aldy_results = aldy_response.json()
-                logger.info(f"Aldy analysis completed for {filename}")
+                logger.info(f"Aldy multi-gene analysis completed for {filename}")
+                logger.info(f"Aldy response status: {aldy_results.get('status', 'unknown')}")
+                logger.info(f"Aldy genes analyzed: {list(aldy_results.get('genes', {}).keys())}")
+                
+                # Log all status values to help debug issues
+                for gene, gene_data in aldy_results.get('genes', {}).items():
+                    gene_status = gene_data.get('status', 'unknown')
+                    logger.info(f"Aldy gene {gene} status: {gene_status}")
+                    if gene_status != 'success':
+                        logger.warning(f"Aldy gene {gene} error: {gene_data.get('error', 'unknown error')}")
+                        
+                # Add a final debug log of the diplotypes being created
+                logger.info("Creating diplotypes from results...")
         except Exception as aldy_error:
             logger.error(f"Error calling Aldy service: {str(aldy_error)}")
+            # Try to get more diagnostic information
+            try:
+                logger.error(f"Aldy response content: {aldy_response.content}")
+            except:
+                pass
             aldy_results = {"status": "error", "error": str(aldy_error)}
         
         # Generate patient ID if none provided
@@ -170,23 +208,98 @@ async def upload_vcf_file(
         # Create a report from the results
         diplotypes = []
         
+        # Track which genes have been added to avoid duplicates
+        added_genes = set()
+        
         # Extract PharmCAT diplotypes
         for gene, data in pharmcat_results.get("genes", {}).items():
             diplotypes.append({
                 "gene": gene,
                 "diplotype": data.get("diplotype", "Unknown"),
                 "phenotype": data.get("phenotype", "Unknown"),
+                "activity_score": data.get("activity_score"),
                 "source": "PharmCAT"
             })
+            added_genes.add(gene)
+            logger.info(f"Added PharmCAT gene: {gene} with diplotype {data.get('diplotype', 'Unknown')}")
         
-        # Add CYP2D6 from Aldy if available
-        if aldy_results.get("status") == "success":
-            diplotypes.append({
-                "gene": "CYP2D6",
-                "diplotype": aldy_results.get("diplotype", "Unknown"),
-                "phenotype": "See activity score",
-                "source": "Aldy"
-            })
+        # Add Aldy results for multiple genes if available
+        if aldy_results.get("status") == "success" and "genes" in aldy_results:
+            logger.info(f"Processing Aldy results for {len(aldy_results.get('genes', {}))} genes")
+            
+            # Debug: log all gene results
+            for gene_name, gene_data in aldy_results.get("genes", {}).items():
+                logger.info(f"Aldy result for {gene_name}: status={gene_data.get('status')}, " +
+                           f"diplotype={gene_data.get('diplotype')}, " +
+                           f"activity_score={gene_data.get('activity_score')}")
+                
+                # Log the full error for debugging
+                if gene_data.get("status") != "success":
+                    logger.error(f"Aldy error details for {gene_name}: {gene_data.get('error', 'No error message')}")
+                    logger.error(f"Aldy stderr for {gene_name}: {gene_data.get('stderr', 'No stderr')}")
+                    
+            # Process successful gene results
+            for gene, gene_data in aldy_results.get("genes", {}).items():
+                if gene_data.get("status") == "success":
+                    # Skip if the gene is already in diplotypes from PharmCAT
+                    if gene not in added_genes:
+                        diplotype_value = gene_data.get("diplotype", "Unknown")
+                        activity_score = gene_data.get("activity_score")
+                        
+                        # Generate a phenotype based on activity score if available
+                        phenotype = "Unknown"
+                        if activity_score is not None:
+                            if activity_score == 0:
+                                phenotype = "Poor Metabolizer"
+                            elif 0 < activity_score < 1.0:
+                                phenotype = "Intermediate Metabolizer"
+                            elif 1.0 <= activity_score < 2.0:
+                                phenotype = "Normal Metabolizer"
+                            elif activity_score >= 2.0:
+                                phenotype = "Ultra-rapid Metabolizer"
+                        
+                        diplotypes.append({
+                            "gene": gene,
+                            "diplotype": diplotype_value,
+                            "phenotype": phenotype,
+                            "activity_score": activity_score,
+                            "source": "Aldy"
+                        })
+                        added_genes.add(gene)
+                        logger.info(f"Added Aldy gene: {gene} with diplotype {diplotype_value}")
+                else:
+                    logger.warning(f"Skipping Aldy gene {gene} due to status: {gene_data.get('status')}")
+        elif aldy_results.get("status") == "success":
+            # Backward compatibility for single gene response
+            if "CYP2D6" not in added_genes:
+                diplotype_value = aldy_results.get("diplotype", "Unknown")
+                activity_score = aldy_results.get("activity_score")
+                
+                # Generate a phenotype based on activity score if available
+                phenotype = "Unknown"
+                if activity_score is not None:
+                    if activity_score == 0:
+                        phenotype = "Poor Metabolizer"
+                    elif 0 < activity_score < 1.0:
+                        phenotype = "Intermediate Metabolizer"
+                    elif 1.0 <= activity_score < 2.0:
+                        phenotype = "Normal Metabolizer"
+                    elif activity_score >= 2.0:
+                        phenotype = "Ultra-rapid Metabolizer"
+                
+                diplotypes.append({
+                    "gene": "CYP2D6",
+                    "diplotype": diplotype_value,
+                    "phenotype": phenotype,
+                    "activity_score": activity_score,
+                    "source": "Aldy"
+                })
+                added_genes.add("CYP2D6")
+                logger.info(f"Added single Aldy gene: CYP2D6 with diplotype {diplotype_value}")
+        
+        # Log final diplotype count
+        logger.info(f"Final diplotype count: {len(diplotypes)}")
+        logger.info(f"Genes in report: {[d['gene'] for d in diplotypes]}")
         
         # Generate report paths
         reports_dir = Path("/data/reports") / patient_id
@@ -237,4 +350,138 @@ async def upload_vcf_file(
                 "message": f"Error processing file: {str(e)}",
                 "success": False
             }
-        ) 
+        )
+
+async def handle_pgx_report(vcf_path, sample_id=None):
+    """
+    Process uploaded VCF file for pharmacogenomic analysis
+    
+    Args:
+        vcf_path: Path to the VCF file
+        sample_id: Optional sample ID (default: auto-detected from VCF)
+        
+    Returns:
+        Dictionary with report data
+    """
+    try:
+        logging.info(f"Handling PGx report for VCF: {vcf_path}")
+        
+        # Use the current timestamp in the file ID for uniqueness
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # Create a valid filename with the sample ID and timestamp
+        if sample_id:
+            sample_id = sanitize_filename(sample_id)
+            filename = f"{sample_id}-{timestamp}.vcf"
+        else:
+            # If no sample ID provided, use a generic name
+            filename = f"upload-{timestamp}.vcf"
+            
+        # Copy VCF file to a unique filename to avoid conflicts
+        dest_path = os.path.join("/tmp", filename)
+        shutil.copy2(vcf_path, dest_path)
+        logging.info(f"Copied VCF to {dest_path}")
+        
+        # Call PharmCAT for genotype calling - future step
+        pharmpcat_results = {}
+        try:
+            logging.info("Calling PharmCAT service")
+            # pharmcat_url = "http://pharmcat:8080/rest/genotype"
+            # TODO: Implement PharmCAT integration
+        except Exception as e:
+            logging.error(f"Error calling PharmCAT service: {str(e)}")
+        
+        # Call Aldy for multi-gene genotyping
+        aldy_results = {}
+        genes_analyzed = 0
+        gene_results = {}
+        
+        try:
+            # Copy file to Aldy service data directory
+            aldy_file_path = os.path.join("/tmp", f"{sample_id or 'sample'}-{timestamp}.vcf")
+            shutil.copy2(vcf_path, aldy_file_path)
+            logging.info(f"Copied VCF for Aldy to {aldy_file_path}")
+            
+            # List of genes to analyze
+            gene_list = ["CYP2D6", "CYP2C19", "CYP2C9", "CYP2B6", "CYP1A2"]
+            
+            # Call Aldy's multi-gene endpoint
+            logging.info(f"Calling Aldy service for multi-gene analysis: {gene_list}")
+            aldy_url = "http://aldy:5000/multi_genotype"
+            
+            # Create a multipart form-data request
+            with open(aldy_file_path, 'rb') as f:
+                files = {'file': (os.path.basename(aldy_file_path), f)}
+                data = {
+                    'genes': ','.join(gene_list),
+                    'sequencing_profile': 'illumina'
+                    # No profile parameter - Aldy will use the sample from VCF
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    # Increase timeout for multi-gene analysis
+                    async with session.post(aldy_url, data=data, files=files, timeout=180) as response:
+                        if response.status == 200:
+                            aldy_results = await response.json()
+                            logging.info(f"Aldy returned results with status: {aldy_results.get('status')}")
+                            
+                            # Process multi-gene results
+                            if 'genes' in aldy_results:
+                                genes = aldy_results['genes']
+                                genes_analyzed = len(genes)
+                                logging.info(f"Processing results for {genes_analyzed} genes")
+                                
+                                for gene_name, gene_data in genes.items():
+                                    gene_status = gene_data.get('status', 'unknown')
+                                    diplotype = gene_data.get('diplotype')
+                                    activity_score = gene_data.get('activity_score')
+                                    
+                                    logging.info(f"Gene {gene_name}: status={gene_status}, diplotype={diplotype}, activity={activity_score}")
+                                    
+                                    # Handle different output formats (JSON or TSV)
+                                    output_format = gene_data.get('output_format', 'json')
+                                    
+                                    if gene_status == 'success':
+                                        gene_results[gene_name] = {
+                                            'diplotype': diplotype,
+                                            'activity_score': activity_score,
+                                            'output_format': output_format,
+                                            'status': 'success'
+                                        }
+                                        
+                                        # Handle solution data if present (TSV format)
+                                        if 'solution_data' in gene_data:
+                                            gene_results[gene_name]['solution_data'] = gene_data['solution_data']
+                                    else:
+                                        error_msg = gene_data.get('error', 'Unknown error')
+                                        stderr = gene_data.get('stderr', '')
+                                        logging.error(f"Error for gene {gene_name}: {error_msg}")
+                                        if stderr:
+                                            logging.error(f"Stderr for {gene_name}: {stderr[:200]}...")
+                                            
+                                        gene_results[gene_name] = {
+                                            'status': 'error',
+                                            'error': error_msg,
+                                            'output_format': output_format
+                                        }
+                        else:
+                            error_text = await response.text()
+                            logging.error(f"Aldy service returned error: {response.status}, {error_text}")
+        except Exception as e:
+            logging.exception(f"Error calling Aldy service: {str(e)}")
+            
+        # Generate basic report
+        report_data = {
+            'sample_id': sample_id,
+            'timestamp': timestamp,
+            'report_id': f"PGX-{timestamp}",
+            'genes_analyzed': genes_analyzed,
+            'gene_results': gene_results,
+            'aldy_results': aldy_results
+        }
+        
+        # Return report data
+        return report_data
+    except Exception as e:
+        logging.exception(f"Error in handle_pgx_report: {str(e)}")
+        return {'error': str(e)} 

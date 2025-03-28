@@ -82,6 +82,10 @@ services:
       - "5002:5000"
     environment:
       - MAX_WORKERS=4  # Limit workers for multi-gene analysis
+      - DATA_DIR=/data # Ensure data directory is properly set
+      - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
+      - FLASK_ENV=development # Enable debug mode for Flask
+      - FLASK_DEBUG=1 # Show more detailed errors
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -110,6 +114,8 @@ services:
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
       - ALDY_API_URL=http://aldy:5000
       - PYTHONPATH=/app
+      - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
+      - LOG_LEVEL=DEBUG # Increase logging verbosity
     volumes:
       - ./:/app  # Mount the entire project directory to /app instead of root
       - ./data:/data

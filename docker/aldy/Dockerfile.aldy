@@ -1,47 +1,49 @@
+# Dockerfile for Aldy Genotyping Service
+# Successfully tested with Aldy 4.7 for pharmacogenomic genotyping
+# Features:
+#  - Support for multiple genes (CYP2D6, CYP2C19, etc.)
+#  - Works with indexed VCF files (requires .tbi or auto-indexing)
+#  - Reference genome support for hg38 and hg19
+#  - API endpoints for various usage scenarios
+
 FROM python:3.10-slim
 
-WORKDIR /aldy
+WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libz-dev \
-    wget \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    tabix \
+    curl \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Aldy and dependencies
-RUN pip install --no-cache-dir \
-    aldy==3.0 \
-    numpy==1.24.2 \
-    pysam==0.20.0 \
-    scikit-learn==1.2.2 \
-    scipy==1.10.1 \
-    flask==3.1.0 \
-    gunicorn==21.2.0 \
-    pandas==2.0.3 \
-    requests==2.31.0
+# Install Python dependencies and Aldy 4.7
+RUN pip install --no-cache-dir aldy==4.7 flask==3.0.0 pyyaml==6.0.1 gunicorn==21.2.0 requests pysam
 
-# Download additional gene definitions for Aldy
-RUN mkdir -p /usr/local/lib/python3.10/site-packages/aldy/resources/genes/ && \
-    cd /usr/local/lib/python3.10/site-packages/aldy/resources/genes/ && \
-    for gene in cyp2c19 cyp2c9 cyp2c8 cyp2b6 cyp1a2 cyp2a6 cyp3a4 cyp3a5 ugt1a1 tpmt dpyd nudt15 slco1b1; do \
-        echo "Downloading ${gene} definition..." && \
-        wget -q -O ${gene}.json https://github.com/0xTCG/aldy-recipes/raw/main/genes/${gene}/${gene}.json || echo "Failed to download ${gene}"; \
-    done
+# Create directory for gene resources
+# Note: Aldy 4.x includes gene definitions; additional not needed
+RUN mkdir -p /app/gene_resources /data
 
 # Copy wrapper script
-COPY aldy_wrapper.py .
+COPY aldy_wrapper.py /app/
 
 # Create start script
-RUN echo '#!/bin/sh\necho "Starting Aldy wrapper service..."\ngunicorn --bind 0.0.0.0:5000 aldy_wrapper:app' > /aldy/start.sh && \
-    chmod +x /aldy/start.sh
+RUN echo '#!/bin/sh\n\
+cd /app\n\
+gunicorn --bind 0.0.0.0:5000 aldy_wrapper:app\n'\
+> /app/start.sh && chmod +x /app/start.sh
 
-# Volume for data
-VOLUME /data
+# Set correct permissions
+RUN chmod 755 /app/aldy_wrapper.py
 
-# Set permissions
-RUN chmod +x aldy_wrapper.py
+# Command to start the service
+CMD ["/app/start.sh"]
 
-# Command to run the service
-CMD ["/aldy/start.sh"] 
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1 

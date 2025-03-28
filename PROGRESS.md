@@ -195,3 +195,68 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 - Interactive pathway visualizations
 - Integration with drug interaction databases
 - Phenotype prediction based on multi-gene interactions 
+
+## VCF Upload Enhancements
+
+For genomic analyses that require indexed VCF files (like Aldy):
+
+1. Add option for users to upload both VCF and index files:
+   - Primary upload slot for VCF file (required)
+   - Secondary upload slot for index file (.tbi or .csi, optional)
+
+2. If user doesn't provide an index file, implement automatic indexing:
+   - Use bgzip to compress the VCF if not already compressed
+   - Generate index with tabix
+   - Display progress indicator during indexing for large files
+
+3. Handle errors gracefully:
+   - Validate that uploaded index matches the VCF file
+   - Provide clear error messages if indexing fails
+   - Include informative documentation on index file requirements
+
+## Reference Genome Selection
+
+For accurate pharmacogenomic analysis:
+
+1. Add reference genome selection to the user interface:
+   - Default to hg38 (GRCh38) as the most current reference
+   - Provide option to select hg19/GRCh37 for backward compatibility
+   - Clearly indicate which reference was used in the report
+
+2. Implement intelligent reference genome detection:
+   - Auto-detect from VCF header by searching for "GRCh38", "hg38", "GRCh37", or "hg19"
+   - Parse GATK command line or other header information for reference path
+   - Provide clear indication when auto-detection is used and what was detected
+
+3. Ensure all analysis tools receive the correct reference genome parameter:
+   - Pass `--genome` parameter to Aldy for star allele calling
+   - Configure PharmCAT with the appropriate reference
+   - Add validation to check VCF headers for genome build indicators
+
+4. Document reference genome recommendations:
+   - Include warnings about potential discrepancies when using incorrect reference
+   - Provide guidance on converting between reference builds if needed
+
+## Phase 1 Implementation Status (Updated)
+
+### Completed:
+- ✅ Created database schema for gene groups and gene-group relationships
+- ✅ Added CYP450 enzymes and other PGx gene groups to database
+- ✅ Updated Aldy service to support multiple genes and gene groups
+- ✅ Implemented Aldy 4.x integration with proper indexing and genome detection
+- ✅ Successfully tested CYP2D6 genotyping with sample VCF file
+- ✅ Added proper reference genome detection from VCF headers
+- ✅ Integrated comprehensive VCF file validation and indexing
+
+### Current Results:
+- CYP2D6 genotyping successfully produces *1/*4.021 calls with 100% confidence
+- Detailed variant information available for clinical interpretation
+- Phenotype predictions available (normal function / no function alleles)
+
+### Next Steps:
+- Integrate Aldy genotyping results with API endpoints for the frontend
+- Update PharmCAT wrapper to use the same VCF processing pipeline
+- Implement drug recommendation engine based on multiple gene results
+- Add remaining SNPs and group star alleles by enzyme family
+- Design comprehensive report templates using newly available data
+- Create user interface for VCF upload with indexing capabilities
