@@ -711,4 +711,30 @@ async def call_variants(
         except:
             pass
 
+# Wait for GATK API to be ready
+@app.on_event("startup")
+async def startup_db_client():
+    """Check if gatk-api is ready before starting the app"""
+    logger.info("Checking if GATK API is ready...")
+    
+    max_retries = 6
+    retry_delay = 10  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{GATK_SERVICE_URL}/health", timeout=5) as response:
+                    if response.status == 200:
+                        logger.info("GATK API is ready!")
+                        return
+                    logger.warning(f"GATK API returned status {response.status}, retrying...")
+        except Exception as e:
+            logger.warning(f"GATK API not ready yet (attempt {attempt+1}/{max_retries}): {str(e)}")
+        
+        if attempt < max_retries - 1:
+            logger.info(f"Waiting {retry_delay} seconds before next attempt...")
+            await asyncio.sleep(retry_delay)
+    
+    logger.warning(f"GATK API health check failed after {max_retries} attempts, but we'll continue anyway")
+
 # Additional endpoints would go here 

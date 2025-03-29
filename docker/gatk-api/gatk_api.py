@@ -20,13 +20,14 @@ logger = logging.getLogger(__name__)
 # Configuration
 GATK_CONTAINER = os.environ.get('GATK_CONTAINER', 'gatk')
 DATA_DIR = os.environ.get('DATA_DIR', '/data')
-TEMP_DIR = '/tmp'
+TEMP_DIR = os.environ.get('TMPDIR', '/tmp/gatk_temp')
 REFERENCE_DIR = os.environ.get('REFERENCE_DIR', '/reference')
 
 # Create directories
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, 'uploads'), exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, 'results'), exist_ok=True)
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Map reference genome names to file paths
 REFERENCE_PATHS = {
@@ -35,6 +36,50 @@ REFERENCE_PATHS = {
     'grch37': os.path.join(REFERENCE_DIR, 'grch37', 'human_g1k_v37.fasta'),
     'grch38': os.path.join(REFERENCE_DIR, 'hg38', 'Homo_sapiens_assembly38.fasta')  # symlink
 }
+
+def index_bam_file(bam_path):
+    """
+    Create an index for a BAM file using samtools.
+    
+    Args:
+        bam_path: Path to the BAM file to index
+        
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        logger.info(f"Indexing BAM file: {bam_path}")
+        
+        # Check if samtools is installed
+        try:
+            subprocess.run(["samtools", "--version"], capture_output=True, check=True)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            logger.error("samtools not found. Installing...")
+            subprocess.run("apt-get update && apt-get install -y samtools", 
+                          shell=True, check=True)
+        
+        # Create the index
+        cmd = f"samtools index {bam_path}"
+        process = subprocess.run(cmd, shell=True, check=True, 
+                               capture_output=True, text=True)
+        
+        # Check if index file was created
+        index_path = f"{bam_path}.bai"
+        if os.path.exists(index_path):
+            logger.info(f"Successfully indexed BAM file, index at {index_path}")
+            return True, f"Created index at {index_path}"
+        else:
+            logger.warning(f"Index command completed but no index file found at {index_path}")
+            return False, "Index command completed but no index file found"
+            
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Error indexing BAM file: {e.stderr}"
+        logger.error(error_msg)
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Unexpected error while indexing BAM file: {str(e)}"
+        logger.error(error_msg)
+        return False, error_msg
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -97,6 +142,15 @@ def variant_call():
             }), 200
         
         elif file_ext in ['.bam', '.cram', '.sam']:
+            # For BAM files, create an index first
+            if file_ext == '.bam':
+                success, message = index_bam_file(input_path)
+                if not success:
+                    return jsonify({
+                        "error": f"Failed to index BAM file: {message}"
+                    }), 500
+                logger.info(f"BAM file indexed successfully: {message}")
+            
             # For BAM/CRAM files, run GATK HaplotypeCaller
             # Build GATK command
             regions_arg = f"-L {regions}" if regions else ""
@@ -153,11 +207,40 @@ def variant_call():
         logger.exception(f"Unexpected error in variant-call endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+def ensure_reference_dictionaries():
+    """Check if GATK dictionaries exist for reference genomes and create them if needed"""
+    for genome_name, fasta_path in REFERENCE_PATHS.items():
+        if os.path.exists(fasta_path):
+            # Check if dictionary exists
+            dict_path = os.path.splitext(fasta_path)[0] + '.dict'
+            if not os.path.exists(dict_path):
+                logger.info(f"Creating sequence dictionary for {genome_name} at {dict_path}")
+                try:
+                    cmd = f"gatk CreateSequenceDictionary -R {fasta_path}"
+                    subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+                    logger.info(f"Created sequence dictionary for {genome_name}")
+                except Exception as e:
+                    logger.error(f"Failed to create sequence dictionary for {genome_name}: {str(e)}")
+            else:
+                logger.info(f"Sequence dictionary for {genome_name} already exists at {dict_path}")
+        else:
+            logger.warning(f"Reference genome {genome_name} not found at {fasta_path}")
+
 if __name__ == '__main__':
     # Make sure GATK is installed
     try:
         result = subprocess.run(["gatk", "--version"], capture_output=True, text=True)
         logger.info(f"GATK version: {result.stdout.strip()}")
+        
+        # Ensure reference dictionaries exist
+        ensure_reference_dictionaries()
+        
+        # Check if samtools is installed
+        try:
+            result = subprocess.run(["samtools", "--version"], capture_output=True, text=True)
+            logger.info(f"samtools version: {result.stdout.splitlines()[0] if result.stdout else 'Unknown'}")
+        except:
+            logger.warning("samtools not found. Will attempt to install when needed.")
     except Exception as e:
         logger.error(f"GATK not found or not executable: {str(e)}")
     

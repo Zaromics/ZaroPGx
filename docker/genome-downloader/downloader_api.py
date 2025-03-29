@@ -97,7 +97,7 @@ def extract_file(file_path, output_path, genome_name):
         return False
 
 def index_genome(fasta_path, genome_name):
-    """Create genome index files"""
+    """Create genome index files using samtools"""
     try:
         download_status["genomes"][genome_name]["status"] = "indexing"
         save_status()
@@ -105,9 +105,8 @@ def index_genome(fasta_path, genome_name):
         # Create samtools index
         subprocess.run(["samtools", "faidx", fasta_path], check=True)
         
-        # Create GATK dictionary
-        dict_cmd = ["gatk", "CreateSequenceDictionary", "-R", fasta_path]
-        subprocess.run(dict_cmd, check=True)
+        # Note: We no longer create GATK dictionary here
+        # GATK dictionary creation will be handled by the GATK API service when needed
         
         download_status["genomes"][genome_name]["status"] = "ready"
         download_status["genomes"][genome_name]["progress"] = 100

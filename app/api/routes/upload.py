@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 import uuid
 from typing import Dict, Optional
 import requests
+import asyncio
 
 # Dictionary to store job status
 job_status: Dict[str, Dict] = {}
@@ -25,45 +26,65 @@ def update_job_progress(job_id: str, stage: str, percentage: int, message: str):
         })
 
 async def call_gatk_variants(job_id: str, vcf_file_path: str, reference_genome: str = "hg38"):
-    """Call variants using GATK API service."""
-    try:
-        logging.info(f"Job {job_id} progress: variant_calling - 10% - Calling variants with GATK")
-        
-        # Call the GATK API
-        # Create the multipart/form-data request
-        files = {'file': open(vcf_file_path, 'rb')}
-        data = {'reference_genome': reference_genome}
-        
-        # Get the GATK service URL from environment or use default
-        gatk_api_url = os.environ.get("GATK_API_URL", "http://gatk-api:5000")
-        
-        # Call the GATK API
-        response = requests.post(
-            f"{gatk_api_url}/variant-call",
-            files=files,
-            data=data,
-            timeout=3600  # Allow up to 1 hour for large files
-        )
-        response.raise_for_status()
-        
-        # Get the response content
-        result = response.json()
-        
-        # The API returns the path to the output VCF
-        output_vcf = result.get("output_file")
-        
-        if not output_vcf:
-            raise Exception(f"No output file path returned from GATK API: {result}")
+    """Call variants using GATK API service with retry logic."""
+    logging.info(f"Job {job_id} progress: variant_calling - 10% - Calling variants with GATK")
+    
+    # Get the GATK service URL from environment or use default
+    gatk_api_url = os.environ.get("GATK_API_URL", "http://gatk-api:5000")
+    
+    # Add retry logic for connection issues
+    max_retries = 3
+    retry_delay = 5  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Create the multipart/form-data request
+            files = {'file': open(vcf_file_path, 'rb')}
+            data = {'reference_genome': reference_genome}
             
-        return output_vcf
-    except requests.RequestException as e:
-        error_msg = f"GATK API error: {str(e)}"
-        logging.error(error_msg)
-        raise Exception(error_msg)
-    except Exception as e:
-        error_msg = f"Error calling GATK variants: {str(e)}"
-        logging.error(error_msg)
-        raise Exception(error_msg)
+            # Call the GATK API with increased timeout
+            logging.info(f"Attempt {attempt+1}/{max_retries} to call GATK API at {gatk_api_url}")
+            response = requests.post(
+                f"{gatk_api_url}/variant-call",
+                files=files,
+                data=data,
+                timeout=3600  # Allow up to 1 hour for large files
+            )
+            response.raise_for_status()
+            
+            # Get the response content
+            result = response.json()
+            
+            # The API returns the path to the output VCF
+            output_vcf = result.get("output_file")
+            
+            if not output_vcf:
+                raise Exception(f"No output file path returned from GATK API: {result}")
+                
+            return output_vcf
+        
+        except requests.ConnectionError as e:
+            # If this isn't the last attempt, wait and retry
+            if attempt < max_retries - 1:
+                error_msg = f"Connection error to GATK API (attempt {attempt+1}): {str(e)}. Retrying in {retry_delay} seconds..."
+                logging.warning(error_msg)
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                # Last attempt failed
+                error_msg = f"GATK API connection failed after {max_retries} attempts: {str(e)}"
+                logging.error(error_msg)
+                raise Exception(error_msg)
+                
+        except requests.RequestException as e:
+            error_msg = f"GATK API error: {str(e)}"
+            logging.error(error_msg)
+            raise Exception(error_msg)
+            
+        except Exception as e:
+            error_msg = f"Error calling GATK variants: {str(e)}"
+            logging.error(error_msg)
+            raise Exception(error_msg)
 
 async def call_stargazer(job_id: str, vcf_file: str):
     """Call CYP2D6 star alleles using Stargazer."""

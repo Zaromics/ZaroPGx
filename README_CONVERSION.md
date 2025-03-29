@@ -69,9 +69,12 @@ Reference genomes need to be downloaded and indexed for GATK to function properl
 
 #### Progress Made:
 1. Created a Genome Downloader service to handle downloading and indexing reference genomes
-2. Set up container structure for GATK and Stargazer services
-3. Created a GATK API wrapper service that handles HTTP requests and executes GATK commands
+2. Set up container structure for GATK API and Stargazer services
+3. Created a GATK API wrapper service that has GATK installed and executes commands directly
 4. Added proper dependencies in docker-compose.yml to ensure services start in the correct order
+5. Simplified the architecture by removing redundant GATK installations
+   - Eliminated the separate GATK container to avoid duplication
+   - GATK functionality now centralized in the GATK API service
 
 #### Current Issues:
 1. **GATK API Service Error**: The GATK API is returning a 500 Internal Server Error when called

@@ -1,252 +1,217 @@
-// Genome Download Progress component
+/**
+ * Genome Download Progress Component
+ * Displays the status of reference genome downloads
+ */
 class GenomeDownloadProgress {
-  constructor(elementId) {
-    this.element = document.getElementById(elementId);
-    if (!this.element) {
-      console.error(`Element with ID "${elementId}" not found`);
-      return;
+    constructor() {
+        this.container = document.getElementById('genome-download-container');
+        if (!this.container) {
+            console.warn('Genome download container not found');
+            return;
+        }
+        
+        this.minimized = false;
+        this.downloadInProgress = false;
+        this.init();
+        this.checkStatus();
+        
+        // Check status every 10 seconds
+        setInterval(() => this.checkStatus(), 10000);
     }
     
-    this.isMinimized = false;
-    this.status = null;
-    this.interval = null;
-    
-    this.init();
-  }
-  
-  init() {
-    // Create the UI
-    this.element.innerHTML = `
-      <div class="genome-download-panel">
-        <div class="download-header">
-          <h4>Reference Genome Downloads</h4>
-          <button class="minimize-btn">Minimize</button>
-        </div>
-        <div class="download-content">
-          <div class="overall-progress">
-            <span class="progress-label">Overall Progress: 0%</span>
-            <div class="progress-bar-container">
-              <div class="progress-bar" style="width: 0%"></div>
+    init() {
+        this.container.innerHTML = `
+            <div id="genome-download-panel" class="download-panel">
+                <div class="download-header">
+                    <h3>Reference Genome Downloads</h3>
+                    <button id="minimize-download" class="minimize-btn">-</button>
+                </div>
+                <div id="download-content" class="download-content">
+                    <div id="download-status">Checking status...</div>
+                    <div id="download-progress" class="progress-container">
+                        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div id="genome-list" class="genome-list"></div>
+                    <button id="start-download" class="download-btn" style="display: none;">Start Download</button>
+                </div>
             </div>
-          </div>
-          <div class="genome-list"></div>
-        </div>
-      </div>
-    `;
-    
-    // Add styles
-    const style = document.createElement('style');
-    style.textContent = `
-      .genome-download-panel {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        width: 350px;
-        background-color: white;
-        border-radius: 8px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        z-index: 1000;
-        overflow: hidden;
-        transition: all 0.3s ease;
-      }
-      
-      .genome-download-panel.minimized .download-content {
-        display: none;
-      }
-      
-      .download-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 10px 15px;
-        background-color: #f5f5f5;
-        border-bottom: 1px solid #ddd;
-      }
-      
-      .download-header h4 {
-        margin: 0;
-        font-size: 16px;
-        color: #333;
-      }
-      
-      .download-header button {
-        border: none;
-        background: none;
-        color: #0066cc;
-        cursor: pointer;
-        font-size: 14px;
-      }
-      
-      .download-content {
-        padding: 15px;
-      }
-      
-      .overall-progress {
-        margin-bottom: 15px;
-      }
-      
-      .progress-bar-container {
-        height: 8px;
-        background-color: #eee;
-        border-radius: 4px;
-        margin-top: 5px;
-        overflow: hidden;
-      }
-      
-      .progress-bar {
-        height: 100%;
-        background-color: #4caf50;
-        transition: width 0.3s ease;
-      }
-      
-      .genome-list {
-        max-height: 200px;
-        overflow-y: auto;
-      }
-      
-      .genome-item {
-        margin-bottom: 10px;
-      }
-      
-      .genome-info {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 5px;
-      }
-      
-      .genome-name {
-        font-weight: bold;
-      }
-      
-      .genome-status {
-        color: #666;
-        text-transform: capitalize;
-      }
-      
-      .genome-size {
-        color: #999;
-      }
-      
-      .progress-text {
-        text-align: right;
-        font-size: 12px;
-        color: #666;
-        margin-top: 2px;
-      }
-    `;
-    document.head.appendChild(style);
-    
-    // Add event listeners
-    const minimizeBtn = this.element.querySelector('.minimize-btn');
-    minimizeBtn.addEventListener('click', () => this.toggleMinimize());
-    
-    // Start checking status
-    this.checkStatus();
-    this.interval = setInterval(() => this.checkStatus(), 3000);
-  }
-  
-  toggleMinimize() {
-    this.isMinimized = !this.isMinimized;
-    const panel = this.element.querySelector('.genome-download-panel');
-    const btn = this.element.querySelector('.minimize-btn');
-    
-    if (this.isMinimized) {
-      panel.classList.add('minimized');
-      btn.textContent = 'Expand';
-    } else {
-      panel.classList.remove('minimized');
-      btn.textContent = 'Minimize';
+        `;
+        
+        // Add event listeners
+        document.getElementById('minimize-download').addEventListener('click', () => this.toggleMinimize());
+        document.getElementById('start-download').addEventListener('click', () => this.startDownload());
+        
+        // Add styles
+        const style = document.createElement('style');
+        style.textContent = `
+            .download-panel {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                width: 300px;
+                background: white;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                z-index: 1000;
+                transition: height 0.3s;
+                overflow: hidden;
+            }
+            .download-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 10px;
+                background: #f8f9fa;
+                border-bottom: 1px solid #eee;
+            }
+            .download-header h3 {
+                margin: 0;
+                font-size: 16px;
+            }
+            .minimize-btn {
+                background: none;
+                border: none;
+                font-size: 20px;
+                cursor: pointer;
+            }
+            .download-content {
+                padding: 15px;
+            }
+            .progress-container {
+                height: 20px;
+                background: #f0f0f0;
+                border-radius: 10px;
+                margin: 10px 0;
+                overflow: hidden;
+            }
+            .progress-bar {
+                height: 100%;
+                background: #4CAF50;
+                width: 0%;
+                transition: width 0.5s;
+            }
+            .genome-list {
+                margin-top: 10px;
+                max-height: 150px;
+                overflow-y: auto;
+            }
+            .genome-item {
+                margin-bottom: 5px;
+                padding: 5px;
+                border-bottom: 1px solid #eee;
+            }
+            .download-btn {
+                display: block;
+                width: 100%;
+                padding: 8px;
+                margin-top: 10px;
+                background: #007bff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            .minimized .download-content {
+                display: none;
+            }
+        `;
+        document.head.appendChild(style);
     }
-  }
-  
-  async checkStatus() {
-    try {
-      const response = await fetch('/api/genome-download-status');
-      const data = await response.json();
-      
-      // If we got data and it's different from current status, update UI
-      if (data && JSON.stringify(data) !== JSON.stringify(this.status)) {
-        this.status = data;
-        this.updateUI();
-      }
-      
-      // If download is complete, stop checking
-      if (data && data.completed && !data.in_progress) {
-        clearInterval(this.interval);
-        setTimeout(() => {
-          this.element.style.display = 'none';
-        }, 5000);
-      }
-    } catch (error) {
-      console.error('Error fetching genome download status:', error);
+    
+    toggleMinimize() {
+        this.minimized = !this.minimized;
+        const panel = document.getElementById('genome-download-panel');
+        const btn = document.getElementById('minimize-download');
+        
+        if (this.minimized) {
+            panel.classList.add('minimized');
+            btn.textContent = '+';
+        } else {
+            panel.classList.remove('minimized');
+            btn.textContent = '-';
+        }
     }
-  }
-  
-  updateUI() {
-    if (!this.status) return;
     
-    // Update overall progress
-    const overallLabel = this.element.querySelector('.progress-label');
-    const overallBar = this.element.querySelector('.progress-bar');
-    
-    overallLabel.textContent = `Overall Progress: ${Math.round(this.status.overall_progress)}%`;
-    overallBar.style.width = `${this.status.overall_progress}%`;
-    
-    // Update genome list
-    const genomeList = this.element.querySelector('.genome-list');
-    genomeList.innerHTML = '';
-    
-    Object.entries(this.status.genomes).forEach(([name, info]) => {
-      const genomeItem = document.createElement('div');
-      genomeItem.className = 'genome-item';
-      genomeItem.innerHTML = `
-        <div class="genome-info">
-          <span class="genome-name">${name}</span>
-          <span class="genome-status">${info.status}</span>
-          <span class="genome-size">${info.size_mb} MB</span>
-        </div>
-        <div class="progress-bar-container">
-          <div class="progress-bar" style="width: ${info.progress}%"></div>
-        </div>
-        <div class="progress-text">${Math.round(info.progress)}%</div>
-      `;
-      genomeList.appendChild(genomeItem);
-    });
-    
-    // Show or hide based on status
-    if (!this.status.in_progress && this.status.completed) {
-      setTimeout(() => {
-        this.element.style.display = 'none';
-      }, 5000);
-    } else {
-      this.element.style.display = 'block';
+    async checkStatus() {
+        try {
+            const response = await fetch('/api/genome-download-status');
+            if (response.ok) {
+                const data = await response.json();
+                this.updateUI(data);
+            } else {
+                console.error('Failed to fetch download status');
+            }
+        } catch (error) {
+            console.error('Error checking download status:', error);
+        }
     }
-  }
-  
-  startDownload() {
-    fetch('/api/start-genome-download', {
-      method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-      console.log('Download started:', data);
-      this.checkStatus();
-    })
-    .catch(error => {
-      console.error('Error starting download:', error);
-    });
-  }
+    
+    updateUI(data) {
+        const statusEl = document.getElementById('download-status');
+        const progressBar = document.getElementById('progress-bar');
+        const genomeList = document.getElementById('genome-list');
+        const startBtn = document.getElementById('start-download');
+        
+        // Update overall status
+        if (data.downloading) {
+            this.downloadInProgress = true;
+            statusEl.textContent = `Downloading reference genomes: ${data.overall_progress}%`;
+            progressBar.style.width = `${data.overall_progress}%`;
+            startBtn.style.display = 'none';
+            
+            // Make the panel visible if minimized during active download
+            if (this.minimized) {
+                this.toggleMinimize();
+            }
+        } else if (data.complete) {
+            statusEl.textContent = 'All reference genomes downloaded';
+            progressBar.style.width = '100%';
+            startBtn.style.display = 'none';
+            
+            // Auto-minimize after 5 seconds if complete
+            if (this.downloadInProgress) {
+                this.downloadInProgress = false;
+                setTimeout(() => {
+                    if (!this.minimized) this.toggleMinimize();
+                }, 5000);
+            }
+        } else {
+            statusEl.textContent = 'Reference genomes need to be downloaded';
+            progressBar.style.width = '0%';
+            startBtn.style.display = 'block';
+        }
+        
+        // Update genome list
+        if (data.genomes) {
+            genomeList.innerHTML = '';
+            Object.entries(data.genomes).forEach(([name, info]) => {
+                const item = document.createElement('div');
+                item.className = 'genome-item';
+                item.innerHTML = `<b>${name}</b>: ${info.status} ${info.progress ? `(${info.progress}%)` : ''}`;
+                genomeList.appendChild(item);
+            });
+        }
+    }
+    
+    async startDownload() {
+        try {
+            const response = await fetch('/api/start-genome-download', {
+                method: 'POST'
+            });
+            
+            if (response.ok) {
+                this.checkStatus(); // Immediately check for updated status
+            } else {
+                console.error('Failed to start download');
+            }
+        } catch (error) {
+            console.error('Error starting download:', error);
+        }
+    }
 }
 
-// Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
-  // Create a container for the download panel if it doesn't exist
-  if (!document.getElementById('genome-download-container')) {
-    const container = document.createElement('div');
-    container.id = 'genome-download-container';
-    document.body.appendChild(container);
-  }
-  
-  // Initialize the download progress component
-  window.genomeDownloader = new GenomeDownloadProgress('genome-download-container');
+// Initialize the component when the DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    new GenomeDownloadProgress();
 }); 

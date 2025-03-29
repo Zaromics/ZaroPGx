@@ -89,20 +89,6 @@ services:
     networks:
       - pgx-network
 
-  # GATK Service (official broadinstitute image)
-  gatk:
-    image: broadinstitute/gatk:latest
-    container_name: pgx_gatk
-    restart: unless-stopped
-    depends_on:
-      genome-downloader:
-        condition: service_healthy
-    volumes:
-      - ./data:/data
-      - ./reference:/reference
-    networks:
-      - pgx-network
-
   # GATK API Service - provides HTTP endpoints for the app
   gatk-api:
     build:
@@ -111,15 +97,17 @@ services:
     container_name: pgx_gatk_api
     restart: unless-stopped
     depends_on:
-      - gatk
+      genome-downloader:
+        condition: service_healthy
     volumes:
       - ./data:/data
       - ./reference:/reference
     environment:
-      - GATK_CONTAINER=gatk
       - REFERENCE_DIR=/reference
       - DATA_DIR=/data
       - MAX_MEMORY=4g
+      - PYTHONPATH=/app
+      - UVICORN_RELOAD_EXCLUDES=".git/*,.venv/*"
     ports:
       - "5002:5000"
     healthcheck:
@@ -130,6 +118,10 @@ services:
       start_period: 40s
     networks:
       - pgx-network
+    deploy:
+      resources:
+        limits:
+          memory: 8G
 
   # Stargazer Service for CYP2D6 star allele calling
   stargazer:

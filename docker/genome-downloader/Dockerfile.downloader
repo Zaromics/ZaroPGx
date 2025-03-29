@@ -9,12 +9,8 @@ RUN apt-get update && \
     default-jre \
     && rm -rf /var/lib/apt/lists/*
 
-# Install GATK
-WORKDIR /usr/local
-RUN wget -q https://github.com/broadinstitute/gatk/releases/download/4.4.0.0/gatk-4.4.0.0.zip && \
-    unzip gatk-4.4.0.0.zip && \
-    rm gatk-4.4.0.0.zip && \
-    ln -s /usr/local/gatk-4.4.0.0/gatk /usr/local/bin/gatk
+# We don't need GATK installed here - genome indexing can be done with samtools
+# The GATK-specific indexing can be done by the GATK API service when needed
 
 RUN pip install flask requests tqdm
 

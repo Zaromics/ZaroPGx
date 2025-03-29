@@ -21,6 +21,13 @@ WORKDIR /app
 # Install Python dependencies
 RUN pip install --no-cache-dir flask requests
 
+# Create and set proper permissions for data directories
+RUN mkdir -p /data/uploads /data/reports /data/results /tmp/gatk_temp && \
+    chmod -R 777 /data /tmp/gatk_temp
+
+# Change temporary directory for GATK
+ENV TMPDIR=/tmp/gatk_temp
+
 # Copy the API script
 COPY gatk_api.py /app/
 
