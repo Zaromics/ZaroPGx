@@ -164,3 +164,7 @@ cython_debug/
 /data/reports/
 *.vcf
 *.vcf.gz
+
+# Reference genomes
+reference/
+reference/*

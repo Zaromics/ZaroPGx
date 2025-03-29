@@ -1,0 +1,17 @@
+FROM broadinstitute/gatk:4.4.0.0
+
+# Install Python and Flask
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip && \
+    pip3 install flask werkzeug && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the API code
+WORKDIR /app
+COPY gatk_api.py /app/
+
+# Expose port for the API
+EXPOSE 5000
+
+# Run the API
+CMD ["python3", "gatk_api.py"] 

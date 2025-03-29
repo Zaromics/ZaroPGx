@@ -1,74 +1,62 @@
-FROM python:3.10
+# Use a smaller base image with Python
+FROM python:3.10-slim
 
-WORKDIR /app
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV TZ=UTC
 
-# Install system dependencies for WeasyPrint
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     build-essential \
-    python3-dev \
-    python3-pip \
-    python3-setuptools \
-    python3-wheel \
-    python3-cffi \
+    curl \
+    libpq-dev \
+    # WeasyPrint dependencies
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     libgdk-pixbuf2.0-0 \
     libffi-dev \
     shared-mime-info \
-    && apt-get clean \
+    libglib2.0-0 \
+    libjpeg-dev \
+    libopenjp2-7-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
-
-# Create and set working directory
+# Set work directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev \
-    wget \
-    gnupg \
-    lsb-release \
-    curl \
-    procps \
-    # Add genomic tools for BAM/VCF handling
-    samtools \
-    tabix \
-    bcftools \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install default JRE (using default-jre which is available in the repos)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    default-jre \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements file
-COPY requirements.txt /app/
+# Copy requirements.txt and install dependencies
+COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    python-multipart \
+    python-jose \
+    sqlalchemy \
+    psycopg2-binary \
+    pandas \
+    weasyprint \
+    jinja2 \
+    pydantic \
+    python-dotenv \
+    requests \
+    aiohttp \
+    werkzeug
 
 # Create directories for data and reports
-RUN mkdir -p /app/data/uploads /app/data/reports
-
-# Copy health check script
-COPY docker/app/health.sh /app/health.sh
-RUN chmod +x /app/health.sh
+RUN mkdir -p /data/reports /data/uploads
 
 # Copy application code
+# Note: Reference genome files are not included in the build context (see .dockerignore)
+# They are mounted as volumes at runtime
 COPY . /app/
 
-# Set proper permissions
-RUN chmod -R 755 /app
-
-# Expose port
+# Expose the port for the application
 EXPOSE 8000
 
-# Command to run when container starts
+# Command to run the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] 

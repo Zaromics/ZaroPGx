@@ -33,10 +33,11 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Clone and setup Stargazer
+# Setup Stargazer from local zip file
 WORKDIR /stargazer
-RUN git clone https://github.com/sbslee/stargazer.git . && \
-    pip3 install -e .
+# Copy the zip file from the mounted volume and extract it
+COPY setup_stargazer.sh /stargazer/
+RUN chmod +x /stargazer/setup_stargazer.sh
 
 # Copy application code
 COPY . /app/
@@ -47,5 +48,5 @@ WORKDIR /app
 # Expose port
 EXPOSE 5000
 
-# Start the Flask API
-CMD ["python3", "stargazer_wrapper.py"] 
+# Start the service, running setup first
+CMD ["/bin/bash", "-c", "/stargazer/setup_stargazer.sh && python3 stargazer_wrapper.py"] 

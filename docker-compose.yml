@@ -21,6 +21,26 @@ services:
     networks:
       - pgx-network
 
+  # Reference genome downloader service
+  genome-downloader:
+    build:
+      context: ./docker/genome-downloader
+      dockerfile: Dockerfile.downloader
+    container_name: pgx_genome_downloader
+    volumes:
+      - ./reference:/reference
+    environment:
+      - DOWNLOAD_ON_STARTUP=true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/reference/.download_complete') else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    ports:
+      - "5050:5050"
+    networks:
+      - pgx-network
+
   # PharmCAT Service - using official Docker image
   pharmcat:
     image: pgkb/pharmcat
@@ -71,22 +91,21 @@ services:
 
   # GATK Service for variant calling
   gatk:
-    build:
-      context: ./docker/gatk
-      dockerfile: Dockerfile.gatk
+    image: broadinstitute/gatk:latest
     container_name: pgx_gatk
     restart: unless-stopped
+    depends_on:
+      genome-downloader:
+        condition: service_healthy
     volumes:
-      - ./data:/data
-      - ./reference:/reference
+      - ./data:/gatk/data
+      - ./reference:/gatk/reference
     environment:
-      - DATA_DIR=/data
-      - REFERENCE_DIR=/reference
-      - MAX_MEMORY=4g
+      - REFERENCE_DIR=/gatk/reference
     ports:
-      - "5002:5000"
+      - "5002:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "ls", "/gatk/reference"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -101,9 +120,13 @@ services:
       dockerfile: Dockerfile.stargazer
     container_name: pgx_stargazer
     restart: unless-stopped
+    depends_on:
+      genome-downloader:
+        condition: service_healthy
     volumes:
       - ./data:/data
       - ./reference:/reference
+      - ./stargazer.zip:/tmp/stargazer.zip  # Mount the Stargazer zip file
     environment:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
@@ -136,8 +159,8 @@ services:
       - PHARMCAT_API_URL=http://pharmcat-wrapper:5000
       - PHARMCAT_SERVICE_URL=http://pharmcat:8080
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
-      - GATK_API_URL=http://gatk:5000
       - STARGAZER_API_URL=http://stargazer:5000
+      - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
       - PYTHONPATH=/app
       - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
       - LOG_LEVEL=DEBUG # Increase logging verbosity

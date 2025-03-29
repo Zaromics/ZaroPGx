@@ -1,0 +1,50 @@
+# Exclude reference genomes - these are mounted at runtime
+reference/
+reference/*
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+*.cover
+
+# Docker-specific
+.git
+.gitignore
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Local development files
+.vscode/
+.idea/
+*.swp
+.env
+.env.*
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Don't include the data directory, it's mounted at runtime
+data/
+
+# Don't include stargazer zip - it's mounted separately
+# Keep it included for now. May need to separate it out later.
+# stargazer.zip 
