@@ -36,6 +36,19 @@
             background-color: #f8f9fa;
             text-align: center;
         }
+        .stage-indicator {
+            position: relative;
+            padding: 0 5px;
+        }
+        .stage-indicator:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            right: -10px;
+            width: 20px;
+            height: 1px;
+            background-color: #dee2e6;
+        }
     </style>
 </head>
 <body>
@@ -68,11 +81,11 @@
                 <div class="card">
                     <div class="card-header">Upload Genomic File for Analysis</div>
                     <div class="card-body">
-                        <form action="/upload-vcf" method="post" enctype="multipart/form-data">
+                        <form action="/upload-vcf" method="post" enctype="multipart/form-data" id="uploadForm">
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File</label>
-                                <input class="form-control" type="file" id="genomicFile" name="genomicFile" accept=".vcf,.vcf.gz,.bam,.sam,.cram" required>
-                                <div class="form-text">Upload a VCF, BAM, SAM, or CRAM file for pharmacogenomic analysis</div>
+                                <input class="form-control" type="file" id="genomicFile" name="genomicFile" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.zip" required>
+                                <div class="form-text">Upload a VCF, BAM, SAM, CRAM file or ZIP archive for pharmacogenomic analysis</div>
                             </div>
                             <div class="mb-3">
                                 <label for="sampleId" class="form-label">Sample ID (optional)</label>
@@ -86,7 +99,39 @@
                                 </select>
                                 <div class="form-text">Specify the reference genome used for mapping</div>
                             </div>
-                            <button type="submit" class="btn btn-primary">Upload and Analyze</button>
+                            
+                            <!-- Multi-stage progress bar (hidden by default) -->
+                            <div id="progressContainer" class="mb-3 d-none">
+                                <label class="form-label" id="progressLabel">Progress</label>
+                                <div class="progress" style="height: 25px;">
+                                    <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
+                                         role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
+                                        0%
+                                    </div>
+                                </div>
+                                <div id="progressStatus" class="form-text mt-2">Preparing...</div>
+                                
+                                <!-- Stage indicators -->
+                                <div class="d-flex justify-content-between mt-2 small">
+                                    <div id="stageUpload" class="stage-indicator">
+                                        <i class="bi bi-circle"></i> Upload
+                                    </div>
+                                    <div id="stagePreprocess" class="stage-indicator text-muted">
+                                        <i class="bi bi-circle"></i> Preprocessing
+                                    </div>
+                                    <div id="stageAldy" class="stage-indicator text-muted">
+                                        <i class="bi bi-circle"></i> Aldy Analysis
+                                    </div>
+                                    <div id="stagePharmcat" class="stage-indicator text-muted">
+                                        <i class="bi bi-circle"></i> PharmCAT
+                                    </div>
+                                    <div id="stageReport" class="stage-indicator text-muted">
+                                        <i class="bi bi-circle"></i> Report
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary" id="uploadButton">Upload and Analyze</button>
                         </form>
                     </div>
                 </div>
@@ -144,5 +189,278 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Add JavaScript for real progress tracking using Server-Sent Events -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('uploadForm');
+            const fileInput = document.getElementById('genomicFile');
+            const progressBar = document.getElementById('progressBar');
+            const progressContainer = document.getElementById('progressContainer');
+            const progressStatus = document.getElementById('progressStatus');
+            const progressLabel = document.getElementById('progressLabel');
+            const uploadButton = document.getElementById('uploadButton');
+            
+            // Stage indicators
+            const stages = {
+                upload: document.getElementById('stageUpload'),
+                preprocess: document.getElementById('stagePreprocess'),
+                aldy: document.getElementById('stageAldy'),
+                pharmcat: document.getElementById('stagePharmcat'),
+                report: document.getElementById('stageReport')
+            };
+            
+            // Function to update the active stage
+            function updateStage(stageName) {
+                // Reset all stages to inactive
+                for (const [name, element] of Object.entries(stages)) {
+                    element.classList.add('text-muted');
+                    element.innerHTML = '<i class="bi bi-circle"></i> ' + element.innerHTML.split('</i> ')[1];
+                }
+                
+                // Set the current stage to active
+                if (stages[stageName]) {
+                    stages[stageName].classList.remove('text-muted');
+                    stages[stageName].innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> ' + 
+                                                 stages[stageName].innerHTML.split('</i> ')[1];
+                }
+                
+                // Update all completed stages
+                const stageOrder = ['upload', 'preprocess', 'aldy', 'pharmcat', 'report'];
+                const currentIndex = stageOrder.indexOf(stageName);
+                
+                for (let i = 0; i < currentIndex; i++) {
+                    const completedStage = stages[stageOrder[i]];
+                    completedStage.classList.remove('text-muted');
+                    completedStage.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> ' + 
+                                              completedStage.innerHTML.split('</i> ')[1];
+                }
+            }
+            
+            // Function to display a warning message
+            function showWarning(message) {
+                // Create warning container if it doesn't exist
+                let warningContainer = document.getElementById('warningContainer');
+                if (!warningContainer) {
+                    warningContainer = document.createElement('div');
+                    warningContainer.id = 'warningContainer';
+                    warningContainer.className = 'alert alert-warning mt-3';
+                    warningContainer.role = 'alert';
+                    progressContainer.insertAdjacentElement('afterend', warningContainer);
+                }
+                
+                // Set the warning message
+                warningContainer.innerHTML = `
+                    <strong>Warning:</strong> ${message}
+                    <button type="button" class="btn-close float-end" data-bs-dismiss="alert" aria-label="Close"></button>
+                `;
+                
+                // Add Bootstrap dismiss functionality
+                const closeButton = warningContainer.querySelector('.btn-close');
+                closeButton.addEventListener('click', function() {
+                    warningContainer.style.display = 'none';
+                });
+            }
+            
+            let jobId = null;
+            let eventSource = null;
+            
+            // Set up form submission
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+                
+                // Show progress bar
+                progressContainer.classList.remove('d-none');
+                uploadButton.disabled = true;
+                
+                const formData = new FormData(form);
+                
+                // Upload the file using AJAX
+                fetch('/upload-vcf', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Store the job ID
+                        jobId = data.job_id;
+                        
+                        // Check for warnings
+                        if (data.warning) {
+                            showWarning(data.warning);
+                        }
+                        
+                        // Start listening for progress updates
+                        connectToEventSource(jobId);
+                    } else {
+                        // Handle error
+                        progressStatus.textContent = data.message || 'Upload failed!';
+                        progressBar.classList.remove('bg-info', 'bg-success');
+                        progressBar.classList.add('bg-danger');
+                        uploadButton.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    progressStatus.textContent = 'Error uploading file. Please try again.';
+                    progressBar.classList.remove('bg-info', 'bg-success');
+                    progressBar.classList.add('bg-danger');
+                    uploadButton.disabled = false;
+                });
+            });
+            
+            function connectToEventSource(jobId) {
+                // Close any existing event source
+                if (eventSource) {
+                    eventSource.close();
+                }
+                
+                // Connect to the progress endpoint
+                eventSource = new EventSource(`/progress/${jobId}`);
+                
+                // Handle progress updates
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.error) {
+                        console.error('Error:', data.error);
+                        progressStatus.textContent = 'Error: ' + data.error;
+                        progressBar.classList.remove('bg-info', 'bg-success');
+                        progressBar.classList.add('bg-danger');
+                        
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                        
+                        uploadButton.disabled = false;
+                        return;
+                    }
+                    
+                    // Update the progress bar
+                    const percent = data.percent || 0;
+                    progressBar.style.width = percent + '%';
+                    progressBar.textContent = percent + '%';
+                    progressBar.setAttribute('aria-valuenow', percent);
+                    
+                    // Ensure the progress bar has the correct class
+                    if (!progressBar.classList.contains('bg-info')) {
+                        progressBar.classList.add('bg-info');
+                    }
+                    
+                    // Update stage
+                    if (data.stage) {
+                        updateStage(data.stage);
+                    }
+                    
+                    // Update the status message
+                    if (data.message) {
+                        progressStatus.textContent = data.message;
+                        
+                        // Check if message contains a warning (usually we'd have a separate field but we're parsing the message)
+                        if (data.message.includes("different names")) {
+                            const warningMessage = data.message.split(" - ")[1] || data.message;
+                            showWarning(warningMessage);
+                        }
+                    }
+                    
+                    // If job is complete
+                    if (data.complete) {
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                        
+                        if (data.success) {
+                            progressBar.classList.remove('bg-info', 'bg-danger');
+                            progressBar.classList.add('bg-success');
+                            
+                            // If we have a report path, offer to view it
+                            if (data.report_path) {
+                                // Create report link container
+                                const reportContainer = document.createElement('div');
+                                reportContainer.className = 'alert alert-success mt-3';
+                                reportContainer.innerHTML = `
+                                    <h5>Report Generated Successfully!</h5>
+                                    <p>${data.message}</p>
+                                    <a href="${data.report_path}" class="btn btn-primary" target="_blank">
+                                        <i class="bi bi-file-earmark-pdf"></i> View Report
+                                    </a>
+                                `;
+                                progressContainer.insertAdjacentElement('afterend', reportContainer);
+                            }
+                        } else {
+                            progressBar.classList.remove('bg-info', 'bg-success');
+                            progressBar.classList.add('bg-danger');
+                        }
+                        
+                        // Re-enable the upload button
+                        uploadButton.disabled = false;
+                        uploadButton.innerHTML = 'Upload and Analyze';
+                    }
+                };
+                
+                // Handle connection errors
+                eventSource.onerror = function(error) {
+                    console.error('EventSource error:', error);
+                    
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
+                    }
+                    
+                    progressStatus.textContent = 'Lost connection to server. Please try again.';
+                    uploadButton.disabled = false;
+                };
+            }
+            
+            // Helper function to format file size
+            function formatFileSize(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+            
+            // Update file info when a new file is selected
+            fileInput.addEventListener('change', function() {
+                if (fileInput.files.length > 0) {
+                    const file = fileInput.files[0];
+                    progressStatus.textContent = `Selected: ${file.name} (${formatFileSize(file.size)})`;
+                    progressContainer.classList.remove('d-none');
+                    progressBar.style.width = '0%';
+                    progressBar.textContent = '';
+                    progressBar.setAttribute('aria-valuenow', 0);
+                    progressBar.classList.remove('bg-danger', 'bg-success');
+                    progressBar.classList.add('progress-bar-striped', 'progress-bar-animated', 'bg-info');
+                    
+                    // Reset stages
+                    updateStage('upload');
+                    progressLabel.textContent = 'Upload Progress';
+                    
+                    // Reset any existing report links
+                    const existingReportLinks = form.querySelector('.alert-success');
+                    if (existingReportLinks) {
+                        form.removeChild(existingReportLinks);
+                    }
+                    
+                    // Close any existing event sources
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
+                    }
+                } else {
+                    progressContainer.classList.add('d-none');
+                }
+            });
+        });
+    </script>
+    
+    <!-- Add Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 </body>
 </html> 

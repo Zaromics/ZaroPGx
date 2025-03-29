@@ -35,6 +35,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsb-release \
     curl \
     procps \
+    # Add genomic tools for BAM/VCF handling
+    samtools \
+    tabix \
+    bcftools \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

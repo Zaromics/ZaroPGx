@@ -1,12 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, File, UploadFile, Form
+from fastapi import FastAPI, Depends, HTTPException, status, Request, File, UploadFile, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, StreamingResponse
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, AsyncGenerator
 import os
 import shutil
 from pathlib import Path
@@ -18,6 +18,12 @@ import aiohttp
 import uuid
 import tempfile
 import subprocess
+import time
+import mimetypes
+import zipfile
+import asyncio
+import threading
+import re
 
 from app.api.routes import upload_router, report_router
 from app.api.models import Token, TokenData
@@ -40,12 +46,19 @@ SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")  # In production, use env
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Directory setup
+# Constants
+GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk:5000")
+STARGAZER_SERVICE_URL = os.getenv("STARGAZER_API_URL", "http://stargazer:5000")
+PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match")
+TEMP_DIR = Path("/tmp")
+DATA_DIR = Path("/data")
+REPORTS_DIR = Path("/data/reports")
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / "templates"
-UPLOAD_DIR = Path("/tmp")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-REPORTS_DIR = Path("/data/reports")
+
+# Create directories if they don't exist
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Initialize templates
@@ -137,461 +150,445 @@ async def health_check():
     logger.info("Health check called")
     return {"status": "healthy", "timestamp": str(datetime.utcnow())}
 
-def detect_file_type(file_path, filename):
+def detect_file_type(file_path: str) -> str:
     """
-    Detect the file type based on extension and header
-    
-    Args:
-        file_path: Path to the uploaded file
-        filename: Original filename with extension
-        
-    Returns:
-        Tuple of (file_type, file_extension, is_compressed)
+    Detect the type of genomic file based on extension and file content.
+    Returns one of 'vcf', 'bam', 'sam', 'cram', or 'unknown'
     """
-    lower_filename = filename.lower()
-    is_compressed = False
+    file_ext = os.path.splitext(file_path.lower())[1]
     
-    # Check by extension first
-    if lower_filename.endswith('.bam'):
-        return 'BAM', 'bam', False
-    elif lower_filename.endswith('.sam'):
-        return 'SAM', 'sam', False
-    elif lower_filename.endswith('.cram'):
-        return 'CRAM', 'cram', False
-    elif lower_filename.endswith('.vcf.gz'):
-        return 'VCF', 'vcf.gz', True
-    elif lower_filename.endswith('.vcf'):
-        return 'VCF', 'vcf', False
+    # Check extensions first
+    if file_ext in ['.vcf', '.vcf.gz']:
+        return 'vcf'
+    elif file_ext == '.bam':
+        return 'bam'
+    elif file_ext == '.sam':
+        return 'sam'
+    elif file_ext == '.cram':
+        return 'cram'
+    elif file_ext == '.zip':
+        return 'zip'
     
-    # Check file header for more accurate detection
+    # For files without typical extensions, check file signature (magic bytes)
     try:
         with open(file_path, 'rb') as f:
-            header = f.read(10)  # Read first few bytes
+            header = f.read(8)  # Read first 8 bytes
             
-            # BAM magic header
-            if header.startswith(b'BAM\x01'):
-                return 'BAM', 'bam', False
+            # BAM files start with "BAM\1"
+            if header.startswith(b'BAM\1'):
+                return 'bam'
             
-            # Gzip magic header
-            if header.startswith(b'\x1f\x8b'):
-                is_compressed = True
-                # Likely a compressed VCF
-                return 'VCF', 'vcf.gz', True
-                
-            # Check if it looks like a SAM/VCF text file
-            if header.startswith(b'@HD\t') or header.startswith(b'@SQ\t'):
-                return 'SAM', 'sam', False
+            # CRAM files start with "CRAM"
+            if header.startswith(b'CRAM'):
+                return 'cram'
             
-            # Check for VCF header
-            if header.startswith(b'##fileformat=VCF'):
-                return 'VCF', 'vcf', False
+            # ZIP files start with PK\x03\x04
+            if header.startswith(b'PK\x03\x04'):
+                return 'zip'
+            
+            # Check if it might be a text-based VCF or SAM
+            f.seek(0)
+            first_line = f.readline().decode('utf-8', errors='ignore')
+            if first_line.startswith('##fileformat=VCF'):
+                return 'vcf'
+            elif first_line.startswith('@HD') or first_line.startswith('@SQ'):
+                return 'sam'
     except Exception as e:
-        logger.warning(f"Error checking file header: {str(e)}")
+        logger.warning(f"Error detecting file type: {str(e)}")
     
-    # Default to VCF if can't determine
-    return 'VCF', 'vcf', False
+    # Default to unknown if we couldn't determine
+    return 'unknown'
 
-def determine_sequencing_profile(file_type, reference_genome='hg19'):
+def determine_sequencing_profile(file_type: str) -> str:
     """
-    Determine the appropriate sequencing profile for Aldy
-    
-    Args:
-        file_type: Type of the genomic file (BAM, SAM, CRAM, VCF)
-        reference_genome: Reference genome used (default: hg19)
-        
-    Returns:
-        Appropriate sequencing profile string for Aldy
+    Determine the sequencing profile based on file type
+    Returns 'illumina' (default), 'pacbio', 'nanopore', etc.
     """
-    # For most WGS/WXS data, illumina is the default profile
+    # For now, just return the default
     return "illumina"
 
 def sanitize_filename(filename):
-    """
-    Sanitize a filename to remove invalid characters
+    """Sanitize the filename to remove potential security issues"""
+    # Remove path information
+    filename = os.path.basename(filename)
     
-    Args:
-        filename: Original filename
-        
-    Returns:
-        Sanitized filename
-    """
+    # Replace potentially problematic characters
+    filename = re.sub(r'[^\w\.\-]', '_', filename)
+    
+    # Ensure the filename isn't empty after sanitization
     if not filename:
-        return None
-    # Replace invalid characters with underscores
-    for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']:
-        filename = filename.replace(char, '_')
+        filename = "unnamed_file"
+    
     return filename
 
-@app.post("/upload-vcf")
-async def upload_genomic_file(
-    request: Request,
-    genomicFile: UploadFile = File(...),
-    sampleId: str = Form(None),
-    referenceGenome: str = Form("hg19")  # For CRAM files
-):
-    logger.info(f"Received genomic file upload: {genomicFile.filename}, Sample ID: {sampleId}")
+def extract_zip_file(zip_path):
+    """Extract contents of a zip file to a temporary directory"""
+    extract_dir = tempfile.mkdtemp(dir=TEMP_DIR)
     
-    # Create a temporary file to store the upload
-    temp_file_path = UPLOAD_DIR / f"temp_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    with open(temp_file_path, "wb") as buffer:
-        shutil.copyfileobj(genomicFile.file, buffer)
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        # Get the list of files
+        file_list = zip_ref.namelist()
+        
+        # Extract all files
+        zip_ref.extractall(extract_dir)
+        
+        # Find genomic files
+        vcf_files = [f for f in file_list if f.lower().endswith(('.vcf', '.vcf.gz'))]
+        bam_files = [f for f in file_list if f.lower().endswith('.bam')]
+        sam_files = [f for f in file_list if f.lower().endswith('.sam')]
+        cram_files = [f for f in file_list if f.lower().endswith('.cram')]
+        
+        # Prioritize file types: VCF > BAM > CRAM > SAM
+        genomic_files = vcf_files or bam_files or cram_files or sam_files
+        
+        if genomic_files:
+            # Return the path to the first genomic file found
+            return os.path.join(extract_dir, genomic_files[0]), extract_dir
     
-    # Detect file type
-    file_type, file_ext, is_compressed = detect_file_type(temp_file_path, genomicFile.filename)
-    logger.info(f"Detected file type: {file_type}, extension: {file_ext}, compressed: {is_compressed}")
-    
-    # Generate a unique filename with the correct extension
-    filename = f"{sampleId or 'sample'}-{datetime.now().strftime('%Y%m%d%H%M%S')}.{file_ext}"
-    file_path = UPLOAD_DIR / filename
-    
-    # Rename the temporary file
-    shutil.move(temp_file_path, file_path)
-    logger.info(f"Saved uploaded file to {file_path}")
-    
-    # Determine the appropriate sequencing profile
-    profile = determine_sequencing_profile(file_type, referenceGenome)
-    logger.info(f"Using sequencing profile: {profile}")
-    
-    # Prepare file for analysis
+    return None, extract_dir
+
+# Progress tracking for jobs
+job_status = {}
+
+def update_job_progress(job_id: str, stage: str, percent: int, message: str, 
+                        complete: bool = False, success: bool = False, data: Dict = None):
+    """Update the status of a processing job"""
+    job_status[job_id] = {
+        "job_id": job_id,
+        "stage": stage,
+        "percent": percent,
+        "message": message,
+        "complete": complete,
+        "success": success,
+        "timestamp": datetime.utcnow().isoformat(),
+        "data": data or {}
+    }
+    logger.info(f"Job {job_id} progress: {stage} - {percent}% - {message}")
+
+def process_file_in_background(job_id, file_path, file_type, sample_id, reference_genome, has_index=False):
+    """
+    Process the genomic file through the pipeline:
+    1. Call variants with GATK (if not a VCF)
+    2. Call CYP2D6 star alleles with Stargazer
+    3. Call PharmCAT for overall PGx annotation
+    4. Generate a report
+    """
     try:
-        # For BAM files, ensure they're indexed
-        if file_type == 'BAM':
-            logger.info(f"Indexing BAM file: {file_path}")
+        # Start job tracking
+        update_job_progress(job_id, "initializing", 0, "Starting analysis pipeline")
+        
+        # Create a directory for this job
+        job_dir = os.path.join(TEMP_DIR, job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        
+        vcf_path = file_path
+        
+        # Step 1: Process with GATK if not already a VCF
+        if file_type != 'vcf':
+            update_job_progress(job_id, "variant_calling", 10, "Calling variants with GATK")
+            
+            # Call GATK service
+            files = {'file': open(file_path, 'rb')}
+            data = {'reference_genome': reference_genome}
+            
             try:
-                index_cmd = f"samtools index {file_path}"
-                subprocess.run(index_cmd, shell=True, check=True)
-                logger.info(f"BAM indexing completed for {filename}")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Error indexing BAM file: {str(e)}")
-                return templates.TemplateResponse(
-                    "index.html", 
-                    {
-                        "request": request, 
-                        "message": f"Error indexing BAM file: {str(e)}",
-                        "success": False
-                    }
+                response = requests.post(
+                    f"{GATK_SERVICE_URL}/variant-call",
+                    files=files,
+                    data=data
                 )
+                response.raise_for_status()
+                
+                # Save the VCF result
+                vcf_path = os.path.join(job_dir, f"{job_id}_variants.vcf")
+                with open(vcf_path, 'wb') as f:
+                    f.write(response.content)
+                
+                update_job_progress(job_id, "variant_calling", 30, "Variant calling completed")
+                
+            except requests.RequestException as e:
+                logger.error(f"GATK service error: {str(e)}")
+                update_job_progress(
+                    job_id, "error", 100, f"GATK service error: {str(e)}", 
+                    complete=True, success=False
+                )
+                return
+        else:
+            # Already a VCF, just update progress
+            update_job_progress(job_id, "variant_calling", 30, "Using provided VCF file")
         
-        # Call PharmCAT service for analysis
-        pharmcat_results = call_pharmcat_service(str(file_path))
-        logger.info(f"PharmCAT analysis completed for {filename}")
+        # Step 2: Process CYP2D6 with Stargazer
+        update_job_progress(job_id, "star_allele_calling", 40, "Calling CYP2D6 star alleles with Stargazer")
         
-        # Process with Aldy service for CYP2D6 and other genes
-        aldy_results = {"status": "unknown"}
+        cyp2d6_results = {}
         try:
-            # Prepare file for Aldy
-            aldy_file = file_path
+            files = {'file': open(vcf_path, 'rb')}
+            data = {
+                'gene': 'CYP2D6',
+                'reference_genome': reference_genome
+            }
             
-            # Ensure we're using the correct URL for the Aldy service
-            aldy_url = os.environ.get("ALDY_API_URL", "http://aldy:5000")
-            logger.info(f"Calling Aldy service at {aldy_url}/multi_genotype")
+            response = requests.post(
+                f"{STARGAZER_SERVICE_URL}/genotype",
+                files=files,
+                data=data
+            )
+            response.raise_for_status()
             
-            # Call Aldy's multi_genotype endpoint to analyze multiple genes
-            with open(aldy_file, 'rb') as f:
-                aldy_response = requests.post(
-                    f"{aldy_url}/multi_genotype",
-                    files={"file": (os.path.basename(aldy_file), f)},
-                    data={
-                        "genes": "CYP2D6,CYP2C19,CYP2C9,CYP2B6,CYP1A2",
-                        "sequencing_profile": profile,
-                        "file_type": file_type.lower(),
-                        "reference_genome": referenceGenome if file_type == 'CRAM' else None
-                    },
-                    timeout=300  # Increased timeout for processing multiple genes
+            cyp2d6_results = response.json()
+            
+            # Save CYP2D6 results
+            with open(os.path.join(job_dir, f"{job_id}_cyp2d6.json"), 'w') as f:
+                json.dump(cyp2d6_results, f, indent=2)
+            
+            update_job_progress(
+                job_id, "star_allele_calling", 60, 
+                f"CYP2D6 calling completed: {cyp2d6_results.get('diplotype', 'Unknown')}"
+            )
+            
+        except requests.RequestException as e:
+            logger.error(f"Stargazer service error: {str(e)}")
+            # Continue even if Stargazer fails
+            update_job_progress(
+                job_id, "star_allele_calling", 60, 
+                f"CYP2D6 calling error: {str(e)}"
+            )
+        
+        # Step 3: Process with PharmCAT
+        update_job_progress(job_id, "pharmcat", 70, "Running PharmCAT analysis")
+        
+        pharmcat_results = None
+        try:
+            # Call PharmCAT through our wrapper
+            pharmcat_result_path = os.path.join(job_dir, f"{job_id}_pharmcat_results.json")
+            
+            # Use the pharmcat_client module to call PharmCAT
+            result = call_pharmcat_service(
+                vcf_path=vcf_path,
+                output_json=pharmcat_result_path,
+                sample_id=sample_id or job_id
+            )
+            
+            if result.get('success'):
+                # Load the PharmCAT results
+                with open(pharmcat_result_path, 'r') as f:
+                    pharmcat_results = json.load(f)
+                
+                update_job_progress(
+                    job_id, "pharmcat", 80, 
+                    f"PharmCAT analysis completed with {len(pharmcat_results.get('drug_recommendations', []))} recommendations"
                 )
-                
-                logger.info(f"Aldy response status code: {aldy_response.status_code}")
-                
-                # Try to log the raw response content for debugging
-                try:
-                    logger.info(f"Aldy raw response: {aldy_response.text[:500]}...")
-                except:
-                    logger.info("Could not log Aldy raw response")
-                
-                aldy_response.raise_for_status()
-                aldy_results = aldy_response.json()
-                logger.info(f"Aldy multi-gene analysis completed for {filename}")
-                logger.info(f"Aldy response status: {aldy_results.get('status', 'unknown')}")
-                logger.info(f"Aldy genes analyzed: {list(aldy_results.get('genes', {}).keys())}")
-                
-                # Log all status values to help debug issues
-                for gene, gene_data in aldy_results.get('genes', {}).items():
-                    gene_status = gene_data.get('status', 'unknown')
-                    diplotype = gene_data.get('diplotype')
-                    output_format = gene_data.get('output_format', 'json')
-                    
-                    logger.info(f"Aldy gene {gene} status: {gene_status}, format: {output_format}, diplotype: {diplotype}")
-                    
-                    # For TSV output, also log the solution data
-                    if output_format == 'tsv' and 'solution_data' in gene_data:
-                        logger.info(f"Aldy gene {gene} solution data: {gene_data.get('solution_data')}")
-                    
-                    if gene_status != 'success':
-                        logger.warning(f"Aldy gene {gene} error: {gene_data.get('error', 'unknown error')}")
-                        
-                # Add a final debug log of the diplotypes being created
-                logger.info("Creating diplotypes from results...")
-        except Exception as aldy_error:
-            logger.error(f"Error calling Aldy service: {str(aldy_error)}")
-            # Try to get more diagnostic information
-            try:
-                logger.error(f"Aldy response content: {aldy_response.content}")
-            except:
-                pass
-            aldy_results = {"status": "error", "error": str(aldy_error)}
+            else:
+                update_job_progress(
+                    job_id, "pharmcat", 80, 
+                    f"PharmCAT warning: {result.get('message', 'Unknown error')}"
+                )
         
-        # Generate patient ID if none provided
-        patient_id = sampleId or f"PATIENT_{datetime.now().strftime('%Y%m%d%H%M')}"
+        except Exception as e:
+            logger.error(f"PharmCAT error: {str(e)}")
+            update_job_progress(
+                job_id, "pharmcat", 80, 
+                f"PharmCAT error: {str(e)}"
+            )
         
-        # Create a report from the results
-        diplotypes = []
+        # Step 4: Generate the report
+        update_job_progress(job_id, "report_generation", 90, "Generating report")
         
-        # Track which genes have been added to avoid duplicates
-        added_genes = set()
+        # Merge results
+        combined_results = {
+            "job_id": job_id,
+            "sample_id": sample_id or job_id,
+            "cyp2d6": cyp2d6_results,
+            "pharmcat": pharmcat_results,
+            "processing_date": datetime.utcnow().isoformat()
+        }
         
-        # Extract PharmCAT diplotypes
-        for gene, data in pharmcat_results.get("genes", {}).items():
-            diplotypes.append({
-                "gene": gene,
-                "diplotype": data.get("diplotype", "Unknown"),
-                "phenotype": data.get("phenotype", "Unknown"),
-                "activity_score": data.get("activity_score"),
-                "source": "PharmCAT"
-            })
-            added_genes.add(gene)
-            logger.info(f"Added PharmCAT gene: {gene} with diplotype {data.get('diplotype', 'Unknown')}")
+        # Save combined results
+        combined_results_path = os.path.join(job_dir, f"{job_id}_combined_results.json")
+        with open(combined_results_path, 'w') as f:
+            json.dump(combined_results, f, indent=2)
         
-        # Add Aldy results for multiple genes if available
-        if aldy_results.get("status") == "success" and "genes" in aldy_results:
-            logger.info(f"Processing Aldy results for {len(aldy_results.get('genes', {}))} genes")
+        # Generate PDF report
+        report_path = os.path.join(REPORTS_DIR, f"{job_id}_pgx_report.pdf")
+        html_report_path = os.path.join(REPORTS_DIR, f"{job_id}_pgx_report.html")
+        
+        try:
+            # Generate PDF
+            generate_pdf_report(combined_results, report_path)
             
-            # Debug: log all gene results
-            for gene_name, gene_data in aldy_results.get("genes", {}).items():
-                logger.info(f"Aldy result for {gene_name}: status={gene_data.get('status')}, " +
-                           f"diplotype={gene_data.get('diplotype')}, " +
-                           f"activity_score={gene_data.get('activity_score')}")
-                
-                # Log the full error for debugging
-                if gene_data.get("status") != "success":
-                    logger.error(f"Aldy error details for {gene_name}: {gene_data.get('error', 'No error')}")
-                    logger.error(f"Aldy stderr for {gene_name}: {gene_data.get('stderr', 'No stderr')}")
-                    
-            # Process successful gene results
-            for gene, gene_data in aldy_results.get("genes", {}).items():
-                # Accept both "success" and "partial" status for gene calls
-                # partial means we have a diplotype but might be missing some details
-                if gene_data.get("status") in ["success", "partial"] and gene_data.get("diplotype"):
-                    # Skip if the gene is already in diplotypes from PharmCAT
-                    if gene not in added_genes:
-                        diplotype_value = gene_data.get("diplotype", "Unknown")
-                        activity_score = gene_data.get("activity_score")
-                        
-                        # Generate a phenotype based on activity score if available
-                        phenotype = "Unknown"
-                        if activity_score is not None:
-                            if activity_score == 0:
-                                phenotype = "Poor Metabolizer"
-                            elif 0 < activity_score < 1.0:
-                                phenotype = "Intermediate Metabolizer"
-                            elif 1.0 <= activity_score < 2.0:
-                                phenotype = "Normal Metabolizer"
-                            elif activity_score >= 2.0:
-                                phenotype = "Ultra-rapid Metabolizer"
-                        
-                        diplotypes.append({
-                            "gene": gene,
-                            "diplotype": diplotype_value,
-                            "phenotype": phenotype,
-                            "activity_score": activity_score,
-                            "source": "Aldy"
-                        })
-                        added_genes.add(gene)
-                        logger.info(f"Added Aldy gene: {gene} with diplotype {diplotype_value}")
-        
-        # Generate a report ID for linking related files
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        report_id = f"PGX_{timestamp}"
-        
-        # Generate report paths
-        reports_dir = Path("/data/reports") / patient_id
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        pdf_path = reports_dir / f"{report_id}.pdf"
-        html_path = reports_dir / f"{report_id}.html"
-        
-        # Generate reports
-        pdf_report = generate_pdf_report(
-            patient_id=patient_id,
-            report_id=report_id,
-            diplotypes=diplotypes,
-            recommendations=pharmcat_results.get("recommendations", []),
-            report_path=str(pdf_path)
-        )
-        
-        html_report = create_interactive_html_report(
-            patient_id=patient_id,
-            report_id=report_id,
-            diplotypes=diplotypes,
-            recommendations=pharmcat_results.get("recommendations", []),
-            output_path=str(html_path)
-        )
-        
-        # Determine if pdf_report is actually PDF or fallback HTML
-        is_pdf_fallback = pdf_report.endswith('.html')
-        
-        return templates.TemplateResponse(
-            "index.html", 
-            {
-                "request": request, 
-                "message": f"File {genomicFile.filename} processed successfully! Reports generated." + 
-                           (" (PDF generation failed, HTML fallback used)" if is_pdf_fallback else ""),
-                "success": True,
-                "report_id": report_id,
-                "report_pdf": f"/reports/{patient_id}/{report_id}" + (".html" if is_pdf_fallback else ".pdf"),
-                "report_html": f"/reports/{patient_id}/{report_id}.html"
-            }
-        )
+            # Generate interactive HTML
+            create_interactive_html_report(combined_results, html_report_path)
+            
+            # Update progress with report URLs
+            update_job_progress(
+                job_id, "complete", 100, "Analysis complete",
+                complete=True, success=True,
+                data={
+                    "pdf_report_url": f"/reports/{os.path.basename(report_path)}",
+                    "html_report_url": f"/reports/{os.path.basename(html_report_path)}",
+                    "results": combined_results
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Report generation error: {str(e)}")
+            update_job_progress(
+                job_id, "report_generation", 95,
+                f"Report generation error: {str(e)}",
+                complete=True, success=False
+            )
+    
     except Exception as e:
-        logger.error(f"Error processing file upload: {str(e)}")
-        return templates.TemplateResponse(
-            "index.html", 
-            {
-                "request": request, 
-                "message": f"Error processing file: {str(e)}",
-                "success": False
+        logger.exception(f"Error in background processing: {str(e)}")
+        update_job_progress(
+            job_id, "error", 100,
+            f"Processing error: {str(e)}",
+            complete=True, success=False
+        )
+    finally:
+        # Clean up temp files if needed
+        pass
+
+@app.post("/upload-vcf", response_class=JSONResponse)
+async def upload_vcf(
+    background_tasks: BackgroundTasks,
+    genomicFile: UploadFile = File(...),
+    sampleId: Optional[str] = Form(None),
+    referenceGenome: str = Form("hg19")
+):
+    """
+    Upload a genomic file for PGx analysis.
+    
+    Accepts:
+    - VCF files (variant calls)
+    - BAM/CRAM/SAM files (aligned reads)
+    - ZIP files containing any of the above
+    
+    The file will be processed to extract PGx variants and generate a report.
+    """
+    # Validate reference genome
+    valid_references = ["hg19", "hg38", "grch37", "grch38"]
+    if referenceGenome not in valid_references:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"Invalid reference genome. Supported: {valid_references}"}
+        )
+    
+    # Generate a unique job ID
+    job_id = str(uuid.uuid4())
+    
+    # Sanitize the filename
+    original_filename = sanitize_filename(genomicFile.filename)
+    
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, dir=TEMP_DIR, suffix=os.path.splitext(original_filename)[1]) as tmp:
+        # Copy the uploaded file to the temporary file
+        shutil.copyfileobj(genomicFile.file, tmp)
+        tmp_path = tmp.name
+    
+    try:
+        # Detect the file type
+        file_type = detect_file_type(tmp_path)
+        logger.info(f"Detected file type: {file_type}")
+        
+        extract_dir = None
+        if file_type == 'zip':
+            # Extract the zip file to get the genomic file
+            extracted_file, extract_dir = extract_zip_file(tmp_path)
+            if not extracted_file:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "No valid genomic file found in the ZIP archive"}
+                )
+            
+            # Update the file path and detect the actual genomic file type
+            tmp_path = extracted_file
+            file_type = detect_file_type(tmp_path)
+        
+        if file_type not in ['vcf', 'bam', 'sam', 'cram']:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"Unsupported file type: {file_type}. Supported: vcf, bam, sam, cram"}
+            )
+        
+        # Initialize job status
+        update_job_progress(job_id, "uploaded", 0, "File received, starting processing")
+        
+        # Start background processing
+        background_tasks.add_task(
+            process_file_in_background,
+            job_id=job_id,
+            file_path=tmp_path,
+            file_type=file_type,
+            sample_id=sampleId,
+            reference_genome=referenceGenome
+        )
+        
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job_id,
+                "status": "processing",
+                "message": "File uploaded successfully and queued for processing",
+                "progress_url": f"/progress/{job_id}",
+                "status_url": f"/job-status/{job_id}"
             }
         )
+    
+    except Exception as e:
+        logger.exception(f"Error processing upload: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Error processing file: {str(e)}"}
+        )
+
+@app.get("/progress/{job_id}")
+async def get_progress(job_id: str):
+    """
+    SSE endpoint to stream progress updates for a job
+    """
+    if job_id not in job_status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    async def event_generator() -> AsyncGenerator[str, None]:
+        last_status = None
+        
+        while True:
+            current_status = job_status.get(job_id)
+            
+            # If status has changed, send an update
+            if current_status != last_status:
+                yield f"data: {json.dumps(current_status)}\n\n"
+                last_status = current_status.copy() if current_status else None
+            
+            # If job is complete, stop streaming
+            if current_status and current_status.get("complete", False):
+                break
+            
+            # Wait a bit before checking again
+            await asyncio.sleep(1)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
+@app.get("/job-status/{job_id}")
+async def get_job_status(job_id: str):
+    """
+    Get the current status of a job
+    """
+    if job_id not in job_status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return job_status[job_id]
 
 async def handle_pgx_report(vcf_path, sample_id=None):
     """
-    Process uploaded VCF file for pharmacogenomic analysis
-    
-    Args:
-        vcf_path: Path to the VCF file
-        sample_id: Optional sample ID (default: auto-detected from VCF)
-        
-    Returns:
-        Dictionary with report data
+    Process a VCF file through the PGx pipeline and return the report
     """
-    try:
-        logging.info(f"Handling PGx report for VCF: {vcf_path}")
-        
-        # Use the current timestamp in the file ID for uniqueness
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        
-        # Create a valid filename with the sample ID and timestamp
-        if sample_id:
-            sample_id = sanitize_filename(sample_id)
-            filename = f"{sample_id}-{timestamp}.vcf"
-        else:
-            # If no sample ID provided, use a generic name
-            filename = f"upload-{timestamp}.vcf"
-            
-        # Copy VCF file to a unique filename to avoid conflicts
-        dest_path = os.path.join("/tmp", filename)
-        shutil.copy2(vcf_path, dest_path)
-        logging.info(f"Copied VCF to {dest_path}")
-        
-        # Call PharmCAT for genotype calling - future step
-        pharmpcat_results = {}
-        try:
-            logging.info("Calling PharmCAT service")
-            # pharmcat_url = "http://pharmcat:8080/rest/genotype"
-            # TODO: Implement PharmCAT integration
-        except Exception as e:
-            logging.error(f"Error calling PharmCAT service: {str(e)}")
-        
-        # Call Aldy for multi-gene genotyping
-        aldy_results = {}
-        genes_analyzed = 0
-        gene_results = {}
-        
-        try:
-            # Copy file to Aldy service data directory
-            aldy_file_path = os.path.join("/tmp", f"{sample_id or 'sample'}-{timestamp}.vcf")
-            shutil.copy2(vcf_path, aldy_file_path)
-            logging.info(f"Copied VCF for Aldy to {aldy_file_path}")
-            
-            # List of genes to analyze
-            gene_list = ["CYP2D6", "CYP2C19", "CYP2C9", "CYP2B6", "CYP1A2"]
-            
-            # Call Aldy's multi-gene endpoint
-            logging.info(f"Calling Aldy service for multi-gene analysis: {gene_list}")
-            aldy_url = "http://aldy:5000/multi_genotype"
-            
-            # Create a multipart form-data request
-            with open(aldy_file_path, 'rb') as f:
-                files = {'file': (os.path.basename(aldy_file_path), f)}
-                data = {
-                    'genes': ','.join(gene_list),
-                    'sequencing_profile': 'illumina'
-                    # No profile parameter - Aldy will use the sample from VCF
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    # Increase timeout for multi-gene analysis
-                    async with session.post(aldy_url, data=data, files=files, timeout=180) as response:
-                        if response.status == 200:
-                            aldy_results = await response.json()
-                            logging.info(f"Aldy returned results with status: {aldy_results.get('status')}")
-                            
-                            # Process multi-gene results
-                            if 'genes' in aldy_results:
-                                genes = aldy_results['genes']
-                                genes_analyzed = len(genes)
-                                logging.info(f"Processing results for {genes_analyzed} genes")
-                                
-                                for gene_name, gene_data in genes.items():
-                                    gene_status = gene_data.get('status', 'unknown')
-                                    diplotype = gene_data.get('diplotype')
-                                    activity_score = gene_data.get('activity_score')
-                                    
-                                    logging.info(f"Gene {gene_name}: status={gene_status}, diplotype={diplotype}, activity={activity_score}")
-                                    
-                                    # Handle different output formats (JSON or TSV)
-                                    output_format = gene_data.get('output_format', 'json')
-                                    
-                                    if gene_status == 'success':
-                                        gene_results[gene_name] = {
-                                            'diplotype': diplotype,
-                                            'activity_score': activity_score,
-                                            'output_format': output_format,
-                                            'status': 'success'
-                                        }
-                                        
-                                        # Handle solution data if present (TSV format)
-                                        if 'solution_data' in gene_data:
-                                            gene_results[gene_name]['solution_data'] = gene_data['solution_data']
-                                    else:
-                                        error_msg = gene_data.get('error', 'Unknown error')
-                                        stderr = gene_data.get('stderr', '')
-                                        logging.error(f"Error for gene {gene_name}: {error_msg}")
-                                        if stderr:
-                                            logging.error(f"Stderr for {gene_name}: {stderr[:200]}...")
-                                            
-                                        gene_results[gene_name] = {
-                                            'status': 'error',
-                                            'error': error_msg,
-                                            'output_format': output_format
-                                        }
-                        else:
-                            error_text = await response.text()
-                            logging.error(f"Aldy service returned error: {response.status}, {error_text}")
-        except Exception as e:
-            logging.exception(f"Error calling Aldy service: {str(e)}")
-            
-        # Generate basic report
-        report_data = {
-            'sample_id': sample_id,
-            'timestamp': timestamp,
-            'report_id': f"PGX-{timestamp}",
-            'genes_analyzed': genes_analyzed,
-            'gene_results': gene_results,
-            'aldy_results': aldy_results
-        }
-        
-        # Return report data
-        return report_data
-    except Exception as e:
-        logging.exception(f"Error in handle_pgx_report: {str(e)}")
-        return {'error': str(e)} 
+    # This would be similar to the background process but synchronous and returning the report paths
+    # Implement as needed
+    pass
+
+# Additional endpoints would go here 

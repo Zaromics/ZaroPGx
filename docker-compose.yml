@@ -69,23 +69,46 @@ services:
     networks:
       - pgx-network
 
-  # Aldy Service for pharmacogenomic gene calling
-  aldy:
+  # GATK Service for variant calling
+  gatk:
     build:
-      context: ./docker/aldy
-      dockerfile: Dockerfile.aldy
-    container_name: pgx_aldy
+      context: ./docker/gatk
+      dockerfile: Dockerfile.gatk
+    container_name: pgx_gatk
     restart: unless-stopped
     volumes:
       - ./data:/data
+      - ./reference:/reference
+    environment:
+      - DATA_DIR=/data
+      - REFERENCE_DIR=/reference
+      - MAX_MEMORY=4g
     ports:
       - "5002:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - pgx-network
+
+  # Stargazer Service for CYP2D6 star allele calling
+  stargazer:
+    build:
+      context: ./docker/stargazer
+      dockerfile: Dockerfile.stargazer
+    container_name: pgx_stargazer
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+      - ./reference:/reference
     environment:
-      - MAX_WORKERS=4  # Limit workers for multi-gene analysis
-      - DATA_DIR=/data # Ensure data directory is properly set
-      - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
-      - FLASK_ENV=development # Enable debug mode for Flask
-      - FLASK_DEBUG=1 # Show more detailed errors
+      - DATA_DIR=/data
+      - REFERENCE_DIR=/reference
+    ports:
+      - "5003:5000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -105,14 +128,16 @@ services:
     depends_on:
       - db
       - pharmcat-wrapper
-      - aldy
+      - gatk
+      - stargazer
     environment:
       - DATABASE_URL=postgresql://cpic_user:${POSTGRES_PASSWORD}@db:5432/cpic_db
       - SECRET_KEY=${SECRET_KEY}
       - PHARMCAT_API_URL=http://pharmcat-wrapper:5000
       - PHARMCAT_SERVICE_URL=http://pharmcat:8080
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
-      - ALDY_API_URL=http://aldy:5000
+      - GATK_API_URL=http://gatk:5000
+      - STARGAZER_API_URL=http://stargazer:5000
       - PYTHONPATH=/app
       - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
       - LOG_LEVEL=DEBUG # Increase logging verbosity

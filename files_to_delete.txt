@@ -1,0 +1,10 @@
+Files to be deleted:
+1. docker/aldy/Dockerfile.aldy
+2. docker/aldy/aldy_wrapper.py
+3. test_aldy_multi_gene.py
+4. debug_aldy.sh
+5. ALDY_README.rst
+
+Folders to be created:
+1. docker/gatk/
+2. docker/stargazer/ 

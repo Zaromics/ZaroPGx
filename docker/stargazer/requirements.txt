@@ -1,0 +1,8 @@
+flask==2.3.3
+gunicorn==21.2.0
+flask-cors==4.0.0
+requests==2.31.0
+pysam==0.22.0
+pandas==2.1.0
+numpy==1.25.2
+biopython==1.81 
