@@ -2,10 +2,15 @@
 
 A containerized pharmacogenomic report generator that processes genetic data and generates clinical reports based on CPIC guidelines. The system focuses on pharmacogenomic analysis for psychiatric and neurological medications.
 
+# Notice
+
+This software is currently being built and is not near completion. It is less likely to work than not.
+
 ## Features
 
 - Process genetic data from various sources (23andMe, VCF)
-- Call alleles using PharmCAT and Aldy
+- Call variants using GATK and Stargazer
+- Call alleles using PharmCAT and Stargazer
 - Generate PDF and interactive HTML reports
 - HIPAA-compliant data handling
 - RESTful API with authentication
@@ -19,8 +24,9 @@ The application consists of several containerized services:
 
 1. **PostgreSQL Database**: Stores CPIC guidelines, gene-drug interactions, and patient data
 2. **FastAPI Backend**: Handles file uploads, report generation, and API endpoints
+3. **GATK**: Handles variant calling and converts WGS to VCF format
 3. **PharmCAT Service**: Performs allele calling for 23andMe data
-4. **Aldy Service**: Specialized in CYP2D6 calling from VCF files
+4. **Stargazer**: Specialized in CYP2D6 calling from VCF files
 5. **PharmCAT Wrapper**: Python wrapper providing a REST API for PharmCAT
 
 ## Setup
@@ -29,6 +35,7 @@ The application consists of several containerized services:
 
 - Docker and Docker Compose
 - Git
+- Make sure to download Stargazer in case it is not bundled. It is free software but requires signup.
 - 8GB RAM minimum
 - 20GB free disk space
 
@@ -60,7 +67,7 @@ The application consists of several containerized services:
 ### Using the Web Interface
 
 1. Open the web interface at http://localhost:8765
-2. Upload a VCF file using the upload form
+2. Upload a genoset file using the upload form
 3. View and download the generated reports
 
 ### Uploading genetic data via API

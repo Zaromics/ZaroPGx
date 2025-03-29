@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, UploadFile, Form, BackgroundTasks
 from fastapi.responses import JSONResponse
 import uuid
 from typing import Dict, Optional
+import requests
 
 # Dictionary to store job status
 job_status: Dict[str, Dict] = {}
@@ -24,32 +25,39 @@ def update_job_progress(job_id: str, stage: str, percentage: int, message: str):
         })
 
 async def call_gatk_variants(job_id: str, vcf_file_path: str, reference_genome: str = "hg38"):
-    """Call variants using GATK through direct Docker command instead of HTTP API."""
+    """Call variants using GATK API service."""
     try:
         logging.info(f"Job {job_id} progress: variant_calling - 10% - Calling variants with GATK")
         
-        # Define the output VCF path
-        output_vcf = os.path.join(os.path.dirname(vcf_file_path), f"{os.path.splitext(os.path.basename(vcf_file_path))[0]}_gatk.vcf")
+        # Call the GATK API
+        # Create the multipart/form-data request
+        files = {'file': open(vcf_file_path, 'rb')}
+        data = {'reference_genome': reference_genome}
         
-        # Map reference genome to path
-        reference_paths = {
-            'hg19': "/gatk/reference/hg19/ucsc.hg19.fasta",
-            'hg38': "/gatk/reference/hg38/Homo_sapiens_assembly38.fasta",
-            'grch37': "/gatk/reference/grch37/human_g1k_v37.fasta",
-            'grch38': "/gatk/reference/hg38/Homo_sapiens_assembly38.fasta"  # symlink
-        }
+        # Get the GATK service URL from environment or use default
+        gatk_api_url = os.environ.get("GATK_API_URL", "http://gatk-api:5000")
         
-        reference_path = reference_paths.get(reference_genome)
-        if not reference_path:
-            raise ValueError(f"Unsupported reference genome: {reference_genome}")
+        # Call the GATK API
+        response = requests.post(
+            f"{gatk_api_url}/variant-call",
+            files=files,
+            data=data,
+            timeout=3600  # Allow up to 1 hour for large files
+        )
+        response.raise_for_status()
         
-        # Execute GATK using docker exec command
-        cmd = f"docker exec pgx_gatk gatk HaplotypeCaller -R {reference_path} -I {vcf_file_path} -O {output_vcf}"
-        process = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+        # Get the response content
+        result = response.json()
         
+        # The API returns the path to the output VCF
+        output_vcf = result.get("output_file")
+        
+        if not output_vcf:
+            raise Exception(f"No output file path returned from GATK API: {result}")
+            
         return output_vcf
-    except subprocess.CalledProcessError as e:
-        error_msg = f"GATK command failed: {e.stderr}"
+    except requests.RequestException as e:
+        error_msg = f"GATK API error: {str(e)}"
         logging.error(error_msg)
         raise Exception(error_msg)
     except Exception as e:

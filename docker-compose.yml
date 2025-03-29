@@ -89,7 +89,7 @@ services:
     networks:
       - pgx-network
 
-  # GATK Service for variant calling
+  # GATK Service (official broadinstitute image)
   gatk:
     image: broadinstitute/gatk:latest
     container_name: pgx_gatk
@@ -98,14 +98,32 @@ services:
       genome-downloader:
         condition: service_healthy
     volumes:
-      - ./data:/gatk/data
-      - ./reference:/gatk/reference
+      - ./data:/data
+      - ./reference:/reference
+    networks:
+      - pgx-network
+
+  # GATK API Service - provides HTTP endpoints for the app
+  gatk-api:
+    build:
+      context: ./docker/gatk-api
+      dockerfile: Dockerfile.gatk-api
+    container_name: pgx_gatk_api
+    restart: unless-stopped
+    depends_on:
+      - gatk
+    volumes:
+      - ./data:/data
+      - ./reference:/reference
     environment:
-      - REFERENCE_DIR=/gatk/reference
+      - GATK_CONTAINER=gatk
+      - REFERENCE_DIR=/reference
+      - DATA_DIR=/data
+      - MAX_MEMORY=4g
     ports:
-      - "5002:8000"
+      - "5002:5000"
     healthcheck:
-      test: ["CMD", "ls", "/gatk/reference"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -151,7 +169,7 @@ services:
     depends_on:
       - db
       - pharmcat-wrapper
-      - gatk
+      - gatk-api
       - stargazer
     environment:
       - DATABASE_URL=postgresql://cpic_user:${POSTGRES_PASSWORD}@db:5432/cpic_db
@@ -159,6 +177,7 @@ services:
       - PHARMCAT_API_URL=http://pharmcat-wrapper:5000
       - PHARMCAT_SERVICE_URL=http://pharmcat:8080
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
+      - GATK_API_URL=http://gatk-api:5000
       - STARGAZER_API_URL=http://stargazer:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
       - PYTHONPATH=/app

@@ -65,6 +65,39 @@ Reference genomes need to be downloaded and indexed for GATK to function properl
 - GRCh37 (1000 Genomes)
 - GRCh38 (symlink to hg38)
 
+### Current Status and Known Issues
+
+#### Progress Made:
+1. Created a Genome Downloader service to handle downloading and indexing reference genomes
+2. Set up container structure for GATK and Stargazer services
+3. Created a GATK API wrapper service that handles HTTP requests and executes GATK commands
+4. Added proper dependencies in docker-compose.yml to ensure services start in the correct order
+
+#### Current Issues:
+1. **GATK API Service Error**: The GATK API is returning a 500 Internal Server Error when called
+   - Possible causes: GATK installation issues, path issues, file permissions
+   - Next steps: Check the GATK API logs, test GATK commands directly in the container
+
+2. **Stargazer Setup**: Stargazer needs a local ZIP file to be properly mounted and installed
+   - Currently looking for the ZIP file at `/tmp/stargazer.zip` in the container
+
+3. **Reference Genome Issues**: The genome downloader may be failing to properly index genomes
+   - Need to verify reference genome files exist and are properly indexed
+
+#### Troubleshooting Steps:
+1. Check GATK API logs: `docker logs pgx_gatk_api`
+2. Test GATK commands directly in the container:
+   ```bash
+   docker exec -it pgx_gatk_api /bin/bash
+   gatk --version
+   # Test a simple GATK command
+   ```
+3. Verify file paths and permissions:
+   ```bash
+   docker exec -it pgx_gatk_api ls -la /reference
+   docker exec -it pgx_gatk_api ls -la /tmp
+   ```
+
 ### Note about deployment
 
 When deploying this application, make sure:

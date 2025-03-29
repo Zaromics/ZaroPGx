@@ -48,7 +48,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Constants
-GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk:8000")
+GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
 STARGAZER_SERVICE_URL = os.getenv("STARGAZER_API_URL", "http://stargazer:5000")
 PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match")
 TEMP_DIR = Path("/tmp")
@@ -301,33 +301,36 @@ def update_job_progress(job_id: str, stage: str, percent: int, message: str,
     logger.info(f"Job {job_id} progress: {stage} - {percent}% - {message}")
 
 def call_gatk_variants(job_id, file_path, reference_genome="hg38"):
-    """Call variants using GATK through direct Docker command instead of HTTP API."""
+    """Call variants using GATK API service"""
     try:
         logger.info(f"Job {job_id} progress: variant_calling - 10% - Calling variants with GATK")
         
-        # Define the output VCF path
-        output_vcf = os.path.join(os.path.dirname(file_path), f"{os.path.splitext(os.path.basename(file_path))[0]}_gatk.vcf")
-        
-        # Map reference genome to path
-        reference_paths = {
-            'hg19': "/gatk/reference/hg19/ucsc.hg19.fasta",
-            'hg38': "/gatk/reference/hg38/Homo_sapiens_assembly38.fasta",
-            'grch37': "/gatk/reference/grch37/human_g1k_v37.fasta",
-            'grch38': "/gatk/reference/hg38/Homo_sapiens_assembly38.fasta"  # symlink
+        # Call the GATK API service
+        files = {'file': open(file_path, 'rb')}
+        data = {
+            'reference_genome': reference_genome
         }
         
-        reference_path = reference_paths.get(reference_genome)
-        if not reference_path:
-            raise ValueError(f"Unsupported reference genome: {reference_genome}")
+        response = requests.post(
+            f"{GATK_SERVICE_URL}/variant-call",
+            files=files,
+            data=data,
+            timeout=3600  # Allow up to 1 hour for large files
+        )
+        response.raise_for_status()
         
-        # Execute GATK using docker exec command
-        cmd = f"docker exec pgx_gatk gatk HaplotypeCaller -R {reference_path} -I {file_path} -O {output_vcf}"
-        logger.info(f"Running GATK command: {cmd}")
-        process = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+        # Get the response content
+        result = response.json()
         
+        # The API returns the path to the output VCF
+        output_vcf = result.get("output_file")
+        
+        if not output_vcf:
+            raise Exception(f"No output file path returned from GATK API: {result}")
+            
         return output_vcf
-    except subprocess.CalledProcessError as e:
-        error_msg = f"GATK command failed: {e.stderr}"
+    except requests.RequestException as e:
+        error_msg = f"GATK API error: {str(e)}"
         logger.error(error_msg)
         raise Exception(error_msg)
     except Exception as e:
@@ -653,55 +656,45 @@ async def call_variants(
     reference_genome: str = Form("hg38"),
     regions: Optional[str] = Form(None)
 ):
-    """Call variants using GATK HaplotypeCaller via direct Docker command."""
-    # Save uploaded file to a temporary location
-    temp_dir = tempfile.mkdtemp(dir="./data")
-    input_path = os.path.join(temp_dir, secure_filename(file.filename))
-    
-    with open(input_path, "wb") as temp_file:
-        content = await file.read()
-        temp_file.write(content)
-    
-    # Map reference genome to path
-    reference_paths = {
-        'hg19': os.path.join("/gatk/reference", 'hg19', 'ucsc.hg19.fasta'),
-        'hg38': os.path.join("/gatk/reference", 'hg38', 'Homo_sapiens_assembly38.fasta'),
-        'grch37': os.path.join("/gatk/reference", 'grch37', 'human_g1k_v37.fasta'),
-        'grch38': os.path.join("/gatk/reference", 'hg38', 'Homo_sapiens_assembly38.fasta')  # symlink
-    }
-    
-    if reference_genome not in reference_paths:
-        return JSONResponse(
-            status_code=400, 
-            content={"error": f"Unsupported reference genome: {reference_genome}"}
-        )
-    
-    reference_path = reference_paths[reference_genome]
-    output_vcf = os.path.join(temp_dir, f"{os.path.splitext(os.path.basename(input_path))[0]}.vcf")
-    
-    # Define regions argument if provided
-    regions_arg = f"-L {regions}" if regions else ""
-    
+    """Call variants using GATK API service."""
     try:
-        # Execute GATK using docker exec command
-        cmd = f"docker exec pgx_gatk gatk HaplotypeCaller -R {reference_path} -I {input_path} -O {output_vcf} {regions_arg}"
-        process = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+        # Save the file to a temporary location to get its path
+        temp_dir = tempfile.mkdtemp(dir="./data")
+        input_path = os.path.join(temp_dir, secure_filename(file.filename))
         
+        with open(input_path, "wb") as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+        
+        # Prepare the multipart/form-data
+        files = {'file': open(input_path, 'rb')}
+        data = {
+            'reference_genome': reference_genome
+        }
+        if regions:
+            data['regions'] = regions
+            
+        # Call the GATK API service
+        response = requests.post(
+            f"{GATK_SERVICE_URL}/variant-call",
+            files=files,
+            data=data,
+            timeout=3600  # Allow up to 1 hour for large files
+        )
+        response.raise_for_status()
+        
+        # Return the API response
         return JSONResponse(
             status_code=200,
-            content={
-                "message": "Variant calling complete",
-                "output_file": output_vcf,
-                "command": cmd
-            }
+            content=response.json()
         )
-    except subprocess.CalledProcessError as e:
-        logging.error(f"GATK command failed: {e.stderr}")
+    except requests.RequestException as e:
+        logging.error(f"GATK API error: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={
                 "error": "Variant calling failed",
-                "details": e.stderr
+                "details": str(e)
             }
         )
     except Exception as e:
@@ -710,5 +703,12 @@ async def call_variants(
             status_code=500,
             content={"error": str(e)}
         )
+    finally:
+        # Clean up the file (optional)
+        try:
+            if 'files' in locals() and 'file' in files:
+                files['file'].close()
+        except:
+            pass
 
 # Additional endpoints would go here 

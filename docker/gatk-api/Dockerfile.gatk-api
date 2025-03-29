@@ -1,0 +1,31 @@
+FROM python:3.9-slim
+
+# Install required packages
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    unzip \
+    default-jre \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GATK
+WORKDIR /usr/local
+RUN wget -q https://github.com/broadinstitute/gatk/releases/download/4.6.1.0/gatk-4.6.1.0.zip && \
+    unzip gatk-4.6.1.0.zip && \
+    rm gatk-4.6.1.0.zip && \
+    ln -s /usr/local/gatk-4.6.1.0/gatk /usr/local/bin/gatk
+
+WORKDIR /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir flask requests
+
+# Copy the API script
+COPY gatk_api.py /app/
+
+# Expose the API port
+EXPOSE 5000
+
+# Run the API
+CMD ["python", "gatk_api.py"] 
