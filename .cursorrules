@@ -2,13 +2,13 @@
   "projectContext": {
     "fileAssociations": {
       "priorityPatterns": [
-        "**/*.py",          // Python backend (FastAPI, data processing)
-        "**/Dockerfile*",   // Containerization logic
-        "**/*.sql",         // PostgreSQL schema/CPIC queries
-        "**/*.jsx?",        // React frontend (if using)
-        "**/*.sh",          // Shell scripts for allele calling
-        "**/*.yml",          // Docker Compose configs
-        "**/requirements.txt" // Python dependencies
+        "**/*.py",
+        "**/Dockerfile*",
+        "**/*.sql",
+        "**/*.jsx?",
+        "**/*.sh",
+        "**/*.yml",
+        "**/requirements.txt"
       ],
       "ignorePatterns": [
         "**/node_modules/**",
@@ -36,7 +36,7 @@
     "keyConcepts": [
       "pharmacogenomics", "cpic", "star_allele", "cyp2d6",
       "vcf_parsing", "hippa_compliance", "docker_networking",
-      "pharmcat", "aldy", "stargazer"
+      "pharmcat", "aldy", "stargazer", "gatk", "pypgx"
     ]
   },
   "codeActions": {

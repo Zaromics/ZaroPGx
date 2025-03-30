@@ -7,6 +7,8 @@ RUN apt-get update && \
     wget \
     unzip \
     default-jre \
+    libgomp1 \
+    samtools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GATK
@@ -19,7 +21,7 @@ RUN wget -q https://github.com/broadinstitute/gatk/releases/download/4.6.1.0/gat
 WORKDIR /app
 
 # Install Python dependencies
-RUN pip install --no-cache-dir flask requests
+RUN pip install --no-cache-dir flask requests psutil
 
 # Create and set proper permissions for data directories
 RUN mkdir -p /data/uploads /data/reports /data/results /tmp/gatk_temp && \

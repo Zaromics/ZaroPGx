@@ -1,4 +1,4 @@
-FROM broadinstitute/gatk:4.4.0.0
+FROM broadinstitute/gatk:4.6.1.0
 
 # Install Python and Flask
 RUN apt-get update && \

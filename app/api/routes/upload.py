@@ -26,7 +26,7 @@ def update_job_progress(job_id: str, stage: str, percentage: int, message: str):
         })
 
 async def call_gatk_variants(job_id: str, vcf_file_path: str, reference_genome: str = "hg38"):
-    """Call variants using GATK API service with retry logic."""
+    """Call variants using GATK API service with async job handling."""
     logging.info(f"Job {job_id} progress: variant_calling - 10% - Calling variants with GATK")
     
     # Get the GATK service URL from environment or use default
@@ -42,27 +42,77 @@ async def call_gatk_variants(job_id: str, vcf_file_path: str, reference_genome: 
             files = {'file': open(vcf_file_path, 'rb')}
             data = {'reference_genome': reference_genome}
             
-            # Call the GATK API with increased timeout
-            logging.info(f"Attempt {attempt+1}/{max_retries} to call GATK API at {gatk_api_url}")
+            # Call the GATK API to start the job
+            logging.info(f"Attempt {attempt+1}/{max_retries} to start GATK job at {gatk_api_url}")
+            
             response = requests.post(
                 f"{gatk_api_url}/variant-call",
                 files=files,
                 data=data,
-                timeout=3600  # Allow up to 1 hour for large files
+                timeout=60  # Shorter timeout just for job submission
             )
             response.raise_for_status()
             
-            # Get the response content
+            # Get the job ID from the response
             result = response.json()
+            gatk_job_id = result.get("job_id")
             
-            # The API returns the path to the output VCF
-            output_vcf = result.get("output_file")
+            if not gatk_job_id:
+                raise Exception(f"No job ID returned from GATK API: {result}")
             
-            if not output_vcf:
-                raise Exception(f"No output file path returned from GATK API: {result}")
+            logging.info(f"GATK job started with ID: {gatk_job_id}")
+            
+            # Poll the job status until it completes or fails
+            max_poll_attempts = 120  # 2 hours with 60 second intervals
+            poll_interval = 60  # seconds
+            
+            for poll_attempt in range(max_poll_attempts):
+                logging.info(f"Polling GATK job {gatk_job_id}, attempt {poll_attempt+1}/{max_poll_attempts}")
                 
-            return output_vcf
-        
+                # Check job status
+                status_response = requests.get(
+                    f"{gatk_api_url}/job/{gatk_job_id}", 
+                    timeout=30
+                )
+                status_response.raise_for_status()
+                
+                job_status = status_response.json()
+                status = job_status.get("status")
+                
+                logging.info(f"GATK job {gatk_job_id} status: {status}")
+                
+                if status == "completed":
+                    # Job completed successfully
+                    output_vcf = job_status.get("output_file")
+                    if not output_vcf:
+                        raise Exception(f"No output file path in completed GATK job: {job_status}")
+                    
+                    logging.info(f"GATK job completed successfully, output file: {output_vcf}")
+                    return output_vcf
+                    
+                elif status == "error":
+                    # Job failed
+                    error_msg = job_status.get("error", "Unknown error")
+                    raise Exception(f"GATK job failed: {error_msg}")
+                    
+                elif status in ["pending", "running"]:
+                    # Job is still running, wait and try again
+                    logging.info(f"GATK job {gatk_job_id} is {status}, waiting {poll_interval} seconds...")
+                    await asyncio.sleep(poll_interval)
+                    
+                    # Update progress message for longer-running jobs
+                    if poll_attempt > 0 and poll_attempt % 5 == 0:
+                        minutes_elapsed = (poll_attempt * poll_interval) // 60
+                        update_job_progress(job_id, "variant_calling", 15, 
+                                           f"Calling variants with GATK (running for {minutes_elapsed} minutes)")
+                
+                else:
+                    # Unknown status
+                    raise Exception(f"Unknown GATK job status: {status}")
+            
+            # If we get here, we've exceeded the maximum polling attempts
+            raise Exception(f"GATK job timed out after {max_poll_attempts * poll_interval / 60} minutes")
+                
         except requests.ConnectionError as e:
             # If this isn't the last attempt, wait and retry
             if attempt < max_retries - 1:

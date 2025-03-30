@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir flask==2.3.3 requests==2.31.0
+    pip install --no-cache-dir flask requests
 
 # Copy the wrapper script
 COPY pharmcat_wrapper.py .

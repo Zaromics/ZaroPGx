@@ -103,33 +103,51 @@
                             <!-- Multi-stage progress bar (hidden by default) -->
                             <div id="progressContainer" class="mb-3 d-none">
                                 <label class="form-label" id="progressLabel">Progress</label>
-                                <div class="progress" style="height: 25px;">
+                                <div class="progress mb-2" style="height: 25px;">
                                     <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
                                          role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
                                         0%
                                     </div>
                                 </div>
-                                <div id="progressStatus" class="form-text mt-2">Preparing...</div>
+                                <div id="progressStatus" class="form-text mb-2 fw-bold">Preparing...</div>
                                 
                                 <!-- Stage indicators -->
-                                <div class="d-flex justify-content-between mt-2 small">
-                                    <div id="stageUpload" class="stage-indicator">
-                                        <i class="bi bi-circle"></i> Upload
+                                <div class="d-flex justify-content-between small mb-3">
+                                    <div id="stageUpload" class="stage-indicator text-center">
+                                        <div class="mb-1"><i class="bi bi-cloud-upload"></i></div>
+                                        <span>Upload</span>
                                     </div>
-                                    <div id="stagePreprocess" class="stage-indicator text-muted">
-                                        <i class="bi bi-circle"></i> Preprocessing
+                                    <div id="stagePreprocess" class="stage-indicator text-center text-muted">
+                                        <div class="mb-1"><i class="bi bi-gear"></i></div>
+                                        <span>Preprocess</span>
                                     </div>
-                                    <div id="stageGATK" class="stage-indicator text-muted">
-                                        <i class="bi bi-circle"></i> GATK Analysis
+                                    <div id="stageGATK" class="stage-indicator text-center text-muted">
+                                        <div class="mb-1"><i class="bi bi-dna"></i></div>
+                                        <span>GATK</span>
                                     </div>
-                                    <div id="stageStargazer" class="stage-indicator text-muted">
-                                        <i class="bi bi-circle"></i> Stargazer Analysis
+                                    <div id="stageStargazer" class="stage-indicator text-center text-muted">
+                                        <div class="mb-1"><i class="bi bi-star"></i></div>
+                                        <span>Stargazer</span>
                                     </div>
-                                    <div id="stagePharmcat" class="stage-indicator text-muted">
-                                        <i class="bi bi-circle"></i> PharmCAT
+                                    <div id="stagePharmcat" class="stage-indicator text-center text-muted">
+                                        <div class="mb-1"><i class="bi bi-capsule"></i></div>
+                                        <span>PharmCAT</span>
                                     </div>
-                                    <div id="stageReport" class="stage-indicator text-muted">
-                                        <i class="bi bi-circle"></i> Report
+                                    <div id="stageReport" class="stage-indicator text-center text-muted">
+                                        <div class="mb-1"><i class="bi bi-file-earmark-text"></i></div>
+                                        <span>Report</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- Detailed log panel (initially collapsed) -->
+                                <div class="card">
+                                    <div class="card-header bg-light p-2" role="button" data-bs-toggle="collapse" data-bs-target="#logPanel">
+                                        <small>Processing Log <i class="bi bi-chevron-down float-end"></i></small>
+                                    </div>
+                                    <div id="logPanel" class="collapse">
+                                        <div id="logMessages" class="card-body p-2 small" style="max-height: 150px; overflow-y: auto; font-family: monospace;">
+                                            <!-- Log messages will appear here -->
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -214,56 +232,136 @@
                 report: document.getElementById('stageReport')
             };
             
+            // Stage metadata for progress tracking
+            const stageConfig = {
+                'uploaded': { label: 'Upload Progress', min: 0, max: 100 },
+                'initializing': { label: 'Initialization', min: 0, max: 100 },
+                'gatk': { label: 'GATK Variant Calling', min: 0, max: 100 },
+                'variant_calling': { label: 'GATK Variant Calling', min: 0, max: 100 },
+                'star_allele_calling': { label: 'Stargazer Analysis', min: 0, max: 100 },
+                'stargazer': { label: 'Stargazer Analysis', min: 0, max: 100 },
+                'pharmcat': { label: 'PharmCAT Analysis', min: 0, max: 100 },
+                'report_generation': { label: 'Report Generation', min: 0, max: 100 },
+                'report': { label: 'Report Generation', min: 0, max: 100 },
+                'complete': { label: 'Completed', min: 0, max: 100 }
+            };
+            
+            // Track the current stage
+            let currentStage = null;
+            
             // Function to update the active stage
             function updateStage(stageName) {
+                // Check if stage has changed
+                const isNewStage = (currentStage !== stageName);
+                currentStage = stageName;
+                
+                // Map backend stage names to frontend element IDs
+                const stageMapping = {
+                    'uploaded': 'stageUpload',
+                    'initializing': 'stageUpload',
+                    'variant_calling': 'stageGATK',
+                    'gatk': 'stageGATK',
+                    'star_allele_calling': 'stageStargazer',
+                    'stargazer': 'stageStargazer',
+                    'pharmcat': 'stagePharmcat',
+                    'report_generation': 'stageReport',
+                    'report': 'stageReport'
+                };
+                
+                // Get the element ID for this stage
+                const elementId = stageMapping[stageName] || stageName;
+                
                 // Reset all stages to inactive
-                for (const [name, element] of Object.entries(stages)) {
+                for (const element of Object.values(stages)) {
                     element.classList.add('text-muted');
-                    element.innerHTML = '<i class="bi bi-circle"></i> ' + element.innerHTML.split('</i> ')[1];
+                    element.classList.remove('text-primary', 'text-success');
                 }
                 
-                // Set the current stage to active
-                if (stages[stageName]) {
-                    stages[stageName].classList.remove('text-muted');
-                    stages[stageName].innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> ' + 
-                                                 stages[stageName].innerHTML.split('</i> ')[1];
+                // Get the stage order for progress indication
+                const stageOrder = [
+                    'stageUpload',
+                    'stagePreprocess',
+                    'stageGATK',
+                    'stageStargazer',
+                    'stagePharmcat',
+                    'stageReport'
+                ];
+                
+                // Get index of current stage
+                const currentStageIndex = stageOrder.indexOf(elementId);
+                
+                // Mark all completed stages
+                for (let i = 0; i <= currentStageIndex; i++) {
+                    if (i < currentStageIndex) {
+                        // Previous stages are completed
+                        const stage = document.getElementById(stageOrder[i]);
+                        if (stage) {
+                            stage.classList.remove('text-muted');
+                            stage.classList.add('text-success');
+                            stage.querySelector('i').classList.add('text-success');
+                        }
+                    } else if (i === currentStageIndex) {
+                        // Current stage is active
+                        const stage = document.getElementById(stageOrder[i]);
+                        if (stage) {
+                            stage.classList.remove('text-muted');
+                            stage.classList.add('text-primary');
+                            stage.querySelector('i').classList.add('text-primary');
+                        }
+                    }
                 }
                 
-                // Update all completed stages
-                const stageOrder = ['Upload', 'Preprocess', 'GATK variant call', 'Stargazer variant call', 'PharmCAT allele call', 'Report'];
-                const currentIndex = stageOrder.indexOf(stageName);
-                
-                for (let i = 0; i < currentIndex; i++) {
-                    const completedStage = stages[stageOrder[i]];
-                    completedStage.classList.remove('text-muted');
-                    completedStage.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> ' + 
-                                              completedStage.innerHTML.split('</i> ')[1];
+                // Reset progress bar if this is a new stage
+                if (isNewStage && stageConfig[stageName]) {
+                    const config = stageConfig[stageName];
+                    
+                    // Update progress label for this stage
+                    progressLabel.textContent = config.label;
+                    
+                    // Reset progress bar to 0% for the new stage
+                    progressBar.style.width = '0%';
+                    progressBar.textContent = '0%';
+                    progressBar.setAttribute('aria-valuenow', 0);
+                    
+                    // Ensure the bar has the correct styling
+                    progressBar.classList.remove('bg-danger', 'bg-success', 'bg-warning');
+                    progressBar.classList.add('bg-info', 'progress-bar-striped', 'progress-bar-animated');
+                    
+                    addLogMessage(`Started ${config.label} stage`);
                 }
             }
             
-            // Function to display a warning message
-            function showWarning(message) {
-                // Create warning container if it doesn't exist
-                let warningContainer = document.getElementById('warningContainer');
-                if (!warningContainer) {
-                    warningContainer = document.createElement('div');
-                    warningContainer.id = 'warningContainer';
-                    warningContainer.className = 'alert alert-warning mt-3';
-                    warningContainer.role = 'alert';
-                    progressContainer.insertAdjacentElement('afterend', warningContainer);
+            // Add a log message to the log panel
+            function addLogMessage(message, type = 'info') {
+                const logMessages = document.getElementById('logMessages');
+                if (!logMessages) return;
+                
+                const logLine = document.createElement('div');
+                const timestamp = new Date().toLocaleTimeString();
+                
+                // Set classes based on message type
+                if (type === 'error') {
+                    logLine.className = 'text-danger';
+                } else if (type === 'success') {
+                    logLine.className = 'text-success';
+                } else if (type === 'warning') {
+                    logLine.className = 'text-warning';
                 }
                 
-                // Set the warning message
-                warningContainer.innerHTML = `
-                    <strong>Warning:</strong> ${message}
-                    <button type="button" class="btn-close float-end" data-bs-dismiss="alert" aria-label="Close"></button>
-                `;
+                logLine.textContent = `[${timestamp}] ${message}`;
                 
-                // Add Bootstrap dismiss functionality
-                const closeButton = warningContainer.querySelector('.btn-close');
-                closeButton.addEventListener('click', function() {
-                    warningContainer.style.display = 'none';
-                });
+                // Add to log panel and scroll to bottom
+                logMessages.appendChild(logLine);
+                logMessages.scrollTop = logMessages.scrollHeight;
+                
+                // If log panel is collapsed and this is an error or warning, expand it
+                if (type === 'error' || type === 'warning') {
+                    const logPanel = document.getElementById('logPanel');
+                    if (logPanel && !logPanel.classList.contains('show')) {
+                        const bsCollapse = new bootstrap.Collapse(logPanel);
+                        bsCollapse.show();
+                    }
+                }
             }
             
             let jobId = null;
@@ -272,60 +370,192 @@
             // Set up form submission
             form.addEventListener('submit', function(event) {
                 event.preventDefault();
+
+                // Validate file input
+                if (!fileInput.files.length) {
+                    addLogMessage("Please select a file to upload", "error");
+                    return;
+                }
                 
+                const file = fileInput.files[0];
+                const fileExt = file.name.toLowerCase().split('.').pop();
+                
+                // Check file size for large BAM/ZIP files
+                if (file.size > 100 * 1024 * 1024) { // > 100MB
+                    if (fileExt === 'bam' || fileExt === 'zip') {
+                        addLogMessage(`Large ${fileExt.toUpperCase()} file detected (${formatFileSize(file.size)}). Processing may take several minutes.`, "warning");
+                    }
+                }
+
                 // Show progress bar
                 progressContainer.classList.remove('d-none');
                 uploadButton.disabled = true;
+                uploadButton.innerHTML = 'Uploading...';
+                progressStatus.textContent = 'Uploading file...';
                 
+                // Reset progress bar
+                progressBar.style.width = '0%';
+                progressBar.textContent = '0%';
+                progressBar.setAttribute('aria-valuenow', 0);
+                progressBar.classList.remove('bg-danger', 'bg-success');
+                progressBar.classList.add('bg-info');
+                
+                // Set stage to upload
+                updateStage('uploaded');
+
                 const formData = new FormData(form);
+
+                // Show initial log message
+                addLogMessage(`Uploading file: ${file.name} (${formatFileSize(file.size)})`);
                 
-                // Upload the file using AJAX
-                fetch('/upload-vcf', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        // Store the job ID
-                        jobId = data.job_id;
+                // For zip files, add additional info
+                if (fileExt === 'zip') {
+                    addLogMessage("ZIP archive detected - will extract and process genomic files automatically");
+                }
+                
+                // Add upload progress tracking
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/upload-vcf', true);
+                
+                // Track upload progress
+                xhr.upload.onprogress = function(e) {
+                    if (e.lengthComputable) {
+                        const percentComplete = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percentComplete + '%';
+                        progressBar.textContent = percentComplete + '%';
+                        progressBar.setAttribute('aria-valuenow', percentComplete);
                         
-                        // Check for warnings
-                        if (data.warning) {
-                            showWarning(data.warning);
+                        if (percentComplete % 20 === 0) {
+                            addLogMessage(`Upload progress: ${percentComplete}%`);
                         }
-                        
-                        // Start listening for progress updates
-                        connectToEventSource(jobId);
+                    }
+                };
+                
+                xhr.onload = function() {
+                    if (xhr.status === 202 || xhr.status === 200) {
+                        try {
+                            const data = JSON.parse(xhr.responseText);
+                            
+                            // Handle both success and error responses
+                            if (data.success === true) {
+                                // Store the job ID
+                                jobId = data.job_id;
+                                
+                                addLogMessage(`Upload complete. Job ID: ${jobId}`, 'success');
+                                progressStatus.textContent = data.message || 'Processing started...';
+                                
+                                // Reset stage to initializing and reset progress
+                                updateStage('initializing');
+                                
+                                // Start listening for progress updates
+                                connectToEventSource(jobId);
+                            } else {
+                                // Handle error
+                                const errorMsg = data.detail || data.message || 'Upload failed!';
+                                console.error('Upload error:', errorMsg);
+                                progressStatus.textContent = errorMsg;
+                                progressBar.style.width = '100%';
+                                progressBar.textContent = 'Error';
+                                progressBar.setAttribute('aria-valuenow', 100);
+                                progressBar.classList.remove('bg-info', 'bg-success');
+                                progressBar.classList.add('bg-danger');
+                                uploadButton.disabled = false;
+                                uploadButton.innerHTML = 'Try Again';
+                                
+                                addLogMessage(`Upload failed: ${errorMsg}`, 'error');
+                            }
+                        } catch (e) {
+                            console.error('JSON parse error:', e);
+                            progressStatus.textContent = 'Error parsing server response';
+                            addLogMessage('Error parsing server response', 'error');
+                            uploadButton.disabled = false;
+                            uploadButton.innerHTML = 'Try Again';
+                        }
                     } else {
-                        // Handle error
-                        progressStatus.textContent = data.message || 'Upload failed!';
+                        console.error('HTTP error:', xhr.status);
+                        progressStatus.textContent = `Server error: ${xhr.status}`;
+                        addLogMessage(`Server error (${xhr.status}): ${xhr.responseText || "No response"}`, 'error');
+                        progressBar.style.width = '100%';
+                        progressBar.textContent = 'Error';
+                        progressBar.setAttribute('aria-valuenow', 100);
                         progressBar.classList.remove('bg-info', 'bg-success');
                         progressBar.classList.add('bg-danger');
                         uploadButton.disabled = false;
+                        uploadButton.innerHTML = 'Try Again';
                     }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    progressStatus.textContent = 'Error uploading file. Please try again.';
+                };
+                
+                xhr.onerror = function() {
+                    console.error('XHR error');
+                    progressStatus.textContent = 'Network error during upload';
+                    addLogMessage('Network error during upload', 'error');
+                    progressBar.style.width = '100%';
+                    progressBar.textContent = 'Error';
+                    progressBar.setAttribute('aria-valuenow', 100);
                     progressBar.classList.remove('bg-info', 'bg-success');
                     progressBar.classList.add('bg-danger');
                     uploadButton.disabled = false;
-                });
+                    uploadButton.innerHTML = 'Try Again';
+                };
+                
+                xhr.send(formData);
             });
             
+            // Connect to the event source for progress updates
             function connectToEventSource(jobId) {
+                // Clear the job-specific log messages
+                const logMessages = document.getElementById('logMessages');
+                const timestampStr = new Date().toLocaleTimeString();
+                if (logMessages && !logMessages.innerHTML.includes("Started processing job")) {
+                    // Only clear if we haven't already added the initial message
+                    // This prevents clearing during reconnects
+                    logMessages.innerHTML = `<div class="text-info">[${timestampStr}] Started processing job ${jobId}</div>`;
+                }
+                
                 // Close any existing event source
                 if (eventSource) {
                     eventSource.close();
                 }
+                
+                // Track reconnection attempts
+                let reconnectAttempts = 0;
+                const maxReconnectAttempts = 15; // Increased from 5 to handle longer processing
                 
                 // Connect to the progress endpoint
                 eventSource = new EventSource(`/progress/${jobId}`);
                 
                 // Handle progress updates
                 eventSource.onmessage = function(event) {
+                    // Reset reconnect attempts on successful message
+                    reconnectAttempts = 0;
+                    
                     const data = JSON.parse(event.data);
+                    
+                    // Check for reconnect message
+                    if (data.reconnect) {
+                        addLogMessage("Server requested reconnection - refreshing connection", 'info');
+                        eventSource.close();
+                        setTimeout(() => connectToEventSource(jobId), 1000);
+                        return;
+                    }
+                    
+                    // Check if this is a keepalive message
+                    if (data.keepalive) {
+                        console.log(`Received keepalive for ${data.stage} - count: ${data.keepalive_count}`);
+                        
+                        if (data.stage === "variant_calling" || data.stage === "gatk") {
+                            // For GATK processing, provide more context about the ongoing work
+                            const dots = ".".repeat((data.keepalive_count % 3) + 1);
+                            const baseMsg = data.message ? data.message.replace(/\.+$/, "") : "Processing";
+                            progressStatus.textContent = `${baseMsg}${dots}`;
+                            
+                            // Add log message occasionally so user knows it's still working
+                            if (data.keepalive_count % 10 === 0) {
+                                addLogMessage(`Still processing - GATK variant calling in progress${dots}`);
+                            }
+                        }
+                        return; // Skip further processing for keepalive messages
+                    }
                     
                     if (data.error) {
                         console.error('Error:', data.error);
@@ -333,39 +563,51 @@
                         progressBar.classList.remove('bg-info', 'bg-success');
                         progressBar.classList.add('bg-danger');
                         
+                        addLogMessage(`Error: ${data.error}`, 'error');
+                        
                         if (eventSource) {
                             eventSource.close();
                             eventSource = null;
                         }
                         
                         uploadButton.disabled = false;
+                        uploadButton.innerHTML = 'Try Again';
                         return;
                     }
                     
-                    // Update the progress bar
+                    // Update stage if changed
+                    if (data.stage && data.stage !== currentStage) {
+                        updateStage(data.stage);
+                    }
+                    
+                    // Update the progress bar for current stage
                     const percent = data.percent || 0;
                     progressBar.style.width = percent + '%';
                     progressBar.textContent = percent + '%';
                     progressBar.setAttribute('aria-valuenow', percent);
                     
                     // Ensure the progress bar has the correct class
-                    if (!progressBar.classList.contains('bg-info')) {
-                        progressBar.classList.add('bg-info');
-                    }
-                    
-                    // Update stage
-                    if (data.stage) {
-                        updateStage(data.stage);
-                    }
+                    progressBar.classList.remove('bg-danger', 'bg-success', 'bg-warning');
+                    progressBar.classList.add('bg-info');
                     
                     // Update the status message
                     if (data.message) {
-                        progressStatus.textContent = data.message;
-                        
-                        // Check if message contains a warning (usually we'd have a separate field but we're parsing the message)
-                        if (data.message.includes("different names")) {
-                            const warningMessage = data.message.split(" - ")[1] || data.message;
-                            showWarning(warningMessage);
+                        // Don't overwrite with empty messages
+                        if (data.message.trim() !== '') {
+                            progressStatus.textContent = data.message;
+                            
+                            // Log message changes
+                            if (!progressStatus.dataset.lastMessage || 
+                                progressStatus.dataset.lastMessage !== data.message) {
+                                addLogMessage(data.message);
+                                progressStatus.dataset.lastMessage = data.message;
+                            }
+                            
+                            // Add warning class if message contains warning or error
+                            if (data.message.toLowerCase().includes('warning') || 
+                                data.message.toLowerCase().includes('error')) {
+                                addLogMessage(data.message, 'warning');
+                            }
                         }
                     }
                     
@@ -377,26 +619,63 @@
                         }
                         
                         if (data.success) {
+                            // Update progress bar to success state
                             progressBar.classList.remove('bg-info', 'bg-danger');
                             progressBar.classList.add('bg-success');
                             
-                            // If we have a report path, offer to view it
-                            if (data.report_path) {
+                            // Update all stages to completed
+                            for (const [name, element] of Object.entries(stages)) {
+                                element.classList.remove('text-muted', 'text-primary');
+                                element.classList.add('text-success');
+                                element.querySelector('i').classList.add('text-success');
+                            }
+                            
+                            addLogMessage(`Processing completed successfully!`, 'success');
+                            
+                            // If we have report paths in the data
+                            if (data.data && (data.data.pdf_report_url || data.data.html_report_url)) {
                                 // Create report link container
                                 const reportContainer = document.createElement('div');
                                 reportContainer.className = 'alert alert-success mt-3';
+                                
+                                let reportLinks = '';
+                                if (data.data.pdf_report_url) {
+                                    reportLinks += `<a href="${data.data.pdf_report_url}" class="btn btn-primary me-2" target="_blank">
+                                        <i class="bi bi-file-earmark-pdf"></i> View PDF Report
+                                    </a>`;
+                                }
+                                
+                                if (data.data.html_report_url) {
+                                    reportLinks += `<a href="${data.data.html_report_url}" class="btn btn-info" target="_blank">
+                                        <i class="bi bi-file-earmark-code"></i> View Interactive Report
+                                    </a>`;
+                                }
+                                
                                 reportContainer.innerHTML = `
                                     <h5>Report Generated Successfully!</h5>
-                                    <p>${data.message}</p>
-                                    <a href="${data.report_path}" class="btn btn-primary" target="_blank">
-                                        <i class="bi bi-file-earmark-pdf"></i> View Report
-                                    </a>
+                                    <p>${data.message || 'Your pharmacogenomic report is ready.'}</p>
+                                    <div class="mt-3">
+                                        ${reportLinks}
+                                    </div>
                                 `;
+                                
                                 progressContainer.insertAdjacentElement('afterend', reportContainer);
+                                addLogMessage(`Report URLs: ${JSON.stringify(data.data)}`, 'success');
                             }
                         } else {
+                            // Update progress bar to error state
                             progressBar.classList.remove('bg-info', 'bg-success');
                             progressBar.classList.add('bg-danger');
+                            
+                            // Update current stage to error
+                            const currentStage = Object.values(stages).find(el => el.classList.contains('text-primary'));
+                            if (currentStage) {
+                                currentStage.classList.remove('text-primary');
+                                currentStage.classList.add('text-danger');
+                                currentStage.querySelector('i').classList.add('text-danger');
+                            }
+                            
+                            addLogMessage(`Processing failed: ${data.message}`, 'error');
                         }
                         
                         // Re-enable the upload button
@@ -404,18 +683,51 @@
                         uploadButton.innerHTML = 'Upload and Analyze';
                     }
                 };
-                
-                // Handle connection errors
+
+                // Handle connection errors with auto-reconnect
                 eventSource.onerror = function(error) {
                     console.error('EventSource error:', error);
                     
-                    if (eventSource) {
-                        eventSource.close();
-                        eventSource = null;
+                    // Try to reconnect if under max attempts
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        const waitTime = Math.min(1000 * reconnectAttempts, 5000); // Exponential backoff capped at 5 seconds
+                        
+                        // Update status to show reconnection attempt
+                        progressStatus.textContent = `Connection lost. Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`;
+                        addLogMessage(`Connection lost. Reconnecting in ${waitTime/1000} seconds... (Attempt ${reconnectAttempts}/${maxReconnectAttempts})`, 'warning');
+                        
+                        // Close current connection
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                        
+                        // Apply a "connecting" style to the progress bar
+                        progressBar.classList.remove('bg-info', 'bg-success', 'bg-danger');
+                        progressBar.classList.add('bg-warning');
+                        
+                        // Try to reconnect after a delay
+                        setTimeout(() => {
+                            addLogMessage(`Reconnecting to job ${jobId}...`, 'info');
+                            connectToEventSource(jobId);
+                        }, waitTime);
+                        
+                    } else {
+                        // Max reconnection attempts reached
+                        addLogMessage(`Connection error: Maximum reconnection attempts (${maxReconnectAttempts}) reached.`, 'error');
+                        
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                        
+                        progressStatus.textContent = 'Lost connection to server. Please try again.';
+                        progressBar.classList.remove('bg-info', 'bg-success', 'bg-warning');
+                        progressBar.classList.add('bg-danger');
+                        uploadButton.disabled = false;
+                        uploadButton.innerHTML = 'Try Again';
                     }
-                    
-                    progressStatus.textContent = 'Lost connection to server. Please try again.';
-                    uploadButton.disabled = false;
                 };
             }
             

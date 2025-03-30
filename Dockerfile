@@ -30,22 +30,11 @@ WORKDIR /app
 # Copy requirements.txt and install dependencies
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir \
-    fastapi \
-    uvicorn \
-    python-multipart \
-    python-jose \
-    sqlalchemy \
-    psycopg2-binary \
-    pandas \
-    weasyprint \
-    jinja2 \
-    pydantic \
-    python-dotenv \
-    requests \
-    aiohttp \
-    werkzeug
+# Install Python dependencies - install directly from requirements.txt for better versioning
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Ensure aiohttp is installed explicitly with a specific version
+RUN pip install --no-cache-dir aiohttp
 
 # Create directories for data and reports
 RUN mkdir -p /data/reports /data/uploads
@@ -58,5 +47,5 @@ COPY . /app/
 # Expose the port for the application
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] 
+# Command to run the application with debug mode but without reload
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug"] 
