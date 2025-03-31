@@ -105,7 +105,7 @@ services:
     environment:
       - REFERENCE_DIR=/reference
       - DATA_DIR=/data
-      - MAX_MEMORY=6g
+      - MAX_MEMORY=20g
       - PYTHONPATH=/app
       - UVICORN_RELOAD_EXCLUDES=".git/*,.venv/*"
     ports:
@@ -121,7 +121,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 12G
+          memory: 28G
 
   # Stargazer Service for CYP2D6 star allele calling
   stargazer:

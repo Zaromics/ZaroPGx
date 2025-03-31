@@ -177,16 +177,16 @@ def run_variant_calling(job_id, input_path, output_path, reference_path, regions
                 # Use 70% of available memory, but cap at MAX_MEMORY if set
                 memory_to_use = min(int(total_memory_gb * 0.7), 
                                    int(MAX_MEMORY.replace('g', '')) if MAX_MEMORY.endswith('g') else int(MAX_MEMORY))
-                java_options = f"-Xmx{memory_to_use}g -XX:+UseG1GC -XX:ParallelGCThreads=4"
+                java_options = f"-Xms{memory_to_use}G -Xmx{memory_to_use}G -XX:ParallelGCThreads=2 -XX:+UseG1GC"
                 logger.info(f"Job {job_id}: Large file detected, using {memory_to_use}g memory for Java")
             else:
                 # Use standard memory settings
-                java_options = f"-Xmx{MAX_MEMORY} -XX:+UseG1GC"
+                java_options = f"-Xms20G -Xmx20G -XX:ParallelGCThreads=2"
                 logger.info(f"Job {job_id}: Using standard memory setting {MAX_MEMORY}")
         except Exception as mem_error:
             # Fall back to default if we can't get memory info
             logger.warning(f"Job {job_id}: Failed to get system memory info: {str(mem_error)}. Using default {MAX_MEMORY}")
-            java_options = f"-Xmx{MAX_MEMORY}"
+            java_options = f"-Xms20G -Xmx20G -XX:ParallelGCThreads=2"
                 
         # Update job status
         update_job_status(job_id, JOB_STATUS_RUNNING, progress=30, 
@@ -201,7 +201,7 @@ def run_variant_calling(job_id, input_path, output_path, reference_path, regions
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
         # Set up the command
-        cmd = f"gatk --java-options '{java_options}' HaplotypeCaller -R {reference_path} -I {input_path} -O {output_path} {regions_arg} --native-pair-hmm-threads 4"
+        cmd = f"gatk --java-options '{java_options}' HaplotypeCaller -R {reference_path} -I {input_path} -O {output_path} {regions_arg}"
         
         # Log the command being run
         logger.info(f"Job {job_id}: Running GATK command: {cmd}")
