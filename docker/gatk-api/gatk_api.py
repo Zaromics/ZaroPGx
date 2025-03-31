@@ -22,6 +22,7 @@ import re  # Add regex module for header parsing
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 import random
+from typing import List, Dict
 
 # Set up more verbose logging with both file and console handlers
 logging.basicConfig(

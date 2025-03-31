@@ -135,6 +135,12 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Add validation for reference genome compatibility
    - Implement reference genome conversion tools if needed
 
+6. **GATK Contig Handling**:
+   - Fix contig exclusion logic for non-human sequences (e.g., EBV)
+   - Implement proper interval list handling for excluded contigs
+   - Add validation for contig presence in reference genome
+   - Improve error recovery for contig-related issues
+
 ## Upcoming Tasks
 
 1. **Immediate Next Steps**:
@@ -154,6 +160,9 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Implement parallel processing for large files
    - Add support for GATK best practices pipeline
    - Enhance progress reporting with more detailed metrics
+   - Fix contig exclusion mechanism using proper interval lists
+   - Add pre-processing step to validate contigs against reference
+   - Implement proper handling of viral and mitochondrial sequences
 
 4. **Report Enhancements**: 
    - Group results by gene family in reports
