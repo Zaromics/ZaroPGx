@@ -18,8 +18,10 @@ import platform
 import psutil
 import shutil
 import traceback
+import re  # Add regex module for header parsing
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
+import random
 
 # Set up more verbose logging with both file and console handlers
 logging.basicConfig(
@@ -44,6 +46,7 @@ GATK_CONTAINER = os.environ.get('GATK_CONTAINER', 'gatk')
 DATA_DIR = os.environ.get('DATA_DIR', '/data')
 TEMP_DIR = os.environ.get('TMPDIR', '/tmp/gatk_temp')
 REFERENCE_DIR = os.environ.get('REFERENCE_DIR', '/reference')
+MAX_MEMORY = os.environ.get('MAX_MEMORY', '20g')  # Default to 20g per NIH recommendation
 
 # Create directories
 logger.info(f"Creating required directories: DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
@@ -129,7 +132,7 @@ def index_bam_file(job_id, bam_path):
         update_job_status(job_id, JOB_STATUS_ERROR, progress=100, message=error_msg)
         return False, error_msg
 
-def update_job_status(job_id, status, progress=None, message=None, output_file=None, error=None):
+def update_job_status(job_id, status, progress=None, message=None, output_file=None, error=None, extras=None):
     """Update job status with more detailed information and logging"""
     if job_id not in jobs:
         logger.warning(f"Attempting to update non-existent job: {job_id}")
@@ -148,6 +151,11 @@ def update_job_status(job_id, status, progress=None, message=None, output_file=N
         job["output_file"] = output_file
     if error is not None:
         job["error"] = error
+    if extras is not None:
+        if "extras" not in job:
+            job["extras"] = {}
+        # Update extras with new information
+        job["extras"].update(extras)
     
     # Update timestamp
     job["updated_at"] = time.time()
@@ -200,79 +208,319 @@ def run_variant_calling(job_id, input_path, output_path, reference_path, regions
         # Create directory for output if it doesn't exist
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        # Set up the command
-        cmd = f"gatk --java-options '{java_options}' HaplotypeCaller -R {reference_path} -I {input_path} -O {output_path} {regions_arg}"
+        # Track excluded contigs in case we need to retry
+        excluded_contigs = []
+        max_retries = 2  # Allow up to 2 retries for contig issues
         
-        # Log the command being run
-        logger.info(f"Job {job_id}: Running GATK command: {cmd}")
+        # Store information about non-human contigs found
+        non_human_contigs = {
+            "detected": [],
+            "excluded": [],
+            "identified_types": []
+        }
         
-        # Create a monitoring thread to check memory and update progress
-        def monitor_job():
-            start_time = time.time()
-            while True:
+        # Viral and non-human contig information for reporting
+        contig_info = {
+            "chrEBV": {
+                "name": "Epstein-Barr virus (EBV)", 
+                "type": "viral",
+                "description": "Human herpesvirus 4, commonly present in saliva and associated with mononucleosis"
+            },
+            "chrHPV": {
+                "name": "Human Papillomavirus (HPV)", 
+                "type": "viral",
+                "description": "DNA virus associated with various types of cancer"
+            },
+            "NC_007605": {
+                "name": "Epstein-Barr virus (EBV)", 
+                "type": "viral",
+                "description": "Alternative contig name for EBV"
+            },
+            "chrVirus": {
+                "name": "Unspecified viral sequences", 
+                "type": "viral",
+                "description": "Generic viral contig"
+            },
+            "chrMito": {
+                "name": "Mitochondrial DNA", 
+                "type": "mitochondrial",
+                "description": "Mitochondrial genome sequence, often with different ploidy"
+            }
+        }
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Build the exclusion arg if we have contigs to exclude
+                exclude_arg = ""
+                if excluded_contigs:
+                    exclude_arg = " ".join([f"-XL {contig}" for contig in excluded_contigs])
+                    logger.info(f"Job {job_id}: Excluding contigs: {', '.join(excluded_contigs)}")
+                
+                # Set up the command
+                cmd = f"gatk --java-options '{java_options}' HaplotypeCaller -R {reference_path} -I {input_path} -O {output_path} {regions_arg} {exclude_arg} --verbosity INFO"
+                
+                # Log the command being run
+                logger.info(f"Job {job_id}: Running GATK command (attempt {attempt+1}/{max_retries+1}): {cmd}")
+                
+                # Prepare the subprocess
+                process = subprocess.Popen(
+                    cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+                
+                # Track the current chromosome and progress
+                current_chromosome = "Unknown"
+                chromosomes_processed = []
+                chromosomes_expected = []
+                
+                # Check for contig errors during execution
+                contig_error = None
+                
+                # Get a list of expected chromosomes from the reference
                 try:
-                    # For every 30 seconds, update the progress by 5%
-                    elapsed = time.time() - start_time
-                    # Estimate the progress (capped at 90%)
-                    estimated_progress = min(30 + int(elapsed / 30) * 5, 90)
-                    
-                    # Get current memory usage if possible
-                    try:
-                        process = psutil.Process(os.getpid())
-                        memory_info = process.memory_info()
-                        memory_mb = memory_info.rss / (1024 * 1024)
-                        logger.info(f"Job {job_id}: Memory usage: {memory_mb:.2f}MB, Progress: {estimated_progress}%")
-                        
-                        # Update job status with memory info
-                        update_job_status(job_id, JOB_STATUS_RUNNING, progress=estimated_progress,
-                                         message=f"Running GATK HaplotypeCaller ({memory_mb:.0f}MB used)")
-                    except Exception as mem_err:
-                        # If we can't get memory info, just update progress
-                        logger.debug(f"Job {job_id}: Failed to get memory info: {str(mem_err)}")
-                        update_job_status(job_id, JOB_STATUS_RUNNING, progress=estimated_progress,
-                                         message="Running GATK HaplotypeCaller")
-                    
-                    time.sleep(30)  # Check every 30 seconds
+                    # Use samtools to list expected chromosomes from the reference
+                    fai_path = f"{reference_path}.fai"
+                    if os.path.exists(fai_path):
+                        with open(fai_path, 'r') as f:
+                            chromosomes_expected = [line.split()[0] for line in f]
+                            logger.info(f"Job {job_id}: Found {len(chromosomes_expected)} chromosomes in reference: {', '.join(chromosomes_expected[:5])}...")
+                    else:
+                        logger.warning(f"Job {job_id}: Reference index file not found at {fai_path}")
                 except Exception as e:
-                    logger.error(f"Job {job_id}: Error in monitoring thread: {str(e)}")
-                    time.sleep(60)  # Back off on error
-        
-        # Start the monitoring thread
-        monitor_thread = threading.Thread(target=monitor_job, daemon=True)
-        monitor_thread.start()
-        
-        # Run the command
-        process = subprocess.run(
-            cmd, 
-            shell=True, 
-            check=True, 
-            text=True, 
-            capture_output=True
-        )
-        
-        # Command completed successfully
-        logger.info(f"Job {job_id}: GATK command completed successfully")
-        logger.debug(f"Job {job_id}: GATK output: {process.stdout}")
-        
-        # Verify the output file exists
-        if not os.path.exists(output_path):
-            raise Exception(f"GATK completed but output file not found: {output_path}")
-        
-        # Update job status
-        update_job_status(job_id, JOB_STATUS_COMPLETED, progress=100, 
-                         message="Variant calling complete",
-                         output_file=output_path)
-        
-        return output_path
-        
-    except subprocess.CalledProcessError as e:
-        error_message = f"GATK command failed with exit code {e.returncode}: {e.stderr}"
-        logger.error(f"Job {job_id}: {error_message}")
-        
-        update_job_status(job_id, JOB_STATUS_ERROR, progress=100, 
-                         message="GATK variant calling failed",
-                         error=error_message)
-        return None
+                    logger.warning(f"Job {job_id}: Could not determine chromosome list: {str(e)}")
+                
+                # Function to update progress based on chromosome position
+                def update_progress_by_chromosome(chrom):
+                    # If we don't have an expected list, guess based on standard human genome
+                    if not chromosomes_expected:
+                        # Approximate chromosomes for human genome
+                        standard_chroms = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY", "chrM"]
+                        alt_chroms = [str(i) for i in range(1, 23)] + ["X", "Y", "MT"]
+                        
+                        if chrom in standard_chroms:
+                            idx = standard_chroms.index(chrom)
+                            progress = 30 + min(60 * idx / len(standard_chroms), 60)
+                        elif chrom in alt_chroms:
+                            idx = alt_chroms.index(chrom)
+                            progress = 30 + min(60 * idx / len(alt_chroms), 60)
+                        else:
+                            # Unknown chromosome format, use count-based
+                            progress = 30 + min(60 * len(chromosomes_processed) / 24, 60)
+                    else:
+                        # We have the expected chromosome list
+                        if chrom in chromosomes_expected:
+                            idx = chromosomes_expected.index(chrom)
+                            progress = 30 + min(60 * idx / len(chromosomes_expected), 60)
+                        else:
+                            # Unknown chromosome
+                            progress = 30 + min(60 * len(chromosomes_processed) / len(chromosomes_expected), 60)
+                    
+                    return int(progress)
+                
+                # Function to get GATK process memory usage
+                def get_gatk_memory_usage():
+                    try:
+                        # Find all Java processes
+                        java_processes = []
+                        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                            try:
+                                if proc.name() == 'java' and any('gatk' in cmd.lower() if cmd else False for cmd in proc.cmdline()):
+                                    java_processes.append(proc)
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+                        
+                        # Get memory usage of all Java processes that might be GATK
+                        if java_processes:
+                            total_memory = 0
+                            for proc in java_processes:
+                                try:
+                                    mem_info = proc.memory_info()
+                                    total_memory += mem_info.rss
+                                except:
+                                    pass
+                            return total_memory / (1024 * 1024)  # Return in MB
+                        
+                        # If we can't find GATK process, try to get system-wide Java memory
+                        java_mem = 0
+                        for proc in psutil.process_iter(['pid', 'name']):
+                            try:
+                                if proc.name() == 'java':
+                                    java_mem += proc.memory_info().rss
+                            except:
+                                pass
+                        return java_mem / (1024 * 1024)  # Return in MB
+                    except Exception as e:
+                        logger.debug(f"Job {job_id}: Could not get GATK memory usage: {str(e)}")
+                        return None
+                
+                # Process output line by line
+                for line in iter(process.stdout.readline, ''):
+                    # Log the GATK output
+                    logger.debug(f"Job {job_id}: GATK output: {line.strip()}")
+                    
+                    # Check for contig not present errors
+                    contig_not_present_match = re.search(r'Contig\s+(\S+)\s+not\s+present', line)
+                    if contig_not_present_match:
+                        missing_contig = contig_not_present_match.group(1)
+                        contig_error = f"Contig {missing_contig} not present in reference"
+                        logger.warning(f"Job {job_id}: {contig_error}")
+                        
+                        # Add to excluded contigs for next attempt
+                        if missing_contig not in excluded_contigs:
+                            excluded_contigs.append(missing_contig)
+                            
+                        # Add to non-human contigs detected list if not already there
+                        if missing_contig not in non_human_contigs["detected"]:
+                            non_human_contigs["detected"].append(missing_contig)
+                            
+                            # Check if we have info about this contig
+                            if missing_contig in contig_info:
+                                contig_type = contig_info[missing_contig]["type"]
+                                if contig_type not in non_human_contigs["identified_types"]:
+                                    non_human_contigs["identified_types"].append(contig_type)
+                    
+                    # Extract chromosome information
+                    if 'Starting traversal' in line or 'Start traversal' in line or 'Processing' in line:
+                        # Capture the current chromosome being processed
+                        chrom_match = re.search(r'(chr\w+|scaffold\w+|\d+|X|Y|MT)', line)
+                        if chrom_match:
+                            new_chromosome = chrom_match.group(0)
+                            if new_chromosome != current_chromosome:
+                                logger.info(f"Job {job_id}: GATK processing chromosome: {new_chromosome}")
+                                current_chromosome = new_chromosome
+                                if new_chromosome not in chromosomes_processed:
+                                    chromosomes_processed.append(new_chromosome)
+                            
+                            # Update progress based on chromosome position
+                            progress = update_progress_by_chromosome(current_chromosome)
+                            
+                            # Get memory usage
+                            memory_usage = get_gatk_memory_usage()
+                            memory_info = f"({int(memory_usage)}MB used)" if memory_usage else ""
+                            
+                            # Update job status
+                            update_job_status(job_id, JOB_STATUS_RUNNING, progress=progress,
+                                            message=f"Processing chromosome {current_chromosome} {memory_info}")
+                    
+                    # Look for progress information
+                    elif 'Progress:' in line:
+                        # Try to extract percentage if GATK outputs it
+                        progress_match = re.search(r'(\d+\.\d+)%', line)
+                        if progress_match:
+                            gatk_progress = float(progress_match.group(1))
+                            # Scale to our 30-90% range
+                            progress = 30 + min(gatk_progress * 0.6, 60)
+                            
+                            # Get memory usage
+                            memory_usage = get_gatk_memory_usage()
+                            memory_info = f"({int(memory_usage)}MB used)" if memory_usage else ""
+                            
+                            update_job_status(job_id, JOB_STATUS_RUNNING, progress=int(progress),
+                                            message=f"GATK Progress: {gatk_progress:.1f}% {memory_info}")
+                    
+                    # Check for errors
+                    elif 'ERROR' in line:
+                        logger.error(f"Job {job_id}: GATK error: {line.strip()}")
+                    
+                    # Periodically update memory usage even without progress update
+                    elif line.strip() and random.random() < 0.1:  # 10% chance to update on any output line
+                        # Get memory usage
+                        memory_usage = get_gatk_memory_usage()
+                        if memory_usage:
+                            # Get progress based on chromosomes
+                            if chromosomes_processed:
+                                progress = update_progress_by_chromosome(chromosomes_processed[-1])
+                            else:
+                                progress = 30  # Default starting progress
+                            
+                            update_job_status(job_id, JOB_STATUS_RUNNING, progress=progress,
+                                            message=f"Running GATK HaplotypeCaller ({int(memory_usage)}MB used)")
+                
+                # Wait for process to complete and get return code
+                return_code = process.wait()
+                
+                # If we had a contig error but the process exited with a non-zero code, retry
+                if return_code != 0 and contig_error and attempt < max_retries:
+                    logger.warning(f"Job {job_id}: GATK failed with contig error. Will retry excluding: {', '.join(excluded_contigs)}")
+                    continue  # Try again with excluded contigs
+                
+                # If we reach here, either the process succeeded, or it failed without a contig error
+                if return_code != 0:
+                    raise subprocess.CalledProcessError(return_code, cmd)
+                
+                # Command completed successfully
+                logger.info(f"Job {job_id}: GATK command completed successfully")
+                
+                # Update non-human contigs excluded list
+                non_human_contigs["excluded"] = excluded_contigs.copy()
+                
+                # Prepare extras data for reporting
+                extras_data = {
+                    "non_human_contigs": non_human_contigs
+                }
+                
+                # Add detailed contig information if available
+                if non_human_contigs["detected"]:
+                    extras_data["contig_details"] = {}
+                    for contig in non_human_contigs["detected"]:
+                        if contig in contig_info:
+                            extras_data["contig_details"][contig] = contig_info[contig]
+                        else:
+                            extras_data["contig_details"][contig] = {
+                                "name": f"Unknown contig ({contig})",
+                                "type": "unknown",
+                                "description": "Contig not found in reference genome"
+                            }
+                
+                # Verify the output file exists
+                if not os.path.exists(output_path):
+                    raise Exception(f"GATK completed but output file not found: {output_path}")
+                
+                # Update job status
+                update_job_status(job_id, JOB_STATUS_COMPLETED, progress=100, 
+                                message=f"Variant calling complete{' (excluded: ' + ', '.join(excluded_contigs) + ')' if excluded_contigs else ''}",
+                                output_file=output_path,
+                                extras=extras_data)
+                
+                return output_path
+                
+            except subprocess.CalledProcessError as e:
+                # If this was our last attempt, raise the error
+                if attempt == max_retries:
+                    error_message = f"GATK command failed with exit code {e.returncode}"
+                    logger.error(f"Job {job_id}: {error_message}")
+                    
+                    update_job_status(job_id, JOB_STATUS_ERROR, progress=100, 
+                                    message="GATK variant calling failed",
+                                    error=error_message)
+                    return None
+                else:
+                    # If no contig error was detected but we still failed, check if we should retry
+                    if not excluded_contigs:
+                        # No specific contig issues detected, but let's try a general fix
+                        # Add common non-human contigs that might cause issues
+                        common_viral_contigs = ["chrEBV", "chrHPV", "NC_007605", "chrVirus"]
+                        for viral_contig in common_viral_contigs:
+                            if viral_contig not in excluded_contigs:
+                                excluded_contigs.append(viral_contig)
+                                # Add to detected list for reporting
+                                if viral_contig not in non_human_contigs["detected"]:
+                                    non_human_contigs["detected"].append(viral_contig)
+                                    # Add contig type if available
+                                    if viral_contig in contig_info:
+                                        contig_type = contig_info[viral_contig]["type"]
+                                        if contig_type not in non_human_contigs["identified_types"]:
+                                            non_human_contigs["identified_types"].append(contig_type)
+                                            
+                                logger.info(f"Job {job_id}: Proactively excluding viral contig {viral_contig} for retry")
+                    
+                    logger.warning(f"Job {job_id}: GATK attempt {attempt+1} failed, will retry excluding {len(excluded_contigs)} contigs")
+                    continue
         
     except Exception as e:
         error_message = f"Error running GATK HaplotypeCaller: {str(e)}"
@@ -323,6 +571,104 @@ def list_jobs():
         })
     
     return jsonify(result), 200
+
+def detect_reference(file_path, default_reference='hg38'):
+    """
+    Detect reference genome from genomic file headers
+    
+    First tries a fast text-based search, then falls back to samtools for BAM files
+    if needed for more accurate detection
+    """
+    try:
+        logger.info(f"Attempting to detect reference genome from file: {file_path}")
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        # First try simple text search for all file types (fast)
+        try:
+            logger.info(f"Trying simple text search for reference genome detection")
+            with open(file_path, 'rb') as f:
+                # Read first 10KB which should contain any headers
+                header = f.read(10240).decode('utf-8', errors='ignore')
+                
+            # Look for specific reference genome identifiers
+            if any(x in header for x in ['GRCh38', 'hg38', 'b38']):
+                logger.info(f"Detected hg38/GRCh38 reference via text search")
+                return 'hg38'
+            elif any(x in header for x in ['GRCh37', 'hg19', 'b37']):
+                logger.info(f"Detected hg19/GRCh37 reference via text search") 
+                return 'hg19'
+            
+            logger.info(f"Simple text search did not find reference genome information")
+        except Exception as e:
+            logger.warning(f"Simple text search failed: {str(e)}")
+        
+        # For BAM/CRAM/SAM files, try samtools as a fallback if text search failed
+        if file_ext in ['.bam', '.cram', '.sam']:
+            try:
+                logger.info(f"Falling back to samtools for reference detection")
+                # Use samtools to get the header
+                cmd = f"samtools view -H {file_path}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if result.returncode == 0:
+                    header = result.stdout
+                    
+                    # Check for specific reference genome indicators in the header
+                    # First check for @SQ lines with known reference lengths
+                    if "SN:chr1\tLN:248956422" in header:
+                        logger.info("Detected GRCh38/hg38 reference based on chr1 length")
+                        return "hg38"
+                    elif "SN:chr1\tLN:249250621" in header:
+                        logger.info("Detected GRCh37/hg19 reference based on chr1 length")
+                        return "hg19"
+                    
+                    # Check for reference path in header comments
+                    ref_path_match = re.search(r'@PG.*?-R\s+(\S+)', header)
+                    if ref_path_match:
+                        ref_path = ref_path_match.group(1)
+                        logger.info(f"Found reference path in header: {ref_path}")
+                        if "hg38" in ref_path or "GRCh38" in ref_path:
+                            return "hg38"
+                        elif "hg19" in ref_path or "GRCh37" in ref_path:
+                            return "hg19"
+                    
+                    # Check reference dictionary
+                    ref_dict_match = re.search(r'@HD.*?VN:(\S+)', header)
+                    if ref_dict_match:
+                        ref_version = ref_dict_match.group(1)
+                        logger.info(f"Found reference version in header: {ref_version}")
+                        if "38" in ref_version:
+                            return "hg38"
+                        elif "19" in ref_version or "37" in ref_version:
+                            return "hg19"
+            except Exception as e:
+                logger.warning(f"Samtools detection failed: {str(e)}")
+                
+        # For VCF files, check header lines explicitly
+        elif file_ext in ['.vcf', '.vcf.gz']:
+            try:
+                # Open as text directly for VCF files
+                with open(file_path, 'r') as f:
+                    for line in f:
+                        if not line.startswith('#'):
+                            break
+                        # Look for reference in header lines
+                        if '##reference=' in line:
+                            ref_field = line.strip().split('=')[1]
+                            if any(x in ref_field for x in ['GRCh38', 'hg38']):
+                                logger.info(f"Detected hg38 from VCF header reference field")
+                                return 'hg38'
+                            elif any(x in ref_field for x in ['GRCh37', 'hg19']):
+                                logger.info(f"Detected hg19 from VCF header reference field") 
+                                return 'hg19'
+            except Exception as e:
+                logger.warning(f"VCF header parsing failed: {str(e)}")
+        
+        # If we can't determine, return default
+        logger.warning(f"Could not determine reference genome, using default: {default_reference}")
+        return default_reference
+    except Exception as e:
+        logger.error(f"Error detecting reference genome: {str(e)}")
+        return default_reference
 
 @app.route('/variant-call', methods=['POST'])
 def variant_call():
@@ -383,16 +729,6 @@ def variant_call():
 
         logger.info(f"Job {job_id}: Request received - File: {file.filename}, Reference: {reference_genome}, Regions: {regions}")
 
-        # Validate reference genome
-        if reference_genome not in REFERENCE_PATHS:
-            logger.error(f"Job {job_id}: Unsupported reference genome: {reference_genome}")
-            return jsonify({"error": f"Unsupported reference genome: {reference_genome}"}), 400
-
-        reference_path = REFERENCE_PATHS[reference_genome]
-        if not os.path.exists(reference_path):
-            logger.error(f"Job {job_id}: Reference genome file not found: {reference_path}")
-            return jsonify({"error": f"Reference genome file not found: {reference_path}"}), 500
-
         # Save uploaded file to a temporary directory
         filename = secure_filename(file.filename)
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
@@ -402,18 +738,34 @@ def variant_call():
         logger.info(f"Job {job_id}: Saving file to {input_path}")
         file.save(input_path)
         logger.info(f"Job {job_id}: Saved uploaded file to {input_path}")
-
+        
         # Check if file exists
         if not os.path.exists(input_path):
             logger.error(f"Job {job_id}: Failed to save uploaded file to {input_path}")
             return jsonify({"error": f"Failed to save uploaded file to {input_path}"}), 500
-
+        
         # Log file details
         file_size = os.path.getsize(input_path)
         logger.info(f"Job {job_id}: File saved: {input_path}, size: {file_size} bytes")
-
-        # Determine if it's a BAM/CRAM or VCF file
+        
+        # Auto-detect reference genome for all genomic file types
         file_ext = os.path.splitext(filename)[1].lower()
+        if file_ext in ['.bam', '.cram', '.sam', '.vcf', '.vcf.gz']:
+            detected_reference = detect_reference(input_path, default_reference=reference_genome)
+            if detected_reference != reference_genome:
+                logger.warning(f"Job {job_id}: Detected reference ({detected_reference}) differs from specified reference ({reference_genome})")
+                logger.warning(f"Job {job_id}: Using detected reference: {detected_reference}")
+                reference_genome = detected_reference
+
+        # Validate reference genome
+        if reference_genome not in REFERENCE_PATHS:
+            logger.error(f"Job {job_id}: Unsupported reference genome: {reference_genome}")
+            return jsonify({"error": f"Unsupported reference genome: {reference_genome}"}), 400
+
+        reference_path = REFERENCE_PATHS[reference_genome]
+        if not os.path.exists(reference_path):
+            logger.error(f"Job {job_id}: Reference genome file not found: {reference_path}")
+            return jsonify({"error": f"Reference genome file not found: {reference_path}"}), 500
 
         # Initialize job info
         jobs[job_id] = {
@@ -427,6 +779,9 @@ def variant_call():
             "created_at": time.time(),
             "updated_at": time.time()
         }
+
+        # Determine if it's a BAM/CRAM or VCF file
+        file_ext = os.path.splitext(filename)[1].lower()
 
         if file_ext in ['.vcf', '.vcf.gz']:
             # If it's already a VCF, just return the path
@@ -581,6 +936,11 @@ def job_status(job_id):
 
     if job.get("status") == JOB_STATUS_COMPLETED:
         response["output_file"] = job.get("output_file")
+        
+        # Include extras if available
+        if "extras" in job:
+            response["extras"] = job.get("extras")
+            
     elif job.get("status") == JOB_STATUS_ERROR:
         response["error"] = job.get("error", "Unknown error")
 

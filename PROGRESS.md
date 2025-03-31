@@ -82,6 +82,31 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Added service status display
    - Implemented Jinja2 templates in FastAPI
 
+8. **GATK API Enhancements**: 
+   - Implemented intelligent reference genome detection from file headers
+   - Added support for handling non-human contigs (viral, mitochondrial)
+   - Enhanced progress tracking with real-time memory usage monitoring
+   - Improved error handling and automatic retry logic for contig issues
+   - Added comprehensive diagnostic endpoint for system monitoring
+
+9. **Reference Genome Handling**:
+   - Added automatic detection of reference genome from file headers
+   - Implemented fallback mechanisms for reference detection
+   - Added support for both hg38 and hg19 reference genomes
+   - Enhanced error reporting for reference genome mismatches
+
+10. **Memory Management**:
+   - Implemented dynamic memory allocation based on input file size
+   - Added real-time memory usage tracking during GATK execution
+   - Optimized Java memory settings for large file processing
+   - Added memory usage reporting in job status updates
+
+11. **Job Status Tracking**:
+   - Enhanced progress reporting with chromosome-level tracking
+   - Added detailed memory usage information to status updates
+   - Improved error reporting and recovery mechanisms
+   - Added support for tracking non-human contigs in job results
+
 ## Current Challenges
 
 1. **Gene Definition Files**: 
@@ -100,6 +125,16 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Implement proper patient data storage and retrieval
    - Update report generation to include gene group information
 
+4. **Memory Management**:
+   - Monitor and optimize memory usage for large genomic files
+   - Implement better cleanup of temporary files
+   - Add memory usage alerts for system administrators
+
+5. **Reference Genome Handling**:
+   - Ensure consistent reference genome usage across all tools
+   - Add validation for reference genome compatibility
+   - Implement reference genome conversion tools if needed
+
 ## Upcoming Tasks
 
 1. **Immediate Next Steps**:
@@ -114,16 +149,23 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Test and verify Drug Transporter functionality
    - Update UI to display gene group analysis results
 
-3. **Report Enhancements**: 
+3. **GATK Integration Improvements**:
+   - Add support for additional GATK tools and workflows
+   - Implement parallel processing for large files
+   - Add support for GATK best practices pipeline
+   - Enhance progress reporting with more detailed metrics
+
+4. **Report Enhancements**: 
    - Group results by gene family in reports
    - Add gene group-specific visualizations
    - Add pathway-based color coding and contextual information
+   - Include non-human contig information in reports
 
-4. **API Documentation**: 
+5. **API Documentation**: 
    - Document new multi-gene and group-based endpoints
    - Create usage examples for gene group analysis
 
-5. **Testing Scripts**: 
+6. **Testing Scripts**: 
    - Create testing scripts for multi-gene analysis
    - Create testing scripts for gene group functionality
 
