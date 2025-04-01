@@ -1,13 +1,14 @@
 FROM python:3.9-slim
 
 # Install system dependencies
+# Note that samtools, bcftools, possibly others, may need to be installed from source
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
     wget \
     default-jre \
     unzip \
-    bcftools \
+    bcftools \    
     bedtools \
     samtools && \
     apt-get clean && \

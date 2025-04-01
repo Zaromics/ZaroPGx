@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import create_engine, MetaData, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
@@ -54,15 +54,25 @@ def init_db():
 # Utility to check if a patient exists
 def patient_exists(db, patient_id):
     result = db.execute(
-        "SELECT EXISTS(SELECT 1 FROM user_data.patients WHERE patient_id = :patient_id)",
+        text("SELECT EXISTS(SELECT 1 FROM user_data.patients WHERE patient_id = :patient_id)"),
         {"patient_id": patient_id}
     )
     return result.scalar()
 
-# Function to create a new patient
+# Function to create a new patient or get existing one
 def create_patient(db, patient_identifier):
+    # First check if patient exists
+    existing = db.execute(
+        text("SELECT patient_id FROM user_data.patients WHERE patient_identifier = :identifier"),
+        {"identifier": patient_identifier}
+    ).scalar()
+    
+    if existing:
+        return existing
+        
+    # If patient doesn't exist, create new one
     result = db.execute(
-        "INSERT INTO user_data.patients (patient_identifier) VALUES (:identifier) RETURNING patient_id",
+        text("INSERT INTO user_data.patients (patient_identifier) VALUES (:identifier) RETURNING patient_id"),
         {"identifier": patient_identifier}
     )
     patient_id = result.scalar()
@@ -72,11 +82,11 @@ def create_patient(db, patient_identifier):
 # Function to register genetic data for a patient
 def register_genetic_data(db, patient_id, file_type, file_path):
     result = db.execute(
-        """
+        text("""
         INSERT INTO user_data.genetic_data (patient_id, file_type, file_path)
         VALUES (:patient_id, :file_type, :file_path)
         RETURNING data_id
-        """,
+        """),
         {"patient_id": patient_id, "file_type": file_type, "file_path": file_path}
     )
     data_id = result.scalar()
@@ -99,13 +109,13 @@ def get_guidelines_for_gene_drug(db, gene, drug):
 def store_patient_alleles(db, patient_id, gene_id, diplotype, phenotype, activity_score, 
                           confidence_score, calling_method):
     result = db.execute(
-        """
+        text("""
         INSERT INTO user_data.patient_alleles 
         (patient_id, gene_id, diplotype, phenotype, activity_score, confidence_score, calling_method)
         VALUES (:patient_id, :gene_id, :diplotype, :phenotype, :activity_score, 
                 :confidence_score, :calling_method)
         RETURNING patient_allele_id
-        """,
+        """),
         {
             "patient_id": patient_id,
             "gene_id": gene_id,
@@ -123,11 +133,11 @@ def store_patient_alleles(db, patient_id, gene_id, diplotype, phenotype, activit
 # Function to register a generated report
 def register_report(db, patient_id, report_type, report_path):
     result = db.execute(
-        """
+        text("""
         INSERT INTO reports.patient_reports (patient_id, report_type, report_path)
         VALUES (:patient_id, :report_type, :report_path)
         RETURNING report_id
-        """,
+        """),
         {"patient_id": patient_id, "report_type": report_type, "report_path": report_path}
     )
     report_id = result.scalar()

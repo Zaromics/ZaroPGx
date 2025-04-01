@@ -12,6 +12,15 @@ RUN apt-get update && \
     build-essential \
     curl \
     libpq-dev \
+    git \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    autoconf \
+    automake \
+    libtool \
+    pkg-config \
+    gettext \
     # WeasyPrint dependencies
     libcairo2 \
     libpango-1.0-0 \
@@ -23,6 +32,23 @@ RUN apt-get update && \
     libjpeg-dev \
     libopenjp2-7-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install bcftools from source
+RUN git clone --recurse-submodules https://github.com/samtools/htslib.git && \
+    cd htslib && \
+    autoreconf -i && \
+    ./configure && \
+    make && \
+    make install && \
+    cd .. && \
+    git clone https://github.com/samtools/bcftools.git && \
+    cd bcftools && \
+    autoreconf -i && \
+    ./configure && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf htslib bcftools
 
 # Set work directory
 WORKDIR /app

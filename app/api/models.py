@@ -14,23 +14,67 @@ class TokenData(BaseModel):
 
 
 class FileType(str, Enum):
-    TWENTYTHREE_AND_ME = "23andme"
     VCF = "vcf"
-    OTHER = "other"
+    BAM = "bam"
+    FASTQ = "fastq"
+    TWENTYTHREE_AND_ME = "23andme"
+    UNKNOWN = "unknown"
+
+
+class SequencingProfile(str, Enum):
+    WGS = "whole_genome_sequencing"
+    WES = "whole_exome_sequencing"
+    TARGETED = "targeted_sequencing"
+    UNKNOWN = "unknown"
+
+
+class VCFHeaderInfo(BaseModel):
+    reference_genome: str
+    sequencing_platform: str
+    sequencing_profile: SequencingProfile
+    has_index: bool
+    is_bgzipped: bool
+    contigs: List[str]
+    sample_count: int
+    variant_count: Optional[int] = None
+
+
+class FileAnalysis(BaseModel):
+    file_type: FileType
+    is_compressed: bool
+    has_index: bool
+    vcf_info: Optional[VCFHeaderInfo] = None
+    file_size: Optional[int] = None
+    error: Optional[str] = None
+
+
+class WorkflowInfo(BaseModel):
+    needs_gatk: bool
+    needs_stargazer: bool
+    needs_conversion: bool
+    is_provisional: bool
+    recommendations: List[str]
+    warnings: List[str]
 
 
 class UploadResponse(BaseModel):
     file_id: str
-    file_type: FileType
+    file_type: str
     status: str
     message: str
+    analysis_info: Optional[FileAnalysis] = None
+    workflow: Optional[WorkflowInfo] = None
+    created_at: datetime = datetime.utcnow()
 
 
-class ProcessingStatus(str, Enum):
-    QUEUED = "queued"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
+class ProcessingStatus(BaseModel):
+    file_id: str
+    status: str
+    progress: int
+    message: str
+    current_stage: Optional[str] = None
+    error: Optional[str] = None
+    last_updated: datetime = datetime.utcnow()
 
 
 class GeneticDataStatus(BaseModel):

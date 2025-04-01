@@ -6,11 +6,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: cpic_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: test123
       POSTGRES_DB: cpic_db
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations
     ports:
       - "5444:5432"
     healthcheck:
@@ -52,7 +53,8 @@ services:
     ports:
       - "2323:8080"
     environment:
-      - JAVA_OPTS=-Xmx1g
+      - JAVA_OPTS=-Xmx4g
+      - PHARMCAT_LOG_LEVEL=DEBUG
     healthcheck:
       test: ["CMD", "echo", "Healthcheck disabled for debugging"]
       interval: 10s
@@ -60,9 +62,7 @@ services:
       retries: 1
     networks:
       - pgx-network
-    # Since we're using the PharmCAT wrapper to make direct JAR calls,
-    # we just need to keep this container running
-    command: ["sh", "-c", "echo 'PharmCAT service running...' && tail -f /dev/null"]
+    command: ["java", "-jar", "/pharmcat/pharmcat.jar", "server"]
 
   # PharmCAT Wrapper Service
   pharmcat-wrapper:
@@ -82,10 +82,11 @@ services:
     ports:
       - "5001:5000"
     healthcheck:
-      test: ["CMD", "echo", "Healthcheck disabled for debugging"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
       timeout: 5s
-      retries: 1
+      retries: 5
+      start_period: 30s
     networks:
       - pgx-network
 
@@ -197,4 +198,9 @@ volumes:
 
 networks:
   pgx-network:
-    driver: bridge 
+    name: pgx-network
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16 

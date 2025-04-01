@@ -26,6 +26,7 @@ import threading
 import re
 from werkzeug.utils import secure_filename
 import traceback
+import httpx
 
 from app.api.routes import upload_router, report_router
 from app.api.models import Token, TokenData
@@ -134,7 +135,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise credentials_exception
     # In a real app, get user from database
-    if token_data.username != "testuser":  # Mock user validation
+    if token_data.username != "test":  # Mock user validation
         raise credentials_exception
     return token_data.username
 
@@ -142,7 +143,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     # In a real app, validate against database
-    if form_data.username != "testuser" or form_data.password != "testpassword":
+    if form_data.username != "test" or form_data.password != "test":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -1212,7 +1213,7 @@ async def upload_vcf(
         )
 
 @app.get("/progress/{job_id}")
-async def get_progress(job_id: str):
+async def get_progress(job_id: str, current_user: str = Depends(get_current_user)):
     """
     SSE endpoint to stream progress updates for a job
     """
@@ -1639,12 +1640,12 @@ async def startup_event():
     # Services to check
     services = {
         "GATK API": f"{GATK_SERVICE_URL}/health",
-        "PharmCAT": f"{PHARMCAT_SERVICE_URL.split('/match')[0]}/version",
+        "PharmCAT Wrapper": f"{os.getenv('PHARMCAT_API_URL', 'http://pharmcat-wrapper:5000')}/health",
         "Stargazer": f"{STARGAZER_SERVICE_URL}/health"
     }
     
-    max_retries = 6
-    retry_delay = 10  # seconds
+    max_retries = 12  # Increased from 6 to 12
+    retry_delay = 5  # Reduced from 10 to 5 seconds
     
     for service_name, service_url in services.items():
         logger.info(f"Checking if {service_name} is ready at {service_url}...")
@@ -1652,25 +1653,24 @@ async def startup_event():
         
         for attempt in range(max_retries):
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(service_url, timeout=5) as response:
-                        if response.status < 400:  # Accept any non-error status
-                            logger.info(f"{service_name} is ready! Status: {response.status}")
-                            print(f"✅ {service_name} is ready! Status: {response.status}")
-                            break
-                        logger.warning(f"{service_name} returned status {response.status}, retrying...")
-                        print(f"⚠️ {service_name} returned status {response.status}, retrying...")
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(service_url, timeout=5.0)
+                    if response.status_code == 200:
+                        logger.info(f"{service_name} is ready!")
+                        print(f"✅ {service_name} is ready!")
+                        break
+                    else:
+                        logger.warning(f"{service_name} returned status {response.status_code}")
+                        print(f"⚠️ {service_name} returned status {response.status_code}")
             except Exception as e:
-                logger.warning(f"{service_name} not ready yet (attempt {attempt+1}/{max_retries}): {str(e)}")
-                print(f"⚠️ {service_name} not ready (attempt {attempt+1}/{max_retries}): {str(e)}")
+                logger.warning(f"{service_name} not ready yet (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                print(f"⚠️ {service_name} not ready (attempt {attempt + 1}/{max_retries})")
             
             if attempt < max_retries - 1:
-                logger.info(f"Waiting {retry_delay} seconds before next attempt...")
-                print(f"Waiting {retry_delay} seconds before next attempt...")
                 await asyncio.sleep(retry_delay)
             else:
                 logger.warning(f"{service_name} health check failed after {max_retries} attempts, but we'll continue anyway")
-                print(f"❌ {service_name} health check failed after {max_retries} attempts, continuing anyway")
+                print(f"⚠️ {service_name} health check failed after {max_retries} attempts, continuing anyway")
     
     # Check temp and data directories
     for dir_path in [TEMP_DIR, DATA_DIR, REPORTS_DIR]:

@@ -60,6 +60,26 @@
 
         <div class="row">
             <div class="col-md-8 offset-md-2">
+                <!-- Login Form (shown by default) -->
+                <div id="loginForm" class="card mb-4">
+                    <div class="card-header">Login</div>
+                    <div class="card-body">
+                        <form id="authForm">
+                            <div class="mb-3">
+                                <label for="username" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="username" name="username" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="password" class="form-label">Password</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Login</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Main Content (hidden until logged in) -->
+                <div id="mainContent" class="d-none">
                 <!-- Display messages if any -->
                 {% if message %}
                 <div class="alert {{ 'alert-success' if success else 'alert-danger' }}" role="alert">
@@ -81,23 +101,35 @@
                 <div class="card">
                     <div class="card-header">Upload Genomic File for Analysis</div>
                     <div class="card-body">
-                        <form action="/upload-vcf" method="post" enctype="multipart/form-data" id="uploadForm">
+                            <form action="/upload/genomic-data" method="post" enctype="multipart/form-data" id="uploadForm">
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File</label>
-                                <input class="form-control" type="file" id="genomicFile" name="genomicFile" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.zip" required>
-                                <div class="form-text">Upload a VCF, BAM, SAM, CRAM file or ZIP archive for pharmacogenomic analysis</div>
+                                    <input class="form-control" type="file" id="genomicFile" name="file" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.fastq,.fastq.gz,.fq,.fq.gz,.txt,.csv,.zip" required>
+                                    <div class="form-text">Upload a VCF, BAM, SAM, CRAM, FASTQ, or 23andMe file for pharmacogenomic analysis</div>
                             </div>
+                                
                             <div class="mb-3">
-                                <label for="sampleId" class="form-label">Sample ID (optional)</label>
-                                <input type="text" class="form-control" id="sampleId" name="sampleId" placeholder="Enter a sample identifier">
+                                    <label for="originalWgs" class="form-label">Original WGS Data (Optional)</label>
+                                    <input class="form-control" type="file" id="originalWgs" name="original_wgs" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.fastq,.fastq.gz,.fq,.fq.gz">
+                                    <div class="form-text">If you have the original whole genome sequencing data, upload it here for improved analysis</div>
                             </div>
+
                             <div class="mb-3">
-                                <label for="referenceGenome" class="form-label">Reference Genome (required for CRAM files)</label>
-                                <select class="form-select" id="referenceGenome" name="referenceGenome">
-                                    <option value="hg19" selected>hg19 (GRCh37)</option>
-                                    <option value="hg38">hg38 (GRCh38)</option>
-                                </select>
-                                <div class="form-text">Specify the reference genome used for mapping</div>
+                                    <label for="patientIdentifier" class="form-label">Patient Identifier (Optional)</label>
+                                    <input type="text" class="form-control" id="patientIdentifier" name="patient_identifier" placeholder="Enter a patient identifier">
+                                </div>
+
+                                <!-- File Analysis Results (hidden by default) -->
+                                <div id="fileAnalysis" class="mb-3 d-none">
+                                    <h5>File Analysis</h5>
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <div id="fileTypeInfo" class="mb-2"></div>
+                                            <div id="vcfInfo" class="mb-2 d-none"></div>
+                                            <div id="workflowInfo" class="mb-2"></div>
+                                            <div id="warnings" class="alert alert-warning d-none"></div>
+                                        </div>
+                                    </div>
                             </div>
                             
                             <!-- Multi-stage progress bar (hidden by default) -->
@@ -117,9 +149,9 @@
                                         <div class="mb-1"><i class="bi bi-cloud-upload"></i></div>
                                         <span>Upload</span>
                                     </div>
-                                    <div id="stagePreprocess" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-gear"></i></div>
-                                        <span>Preprocess</span>
+                                        <div id="stageAnalysis" class="stage-indicator text-center text-muted">
+                                            <div class="mb-1"><i class="bi bi-search"></i></div>
+                                            <span>Analysis</span>
                                     </div>
                                     <div id="stageGATK" class="stage-indicator text-center text-muted">
                                         <div class="mb-1"><i class="bi bi-dna"></i></div>
@@ -156,6 +188,14 @@
                         </form>
                     </div>
                 </div>
+
+                    <!-- Analysis Results Container -->
+                    <div id="analysisResults" class="card mt-4 d-none">
+                        <div class="card-header">Analysis Results</div>
+                        <div class="card-body">
+                            <!-- Results will be displayed here -->
+                        </div>
+                    </div>
 
                 <div class="row">
                     <div class="col-md-6">
@@ -199,6 +239,7 @@
                                 <span class="badge bg-success rounded-pill">Running</span>
                             </li>
                         </ul>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -214,565 +255,340 @@
     <!-- Add JavaScript for real progress tracking using Server-Sent Events -->
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            const loginForm = document.getElementById('loginForm');
+            const mainContent = document.getElementById('mainContent');
+            const authForm = document.getElementById('authForm');
+            let accessToken = localStorage.getItem('access_token');
+
+            // Check if user is already logged in
+            if (accessToken) {
+                showMainContent();
+            }
+
+            // Handle login form submission
+            authForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new URLSearchParams();
+                formData.append('username', document.getElementById('username').value);
+                formData.append('password', document.getElementById('password').value);
+
+                try {
+                    const response = await fetch('/token', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        accessToken = data.access_token;
+                        localStorage.setItem('access_token', accessToken);
+                        showMainContent();
+                    } else {
+                        const error = await response.json();
+                        alert(`Login failed: ${error.detail}`);
+                    }
+                } catch (error) {
+                    alert(`Error during login: ${error.message}`);
+                }
+            });
+
+            // Function to show main content
+            function showMainContent() {
+                loginForm.classList.add('d-none');
+                mainContent.classList.remove('d-none');
+            }
+
+            // Function to add authorization header to requests
+            function getAuthHeaders() {
+                return {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                };
+            }
+
+            // Update the file upload handler to include auth token
             const form = document.getElementById('uploadForm');
             const fileInput = document.getElementById('genomicFile');
-            const progressBar = document.getElementById('progressBar');
+            const originalWgsInput = document.getElementById('originalWgs');
+            const fileAnalysis = document.getElementById('fileAnalysis');
+            const fileTypeInfo = document.getElementById('fileTypeInfo');
+            const vcfInfo = document.getElementById('vcfInfo');
+            const workflowInfo = document.getElementById('workflowInfo');
+            const warnings = document.getElementById('warnings');
             const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
             const progressStatus = document.getElementById('progressStatus');
-            const progressLabel = document.getElementById('progressLabel');
-            const uploadButton = document.getElementById('uploadButton');
-            
-            // Stage indicators
-            const stages = {
-                upload: document.getElementById('stageUpload'),
-                preprocess: document.getElementById('stagePreprocess'),
-                gatk: document.getElementById('stageGATK'),
-                stargazer: document.getElementById('stageStargazer'),
-                pharmcat: document.getElementById('stagePharmcat'),
-                report: document.getElementById('stageReport')
-            };
-            
-            // Stage metadata for progress tracking
-            const stageConfig = {
-                'uploaded': { label: 'Upload Progress', min: 0, max: 100 },
-                'initializing': { label: 'Initialization', min: 0, max: 100 },
-                'gatk': { label: 'GATK Variant Calling', min: 0, max: 100 },
-                'variant_calling': { label: 'GATK Variant Calling', min: 0, max: 100 },
-                'star_allele_calling': { label: 'Stargazer Analysis', min: 0, max: 100 },
-                'stargazer': { label: 'Stargazer Analysis', min: 0, max: 100 },
-                'pharmcat': { label: 'PharmCAT Analysis', min: 0, max: 100 },
-                'report_generation': { label: 'Report Generation', min: 0, max: 100 },
-                'report': { label: 'Report Generation', min: 0, max: 100 },
-                'complete': { label: 'Completed', min: 0, max: 100 }
-            };
-            
-            // Track the current stage
-            let currentStage = null;
-            
-            // Function to update the active stage
-            function updateStage(stageName) {
-                // Check if stage has changed
-                const isNewStage = (currentStage !== stageName);
-                currentStage = stageName;
-                
-                // Map backend stage names to frontend element IDs
-                const stageMapping = {
-                    'uploaded': 'stageUpload',
-                    'initializing': 'stageUpload',
-                    'variant_calling': 'stageGATK',
-                    'gatk': 'stageGATK',
-                    'star_allele_calling': 'stageStargazer',
-                    'stargazer': 'stageStargazer',
-                    'pharmcat': 'stagePharmcat',
-                    'report_generation': 'stageReport',
-                    'report': 'stageReport'
-                };
-                
-                // Get the element ID for this stage
-                const elementId = stageMapping[stageName] || stageName;
-                
-                // Reset all stages to inactive
-                for (const element of Object.values(stages)) {
-                    element.classList.add('text-muted');
-                    element.classList.remove('text-primary', 'text-success');
-                }
-                
-                // Get the stage order for progress indication
-                const stageOrder = [
-                    'stageUpload',
-                    'stagePreprocess',
-                    'stageGATK',
-                    'stageStargazer',
-                    'stagePharmcat',
-                    'stageReport'
-                ];
-                
-                // Get index of current stage
-                const currentStageIndex = stageOrder.indexOf(elementId);
-                
-                // Mark all completed stages
-                for (let i = 0; i <= currentStageIndex; i++) {
-                    if (i < currentStageIndex) {
-                        // Previous stages are completed
-                        const stage = document.getElementById(stageOrder[i]);
-                        if (stage) {
-                            stage.classList.remove('text-muted');
-                            stage.classList.add('text-success');
-                            stage.querySelector('i').classList.add('text-success');
-                        }
-                    } else if (i === currentStageIndex) {
-                        // Current stage is active
-                        const stage = document.getElementById(stageOrder[i]);
-                        if (stage) {
-                            stage.classList.remove('text-muted');
-                            stage.classList.add('text-primary');
-                            stage.querySelector('i').classList.add('text-primary');
-                        }
-                    }
-                }
-                
-                // Reset progress bar if this is a new stage
-                if (isNewStage && stageConfig[stageName]) {
-                    const config = stageConfig[stageName];
-                    
-                    // Update progress label for this stage
-                    progressLabel.textContent = config.label;
-                    
-                    // Reset progress bar to 0% for the new stage
-                    progressBar.style.width = '0%';
-                    progressBar.textContent = '0%';
-                    progressBar.setAttribute('aria-valuenow', 0);
-                    
-                    // Ensure the bar has the correct styling
-                    progressBar.classList.remove('bg-danger', 'bg-success', 'bg-warning');
-                    progressBar.classList.add('bg-info', 'progress-bar-striped', 'progress-bar-animated');
-                    
-                    addLogMessage(`Started ${config.label} stage`);
-                }
-            }
-            
-            // Add a log message to the log panel
-            function addLogMessage(message, type = 'info') {
-                const logMessages = document.getElementById('logMessages');
-                if (!logMessages) return;
-                
-                const logLine = document.createElement('div');
-                const timestamp = new Date().toLocaleTimeString();
-                
-                // Set classes based on message type
-                if (type === 'error') {
-                    logLine.className = 'text-danger';
-                } else if (type === 'success') {
-                    logLine.className = 'text-success';
-                } else if (type === 'warning') {
-                    logLine.className = 'text-warning';
-                }
-                
-                logLine.textContent = `[${timestamp}] ${message}`;
-                
-                // Add to log panel and scroll to bottom
-                logMessages.appendChild(logLine);
-                logMessages.scrollTop = logMessages.scrollHeight;
-                
-                // If log panel is collapsed and this is an error or warning, expand it
-                if (type === 'error' || type === 'warning') {
-                    const logPanel = document.getElementById('logPanel');
-                    if (logPanel && !logPanel.classList.contains('show')) {
-                        const bsCollapse = new bootstrap.Collapse(logPanel);
-                        bsCollapse.show();
-                    }
-                }
-            }
-            
-            let jobId = null;
-            let eventSource = null;
-            
-            // Set up form submission
-            form.addEventListener('submit', function(event) {
-                event.preventDefault();
+            const logMessages = document.getElementById('logMessages');
 
-                // Validate file input
-                if (!fileInput.files.length) {
-                    addLogMessage("Please select a file to upload", "error");
+            // Function to add log message
+            function addLogMessage(message, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = `text-${type}`;
+                logEntry.textContent = `[${timestamp}] ${message}`;
+                logMessages.appendChild(logEntry);
+                logMessages.scrollTop = logMessages.scrollHeight;
+            }
+
+            // Function to update file analysis display
+            function updateFileAnalysis(analysis) {
+                fileAnalysis.classList.remove('d-none');
+                
+                // Update file type info
+                fileTypeInfo.innerHTML = `
+                    <strong>File Type:</strong> ${analysis.file_type}<br>
+                    <strong>Compressed:</strong> ${analysis.is_compressed ? 'Yes' : 'No'}<br>
+                    <strong>Has Index:</strong> ${analysis.has_index ? 'Yes' : 'No'}
+                `;
+
+                // Update VCF info if available
+                if (analysis.vcf_info) {
+                    vcfInfo.classList.remove('d-none');
+                    vcfInfo.innerHTML = `
+                        <strong>Reference Genome:</strong> ${analysis.vcf_info.reference_genome}<br>
+                        <strong>Sequencing Platform:</strong> ${analysis.vcf_info.sequencing_platform}<br>
+                        <strong>Sequencing Profile:</strong> ${analysis.vcf_info.sequencing_profile}<br>
+                        <strong>Sample Count:</strong> ${analysis.vcf_info.sample_count}
+                    `;
+                }
+
+                // Update workflow info
+                workflowInfo.innerHTML = `
+                    <strong>Analysis Workflow:</strong><br>
+                    ${analysis.workflow.recommendations.map(rec => `• ${rec}`).join('<br>')}
+                `;
+
+                // Show warnings if any
+                if (analysis.workflow.warnings.length > 0) {
+                    warnings.classList.remove('d-none');
+                    warnings.innerHTML = analysis.workflow.warnings.map(warn => `• ${warn}`).join('<br>');
+                }
+
+                // Show progress container
+                progressContainer.classList.remove('d-none');
+            }
+
+            // Function to show results
+            function showResults(data) {
+                const resultsDiv = document.getElementById('analysisResults');
+                if (!resultsDiv) {
+                    console.error("Results container not found");
+                    return;
+                }
+
+                let resultsHtml = `
+                    <div class="alert alert-success">
+                        <h4>Analysis Complete!</h4>
+                        <p>Your pharmacogenomic analysis has been completed successfully.</p>
+                `;
+
+                if (data.pdf_report_url) {
+                    resultsHtml += `
+                        <div class="mt-3">
+                            <a href="${data.pdf_report_url}" class="btn btn-primary" target="_blank">
+                                <i class="bi bi-file-pdf"></i> View PDF Report
+                            </a>
+                        </div>
+                    `;
+                }
+
+                if (data.html_report_url) {
+                    resultsHtml += `
+                        <div class="mt-2">
+                            <a href="${data.html_report_url}" class="btn btn-info" target="_blank">
+                                <i class="bi bi-file-code"></i> View Interactive Report
+                            </a>
+                        </div>
+                    `;
+                }
+
+                resultsHtml += `</div>`;
+                resultsDiv.innerHTML = resultsHtml;
+                resultsDiv.classList.remove('d-none');
+            }
+
+            // Function to show error
+            function showError(message) {
+                const resultsDiv = document.getElementById('analysisResults');
+                if (!resultsDiv) {
+                    console.error("Results container not found");
                     return;
                 }
                 
-                const file = fileInput.files[0];
-                const fileExt = file.name.toLowerCase().split('.').pop();
-                
-                // Check file size for large BAM/ZIP files
-                if (file.size > 100 * 1024 * 1024) { // > 100MB
-                    if (fileExt === 'bam' || fileExt === 'zip') {
-                        addLogMessage(`Large ${fileExt.toUpperCase()} file detected (${formatFileSize(file.size)}). Processing may take several minutes.`, "warning");
-                    }
-                }
+                resultsDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h4>Analysis Failed</h4>
+                        <p>${message}</p>
+                    </div>
+                `;
+                resultsDiv.classList.remove('d-none');
+            }
 
-                // Show progress bar
-                progressContainer.classList.remove('d-none');
-                uploadButton.disabled = true;
-                uploadButton.innerHTML = 'Uploading...';
-                progressStatus.textContent = 'Uploading file...';
-                
-                // Reset progress bar
-                progressBar.style.width = '0%';
-                progressBar.textContent = '0%';
-                progressBar.setAttribute('aria-valuenow', 0);
-                progressBar.classList.remove('bg-danger', 'bg-success');
-                progressBar.classList.add('bg-info');
-                
-                // Set stage to upload
-                updateStage('uploaded');
+            // Update the file upload handler to include auth token
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
 
                 const formData = new FormData(form);
+                const uploadButton = document.getElementById('uploadButton');
+                uploadButton.disabled = true;
+                uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Uploading...';
 
-                // Show initial log message
-                addLogMessage(`Uploading file: ${file.name} (${formatFileSize(file.size)})`);
-                
-                // For zip files, add additional info
-                if (fileExt === 'zip') {
-                    addLogMessage("ZIP archive detected - will extract and process genomic files automatically");
-                }
-                
-                // Add upload progress tracking
-                const xhr = new XMLHttpRequest();
-                xhr.open('POST', '/upload-vcf', true);
-                
-                // Track upload progress
-                xhr.upload.onprogress = function(e) {
-                    if (e.lengthComputable) {
-                        const percentComplete = Math.round((e.loaded / e.total) * 100);
-                        progressBar.style.width = percentComplete + '%';
-                        progressBar.textContent = percentComplete + '%';
-                        progressBar.setAttribute('aria-valuenow', percentComplete);
+                try {
+                    addLogMessage('Starting file upload...');
+                    const response = await fetch('/upload/genomic-data', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        },
+                        body: formData
+                    });
+
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        addLogMessage('File uploaded successfully', 'success');
+                        updateFileAnalysis(result);
                         
-                        if (percentComplete % 20 === 0) {
-                            addLogMessage(`Upload progress: ${percentComplete}%`);
-                        }
-                    }
-                };
-                
-                xhr.onload = function() {
-                    if (xhr.status === 202 || xhr.status === 200) {
-                        try {
-                            const data = JSON.parse(xhr.responseText);
-                            
-                            // Handle both success and error responses
-                            if (data.success === true) {
-                                // Store the job ID
-                                jobId = data.job_id;
-                                
-                                addLogMessage(`Upload complete. Job ID: ${jobId}`, 'success');
-                                progressStatus.textContent = data.message || 'Processing started...';
-                                
-                                // Reset stage to initializing and reset progress
-                                updateStage('initializing');
-                                
-                                // Start listening for progress updates
-                                connectToEventSource(jobId);
+                        // Start progress monitoring
+                        monitorProgress(result.file_id);
+                    } else {
+                        if (response.status === 401) {
+                            // Token expired or invalid
+                            localStorage.removeItem('access_token');
+                            showLoginForm();
+                            alert('Session expired. Please login again.');
                             } else {
-                                // Handle error
-                                const errorMsg = data.detail || data.message || 'Upload failed!';
-                                console.error('Upload error:', errorMsg);
-                                progressStatus.textContent = errorMsg;
-                                progressBar.style.width = '100%';
-                                progressBar.textContent = 'Error';
-                                progressBar.setAttribute('aria-valuenow', 100);
-                                progressBar.classList.remove('bg-info', 'bg-success');
-                                progressBar.classList.add('bg-danger');
-                                uploadButton.disabled = false;
-                                uploadButton.innerHTML = 'Try Again';
-                                
-                                addLogMessage(`Upload failed: ${errorMsg}`, 'error');
-                            }
-                        } catch (e) {
-                            console.error('JSON parse error:', e);
-                            progressStatus.textContent = 'Error parsing server response';
-                            addLogMessage('Error parsing server response', 'error');
+                            addLogMessage(`Upload failed: ${result.detail}`, 'danger');
                             uploadButton.disabled = false;
-                            uploadButton.innerHTML = 'Try Again';
+                            uploadButton.textContent = 'Upload and Analyze';
                         }
-                    } else {
-                        console.error('HTTP error:', xhr.status);
-                        progressStatus.textContent = `Server error: ${xhr.status}`;
-                        addLogMessage(`Server error (${xhr.status}): ${xhr.responseText || "No response"}`, 'error');
-                        progressBar.style.width = '100%';
-                        progressBar.textContent = 'Error';
-                        progressBar.setAttribute('aria-valuenow', 100);
-                        progressBar.classList.remove('bg-info', 'bg-success');
-                        progressBar.classList.add('bg-danger');
-                        uploadButton.disabled = false;
-                        uploadButton.innerHTML = 'Try Again';
                     }
-                };
-                
-                xhr.onerror = function() {
-                    console.error('XHR error');
-                    progressStatus.textContent = 'Network error during upload';
-                    addLogMessage('Network error during upload', 'error');
-                    progressBar.style.width = '100%';
-                    progressBar.textContent = 'Error';
-                    progressBar.setAttribute('aria-valuenow', 100);
-                    progressBar.classList.remove('bg-info', 'bg-success');
-                    progressBar.classList.add('bg-danger');
+                } catch (error) {
+                    addLogMessage(`Error during upload: ${error.message}`, 'danger');
                     uploadButton.disabled = false;
-                    uploadButton.innerHTML = 'Try Again';
-                };
-                
-                xhr.send(formData);
+                    uploadButton.textContent = 'Upload and Analyze';
+                }
             });
-            
-            // Connect to the event source for progress updates
-            function connectToEventSource(jobId) {
-                // Clear the job-specific log messages
-                const logMessages = document.getElementById('logMessages');
-                const timestampStr = new Date().toLocaleTimeString();
-                if (logMessages && !logMessages.innerHTML.includes("Started processing job")) {
-                    // Only clear if we haven't already added the initial message
-                    // This prevents clearing during reconnects
-                    logMessages.innerHTML = `<div class="text-info">[${timestampStr}] Started processing job ${jobId}</div>`;
-                }
-                
-                // Close any existing event source
-                if (eventSource) {
-                    eventSource.close();
-                }
-                
-                // Track reconnection attempts
-                let reconnectAttempts = 0;
-                const maxReconnectAttempts = 15; // Increased from 5 to handle longer processing
-                
-                // Connect to the progress endpoint
-                eventSource = new EventSource(`/progress/${jobId}`);
-                
-                // Handle progress updates
-                eventSource.onmessage = function(event) {
-                    // Reset reconnect attempts on successful message
-                    reconnectAttempts = 0;
-                    
-                    const data = JSON.parse(event.data);
-                    
-                    // Check for reconnect message
-                    if (data.reconnect) {
-                        addLogMessage("Server requested reconnection - refreshing connection", 'info');
-                        eventSource.close();
-                        setTimeout(() => connectToEventSource(jobId), 1000);
-                        return;
-                    }
-                    
-                    // Check if this is a keepalive message
-                    if (data.keepalive) {
-                        console.log(`Received keepalive for ${data.stage} - count: ${data.keepalive_count}`);
-                        
-                        if (data.stage === "variant_calling" || data.stage === "gatk") {
-                            // For GATK processing, provide more context about the ongoing work
-                            const dots = ".".repeat((data.keepalive_count % 3) + 1);
-                            const baseMsg = data.message ? data.message.replace(/\.+$/, "") : "Processing";
-                            progressStatus.textContent = `${baseMsg}${dots}`;
-                            
-                            // Add log message occasionally so user knows it's still working
-                            if (data.keepalive_count % 10 === 0) {
-                                addLogMessage(`Still processing - GATK variant calling in progress${dots}`);
-                            }
-                        }
-                        return; // Skip further processing for keepalive messages
-                    }
-                    
-                    if (data.error) {
-                        console.error('Error:', data.error);
-                        progressStatus.textContent = 'Error: ' + data.error;
-                        progressBar.classList.remove('bg-info', 'bg-success');
-                        progressBar.classList.add('bg-danger');
-                        
-                        addLogMessage(`Error: ${data.error}`, 'error');
-                        
-                        if (eventSource) {
-                            eventSource.close();
-                            eventSource = null;
-                        }
-                        
-                        uploadButton.disabled = false;
-                        uploadButton.innerHTML = 'Try Again';
-                        return;
-                    }
-                    
-                    // Update stage if changed
-                    if (data.stage && data.stage !== currentStage) {
-                        updateStage(data.stage);
-                    }
-                    
-                    // Update the progress bar for current stage
-                    const percent = data.percent || 0;
-                    progressBar.style.width = percent + '%';
-                    progressBar.textContent = percent + '%';
-                    progressBar.setAttribute('aria-valuenow', percent);
-                    
-                    // Ensure the progress bar has the correct class
-                    progressBar.classList.remove('bg-danger', 'bg-success', 'bg-warning');
-                    progressBar.classList.add('bg-info');
-                    
-                    // Update the status message
-                    if (data.message) {
-                        // Don't overwrite with empty messages
-                        if (data.message.trim() !== '') {
-                            progressStatus.textContent = data.message;
-                            
-                            // Log message changes
-                            if (!progressStatus.dataset.lastMessage || 
-                                progressStatus.dataset.lastMessage !== data.message) {
-                                addLogMessage(data.message);
-                                progressStatus.dataset.lastMessage = data.message;
-                            }
-                            
-                            // Add warning class if message contains warning or error
-                            if (data.message.toLowerCase().includes('warning') || 
-                                data.message.toLowerCase().includes('error')) {
-                                addLogMessage(data.message, 'warning');
-                            }
-                        }
-                    }
-                    
-                    // If job is complete
-                    if (data.complete) {
-                        if (eventSource) {
-                            eventSource.close();
-                            eventSource = null;
-                        }
-                        
-                        if (data.success) {
-                            // Update progress bar to success state
-                            progressBar.classList.remove('bg-info', 'bg-danger');
-                            progressBar.classList.add('bg-success');
-                            
-                            // Update all stages to completed
-                            for (const [name, element] of Object.entries(stages)) {
-                                element.classList.remove('text-muted', 'text-primary');
-                                element.classList.add('text-success');
-                                element.querySelector('i').classList.add('text-success');
-                            }
-                            
-                            addLogMessage(`Processing completed successfully!`, 'success');
-                            
-                            // If we have report paths in the data
-                            if (data.data && (data.data.pdf_report_url || data.data.html_report_url)) {
-                                // Create report link container
-                                const reportContainer = document.createElement('div');
-                                reportContainer.className = 'alert alert-success mt-3';
-                                
-                                let reportLinks = '';
-                                if (data.data.pdf_report_url) {
-                                    reportLinks += `<a href="${data.data.pdf_report_url}" class="btn btn-primary me-2" target="_blank">
-                                        <i class="bi bi-file-earmark-pdf"></i> View PDF Report
-                                    </a>`;
-                                }
-                                
-                                if (data.data.html_report_url) {
-                                    reportLinks += `<a href="${data.data.html_report_url}" class="btn btn-info" target="_blank">
-                                        <i class="bi bi-file-earmark-code"></i> View Interactive Report
-                                    </a>`;
-                                }
-                                
-                                reportContainer.innerHTML = `
-                                    <h5>Report Generated Successfully!</h5>
-                                    <p>${data.message || 'Your pharmacogenomic report is ready.'}</p>
-                                    <div class="mt-3">
-                                        ${reportLinks}
-                                    </div>
-                                `;
-                                
-                                progressContainer.insertAdjacentElement('afterend', reportContainer);
-                                addLogMessage(`Report URLs: ${JSON.stringify(data.data)}`, 'success');
-                            }
-                        } else {
-                            // Update progress bar to error state
-                            progressBar.classList.remove('bg-info', 'bg-success');
-                            progressBar.classList.add('bg-danger');
-                            
-                            // Update current stage to error
-                            const currentStage = Object.values(stages).find(el => el.classList.contains('text-primary'));
-                            if (currentStage) {
-                                currentStage.classList.remove('text-primary');
-                                currentStage.classList.add('text-danger');
-                                currentStage.querySelector('i').classList.add('text-danger');
-                            }
-                            
-                            addLogMessage(`Processing failed: ${data.message}`, 'error');
-                        }
-                        
-                        // Re-enable the upload button
-                        uploadButton.disabled = false;
-                        uploadButton.innerHTML = 'Upload and Analyze';
-                    }
-                };
 
-                // Handle connection errors with auto-reconnect
-                eventSource.onerror = function(error) {
-                    console.error('EventSource error:', error);
-                    
-                    // Try to reconnect if under max attempts
-                    if (reconnectAttempts < maxReconnectAttempts) {
-                        reconnectAttempts++;
-                        const waitTime = Math.min(1000 * reconnectAttempts, 5000); // Exponential backoff capped at 5 seconds
-                        
-                        // Update status to show reconnection attempt
-                        progressStatus.textContent = `Connection lost. Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`;
-                        addLogMessage(`Connection lost. Reconnecting in ${waitTime/1000} seconds... (Attempt ${reconnectAttempts}/${maxReconnectAttempts})`, 'warning');
-                        
-                        // Close current connection
-                        if (eventSource) {
-                            eventSource.close();
-                            eventSource = null;
-                        }
-                        
-                        // Apply a "connecting" style to the progress bar
-                        progressBar.classList.remove('bg-info', 'bg-success', 'bg-danger');
-                        progressBar.classList.add('bg-warning');
-                        
-                        // Try to reconnect after a delay
-                        setTimeout(() => {
-                            addLogMessage(`Reconnecting to job ${jobId}...`, 'info');
-                            connectToEventSource(jobId);
-                        }, waitTime);
-                        
-                    } else {
-                        // Max reconnection attempts reached
-                        addLogMessage(`Connection error: Maximum reconnection attempts (${maxReconnectAttempts}) reached.`, 'error');
-                        
-                        if (eventSource) {
-                            eventSource.close();
-                            eventSource = null;
-                        }
-                        
-                        progressStatus.textContent = 'Lost connection to server. Please try again.';
-                        progressBar.classList.remove('bg-info', 'bg-success', 'bg-warning');
-                        progressBar.classList.add('bg-danger');
-                        uploadButton.disabled = false;
-                        uploadButton.innerHTML = 'Try Again';
-                    }
-                };
-            }
-            
-            // Helper function to format file size
-            function formatFileSize(bytes) {
-                if (bytes === 0) return '0 Bytes';
+            // Update the progress monitoring to include auth token
+            async function monitorProgress(jobId) {
+                const progressBar = document.getElementById('progressBar');
+                const progressText = document.getElementById('progressText');
+                const stageIndicator = document.getElementById('stageIndicator');
+                const statusMessage = document.getElementById('statusMessage');
+                const uploadButton = document.getElementById('uploadButton');
+                const logMessages = document.getElementById('logMessages');
                 
-                const k = 1024;
-                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-                const i = Math.floor(Math.log(bytes) / Math.log(k));
-                
-                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-            }
-            
-            // Update file info when a new file is selected
-            fileInput.addEventListener('change', function() {
-                if (fileInput.files.length > 0) {
-                    const file = fileInput.files[0];
-                    progressStatus.textContent = `Selected: ${file.name} (${formatFileSize(file.size)})`;
-                    progressContainer.classList.remove('d-none');
-                    progressBar.style.width = '0%';
-                    progressBar.textContent = '';
-                    progressBar.setAttribute('aria-valuenow', 0);
-                    progressBar.classList.remove('bg-danger', 'bg-success');
-                    progressBar.classList.add('progress-bar-striped', 'progress-bar-animated', 'bg-info');
-                    
-                    // Reset stages
-                    updateStage('upload');
-                    progressLabel.textContent = 'Upload Progress';
-                    
-                    // Reset any existing report links
-                    const existingReportLinks = form.querySelector('.alert-success');
-                    if (existingReportLinks) {
-                        form.removeChild(existingReportLinks);
-                    }
-                    
-                    // Close any existing event sources
-                    if (eventSource) {
-                        eventSource.close();
-                        eventSource = null;
-                    }
-                } else {
-                    progressContainer.classList.add('d-none');
+                // Check if elements exist before proceeding
+                if (!progressBar || !progressText || !stageIndicator || !statusMessage || !logMessages) {
+                    console.error("Progress monitoring elements not found");
+                    return;
                 }
-            });
+
+                try {
+                    const response = await fetch(`/progress/${jobId}`, {
+                        headers: {
+                            'Accept': 'text/event-stream',
+                            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                        }
+                    });
+
+                    if (response.status === 401) {
+                        // Token expired, try to refresh
+                        try {
+                            const refreshResponse = await fetch('/token', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                },
+                                body: 'username=test&password=test'
+                            });
+                            
+                            if (refreshResponse.ok) {
+                                const tokenData = await refreshResponse.json();
+                                localStorage.setItem('access_token', tokenData.access_token);
+                                // Retry the progress monitoring with new token
+                                monitorProgress(jobId);
+                                return;
+                            }
+                        } catch (refreshError) {
+                            console.error("Failed to refresh token:", refreshError);
+                        }
+                        
+                        // If refresh failed, redirect to login
+                        window.location.href = '/login';
+                        return;
+                    }
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    while (true) {
+                        const {value, done} = await reader.read();
+                        if (done) break;
+                        
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.reconnect) {
+                                    console.log("Connection timed out, reconnecting...");
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                    monitorProgress(jobId);
+                                    return;
+                                }
+                                
+                                // Update progress bar
+                                progressBar.style.width = `${data.percent}%`;
+                                progressText.textContent = `${data.percent}%`;
+                                
+                                // Update stage indicator
+                                stageIndicator.textContent = data.stage;
+                                
+                                // Update status message
+                                statusMessage.textContent = data.message;
+                                
+                                // Add log message
+                                addLogMessage(data.message);
+                                
+                                // If complete, show results
+                                if (data.complete) {
+                                    if (data.success) {
+                                        showResults(data.data);
+                                    } else {
+                                        showError(data.message);
+                                    }
+                                    uploadButton.disabled = false;
+                                    uploadButton.textContent = 'Upload and Analyze';
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error monitoring progress:", error);
+                    showError("Error monitoring progress: " + error.message);
+                        uploadButton.disabled = false;
+                    uploadButton.textContent = 'Upload and Analyze';
+                }
+            }
+
+            // Function to show login form
+            function showLoginForm() {
+                mainContent.classList.add('d-none');
+                loginForm.classList.remove('d-none');
+            }
         });
     </script>
     
