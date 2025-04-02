@@ -168,3 +168,10 @@ cython_debug/
 # Reference genomes
 reference/
 reference/*
+
+# Stargazer .zip -- do not commit. There will be another means of distributing this.
+stargazer.zip
+
+# Test data
+test_data/
+test_data/*
