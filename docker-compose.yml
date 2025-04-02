@@ -33,9 +33,9 @@ services:
     environment:
       - DOWNLOAD_ON_STARTUP=true
     healthcheck:
-      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/reference/.download_complete') else 1)"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
+      interval: 10s
+      timeout: 5s
       retries: 3
     ports:
       - "5050:5050"

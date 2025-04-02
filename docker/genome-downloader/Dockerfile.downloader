@@ -9,9 +9,6 @@ RUN apt-get update && \
     default-jre \
     && rm -rf /var/lib/apt/lists/*
 
-# We don't need GATK installed here - genome indexing can be done with samtools
-# The GATK-specific indexing can be done by the GATK API service when needed
-
 RUN pip install flask requests tqdm
 
 WORKDIR /app

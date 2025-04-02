@@ -30,8 +30,9 @@ RUN pip install --no-cache-dir flask requests psutil
 RUN mkdir -p /data/uploads /data/reports /data/results /tmp/gatk_temp && \
     chmod -R 777 /data /tmp/gatk_temp
 
-# Change temporary directory for GATK
+# Change temporary directory for GATK and set PATH explicitly
 ENV TMPDIR=/tmp/gatk_temp
+ENV PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
 
 # Copy the API script
 COPY gatk_api.py /app/

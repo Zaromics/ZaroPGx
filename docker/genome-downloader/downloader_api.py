@@ -200,6 +200,29 @@ def download_genomes():
     
     save_status()
 
+def schedule_download(delay_seconds=5):
+    """Schedule download to start after a delay"""
+    def delayed_start():
+        print(f"Waiting {delay_seconds} seconds before starting downloads...")
+        time.sleep(delay_seconds)
+        print("Starting delayed genome downloads...")
+        download_genomes()
+    
+    # Check if downloads were already completed
+    if os.path.exists('/reference/.download_complete'):
+        print("Reference genomes already downloaded.")
+        download_status["completed"] = True
+        return
+        
+    # Check if downloads are in progress
+    if download_status["in_progress"]:
+        print("Downloads already in progress.")
+        return
+        
+    # Start the download in a new thread after delay
+    threading.Thread(target=delayed_start).start()
+    print(f"Scheduled genome downloads to start in {delay_seconds} seconds.")
+
 @app.route('/health')
 def health():
     """Health check endpoint"""
@@ -228,10 +251,19 @@ def start_download():
     return jsonify({"status": "already_running" if download_status["in_progress"] else "already_completed"})
 
 if __name__ == "__main__":
-    # Check if we should start download automatically
-    if os.environ.get('DOWNLOAD_ON_STARTUP', 'false').lower() == 'true':
-        # Check if downloads were already completed
-        if not os.path.exists('/reference/.download_complete'):
-            threading.Thread(target=download_genomes).start()
+    # Load existing status if available
+    if os.path.exists('/reference/download_status.json'):
+        try:
+            with open('/reference/download_status.json', 'r') as f:
+                download_status.update(json.load(f))
+        except Exception as e:
+            print(f"Error loading status file: {str(e)}")
     
+    # Schedule downloads to start after the server has fully initialized
+    if os.environ.get('DOWNLOAD_ON_STARTUP', 'true').lower() == 'true':
+        # Schedule downloads to start after a delay (10 seconds after server startup)
+        print("Scheduling reference genome downloads to start shortly after server startup")
+        threading.Thread(target=lambda: schedule_download(10)).start()
+    
+    # Start the Flask server
     app.run(host='0.0.0.0', port=5050) 

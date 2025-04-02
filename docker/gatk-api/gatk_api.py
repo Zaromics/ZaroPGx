@@ -91,23 +91,22 @@ def index_bam_file(job_id, bam_path):
 
         # Check if samtools is installed
         try:
+            # Check samtools without text decoding to avoid encoding issues
             subprocess.run(["samtools", "--version"], capture_output=True, check=True)
             logger.debug(f"Job {job_id}: samtools is installed")
             update_job_status(job_id, JOB_STATUS_INDEXING, progress=15, message="samtools found")
+            
+            # Create the index with default PATH
+            cmd = f"samtools index {bam_path}"
+            logger.info(f"Job {job_id}: Running command: {cmd}")
+            update_job_status(job_id, JOB_STATUS_INDEXING, progress=20, message="Running samtools index")
+            
+            process = subprocess.run(cmd, shell=True, check=True, capture_output=True)
         except (subprocess.SubprocessError, FileNotFoundError):
-            logger.error(f"Job {job_id}: samtools not found. Installing...")
-            update_job_status(job_id, JOB_STATUS_INDEXING, progress=15, message="Installing samtools")
-            subprocess.run("apt-get update && apt-get install -y samtools",
-                          shell=True, check=True)
-            logger.info(f"Job {job_id}: samtools installed successfully")
-
-        # Create the index
-        cmd = f"samtools index {bam_path}"
-        logger.info(f"Job {job_id}: Running command: {cmd}")
-        update_job_status(job_id, JOB_STATUS_INDEXING, progress=20, message="Running samtools index")
-        
-        process = subprocess.run(cmd, shell=True, check=True,
-                               capture_output=True, text=True)
+            error_msg = "samtools not found - check container configuration"
+            logger.error(f"Job {job_id}: {error_msg}")
+            update_job_status(job_id, JOB_STATUS_ERROR, progress=100, message=error_msg)
+            return False, error_msg
 
         # Check if index file was created
         index_path = f"{bam_path}.bai"
@@ -123,7 +122,7 @@ def index_bam_file(job_id, bam_path):
             return False, "Index command completed but no index file found"
 
     except subprocess.CalledProcessError as e:
-        error_msg = f"Error indexing BAM file: {e.stderr}"
+        error_msg = f"Error indexing BAM file: {str(e)}"
         logger.error(f"Job {job_id}: {error_msg}")
         update_job_status(job_id, JOB_STATUS_ERROR, progress=100, message=error_msg)
         return False, error_msg
@@ -375,11 +374,7 @@ def run_variant_calling(job_id, input_path, output_path, reference_path, regions
                         if missing_contig not in excluded_contigs:
                             excluded_contigs.append(missing_contig)
                             
-                        # Add to non-human contigs detected list if not already there
-                        if missing_contig not in non_human_contigs["detected"]:
-                            non_human_contigs["detected"].append(missing_contig)
-                            
-                            # Check if we have info about this contig
+                            # Add to non-human contigs detected list if not already there
                             if missing_contig in contig_info:
                                 contig_type = contig_info[missing_contig]["type"]
                                 if contig_type not in non_human_contigs["identified_types"]:
@@ -1077,10 +1072,10 @@ if __name__ == '__main__':
 
         # Check if samtools is installed
         try:
-            result = subprocess.run(["samtools", "--version"], capture_output=True, text=True)
-            logger.info(f"samtools version: {result.stdout.splitlines()[0] if result.stdout else 'Unknown'}")
-        except:
-            logger.warning("samtools not found. Will attempt to install when needed.")
+            subprocess.run(["samtools", "--version"], capture_output=True, check=True)
+            logger.info("Verified samtools is installed")
+        except Exception as e:
+            logger.error(f"Samtools check failed: {str(e)}")
     except Exception as e:
         logger.error(f"GATK not found or not executable: {str(e)}")
 
