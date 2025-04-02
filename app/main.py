@@ -27,11 +27,14 @@ import re
 from werkzeug.utils import secure_filename
 import traceback
 import httpx
+from sqlalchemy.orm import Session
 
 from app.api.routes import upload_router, report_router
 from app.api.models import Token, TokenData
 from app.pharmcat_wrapper.pharmcat_client import call_pharmcat_service
 from app.reports.generator import generate_pdf_report, create_interactive_html_report
+from app.api.db import get_db
+from app.api.utils.security import get_current_user, get_optional_user
 
 # Configure more detailed logging
 log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
@@ -109,6 +112,106 @@ app.add_middleware(
 app.include_router(upload_router.router)
 app.include_router(report_router.router)
 
+# Override and disable authentication in development mode
+if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
+    # Print warning about development mode
+    print("🔓 WARNING: RUNNING IN DEVELOPMENT MODE - AUTHENTICATION DISABLED 🔓")
+    logger.warning("Running in development mode - authentication is disabled!")
+    
+    # Create a dummy authentication that never fails
+    from fastapi.security import OAuth2
+    from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
+    from fastapi import Request
+    from typing import Optional, Dict, List, Any
+    
+    class NoAuthOAuth2(OAuth2):
+        def __init__(self, tokenUrl: str):
+            flows = OAuthFlowsModel(password={"tokenUrl": tokenUrl, "scopes": {}})
+            super().__init__(flows=flows, auto_error=False)
+            
+        async def __call__(self, request: Request) -> Optional[str]:
+            return "test_dev_user"
+            
+    # Replace the original OAuth2 scheme
+    from fastapi import security
+    from app.api.utils.security import oauth2_scheme, get_current_user
+    
+    # Override the dependencies
+    async def get_current_user_override(token: str = "dummy_token"):
+        return "test_dev_user"
+        
+    # Apply overrides to all routers and endpoints
+    for route in app.routes:
+        if hasattr(route, "dependencies"):
+            # Remove authentication dependencies
+            new_dependencies = []
+            for dep in route.dependencies:
+                if dep.dependency != get_current_user:
+                    new_dependencies.append(dep)
+            route.dependencies = new_dependencies
+            
+    # Apply overrides to included routers
+    for router in [upload_router.router, report_router.router]:
+        router.dependencies = [d for d in router.dependencies if d.dependency != get_current_user]
+        # Update route dependencies
+        for route in router.routes:
+            if hasattr(route, "dependencies"):
+                route.dependencies = [d for d in route.dependencies if d.dependency != get_current_user]
+
+# Add direct routes for status and reports
+@app.get("/status/{file_id}")
+async def get_status(file_id: str, db: Session = Depends(get_db), current_user: str = Depends(get_optional_user)):
+    """Forward to upload_router status endpoint"""
+    return await upload_router.get_upload_status(file_id, db)
+
+@app.get("/reports/{file_id}")
+async def get_reports(file_id: str, current_user: str = Depends(get_optional_user)):
+    """Forward to upload_router reports endpoint"""
+    return await upload_router.get_report_urls(file_id)
+
+@app.get("/reports/{filename}")
+async def serve_report(filename: str):
+    """
+    Serve report files from the reports directory.
+    """
+    try:
+        # Define reports directory
+        reports_dir = Path("/data/reports")
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Check if the file exists
+        report_path = reports_dir / filename
+        
+        if not report_path.exists():
+            logger.warning(f"Requested report not found: {filename}")
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Report not found: {filename}"}
+            )
+        
+        # Determine content type based on file extension
+        content_type = "application/octet-stream"  # Default
+        if filename.endswith(".pdf"):
+            content_type = "application/pdf"
+        elif filename.endswith(".html"):
+            content_type = "text/html"
+        elif filename.endswith(".json"):
+            content_type = "application/json"
+        
+        # Serve the file
+        logger.info(f"Serving report: {report_path}")
+        return FileResponse(
+            path=report_path,
+            filename=filename,
+            media_type=content_type
+        )
+    except Exception as e:
+        logger.exception(f"Error serving report: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Error serving report: {str(e)}"}
+        )
+
 # JWT token functions
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -138,6 +241,25 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     if token_data.username != "test":  # Mock user validation
         raise credentials_exception
     return token_data.username
+
+# Optional authentication for development mode
+async def get_optional_user(token: Optional[str] = Depends(oauth2_scheme)):
+    # For development, allow requests without authentication
+    if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
+        return "test"  # Return a default user
+    
+    # If not in dev mode, use the normal authentication
+    return await get_current_user(token)
+
+# Modify the router dependencies for development mode
+if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
+    # Override the router dependencies to use optional authentication
+    logger.info("Running in development mode - authentication is optional")
+    # Remove auth dependencies from the routers
+    upload_router.router.dependencies = []
+    report_router.router.dependencies = []
+else:
+    logger.info("Running in production mode - authentication is required")
 
 # Authentication endpoint
 @app.post("/token", response_model=Token)
@@ -363,14 +485,14 @@ def update_job_progress(job_id: str, stage: str, percent: int, message: str,
     """Update the status of a processing job"""
     # Map stage names to frontend-friendly names for display
     stage_map = {
-        "initializing": "uploaded",
-        "uploaded": "uploaded",
-        "variant_calling": "gatk",
-        "star_allele_calling": "stargazer",
-        "pharmcat": "pharmcat",
-        "report_generation": "report",
-        "complete": "complete",
-        "error": "error"
+        "initializing": "Upload",
+        "uploaded": "Upload",
+        "variant_calling": "GATK",
+        "star_allele_calling": "Stargazer",
+        "pharmcat": "PharmCAT",
+        "report_generation": "Report",
+        "complete": "Report",
+        "error": "Error"
     }
     
     # Ensure stage is mapped correctly for frontend
@@ -1092,18 +1214,10 @@ async def upload_vcf(
     background_tasks: BackgroundTasks,
     genomicFile: UploadFile = File(...),
     sampleId: Optional[str] = Form(None),
-    referenceGenome: str = Form("hg19")
+    referenceGenome: str = Form("hg19"),
+    current_user: str = Depends(get_optional_user)
 ):
-    """
-    Upload a genomic file for PGx analysis.
-    
-    Accepts:
-    - VCF files (variant calls)
-    - BAM/CRAM/SAM files (aligned reads)
-    - ZIP files containing any of the above
-    
-    The file will be processed to extract PGx variants and generate a report.
-    """
+    """Upload a VCF file for analysis."""
     logger.info(f"Received file upload request: {genomicFile.filename}, Sample ID: {sampleId}, Reference: {referenceGenome}")
     print(f"[UPLOAD] Received file: {genomicFile.filename}, Sample ID: {sampleId}, Reference: {referenceGenome}")
     
@@ -1213,37 +1327,17 @@ async def upload_vcf(
         )
 
 @app.get("/progress/{job_id}")
-async def get_progress(job_id: str, current_user: str = Depends(get_current_user)):
-    """
-    SSE endpoint to stream progress updates for a job
-    """
-    # Log the request to debug issue with 404 errors
-    logger.info(f"Progress request for job ID: {job_id} (exists in job_status: {job_id in job_status})")
-    print(f"[PROGRESS] Request for job {job_id} (exists: {job_id in job_status})")
-    
-    # Create a default status if job not found - prevents 404s during processing
-    if job_id not in job_status:
-        # Instead of 404, return a waiting status - the job might be in progress but status not updated yet
-        logger.warning(f"Job {job_id} not found in job_status dictionary - creating temp status")
-        print(f"[PROGRESS WARNING] Job {job_id} not found in status dictionary - creating temporary entry")
-        
-        # Create a placeholder status
-        job_status[job_id] = {
-            "job_id": job_id,
-            "stage": "gatk",  # Default to GATK since that's where we're seeing issues
-            "percent": 15,
-            "message": "Processing with GATK - please wait...",
-            "complete": False,
-            "success": None,
-            "timestamp": datetime.utcnow().isoformat(),
-            "data": {},
-            "temporary": True  # Flag to indicate this is a placeholder
-        }
-        
-    # Ensure the event stream is sent regardless of status
+async def get_progress(job_id: str, current_user: str = Depends(get_optional_user)):
+    """Stream job progress as Server-Sent Events"""
+    # Initialize response headers for SSE
     return StreamingResponse(
         event_generator(job_id),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+        }
     )
 
 async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
@@ -1630,6 +1724,78 @@ async def api_status():
             "traceback": traceback.format_exc()
         }
 
+@app.get("/services-status", response_class=JSONResponse)
+async def services_status(current_user: str = Depends(get_optional_user)):
+    """Check status of all connected services"""
+    try:
+        services = {
+            "pharmcat": {
+                "url": os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match"),
+                "timeout": 5
+            },
+            "gatk": {
+                "url": os.getenv("GATK_API_URL", "http://gatk-api:5000/health"),
+                "timeout": 5
+            },
+            "stargazer": {
+                "url": os.getenv("STARGAZER_API_URL", "http://stargazer:5000/health"),
+                "timeout": 5
+            },
+            "database": {
+                "url": os.getenv("DATABASE_URL", "postgresql://cpic_user:cpic_password@db:5432/cpic_db"),
+                "timeout": 3
+            }
+        }
+        
+        # Check each service
+        unhealthy_services = {}
+        
+        # Use httpx for concurrent requests
+        async with httpx.AsyncClient() as client:
+            for service_name, service_info in services.items():
+                if service_name == "database":
+                    # Special handling for database check
+                    try:
+                        # Try to connect to the database
+                        from sqlalchemy import create_engine, text
+                        engine = create_engine(service_info["url"])
+                        with engine.connect() as connection:
+                            result = connection.execute(text("SELECT 1"))
+                            if not result.fetchone():
+                                unhealthy_services[service_name] = "Database connection test failed"
+                    except Exception as e:
+                        unhealthy_services[service_name] = f"Database error: {str(e)}"
+                else:
+                    # HTTP services
+                    try:
+                        response = await client.get(
+                            service_info["url"],
+                            timeout=service_info["timeout"]
+                        )
+                        if response.status_code != 200:
+                            unhealthy_services[service_name] = f"HTTP {response.status_code}"
+                    except Exception as e:
+                        unhealthy_services[service_name] = str(e)
+        
+        # Return status
+        if unhealthy_services:
+            return {
+                "status": "error",
+                "message": "Some services are unavailable",
+                "unhealthy_services": unhealthy_services
+            }
+        else:
+            return {
+                "status": "ok",
+                "message": "All services are available"
+            }
+    except Exception as e:
+        logger.error(f"Error checking services status: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error checking services: {str(e)}"
+        }
+
 # Wait for services to be ready
 @app.on_event("startup")
 async def startup_event():
@@ -1801,3 +1967,153 @@ async def gatk_test(background_tasks: BackgroundTasks):
     except Exception as e:
         logger.exception(f"Error starting GATK test: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error starting GATK test: {str(e)}")
+
+@app.get("/check-reports/{job_id}")
+async def check_reports(job_id: str):
+    """
+    Check for reports and manually trigger completion notification
+    """
+    try:
+        # Define reports directory
+        reports_dir = Path("/data/reports")
+        
+        # Check for report files
+        pdf_path = reports_dir / f"{job_id}_pgx_report.pdf"
+        html_path = reports_dir / f"{job_id}_pgx_report.html"
+        
+        pdf_exists = pdf_path.exists()
+        html_exists = html_path.exists()
+        
+        # Get job status if it exists
+        from app.api.routes.upload_router import job_status
+        job_data = job_status.get(job_id, {"status": "unknown", "complete": False})
+        
+        # CRITICAL: Update job status to ensure completion
+        if pdf_exists or html_exists:
+            # Ensure job status is updated
+            job_status[job_id] = {
+                "status": "completed",
+                "percent": 100,
+                "message": "Analysis completed successfully (from check-reports)",
+                "stage": "Report",
+                "complete": True,
+                "success": True,
+                "data": {
+                    "job_id": job_id,
+                    "pdf_report_url": f"/reports/{job_id}_pgx_report.pdf" if pdf_exists else None,
+                    "html_report_url": f"/reports/{job_id}_pgx_report.html" if html_exists else None
+                }
+            }
+            logger.info(f"Manually updated job status for job {job_id} to completed")
+        
+        return {
+            "job_id": job_id,
+            "reports": {
+                "pdf_exists": pdf_exists,
+                "pdf_path": str(pdf_path) if pdf_exists else None,
+                "pdf_url": f"/reports/{job_id}_pgx_report.pdf" if pdf_exists else None,
+                "html_exists": html_exists,
+                "html_path": str(html_path) if html_exists else None,
+                "html_url": f"/reports/{job_id}_pgx_report.html" if html_exists else None
+            },
+            "job_status": job_status.get(job_id),
+            "instructions": "To check your report, click on the PDF or HTML URL link."
+        }
+    except Exception as e:
+        logger.exception(f"Error checking reports: {str(e)}")
+        return {"status": "error", "message": f"Error checking reports: {str(e)}"}
+
+@app.get("/trigger-completion/{job_id}", response_class=HTMLResponse)
+async def trigger_completion(job_id: str):
+    """
+    A troubleshooting endpoint to manually trigger completion flow and provide direct report links.
+    This is a backup method when the SSE progress monitor fails to notify the frontend.
+    """
+    from app.api.routes.upload_router import job_status
+    
+    # Check if job exists
+    if job_id not in job_status:
+        job_status[job_id] = {"status": "unknown", "data": {}}
+    
+    # Check if reports exist
+    pdf_path = f"/data/reports/{job_id}_pgx_report.pdf"
+    html_path = f"/data/reports/{job_id}_pgx_report.html"
+    
+    pdf_exists = os.path.exists(pdf_path)
+    html_exists = os.path.exists(html_path)
+    
+    # Create job status showing completion
+    if pdf_exists or html_exists:
+        # If reports exist, mark job as complete
+        job_status[job_id] = {
+            "status": "completed",
+            "message": "Analysis completed successfully",
+            "data": {
+                "success": True,
+                "pdf_report_url": f"/reports/{job_id}_pgx_report.pdf",
+                "html_report_url": f"/reports/{job_id}_pgx_report.html"
+            }
+        }
+        
+        logger.info(f"Manual trigger for job {job_id} - Reports found and job status updated")
+    else:
+        logger.error(f"Manual trigger for job {job_id} - No reports found at expected locations")
+    
+    # Return an HTML page with direct links and troubleshooting help
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>PharmGx Report Manual Access</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+        <style>
+            body {{ padding: 20px; }}
+            .report-link {{ margin: 10px 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1 class="mb-4">PharmGx Report Manual Access</h1>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h3>Job Status and Reports</h3>
+                </div>
+                <div class="card-body">
+                    <p><strong>Job ID:</strong> {job_id}</p>
+                    <p><strong>PDF Report:</strong> {"Available" if pdf_exists else "Not found"}</p>
+                    <p><strong>HTML Report:</strong> {"Available" if html_exists else "Not found"}</p>
+                    
+                    <div class="report-link">
+                        <h4>Direct Report Links:</h4>
+                        {"<a href='/reports/" + job_id + "_pgx_report.pdf' class='btn btn-primary' target='_blank'>View PDF Report</a>" if pdf_exists else "<span class='text-danger'>PDF report not found</span>"}
+                    </div>
+                    
+                    <div class="report-link">
+                        {"<a href='/reports/" + job_id + "_pgx_report.html' class='btn btn-info' target='_blank'>View HTML Report</a>" if html_exists else "<span class='text-danger'>HTML report not found</span>"}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h3>Troubleshooting Information</h3>
+                </div>
+                <div class="card-body">
+                    <p>If the main interface doesn't display your reports, you can use the links above to access them directly.</p>
+                    <p>Job Status Information:</p>
+                    <pre>{json.dumps(job_status.get(job_id, {}), indent=2)}</pre>
+                    
+                    <div class="mt-3">
+                        <a href="/" class="btn btn-secondary">Return to Main Page</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content)

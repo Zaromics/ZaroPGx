@@ -97,6 +97,14 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                     if "success" not in results:
                         results["success"] = True
                     
+                    # Make sure there's a data field containing the results
+                    if "data" not in results:
+                        results["data"] = results.copy()
+                        # Remove non-data fields from the nested data
+                        for key in ["success", "message"]:
+                            if key in results["data"]:
+                                del results["data"][key]
+                    
                     return results
                 except ValueError as e:
                     error_msg = f"Failed to parse PharmCAT API response: {str(e)}"

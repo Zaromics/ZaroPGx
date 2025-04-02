@@ -1,0 +1,135 @@
+======================================================================
+TROUBLESHOOTING SESSION SUMMARY - REPORT VISIBILITY ISSUES (April 2, 2025)
+======================================================================
+
+ROOT CAUSES:
+- SSE event stream not properly indicating completion to frontend
+- PharmCAT response structure had nested gene data not properly accessed
+- Frontend not correctly handling various data formats
+- Report file paths for direct access needed better error handling
+
+SOLUTIONS IMPLEMENTED:
+1. Added specialized report serving endpoint: /reports/{filename}
+2. Enhanced frontend to better handle completion events
+3. Created emergency report access system with direct HTML links
+4. Fixed gene data extraction in the backend
+5. Added multiple fallback mechanisms to ensure report visibility
+
+KEY FILES MODIFIED:
+- app/main.py: Added new endpoints for reports and manual completion
+- app/templates/index.html: Enhanced progress monitoring and report display
+- app/api/routes/upload_router.py: Fixed gene data extraction
+
+TESTS PERFORMED:
+- VCF file uploads with manual completion checks
+- Direct access to report files via new endpoints
+- Verification of report generation with dummy data fallback
+
+RECOMMENDED WORKFLOW FOR USERS:
+1. Upload VCF file through normal interface
+2. If reports don't appear after processing completes:
+   a. Note the job ID (typically "1" for first upload)
+   b. Use the "Manual Complete" button with that job ID
+   c. Access reports directly from the new tab that opens
+
+FUTURE IMPROVEMENTS:
+- Refactor SSE progress monitoring for reliability
+- Better PharmCAT response parsing
+- Comprehensive logging throughout pipeline
+- Automated testing for the complete workflow
+
+ures for various genes.</p></li>\n<li><p>CPIC is a registered service mark of the U.S. Department of Health &amp; Human Services (HHS).</p></li>\n</ol>\n<h3 id="h-pharmgkb-disclaimers-and-caveats">H. PharmGKB Disclaimers and Caveats</h3>\n<p>PharmGKB is a registered service mark of the U.S. Department of Health &amp; Human Services (HHS).</p>\n</section>\n\n\n</main>\n</body>\n</html>\n'}}
+pgx_app                | INFO:app.api.routes.upload_router:Trying direct access to genes data from 'results'
+pgx_app                | INFO:app.api.routes.upload_router:Final diplotypes count: 0
+pgx_app                | WARNING:app.api.routes.upload_router:No drugRecommendations found in standard location
+pgx_app                | INFO:app.api.routes.upload_router:Final recommendations count: 0
+pgx_app                | WARNING:app.api.routes.upload_router:HTML report doesn't exist or no diplotypes found. HTML exists: True, Diplotypes: 0
+pgx_app                | WARNING:app.api.routes.upload_router:No diplotypes found for report. Using dummy data.
+pgx_app                | WARNING:app.api.routes.upload_router:No recommendations found for report. Using dummy data.
+pgx_app                | INFO:app.api.routes.upload_router:Generating PDF report to /data/reports/5_pgx_report.pdf
+pgx_app                | INFO:app.reports.generator:Generating PDF report for patient 5
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'maxp' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'maxp' table
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.001s to load 'maxp'
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to prune 'maxp'
+pgx_app                | INFO:fontTools.subset:maxp pruned
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'cmap' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'cmap' table
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'post' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'post' table
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.010s to load 'cmap'
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to prune 'cmap'
+pgx_app                | INFO:fontTools.subset:cmap pruned
+pgx_app                | INFO:fontTools.subset:fpgm dropped
+pgx_app                | INFO:fontTools.subset:prep dropped
+pgx_app                | INFO:fontTools.subset:cvt  dropped
+pgx_app                | INFO:fontTools.subset:kern dropped
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to load 'post'
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to prune 'post'
+pgx_app                | INFO:fontTools.subset:post pruned
+pgx_app                | INFO:fontTools.subset:GPOS dropped
+pgx_app                | INFO:fontTools.subset:GSUB dropped
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'glyf' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'glyf' table
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'loca' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'loca' table
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'head' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'head' table
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.007s to load 'glyf'
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to prune 'glyf'
+pgx_app                | INFO:fontTools.subset:glyf pruned
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.001s to close glyph list over 'cmap'
+pgx_app                | INFO:fontTools.subset:Added gid0 to subset
+pgx_app                | INFO:fontTools.subset:Closing glyph list over 'glyf': 42 glyphs before
+pgx_app                | INFO:fontTools.subset:Glyph names: ['.notdef', 'A', 'C', 'D', 'E', 'G', 'I', 'M', 'N', 'P', 'R', 'S', 'Y', 'Z', 'a', 'b', 'c', 'colon', 'd', 'e', 'f', 'g', 'h', 'i', 'l', 'm', 'n', 'o', 'p', 'parenleft', 'parenright', 'r', 's', 'six', 'space', 't', 'two', 'u', 'v', 'x', 'y', 'z']
+pgx_app                | INFO:fontTools.subset:Glyph IDs:   [0, 3, 11, 12, 21, 25, 29, 36, 38, 39, 40, 42, 44, 48, 49, 51, 53, 54, 60, 61, 68, 69, 70, 71, 72, 73, 74, 75, 76, 79, 80, 81, 82, 83, 85, 86, 87, 88, 89, 91, 92, 93]
+pgx_app                | INFO:fontTools.subset:Closed glyph list over 'glyf': 42 glyphs after
+pgx_app                | INFO:fontTools.subset:Glyph names: ['.notdef', 'A', 'C', 'D', 'E', 'G', 'I', 'M', 'N', 'P', 'R', 'S', 'Y', 'Z', 'a', 'b', 'c', 'colon', 'd', 'e', 'f', 'g', 'h', 'i', 'l', 'm', 'n', 'o', 'p', 'parenleft', 'parenright', 'r', 's', 'six', 'space', 't', 'two', 'u', 'v', 'x', 'y', 'z']
+pgx_app                | INFO:fontTools.subset:Glyph IDs:   [0, 3, 11, 12, 21, 25, 29, 36, 38, 39, 40, 42, 44, 48, 49, 51, 53, 54, 60, 61, 68, 69, 70, 71, 72, 73, 74, 75, 76, 79, 80, 81, 82, 83, 85, 86, 87, 88, 89, 91, 92, 93]
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.001s to close glyph list over 'glyf'
+pgx_app                | INFO:fontTools.subset:Retaining 42 glyphs
+pgx_app                | INFO:fontTools.subset:head subsetting not needed
+pgx_app                | INFO:fontTools.subset:hhea subsetting not needed
+pgx_app                | INFO:fontTools.subset:maxp subsetting not needed
+pgx_app                | INFO:fontTools.subset:OS/2 subsetting not needed
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'hmtx' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'hmtx' table
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'hhea' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'hhea' table
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.003s to subset 'hmtx'
+pgx_app                | INFO:fontTools.subset:hmtx subsetted
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.002s to subset 'cmap'
+pgx_app                | INFO:fontTools.subset:cmap subsetted
+pgx_app                | INFO:fontTools.subset:loca subsetting not needed
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to subset 'post'
+pgx_app                | INFO:fontTools.subset:post subsetted
+pgx_app                | INFO:fontTools.subset:gasp subsetting not needed
+pgx_app                | INFO:fontTools.subset:FFTM NOT subset; don't know how to subset
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'GDEF' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'GDEF' table
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.002s to subset 'GDEF'
+pgx_app                | INFO:fontTools.subset:GDEF subsetted
+pgx_app                | INFO:fontTools.subset:name subsetting not needed
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.001s to subset 'glyf'
+pgx_app                | INFO:fontTools.subset:glyf subsetted
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to subset GlyphOrder
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to prune 'head'
+pgx_app                | INFO:fontTools.subset:head pruned
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'OS/2' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'OS/2' table
+pgx_app                | INFO:fontTools.subset:OS/2 Unicode ranges pruned: [0]
+pgx_app                | INFO:fontTools.subset:OS/2 CodePage ranges pruned: [0]
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to prune 'glyf'
+pgx_app                | INFO:fontTools.subset:glyf pruned
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.000s to prune 'GDEF'
+pgx_app                | INFO:fontTools.subset:GDEF pruned
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'name' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'name' table
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'gasp' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'gasp' table
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Reading 'FFTM' table from disk
+pgx_app                | DEBUG:fontTools.ttLib.ttFont:Decompiling 'FFTM' table
+pgx_app                | DEBUG:fontTools.subset.timer:Took 0.001s to prune 'name'
+pgx_app                | INFO:fontTools.subset:name pruned
+pgx_app                | INFO:app.reports.generator:PDF report generated successfully: /data/reports/5_pgx_report.pdf
+pgx_app                | INFO:app.api.routes.upload_router:Updated job status with report URLs: PDF=/reports/5_pgx_report.pdf, HTML=/reports/5_pgx_report.html

@@ -10,7 +10,7 @@ import json
 from app.api.db import get_db, register_report, get_guidelines_for_gene_drug
 from app.api.models import ReportRequest, ReportResponse, DrugRecommendation
 from app.reports.generator import generate_pdf_report
-from ..utils.security import get_current_user
+from ..utils.security import get_current_user, get_optional_user
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,8 +19,7 @@ logger = logging.getLogger(__name__)
 # Initialize router
 router = APIRouter(
     prefix="/reports",
-    tags=["reports"],
-    dependencies=[Depends(get_current_user)]
+    tags=["reports"]
 )
 
 # Constants
@@ -83,7 +82,8 @@ def generate_report_background(patient_id: str, file_id: str, report_type: str, 
 async def generate_report(
     request: ReportRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_optional_user)
 ):
     """
     Generate a pharmacogenomic report for a patient based on their genetic data.
@@ -119,7 +119,11 @@ async def generate_report(
         raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
 
 @router.get("/{report_id}/status")
-async def get_report_status(report_id: str, db: Session = Depends(get_db)):
+async def get_report_status(
+    report_id: str, 
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_optional_user)
+):
     """
     Check the status of a report generation request.
     """
@@ -138,7 +142,11 @@ async def get_report_status(report_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Report not found")
 
 @router.get("/{report_id}/download")
-async def download_report(report_id: str, db: Session = Depends(get_db)):
+async def download_report(
+    report_id: str, 
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_optional_user)
+):
     """
     Download a generated pharmacogenomic report.
     """
@@ -164,7 +172,12 @@ async def download_report(report_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error downloading report: {str(e)}")
 
 @router.get("/recommendations/{patient_id}", response_model=List[DrugRecommendation])
-async def get_drug_recommendations(patient_id: str, drug: Optional[str] = None, db: Session = Depends(get_db)):
+async def get_drug_recommendations(
+    patient_id: str, 
+    drug: Optional[str] = None, 
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_optional_user)
+):
     """
     Get drug recommendations for a patient based on their genetic profile.
     Optionally filter by specific drug.

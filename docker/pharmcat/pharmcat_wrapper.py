@@ -262,6 +262,71 @@ def process_file():
                         else:
                             results[name] = json.load(f)
                 
+                # PharmCAT generates reports with .match.json, .phenotype.json, and .report.html extensions
+                # We need to:
+                # 1. Copy these files to the expected locations in /data/reports
+                # 2. Structure the response data to match what the main app expects
+                
+                # Create report directory if it doesn't exist
+                reports_dir = Path("/data/reports")
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Copy PharmCAT reports to /data/reports with app-expected naming
+                # The main app expects files named job_id_pgx_report.pdf and job_id_pgx_report.html
+                dest_html_path = reports_dir / f"{base_name}_pgx_report.html"
+                src_html_path = Path(temp_dir) / f"{base_name}.report.html"
+                
+                logger.info(f"Copying PharmCAT report from {src_html_path} to {dest_html_path}")
+                
+                if os.path.exists(src_html_path):
+                    shutil.copy2(src_html_path, dest_html_path)
+                    logger.info(f"HTML report copied to {dest_html_path}")
+                else:
+                    logger.error(f"PharmCAT HTML report not found at {src_html_path}")
+                
+                # Parse the PharmCAT phenotype.json file to get structured data
+                phenotype_path = Path(temp_dir) / f"{base_name}.phenotype.json"
+                match_path = Path(temp_dir) / f"{base_name}.match.json"
+                
+                # Parse results from PharmCAT output files to get structured data
+                genes_data = []
+                drug_recommendations = []
+                
+                if os.path.exists(phenotype_path):
+                    try:
+                        with open(phenotype_path, 'r') as f:
+                            phenotype_data = json.load(f)
+                            
+                        # Extract gene data from phenotype file
+                        if "phenotypes" in phenotype_data:
+                            for gene_id, gene_info in phenotype_data["phenotypes"].items():
+                                gene_entry = {
+                                    "gene": gene_id,
+                                    "diplotype": {
+                                        "name": gene_info.get("diplotype", "Unknown"),
+                                        "activityScore": gene_info.get("activityScore")
+                                    },
+                                    "phenotype": {
+                                        "info": gene_info.get("phenotype", "Unknown")
+                                    }
+                                }
+                                genes_data.append(gene_entry)
+                                
+                        # Extract drug recommendations
+                        if "drugRecommendations" in phenotype_data:
+                            for drug_rec in phenotype_data["drugRecommendations"]:
+                                drug_recommendations.append(drug_rec)
+                                
+                        logger.info(f"Extracted {len(genes_data)} genes and {len(drug_recommendations)} drug recommendations")
+                    except Exception as e:
+                        logger.error(f"Error parsing phenotype file: {str(e)}")
+                else:
+                    logger.error(f"PharmCAT phenotype file not found at {phenotype_path}")
+                
+                # Ensure the results object has the required structure
+                results["genes"] = genes_data
+                results["drugRecommendations"] = drug_recommendations
+                
                 # Update processing status to success
                 processing_status.update({
                     "status": "completed",
@@ -269,15 +334,16 @@ def process_file():
                     "last_error": None
                 })
                 
-                # Return success response with results and report URLs
+                # Return response with properly structured data
                 return jsonify({
                     "success": True,
                     "message": "PharmCAT analysis completed successfully",
-                    "results": results,
-                    "report_url": f"/reports/{base_name}.report.html",  # URL for the report
                     "data": {
-                        "pdf_report_url": f"/reports/{base_name}.report.pdf",
-                        "html_report_url": f"/reports/{base_name}.report.html",
+                        "job_id": base_name,
+                        "pdf_report_url": f"/reports/{base_name}_pgx_report.pdf",
+                        "html_report_url": f"/reports/{base_name}_pgx_report.html",
+                        "genes": genes_data,
+                        "drugRecommendations": drug_recommendations,
                         "results": results
                     }
                 })

@@ -225,3 +225,29 @@ Services communicate with each other using their service names as hostnames:
 ## License
 
 This project is licensed under the AGPLv3 License.
+
+## Emergency Report Access System
+
+For cases where the automatic report display in the UI fails, we've implemented a robust emergency access system:
+
+### Direct Report Access
+
+1. After uploading your VCF file, if reports don't appear automatically:
+   - Note your job ID (typically "1" for the first upload after restart)
+   - Find the "Manual Complete" button at the bottom of the page
+   - Enter your job ID and click the button
+
+2. A new tab will open showing:
+   - Direct links to your PDF and HTML reports
+   - Detailed troubleshooting information
+   - Job status details for debugging
+
+### Using the Emergency System
+
+The emergency system provides three ways to access your reports:
+
+1. **Direct Links**: Click the PDF or HTML report buttons in the new tab
+2. **Main UI Update**: The main page should also update to show report links
+3. **Manual Status Check**: Use the "Check Reports" button with your job ID
+
+This ensures you can always access your reports even if the normal UI flow encounters issues with the Server-Sent Events (SSE) progress monitoring system.

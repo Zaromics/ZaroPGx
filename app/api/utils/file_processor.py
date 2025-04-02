@@ -232,13 +232,6 @@ class FileProcessor:
             
             # Determine workflow
             workflow = self.determine_workflow(analysis)
-            
-            # If original WGS is provided, update workflow
-            if original_wgs and analysis.file_type == FileType.VCF:
-                workflow["recommendations"].append(
-                    "Using original WGS data for improved analysis"
-                )
-                workflow["needs_stargazer"] = True
 
             return {
                 "file_analysis": analysis,
