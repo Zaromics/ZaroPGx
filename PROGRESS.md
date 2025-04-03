@@ -5,7 +5,7 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 
 ## Project Status
 - **Current Phase**: Phase 1 Implementation - Core Gene Groups
-- **Last Updated**: March 30, 2025
+- **Last Updated**: April 3, 2025
 
 ## Components & Services
 
@@ -17,7 +17,8 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 | **PostgreSQL Database** | 🟢 Working | Stores CPIC guidelines, user data, reports | Gene grouping schema implemented |
 | **PharmCAT Service** | 🟢 Working | Using official pgkb/pharmcat Docker image | Now running with proper command |
 | **PharmCAT Wrapper** | 🟢 Working | Python wrapper providing REST API for PharmCAT | API accessible via port 5001 |
-| **Aldy Service** | 🟡 Enhanced | Multi-gene genotype caller | Updated to support multiple PGx genes |
+| **GATK**
+| **HAPI FHIR Server** | 🟢 Working | FHIR server for EHR integration | Provides FHIR API for report exports |
 
 ### 2. Docker Infrastructure
 
@@ -26,12 +27,14 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 | **Docker Compose** | 🟢 Working | Multi-container orchestration | Core services up and running |
 | **Network Config** | 🟢 Working | PGX-Network for service communication | Services communicating successfully |
 | **Volumes** | 🟢 Working | Data persistence and sharing | Using volume mounts for JAR sharing |
+| **HAPI FHIR Server** | 🟢 Working | FHIR server for EHR integration | Running with persistent storage |
 | **Health Checks** | 🟡 In Progress | Container health monitoring | Temporarily simplified for debugging |
 
 ### 3. Features & Capabilities
 
 | Feature | Status | Description | Issues/Next Steps |
 |---------|--------|-------------|------------------|
+| **FHIR Integration** | 🟢 Working | EHR integration via FHIR standard | Button in UI with fhirServerUrl configuration |
 | **VCF Processing** | 🟢 Working | Upload and analysis of genetic data | Basic UI form for uploading VCF files |
 | **Genotype Extraction** | 🟡 Enhanced | Star allele calling from genetic data | Now supports multiple genes and groups |
 | **Report Generation** | 🟢 Working | PDF reports for clinical use | Templates implemented with WeasyPrint |
@@ -42,66 +45,73 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 
 ## Recent Changes
 
-1. **Phase 1 Implementation**: 
+1. **FHIR Integration (April 3, 2025)**:
+   - Added HAPI FHIR server to Docker stack for EHR integration
+   - Created API endpoint in report_router.py for exporting PGx reports to FHIR servers
+   - Implemented FHIR export UI in interactive report template
+   - Created dedicated JavaScript module (pgx-fhir-export.js) for FHIR functionality
+   - Separated visualization code from FHIR export logic for better maintainability
+   - Configured FastAPI to properly serve static files from app/static directory
+
+2. **Phase 1 Implementation**: 
    - Created database schema for gene groups and relationships
    - Enhanced Aldy wrapper to support multiple genes and gene grouping
    - Added gene group and multi-gene analysis endpoints
    - Updated Dockerfile to support additional gene definitions
 
-2. **Major Enhancement**: 
-   - Extended Aldy wrapper to support 25+ pharmacogenomic genes
+3. **Major Enhancement**: 
    - Implemented gene grouping by functional pathway (CYP450, Phase II, etc.)
    - Added `/multi_genotype` endpoint for analyzing multiple genes in one request
    - Added support for gene group-based analysis
 
-3. **Database Schema Update**:
+4. **Database Schema Update**:
    - Added `gene_groups` table for categorizing genes by function
    - Created `gene_group_members` table for gene-group relationships
    - Implemented functions for dynamic gene group membership
 
-4. **Service Integration Fixes**:
+5. **Service Integration Fixes**:
    - Fixed service connection issues between main app and PharmCAT wrapper
    - Updated PharmCAT wrapper to use /genotype endpoint for processing
    - Fixed URL naming in Docker Compose networking
    - Properly passed environment variables between containers
 
-5. **Report Generation Implementation**:
+6. **Report Generation Implementation**:
    - Created PDF report template with clean styling
    - Implemented interactive HTML report with visualizations
    - Added proper error handling for PDF generation
    - Created fallback mechanisms for report generation errors
    
-6. **Sample Data Integration**:
+7. **Sample Data Integration**:
    - Added sample VCF files for CYP2C19 and CYP2D6 genes
    - Created test data for verifying the pipeline
    - Implemented VCF upload and processing workflow
 
-7. **Major Update**: Added user-friendly web interface:
+8. **Major Update**: Added user-friendly web interface:
    - Created Bootstrap-based web UI
    - Added file upload form for VCF processing
    - Added service status display
    - Implemented Jinja2 templates in FastAPI
 
-8. **GATK API Enhancements**: 
+9. **GATK API Enhancements**: 
    - Implemented intelligent reference genome detection from file headers
    - Added support for handling non-human contigs (viral, mitochondrial)
    - Enhanced progress tracking with real-time memory usage monitoring
    - Improved error handling and automatic retry logic for contig issues
    - Added comprehensive diagnostic endpoint for system monitoring
 
-9. **Reference Genome Handling**:
+10. **Reference Genome Handling**:
    - Added automatic detection of reference genome from file headers
    - Implemented fallback mechanisms for reference detection
    - Added support for both hg38 and hg19 reference genomes
    - Enhanced error reporting for reference genome mismatches
 
-10. **Memory Management**:
+11. **Memory Management**:
    - Implemented dynamic memory allocation based on input file size
    - Added real-time memory usage tracking during GATK execution
    - Optimized Java memory settings for large file processing
    - Added memory usage reporting in job status updates
 
-11. **Job Status Tracking**:
+12. **Job Status Tracking**:
    - Enhanced progress reporting with chromosome-level tracking
    - Added detailed memory usage information to status updates
    - Improved error reporting and recovery mechanisms
@@ -320,6 +330,7 @@ For accurate pharmacogenomic analysis:
 - [x] Set up volume mounts for data persistence
 - [x] Implemented health checks for all services
 - [x] Configured proper service dependencies and startup order
+- [x] Added HAPI FHIR server for EHR integration
 
 ### Authentication & Security
 - [x] Implemented JWT-based authentication
@@ -347,6 +358,7 @@ For accurate pharmacogenomic analysis:
 - [x] Added file analysis display
 - [x] Implemented proper error handling and user feedback
 - [x] Added service status indicators
+- [x] Implemented FHIR export capability in interactive reports
 
 ## In Progress / Needs Fixing
 

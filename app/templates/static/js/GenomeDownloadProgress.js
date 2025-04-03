@@ -1,6 +1,8 @@
 /**
  * Genome Download Progress Component
  * Displays the status of reference genome downloads
+ * This component needs to be reworked. The downloading of reference genomes is not user-facing.
+ * Instead tools like this should be used to visualize the progress of the user's uploads.
  */
 class GenomeDownloadProgress {
     constructor() {
