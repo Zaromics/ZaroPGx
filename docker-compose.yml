@@ -62,7 +62,6 @@ services:
       retries: 1
     networks:
       - pgx-network
-    command: ["java", "-jar", "/pharmcat/pharmcat.jar", "server"]
 
   # PharmCAT Wrapper Service
   pharmcat-wrapper:

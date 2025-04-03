@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 import asyncio
 import requests
+import json
 
 from app.api.db import get_db, create_patient, register_genetic_data
 from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis as PydanticFileAnalysis, VCFHeaderInfo
@@ -58,22 +59,33 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # Update status for each stage
         stages = ["Upload", "Analysis", "GATK", "Stargazer", "PharmCAT", "Report"]
         for i, stage in enumerate(stages):
-            progress = int((i / len(stages)) * 100)
-            job_status[data_id].update({
-                "percent": progress,
-                "stage": stage,
-                "message": f"Processing {stage} stage..."
-            })
-            await asyncio.sleep(1)  # Give time for status updates
+            if i < 2:  # Only execute the first two stages
+                progress = int((i / len(stages)) * 100)
+                job_status[data_id].update({
+                    "percent": progress,
+                    "stage": stage,
+                    "message": f"Processing {stage} stage..."
+                })
+                await asyncio.sleep(1)  # Give time for status updates
 
         if workflow["needs_gatk"]:
             # Call GATK service for processing
             # This would be implemented with a call to GATK
+            job_status[data_id].update({
+                "percent": 30,
+                "stage": "GATK",
+                "message": "Processing through GATK..."
+            })
             pass
 
         if workflow["needs_stargazer"]:
             # Call Stargazer service for CYP2D6 analysis
             # This would be implemented with a call to Stargazer
+            job_status[data_id].update({
+                "percent": 50,
+                "stage": "Stargazer",
+                "message": "Processing through Stargazer..."
+            })
             pass
 
         if workflow["needs_conversion"]:
@@ -81,13 +93,53 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             # This would be implemented with a conversion tool
             pass
 
+        # Update status for PharmCAT stage
+        job_status[data_id].update({
+            "percent": 70,
+            "stage": "PharmCAT",
+            "message": "Processing through PharmCAT..."
+        })
+
         # Call PharmCAT service for final analysis
-        results = call_pharmcat_service(file_path)
-        logger.info(f"Processing complete: {results}")
+        logger.info(f"Calling PharmCAT service with file: {file_path}")
+        try:
+            # Use the run_pharmcat_analysis function from main.py if available
+            from app.main import run_pharmcat_analysis
+            results = await run_pharmcat_analysis(file_path)
+        except ImportError:
+            # Fall back to direct call if the function isn't available
+            logger.warning("run_pharmcat_analysis not found, falling back to direct call")
+            results = call_pharmcat_service(file_path)
+            
+        logger.info(f"PharmCAT processing complete")
         
         try:
+            # Update status for Report stage
+            job_status[data_id].update({
+                "percent": 90,
+                "stage": "Report",
+                "message": "Generating reports..."
+            })
+            
+            # Ensure results has required structure even if the call failed
+            if not isinstance(results, dict):
+                logger.error(f"PharmCAT results are not a dictionary: {type(results)}")
+                results = {"success": False, "message": "Invalid results format", "data": {}}
+                
+            if "data" not in results:
+                logger.warning("PharmCAT results missing 'data' key, adding empty data structure")
+                results["data"] = {}
+                
+            if "genes" not in results.get("data", {}):
+                logger.warning("Missing 'genes' in results data, adding empty list")
+                results.setdefault("data", {})["genes"] = []
+                
+            if "drugRecommendations" not in results.get("data", {}):
+                logger.warning("Missing 'drugRecommendations' in results data, adding empty list")
+                results.setdefault("data", {})["drugRecommendations"] = []
+            
             # Generate reports
-            if results.get("success"):
+            if results.get("success", False):
                 # Create directory for reports if it doesn't exist
                 reports_dir = Path("/data/reports")
                 reports_dir.mkdir(parents=True, exist_ok=True)
@@ -96,249 +148,160 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 report_path = reports_dir / f"{data_id}_pgx_report.pdf"
                 html_report_path = reports_dir / f"{data_id}_pgx_report.html"
                 
-                # Create a combined results object
-                combined_results = {
-                    "job_id": data_id,
-                    "sample_id": patient_id,
-                    "pharmcat": results.get("data", {}),
-                    "processing_date": datetime.utcnow().isoformat()
-                }
-                
-                # Log received data structure from PharmCAT
-                logger.info(f"PharmCAT results structure: {list(results.keys())}")
-                if "data" in results:
-                    logger.info(f"PharmCAT data structure: {list(results['data'].keys())}")
-                
                 # Extract data needed for the reports
                 pharmcat_data = results.get("data", {})
                 
-                # Extract diplotypes from PharmCAT results
-                diplotypes = []
+                # Extract diplotypes from PharmCAT results - should be normalized already
+                diplotypes = pharmcat_data.get("genes", [])
+                logger.info(f"PharmCAT returned {len(diplotypes)} genes")
                 
-                # Check if genes data is directly in the response
-                if isinstance(pharmcat_data.get("genes"), list):
-                    logger.info(f"Found {len(pharmcat_data['genes'])} genes in pharmcat_data['genes']")
-                    for gene in pharmcat_data.get("genes", []):
-                        gene_name = gene.get("gene", "")
+                # Simple diplotype format conversion if needed
+                formatted_diplotypes = []
+                for gene in diplotypes:
+                    if isinstance(gene, dict):
+                        # Handle different possible data structures
                         diplotype_obj = gene.get("diplotype", {})
-                        phenotype_obj = gene.get("phenotype", {})
+                        diplotype_name = diplotype_obj
+                        if isinstance(diplotype_obj, dict):
+                            diplotype_name = diplotype_obj.get("name", "Unknown")
                         
-                        diplotypes.append({
-                            "gene": gene_name,
-                            "diplotype": diplotype_obj.get("name", "Unknown"),
-                            "phenotype": phenotype_obj.get("info", "Unknown"),
-                            "activity_score": diplotype_obj.get("activityScore")
+                        phenotype_obj = gene.get("phenotype", {})
+                        phenotype_info = phenotype_obj
+                        if isinstance(phenotype_obj, dict):
+                            phenotype_info = phenotype_obj.get("info", "Unknown")
+                        
+                        formatted_diplotypes.append({
+                            "gene": gene.get("gene", ""),
+                            "diplotype": diplotype_name,
+                            "phenotype": phenotype_info,
+                            "activity_score": diplotype_obj.get("activityScore") if isinstance(diplotype_obj, dict) else None
                         })
-                        logger.info(f"Added gene {gene_name} with diplotype {diplotype_obj.get('name', 'Unknown')}")
-                else:
-                    # CRITICAL DEBUG - dump the full PharmCAT data so we can see what's available
-                    logger.warning(f"No genes list found. PharmCAT data structure: {pharmcat_data}")
-                    
-                    # Look for genes in other locations - sometimes it's nested differently
-                    if isinstance(pharmcat_data.get("results"), dict) and isinstance(pharmcat_data.get("results").get("genes"), list):
-                        logger.info("Found genes in pharmcat_data.results.genes")
-                        genes_list = pharmcat_data.get("results").get("genes", [])
-                        for gene in genes_list:
-                            diplotypes.append({
-                                "gene": gene.get("gene", ""),
-                                "diplotype": gene.get("diplotype", {}).get("name", "Unknown"),
-                                "phenotype": gene.get("phenotype", {}).get("info", "Unknown"),
-                                "activity_score": gene.get("diplotype", {}).get("activityScore")
-                            })
-                    
-                    # Direct access from the PharmCAT wrapper specific structure
-                    if len(diplotypes) == 0:
-                        # Try direct access to the actual structure we're seeing in the logs
-                        logger.info("Trying direct access to genes data from 'results'")
-                        if "results" in pharmcat_data and "phenotype_results" in pharmcat_data["results"]:
-                            phenotype_data = pharmcat_data["results"]["phenotype_results"]
-                            if "phenotypes" in phenotype_data:
-                                logger.info(f"Found phenotypes data with {len(phenotype_data['phenotypes'])} genes")
-                                for gene_id, gene_info in phenotype_data["phenotypes"].items():
-                                    logger.info(f"Processing gene {gene_id}: {gene_info}")
-                                    diplotypes.append({
-                                        "gene": gene_id,
-                                        "diplotype": gene_info.get("diplotype", "Unknown"),
-                                        "phenotype": gene_info.get("phenotype", "Unknown"),
-                                        "activity_score": gene_info.get("activityScore")
-                                    })
                 
-                logger.info(f"Final diplotypes count: {len(diplotypes)}")
+                # Log the number of diplotypes found
+                logger.info(f"Extracted {len(formatted_diplotypes)} formatted diplotypes")
                 
-                # Extract recommendations from PharmCAT results
-                recommendations = []
+                # Extract recommendations from PharmCAT results - should be normalized already
+                recommendations = pharmcat_data.get("drugRecommendations", [])
+                logger.info(f"PharmCAT returned {len(recommendations)} drug recommendations")
                 
-                if isinstance(pharmcat_data.get("drugRecommendations"), list):
-                    logger.info(f"Found {len(pharmcat_data['drugRecommendations'])} drug recommendations")
-                    for drug in pharmcat_data.get("drugRecommendations", []):
-                        drug_name = drug.get("drug", {}).get("name", "Unknown")
-                        if isinstance(drug.get("drug"), str):
-                            drug_name = drug.get("drug")
-                            
-                        recommendations.append({
-                            "gene": drug.get("gene", ""),
-                            "drug": drug_name,
-                            "guideline": drug.get("guideline", ""),
-                            "recommendation": drug.get("recommendation", "Unknown"),
-                            "classification": drug.get("classification", "Unknown")
-                        })
-                        logger.info(f"Added recommendation for drug {drug_name}")
-                else:
-                    # Try other locations for drug recommendations
-                    logger.warning("No drugRecommendations found in standard location")
+                # Simple recommendation format conversion if needed
+                formatted_recommendations = []
+                for drug in recommendations:
+                    if not isinstance(drug, dict):
+                        continue
+                        
+                    # Handle different possible structures for drug name
+                    drug_name = drug.get("drug", {})
+                    if isinstance(drug_name, dict):
+                        drug_name = drug_name.get("name", "Unknown")
                     
-                    # Try in results structure
-                    if "results" in pharmcat_data and "phenotype_results" in pharmcat_data["results"]:
-                        phenotype_data = pharmcat_data["results"]["phenotype_results"]
-                        if "drugRecommendations" in phenotype_data:
-                            logger.info(f"Found drug recommendations in phenotype_results: {len(phenotype_data['drugRecommendations'])}")
-                            for drug in phenotype_data["drugRecommendations"]:
-                                drug_name = drug.get("drug", {}).get("name", "Unknown")
-                                if isinstance(drug.get("drug"), str):
-                                    drug_name = drug.get("drug")
-                                
-                                recommendations.append({
-                                    "gene": drug.get("gene", ""),
-                                    "drug": drug_name,
-                                    "guideline": drug.get("guideline", ""),
-                                    "recommendation": drug.get("recommendation", "Unknown"),
-                                    "classification": drug.get("classification", "Unknown")
-                                })
+                    formatted_recommendations.append({
+                        "gene": drug.get("gene", ""),
+                        "drug": drug_name,
+                        "guideline": drug.get("guideline", ""),
+                        "recommendation": drug.get("recommendation", "Unknown"),
+                        "classification": drug.get("classification", "Unknown")
+                    })
                 
-                logger.info(f"Final recommendations count: {len(recommendations)}")
+                # Log the number of recommendations found
+                logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
                 
-                # Check if PharmCAT has already generated the HTML report
-                html_exists = html_report_path.exists()
+                # Check if the HTML report already exists (may have been copied by PharmCAT wrapper)
+                html_report_exists = html_report_path.exists()
                 
-                if not html_exists or len(diplotypes) == 0:
-                    logger.warning(f"HTML report doesn't exist or no diplotypes found. HTML exists: {html_exists}, Diplotypes: {len(diplotypes)}")
-                    
-                    # FORCE REPORT GENERATION: Always create reports regardless of extraction success
-                    from app.reports.generator import generate_pdf_report, create_interactive_html_report
-                    
-                    # Guarantee we have diplotypes data for reports
-                    if len(diplotypes) == 0:
-                        logger.warning("No diplotypes found for report. Using dummy data.")
-                        # Add dummy diplotypes for testing
-                        diplotypes = [
-                            {
-                                "gene": "CYP2D6",
-                                "diplotype": "*1/*1",
-                                "phenotype": "Normal Metabolizer",
-                                "activity_score": 2.0
-                            },
-                            {
-                                "gene": "CYP2C19",
-                                "diplotype": "*1/*2",
-                                "phenotype": "Intermediate Metabolizer",
-                                "activity_score": 1.0
-                            }
-                        ]
-                    
-                    # Guarantee we have recommendations for reports
-                    if len(recommendations) == 0:
-                        logger.warning("No recommendations found for report. Using dummy data.")
-                        # Add dummy recommendations for testing
-                        recommendations = [
-                            {
-                                "gene": "CYP2D6",
-                                "drug": "codeine",
-                                "guideline": "CPIC",
-                                "recommendation": "Use standard dosage",
-                                "classification": "Strong"
-                            },
-                            {
-                                "gene": "CYP2C19",
-                                "drug": "clopidogrel",
-                                "guideline": "CPIC",
-                                "recommendation": "Consider alternative",
-                                "classification": "Moderate"
-                            }
-                        ]
-                    
-                    # FORCE GENERATE PDF AND HTML REPORTS REGARDLESS
-                    logger.info(f"Force generating reports with {len(diplotypes)} diplotypes and {len(recommendations)} recommendations")
-                    
-                    # Generate PDF report
-                    logger.info(f"Generating PDF report to {report_path}")
-                    generate_pdf_report(
-                        patient_id=str(patient_id),
-                        report_id=str(data_id),
-                        diplotypes=diplotypes,
-                        recommendations=recommendations,
-                        report_path=str(report_path)
-                    )
-                    
-                    # Generate HTML report
-                    logger.info(f"Generating HTML report to {html_report_path}")
+                # Try to copy the HTML report directly from PharmCAT output if it exists in the data
+                if not html_report_exists and "html_report_url" in pharmcat_data:
+                    source_path = pharmcat_data["html_report_url"]
+                    if source_path.startswith("/"):
+                        # This is a direct file path, not a URL
+                        source_path = source_path.lstrip("/")
+                        full_source_path = Path("/") / source_path
+                        if full_source_path.exists():
+                            shutil.copy2(full_source_path, html_report_path)
+                            html_report_exists = True
+                            logger.info(f"Copied HTML report from {full_source_path} to {html_report_path}")
+                
+                # Log warning if no data was found
+                if len(formatted_diplotypes) == 0:
+                    logger.warning("No diplotypes found for report. Raw data structure: " + json.dumps(pharmcat_data)[:1000])
+                
+                if len(formatted_recommendations) == 0:
+                    logger.warning("No recommendations found for report. Raw data structure: " + json.dumps(pharmcat_data)[:1000])
+                
+                # ALWAYS generate our own reports, regardless of whether PharmCAT created them
+                from app.reports.generator import generate_pdf_report, create_interactive_html_report
+                
+                # Generate PDF report (even if HTML report already exists)
+                logger.info(f"Generating PDF report to {report_path}")
+                generate_pdf_report(
+                    patient_id=patient_id,
+                    report_id=data_id,
+                    diplotypes=formatted_diplotypes,
+                    recommendations=formatted_recommendations,
+                    report_path=str(report_path)
+                )
+                
+                # Generate HTML report if it doesn't already exist
+                if not html_report_exists:
+                    logger.info(f"Generating interactive HTML report to {html_report_path}")
                     create_interactive_html_report(
-                        patient_id=str(patient_id),
-                        report_id=str(data_id),
-                        diplotypes=diplotypes,
-                        recommendations=recommendations,
+                        patient_id=patient_id,
+                        report_id=data_id,
+                        diplotypes=formatted_diplotypes,
+                        recommendations=formatted_recommendations,
                         output_path=str(html_report_path)
                     )
-                else:
-                    logger.info(f"HTML report already exists at {html_report_path}, skipping generation")
-                
-                # Prepare consistent report URLs
-                pdf_report_url = f"/reports/{report_path.name}"
-                html_report_url = f"/reports/{html_report_path.name}"
                 
                 # Update job status with report URLs
-                status_update = {
-                    "status": "completed",
-                    "percent": 100,
-                    "message": "Analysis completed successfully",
-                    "stage": "Report",
-                    "complete": True,
-                    "success": True,
-                    "data": {
-                        "job_id": data_id,
-                        "pdf_report_url": pdf_report_url,
-                        "html_report_url": html_report_url,
-                        "results": combined_results
-                    }
-                }
-                
-                # Update the job status
-                job_status[data_id] = status_update
-                
-                # Log the update for debugging
-                logger.info(f"Updated job status with report URLs: PDF={pdf_report_url}, HTML={html_report_url}")
-                logger.info(f"Final job status: {job_status[data_id]}")
-            else:
                 job_status[data_id].update({
-                    "status": "failed",
-                    "percent": 0,
-                    "message": results.get("message", "Analysis failed"),
-                    "stage": "Error",
-                    "complete": True,
-                    "error": results.get("message")
+                    "data": {
+                        "pdf_report_url": f"/reports/{data_id}_pgx_report.pdf",
+                        "html_report_url": f"/reports/{data_id}_pgx_report.html",
+                        "diplotypes": formatted_diplotypes,
+                        "recommendations": formatted_recommendations
+                    }
                 })
-        except Exception as e:
-            logger.error(f"Error generating reports: {str(e)}")
+                
+                logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}_pgx_report.html")
+            
+            else:
+                # Handle PharmCAT error
+                error_msg = results.get("message", "Unknown error in PharmCAT processing")
+                logger.error(f"PharmCAT processing failed: {error_msg}")
+                job_status[data_id].update({
+                    "status": "error",
+                    "message": f"PharmCAT processing failed: {error_msg}"
+                })
+                return
+                
+        except Exception as report_error:
+            # Handle report generation error
+            logger.error(f"Error generating reports: {str(report_error)}")
             job_status[data_id].update({
-                "status": "failed",
-                "percent": 0,
-                "message": f"Error generating reports: {str(e)}",
-                "stage": "Error",
-                "complete": True,
-                "error": str(e)
+                "status": "error",
+                "message": f"Error generating reports: {str(report_error)}"
             })
-
+            return
+        
+        # Mark job as completed
+        job_status[data_id].update({
+            "status": "completed",
+            "percent": 100,
+            "stage": "Complete",
+            "message": "Analysis completed successfully",
+            "complete": True
+        })
+        
+        logger.info(f"Job {data_id} completed successfully")
+        
     except Exception as e:
+        # Handle any other errors
         logger.error(f"Error processing file: {str(e)}")
-        # Update status in database to failed
-        if data_id in job_status:
-            job_status[data_id].update({
-                "status": "failed",
-                "percent": 0,
-                "message": str(e),
-                "stage": "Error",
-                "complete": True,
-                "error": str(e)
-            })
+        job_status[data_id].update({
+            "status": "error",
+            "message": f"Error: {str(e)}",
+            "complete": True
+        })
 
 @router.post("/genomic-data", response_model=UploadResponse)
 async def upload_genomic_data(

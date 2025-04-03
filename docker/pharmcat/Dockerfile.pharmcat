@@ -16,14 +16,20 @@ RUN wget -q https://github.com/PharmGKB/PharmCAT/releases/download/v${PHARMCAT_V
     && mv pharmcat-${PHARMCAT_VERSION}-all.jar pharmcat.jar \
     && chmod +x pharmcat.jar
 
+# Create script for running pharmcat_pipeline
+RUN echo '#!/bin/sh\n\
+java -jar /pharmcat/pharmcat.jar pipeline "$@"' > /pharmcat/pharmcat_pipeline && \
+    chmod +x /pharmcat/pharmcat_pipeline && \
+    ln -s /pharmcat/pharmcat_pipeline /usr/local/bin/pharmcat_pipeline
+
 # Create data directory
 RUN mkdir -p /data
 VOLUME /data
 
 # Create health check script
 RUN echo '#!/bin/sh\n\
-# Check if Java process is running\n\
-if pgrep -f "java -jar pharmcat.jar" > /dev/null; then\n\
+# Check if PharmCAT JAR exists\n\
+if [ -f "/pharmcat/pharmcat.jar" ]; then\n\
   echo "{\\"status\\":\\"ok\\",\\"service\\":\\"pharmcat\\"}" \n\
   exit 0\n\
 else\n\
@@ -31,8 +37,8 @@ else\n\
   exit 1\n\
 fi' > /pharmcat/health.sh && chmod +x /pharmcat/health.sh
 
-# Expose API port
+# Expose API port (keeping for compatibility if needed)
 EXPOSE 8080
 
-# Command to run the service in API mode
-ENTRYPOINT ["java", "-jar", "pharmcat.jar", "serve", "--port", "8080"] 
+# Use a CMD instead of ENTRYPOINT to allow for overriding
+CMD ["tail", "-f", "/dev/null"] 

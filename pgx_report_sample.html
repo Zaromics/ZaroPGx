@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Pharmacogenomic Report - b45c1434-95c2-438a-b404-dce285bb9d06</title>
+    <!-- Include Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Include D3.js for advanced visualizations -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e67e22;
+            --success-color: #2ecc71;
+            --warning-color: #f39c12;
+            --danger-color: #e74c3c;
+            --info-color: #3498db;
+            --light-color: #ecf0f1;
+            --dark-color: #2c3e50;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        
+        header {
+            text-align: center;
+            padding: 20px 0;
+            margin-bottom: 30px;
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .logo {
+            max-width: 150px;
+            margin-bottom: 10px;
+        }
+        
+        h1, h2, h3, h4 {
+            color: var(--primary-color);
+        }
+        
+        .report-info {
+            display: flex;
+            justify-content: space-between;
+            background-color: var(--light-color);
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+        
+        .report-info-item {
+            flex: 1;
+            padding: 0 10px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .section h2 {
+            margin-top: 0;
+            border-bottom: 2px solid var(--light-color);
+            padding-bottom: 10px;
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--light-color);
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            margin-right: 5px;
+            border-radius: 5px 5px 0 0;
+            background-color: var(--light-color);
+        }
+        
+        .tab.active {
+            background-color: var(--secondary-color);
+            color: white;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .gene-phenotype {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 20px;
+            color: white;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .normal-metabolizer {
+            background-color: var(--success-color);
+        }
+        
+        .poor-metabolizer {
+            background-color: var(--danger-color);
+        }
+        
+        .intermediate-metabolizer {
+            background-color: var(--warning-color);
+            color: #333;
+        }
+        
+        .rapid-metabolizer, .ultrarapid-metabolizer {
+            background-color: var(--info-color);
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background-color: var(--light-color);
+            font-weight: bold;
+        }
+        
+        tr:hover {
+            background-color: rgba(0,0,0,0.02);
+        }
+        
+        .card {
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .drug-card {
+            margin-bottom: 15px;
+            border-left: 4px solid var(--secondary-color);
+            transition: transform 0.3s ease;
+        }
+        
+        .drug-card:hover {
+            transform: translateY(-3px);
+        }
+        
+        .normal-card {
+            border-left-color: var(--success-color);
+        }
+        
+        .warning-card {
+            border-left-color: var(--warning-color);
+        }
+        
+        .alert-card {
+            border-left-color: var(--danger-color);
+        }
+        
+        .info-card {
+            border-left-color: var(--info-color);
+        }
+        
+        .drug-card h3 {
+            margin-top: 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .chart-container {
+            height: 300px;
+            margin: 20px 0;
+        }
+        
+        .disclaimer {
+            margin-top: 50px;
+            padding: 15px;
+            background-color: var(--light-color);
+            border-radius: 5px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 50px;
+            padding: 20px;
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .report-info {
+                flex-direction: column;
+            }
+            
+            .report-info-item {
+                margin-bottom: 10px;
+            }
+            
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
+        <h1>ZaroPGx Pharmacogenomic Report</h1>
+        <p>Precision Medicine through Genetic Analysis</p>
+    </header>
+    
+    <div class="container">
+        <div class="report-info">
+            <div class="report-info-item">
+                <strong>Patient ID:</strong> b45c1434-95c2-438a-b404-dce285bb9d06
+            </div>
+            <div class="report-info-item">
+                <strong>Report ID:</strong> b45c1434-95c2-438a-b404-dce285bb9d06
+            </div>
+            <div class="report-info-item">
+                <strong>Report Date:</strong> 2025-04-02 17:12:00 UTC
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Gene-Drug Interaction Dashboard</h2>
+            
+            <div class="tabs">
+                <div class="tab active" onclick="showTab('summary')">Summary</div>
+                <div class="tab" onclick="showTab('genes')">Genes</div>
+                <div class="tab" onclick="showTab('drugs')">Drugs</div>
+                <div class="tab" onclick="showTab('visualizations')">Visualizations</div>
+            </div>
+            
+            <div id="summary" class="tab-content active">
+                <h3>Executive Summary</h3>
+                <p>This interactive report provides comprehensive pharmacogenomic information based on the patient's genetic analysis. The information can be used to guide medication selection and dosing based on the patient's genetic profile.</p>
+                
+                <h4>Key Findings</h4>
+                <div class="grid">
+                    
+                    <div class="card">
+                        <h3>CYP2D6</h3>
+                        <p><strong>Diplotype:</strong> *1/*1</p>
+                        <p>
+                            <strong>Phenotype:</strong> 
+                            <span class="gene-phenotype normal-metabolizer">
+                                Normal Metabolizer
+                            </span>
+                        </p>
+                        <p>
+                            <strong>Clinical Impact:</strong>
+                            
+                                Standard drug metabolism expected for medications metabolized by CYP2D6.
+                            
+                        </p>
+                    </div>
+                    
+                    <div class="card">
+                        <h3>CYP2C19</h3>
+                        <p><strong>Diplotype:</strong> *1/*2</p>
+                        <p>
+                            <strong>Phenotype:</strong> 
+                            <span class="gene-phenotype intermediate-metabolizer">
+                                Intermediate Metabolizer
+                            </span>
+                        </p>
+                        <p>
+                            <strong>Clinical Impact:</strong>
+                            
+                                Slightly reduced metabolism may require monitoring for medications metabolized by CYP2C19.
+                            
+                        </p>
+                    </div>
+                    
+                </div>
+                
+                <div class="chart-container">
+                    <canvas id="genePhenotypeChart"></canvas>
+                </div>
+            </div>
+            
+            <div id="genes" class="tab-content">
+                <h3>Genetic Results</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Gene</th>
+                            <th>Diplotype</th>
+                            <th>Phenotype</th>
+                            <th>Activity Score</th>
+                            <th>Implications</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        <tr>
+                            <td>CYP2D6</td>
+                            <td>*1/*1</td>
+                            <td>
+                                <span class="gene-phenotype normal-metabolizer">
+                                    Normal Metabolizer
+                                </span>
+                            </td>
+                            <td>2.0</td>
+                            <td>
+                                
+                                    Standard drug metabolism expected
+                                
+                            </td>
+                        </tr>
+                        
+                        <tr>
+                            <td>CYP2C19</td>
+                            <td>*1/*2</td>
+                            <td>
+                                <span class="gene-phenotype intermediate-metabolizer">
+                                    Intermediate Metabolizer
+                                </span>
+                            </td>
+                            <td>1.0</td>
+                            <td>
+                                
+                                    Slightly reduced metabolism may require monitoring
+                                
+                            </td>
+                        </tr>
+                        
+                    </tbody>
+                </table>
+                
+                <div id="geneInfoSection"></div>
+            </div>
+            
+            <div id="drugs" class="tab-content">
+                <h3>Drug Recommendations</h3>
+                <p>The following recommendations are based on CPIC guidelines and the patient's genetic profile:</p>
+                
+                <div class="grid">
+                    
+                    <div class="card drug-card 
+                        normal-card
+                        ">
+                        <h3>
+                            codeine
+                            <small>CYP2D6</small>
+                        </h3>
+                        <p><strong>Recommendation:</strong> Use standard dosage</p>
+                        <p><strong>Strength of Evidence:</strong> Strong</p>
+                        
+                    </div>
+                    
+                    <div class="card drug-card 
+                        warning-card
+                        ">
+                        <h3>
+                            clopidogrel
+                            <small>CYP2C19</small>
+                        </h3>
+                        <p><strong>Recommendation:</strong> Consider alternative drug</p>
+                        <p><strong>Strength of Evidence:</strong> Strong</p>
+                        
+                    </div>
+                    
+                </div>
+            </div>
+            
+            <div id="visualizations" class="tab-content">
+                <h3>Interactive Visualizations</h3>
+                
+                <div class="chart-container">
+                    <h4>Drug-Gene Interaction Network</h4>
+                    <div id="networkVisualization"></div>
+                </div>
+                
+                <div class="chart-container">
+                    <h4>Drug Recommendations by Risk</h4>
+                    <canvas id="recommendationChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Methodology</h2>
+            <p>The patient's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), which follows the guidelines of the Clinical Pharmacogenetics Implementation Consortium (CPIC). The genetic data was processed to identify star alleles and diplotypes, which were then used to determine phenotypes and drug recommendations.</p>
+            
+            <p>The recommendations in this report are based on the following sources:</p>
+            <ul>
+                <li>CPIC guidelines (cpicpgx.org)</li>
+                <li>PharmGKB knowledge base (pharmgkb.org)</li>
+                <li>FDA pharmacogenomic biomarker information</li>
+            </ul>
+        </div>
+        
+        <div class="disclaimer">
+            
+    DISCLAIMER: This pharmacogenomic report is for informational purposes only and is not intended
+    to be used as a substitute for professional medical advice, diagnosis, or treatment. The recommendations
+    in this report are based on guidelines from the Clinical Pharmacogenetics Implementation Consortium (CPIC)
+    and are subject to change as new research becomes available.
+    
+    The results should be interpreted by a healthcare professional in the context of the patient's
+    clinical situation. Medication decisions should never be made solely based on this report without
+    consulting a qualified healthcare provider.
+    
+        </div>
+    </div>
+    
+    <footer>
+        <p>ZaroPGx Pharmacogenomic Report &copy; 2025 ZaroPGx, Inc.</p>
+        <p>Generated on 2025-04-02 17:12:00 UTC</p>
+    </footer>
+    
+    <script>
+        // Tab functionality
+        function showTab(tabId) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Deactivate all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Activate the selected tab and content
+            document.getElementById(tabId).classList.add('active');
+            document.querySelector(`.tab[onclick="showTab('${tabId}')"]`).classList.add('active');
+        }
+        
+        // Function to create color-coded gene-phenotype chart
+        function createGenePhenotypeChart() {
+            const ctx = document.getElementById('genePhenotypeChart').getContext('2d');
+            
+            // Extract gene data
+            const genes = [];
+            const phenotypes = [];
+            const colors = [];
+            
+            
+            genes.push("CYP2D6");
+            phenotypes.push("Normal Metabolizer");
+            
+            
+                colors.push('#2ecc71'); // success-color
+            
+            
+            genes.push("CYP2C19");
+            phenotypes.push("Intermediate Metabolizer");
+            
+            
+                colors.push('#f39c12'); // warning-color
+            
+            
+            
+            // Create the chart
+            new Chart(ctx, {
+                type: 'horizontalBar',
+                data: {
+                    labels: genes,
+                    datasets: [{
+                        label: 'Phenotype',
+                        data: genes.map(() => 1), // Just to show the bars
+                        backgroundColor: colors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: 'Gene Phenotypes'
+                    },
+                    scales: {
+                        xAxes: [{
+                            display: false,
+                            ticks: {
+                                beginAtZero: true
+                            }
+                        }],
+                        yAxes: [{
+                            gridLines: {
+                                display: false
+                            }
+                        }]
+                    },
+                    tooltips: {
+                        callbacks: {
+                            label: function(tooltipItem, data) {
+                                return phenotypes[tooltipItem.index];
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Function to create recommendation chart
+        function createRecommendationChart() {
+            const ctx = document.getElementById('recommendationChart').getContext('2d');
+            
+            // Count recommendations by type
+            const recommendationTypes = {
+                'Standard/Normal': 0,
+                'Consider Alternative': 0,
+                'Avoid': 0,
+                'Other': 0
+            };
+            
+            
+            
+                recommendationTypes['Standard/Normal']++;
+            
+            
+            
+                recommendationTypes['Consider Alternative']++;
+            
+            
+            
+            // Create the chart
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(recommendationTypes),
+                    datasets: [{
+                        data: Object.values(recommendationTypes),
+                        backgroundColor: [
+                            '#2ecc71', // success-color
+                            '#f39c12', // warning-color
+                            '#e74c3c', // danger-color
+                            '#3498db'  // info-color
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    title: {
+                        display: true,
+                        text: 'Drug Recommendations by Type'
+                    },
+                    legend: {
+                        position: 'right'
+                    }
+                }
+            });
+        }
+        
+        // Function to create network visualization
+        function createNetworkVisualization() {
+            const container = document.getElementById('networkVisualization');
+            
+            // Set up SVG
+            const width = container.clientWidth;
+            const height = 300;
+            
+            const svg = d3.select('#networkVisualization')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+            
+            // Parse the recommendations
+            const recommendationsData = {"CYP2D6": {"codeine": [{"gene": "CYP2D6", "drug": "codeine", "guideline": "CPIC", "recommendation": "Use standard dosage", "classification": "Strong"}]}, "CYP2C19": {"clopidogrel": [{"gene": "CYP2C19", "drug": "clopidogrel", "guideline": "CPIC", "recommendation": "Consider alternative drug", "classification": "Strong"}]}};
+            
+            // Create nodes for genes and drugs
+            const nodes = [];
+            const links = [];
+            
+            // Add gene nodes
+            
+            nodes.push({
+                id: "CYP2D6",
+                type: "gene",
+                phenotype: "Normal Metabolizer"
+            });
+            
+            nodes.push({
+                id: "CYP2C19",
+                type: "gene",
+                phenotype: "Intermediate Metabolizer"
+            });
+            
+            
+            // Add drug nodes and links
+            
+            // Check if the drug is already in nodes
+            if (!nodes.some(node => node.id === "codeine")) {
+                nodes.push({
+                    id: "codeine",
+                    type: "drug"
+                });
+            }
+            
+            // Add the link
+            links.push({
+                source: "CYP2D6",
+                target: "codeine",
+                recommendation: "Use standard dosage"
+            });
+            
+            // Check if the drug is already in nodes
+            if (!nodes.some(node => node.id === "clopidogrel")) {
+                nodes.push({
+                    id: "clopidogrel",
+                    type: "drug"
+                });
+            }
+            
+            // Add the link
+            links.push({
+                source: "CYP2C19",
+                target: "clopidogrel",
+                recommendation: "Consider alternative drug"
+            });
+            
+            
+            // Create the force simulation
+            const simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-400))
+                .force('center', d3.forceCenter(width / 2, height / 2));
+            
+            // Create links
+            const link = svg.append('g')
+                .selectAll('line')
+                .data(links)
+                .enter()
+                .append('line')
+                .attr('stroke', d => {
+                    if (d.recommendation.toLowerCase().includes('avoid')) {
+                        return '#e74c3c'; // danger-color
+                    } else if (d.recommendation.toLowerCase().includes('consider') || 
+                               d.recommendation.toLowerCase().includes('alternative')) {
+                        return '#f39c12'; // warning-color
+                    } else if (d.recommendation.toLowerCase().includes('standard') || 
+                               d.recommendation.toLowerCase().includes('normal')) {
+                        return '#2ecc71'; // success-color
+                    } else {
+                        return '#3498db'; // info-color
+                    }
+                })
+                .attr('stroke-width', 2);
+            
+            // Create nodes
+            const node = svg.append('g')
+                .selectAll('circle')
+                .data(nodes)
+                .enter()
+                .append('circle')
+                .attr('r', 10)
+                .attr('fill', d => {
+                    if (d.type === 'gene') {
+                        if (d.phenotype.includes('Normal')) {
+                            return '#2ecc71'; // success-color
+                        } else if (d.phenotype.includes('Poor')) {
+                            return '#e74c3c'; // danger-color
+                        } else if (d.phenotype.includes('Intermediate')) {
+                            return '#f39c12'; // warning-color
+                        } else if (d.phenotype.includes('Rapid') || d.phenotype.includes('Ultrarapid')) {
+                            return '#3498db'; // info-color
+                        } else {
+                            return '#95a5a6'; // gray
+                        }
+                    } else {
+                        return '#2c3e50'; // primary-color
+                    }
+                })
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+            
+            // Add node labels
+            const label = svg.append('g')
+                .selectAll('text')
+                .data(nodes)
+                .enter()
+                .append('text')
+                .text(d => d.id)
+                .attr('font-size', 12)
+                .attr('dx', 15)
+                .attr('dy', 4);
+            
+            // Update positions
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+                
+                node
+                    .attr('cx', d => d.x)
+                    .attr('cy', d => d.y);
+                
+                label
+                    .attr('x', d => d.x)
+                    .attr('y', d => d.y);
+            });
+            
+            // Drag functions
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+            
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+        
+        // Create detailed gene information section
+        function createGeneInfoSection() {
+            const geneInfoSection = document.getElementById('geneInfoSection');
+            
+            
+            const geneInfo = document.createElement('div');
+            geneInfo.className = 'section';
+            geneInfo.innerHTML = `
+                <h3>CYP2D6 Information</h3>
+                <p><strong>Description:</strong> 
+                    
+                        Cytochrome P450 Family a Subfamily D Member 6 is responsible for metabolizing approximately 25% of clinically used drugs.
+                    
+                </p>
+                <p><strong>Diplotype:</strong> *1/*1</p>
+                <p><strong>Phenotype:</strong> Normal Metabolizer</p>
+                <p><strong>Activity Score:</strong> 2.0</p>
+                <h4>Clinical Implications</h4>
+                <p>
+                    
+                        This patient has normal CYP2D6 activity, which means they should respond normally to medications metabolized by CYP2D6.
+                    
+                </p>
+                
+                <h4>Related Medications</h4>
+                <ul>
+                    
+                        <li>Codeine (pain relief)</li>
+                        <li>Tamoxifen (cancer treatment)</li>
+                        <li>Antidepressants (fluoxetine, paroxetine)</li>
+                        <li>Antipsychotics (haloperidol, risperidone)</li>
+                    
+                </ul>
+            `;
+            geneInfoSection.appendChild(geneInfo);
+            
+            const geneInfo = document.createElement('div');
+            geneInfo.className = 'section';
+            geneInfo.innerHTML = `
+                <h3>CYP2C19 Information</h3>
+                <p><strong>Description:</strong> 
+                    
+                        Cytochrome P450 Family 2 Subfamily C Member 19 is involved in the metabolism of several important drug classes including proton pump inhibitors and antidepressants.
+                    
+                </p>
+                <p><strong>Diplotype:</strong> *1/*2</p>
+                <p><strong>Phenotype:</strong> Intermediate Metabolizer</p>
+                <p><strong>Activity Score:</strong> 1.0</p>
+                <h4>Clinical Implications</h4>
+                <p>
+                    
+                        This patient has moderately reduced CYP2C19 activity, which may result in somewhat reduced metabolism of drugs processed by CYP2C19. Careful monitoring may be required when using medications metabolized by CYP2C19.
+                    
+                </p>
+                
+                <h4>Related Medications</h4>
+                <ul>
+                    
+                        <li>Clopidogrel (antiplatelet)</li>
+                        <li>Proton pump inhibitors (omeprazole)</li>
+                        <li>Antidepressants (citalopram, escitalopram)</li>
+                        <li>Antifungals (voriconazole)</li>
+                    
+                </ul>
+            `;
+            geneInfoSection.appendChild(geneInfo);
+            
+        }
+        
+        // Initialize everything when the page loads
+        window.addEventListener('load', function() {
+            createGenePhenotypeChart();
+            createRecommendationChart();
+            createNetworkVisualization();
+            createGeneInfoSection();
+        });
+    </script>
+</body>
+</html> 

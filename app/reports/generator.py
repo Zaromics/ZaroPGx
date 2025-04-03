@@ -4,7 +4,11 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any
 from weasyprint import HTML, CSS
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from app.pharmcat_wrapper.pharmcat_client import normalize_pharmcat_results
+
+# Version
+__version__ = "1.0.0"
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +20,11 @@ CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
 
 # Initialize Jinja2 environment
 env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+
+# Custom exceptions
+class ReportGenerationError(Exception):
+    """Exception raised when report generation fails."""
+    pass
 
 def generate_pdf_report(
     patient_id: str,
@@ -135,8 +144,13 @@ def organize_gene_drug_recommendations(recommendations: List[Dict[str, Any]]) ->
     organized = {}
     
     for rec in recommendations:
-        gene = rec.get("gene")
-        drug = rec.get("drug")
+        # Get gene(s) - could be under 'gene' or 'genes' in different formats
+        gene = rec.get("gene") if rec.get("gene") else rec.get("genes", "Unknown")
+        drug = rec.get("drug", "Unknown")
+        
+        # If genes is a comma-separated string, use the first gene
+        if isinstance(gene, str) and "," in gene:
+            gene = gene.split(",")[0].strip()
         
         if gene not in organized:
             organized[gene] = {}
@@ -174,14 +188,19 @@ def create_interactive_html_report(
         # Ensure the directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
+        # Map recommendations if they're in the new format
+        template_recommendations = recommendations
+        if recommendations and "genes" in recommendations[0] and "gene" not in recommendations[0]:
+            template_recommendations = map_recommendations_for_template(recommendations)
+        
         # Prepare the report data
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
             "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
             "diplotypes": diplotypes,
-            "recommendations": recommendations,
-            "organized_recommendations": json.dumps(organize_gene_drug_recommendations(recommendations)),
+            "recommendations": template_recommendations,
+            "organized_recommendations": json.dumps(organize_gene_drug_recommendations(template_recommendations)),
             "disclaimer": get_disclaimer()
         }
         
@@ -198,3 +217,131 @@ def create_interactive_html_report(
     except Exception as e:
         logger.error(f"Error generating interactive HTML report: {str(e)}")
         raise 
+
+def map_recommendations_for_template(drug_recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Map drug recommendations from PharmCAT format to template-compatible format.
+    
+    Args:
+        drug_recommendations: List of drug recommendations from normalized PharmCAT results
+        
+    Returns:
+        Template-compatible recommendations
+    """
+    mapped_recommendations = []
+    
+    for rec in drug_recommendations:
+        # Create a recommendation object with fields required by the template
+        mapped_rec = {
+            "drug": rec.get("drug", "Unknown"),
+            "gene": rec.get("genes", ""),  # Use the genes field from our normalized format
+            "recommendation": rec.get("recommendation", "See report for details"),
+            "classification": rec.get("classification", "Unknown"),
+            "literature_references": []  # Default empty list since templates check for this
+        }
+        
+        # Add implications as references if available
+        if "implications" in rec and rec["implications"]:
+            if isinstance(rec["implications"], list):
+                mapped_rec["literature_references"] = rec["implications"]
+            elif isinstance(rec["implications"], str):
+                # Split by semicolon if it's a string
+                mapped_rec["literature_references"] = [imp.strip() for imp in rec["implications"].split(";") if imp.strip()]
+        
+        mapped_recommendations.append(mapped_rec)
+    
+    return mapped_recommendations
+
+def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_info: Dict[str, Any] = None) -> Dict[str, str]:
+    """
+    Generate a report from PharmCAT results
+    
+    Args:
+        pharmcat_results: Results from PharmCAT
+        output_dir: Directory to write report files to
+        patient_info: Optional patient information
+        
+    Returns:
+        Dict containing file paths for HTML and PDF reports
+    """
+    logger.info("Generating report from PharmCAT results")
+    
+    # Ensure normalized data is used consistently
+    normalized_results = normalize_pharmcat_results(pharmcat_results)
+    data = normalized_results["data"]
+    
+    # Map recommendations to template-compatible format
+    template_recommendations = map_recommendations_for_template(data.get("drugRecommendations", []))
+    
+    # Prepare the template data
+    template_data = {
+        "patient": patient_info or {},
+        "report_date": datetime.now().strftime("%Y-%m-%d"),
+        "genes": data.get("genes", []),
+        "diplotypes": data.get("genes", []),  # For compatibility with template
+        "recommendations": template_recommendations,  # Use mapped recommendations
+        "drug_recommendations": data.get("drugRecommendations", []),  # Keep original for reference
+        "version": __version__
+    }
+    
+    # Create a unique filename based on timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    patient_id = patient_info.get("id", "unknown") if patient_info else "unknown"
+    base_filename = f"pgx_report_{patient_id}_{timestamp}"
+    
+    # Ensure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    try:
+        # Generate both standard HTML report and interactive HTML report
+        html_path = os.path.join(output_dir, f"{base_filename}.html")
+        interactive_html_path = os.path.join(output_dir, f"{base_filename}_interactive.html")
+        
+        # Generate standard HTML report
+        env = Environment(
+            loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "templates")),
+            autoescape=select_autoescape(['html', 'xml'])
+        )
+        template = env.get_template("report_template.html")
+        html_content = template.render(**template_data)
+        
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        logger.info(f"HTML report generated: {html_path}")
+        
+        # Generate interactive HTML report
+        create_interactive_html_report(
+            patient_id=patient_id,
+            report_id=base_filename,
+            diplotypes=data.get("genes", []),
+            recommendations=template_recommendations,
+            output_path=interactive_html_path
+        )
+        logger.info(f"Interactive HTML report generated: {interactive_html_path}")
+        
+        # Generate PDF report from the HTML
+        pdf_path = os.path.join(output_dir, f"{base_filename}.pdf")
+        html = HTML(string=html_content)
+        html.write_pdf(pdf_path)
+        logger.info(f"PDF report generated: {pdf_path}")
+        
+        # Return file paths
+        server_html_path = f"/reports/{base_filename}.html"
+        server_interactive_html_path = f"/reports/{base_filename}_interactive.html"
+        server_pdf_path = f"/reports/{base_filename}.pdf"
+        
+        # Update the normalized results with the report paths
+        normalized_results["data"]["html_report_url"] = server_html_path
+        normalized_results["data"]["interactive_html_report_url"] = server_interactive_html_path
+        normalized_results["data"]["pdf_report_url"] = server_pdf_path
+        
+        return {
+            "html_path": server_html_path,
+            "interactive_html_path": server_interactive_html_path,
+            "pdf_path": server_pdf_path,
+            "normalized_results": normalized_results
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating report: {str(e)}")
+        raise ReportGenerationError(f"Failed to generate report: {str(e)}") 

@@ -3,38 +3,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, StreamingResponse
-from sse_starlette.sse import EventSourceResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, StreamingResponse, EventSourceResponse
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, AsyncGenerator, Callable
+from typing import Optional, List, Dict, Any, AsyncGenerator
 from asyncio import Queue
-from dotenv import load_dotenv
-from sqlalchemy.orm import Session
 import os
-import re
 import shutil
 import json
 import uuid
 import asyncio
-import aiohttp
 import tempfile
 import logging
 from pathlib import Path
-import zipfile
-import time
-import requests
-from werkzeug.utils import secure_filename
-import traceback
-import httpx
-from app.pharmcat_wrapper import pharmcat_client
 
 from app.api.models import Token, TokenData
 from app.pharmcat_wrapper.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
 from app.reports.generator import generate_pdf_report, create_interactive_html_report, generate_report
 from app.api.db import get_db
 from app.api.utils.security import get_current_user, get_optional_user
-from app.api.routes import upload_router, report_router
 
 # Configure more detailed logging
 log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
@@ -1592,9 +1579,14 @@ async def call_variants(
         except:
             pass
 
+@app.get("/reports/{filename}")
+async def get_report(filename: str):
+    """
+    Serve a generated report file
+    """
     reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
     return FileResponse(os.path.join(reports_dir, filename))
-
+):
     """Test endpoint for BAM file processing using GATK"""
     try:
         # Save the uploaded file
@@ -2181,55 +2173,126 @@ async def trigger_completion(job_id: str):
 
 @app.post("/analyze")
 async def analyze_genome(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    genome_file: UploadFile = File(...),
-    patient_id: Optional[str] = Form(None),
-    patient_name: Optional[str] = Form(None),
-    patient_mrn: Optional[str] = Form(None)
+    genome: UploadFile = File(...),
+    patient_info: str = Form(None),
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Analyze a genome file using PharmCAT and return the results
-    
-    This endpoint accepts a genome file upload and patient information,
-    then processes the file using PharmCAT in the background and
-    returns Server-Sent Events with progress updates
+    Analyze a genome file with PharmCAT and generate a report
     """
+    logger.info(f"Received genome analysis request for file: {genome.filename}")
+    
+    # Parse patient info JSON if provided
+    patient_data = {}
+    if patient_info:
+        try:
+            patient_data = json.loads(patient_info)
+            logger.info(f"Patient info provided: {patient_data}")
+        except json.JSONDecodeError:
+            logger.warning(f"Invalid patient info JSON: {patient_info}")
+    
+    # Initialize SSE response
+    client_queue = Queue()
+    task_id = str(uuid.uuid4())
+    background_tasks.add_task(
+        process_genome_analysis, 
+        genome=genome, 
+        patient_info=patient_data,
+        client_queue=client_queue,
+        task_id=task_id
+    )
+    
+    # Return the SSE response to the client
+    return EventSourceResponse(sse_results(client_queue, task_id))
+
+
+async def process_genome_analysis(
+    genome: UploadFile,
+    patient_info: Dict[str, Any],
+    client_queue: Queue,
+    task_id: str
+):
+    """
+    Process genome analysis in the background and send progress updates via SSE
+    """
+    results = {"success": False, "message": "Analysis failed"}
+    report_paths = {"html_path": "", "pdf_path": ""}
+    
     try:
-        # Generate a unique ID for this analysis
-        analysis_id = str(uuid.uuid4())
-        logger.info(f"Starting genome analysis {analysis_id} for patient {patient_id or 'unknown'}")
+        # Write genome file to temp directory
+        await client_queue.put({"task_id": task_id, "status": "running", "message": "Saving genome file...", "progress": 10})
         
-        # Create a queue for SSE messages
-        client_queue = Queue()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(genome.filename)[1]) as tmp:
+            # Save the uploaded file
+            contents = await genome.read()
+            tmp.write(contents)
+            genome_path = tmp.name
         
-        # Define a function to send SSE updates to client
-        async def send_update(message: Dict[str, Any]):
-            await client_queue.put(message)
+        # Run PharmCAT analysis
+        await client_queue.put({"task_id": task_id, "status": "running", "message": "Running PharmCAT analysis...", "progress": 30})
+        pharmcat_results = run_pharmcat_analysis(genome_path)
         
-        # Start the analysis in the background
-        background_tasks.add_task(
-            process_genome_analysis,
-            upload_file=genome_file,
-            genome_id=analysis_id,
-            patient_id=patient_id,
-            patient_name=patient_name,
-            patient_mrn=patient_mrn,
-            notify_client=send_update
-        )
-        
-        # Return SSE response
-        return StreamingResponse(
-            sse_results(client_queue, analysis_id),
-            media_type="text/event-stream"
-        )
-        
+        if pharmcat_results["success"]:
+            # Generate report
+            await client_queue.put({"task_id": task_id, "status": "running", "message": "Generating report...", "progress": 70})
+            
+            reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
+            report_result = generate_report(pharmcat_results, reports_dir, patient_info)
+            
+            # Extract the normalized results with report paths
+            normalized_results = report_result["normalized_results"]
+            
+            # Return successful results with report paths
+            await client_queue.put({
+                "task_id": task_id, 
+                "status": "complete", 
+                "message": "Analysis complete",
+                "progress": 100,
+                "results": normalized_results
+            })
+        else:
+            await client_queue.put({
+                "task_id": task_id, 
+                "status": "error", 
+                "message": pharmcat_results["message"],
+                "progress": 100
+            })
+
     except Exception as e:
-        logger.error(f"Error starting genome analysis: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error starting analysis: {str(e)}")
+        logger.error(f"Error in genome analysis: {str(e)}")
+        await client_queue.put({
+            "task_id": task_id, 
+            "status": "error", 
+            "message": f"Analysis failed: {str(e)}",
+            "progress": 100
+        })
+    
+    finally:
+        # Clean up temporary files
+        if 'genome_path' in locals():
+            try:
+                os.unlink(genome_path)
+            except Exception as e:
+                logger.error(f"Error removing temporary file: {str(e)}")
 
 
+@app.get("/reports/{filename}")
+async def get_report(filename: str):
+    """
+    Serve a generated report file
+    """
+    reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
+    return FileResponse(os.path.join(reports_dir, filename))
+
+# Add the following imports
+import uuid
+import json
+import asyncio
+import tempfile
+from asyncio import Queue
+from fastapi import BackgroundTasks, File, Form, UploadFile
+
+# Add the sse_results function above the analyze_genome endpoint
 async def sse_results(queue: Queue, task_id: str):
     """
     Server-Sent Events generator for streaming progress updates
@@ -2245,15 +2308,15 @@ async def sse_results(queue: Queue, task_id: str):
         while True:
             message = await queue.get()
             
-            # Add task_id to the message if not present
-            if "task_id" not in message:
-                message["task_id"] = task_id
+            # Check if this is for our task
+            if message.get("task_id") != task_id:
+                continue
                 
             # Convert message to JSON and yield as SSE
             yield f"data: {json.dumps(message)}\n\n"
             
             # If status is complete or error, break the loop
-            if message.get("status") in ["completed", "error"]:
+            if message.get("status") in ["complete", "error"]:
                 break
                 
     except asyncio.CancelledError:
@@ -2265,243 +2328,34 @@ async def sse_results(queue: Queue, task_id: str):
         logger.info(f"SSE connection for task {task_id} closed")
 
 
-async def process_genome_analysis(
-    upload_file: UploadFile,
-    genome_id: str,
-    patient_id: Optional[str] = None,
-    patient_name: Optional[str] = None,
-    patient_mrn: Optional[str] = None,
-    notify_client: Callable = None
-) -> Dict[str, Any]:
+# Add the run_pharmcat_analysis function that was referenced but not defined
+def run_pharmcat_analysis(genome_path: str) -> Dict[str, Any]:
     """
-    Process genome analysis task in the background
-    
-    Args:
-        upload_file: The uploaded genome file
-        genome_id: Unique ID for this genome analysis
-        patient_id: Optional patient ID
-        patient_name: Optional patient name
-        patient_mrn: Optional patient medical record number
-        notify_client: Callback to notify client of progress
-        
-    Returns:
-        Dict with analysis results
-    """
-    try:
-        # Create a temporary directory for processing
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Update client on progress - start
-            if notify_client:
-                await notify_client({
-                    "status": "processing",
-                    "progress": 10,
-                    "message": "Starting genome analysis..."
-                })
-            
-            # Save the uploaded file
-            file_path = os.path.join(temp_dir, secure_filename(upload_file.filename))
-            with open(file_path, "wb") as f:
-                content = await upload_file.read()
-                f.write(content)
-            
-            logger.info(f"Saved uploaded genome file to: {file_path}")
-            
-            # Update client on progress - file saved
-            if notify_client:
-                await notify_client({
-                    "status": "processing",
-                    "progress": 20,
-                    "message": "Running PharmCAT analysis..."
-                })
-            
-            # Run PharmCAT analysis
-            pharmcat_results = await run_pharmcat_analysis(file_path)
-            
-            if not pharmcat_results.get("success", False):
-                error_msg = pharmcat_results.get("message", "Unknown error in PharmCAT analysis")
-                logger.error(f"PharmCAT analysis failed: {error_msg}")
-                
-                # Update client on error
-                if notify_client:
-                    await notify_client({
-                        "status": "error",
-                        "message": f"PharmCAT analysis failed: {error_msg}"
-                    })
-                
-                return {
-                    "success": False,
-                    "message": f"PharmCAT analysis failed: {error_msg}"
-                }
-            
-            # Update client - PharmCAT analysis done
-            if notify_client:
-                await notify_client({
-                    "status": "processing",
-                    "progress": 70,
-                    "message": "PharmCAT analysis completed, generating report..."
-                })
-            
-            # Get the PharmCAT results
-            genes = pharmcat_results.get("data", {}).get("genes", [])
-            drug_recommendations = pharmcat_results.get("data", {}).get("drugRecommendations", [])
-            pdf_report_url = pharmcat_results.get("data", {}).get("pdf_report_url", "")
-            html_report_url = pharmcat_results.get("data", {}).get("html_report_url", "")
-            
-            logger.info(f"PharmCAT analysis completed with {len(genes)} genes and {len(drug_recommendations)} drug recommendations")
-            
-            # Generate PDF report (placeholder for now - will be implemented separately)
-            report_result = {
-                "report_id": genome_id,
-                "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                "pdf_url": pdf_report_url,
-                "html_url": html_report_url
-            }
-            
-            # Update client - report generated
-            if notify_client:
-                await notify_client({
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Analysis completed successfully",
-                    "data": {
-                        "genes": genes,
-                        "drugRecommendations": drug_recommendations,
-                        "report": report_result
-                    }
-                })
-            
-            # Return the results
-            return {
-                "success": True,
-                "message": "Genome analysis completed successfully",
-                "data": {
-                    "analysis_id": genome_id,
-                    "patient_id": patient_id,
-                    "patient_name": patient_name,
-                    "genes": genes,
-                    "drugRecommendations": drug_recommendations,
-                    "report": report_result,
-                    "pdf_report_url": pdf_report_url,
-                    "html_report_url": html_report_url
-                }
-            }
-    
-    except Exception as e:
-        logger.error(f"Error in genome analysis: {str(e)}")
-        logger.error(traceback.format_exc())
-        
-        # Update client on error
-        if notify_client:
-            await notify_client({
-                "status": "error",
-                "message": f"Error in genome analysis: {str(e)}"
-            })
-        
-        return {
-            "success": False,
-            "message": f"Error in genome analysis: {str(e)}"
-        }
-
-async def run_pharmcat_analysis(genome_path: str) -> Dict[str, Any]:
-    """
-    Run PharmCAT analysis on genome file and extract data from report.json
+    Run PharmCAT analysis on a genome file
     
     Args:
         genome_path: Path to the genome file
         
     Returns:
-        Dict with PharmCAT results and status
+        Results from PharmCAT analysis
     """
     try:
-        logger.info(f"Starting PharmCAT analysis for {genome_path}")
+        logger.info(f"Running PharmCAT analysis on {genome_path}")
         
         # Call the PharmCAT service
-        response = await pharmcat_client.async_call_pharmcat_api(genome_path)
+        response = call_pharmcat_service(genome_path)
         
-        # Check if we received a proper response
-        if not isinstance(response, dict):
-            logger.error(f"Invalid response from PharmCAT service: {response}")
-            return {
-                "success": False,
-                "message": "Invalid response from PharmCAT service"
-            }
-        
-        # Check if the response is in the report.json format (has expected keys)
-        required_keys = ["title", "timestamp", "pharmcatVersion", "genes", "drugs"]
-        has_report_json_format = all(key in response for key in required_keys)
-        
-        # If we have a direct report.json format
-        if has_report_json_format:
-            logger.info("Received direct report.json format from PharmCAT service")
+        # Return the response
+        if response.get("success", False):
+            logger.info("PharmCAT analysis completed successfully")
+            return response
+        else:
+            logger.error(f"PharmCAT analysis failed: {response.get('message', 'Unknown error')}")
+            return response
             
-            # Normalize the results
-            normalized_results = pharmcat_client.normalize_pharmcat_results(response)
-            return {
-                "success": normalized_results["success"],
-                "message": normalized_results["message"],
-                "data": {
-                    "genes": normalized_results["genes"],
-                    "drugRecommendations": normalized_results["drugRecommendations"],
-                    "pdf_report_url": normalized_results["pdf_report_url"],
-                    "html_report_url": normalized_results["html_report_url"]
-                }
-            }
-        
-        # If not direct report.json format but we have a success key and nested data
-        if "success" in response and response.get("success", False):
-            logger.info("Received standard PharmCAT API response, extracting report.json content")
-            
-            # Extract report.json content
-            genes = response.get("genes", {})
-            drugs = response.get("drugs", {})
-            
-            # Build a report.json compatible structure
-            report_json_compatible = {
-                "success": True,
-                "data": response.get("data", {}),
-                "title": response.get("title", ""),
-                "timestamp": response.get("timestamp", ""),
-                "pharmcatVersion": response.get("pharmcatVersion", ""),
-                "genes": genes,
-                "drugs": drugs,
-                "messages": response.get("messages", [])
-            }
-            
-            # Normalize the results
-            normalized_results = pharmcat_client.normalize_pharmcat_results(report_json_compatible)
-            return {
-                "success": normalized_results["success"],
-                "message": normalized_results["message"],
-                "data": {
-                    "genes": normalized_results["genes"],
-                    "drugRecommendations": normalized_results["drugRecommendations"],
-                    "pdf_report_url": normalized_results["pdf_report_url"],
-                    "html_report_url": normalized_results["html_report_url"]
-                }
-            }
-        
-        # If response indicates failure
-        if "success" in response and not response.get("success", True):
-            error_msg = response.get("message", "Unknown error in PharmCAT analysis")
-            logger.error(f"PharmCAT analysis failed: {error_msg}")
-            return {
-                "success": False,
-                "message": f"PharmCAT analysis failed: {error_msg}"
-            }
-        
-        # If none of the above, return a generic error
-        logger.error(f"Unexpected PharmCAT response format: {response}")
-        return {
-            "success": False,
-            "message": "Unexpected PharmCAT response format"
-        }
-        
     except Exception as e:
-        logger.error(f"Error in PharmCAT analysis: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Error running PharmCAT analysis: {str(e)}")
         return {
             "success": False,
-            "message": f"Error in PharmCAT analysis: {str(e)}"
+            "message": f"PharmCAT analysis failed: {str(e)}"
         }
-
-

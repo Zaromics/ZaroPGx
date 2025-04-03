@@ -30,3 +30,5 @@ httpx
 aiofiles
 aiohttp
 werkzeug
+starlette
+sse-starlette

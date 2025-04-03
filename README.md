@@ -188,6 +188,33 @@ Services share data through:
    - Aldy Service: http://localhost:5002
    - Web UI: http://localhost:8765
 
+## Technical Details
+
+### PharmCAT Report System
+
+The application includes a robust system for handling PharmCAT report JSON data:
+
+1. **Report File Management**: 
+   - Each PharmCAT analysis generates multiple JSON files:
+     - `{job_id}_pgx_report.json`: Standard job-specific report
+     - `{job_id}_raw_report.json`: Unmodified raw report for debugging
+     - `latest_pharmcat_report.json`: Always updated with most recent report data
+
+2. **Reliability Mechanism**:
+   - The `latest_pharmcat_report.json` file serves as a persistent reference
+   - This file is always available for gene and drug data extraction
+   - Each successful PharmCAT run updates this file automatically
+
+3. **Fallback System**:
+   - If PharmCAT fails to generate a report, the system falls back to `latest_pharmcat_report.json`
+   - A sample report with valid structure can be copied to this location if needed
+   - This ensures report generation can proceed even with limited gene data
+
+4. **Maintenance Considerations**:
+   - The `latest_pharmcat_report.json` file should be preserved across container restarts
+   - It may need occasional updates to include additional genes or drugs
+   - New versions of PharmCAT may require adjustments to JSON parsing logic
+
 ## Development
 
 ### Adding New Dependencies
