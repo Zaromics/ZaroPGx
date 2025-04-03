@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ZaroPGx - Pharmacogenomics Platform</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Add Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -181,7 +183,7 @@
                                 </div>
                             </div>
                             
-                            <button type="submit" class="btn btn-primary" id="uploadButton">Upload and Analyze</button>
+                            <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
                             
                             <!-- Debug button to check for report status -->
                             <div class="mt-3 p-2 border-top">
@@ -242,6 +244,9 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     
+    <!-- Add JavaScript file for upload progress tracking -->
+    <script src="/static/js/GenomeDownloadProgress.js"></script>
+    
     <!-- Add JavaScript for real progress tracking using Server-Sent Events -->
     <script>
         // Define accessToken globally so it can be accessed by all functions
@@ -282,18 +287,18 @@
             const progressStatus = document.getElementById('progressStatus');
             const logMessages = document.getElementById('logMessages');
 
-            // Function to add log message
-            function addLogMessage(message, type = 'info') {
+            // Function to add log message - make it globally available
+            window.addLogMessage = function(message, type = 'info') {
                 const timestamp = new Date().toLocaleTimeString();
                 const logEntry = document.createElement('div');
                 logEntry.className = `text-${type}`;
                 logEntry.textContent = `[${timestamp}] ${message}`;
                 logMessages.appendChild(logEntry);
                 logMessages.scrollTop = logMessages.scrollHeight;
-            }
+            };
 
-            // Function to update file analysis display
-            function updateFileAnalysis(analysis) {
+            // Function to update file analysis display - make it globally available
+            window.updateFileAnalysis = function(analysis) {
                 fileAnalysis.classList.remove('d-none');
                 
                 // Update file type info
@@ -328,7 +333,173 @@
 
                 // Show progress container
                 progressContainer.classList.remove('d-none');
-            }
+            };
+
+            // Make monitorProgress globally available
+            window.monitorProgress = async function(jobId) {
+                const progressBar = document.getElementById('progressBar');
+                const progressStatus = document.getElementById('progressStatus');
+                const uploadButton = document.getElementById('uploadButton');
+                const logMessages = document.getElementById('logMessages');
+                
+                // Check if elements exist before proceeding
+                if (!progressBar || !progressStatus || !logMessages) {
+                    console.error("Progress monitoring elements not found");
+                    return;
+                }
+
+                try {
+                    // Make the request without the Authorization header
+                    const response = await fetch(`/progress/${jobId}`, {
+                        headers: {
+                            'Accept': 'text/event-stream'
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    while (true) {
+                        const {value, done} = await reader.read();
+                        if (done) break;
+                        
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+                        
+                        for (const line of lines) {
+                            if (line.trim().length > 0) {
+                                try {
+                                    if (line.startsWith('data: ')) {
+                                        try {
+                                            const data = JSON.parse(line.slice(6));
+                                            
+                                            // DEBUG: Log all progress data
+                                            console.log("Progress update received:", data);
+                                            
+                                            if (data.reconnect) {
+                                                console.log("Connection timed out, reconnecting...");
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                monitorProgress(jobId);
+                                                return;
+                                            }
+                                            
+                                            // Update progress bar
+                                            progressBar.style.width = `${data.percent}%`;
+                                            progressBar.textContent = `${data.percent}%`;
+                                            
+                                            // Update status message
+                                            progressStatus.textContent = data.message || '';
+                                            
+                                            // Add log message
+                                            addLogMessage(data.message || 'Processing...');
+                                            
+                                            // CRITICAL FIX: If complete, show results
+                                            if (data.complete) {
+                                                console.log("Processing complete:", data);
+                                                
+                                                // Set progress to 100%
+                                                progressBar.style.width = '100%';
+                                                progressBar.textContent = '100%';
+                                                
+                                                // Show completion message
+                                                addLogMessage("✓ Processing complete!", "success");
+                                                
+                                                // Add debug info
+                                                console.log("Complete data:", data);
+                                                
+                                                if (data.success) {
+                                                    addLogMessage("✓ Analysis successful", "success");
+                                                    console.log("Success data:", data.data);
+                                                    
+                                                    // Get report URLs
+                                                    let pdfUrl, htmlUrl;
+                                                    
+                                                    if (data.data) {
+                                                        pdfUrl = data.data.pdf_report_url;
+                                                        htmlUrl = data.data.html_report_url;
+                                                        console.log("Found report URLs in data.data:", pdfUrl, htmlUrl);
+                                                    }
+                                                    
+                                                    if (!pdfUrl && !htmlUrl) {
+                                                        const jobId = data.job_id || (data.data && data.data.job_id);
+                                                        console.log("Constructing URLs with job ID:", jobId);
+                                                        
+                                                        if (jobId) {
+                                                            pdfUrl = `/reports/${jobId}_pgx_report.pdf`;
+                                                            htmlUrl = `/reports/${jobId}_pgx_report.html`;
+                                                            console.log("Constructed URLs:", pdfUrl, htmlUrl);
+                                                        }
+                                                    }
+                                                    
+                                                    // Create results display
+                                                    const resultsDiv = document.getElementById('analysisResults');
+                                                    if (resultsDiv) {
+                                                        resultsDiv.innerHTML = `
+                                                            <div class="alert alert-success">
+                                                                <h4>Analysis Complete!</h4>
+                                                                <p>Your pharmacogenomic analysis has been completed successfully.</p>
+                                                                ${pdfUrl ? `<div class="mt-3">
+                                                                    <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
+                                                                        <i class="bi bi-file-pdf"></i> View PDF Report
+                                                                    </a>
+                                                                </div>` : ''}
+                                                                ${htmlUrl ? `<div class="mt-2">
+                                                                    <a href="${htmlUrl}" class="btn btn-info" target="_blank">
+                                                                        <i class="bi bi-file-code"></i> View Interactive Report
+                                                                    </a>
+                                                                </div>` : ''}
+                                                            </div>
+                                                        `;
+                                                        resultsDiv.classList.remove('d-none');
+                                                        addLogMessage("Report links are now available", "success");
+                                                    } else {
+                                                        console.error("Results container not found");
+                                                        addLogMessage("Error: Results container not found", "danger");
+                                                    }
+                                                } else {
+                                                    console.error("Processing failed:", data.message);
+                                                    addLogMessage(`Error: ${data.message}`, "danger");
+                                                    showError(data.message);
+                                                }
+                                                
+                                                // Re-enable the upload button
+                                                uploadButton.disabled = false;
+                                                uploadButton.textContent = 'Upload';
+                                                return;
+                                            }
+                                        } catch (parseError) {
+                                            console.error("Error parsing progress data:", parseError, "Raw data:", line);
+                                            addLogMessage(`Error parsing progress update: ${parseError.message}`, 'danger');
+                                        }
+                                    } else {
+                                        // Log any non-data lines for debugging
+                                        console.log("Non-data SSE line received:", line);
+                                    }
+                                } catch (lineError) {
+                                    console.error("Error processing SSE line:", lineError);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error monitoring progress:", error);
+                    showError("Error monitoring progress: " + error.message);
+                    uploadButton.disabled = false;
+                    uploadButton.textContent = 'Upload';
+                }
+            };
+
+            // Update the file upload handler to work without auth token
+            form.addEventListener('submit', async function(e) {
+                // The actual upload is now handled by GenomeDownloadProgress.js
+                // Prevent default just in case - for backup if the main handler fails
+                e.preventDefault();
+                return false;
+            });
 
             // Function to show results
             function showResults(data) {
@@ -469,211 +640,6 @@
                     </div>
                 `;
                 resultsDiv.classList.remove('d-none');
-            }
-
-            // Update the file upload handler to work without auth token
-            form.addEventListener('submit', async function(e) {
-                e.preventDefault();
-
-                const formData = new FormData(form);
-                const uploadButton = document.getElementById('uploadButton');
-                uploadButton.disabled = true;
-                uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Uploading...';
-
-                try {
-                    addLogMessage('Starting file upload...');
-                    // Make the request without the Authorization header
-                    const response = await fetch('/upload/genomic-data', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        let errorMessage = "Upload failed";
-                        try {
-                            const errorJson = JSON.parse(errorText);
-                            errorMessage = errorJson.detail || errorText;
-                        } catch {
-                            errorMessage = errorText || response.statusText;
-                        }
-                        
-                        addLogMessage(`${errorMessage}`, 'danger');
-                        uploadButton.disabled = false;
-                        uploadButton.textContent = 'Upload and Analyze';
-                        return;
-                    }
-
-                    const result = await response.json();
-                    addLogMessage('File uploaded successfully', 'success');
-                    updateFileAnalysis(result);
-                    
-                    // Start progress monitoring
-                    monitorProgress(result.file_id);
-                    
-                } catch (error) {
-                    addLogMessage(`Error during upload: ${error.message}`, 'danger');
-                    uploadButton.disabled = false;
-                    uploadButton.textContent = 'Upload and Analyze';
-                }
-            });
-
-            // Update the progress monitoring to work without auth token
-            async function monitorProgress(jobId) {
-                const progressBar = document.getElementById('progressBar');
-                const progressStatus = document.getElementById('progressStatus');
-                const uploadButton = document.getElementById('uploadButton');
-                const logMessages = document.getElementById('logMessages');
-                
-                // Check if elements exist before proceeding
-                if (!progressBar || !progressStatus || !logMessages) {
-                    console.error("Progress monitoring elements not found");
-                    return;
-                }
-
-                try {
-                    // Make the request without the Authorization header
-                    const response = await fetch(`/progress/${jobId}`, {
-                        headers: {
-                            'Accept': 'text/event-stream'
-                        }
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-
-                    while (true) {
-                        const {value, done} = await reader.read();
-                        if (done) break;
-                        
-                        const chunk = decoder.decode(value);
-                        const lines = chunk.split('\n');
-                        
-                        for (const line of lines) {
-                            if (line.trim().length > 0) {
-                                try {
-                                    if (line.startsWith('data: ')) {
-                                        try {
-                                            const data = JSON.parse(line.slice(6));
-                                            
-                                            // DEBUG: Log all progress data
-                                            console.log("Progress update received:", data);
-                                            
-                                            if (data.reconnect) {
-                                                console.log("Connection timed out, reconnecting...");
-                                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                                monitorProgress(jobId);
-                                                return;
-                                            }
-                                            
-                                            // Update progress bar
-                                            progressBar.style.width = `${data.percent}%`;
-                                            progressBar.textContent = `${data.percent}%`;
-                                            
-                                            // Update status message
-                                            progressStatus.textContent = data.message || '';
-                                            
-                                            // Add log message
-                                            addLogMessage(data.message || 'Processing...');
-                                            
-                                            // CRITICAL FIX: If complete, show results
-                                            if (data.complete) {
-                                                console.log("Processing complete:", data);
-                                                
-                                                // Set progress to 100%
-                                                progressBar.style.width = '100%';
-                                                progressBar.textContent = '100%';
-                                                
-                                                // Show completion message
-                                                addLogMessage("✓ Processing complete!", "success");
-                                                
-                                                // Add debug info
-                                                console.log("Complete data:", data);
-                                                
-                                                if (data.success) {
-                                                    addLogMessage("✓ Analysis successful", "success");
-                                                    console.log("Success data:", data.data);
-                                                    
-                                                    // Get report URLs
-                                                    let pdfUrl, htmlUrl;
-                                                    
-                                                    if (data.data) {
-                                                        pdfUrl = data.data.pdf_report_url;
-                                                        htmlUrl = data.data.html_report_url;
-                                                        console.log("Found report URLs in data.data:", pdfUrl, htmlUrl);
-                                                    }
-                                                    
-                                                    if (!pdfUrl && !htmlUrl) {
-                                                        const jobId = data.job_id || (data.data && data.data.job_id);
-                                                        console.log("Constructing URLs with job ID:", jobId);
-                                                        
-                                                        if (jobId) {
-                                                            pdfUrl = `/reports/${jobId}_pgx_report.pdf`;
-                                                            htmlUrl = `/reports/${jobId}_pgx_report.html`;
-                                                            console.log("Constructed URLs:", pdfUrl, htmlUrl);
-                                                        }
-                                                    }
-                                                    
-                                                    // Create results display
-                                                    const resultsDiv = document.getElementById('analysisResults');
-                                                    if (resultsDiv) {
-                                                        resultsDiv.innerHTML = `
-                                                            <div class="alert alert-success">
-                                                                <h4>Analysis Complete!</h4>
-                                                                <p>Your pharmacogenomic analysis has been completed successfully.</p>
-                                                                ${pdfUrl ? `<div class="mt-3">
-                                                                    <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
-                                                                        <i class="bi bi-file-pdf"></i> View PDF Report
-                                                                    </a>
-                                                                </div>` : ''}
-                                                                ${htmlUrl ? `<div class="mt-2">
-                                                                    <a href="${htmlUrl}" class="btn btn-info" target="_blank">
-                                                                        <i class="bi bi-file-code"></i> View Interactive Report
-                                                                    </a>
-                                                                </div>` : ''}
-                                                            </div>
-                                                        `;
-                                                        resultsDiv.classList.remove('d-none');
-                                                        addLogMessage("Report links are now available", "success");
-                                                    } else {
-                                                        console.error("Results container not found");
-                                                        addLogMessage("Error: Results container not found", "danger");
-                                                    }
-                                                } else {
-                                                    console.error("Processing failed:", data.message);
-                                                    addLogMessage(`Error: ${data.message}`, "danger");
-                                                    showError(data.message);
-                                                }
-                                                
-                                                // Re-enable the upload button
-                                                uploadButton.disabled = false;
-                                                uploadButton.textContent = 'Upload and Analyze';
-                                                return;
-                                            }
-                                        } catch (parseError) {
-                                            console.error("Error parsing progress data:", parseError, "Raw data:", line);
-                                            addLogMessage(`Error parsing progress update: ${parseError.message}`, 'danger');
-                                        }
-                                    } else {
-                                        // Log any non-data lines for debugging
-                                        console.log("Non-data SSE line received:", line);
-                                    }
-                                } catch (lineError) {
-                                    console.error("Error processing SSE line:", lineError);
-                                }
-                            }
-                        }
-                    }
-                } catch (error) {
-                    console.error("Error monitoring progress:", error);
-                    showError("Error monitoring progress: " + error.message);
-                    uploadButton.disabled = false;
-                    uploadButton.textContent = 'Upload and Analyze';
-                }
             }
 
             // Function to show login form
