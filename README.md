@@ -144,7 +144,7 @@ Each service manages its dependencies within its own container:
 - **PostgreSQL**: Version 15 with initialization scripts in `db/init`
 - **PharmCAT**: Java 17 with PharmCAT v3.0.0 JAR file
 - **PharmCAT Wrapper**: Python 3.10 with Flask and other requirements in `docker/pharmcat/requirements.txt`
-- **Aldy Service**: Python 3.10 with Aldy and necessary ML libraries
+- **GATK Service**:
 - **FastAPI Backend**: Python 3.10 with requirements specified in `requirements.txt`
 
 ### Data Sharing

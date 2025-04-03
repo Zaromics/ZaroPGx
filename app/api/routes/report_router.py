@@ -10,6 +10,7 @@ import json
 from app.api.db import get_db, register_report, get_guidelines_for_gene_drug
 from app.api.models import ReportRequest, ReportResponse, DrugRecommendation
 from app.reports.generator import generate_pdf_report
+from app.reports.fhir_client import FhirClient
 from ..utils.security import get_current_user, get_optional_user
 
 # Configure logging
@@ -217,4 +218,107 @@ async def get_drug_recommendations(
         return recommendations
     except Exception as e:
         logger.error(f"Error getting drug recommendations: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting recommendations: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error getting recommendations: {str(e)}")
+
+@router.post("/{report_id}/export-to-fhir")
+async def export_report_to_fhir(
+    report_id: str,
+    target_fhir_url: Optional[str] = None,
+    patient_info: Optional[dict] = None,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_optional_user)
+):
+    """
+    Export a pharmacogenomic report to a FHIR server.
+    
+    Args:
+        report_id: ID of the report to export
+        target_fhir_url: Optional URL of the target FHIR server
+        patient_info: Optional additional patient information
+    
+    Returns:
+        Export status and details
+    """
+    try:
+        logger.info(f"Exporting report {report_id} to FHIR server")
+        
+        # In a real implementation, we would get this from the database
+        # For now, use placeholder data based on report_id
+        
+        # Initialize the FHIR client
+        fhir_client = FhirClient(target_fhir_url)
+        
+        # Check FHIR server connection
+        if not fhir_client.check_server_connection():
+            logger.error("Cannot connect to FHIR server")
+            raise HTTPException(status_code=503, detail="Cannot connect to FHIR server")
+        
+        # Get report data
+        # In a real implementation, this would come from the database
+        report_path = os.path.join(REPORT_DIR, f"{report_id}.pdf")
+        html_path = os.path.join(REPORT_DIR, f"{report_id}.html")
+        
+        # Ensure report exists
+        if not os.path.exists(report_path) and not os.path.exists(html_path):
+            raise HTTPException(status_code=404, detail="Report not found")
+            
+        # For demonstration purposes, use mock data
+        # In a real implementation, this would be retrieved from the database
+        patient_id = patient_info.get("id", "unknown") if patient_info else "demo-patient"
+        
+        # Get diplotypes and recommendations (mock data for now)
+        diplotypes = [
+            {"gene": "CYP2D6", "diplotype": "*1/*4", "phenotype": "Intermediate Metabolizer"},
+            {"gene": "CYP2C19", "diplotype": "*1/*1", "phenotype": "Normal Metabolizer"},
+            {"gene": "SLCO1B1", "diplotype": "rs4149056 TC", "phenotype": "Intermediate Function"}
+        ]
+        
+        recommendations = []
+        for diplotype in diplotypes:
+            gene = diplotype["gene"]
+            drug_guidelines = get_guidelines_for_gene_drug(db, gene, None)
+            for guideline in drug_guidelines:
+                recommendations.append({
+                    "drug": guideline.drug,
+                    "gene": gene,
+                    "guideline": f"CPIC Guideline for {gene} and {guideline.drug}",
+                    "recommendation": guideline.recommendation,
+                    "classification": "Strong",
+                    "literature_references": ["PMID:12345678"]
+                })
+        
+        # Prepare patient information
+        if not patient_info:
+            patient_info = {
+                "id": patient_id,
+                "name": {
+                    "family": "Demo",
+                    "given": ["Patient"]
+                },
+                "gender": "unknown"
+            }
+        
+        # Create absolute URLs for the reports
+        base_url = "http://localhost:8765"  # This should be configured from environment
+        pdf_url = f"{base_url}/reports/{report_id}/download?format=pdf"
+        html_url = f"{base_url}/reports/{report_id}/download?format=html"
+        
+        # Export to FHIR
+        result = fhir_client.export_pgx_report_to_fhir(
+            patient_info=patient_info,
+            report_id=report_id,
+            diplotypes=diplotypes,
+            recommendations=recommendations,
+            report_pdf_url=pdf_url,
+            report_html_url=html_url,
+            target_fhir_server=target_fhir_url
+        )
+        
+        if result.get("status") == "error":
+            logger.error(f"Error exporting to FHIR: {result.get('error')}")
+            raise HTTPException(status_code=500, detail=f"Error exporting to FHIR: {result.get('error')}")
+            
+        return result
+    except Exception as e:
+        logger.error(f"Error exporting report to FHIR: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error exporting report to FHIR: {str(e)}") 

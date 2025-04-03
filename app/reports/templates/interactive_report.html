@@ -236,6 +236,101 @@
                 grid-template-columns: 1fr;
             }
         }
+        
+        /* Form styles */
+        .form-control {
+            display: block;
+            width: 100%;
+            padding: 0.375rem 0.75rem;
+            font-size: 1rem;
+            line-height: 1.5;
+            color: #495057;
+            background-color: #fff;
+            background-clip: padding-box;
+            border: 1px solid #ced4da;
+            border-radius: 0.25rem;
+            margin-bottom: 1rem;
+            transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+        }
+        
+        .form-label {
+            margin-bottom: 0.5rem;
+            display: inline-block;
+        }
+        
+        .form-select {
+            display: block;
+            width: 100%;
+            padding: 0.375rem 2.25rem 0.375rem 0.75rem;
+            font-size: 1rem;
+            line-height: 1.5;
+            color: #495057;
+            background-color: #fff;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 0.75rem center;
+            background-size: 16px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 0.25rem;
+            margin-bottom: 1rem;
+            appearance: none;
+        }
+        
+        .btn {
+            display: inline-block;
+            font-weight: 400;
+            text-align: center;
+            white-space: nowrap;
+            vertical-align: middle;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            border: 1px solid transparent;
+            padding: 0.375rem 0.75rem;
+            font-size: 1rem;
+            line-height: 1.5;
+            border-radius: 0.25rem;
+            transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+            cursor: pointer;
+        }
+        
+        .btn-primary {
+            color: #fff;
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--secondary-color);
+            border-color: var(--secondary-color);
+        }
+        
+        .alert {
+            position: relative;
+            padding: 0.75rem 1.25rem;
+            margin-bottom: 1rem;
+            border: 1px solid transparent;
+            border-radius: 0.25rem;
+        }
+        
+        .alert-success {
+            color: #155724;
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+        }
+        
+        .alert-danger {
+            color: #721c24;
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+        }
+        
+        .alert-info {
+            color: #0c5460;
+            background-color: #d1ecf1;
+            border-color: #bee5eb;
+        }
     </style>
 </head>
 <body>
@@ -406,375 +501,88 @@
         <div class="disclaimer">
             {{ disclaimer }}
         </div>
+        
+        <!-- FHIR Export Section -->
+        <div class="section" id="fhirExportSection">
+            <h2>Export to Electronic Health Record</h2>
+            <p>You can export this pharmacogenomic report to your Electronic Health Record (EHR) system 
+               using FHIR (Fast Healthcare Interoperability Resources) standard.</p>
+               
+            <div class="card">
+                <form id="fhirExportForm">
+                    <div class="mb-3">
+                        <label for="fhirServerUrl" class="form-label">FHIR Server URL</label>
+                        <input type="url" class="form-control" id="fhirServerUrl" name="fhirServerUrl" 
+                               placeholder="https://your-ehr-fhir-server.com/fhir">
+                        <div class="form-text">Enter the FHIR server URL of your EHR system</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Patient Information (Optional)</label>
+                        <div>
+                            <input type="text" class="form-control" id="patientFamilyName" 
+                                   placeholder="Family Name" style="margin-bottom: 0.5rem;">
+                            <input type="text" class="form-control" id="patientGivenName" 
+                                   placeholder="Given Name" style="margin-bottom: 0.5rem;">
+                        </div>
+                        <select class="form-select" id="patientGender">
+                            <option value="" selected>Gender (Optional)</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="other">Other</option>
+                            <option value="unknown">Unknown</option>
+                        </select>
+                        <input type="date" class="form-control" id="patientBirthDate" placeholder="Birth Date (Optional)">
+                    </div>
+                    
+                    <div>
+                        <button type="button" class="btn btn-primary" id="fhirExportBtn">Export to EHR</button>
+                    </div>
+                </form>
+                
+                <div id="exportResult" style="margin-top: 1rem; display: none;">
+                    <!-- Export results will appear here -->
+                </div>
+            </div>
+        </div>
     </div>
     
     <footer>
-        <p>ZaroPGx Pharmacogenomic Report &copy; {{ report_date.split(" ")[0].split("-")[0] }} ZaroPGx, Inc.</p>
-        <p>Generated on {{ report_date }}</p>
+        <p>&copy; {{ report_date.split(" ")[0].split("-")[0] }} ZaroPGx - Pharmacogenomics Analysis Platform</p>
     </footer>
     
-    <script>
-        // Tab functionality
-        function showTab(tabId) {
-            // Hide all tab contents
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            
-            // Deactivate all tabs
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            // Activate the selected tab and content
-            document.getElementById(tabId).classList.add('active');
-            document.querySelector(`.tab[onclick="showTab('${tabId}')"]`).classList.add('active');
-        }
+    <!-- Store report data in a hidden element for JavaScript to access -->
+    <div id="pgxData" 
+         data-patient-id="{{ patient_id }}"
+         data-report-id="{{ report_id }}"
+         data-report-date="{{ report_date }}"
+         data-organized-recommendations="{{ organized_recommendations|tojson|safe }}"
+         style="display:none;">
         
-        // Function to create color-coded gene-phenotype chart
-        function createGenePhenotypeChart() {
-            const ctx = document.getElementById('genePhenotypeChart').getContext('2d');
-            
-            // Extract gene data
-            const genes = [];
-            const phenotypes = [];
-            const colors = [];
-            
-            {% for d in diplotypes %}
-            genes.push("{{ d.gene }}");
-            phenotypes.push("{{ d.phenotype }}");
-            
-            {% if 'Normal' in d.phenotype %}
-                colors.push('#2ecc71'); // success-color
-            {% elif 'Poor' in d.phenotype %}
-                colors.push('#e74c3c'); // danger-color
-            {% elif 'Intermediate' in d.phenotype %}
-                colors.push('#f39c12'); // warning-color
-            {% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}
-                colors.push('#3498db'); // info-color
-            {% else %}
-                colors.push('#95a5a6'); // gray
-            {% endif %}
-            {% endfor %}
-            
-            // Create the chart
-            new Chart(ctx, {
-                type: 'horizontalBar',
-                data: {
-                    labels: genes,
-                    datasets: [{
-                        label: 'Phenotype',
-                        data: genes.map(() => 1), // Just to show the bars
-                        backgroundColor: colors
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    legend: {
-                        display: false
-                    },
-                    title: {
-                        display: true,
-                        text: 'Gene Phenotypes'
-                    },
-                    scales: {
-                        xAxes: [{
-                            display: false,
-                            ticks: {
-                                beginAtZero: true
-                            }
-                        }],
-                        yAxes: [{
-                            gridLines: {
-                                display: false
-                            }
-                        }]
-                    },
-                    tooltips: {
-                        callbacks: {
-                            label: function(tooltipItem, data) {
-                                return phenotypes[tooltipItem.index];
-                            }
-                        }
-                    }
-                }
-            });
-        }
+        <!-- Store diplotypes data -->
+        {% for d in diplotypes %}
+        <div class="diplotype-data"
+             data-gene="{{ d.gene }}"
+             data-diplotype="{{ d.diplotype }}"
+             data-phenotype="{{ d.phenotype }}"
+             data-activity-score="{{ d.activity_score if d.activity_score else 'N/A' }}">
+        </div>
+        {% endfor %}
         
-        // Function to create recommendation chart
-        function createRecommendationChart() {
-            const ctx = document.getElementById('recommendationChart').getContext('2d');
-            
-            // Count recommendations by type
-            const recommendationTypes = {
-                'Standard/Normal': 0,
-                'Consider Alternative': 0,
-                'Avoid': 0,
-                'Other': 0
-            };
-            
-            {% for rec in recommendations %}
-            {% if 'standard' in rec.recommendation.lower() or 'normal' in rec.recommendation.lower() %}
-                recommendationTypes['Standard/Normal']++;
-            {% elif 'avoid' in rec.recommendation.lower() %}
-                recommendationTypes['Avoid']++;
-            {% elif 'consider' in rec.recommendation.lower() or 'alternative' in rec.recommendation.lower() %}
-                recommendationTypes['Consider Alternative']++;
-            {% else %}
-                recommendationTypes['Other']++;
-            {% endif %}
-            {% endfor %}
-            
-            // Create the chart
-            new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: Object.keys(recommendationTypes),
-                    datasets: [{
-                        data: Object.values(recommendationTypes),
-                        backgroundColor: [
-                            '#2ecc71', // success-color
-                            '#f39c12', // warning-color
-                            '#e74c3c', // danger-color
-                            '#3498db'  // info-color
-                        ]
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    title: {
-                        display: true,
-                        text: 'Drug Recommendations by Type'
-                    },
-                    legend: {
-                        position: 'right'
-                    }
-                }
-            });
-        }
-        
-        // Function to create network visualization
-        function createNetworkVisualization() {
-            const container = document.getElementById('networkVisualization');
-            
-            // Set up SVG
-            const width = container.clientWidth;
-            const height = 300;
-            
-            const svg = d3.select('#networkVisualization')
-                .append('svg')
-                .attr('width', width)
-                .attr('height', height);
-            
-            // Parse the recommendations
-            const recommendationsData = {{ organized_recommendations|safe }};
-            
-            // Create nodes for genes and drugs
-            const nodes = [];
-            const links = [];
-            
-            // Add gene nodes
-            {% for d in diplotypes %}
-            nodes.push({
-                id: "{{ d.gene }}",
-                type: "gene",
-                phenotype: "{{ d.phenotype }}"
-            });
-            {% endfor %}
-            
-            // Add drug nodes and links
-            {% for rec in recommendations %}
-            // Check if the drug is already in nodes
-            if (!nodes.some(node => node.id === "{{ rec.drug }}")) {
-                nodes.push({
-                    id: "{{ rec.drug }}",
-                    type: "drug"
-                });
-            }
-            
-            // Add the link
-            links.push({
-                source: "{{ rec.gene }}",
-                target: "{{ rec.drug }}",
-                recommendation: "{{ rec.recommendation }}"
-            });
-            {% endfor %}
-            
-            // Create the force simulation
-            const simulation = d3.forceSimulation(nodes)
-                .force('link', d3.forceLink(links).id(d => d.id).distance(100))
-                .force('charge', d3.forceManyBody().strength(-400))
-                .force('center', d3.forceCenter(width / 2, height / 2));
-            
-            // Create links
-            const link = svg.append('g')
-                .selectAll('line')
-                .data(links)
-                .enter()
-                .append('line')
-                .attr('stroke', d => {
-                    if (d.recommendation.toLowerCase().includes('avoid')) {
-                        return '#e74c3c'; // danger-color
-                    } else if (d.recommendation.toLowerCase().includes('consider') || 
-                               d.recommendation.toLowerCase().includes('alternative')) {
-                        return '#f39c12'; // warning-color
-                    } else if (d.recommendation.toLowerCase().includes('standard') || 
-                               d.recommendation.toLowerCase().includes('normal')) {
-                        return '#2ecc71'; // success-color
-                    } else {
-                        return '#3498db'; // info-color
-                    }
-                })
-                .attr('stroke-width', 2);
-            
-            // Create nodes
-            const node = svg.append('g')
-                .selectAll('circle')
-                .data(nodes)
-                .enter()
-                .append('circle')
-                .attr('r', 10)
-                .attr('fill', d => {
-                    if (d.type === 'gene') {
-                        if (d.phenotype.includes('Normal')) {
-                            return '#2ecc71'; // success-color
-                        } else if (d.phenotype.includes('Poor')) {
-                            return '#e74c3c'; // danger-color
-                        } else if (d.phenotype.includes('Intermediate')) {
-                            return '#f39c12'; // warning-color
-                        } else if (d.phenotype.includes('Rapid') || d.phenotype.includes('Ultrarapid')) {
-                            return '#3498db'; // info-color
-                        } else {
-                            return '#95a5a6'; // gray
-                        }
-                    } else {
-                        return '#2c3e50'; // primary-color
-                    }
-                })
-                .call(d3.drag()
-                    .on('start', dragstarted)
-                    .on('drag', dragged)
-                    .on('end', dragended));
-            
-            // Add node labels
-            const label = svg.append('g')
-                .selectAll('text')
-                .data(nodes)
-                .enter()
-                .append('text')
-                .text(d => d.id)
-                .attr('font-size', 12)
-                .attr('dx', 15)
-                .attr('dy', 4);
-            
-            // Update positions
-            simulation.on('tick', () => {
-                link
-                    .attr('x1', d => d.source.x)
-                    .attr('y1', d => d.source.y)
-                    .attr('x2', d => d.target.x)
-                    .attr('y2', d => d.target.y);
-                
-                node
-                    .attr('cx', d => d.x)
-                    .attr('cy', d => d.y);
-                
-                label
-                    .attr('x', d => d.x)
-                    .attr('y', d => d.y);
-            });
-            
-            // Drag functions
-            function dragstarted(event, d) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                d.fx = d.x;
-                d.fy = d.y;
-            }
-            
-            function dragged(event, d) {
-                d.fx = event.x;
-                d.fy = event.y;
-            }
-            
-            function dragended(event, d) {
-                if (!event.active) simulation.alphaTarget(0);
-                d.fx = null;
-                d.fy = null;
-            }
-        }
-        
-        // Create detailed gene information section
-        function createGeneInfoSection() {
-            const geneInfoSection = document.getElementById('geneInfoSection');
-            
-            {% for d in diplotypes %}
-            const geneInfo = document.createElement('div');
-            geneInfo.className = 'section';
-            geneInfo.innerHTML = `
-                <h3>{{ d.gene }} Information</h3>
-                <p><strong>Description:</strong> 
-                    {% if d.gene == 'CYP2D6' %}
-                        Cytochrome P450 Family a Subfamily D Member 6 is responsible for metabolizing approximately 25% of clinically used drugs.
-                    {% elif d.gene == 'CYP2C19' %}
-                        Cytochrome P450 Family 2 Subfamily C Member 19 is involved in the metabolism of several important drug classes including proton pump inhibitors and antidepressants.
-                    {% elif d.gene == 'SLCO1B1' %}
-                        Solute Carrier Organic Anion Transporter Family Member 1B1 mediates the sodium-independent uptake of numerous drugs and endogenous compounds.
-                    {% else %}
-                        A gene involved in drug metabolism.
-                    {% endif %}
-                </p>
-                <p><strong>Diplotype:</strong> {{ d.diplotype }}</p>
-                <p><strong>Phenotype:</strong> {{ d.phenotype }}</p>
-                <p><strong>Activity Score:</strong> {{ d.activity_score if d.activity_score else 'N/A' }}</p>
-                <h4>Clinical Implications</h4>
-                <p>
-                    {% if 'Normal' in d.phenotype %}
-                        This patient has normal {{ d.gene }} activity, which means they should respond normally to medications metabolized by {{ d.gene }}.
-                    {% elif 'Poor' in d.phenotype %}
-                        This patient has reduced {{ d.gene }} activity, which may result in reduced metabolism of drugs processed by {{ d.gene }}. This could lead to increased drug concentrations and potential adverse effects at standard doses.
-                    {% elif 'Intermediate' in d.phenotype %}
-                        This patient has moderately reduced {{ d.gene }} activity, which may result in somewhat reduced metabolism of drugs processed by {{ d.gene }}. Careful monitoring may be required when using medications metabolized by {{ d.gene }}.
-                    {% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}
-                        This patient has increased {{ d.gene }} activity, which may result in faster metabolism of drugs processed by {{ d.gene }}. This could lead to reduced drug concentrations and potential loss of efficacy at standard doses.
-                    {% else %}
-                        The clinical implications of this {{ d.gene }} phenotype should be evaluated by a healthcare professional.
-                    {% endif %}
-                </p>
-                
-                <h4>Related Medications</h4>
-                <ul>
-                    {% if d.gene == 'CYP2D6' %}
-                        <li>Codeine (pain relief)</li>
-                        <li>Tamoxifen (cancer treatment)</li>
-                        <li>Antidepressants (fluoxetine, paroxetine)</li>
-                        <li>Antipsychotics (haloperidol, risperidone)</li>
-                    {% elif d.gene == 'CYP2C19' %}
-                        <li>Clopidogrel (antiplatelet)</li>
-                        <li>Proton pump inhibitors (omeprazole)</li>
-                        <li>Antidepressants (citalopram, escitalopram)</li>
-                        <li>Antifungals (voriconazole)</li>
-                    {% elif d.gene == 'SLCO1B1' %}
-                        <li>Statins (simvastatin, atorvastatin)</li>
-                        <li>Methotrexate</li>
-                        <li>Repaglinide</li>
-                    {% else %}
-                        <li>Various medications</li>
-                    {% endif %}
-                </ul>
-            `;
-            geneInfoSection.appendChild(geneInfo);
-            {% endfor %}
-        }
-        
-        // Initialize everything when the page loads
-        window.addEventListener('load', function() {
-            createGenePhenotypeChart();
-            createRecommendationChart();
-            createNetworkVisualization();
-            createGeneInfoSection();
-        });
-    </script>
+        <!-- Store recommendations data -->
+        {% for rec in recommendations %}
+        <div class="recommendation-data"
+             data-drug="{{ rec.drug }}"
+             data-gene="{{ rec.gene }}"
+             data-recommendation="{{ rec.recommendation }}"
+             data-classification="{{ rec.classification }}"
+             data-literature-references="{{ rec.literature_references|tojson|safe if rec.literature_references else '[]' }}">
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- External report visualization scripts -->
+    <script src="/static/js/pgx-report.js"></script>
+    <script src="/static/js/pgx-fhir-export.js"></script>
 </body>
 </html> 

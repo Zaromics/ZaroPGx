@@ -63,6 +63,32 @@ services:
     networks:
       - pgx-network
 
+  # HAPI FHIR Server for EHR integration
+  fhir-server:
+    image: hapiproject/hapi:latest
+    container_name: pgx_fhir_server
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    environment:
+      - hapi.fhir.allow_external_references=true
+      - hapi.fhir.allow_multiple_delete=true
+      - hapi.fhir.reuse_cached_search_results_millis=60000
+      - spring.datasource.url=jdbc:h2:file:/data/hapi-data/h2
+      - spring.datasource.username=sa
+      - spring.datasource.password=
+      - spring.datasource.driverClassName=org.h2.Driver
+    volumes:
+      - fhir-data:/data/hapi-data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/fhir/metadata"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - pgx-network
+
   # PharmCAT Wrapper Service
   pharmcat-wrapper:
     build:
@@ -172,6 +198,7 @@ services:
       - GATK_API_URL=http://gatk-api:5000
       - STARGAZER_API_URL=http://stargazer:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
+      - FHIR_SERVER_URL=http://fhir-server:8080/fhir
       - PYTHONPATH=/app
       - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
       - LOG_LEVEL=DEBUG # Increase logging verbosity
@@ -193,6 +220,8 @@ volumes:
   pgdata:
     driver: local
   pharmcat-jar:
+    driver: local
+  fhir-data:
     driver: local
 
 networks:

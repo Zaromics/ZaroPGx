@@ -99,6 +99,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 # Set up static file serving for reports
 app.mount("/reports", StaticFiles(directory="/data/reports"), name="reports")
 
+# Set up static file serving for application static assets
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
