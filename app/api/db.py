@@ -80,14 +80,35 @@ def create_patient(db, patient_identifier):
     return patient_id
 
 # Function to register genetic data for a patient
-def register_genetic_data(db, patient_id, file_type, file_path):
+def register_genetic_data(db, patient_id, file_type, file_path, is_supplementary=False, parent_id=None):
+    """
+    Register genetic data file for a patient in the database.
+    
+    Args:
+        db: Database session
+        patient_id: ID of the patient
+        file_type: Type of file (VCF, BAM, etc.)
+        file_path: Path to the genetic data file
+        is_supplementary: Whether this is a supplementary file (e.g., original WGS alongside VCF)
+        parent_id: ID of the parent data record if this is supplementary
+    
+    Returns:
+        ID of the newly created genetic data record
+    """
     result = db.execute(
         text("""
-        INSERT INTO user_data.genetic_data (patient_id, file_type, file_path)
-        VALUES (:patient_id, :file_type, :file_path)
+        INSERT INTO user_data.genetic_data 
+        (patient_id, file_type, file_path, is_supplementary, parent_data_id) 
+        VALUES (:patient_id, :file_type, :file_path, :is_supplementary, :parent_id)
         RETURNING data_id
         """),
-        {"patient_id": patient_id, "file_type": file_type, "file_path": file_path}
+        {
+            "patient_id": patient_id, 
+            "file_type": file_type, 
+            "file_path": file_path,
+            "is_supplementary": is_supplementary,
+            "parent_id": parent_id
+        }
     )
     data_id = result.scalar()
     db.commit()

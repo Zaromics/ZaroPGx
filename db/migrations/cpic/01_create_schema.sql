@@ -70,6 +70,8 @@ CREATE TABLE user_data.genetic_data (
     patient_id INTEGER REFERENCES user_data.patients(patient_id),
     file_type VARCHAR(20) NOT NULL, -- e.g., "23andme", "vcf", etc.
     file_path TEXT NOT NULL, -- Path to encrypted file
+    is_supplementary BOOLEAN DEFAULT FALSE, -- Indicates if this is a supplementary file (e.g., original BAM alongside VCF)
+    parent_data_id INTEGER REFERENCES user_data.genetic_data(data_id), -- Reference to primary data file if this is supplementary
     processed BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -108,4 +110,5 @@ CREATE INDEX idx_gene_drug_interactions_drug_id ON cpic.gene_drug_interactions(d
 CREATE INDEX idx_patient_alleles_patient_id ON user_data.patient_alleles(patient_id);
 CREATE INDEX idx_patient_alleles_gene_id ON user_data.patient_alleles(gene_id);
 CREATE INDEX idx_genetic_data_patient_id ON user_data.genetic_data(patient_id);
+CREATE INDEX idx_genetic_data_parent_id ON user_data.genetic_data(parent_data_id);
 CREATE INDEX idx_patient_reports_patient_id ON reports.patient_reports(patient_id); 

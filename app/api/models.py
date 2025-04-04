@@ -16,6 +16,8 @@ class TokenData(BaseModel):
 class FileType(str, Enum):
     VCF = "vcf"
     BAM = "bam"
+    CRAM = "cram"
+    SAM = "sam"
     FASTQ = "fastq"
     TWENTYTHREE_AND_ME = "23andme"
     UNKNOWN = "unknown"
@@ -49,12 +51,34 @@ class FileAnalysis(BaseModel):
 
 
 class WorkflowInfo(BaseModel):
-    needs_gatk: bool
-    needs_stargazer: bool
-    needs_conversion: bool
-    is_provisional: bool
-    recommendations: List[str]
-    warnings: List[str]
+    """
+    Model representing the workflow configuration for processing a genomic file.
+    """
+    # Processing requirements
+    needs_gatk: bool = False
+    needs_alignment: bool = False
+    needs_stargazer: bool = False 
+    needs_conversion: bool = False
+    
+    # File processing flags
+    is_provisional: bool = False
+    go_directly_to_pharmcat: bool = False
+    
+    # Original file info
+    original_file_type: Optional[str] = None
+    original_file_id: Optional[str] = None
+    using_original_file: bool = False
+    
+    # Reference genome info
+    requested_reference: Optional[str] = None
+    
+    # Support status
+    unsupported: bool = False
+    unsupported_reason: Optional[str] = None
+    
+    # Messages
+    recommendations: List[str] = []
+    warnings: List[str] = []
 
 
 class UploadResponse(BaseModel):

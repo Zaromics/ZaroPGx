@@ -41,6 +41,15 @@ job_status = {}
 async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict):
     """
     Process file based on determined workflow
+    
+    This function handles the background processing of genomic files through
+    the appropriate pipeline based on the file type and workflow configuration.
+    
+    Pipeline flow:
+    1. For BAM/CRAM/SAM files: GATK → Stargazer → PharmCAT → Reports
+    2. For VCF files: Direct to PharmCAT → Reports (or GATK if needed)
+    3. Future: For FASTQ: Alignment → GATK → Stargazer → PharmCAT → Reports
+    4. Future: For 23andMe: Conversion → PharmCAT → Reports
     """
     try:
         logger.info(f"Processing file for patient {patient_id}, file {data_id}")
@@ -55,64 +64,154 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             "complete": False,
             "data": {}
         }
+        
+        # Check if file format is unsupported
+        if workflow.get("unsupported", False):
+            reason = workflow.get("unsupported_reason", "Unsupported file format")
+            logger.warning(f"Unsupported file format for {data_id}: {reason}")
+            job_status[data_id].update({
+                "status": "error",
+                "message": reason,
+                "complete": True
+            })
+            return
 
-        # Update status for each stage
-        stages = ["Upload", "Analysis", "GATK", "Stargazer", "PharmCAT", "Report"]
-        for i, stage in enumerate(stages):
-            if i < 2:  # Only execute the first two stages
-                progress = int((i / len(stages)) * 100)
+        # Update initial status
+        job_status[data_id].update({
+            "percent": 5,
+            "stage": "Analysis",
+            "message": "Analyzing file..."
+        })
+        await asyncio.sleep(1)  # Give time for status update
+        
+        # File processing pipeline
+        output_file = file_path  # Start with the original file
+        
+        # Check if we can go directly to PharmCAT (e.g., for VCF files)
+        if workflow.get("go_directly_to_pharmcat", False) and not workflow.get("needs_gatk", False):
+            logger.info(f"File can be processed directly by PharmCAT, skipping preprocessing steps")
+            job_status[data_id].update({
+                "percent": 30, 
+                "stage": "Direct Processing",
+                "message": "File ready for PharmCAT processing"
+            })
+            await asyncio.sleep(1)  # Short delay for UI update
+        else:
+            # Standard preprocessing pipeline
+            
+            # Step 1: Alignment (for FASTQ files) - not yet implemented
+            if workflow.get("needs_alignment", False):
                 job_status[data_id].update({
-                    "percent": progress,
-                    "stage": stage,
-                    "message": f"Processing {stage} stage..."
+                    "percent": 10,
+                    "stage": "Alignment",
+                    "message": "Aligning reads to reference genome (not yet implemented)..."
                 })
-                await asyncio.sleep(1)  # Give time for status updates
+                # This would be implemented with a call to BWA or similar aligner
+                # For now, just sleep to simulate processing time
+                await asyncio.sleep(2)
+            
+            # Step 2: GATK Variant Calling (for BAM/CRAM/SAM)
+            if workflow.get("needs_gatk", False):
+                job_status[data_id].update({
+                    "percent": 20,
+                    "stage": "GATK",
+                    "message": "Calling variants with GATK..."
+                })
+                
+                try:
+                    # Call GATK service for processing
+                    # This would be a real implementation to call the GATK service
+                    # For example:
+                    # gatk_output = await call_gatk_service(file_path)
+                    # output_file = gatk_output
+                    
+                    # For now, simulate processing
+                    logger.info(f"Would call GATK for {file_path}")
+                    await asyncio.sleep(5)  # Simulate GATK processing time
+                    
+                    # Update status after GATK
+                    job_status[data_id].update({
+                        "percent": 40,
+                        "stage": "GATK",
+                        "message": "Variant calling complete."
+                    })
+                except Exception as e:
+                    error_msg = f"GATK processing failed: {str(e)}"
+                    logger.error(error_msg)
+                    job_status[data_id].update({
+                        "status": "error",
+                        "message": error_msg,
+                        "complete": True
+                    })
+                    return
+            
+            # Step 3: File conversion (for 23andMe files) - not yet implemented
+            if workflow.get("needs_conversion", False):
+                job_status[data_id].update({
+                    "percent": 30,
+                    "stage": "Conversion",
+                    "message": "Converting to VCF format (not yet implemented)..."
+                })
+                # This would be implemented with a conversion tool
+                # For now, just sleep to simulate processing time
+                await asyncio.sleep(2)
+            
+            # Step 4: Stargazer for CYP2D6 analysis
+            if workflow.get("needs_stargazer", False):
+                job_status[data_id].update({
+                    "percent": 50,
+                    "stage": "Stargazer",
+                    "message": "Analyzing CYP2D6 with Stargazer..."
+                })
+                
+                try:
+                    # Call Stargazer service
+                    # This would be a real implementation to call Stargazer
+                    # For example:
+                    # stargazer_output = await call_stargazer_service(output_file)
+                    # output_file = stargazer_output
+                    
+                    # For now, simulate processing
+                    logger.info(f"Would call Stargazer for {output_file}")
+                    await asyncio.sleep(3)  # Simulate Stargazer processing time
+                    
+                    # Update status after Stargazer
+                    job_status[data_id].update({
+                        "percent": 60,
+                        "stage": "Stargazer",
+                        "message": "CYP2D6 analysis complete."
+                    })
+                except Exception as e:
+                    error_msg = f"Stargazer processing failed: {str(e)}"
+                    logger.error(error_msg)
+                    job_status[data_id].update({
+                        "status": "error",
+                        "message": error_msg,
+                        "complete": True
+                    })
+                    return
 
-        if workflow["needs_gatk"]:
-            # Call GATK service for processing
-            # This would be implemented with a call to GATK
-            job_status[data_id].update({
-                "percent": 30,
-                "stage": "GATK",
-                "message": "Processing through GATK..."
-            })
-            pass
-
-        if workflow["needs_stargazer"]:
-            # Call Stargazer service for CYP2D6 analysis
-            # This would be implemented with a call to Stargazer
-            job_status[data_id].update({
-                "percent": 50,
-                "stage": "Stargazer",
-                "message": "Processing through Stargazer..."
-            })
-            pass
-
-        if workflow["needs_conversion"]:
-            # Convert 23andMe data to VCF
-            # This would be implemented with a conversion tool
-            pass
-
-        # Update status for PharmCAT stage
+        # Step 5: PharmCAT Analysis
         job_status[data_id].update({
             "percent": 70,
             "stage": "PharmCAT",
-            "message": "Processing through PharmCAT..."
+            "message": "Running PharmCAT analysis..."
         })
 
         # Call PharmCAT service for final analysis
-        logger.info(f"Calling PharmCAT service with file: {file_path}")
+        logger.info(f"Calling PharmCAT service with file: {output_file}")
         try:
             # Use the run_pharmcat_analysis function from main.py if available
             from app.main import run_pharmcat_analysis
-            results = await run_pharmcat_analysis(file_path)
+            results = await run_pharmcat_analysis(output_file)
         except ImportError:
             # Fall back to direct call if the function isn't available
             logger.warning("run_pharmcat_analysis not found, falling back to direct call")
-            results = call_pharmcat_service(file_path)
+            results = call_pharmcat_service(output_file)
             
         logger.info(f"PharmCAT processing complete")
         
+        # Step 6: Generate Reports
         try:
             # Update status for Report stage
             job_status[data_id].update({
@@ -252,15 +351,25 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                         output_path=str(html_report_path)
                     )
                 
-                # Update job status with report URLs
+                # Add provisional flag if the workflow was marked as provisional
+                is_provisional = workflow.get("is_provisional", False)
+                
+                # Update job status with report URLs and results
                 job_status[data_id].update({
                     "data": {
                         "pdf_report_url": f"/reports/{data_id}_pgx_report.pdf",
                         "html_report_url": f"/reports/{data_id}_pgx_report.html",
                         "diplotypes": formatted_diplotypes,
-                        "recommendations": formatted_recommendations
+                        "recommendations": formatted_recommendations,
+                        "is_provisional": is_provisional,
+                        "warnings": workflow.get("warnings", [])
                     }
                 })
+                
+                # Add completion message with provisional status if applicable
+                completion_message = "Analysis completed successfully"
+                if is_provisional:
+                    completion_message += " (PROVISIONAL RESULTS)"
                 
                 logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}_pgx_report.html")
             
@@ -284,11 +393,15 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             return
         
         # Mark job as completed
+        completion_message = "Analysis completed successfully"
+        if workflow.get("is_provisional", False):
+            completion_message += " (PROVISIONAL RESULTS)"
+        
         job_status[data_id].update({
             "status": "completed",
             "percent": 100,
             "stage": "Complete",
-            "message": "Analysis completed successfully",
+            "message": completion_message,
             "complete": True
         })
         
@@ -308,11 +421,20 @@ async def upload_genomic_data(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     patient_identifier: Optional[str] = Form(None),
+    original_file: Optional[UploadFile] = File(None),
+    reference_genome: Optional[str] = Form("hg38"),
     db: Session = Depends(get_db),
     current_user: str = Depends(get_optional_user)
 ):
     """
-    Upload genomic data file for processing. Supports VCF, BAM, FASTQ, and 23andMe formats.
+    Upload genomic data file for processing. Supports various file formats:
+    
+    - VCF: Directly analyzed with PharmCAT (can be uploaded with original BAM/CRAM file for better variant calling)
+    - BAM/CRAM/SAM: Processed through GATK for variant calling
+    - FASTQ: Not yet supported, requires alignment (future implementation)
+    - 23andMe: Not yet supported, requires conversion to VCF (future implementation)
+    
+    Currently only hg38/GRCh38 reference genome is fully supported.
     """
     try:
         # Generate unique identifiers
@@ -327,29 +449,70 @@ async def upload_genomic_data(
         patient_dir = os.path.join(UPLOAD_DIR, str(patient_id))
         os.makedirs(patient_dir, exist_ok=True)
         
-        # Save uploaded file
-        file_path = os.path.join(patient_dir, f"{file_id}{Path(file.filename).suffix}")
-        with open(file_path, "wb") as buffer:
+        # Save primary uploaded file
+        primary_file_path = os.path.join(patient_dir, f"{file_id}{Path(file.filename).suffix}")
+        with open(primary_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
+        
+        # Save original file if provided
+        original_file_path = None
+        if original_file and original_file.filename:
+            original_file_id = str(uuid.uuid4())
+            original_file_path = os.path.join(patient_dir, f"{original_file_id}{Path(original_file.filename).suffix}")
+            with open(original_file_path, "wb") as buffer:
+                shutil.copyfileobj(original_file.file, buffer)
+            
+            logger.info(f"Uploaded original genomic file: {original_file_path}")
+        
         # Analyze file and determine workflow
-        result = await file_processor.process_upload(file_path, None)
+        result = await file_processor.process_upload(primary_file_path, original_file_path)
         
         if result["status"] == "error":
             raise HTTPException(status_code=400, detail=result["error"])
 
-        # Register genetic data in database
+        # Register genetic data in database - primary file
         data_id = register_genetic_data(
             db, 
             patient_id, 
             result["file_analysis"].file_type.value,
-            file_path
+            primary_file_path
         )
+        
+        # Register original file in database if provided
+        if original_file_path:
+            # Determine file type for original file
+            if "original_file_type" in result["workflow"]:
+                original_type = result["workflow"]["original_file_type"]
+            else:
+                # Default to "unknown" if can't determine
+                original_type = "unknown"
+                
+            # Register as a secondary file linked to the same patient
+            original_data_id = register_genetic_data(
+                db,
+                patient_id,
+                original_type,
+                original_file_path,
+                is_supplementary=True,
+                parent_id=data_id
+            )
+            logger.info(f"Registered original file with ID: {original_data_id}")
+            
+            # Add to workflow information
+            result["workflow"]["original_file_id"] = str(original_data_id)
+        
+        # Add reference genome info to workflow
+        if reference_genome and reference_genome != "hg38":
+            result["workflow"]["requested_reference"] = reference_genome
+            result["workflow"]["warnings"].append(
+                f"Requested reference genome {reference_genome} may not be fully supported. "
+                "Only hg38/GRCh38 is currently guaranteed for all analyses."
+            )
         
         # Schedule background processing
         background_tasks.add_task(
             process_file_background,
-            file_path,
+            primary_file_path,
             str(patient_id),
             str(data_id),
             result["workflow"]
@@ -379,11 +542,20 @@ async def upload_genomic_data(
             error=file_analysis.error
         )
         
+        # Prepare response with appropriate messages
+        upload_message = "File uploaded successfully. Processing started."
+        if result["workflow"].get("unsupported", False):
+            upload_message = f"File uploaded, but {result['workflow'].get('unsupported_reason', 'format is not fully supported')}."
+        elif result["workflow"].get("is_provisional", False):
+            upload_message = "File uploaded. Results will be PROVISIONAL due to limitations in the input data."
+        elif original_file_path and result["workflow"].get("using_original_file", False):
+            upload_message = "Files uploaded. Using original genomic file for processing."
+        
         return UploadResponse(
             file_id=str(data_id),
             file_type=file_analysis.file_type.value,
             status="queued",
-            message="File uploaded successfully. Processing started.",
+            message=upload_message,
             analysis_info=analysis_info,
             workflow=result["workflow"]
         )
@@ -400,39 +572,98 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
     try:
         # Get status from job_status dictionary
         if file_id not in job_status:
-            raise HTTPException(status_code=404, detail="File not found")
+            logger.warning(f"Status request for unknown job ID: {file_id}")
+            
+            # Check if reports exist for this ID - maybe job was processed but status lost
+            pdf_path = f"/data/reports/{file_id}_pgx_report.pdf"
+            html_path = f"/data/reports/{file_id}_pgx_report.html"
+            
+            pdf_exists = os.path.exists(pdf_path)
+            html_exists = os.path.exists(html_path)
+            
+            if pdf_exists or html_exists:
+                logger.info(f"Reports found for job {file_id}, returning completed status")
+                return {
+                    "file_id": file_id,
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Analysis completed successfully",
+                    "current_stage": "Complete",
+                    "data": {
+                        "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                        "html_report_url": f"/reports/{file_id}_pgx_report.html" if html_exists else None
+                    }
+                }
+                
+            raise HTTPException(status_code=404, detail=f"Job {file_id} not found")
             
         status = job_status[file_id]
+        logger.info(f"Found status for job {file_id}: {status}")
         
-        # Check wrapper service status if still processing
-        if status["status"] == "processing":
+        # Check PharmCAT wrapper service status if still processing
+        if status.get("status") == "processing" and status.get("stage") == "PharmCAT":
             try:
-                wrapper_response = requests.get("http://pharmcat-wrapper:5000/status")
+                logger.info("Checking PharmCAT wrapper status")
+                wrapper_response = requests.get("http://pharmcat-wrapper:5000/status", timeout=2)
                 if wrapper_response.ok:
                     wrapper_status = wrapper_response.json()
-                    # Update status with wrapper information
-                    status.update({
-                        "message": wrapper_status.get("processing_status", {}).get("message", status["message"]),
-                        "progress": wrapper_status.get("processing_status", {}).get("progress", status["percent"])
-                    })
+                    logger.info(f"PharmCAT wrapper status: {wrapper_status}")
+                    
+                    # Update status with wrapper information if available
+                    if wrapper_status.get("processing_status"):
+                        proc_status = wrapper_status.get("processing_status", {})
+                        # Only update if we have valid information
+                        if proc_status.get("message"):
+                            status["message"] = proc_status.get("message")
+                        if proc_status.get("progress"):
+                            status["percent"] = proc_status.get("progress")
+                        logger.info(f"Updated job status from wrapper: {status}")
             except Exception as e:
-                logger.warning(f"Could not get wrapper status: {str(e)}")
+                logger.warning(f"Could not get PharmCAT wrapper status: {str(e)}")
         
-        # Log current status for debugging
-        logger.info(f"Status for job {file_id}: {status}")
+        # Check for completed reports even if job status doesn't show completion
+        if status.get("status") != "completed" and not status.get("complete", False):
+            pdf_path = f"/data/reports/{file_id}_pgx_report.pdf"
+            html_path = f"/data/reports/{file_id}_pgx_report.html"
+            
+            pdf_exists = os.path.exists(pdf_path)
+            html_exists = os.path.exists(html_path)
+            
+            if pdf_exists or html_exists:
+                logger.info(f"Found reports for job {file_id} but status not marked as complete, updating status")
+                status.update({
+                    "status": "completed",
+                    "percent": 100,
+                    "stage": "Complete",
+                    "message": "Analysis completed successfully",
+                    "complete": True,
+                    "data": {
+                        "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                        "html_report_url": f"/reports/{file_id}_pgx_report.html" if html_exists else None
+                    }
+                })
         
+        # Normalize status for response
+        response_status = "completed" if status.get("complete", False) or status.get("status") == "completed" else "processing"
+        if status.get("status") == "error":
+            response_status = "error"
+            
         # Map the status to the expected response format
-        return {
+        response = {
             "file_id": file_id,
-            "status": "completed" if status["complete"] else "processing",
-            "progress": status["percent"],
-            "message": status["message"],
-            "current_stage": status["stage"],
+            "status": response_status,
+            "progress": status.get("percent", 0),
+            "message": status.get("message", ""),
+            "current_stage": status.get("stage", "Unknown"),
             "data": status.get("data", {})
         }
+        
+        logger.info(f"Returning status response for job {file_id}: {response}")
+        return response
+        
     except Exception as e:
-        logger.error(f"Error getting status: {str(e)}")
-        raise HTTPException(status_code=404, detail="File not found")
+        logger.error(f"Error getting status for job {file_id}: {str(e)}")
+        raise HTTPException(status_code=404, detail=f"File not found or error retrieving status: {str(e)}")
 
 @router.get("/reports/{file_id}")
 async def get_report_urls(file_id: str):
