@@ -118,6 +118,19 @@
                                     <input type="text" class="form-control" id="patientIdentifier" name="patient_identifier" placeholder="Enter a patient identifier">
                                 </div>
 
+                                <!-- VCF Auto-polling notification - hidden by default -->
+                                <div id="vcfPollingNotification" class="alert alert-info d-none">
+                                    <div class="d-flex align-items-center">
+                                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <div>
+                                            <strong>TEMPORARY WORKAROUND:</strong> 
+                                            <span>Automatic report checking is enabled for VCF files. This will periodically check for report completion.</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
                                 <!-- File Analysis Results (hidden by default) -->
                                 <div id="fileAnalysis" class="mb-3 d-none">
                                     <h5>File Analysis</h5>
@@ -183,7 +196,14 @@
                                 </div>
                             </div>
                             
-                            <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
+                                
+                                <!-- Demo button for PharmCAT example -->
+                                <button type="button" class="btn btn-secondary" id="demoButton" onclick="runPharmCatDemo()">
+                                    <i class="bi bi-play-fill"></i> Run Demo with PharmCAT VCF
+                                </button>
+                            </div>
                             
                             <!-- Debug button to check for report status -->
                             <div class="mt-3 p-2 border-top">
@@ -348,149 +368,207 @@
                     return;
                 }
 
-                try {
-                    // Make the request without the Authorization header
-                    const response = await fetch(`/progress/${jobId}`, {
-                        headers: {
-                            'Accept': 'text/event-stream'
+                const addLogMessage = (message, type = 'info') => {
+                    if (!logMessages) return;
+                    const timestamp = new Date().toLocaleTimeString();
+                    const logEntry = document.createElement('div');
+                    logEntry.className = `text-${type}`;
+                    logEntry.textContent = `[${timestamp}] ${message}`;
+                    logMessages.appendChild(logEntry);
+                    logMessages.scrollTop = logMessages.scrollHeight;
+                };
+
+                let reconnectAttempt = 0;
+                const maxReconnects = 3;
+
+                async function attemptConnection() {
+                    try {
+                        // Make the request without the Authorization header
+                        const response = await fetch(`/progress/${jobId}`, {
+                            headers: {
+                                'Accept': 'text/event-stream'
+                            }
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
                         }
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
 
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
 
-                    while (true) {
-                        const {value, done} = await reader.read();
-                        if (done) break;
-                        
-                        const chunk = decoder.decode(value);
-                        const lines = chunk.split('\n');
-                        
-                        for (const line of lines) {
-                            if (line.trim().length > 0) {
-                                try {
-                                    if (line.startsWith('data: ')) {
-                                        try {
-                                            const data = JSON.parse(line.slice(6));
-                                            
-                                            // DEBUG: Log all progress data
-                                            console.log("Progress update received:", data);
-                                            
-                                            if (data.reconnect) {
-                                                console.log("Connection timed out, reconnecting...");
-                                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                                monitorProgress(jobId);
-                                                return;
-                                            }
-                                            
-                                            // Update progress bar
-                                            progressBar.style.width = `${data.percent}%`;
-                                            progressBar.textContent = `${data.percent}%`;
-                                            
-                                            // Update status message
-                                            progressStatus.textContent = data.message || '';
-                                            
-                                            // Add log message
-                                            addLogMessage(data.message || 'Processing...');
-                                            
-                                            // CRITICAL FIX: If complete, show results
-                                            if (data.complete) {
-                                                console.log("Processing complete:", data);
-                                                
-                                                // Set progress to 100%
-                                                progressBar.style.width = '100%';
-                                                progressBar.textContent = '100%';
-                                                
-                                                // Show completion message
-                                                addLogMessage("✓ Processing complete!", "success");
-                                                
-                                                // Add debug info
-                                                console.log("Complete data:", data);
-                                                
-                                                if (data.success) {
-                                                    addLogMessage("✓ Analysis successful", "success");
-                                                    console.log("Success data:", data.data);
-                                                    
-                                                    // Get report URLs
-                                                    let pdfUrl, htmlUrl;
-                                                    
-                                                    if (data.data) {
-                                                        pdfUrl = data.data.pdf_report_url;
-                                                        htmlUrl = data.data.html_report_url;
-                                                        console.log("Found report URLs in data.data:", pdfUrl, htmlUrl);
-                                                    }
-                                                    
-                                                    if (!pdfUrl && !htmlUrl) {
-                                                        const jobId = data.job_id || (data.data && data.data.job_id);
-                                                        console.log("Constructing URLs with job ID:", jobId);
-                                                        
-                                                        if (jobId) {
-                                                            pdfUrl = `/reports/${jobId}_pgx_report.pdf`;
-                                                            htmlUrl = `/reports/${jobId}_pgx_report.html`;
-                                                            console.log("Constructed URLs:", pdfUrl, htmlUrl);
-                                                        }
-                                                    }
-                                                    
-                                                    // Create results display
-                                                    const resultsDiv = document.getElementById('analysisResults');
-                                                    if (resultsDiv) {
-                                                        resultsDiv.innerHTML = `
-                                                            <div class="alert alert-success">
-                                                                <h4>Analysis Complete!</h4>
-                                                                <p>Your pharmacogenomic analysis has been completed successfully.</p>
-                                                                ${pdfUrl ? `<div class="mt-3">
-                                                                    <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
-                                                                        <i class="bi bi-file-pdf"></i> View PDF Report
-                                                                    </a>
-                                                                </div>` : ''}
-                                                                ${htmlUrl ? `<div class="mt-2">
-                                                                    <a href="${htmlUrl}" class="btn btn-info" target="_blank">
-                                                                        <i class="bi bi-file-code"></i> View Interactive Report
-                                                                    </a>
-                                                                </div>` : ''}
-                                                            </div>
-                                                        `;
-                                                        resultsDiv.classList.remove('d-none');
-                                                        addLogMessage("Report links are now available", "success");
-                                                    } else {
-                                                        console.error("Results container not found");
-                                                        addLogMessage("Error: Results container not found", "danger");
-                                                    }
-                                                } else {
-                                                    console.error("Processing failed:", data.message);
-                                                    addLogMessage(`Error: ${data.message}`, "danger");
-                                                    showError(data.message);
-                                                }
-                                                
-                                                // Re-enable the upload button
-                                                uploadButton.disabled = false;
-                                                uploadButton.textContent = 'Upload';
-                                                return;
-                                            }
-                                        } catch (parseError) {
-                                            console.error("Error parsing progress data:", parseError, "Raw data:", line);
-                                            addLogMessage(`Error parsing progress update: ${parseError.message}`, 'danger');
-                                        }
-                                    } else {
-                                        // Log any non-data lines for debugging
-                                        console.log("Non-data SSE line received:", line);
-                                    }
-                                } catch (lineError) {
-                                    console.error("Error processing SSE line:", lineError);
+                        addLogMessage(`Connected to progress stream for job ${jobId}`);
+                        reconnectAttempt = 0; // Reset reconnect attempts on successful connection
+
+                        while (true) {
+                            try {
+                                const {value, done} = await reader.read();
+                                
+                                if (done) {
+                                    console.log("Stream closed normally");
+                                    addLogMessage("Progress stream closed normally");
+                                    break;
                                 }
+                                
+                                const chunk = decoder.decode(value);
+                                const lines = chunk.split('\n');
+                                
+                                for (const line of lines) {
+                                    if (line.trim().length > 0) {
+                                        try {
+                                            if (line.startsWith('data: ')) {
+                                                try {
+                                                    const data = JSON.parse(line.slice(6));
+                                                    
+                                                    // DEBUG: Log all progress data
+                                                    console.log("Progress update received:", data);
+                                                    
+                                                    if (data.reconnect) {
+                                                        console.log("Connection timed out, reconnecting...");
+                                                        await new Promise(resolve => setTimeout(resolve, 1000));
+                                                        attemptConnection();
+                                                        return;
+                                                    }
+                                                    
+                                                    // Update progress bar
+                                                    progressBar.style.width = `${data.percent}%`;
+                                                    progressBar.textContent = `${data.percent}%`;
+                                                    
+                                                    // Update status message
+                                                    progressStatus.textContent = data.message || '';
+                                                    
+                                                    // Add log message
+                                                    addLogMessage(data.message || 'Processing...');
+                                                    
+                                                    // CRITICAL FIX: If complete, show results
+                                                    if (data.complete) {
+                                                        console.log("Processing complete:", data);
+                                                        
+                                                        // Set progress to 100%
+                                                        progressBar.style.width = '100%';
+                                                        progressBar.textContent = '100%';
+                                                        
+                                                        // Show completion message
+                                                        addLogMessage("✓ Processing complete!", "success");
+                                                        
+                                                        // Add debug info
+                                                        console.log("Complete data:", data);
+                                                        
+                                                        if (data.success) {
+                                                            addLogMessage("✓ Analysis successful", "success");
+                                                            console.log("Success data:", data.data);
+                                                            
+                                                            // Get report URLs
+                                                            let pdfUrl, htmlUrl;
+                                                            
+                                                            if (data.data) {
+                                                                pdfUrl = data.data.pdf_report_url;
+                                                                htmlUrl = data.data.html_report_url;
+                                                                console.log("Found report URLs in data.data:", pdfUrl, htmlUrl);
+                                                            }
+                                                            
+                                                            if (!pdfUrl && !htmlUrl) {
+                                                                const jobId = data.job_id || (data.data && data.data.job_id);
+                                                                console.log("Constructing URLs with job ID:", jobId);
+                                                                
+                                                                if (jobId) {
+                                                                    pdfUrl = `/reports/${jobId}_pgx_report.pdf`;
+                                                                    htmlUrl = `/reports/${jobId}_pgx_report.html`;
+                                                                    console.log("Constructed URLs:", pdfUrl, htmlUrl);
+                                                                }
+                                                            }
+                                                            
+                                                            // Create results display
+                                                            const resultsDiv = document.getElementById('analysisResults');
+                                                            if (resultsDiv) {
+                                                                resultsDiv.innerHTML = `
+                                                                    <div class="alert alert-success">
+                                                                        <h4>Analysis Complete!</h4>
+                                                                        <p>Your pharmacogenomic analysis has been completed successfully.</p>
+                                                                        ${pdfUrl ? `<div class="mt-3">
+                                                                            <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
+                                                                                <i class="bi bi-file-pdf"></i> View PDF Report
+                                                                            </a>
+                                                                        </div>` : ''}
+                                                                        ${htmlUrl ? `<div class="mt-2">
+                                                                            <a href="${htmlUrl}" class="btn btn-info" target="_blank">
+                                                                                <i class="bi bi-file-code"></i> View Interactive Report
+                                                                            </a>
+                                                                        </div>` : ''}
+                                                                    </div>
+                                                                `;
+                                                                resultsDiv.classList.remove('d-none');
+                                                                addLogMessage("Report links are now available", "success");
+                                                            } else {
+                                                                console.error("Results container not found");
+                                                                addLogMessage("Error: Results container not found", "danger");
+                                                            }
+                                                        } else {
+                                                            console.error("Processing failed:", data.message);
+                                                            addLogMessage(`Error: ${data.message}`, "danger");
+                                                            showError(data.message);
+                                                        }
+                                                        
+                                                        // Re-enable the upload button
+                                                        uploadButton.disabled = false;
+                                                        uploadButton.textContent = 'Upload';
+                                                        return;
+                                                    }
+                                                } catch (parseError) {
+                                                    console.error("Error parsing progress data:", parseError, "Raw data:", line);
+                                                    addLogMessage(`Error parsing progress update: ${parseError.message}`, 'danger');
+                                                }
+                                            } else {
+                                                // Log any non-data lines for debugging
+                                                console.log("Non-data SSE line received:", line);
+                                            }
+                                        } catch (lineError) {
+                                            console.error("Error processing SSE line:", lineError);
+                                        }
+                                    }
+                                }
+                            } catch (readError) {
+                                console.error("Error reading from stream:", readError);
+                                addLogMessage(`Stream error: ${readError.message}`, 'warning');
+                                
+                                // Try to reconnect
+                                if (reconnectAttempt < maxReconnects) {
+                                    reconnectAttempt++;
+                                    addLogMessage(`Attempting to reconnect (${reconnectAttempt}/${maxReconnects})...`, 'warning');
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    attemptConnection();
+                                    return;
+                                } else {
+                                    addLogMessage("Failed to reconnect after multiple attempts", 'danger');
+                                    showError("Error in input stream. Please check reports manually.");
+                                    // Re-enable the upload button
+                                    uploadButton.disabled = false;
+                                    uploadButton.textContent = 'Upload';
+                                }
+                                break;
                             }
                         }
+                    } catch (error) {
+                        console.error("Error monitoring progress:", error);
+                        addLogMessage(`Error monitoring progress: ${error.message}`, 'danger');
+                        
+                        // Try to reconnect
+                        if (reconnectAttempt < maxReconnects) {
+                            reconnectAttempt++;
+                            addLogMessage(`Attempting to reconnect (${reconnectAttempt}/${maxReconnects})...`, 'warning');
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            attemptConnection();
+                            return;
+                        } else {
+                            showError("Error monitoring progress: " + error.message);
+                            addLogMessage("Failed to reconnect after multiple attempts", 'danger');
+                            uploadButton.disabled = false;
+                            uploadButton.textContent = 'Upload';
+                        }
                     }
-                } catch (error) {
-                    console.error("Error monitoring progress:", error);
-                    showError("Error monitoring progress: " + error.message);
-                    uploadButton.disabled = false;
-                    uploadButton.textContent = 'Upload';
                 }
+
+                attemptConnection();
             };
 
             // Update the file upload handler to work without auth token
@@ -502,7 +580,7 @@
             });
 
             // Function to show results
-            function showResults(data) {
+            window.showResults = function(data) {
                 const resultsDiv = document.getElementById('analysisResults');
                 if (!resultsDiv) {
                     console.error("Results container not found");
@@ -735,22 +813,21 @@
                 return;
             }
             
+            // Log messages element
+            const logMessages = document.getElementById('logMessages');
+            const addLogMessage = (message, type = 'info') => {
+                if (!logMessages) return;
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = `text-${type}`;
+                logEntry.textContent = `[${timestamp}] ${message}`;
+                logMessages.appendChild(logEntry);
+                logMessages.scrollTop = logMessages.scrollHeight;
+            };
+            
+            addLogMessage(`Checking report status for job ${jobId}...`);
+            
             try {
-                // Log messages element
-                const logMessages = document.getElementById('logMessages');
-                if (logMessages) {
-                    const addLogMessage = (message, type = 'info') => {
-                        const timestamp = new Date().toLocaleTimeString();
-                        const logEntry = document.createElement('div');
-                        logEntry.className = `text-${type}`;
-                        logEntry.textContent = `[${timestamp}] ${message}`;
-                        logMessages.appendChild(logEntry);
-                        logMessages.scrollTop = logMessages.scrollHeight;
-                    };
-                    
-                    addLogMessage(`Checking report status for job ${jobId}...`);
-                }
-                
                 // First try the regular status endpoint without authorization
                 const response = await fetch(`/status/${jobId}`);
                 
@@ -759,8 +836,9 @@
                     console.log("Job status data:", data);
                     
                     if (data.status === "completed" && data.data) {
-                        // Show the reports if available
-                        showResults(data.data);
+                        // Use the globally defined showResults function
+                        window.showResults(data.data);
+                        addLogMessage(`Found reports for job ${jobId}`, 'success');
                         return;
                     }
                 }
@@ -779,18 +857,18 @@
                             html_report_url: reportData.html_report_url
                         };
                         
-                        showResults(resultsData);
-                        if (logMessages) addLogMessage(`Found reports for job ${jobId}`, 'success');
+                        window.showResults(resultsData);
+                        addLogMessage(`Found reports for job ${jobId}`, 'success');
                         return;
                     } else {
-                        if (logMessages) addLogMessage(`Job ${jobId} is still processing: ${reportData.message}`, 'warning');
+                        addLogMessage(`Job ${jobId} is still processing: ${reportData.message}`, 'warning');
                     }
                 } else {
                     try {
                         const errorData = await reportResponse.json();
-                        if (logMessages) addLogMessage(`Error checking reports: ${errorData.detail || "Unknown error"}`, 'danger');
+                        addLogMessage(`Error checking reports: ${errorData.detail || "Unknown error"}`, 'danger');
                     } catch (e) {
-                        if (logMessages) addLogMessage(`Error checking reports: ${reportResponse.statusText}`, 'danger');
+                        addLogMessage(`Error checking reports: ${reportResponse.statusText}`, 'danger');
                     }
                 }
                 
@@ -800,20 +878,12 @@
                     html_report_url: `/reports/${jobId}_pgx_report.html`
                 };
                 
-                showResults(manualData);
-                if (logMessages) addLogMessage(`Trying direct report links for job ${jobId}. These may not work if reports don't exist.`, 'warning');
+                window.showResults(manualData);
+                addLogMessage(`Trying direct report links for job ${jobId}. These may not work if reports don't exist.`, 'warning');
                 
             } catch (error) {
                 console.error("Error checking report status:", error);
-                const logMessages = document.getElementById('logMessages');
-                if (logMessages) {
-                    const timestamp = new Date().toLocaleTimeString();
-                    const logEntry = document.createElement('div');
-                    logEntry.className = 'text-danger';
-                    logEntry.textContent = `[${timestamp}] Error checking report status: ${error.message}`;
-                    logMessages.appendChild(logEntry);
-                    logMessages.scrollTop = logMessages.scrollHeight;
-                }
+                addLogMessage(`Error checking report status: ${error.message}`, 'danger');
             }
         }
 
@@ -894,6 +964,270 @@
                 alert(`Error: ${error.message}`);
             }
         }
+
+        // Global variables for VCF auto-polling
+        let vcfPollingInterval = null;
+        let currentJobId = null;
+        let pollingAttempts = 0;
+        const MAX_POLLING_ATTEMPTS = 30; // Maximum number of polling attempts before giving up
+
+        // Function to download and use PharmCAT example VCF for demo
+        async function runPharmCatDemo() {
+            try {
+                // Show that we're fetching the demo file
+                const logMessages = document.getElementById('logMessages');
+                const progressContainer = document.getElementById('progressContainer');
+                
+                if (!logMessages || !progressContainer) {
+                    console.error("Required elements not found");
+                    return;
+                }
+                
+                // Add to log
+                window.addLogMessage("Fetching PharmCAT example VCF file...", "info");
+
+                // Show progress container
+                progressContainer.classList.remove('d-none');
+                
+                // Update progress status
+                const progressStatus = document.getElementById('progressStatus');
+                if (progressStatus) {
+                    progressStatus.textContent = "Downloading PharmCAT example VCF...";
+                }
+                
+                // Fetch the PharmCAT example VCF file
+                const response = await fetch('https://pharmcat.org/examples/pharmcat.example.vcf');
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch demo VCF: ${response.status} ${response.statusText}`);
+                }
+                
+                // Get the file content
+                const vcfContent = await response.text();
+                
+                // Create a Blob from the content
+                const blob = new Blob([vcfContent], { type: 'text/plain' });
+                
+                // Create a File object
+                const file = new File([blob], 'pharmcat_example.vcf', { type: 'text/plain' });
+                
+                // Create a FormData object
+                const formData = new FormData();
+                formData.append('genomicFile', file);
+                formData.append('sampleId', 'PharmCAT-Demo');
+                formData.append('referenceGenome', 'hg38');
+                
+                window.addLogMessage("Example VCF file downloaded successfully. Starting analysis...", "success");
+                
+                // Disable the upload button
+                const uploadButton = document.getElementById('uploadButton');
+                const demoButton = document.getElementById('demoButton');
+                if (uploadButton) uploadButton.disabled = true;
+                if (demoButton) demoButton.disabled = true;
+                
+                // Update progress status
+                if (progressStatus) {
+                    progressStatus.textContent = "Uploading PharmCAT example VCF...";
+                }
+                
+                // Submit the form programmatically
+                const response2 = await fetch('/upload-vcf', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response2.ok) {
+                    throw new Error(`Failed to upload demo VCF: ${response2.status} ${response2.statusText}`);
+                }
+                
+                const result = await response2.json();
+                console.log("Demo upload result:", result);
+                
+                if (result.file_id) {
+                    window.addLogMessage(`Demo file uploaded with job ID: ${result.file_id}`, "success");
+                    
+                    // Show VCF polling notification
+                    const vcfPollingNotification = document.getElementById('vcfPollingNotification');
+                    if (vcfPollingNotification) {
+                        vcfPollingNotification.classList.remove('d-none');
+                    }
+                    
+                    // Start monitoring progress
+                    window.monitorProgress(result.file_id);
+                    
+                    // Also start VCF auto-polling
+                    startVcfAutoPolling(result.file_id);
+                } else {
+                    window.addLogMessage("Demo upload failed: No file ID returned", "danger");
+                    if (uploadButton) uploadButton.disabled = false;
+                    if (demoButton) demoButton.disabled = false;
+                }
+                
+            } catch (error) {
+                console.error("Error running PharmCAT demo:", error);
+                window.addLogMessage(`Error running demo: ${error.message}`, "danger");
+                
+                // Re-enable buttons
+                const uploadButton = document.getElementById('uploadButton');
+                const demoButton = document.getElementById('demoButton');
+                if (uploadButton) uploadButton.disabled = false;
+                if (demoButton) demoButton.disabled = false;
+            }
+        }
+
+        // Function to start auto-polling for VCF files
+        function startVcfAutoPolling(jobId) {
+            // Clear any existing polling interval
+            if (vcfPollingInterval) {
+                clearInterval(vcfPollingInterval);
+            }
+            
+            // Reset polling attempts
+            pollingAttempts = 0;
+            currentJobId = jobId;
+            
+            // Show the notification
+            const vcfPollingNotification = document.getElementById('vcfPollingNotification');
+            if (vcfPollingNotification) {
+                vcfPollingNotification.classList.remove('d-none');
+            }
+            
+            // Log that we're starting auto-polling
+            window.addLogMessage("TEMPORARY WORKAROUND: Starting automatic report checking for VCF file...", "info");
+            
+            // Start the polling interval - check every 10 seconds
+            vcfPollingInterval = setInterval(pollReportStatus, 10000);
+        }
+
+        // Function to poll report status
+        async function pollReportStatus() {
+            if (!currentJobId) {
+                console.error("No job ID for polling");
+                stopVcfAutoPolling();
+                return;
+            }
+            
+            // Increment polling attempts
+            pollingAttempts++;
+            
+            // Log polling attempt
+            console.log(`VCF auto-polling attempt ${pollingAttempts}/${MAX_POLLING_ATTEMPTS} for job ${currentJobId}`);
+            
+            // If we've reached the maximum attempts, stop polling
+            if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
+                window.addLogMessage(`Automatic report checking stopped after ${MAX_POLLING_ATTEMPTS} attempts`, "warning");
+                stopVcfAutoPolling();
+                return;
+            }
+            
+            try {
+                // Try the regular status endpoint
+                const response = await fetch(`/status/${currentJobId}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log("Auto-polling status data:", data);
+                    
+                    // If analysis is complete, show results and stop polling
+                    if (data.status === "completed" && data.data) {
+                        window.addLogMessage("Auto-polling detected completed analysis", "success");
+                        window.showResults(data.data);
+                        stopVcfAutoPolling();
+                        return;
+                    }
+                }
+                
+                // If that doesn't work, try the dedicated reports endpoint
+                const reportResponse = await fetch(`/reports/${currentJobId}`);
+                
+                if (reportResponse.ok) {
+                    const reportData = await reportResponse.json();
+                    console.log("Auto-polling report data:", reportData);
+                    
+                    if (reportData.status === "completed") {
+                        // Build a data object compatible with showResults
+                        const resultsData = {
+                            pdf_report_url: reportData.pdf_report_url,
+                            html_report_url: reportData.html_report_url
+                        };
+                        
+                        window.addLogMessage("Auto-polling detected completed report", "success");
+                        window.showResults(resultsData);
+                        stopVcfAutoPolling();
+                        return;
+                    }
+                }
+                
+                // Log the polling
+                if (pollingAttempts % 3 === 0) { // Log every 3rd attempt to avoid spamming the log
+                    window.addLogMessage(`Auto-polling: Still waiting for report completion (attempt ${pollingAttempts})`, "info");
+                }
+                
+            } catch (error) {
+                console.error("Error in VCF auto-polling:", error);
+                window.addLogMessage(`Auto-polling error: ${error.message}`, "warning");
+            }
+        }
+
+        // Function to stop VCF auto-polling
+        function stopVcfAutoPolling() {
+            if (vcfPollingInterval) {
+                clearInterval(vcfPollingInterval);
+                vcfPollingInterval = null;
+            }
+            
+            // Hide the notification
+            const vcfPollingNotification = document.getElementById('vcfPollingNotification');
+            if (vcfPollingNotification) {
+                vcfPollingNotification.classList.add('d-none');
+            }
+            
+            // Log that we're stopping auto-polling
+            if (pollingAttempts > 0) {
+                window.addLogMessage("Automatic report checking stopped", "info");
+            }
+            
+            currentJobId = null;
+            pollingAttempts = 0;
+        }
+
+        // Modify the file input change handler to detect VCF files and set a flag
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('genomicFile');
+            
+            if (fileInput) {
+                fileInput.addEventListener('change', function() {
+                    const file = this.files[0];
+                    if (file) {
+                        const isVcf = file.name.toLowerCase().endsWith('.vcf') || 
+                                     file.name.toLowerCase().endsWith('.vcf.gz');
+                        
+                        // Store this information for later use when the form is submitted
+                        window.isVcfFile = isVcf;
+                        console.log(`File selected: ${file.name}, Is VCF: ${isVcf}`);
+                    }
+                });
+            }
+            
+            // Modify the form submit handler to start auto-polling for VCF files
+            const form = document.getElementById('uploadForm');
+            if (form) {
+                const originalSubmitHandler = form.onsubmit;
+                
+                form.addEventListener('submit', async function(e) {
+                    // Preserve default behavior (which should be to prevent default)
+                    e.preventDefault();
+                    
+                    // If a VCF file is being uploaded, note this for auto-polling
+                    if (window.isVcfFile) {
+                        window.addLogMessage("VCF file detected - will automatically check for report completion", "info");
+                    }
+                    
+                    // Let the original GenomeDownloadProgress.js handler do its work
+                    return false;
+                });
+            }
+        });
     </script>
 </body>
 </html>

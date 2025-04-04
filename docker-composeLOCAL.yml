@@ -1,5 +1,4 @@
 services:
-  # This docker compose file is for running on the web, not locally. Make sure you are using the correct one.
   # PostgreSQL Database with CPIC data
   db:
     image: postgres:15
@@ -207,7 +206,7 @@ services:
       - ./:/app  # Mount the entire project directory to /app instead of root
       - ./data:/data
     ports:
-      - "0.0.0.0:8765:8000"
+      - "8765:8000"
     healthcheck:
       test: ["CMD", "echo", "Healthcheck disabled for debugging"]
       interval: 10s

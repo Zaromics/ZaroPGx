@@ -105,7 +105,41 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=[
+        # Production domain
+        "https://pgx.zimerguz.net", 
+        "http://pgx.zimerguz.net",
+        
+        # Localhost development - main app ports
+        "http://localhost:8765",  # Main FastAPI app external port
+        "http://localhost:8000",  # Internal app port
+        "http://127.0.0.1:8765",
+        "http://127.0.0.1:8000",
+        
+        # Common frontend development ports
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+        
+        # Service-specific ports from docker-compose.yml
+        "http://localhost:5050",  # genome-downloader
+        "http://localhost:2323",  # pharmcat
+        "http://localhost:8090",  # fhir-server
+        "http://localhost:5001",  # pharmcat-wrapper
+        "http://localhost:5002",  # gatk-api
+        "http://localhost:5003",  # stargazer
+        "http://localhost:5444",  # PostgreSQL
+        
+        # 127.0.0.1 equivalents
+        "http://127.0.0.1:5050",
+        "http://127.0.0.1:2323",
+        "http://127.0.0.1:8090",
+        "http://127.0.0.1:5001",
+        "http://127.0.0.1:5002",
+        "http://127.0.0.1:5003",
+        "http://127.0.0.1:5444"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1794,22 +1828,29 @@ async def services_status(current_user: str = Depends(get_optional_user)):
     try:
         services = {
             "pharmcat": {
-                "url": os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match"),
-                "timeout": 5
+                "url": os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match").replace("/match", "") + "/health",
+                "timeout": 10
             },
             "gatk": {
-                "url": os.getenv("GATK_API_URL", "http://gatk-api:5000/health"),
-                "timeout": 5
+                "url": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
+                "timeout": 10
             },
             "stargazer": {
-                "url": os.getenv("STARGAZER_API_URL", "http://stargazer:5000/health"),
-                "timeout": 5
+                "url": os.getenv("STARGAZER_API_URL", "http://stargazer:5000") + "/health",
+                "timeout": 10
             },
             "database": {
                 "url": os.getenv("DATABASE_URL", "postgresql://cpic_user:cpic_password@db:5432/cpic_db"),
-                "timeout": 3
+                "timeout": 5
             }
         }
+        
+        # For debugging - log the URLs we're trying to check
+        service_urls = []
+        for k, v in services.items():
+            if k != 'database':
+                service_urls.append(f"{k}: {v['url']}")
+        logger.info(f"Checking services: {', '.join(service_urls)}")
         
         # Check each service
         unhealthy_services = {}
@@ -1832,13 +1873,20 @@ async def services_status(current_user: str = Depends(get_optional_user)):
                 else:
                     # HTTP services
                     try:
+                        # Add some extra request headers and increase timeout
                         response = await client.get(
                             service_info["url"],
-                            timeout=service_info["timeout"]
+                            timeout=service_info["timeout"],
+                            headers={"User-Agent": "ZaroPGx-HealthCheck"},
+                            follow_redirects=True
                         )
-                        if response.status_code != 200:
+                        
+                        # Accept 200-299 status codes as success
+                        if response.status_code < 200 or response.status_code >= 300:
                             unhealthy_services[service_name] = f"HTTP {response.status_code}"
+                            logger.warning(f"Service {service_name} returned status {response.status_code}")
                     except Exception as e:
+                        logger.warning(f"Error checking {service_name} health: {str(e)}")
                         unhealthy_services[service_name] = str(e)
         
         # Return status

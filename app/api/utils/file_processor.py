@@ -454,11 +454,11 @@ class FileProcessor:
             if vcf_info.sequencing_profile == SequencingProfile.WGS:
                 workflow["needs_stargazer"] = True
                 workflow["recommendations"].append(
-                    "Using Stargazer for CYP2D6 analysis due to whole genome sequencing data"
+                    "Using Stargazer for enhanced analysis thanks to whole genome sequencing data"
                 )
             else:
                 workflow["warnings"].append(
-                    "Limited CYP2D6 analysis may be available due to non-whole genome sequencing data"
+                    "Limited analysis may be available due to non-whole genome sequencing data for genes such as CYP2D6"
                 )
 
             # Create index if needed
