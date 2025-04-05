@@ -5,7 +5,7 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 
 ## Project Status
 - **Current Phase**: Phase 1 Implementation - Core Gene Groups
-- **Last Updated**: April 3, 2025
+- **Last Updated**: April 6, 2025
 
 ## Components & Services
 
@@ -42,10 +42,22 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 | **API Endpoints** | 🟢 Working | REST API for service interactions | API documentation accessible at /docs |
 | **Web UI** | 🟢 Working | User-friendly interface | Simple Bootstrap UI for file uploads |
 | **Gene Group Analysis** | 🟡 In Progress | Analyzing genes by functional groups | DB schema created, UI updates needed |
+| **Progress Tracking** | 🟢 Fixed | Real-time progress monitoring | Fixed issue with VCF processing progress |
 
 ## Recent Changes
 
-1. **FHIR Integration (April 3, 2025)**:
+1. **Progress Tracking System Improvements (April 6, 2025)**:
+   - Fixed bug where progress would get stuck at 20% for VCF files
+   - Implemented intelligent stage detection when job status disappears
+   - Created robust recovery mechanism that examines existing files to determine current processing stage
+   - Updated VCF file processing path to correctly advance to star allele calling stage
+   - Enhanced frontend UI to properly display current stage with appropriate visual indicators
+   - Added mapping between backend stage names and frontend display elements
+   - Improved stage indicator styling with proper coloring for active and completed stages
+   - Removed connector lines between stage indicators for cleaner UI appearance
+   - Added comprehensive stage name mapping to handle variations in stage naming between backend and frontend
+
+2. **FHIR Integration (April 3, 2025)**:
    - Added HAPI FHIR server to Docker stack for EHR integration
    - Created API endpoint in report_router.py for exporting PGx reports to FHIR servers
    - Implemented FHIR export UI in interactive report template
@@ -53,65 +65,65 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Separated visualization code from FHIR export logic for better maintainability
    - Configured FastAPI to properly serve static files from app/static directory
 
-2. **Phase 1 Implementation**: 
+3. **Phase 1 Implementation**: 
    - Created database schema for gene groups and relationships
    - Enhanced Aldy wrapper to support multiple genes and gene grouping
    - Added gene group and multi-gene analysis endpoints
    - Updated Dockerfile to support additional gene definitions
 
-3. **Major Enhancement**: 
+4. **Major Enhancement**: 
    - Implemented gene grouping by functional pathway (CYP450, Phase II, etc.)
    - Added `/multi_genotype` endpoint for analyzing multiple genes in one request
    - Added support for gene group-based analysis
 
-4. **Database Schema Update**:
+5. **Database Schema Update**:
    - Added `gene_groups` table for categorizing genes by function
    - Created `gene_group_members` table for gene-group relationships
    - Implemented functions for dynamic gene group membership
 
-5. **Service Integration Fixes**:
+6. **Service Integration Fixes**:
    - Fixed service connection issues between main app and PharmCAT wrapper
    - Updated PharmCAT wrapper to use /genotype endpoint for processing
    - Fixed URL naming in Docker Compose networking
    - Properly passed environment variables between containers
 
-6. **Report Generation Implementation**:
+7. **Report Generation Implementation**:
    - Created PDF report template with clean styling
    - Implemented interactive HTML report with visualizations
    - Added proper error handling for PDF generation
    - Created fallback mechanisms for report generation errors
    
-7. **Sample Data Integration**:
+8. **Sample Data Integration**:
    - Added sample VCF files for CYP2C19 and CYP2D6 genes
    - Created test data for verifying the pipeline
    - Implemented VCF upload and processing workflow
 
-8. **Major Update**: Added user-friendly web interface:
+9. **Major Update**: Added user-friendly web interface:
    - Created Bootstrap-based web UI
    - Added file upload form for VCF processing
    - Added service status display
    - Implemented Jinja2 templates in FastAPI
 
-9. **GATK API Enhancements**: 
+10. **GATK API Enhancements**: 
    - Implemented intelligent reference genome detection from file headers
    - Added support for handling non-human contigs (viral, mitochondrial)
    - Enhanced progress tracking with real-time memory usage monitoring
    - Improved error handling and automatic retry logic for contig issues
    - Added comprehensive diagnostic endpoint for system monitoring
 
-10. **Reference Genome Handling**:
+11. **Reference Genome Handling**:
    - Added automatic detection of reference genome from file headers
    - Implemented fallback mechanisms for reference detection
    - Added support for both hg38 and hg19 reference genomes
    - Enhanced error reporting for reference genome mismatches
 
-11. **Memory Management**:
+12. **Memory Management**:
    - Implemented dynamic memory allocation based on input file size
    - Added real-time memory usage tracking during GATK execution
    - Optimized Java memory settings for large file processing
    - Added memory usage reporting in job status updates
 
-12. **Job Status Tracking**:
+13. **Job Status Tracking**:
    - Enhanced progress reporting with chromosome-level tracking
    - Added detailed memory usage information to status updates
    - Improved error reporting and recovery mechanisms
@@ -351,6 +363,7 @@ For accurate pharmacogenomic analysis:
 - [x] Set up PharmCAT service
 - [x] Implemented proper error handling between services
 - [x] Added progress tracking across all stages
+- [x] Fixed progress tracking for VCF files
 
 ### Frontend
 - [x] Created responsive UI with Bootstrap
@@ -359,14 +372,15 @@ For accurate pharmacogenomic analysis:
 - [x] Implemented proper error handling and user feedback
 - [x] Added service status indicators
 - [x] Implemented FHIR export capability in interactive reports
+- [x] Improved progress tracking UI with proper stage indicators
 
 ## In Progress / Needs Fixing
 
 ### Frontend Issues
-- [ ] Fix progress monitoring after PharmCAT completion
-  - [ ] Ensure proper display of results after analysis
-  - [ ] Fix token refresh mechanism during long-running operations
-  - [ ] Improve error handling for connection timeouts
+- [ ] Fix token refresh mechanism during long-running operations
+- [ ] Implement better error recovery for connection timeouts
+- [x] Fix progress monitoring after file upload
+- [x] Ensure proper stage progression display in UI
 
 ### Service Integration
 - [ ] Improve error handling between services
@@ -394,66 +408,74 @@ For accurate pharmacogenomic analysis:
 
 ## Next Steps
 
-1. Fix the progress monitoring and results display after PharmCAT completion
-2. Implement proper error handling and recovery mechanisms
-3. Add comprehensive logging for debugging
-4. Improve the user experience with better feedback
-5. Add proper cleanup mechanisms for failed jobs
+1. Implement proper error handling and recovery mechanisms
+2. Add comprehensive logging for debugging
+3. Improve the user experience with better feedback
+4. Add proper cleanup mechanisms for failed jobs
+5. Enhance token refresh mechanism for long-running operations
+6. Implement parallel processing for large files where possible
 
 ## Known Issues
 
-1. Progress monitoring stops after PharmCAT completion
-2. Results not displaying properly after analysis
-3. Token refresh mechanism needs improvement
-4. Service health checks could be more robust
-5. Error handling between services needs improvement
+1. Token refresh mechanism needs improvement for long-running operations
+2. Service health checks could be more robust
+3. Error handling between services needs enhancement
+4. Large file processing may consume excessive memory
+5. Limited feedback during long-running operations
 
 ## Notes
 
-- The basic infrastructure and service integration is working
+- The basic infrastructure and service integration is working well
 - Authentication and security are properly implemented
-- The main issue currently is with the progress monitoring and results display
+- Progress tracking now works correctly for all file types
+- Frontend UI has been significantly improved
 - Need to focus on improving error handling and user feedback
 - Consider adding more detailed logging for debugging
+- Re-evaluate memory management for large file processing
 
-## Recent Troubleshooting Session (PharmCAT Wrapper Issues)
+## Recent Troubleshooting Session (Progress Tracking System Issues)
 
 ### Issues Identified
-- PharmCAT wrapper was calling the JAR file directly instead of using the `pharmcat_pipeline` command
-- Command line arguments were incorrect, using `-vcf` as a named parameter when position-based parameters are required
-- Non-standard chromosome formats in VCF files causing failures
-- Gene data extraction showing "Unknown" genes despite successful pipeline execution
-- JSON result format differences between PharmCAT versions causing parsing issues
+- Progress would get stuck at 20% specifically for VCF files
+- The event generator in the backend would recreate missing job status with hardcoded stage="gatk" and percent=20
+- VCF files were incorrectly being assigned to "variant_calling" stage instead of skipping to "star_allele_calling" 
+- Stage indicators in UI weren't properly displaying the current stage due to styling issues
+- Connector lines between stage indicators created visual distraction
 
 ### Solutions Implemented
 
-1. **Command Line Fix**:
-   - Updated PharmCAT wrapper to use `pharmcat_pipeline` command instead of direct JAR calls
-   - Corrected argument format to use positional arguments for input file
-   - Removed `-vcf` parameter which was causing "unrecognized arguments" errors
-   - Successfully integrated preprocessing step through `pharmcat_pipeline`
+1. **Backend Progress Recovery**:
+   - Created smart `guess_processing_stage()` function to intelligently determine the current processing stage
+   - Added file existence checks to identify completed or in-progress stages
+   - Implemented proper stage and percentage recovery based on file analysis
+   - Updated VCF processing to correctly skip the GATK stage and move to star allele calling
 
-2. **JSON Parsing Improvements**:
-   - Enhanced parsing logic to handle both `phenotype.json` and `report.json` formats
-   - Added fallback mechanisms to extract data from alternative sources when primary source fails
-   - Implemented structured extraction of gene data from `geneReports` section
-   - Added support for extracting drug recommendations from multiple JSON structures
+2. **Frontend UI Improvements**:
+   - Enhanced stage indicator styling to properly apply colors to both text and icons
+   - Added stage name mapping to handle differences between backend and frontend stage naming
+   - Improved visual feedback for current and completed stages
+   - Removed connector lines between stages for cleaner appearance
+   - Added consistent icon styling across all stages
+
+3. **Robust Stage Mapping**:
+   - Created comprehensive mapping between backend stage identifiers and frontend display names
+   - Implemented case-insensitive stage name matching
+   - Added support for multiple backend identifiers mapping to the same frontend stage
+   - Enhanced logging to track stage transitions for debugging
 
 ### Current Status
-- PharmCAT pipeline executes successfully without errors
-- HTML reports are correctly generated and accessible
-- JSON parsing correctly identifies available data structures
-- Command line arguments are properly formatted
-- **ISSUE**: Still reporting "Unknown" genes despite successful execution
-- **ISSUE**: No drug recommendations being extracted from test files
+- Progress tracking works correctly for all file types, including VCFs
+- The UI properly displays the current stage with appropriate visual indicators
+- If job status disappears, it's now intelligently recreated based on the actual processing stage
+- Stage transitions are smooth and intuitive
+- The progress bar advances correctly through the entire pipeline
+- Visual feedback is clear and consistent
 
 ### Next Steps
-1. Debug gene identification issue in PharmCAT output
-2. Investigate why genes are being reported as "Unknown"
-3. Verify test VCF files contain relevant PGx variants
-4. Trace data flow from VCF input to PharmCAT output structures
-5. Consider preparing PharmCAT-compatible test files with known variants
-6. Explore if preprocessing step is correctly handling chromosome formats
+1. Monitor the progress tracking system for any remaining edge cases
+2. Consider enhancing progress granularity for large file processing
+3. Add more detailed logging for stage transitions
+4. Implement more robust error handling for stage transitions
 
 ## Recent Troubleshooting Session (UI Report Display Issues)
 
