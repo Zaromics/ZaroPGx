@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSON
 from sse_starlette.sse import EventSourceResponse
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, AsyncGenerator, Callable
+from typing import Optional, List, Dict, Any, AsyncGenerator, Callable, Tuple
 from asyncio import Queue
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -75,6 +75,7 @@ PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/m
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path("/data/reports")
+UPLOADS_DIR = Path("/data/uploads")
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / "templates"
 
@@ -82,6 +83,7 @@ TEMPLATE_DIR = BASE_DIR / "templates"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -978,7 +980,9 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 logger.warning(f"Job {job_id} missing for VCF processing - recreating status")
                 print(f"[PROCESSING WARNING] Job {job_id} missing for VCF - recreating")
                 
-            update_job_progress(job_id, "variant_calling", 30, "Using provided VCF file")
+            # For VCF files, we skip variant calling and go directly to star allele calling
+            # Update with special message to indicate we're skipping GATK step
+            update_job_progress(job_id, "star_allele_calling", 35, "Using provided VCF file, proceeding to star allele calling")
         
         # Verify VCF file exists and is not empty
         if not os.path.exists(vcf_path) or os.path.getsize(vcf_path) == 0:
@@ -1448,6 +1452,53 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
     connection_start_time = time.time()
     max_connection_time = 30 * 60  # 30 minutes maximum connection time
     
+    # Add a function to intelligently guess the current processing stage
+    def guess_processing_stage(job_id: str) -> Tuple[str, int, str]:
+        """
+        Intelligently determine the current stage, percent, and message
+        for a job with missing status information.
+        
+        Returns:
+            Tuple[str, int, str]: (stage, percent, message)
+        """
+        # Check for finished reports first - highest priority
+        pdf_report_path = os.path.join(REPORTS_DIR, f"{job_id}_pgx_report.pdf")
+        html_report_path = os.path.join(REPORTS_DIR, f"{job_id}_pgx_report.html")
+        if os.path.exists(pdf_report_path) or os.path.exists(html_report_path):
+            return "complete", 100, "Analysis complete"
+            
+        # Check for PharmCAT reports
+        pharmcat_report_path = os.path.join(TEMP_DIR, job_id, f"{job_id}_pharmcat_report.json")
+        if os.path.exists(pharmcat_report_path):
+            return "report_generation", 90, "Generating final report"
+            
+        # Check for CYP2D6 results (Stargazer output)
+        cyp2d6_path = os.path.join(TEMP_DIR, job_id, f"{job_id}_cyp2d6.json")
+        if os.path.exists(cyp2d6_path):
+            return "pharmcat", 60, "Running PharmCAT analysis" 
+            
+        # Try to determine if the job is using a VCF or BAM based on uploaded files
+        uploads_dir = os.path.join(UPLOADS_DIR, str(job_id))
+        if os.path.exists(uploads_dir):
+            # Check file types in uploads directory
+            has_vcf = False
+            has_bam = False
+            for filename in os.listdir(uploads_dir):
+                if filename.lower().endswith('.vcf') or filename.lower().endswith('.vcf.gz'):
+                    has_vcf = True
+                elif filename.lower().endswith('.bam'):
+                    has_bam = True
+            
+            # If we have a VCF file, we'd be further along in the process
+            if has_vcf:
+                return "star_allele_calling", 40, "Calling CYP2D6 star alleles with Stargazer"
+            # If BAM, likely in variant calling
+            elif has_bam:
+                return "variant_calling", 20, "Calling variants with GATK"
+        
+        # Default fallback if we can't determine the stage
+        return "processing", 30, "Processing genomic data - connection reestablished"
+    
     while True:
         # Check if connection has been open too long and should be recycled
         current_time = time.time()
@@ -1466,17 +1517,25 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
             logger.warning(f"Job {job_id} status disappeared during streaming")
             print(f"[PROGRESS WARNING] Job {job_id} status gone during streaming - recreating")
             
-            # If job status disappeared, recreate it with GATK status
+            # Intelligently guess the current stage based on available information
+            stage, percent, message = guess_processing_stage(job_id)
+            
+            # Recreate the job status with the guessed information
             job_status[job_id] = {
                 "job_id": job_id,
-                "stage": "gatk",
-                "percent": 20,
-                "message": "Processing genomic data with GATK - connection reestablished",
-                "complete": False,
-                "success": None,
+                "stage": stage,
+                "percent": percent,
+                "message": f"{message} - connection reestablished",
+                "complete": stage == "complete",
+                "success": stage == "complete",
                 "timestamp": datetime.utcnow().isoformat(),
                 "reconnected": True
             }
+            
+            # Log the intelligent recreation
+            logger.info(f"Job {job_id} status recreated: stage={stage}, percent={percent}")
+            print(f"[PROGRESS] Job {job_id} status recreated: stage={stage}, percent={percent}")
+            
             current_status = job_status[job_id]
         
         # If status has changed, send an update
@@ -1827,10 +1886,14 @@ async def services_status(current_user: str = Depends(get_optional_user)):
     """Check status of all connected services"""
     try:
         services = {
-            "pharmcat": {
-                "url": os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match").replace("/match", "") + "/health",
-                "timeout": 10
-            },
+            # TEMPORARILY DISABLED: PharmCAT container health check
+            # The PharmCAT container frequently restarts, making health checks unreliable
+            # This is a temporary workaround until a more stable health check implementation is available
+            # TODO: Re-enable PharmCAT health check when container stability is improved
+            # "pharmcat": {
+            #     "url": os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match").replace("/match", "") + "/health",
+            #     "timeout": 10
+            # },
             "gatk": {
                 "url": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
                 "timeout": 10

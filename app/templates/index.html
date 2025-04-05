@@ -37,15 +37,45 @@
         .stage-indicator {
             position: relative;
             padding: 0 5px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
         }
+        /* Removing connector lines
         .stage-indicator:not(:last-child)::after {
             content: '';
             position: absolute;
-            top: 50%;
-            right: -10px;
-            width: 20px;
-            height: 1px;
+            top: 25%;
+            right: -12px;
+            width: 24px;
+            height: 2px;
             background-color: #dee2e6;
+            transition: background-color 0.3s ease;
+        }
+        */
+        /* Apply color styling to both icons and text */
+        .stage-indicator.text-primary i, 
+        .stage-indicator.text-primary span {
+            color: #0066cc !important;
+        }
+        .stage-indicator.text-success i, 
+        .stage-indicator.text-success span {
+            color: #198754 !important;
+        }
+        /* Removing connector line coloring
+        .stage-indicator.text-success::after {
+            background-color: #198754;
+        }
+        .stage-indicator.text-primary::after {
+            background-color: #0066cc;
+        }
+        */
+        /* Ensure all stage icons have consistent size */
+        .stage-indicator i {
+            font-size: 1.2rem;
+            margin-bottom: 0.25rem;
         }
     </style>
 </head>
@@ -124,9 +154,9 @@
                                         <div class="spinner-border spinner-border-sm me-2" role="status">
                                             <span class="visually-hidden">Loading...</span>
                                         </div>
-                                        <div>
-                                            <strong>TEMPORARY WORKAROUND:</strong> 
-                                            <span>Automatic report checking is enabled for VCF files. This will periodically check for report completion.</span>
+                                        <div>       
+                                            <strong>Monitoring status...</strong> 
+                                            <span>Please wait for the reports to be generated. This should not take long.</span>
                                         </div>
                                     </div>
                                 </div>
@@ -161,12 +191,12 @@
                                         <div class="mb-1"><i class="bi bi-cloud-upload"></i></div>
                                         <span>Upload</span>
                                     </div>
-                                        <div id="stageAnalysis" class="stage-indicator text-center text-muted">
-                                            <div class="mb-1"><i class="bi bi-search"></i></div>
-                                            <span>Analysis</span>
+                                    <div id="stageAnalysis" class="stage-indicator text-center text-muted">
+                                        <div class="mb-1"><i class="bi bi-search"></i></div>
+                                        <span>Analysis</span>
                                     </div>
                                     <div id="stageGATK" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-dna"></i></div>
+                                        <div class="mb-1"><i class="bi bi-cpu"></i></div>
                                         <span>GATK</span>
                                     </div>
                                     <div id="stageStargazer" class="stage-indicator text-center text-muted">
@@ -186,7 +216,7 @@
                                 <!-- Detailed log panel (initially collapsed) -->
                                 <div class="card">
                                     <div class="card-header bg-light p-2" role="button" data-bs-toggle="collapse" data-bs-target="#logPanel">
-                                        <small>Processing Log <i class="bi bi-chevron-down float-end"></i></small>
+                                        <small class="text-black">Processing Log <i class="bi bi-chevron-down float-end"></i></small>
                                     </div>
                                     <div id="logPanel" class="collapse">
                                         <div id="logMessages" class="card-body p-2 small" style="max-height: 150px; overflow-y: auto; font-family: monospace;">
@@ -439,6 +469,81 @@
                                                     
                                                     // Add log message
                                                     addLogMessage(data.message || 'Processing...');
+                                                    
+                                                    // Update stage indicators based on current stage
+                                                    if (data.stage) {
+                                                        // First, reset all stages to muted
+                                                        document.querySelectorAll('.stage-indicator').forEach(el => {
+                                                            el.classList.add('text-muted');
+                                                            el.classList.remove('text-primary', 'text-success');
+                                                        });
+                                                        
+                                                        // Map backend stage name to frontend stage name
+                                                        let currentStage = data.stage;
+                                                        // Handle backend stage naming variations
+                                                        const stageNameMap = {
+                                                            'variant_calling': 'GATK',
+                                                            'gatk': 'GATK',
+                                                            'star_allele_calling': 'Stargazer',
+                                                            'stargazer': 'Stargazer',
+                                                            'pharmcat': 'PharmCAT',
+                                                            'report_generation': 'Report',
+                                                            'complete': 'Report',
+                                                            'initializing': 'Upload',
+                                                            'uploaded': 'Upload',
+                                                            'processing': 'Analysis',
+                                                            'analyzing': 'Analysis',
+                                                            'analysis': 'Analysis'
+                                                        };
+                                                        
+                                                        // Convert backend stage name to frontend stage name
+                                                        if (stageNameMap[currentStage.toLowerCase()]) {
+                                                            currentStage = stageNameMap[currentStage.toLowerCase()];
+                                                        }
+                                                        
+                                                        // Map stage to element ID
+                                                        const stageMap = {
+                                                            'Upload': 'stageUpload',
+                                                            'Analysis': 'stageAnalysis',
+                                                            'GATK': 'stageGATK', 
+                                                            'Stargazer': 'stageStargazer',
+                                                            'PharmCAT': 'stagePharmcat',
+                                                            'Report': 'stageReport'
+                                                        };
+                                                        
+                                                        // Get the ordered list of stages for sequencing
+                                                        const orderedStages = ['Upload', 'Analysis', 'GATK', 'Stargazer', 'PharmCAT', 'Report'];
+                                                        const currentStageIndex = orderedStages.indexOf(currentStage);
+                                                        
+                                                        console.log("Stage mapping: backend='"+data.stage+"', frontend='"+currentStage+"', index="+currentStageIndex);
+                                                        
+                                                        if (currentStageIndex !== -1) {
+                                                            // Process each stage
+                                                            orderedStages.forEach((stageName, index) => {
+                                                                const el = document.getElementById(stageMap[stageName]);
+                                                                if (el) {
+                                                                    // Remove muted styling
+                                                                    el.classList.remove('text-muted');
+                                                                    
+                                                                    if (index < currentStageIndex) {
+                                                                        // Completed stages
+                                                                        el.classList.add('text-success');
+                                                                        el.classList.remove('text-primary');
+                                                                    } else if (index === currentStageIndex) {
+                                                                        // Current stage
+                                                                        el.classList.add('text-primary');
+                                                                        el.classList.remove('text-success');
+                                                                    } else {
+                                                                        // Future stages
+                                                                        el.classList.add('text-muted');
+                                                                        el.classList.remove('text-success', 'text-primary');
+                                                                    }
+                                                                }
+                                                            });
+                                                            
+                                                            console.log("Updated stage indicators for stage:", data.stage);
+                                                        }
+                                                    }
                                                     
                                                     // CRITICAL FIX: If complete, show results
                                                     if (data.complete) {
