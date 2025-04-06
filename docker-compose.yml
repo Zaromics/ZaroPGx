@@ -66,7 +66,7 @@ services:
 
   # HAPI FHIR Server for EHR integration
   fhir-server:
-    image: hapiproject/hapi:latest
+    image: hapiproject/hapi:v6.8.0
     container_name: pgx_fhir_server
     restart: unless-stopped
     ports:
@@ -75,12 +75,23 @@ services:
       - hapi.fhir.allow_external_references=true
       - hapi.fhir.allow_multiple_delete=true
       - hapi.fhir.reuse_cached_search_results_millis=60000
-      - spring.datasource.url=jdbc:h2:file:/data/hapi-data/h2
-      - spring.datasource.username=sa
-      - spring.datasource.password=
-      - spring.datasource.driverClassName=org.h2.Driver
+      - spring.datasource.url=jdbc:postgresql://db:5432/cpic_db?currentSchema=fhir
+      - spring.datasource.username=cpic_user
+      - spring.datasource.password=test123
+      - spring.datasource.driverClassName=org.postgresql.Driver
+      - spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQL95Dialect
+      - spring.jpa.hibernate.ddl-auto=update
+      - spring.jpa.properties.hibernate.default_schema=fhir
+      - spring.jpa.open-in-view=false
+      - hapi.fhir.max_page_size=50
+      - hapi.fhir.default_page_size=20
+      - hapi.fhir.subscription.resthook_enabled=true
+      - hapi.fhir.subscription.websocket_enabled=false
+      - JAVA_OPTS=-Djava.io.tmpdir=/tmp -Xmx2g
+    depends_on:
+      - db
     volumes:
-      - fhir-data:/data/hapi-data
+      - ./data/fhir-data:/data/hapi
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/fhir/metadata"]
       interval: 30s
@@ -150,12 +161,12 @@ services:
         limits:
           memory: 28G
 
-  # Stargazer Service for CYP2D6 star allele calling
-  stargazer:
+  # PyPGx Service for CYP2D6 star allele calling
+  pypgx:
     build:
-      context: ./docker/stargazer
-      dockerfile: Dockerfile.stargazer
-    container_name: pgx_stargazer
+      context: ./docker/pypgx
+      dockerfile: Dockerfile.pypgx
+    container_name: pgx_pypgx
     restart: unless-stopped
     depends_on:
       genome-downloader:
@@ -163,7 +174,6 @@ services:
     volumes:
       - ./data:/data
       - ./reference:/reference
-      - ./stargazer.zip:/tmp/stargazer.zip  # Mount the Stargazer zip file
     environment:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
@@ -189,7 +199,7 @@ services:
       - db
       - pharmcat-wrapper
       - gatk-api
-      - stargazer
+      - pypgx
     environment:
       - DATABASE_URL=postgresql://cpic_user:${POSTGRES_PASSWORD}@db:5432/cpic_db
       - SECRET_KEY=${SECRET_KEY}
@@ -197,7 +207,7 @@ services:
       - PHARMCAT_SERVICE_URL=http://pharmcat:8080
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
       - GATK_API_URL=http://gatk-api:5000
-      - STARGAZER_API_URL=http://stargazer:5000
+      - PYPGX_API_URL=http://pypgx:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
       - PYTHONPATH=/app

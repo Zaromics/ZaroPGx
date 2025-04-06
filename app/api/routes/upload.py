@@ -136,23 +136,23 @@ async def call_gatk_variants(job_id: str, vcf_file_path: str, reference_genome: 
             logging.error(error_msg)
             raise Exception(error_msg)
 
-async def call_stargazer(job_id: str, vcf_file: str):
-    """Call CYP2D6 star alleles using Stargazer."""
+async def call_pypgx(job_id: str, vcf_file: str):
+    """Call CYP2D6 star alleles using PyPGx."""
     try:
-        logging.info(f"Job {job_id} progress: star_allele_calling - 30% - Calling CYP2D6 star alleles with Stargazer")
+        logging.info(f"Job {job_id} progress: star_allele_calling - 30% - Calling CYP2D6 star alleles with PyPGx")
         async with aiohttp.ClientSession() as session:
             data = aiohttp.FormData()
             data.add_field('file', open(vcf_file, 'rb'))
             
-            async with session.post('http://stargazer:5000/genotype', data=data) as response:
+            async with session.post('http://pypgx:5000/genotype', data=data) as response:
                 if response.status == 200:
                     result = await response.json()
                     return result.get('output_file')
                 else:
                     error_text = await response.text()
-                    raise Exception(f"Stargazer service returned {response.status}: {error_text}")
+                    raise Exception(f"PyPGx service returned {response.status}: {error_text}")
     except Exception as e:
-        error_msg = f"Stargazer service error: {str(e)}"
+        error_msg = f"PyPGx service error: {str(e)}"
         logging.error(error_msg)
         raise Exception(error_msg)
 
@@ -185,26 +185,26 @@ async def process_sample(job_id: str, file_path: str, sample_name: str):
         # Call variants with GATK
         try:
             vcf_file = await call_gatk_variants(job_id, file_path, "hg38")
-            update_job_progress(job_id, "star_allele_calling", 30, "Calling CYP2D6 star alleles with Stargazer")
+            update_job_progress(job_id, "star_allele_calling", 30, "Calling CYP2D6 star alleles with PyPGx")
         except Exception as e:
             error_msg = f"GATK service error: {str(e)}"
             logging.error(error_msg)
             update_job_progress(job_id, "error", 100, error_msg)
             return
         
-        # Call CYP2D6 star alleles with Stargazer
+        # Call CYP2D6 star alleles with PyPGx
         try:
-            stargazer_output = await call_stargazer(job_id, vcf_file)
+            pypgx_output = await call_pypgx(job_id, vcf_file)
             update_job_progress(job_id, "pharmcat", 60, "Running PharmCAT analysis")
         except Exception as e:
-            error_msg = f"Stargazer service error: {str(e)}"
+            error_msg = f"PyPGx service error: {str(e)}"
             logging.error(error_msg)
             update_job_progress(job_id, "error", 100, error_msg)
             return
         
         # Run PharmCAT
         try:
-            report_file = await call_pharmcat(job_id, stargazer_output)
+            report_file = await call_pharmcat(job_id, pypgx_output)
             update_job_progress(job_id, "complete", 100, f"Analysis complete: {report_file}")
         except Exception as e:
             error_msg = f"PharmCAT service error: {str(e)}"

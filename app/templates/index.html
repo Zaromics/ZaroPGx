@@ -140,7 +140,7 @@
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File</label>
                                     <input class="form-control" type="file" id="genomicFile" name="file" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.fastq,.fastq.gz,.fq,.fq.gz,.txt,.csv,.zip" required>
-                                    <div class="form-text">Upload a VCF, BAM, SAM, CRAM, FASTQ, or 23andMe file for pharmacogenomic analysis</div>
+                                    <div class="form-text">Upload a VCF, BAM, SAM, or CRAM file for pharmacogenomic analysis. Support for FASTQ and 23andMe is coming soon.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -199,9 +199,9 @@
                                         <div class="mb-1"><i class="bi bi-cpu"></i></div>
                                         <span>GATK</span>
                                     </div>
-                                    <div id="stageStargazer" class="stage-indicator text-center text-muted">
+                                    <div id="stagePyPGx" class="stage-indicator text-center text-muted">
                                         <div class="mb-1"><i class="bi bi-star"></i></div>
-                                        <span>Stargazer</span>
+                                        <span>PyPGx</span>
                                     </div>
                                     <div id="stagePharmcat" class="stage-indicator text-center text-muted">
                                         <div class="mb-1"><i class="bi bi-capsule"></i></div>
@@ -484,8 +484,8 @@
                                                         const stageNameMap = {
                                                             'variant_calling': 'GATK',
                                                             'gatk': 'GATK',
-                                                            'star_allele_calling': 'Stargazer',
-                                                            'stargazer': 'Stargazer',
+                                                            'star_allele_calling': 'PyPGx',
+                                                            'stargazer': 'PyPGx',
                                                             'pharmcat': 'PharmCAT',
                                                             'report_generation': 'Report',
                                                             'complete': 'Report',
@@ -506,13 +506,13 @@
                                                             'Upload': 'stageUpload',
                                                             'Analysis': 'stageAnalysis',
                                                             'GATK': 'stageGATK', 
-                                                            'Stargazer': 'stageStargazer',
+                                                            'PyPGx': 'stagePyPGx',
                                                             'PharmCAT': 'stagePharmcat',
                                                             'Report': 'stageReport'
                                                         };
                                                         
                                                         // Get the ordered list of stages for sequencing
-                                                        const orderedStages = ['Upload', 'Analysis', 'GATK', 'Stargazer', 'PharmCAT', 'Report'];
+                                                        const orderedStages = ['Upload', 'Analysis', 'GATK', 'PyPGx', 'PharmCAT', 'Report'];
                                                         const currentStageIndex = orderedStages.indexOf(currentStage);
                                                         
                                                         console.log("Stage mapping: backend='"+data.stage+"', frontend='"+currentStage+"', index="+currentStageIndex);
@@ -1089,7 +1089,7 @@
                 }
                 
                 // Add to log
-                window.addLogMessage("Fetching PharmCAT example VCF file...", "info");
+                window.addLogMessage("Loading PharmCAT example VCF file...", "info");
 
                 // Show progress container
                 progressContainer.classList.remove('d-none');
@@ -1097,32 +1097,8 @@
                 // Update progress status
                 const progressStatus = document.getElementById('progressStatus');
                 if (progressStatus) {
-                    progressStatus.textContent = "Downloading PharmCAT example VCF...";
+                    progressStatus.textContent = "Preparing PharmCAT example VCF...";
                 }
-                
-                // Fetch the PharmCAT example VCF file
-                const response = await fetch('https://pharmcat.org/examples/pharmcat.example.vcf');
-                
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch demo VCF: ${response.status} ${response.statusText}`);
-                }
-                
-                // Get the file content
-                const vcfContent = await response.text();
-                
-                // Create a Blob from the content
-                const blob = new Blob([vcfContent], { type: 'text/plain' });
-                
-                // Create a File object
-                const file = new File([blob], 'pharmcat_example.vcf', { type: 'text/plain' });
-                
-                // Create a FormData object
-                const formData = new FormData();
-                formData.append('genomicFile', file);
-                formData.append('sampleId', 'PharmCAT-Demo');
-                formData.append('referenceGenome', 'hg38');
-                
-                window.addLogMessage("Example VCF file downloaded successfully. Starting analysis...", "success");
                 
                 // Disable the upload button
                 const uploadButton = document.getElementById('uploadButton');
@@ -1130,26 +1106,18 @@
                 if (uploadButton) uploadButton.disabled = true;
                 if (demoButton) demoButton.disabled = true;
                 
-                // Update progress status
-                if (progressStatus) {
-                    progressStatus.textContent = "Uploading PharmCAT example VCF...";
+                // Call the simplified demo endpoint
+                const response = await fetch('/demo');
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to run demo: ${response.status} ${response.statusText}`);
                 }
                 
-                // Submit the form programmatically
-                const response2 = await fetch('/upload-vcf', {
-                    method: 'POST',
-                    body: formData
-                });
+                const result = await response.json();
+                console.log("Demo run result:", result);
                 
-                if (!response2.ok) {
-                    throw new Error(`Failed to upload demo VCF: ${response2.status} ${response2.statusText}`);
-                }
-                
-                const result = await response2.json();
-                console.log("Demo upload result:", result);
-                
-                if (result.file_id) {
-                    window.addLogMessage(`Demo file uploaded with job ID: ${result.file_id}`, "success");
+                if (result.job_id) {
+                    window.addLogMessage(`Demo started with job ID: ${result.job_id}`, "success");
                     
                     // Show VCF polling notification
                     const vcfPollingNotification = document.getElementById('vcfPollingNotification');
@@ -1158,12 +1126,12 @@
                     }
                     
                     // Start monitoring progress
-                    window.monitorProgress(result.file_id);
+                    window.monitorProgress(result.job_id);
                     
                     // Also start VCF auto-polling
-                    startVcfAutoPolling(result.file_id);
+                    startVcfAutoPolling(result.job_id);
                 } else {
-                    window.addLogMessage("Demo upload failed: No file ID returned", "danger");
+                    window.addLogMessage("Demo run failed: No job ID returned", "danger");
                     if (uploadButton) uploadButton.disabled = false;
                     if (demoButton) demoButton.disabled = false;
                 }

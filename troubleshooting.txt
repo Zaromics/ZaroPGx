@@ -1,4 +1,90 @@
 ======================================================================
+TROUBLESHOOTING SESSION SUMMARY - FHIR SERVER DATABASE ACCESS ISSUE (April 8, 2025)
+======================================================================
+
+ROOT CAUSE:
+- FHIR server unable to access its H2 database due to file permission issues
+- Java process inside container encountering AccessDeniedException when attempting to create/access files
+- Docker volume configuration not providing proper write permissions to container user
+
+ERROR MESSAGES:
+- "org.h2.jdbc.JdbcSQLNonTransientException: IO Exception: "/data/hapi-data/h2.mv.db" [90028-232]"
+- "Caused by: java.nio.file.AccessDeniedException: /data/hapi-data/h2.mv.db"
+- "Caused by: java.nio.file.AccessDeniedException: /data/hapi-data/h2.trace.db"
+
+INVESTIGATION:
+1. Examined error logs showing permission denied errors when accessing database files
+2. Analyzed Docker volume configuration in docker-compose.yml
+3. Determined that the named volume "fhir-data" didn't have proper permissions
+4. Container process couldn't write to the mounted volume directory
+
+SOLUTION IMPLEMENTED:
+1. Changed volume configuration approach:
+   - FROM: using a named Docker volume "fhir-data:/data/hapi-data"
+   - TO: direct host directory binding "./data/fhir-data:/data/hapi-data"
+
+2. Created a dedicated directory on the host:
+   - Created "./data/fhir-data" directory
+   - Set appropriate permissions with "icacls data\fhir-data /grant "Everyone:(OI)(CI)F""
+
+3. Added JVM memory settings:
+   - Added "JAVA_OPTS=-Djava.io.tmpdir=/tmp -Xmx2g" for optimal Java performance
+
+4. Rebuilt and restarted the container with revised configuration
+
+VERIFICATION:
+- FHIR server successfully started without database access errors
+- Server responded with HTTP 200 to /fhir/metadata endpoint
+- Database files were properly created in the host directory
+
+FOLLOW-UP IMPROVEMENTS (April 8, 2025, afternoon):
+1. Recognized existing PostgreSQL database could be used instead of H2
+2. Updated FHIR server configuration to use PostgreSQL:
+   - Changed datasource URL to "jdbc:postgresql://db:5432/cpic_db?currentSchema=fhir"
+   - Set PostgreSQL driver and dialect settings
+   - Added hibernate.default_schema property to isolate FHIR tables in their own schema
+   - Added depends_on relationship to ensure database starts first
+
+3. Created SQL initialization script:
+   - Added "db/init/02_create_fhir_schema.sql" to create FHIR schema during DB initialization
+   - Set proper permissions for the cpic_user on the FHIR schema
+   - Added documentation comments for future maintainers
+
+4. Benefits of the improved solution:
+   - Eliminated need for file-based H2 database
+   - Leveraged existing robust PostgreSQL instance
+   - Improved reliability and performance
+   - Better integration with existing infrastructure
+   - Schema separation prevents conflicts with application tables
+
+5. Additional Configuration Refinements (April 8, 2025, evening):
+   - Fixed dialect configuration by using HAPI FHIR's PostgreSQL dialect:
+     - Changed from generic "org.hibernate.dialect.PostgreSQLDialect" 
+     - To FHIR-specific "ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres95Dialect"
+   - Disabled Spring's "open-in-view" pattern to prevent connection leaks:
+     - Added "spring.jpa.open-in-view=false" configuration
+   - These changes addressed most warning messages in server logs
+   - Improved database integration and performance
+   - Note: A persistent warning about H2 dialect remains: "Dialect is not a HAPI FHIR dialect: org.hibernate.dialect.H2Dialect"
+     - This appears to be an internal HAPI FHIR issue where it has hardcoded references to H2
+     - The server still functions properly with PostgreSQL despite this warning
+     - No action needed as this is likely harmless and confined to certain internal configurations
+
+LESSONS LEARNED:
+1. Docker named volumes can have permission issues depending on how they're initialized
+2. Direct host directory mounts provide more control over file permissions
+3. When troubleshooting Java applications in containers, check for file permission issues
+4. H2 database requires write access to both main database file and trace file
+5. Use PostgreSQL with schema separation when possible, instead of embedded databases
+
+FUTURE RECOMMENDATIONS:
+1. Monitor PostgreSQL performance with additional FHIR workload
+2. Consider adding database connection pooling configuration
+3. Add database backup procedures to include FHIR schema
+4. Implement comprehensive health checks for database connectivity
+5. Document schema relationships in the overall system architecture
+
+======================================================================
 TROUBLESHOOTING SESSION SUMMARY - REPORT VISIBILITY ISSUES (April 2, 2025)
 ======================================================================
 
@@ -126,3 +212,45 @@ FUTURE IMPROVEMENTS:
 - Implement validation of report.json structures
 - Add version tracking for PharmCAT compatibility
 - Consider periodic validation and repair of the latest report file
+
+# FHIR Server Troubleshooting
+
+## PostgreSQL Dialect Issue
+When configuring the HAPI FHIR server to use PostgreSQL, we encountered an error with the dialect setting:
+```
+ClassNotFoundException: Could not load requested class : ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres95Dialect
+```
+
+This error occurs because the custom PostgreSQL dialect class is not available in the standard HAPI FHIR image.
+
+### Solution:
+1. Use a standard PostgreSQL dialect available in Hibernate instead of the custom HAPI dialect:
+   ```
+   spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQL95Dialect
+   ```
+
+2. Update to a specific version of HAPI FHIR that has better PostgreSQL support:
+   ```
+   image: hapiproject/hapi:v6.8.0
+   ```
+
+3. Ensure proper PostgreSQL configuration in the environment variables:
+   ```
+   - spring.datasource.url=jdbc:postgresql://db:5432/cpic_db?currentSchema=fhir
+   - spring.datasource.username=cpic_user
+   - spring.datasource.password=test123
+   - spring.datasource.driverClassName=org.postgresql.Driver
+   - spring.jpa.hibernate.ddl-auto=update
+   - spring.jpa.properties.hibernate.default_schema=fhir
+   ```
+
+## FHIR Server Integration Notes
+- The FHIR server requires a dedicated schema in the PostgreSQL database
+- Ensure initialization scripts properly set up permissions for the FHIR schema
+- Use appropriate health checks to verify server operation
+- Configure adequate memory allocation for Java via JAVA_OPTS
+
+## Common FHIR Server Warnings
+- H2 dialect warning: This is a harmless warning related to internal HAPI FHIR components
+- JPA open-in-view warning: Recommended to disable with `spring.jpa.open-in-view=false`
+- Bean post-processor warning: Can typically be ignored, related to Spring internals

@@ -1,0 +1,58 @@
+FROM python:3.8-slim
+
+LABEL description="PyPGx service for CYP2D6 calling in the ZaroPGx pipeline"
+LABEL maintainer="ZaroPGx Team"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    git \
+    curl \
+    unzip \
+    default-jdk \
+    procps \
+    gcc \
+    g++ \
+    libbz2-dev \
+    liblzma-dev \
+    libcurl4-openssl-dev \
+    zlib1g-dev \
+    libncurses5-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up working directories
+RUN mkdir -p /app /data /reference /tmp/pypgx
+
+# Install PyPGx with pip and its dependencies
+# Using PyPGx version 0.24.0 which should be compatible with Python 3.8
+RUN pip install --no-cache-dir pypgx scikit-learn
+
+# Clone the matching PyPGx bundle repository
+RUN cd /root && git clone --branch $(pip show pypgx | grep -oP 'Version: \K.*') --depth 1 https://github.com/sbslee/pypgx-bundle || \
+    git clone --branch 0.24.0 --depth 1 https://github.com/sbslee/pypgx-bundle
+
+# Create a simple script to setup environment and run server
+WORKDIR /app
+
+# Copy the wrapper script
+COPY pypgx_wrapper.py /app/
+COPY setup_pypgx.sh /app/
+
+# Make the setup script executable
+RUN chmod +x /app/setup_pypgx.sh
+
+# Expose the port the app runs on
+EXPOSE 5000
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV DATA_DIR=/data
+ENV REFERENCE_DIR=/reference
+
+# Health check to ensure the API is responsive
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
+
+# Start the wrapper
+CMD ["/app/setup_pypgx.sh"] 

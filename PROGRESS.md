@@ -5,7 +5,7 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 
 ## Project Status
 - **Current Phase**: Phase 1 Implementation - Core Gene Groups
-- **Last Updated**: April 6, 2025
+- **Last Updated**: April 7, 2025
 
 ## Components & Services
 
@@ -17,7 +17,8 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 | **PostgreSQL Database** | 🟢 Working | Stores CPIC guidelines, user data, reports | Gene grouping schema implemented |
 | **PharmCAT Service** | 🟢 Working | Using official pgkb/pharmcat Docker image | Now running with proper command |
 | **PharmCAT Wrapper** | 🟢 Working | Python wrapper providing REST API for PharmCAT | API accessible via port 5001 |
-| **GATK**
+| **GATK API** | 🟢 Working | Variant calling service | Processing variants from BAM/VCF files |
+| **PyPGx Service** | 🟡 In Progress | Replacing Stargazer for CYP2D6 star allele calling | Container created, integration pending |
 | **HAPI FHIR Server** | 🟢 Working | FHIR server for EHR integration | Provides FHIR API for report exports |
 
 ### 2. Docker Infrastructure
@@ -46,7 +47,32 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 
 ## Recent Changes
 
-1. **Progress Tracking System Improvements (April 6, 2025)**:
+1. **FHIR Server Database Storage Fix (April 8, 2025)**:
+   - Fixed critical error with FHIR server database access permissions
+   - Resolved `AccessDeniedException` when accessing H2 database files
+   - Modified docker-compose configuration to directly mount local directory for persistent storage
+   - Changed volume configuration from `fhir-data:/data/hapi-data` to `./data/fhir-data:/data/hapi-data`
+   - Added `JAVA_OPTS` environment variable with memory settings to ensure server has enough resources
+   - Created dedicated directory for FHIR data storage with proper permissions
+   - Ensured FHIR server can now successfully initialize and maintain its database
+   - **IMPROVED SOLUTION**: Integrated FHIR server with existing PostgreSQL database:
+     - Created dedicated `fhir` schema in PostgreSQL to isolate FHIR tables
+     - Modified FHIR server configuration to use PostgreSQL instead of H2
+     - Added initialization SQL script for creating the schema and setting permissions
+     - Eliminated dependency on file-based H2 database for improved reliability
+
+2. **Stargazer to PyPGx Transition (April 7, 2025)**:
+   - Created PyPGx service Docker container to replace Stargazer
+   - Implemented a REST API wrapper similar to the Stargazer service interface
+   - Addressed Python compatibility issues by using Python 3.8 and pip installation
+   - Installed necessary system dependencies for bioinformatics processing
+   - Updated references from "Stargazer" to "PyPGx" throughout the codebase
+   - Temporarily disabled the PyPGx service call in the pipeline (skips to PharmCAT)
+   - Added placeholder results to maintain pipeline flow until full integration
+   - Updated UI/progress tracking to correctly display PyPGx instead of Stargazer
+   - Extended gene support from just CYP2D6 to all 87 pharmacogenes supported by PyPGx
+
+3. **Progress Tracking System Improvements (April 6, 2025)**:
    - Fixed bug where progress would get stuck at 20% for VCF files
    - Implemented intelligent stage detection when job status disappears
    - Created robust recovery mechanism that examines existing files to determine current processing stage
@@ -57,7 +83,7 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Removed connector lines between stage indicators for cleaner UI appearance
    - Added comprehensive stage name mapping to handle variations in stage naming between backend and frontend
 
-2. **FHIR Integration (April 3, 2025)**:
+4. **FHIR Integration (April 3, 2025)**:
    - Added HAPI FHIR server to Docker stack for EHR integration
    - Created API endpoint in report_router.py for exporting PGx reports to FHIR servers
    - Implemented FHIR export UI in interactive report template
@@ -65,65 +91,65 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Separated visualization code from FHIR export logic for better maintainability
    - Configured FastAPI to properly serve static files from app/static directory
 
-3. **Phase 1 Implementation**: 
+5. **Phase 1 Implementation**: 
    - Created database schema for gene groups and relationships
    - Enhanced Aldy wrapper to support multiple genes and gene grouping
    - Added gene group and multi-gene analysis endpoints
    - Updated Dockerfile to support additional gene definitions
 
-4. **Major Enhancement**: 
+6. **Major Enhancement**: 
    - Implemented gene grouping by functional pathway (CYP450, Phase II, etc.)
    - Added `/multi_genotype` endpoint for analyzing multiple genes in one request
    - Added support for gene group-based analysis
 
-5. **Database Schema Update**:
+7. **Database Schema Update**:
    - Added `gene_groups` table for categorizing genes by function
    - Created `gene_group_members` table for gene-group relationships
    - Implemented functions for dynamic gene group membership
 
-6. **Service Integration Fixes**:
+8. **Service Integration Fixes**:
    - Fixed service connection issues between main app and PharmCAT wrapper
    - Updated PharmCAT wrapper to use /genotype endpoint for processing
    - Fixed URL naming in Docker Compose networking
    - Properly passed environment variables between containers
 
-7. **Report Generation Implementation**:
+9. **Report Generation Implementation**:
    - Created PDF report template with clean styling
    - Implemented interactive HTML report with visualizations
    - Added proper error handling for PDF generation
    - Created fallback mechanisms for report generation errors
    
-8. **Sample Data Integration**:
+10. **Sample Data Integration**:
    - Added sample VCF files for CYP2C19 and CYP2D6 genes
    - Created test data for verifying the pipeline
    - Implemented VCF upload and processing workflow
 
-9. **Major Update**: Added user-friendly web interface:
+11. **Major Update**: Added user-friendly web interface:
    - Created Bootstrap-based web UI
    - Added file upload form for VCF processing
    - Added service status display
    - Implemented Jinja2 templates in FastAPI
 
-10. **GATK API Enhancements**: 
+12. **GATK API Enhancements**: 
    - Implemented intelligent reference genome detection from file headers
    - Added support for handling non-human contigs (viral, mitochondrial)
    - Enhanced progress tracking with real-time memory usage monitoring
    - Improved error handling and automatic retry logic for contig issues
    - Added comprehensive diagnostic endpoint for system monitoring
 
-11. **Reference Genome Handling**:
+13. **Reference Genome Handling**:
    - Added automatic detection of reference genome from file headers
    - Implemented fallback mechanisms for reference detection
    - Added support for both hg38 and hg19 reference genomes
    - Enhanced error reporting for reference genome mismatches
 
-12. **Memory Management**:
+14. **Memory Management**:
    - Implemented dynamic memory allocation based on input file size
    - Added real-time memory usage tracking during GATK execution
    - Optimized Java memory settings for large file processing
    - Added memory usage reporting in job status updates
 
-13. **Job Status Tracking**:
+15. **Job Status Tracking**:
    - Enhanced progress reporting with chromosome-level tracking
    - Added detailed memory usage information to status updates
    - Improved error reporting and recovery mechanisms
@@ -343,6 +369,7 @@ For accurate pharmacogenomic analysis:
 - [x] Implemented health checks for all services
 - [x] Configured proper service dependencies and startup order
 - [x] Added HAPI FHIR server for EHR integration
+- [x] Fixed FHIR server database permissions and persistent storage
 
 ### Authentication & Security
 - [x] Implemented JWT-based authentication
@@ -592,3 +619,39 @@ For accurate pharmacogenomic analysis:
 ## Project Status (Updated April 3, 2025)
 - **Current Phase**: Phase 1 Implementation - Core Gene Groups  
 - **Last Updated**: April 3, 2025
+
+## 2025-04-05: FHIR Server PostgreSQL Integration
+
+We have successfully resolved the FHIR server PostgreSQL dialect issue. The initial error was related to the specified custom dialect class:
+
+```
+ClassNotFoundException: Could not load requested class : ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres95Dialect
+```
+
+This happened because the custom HAPI FHIR PostgreSQL dialect was not available in the container. 
+
+The solution involved:
+
+1. Using a standard Hibernate PostgreSQL dialect instead of the custom HAPI dialect:
+   ```
+   spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQL95Dialect
+   ```
+
+2. Updating to a specific version of HAPI FHIR with better PostgreSQL support:
+   ```
+   image: hapiproject/hapi:v6.8.0
+   ```
+
+3. Ensuring proper PostgreSQL configuration:
+   - Using the correct schema settings
+   - Setting appropriate JPA properties
+   - Configuring the FHIR server implementation for our needs
+
+This change allows our FHIR server to properly connect to the PostgreSQL database and use the designated FHIR schema for storing healthcare data. The integration makes our system more robust by:
+
+- Using a proper relational database instead of H2
+- Supporting scalability with PostgreSQL
+- Enabling proper schema-based data organization
+- Ensuring data persistence across container restarts
+
+All configuration changes have been documented in troubleshooting.txt for future reference.

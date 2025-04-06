@@ -58,7 +58,7 @@ print(f"=========== ZaroPGx STARTUP AT {datetime.utcnow()} ===========")
 print(f"LOG LEVEL: {log_level}")
 print(f"GATK SERVICE URL: {os.getenv('GATK_API_URL', 'http://gatk-api:5000')}")
 print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_SERVICE_URL', 'http://pharmcat:8080/match')}")
-print(f"STARGAZER SERVICE URL: {os.getenv('STARGAZER_API_URL', 'http://stargazer:5000')}")
+print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")  # Updated from Stargazer to PyPGx
 
 # Load environment variables
 load_dotenv()
@@ -70,7 +70,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Constants
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
-STARGAZER_SERVICE_URL = os.getenv("STARGAZER_API_URL", "http://stargazer:5000")
+PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")  # Updated from Stargazer to PyPGx
 PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match")
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
@@ -130,7 +130,7 @@ app.add_middleware(
         "http://localhost:8090",  # fhir-server
         "http://localhost:5001",  # pharmcat-wrapper
         "http://localhost:5002",  # gatk-api
-        "http://localhost:5003",  # stargazer
+        "http://localhost:5003",  # pypgx (formerly stargazer)
         "http://localhost:5444",  # PostgreSQL
         
         # 127.0.0.1 equivalents
@@ -527,7 +527,7 @@ def update_job_progress(job_id: str, stage: str, percent: int, message: str,
         "initializing": "Upload",
         "uploaded": "Upload",
         "variant_calling": "GATK",
-        "star_allele_calling": "Stargazer",
+        "star_allele_calling": "PyPGx",  # Updated from Stargazer to PyPGx
         "pharmcat": "PharmCAT",
         "report_generation": "Report",
         "complete": "Report",
@@ -846,7 +846,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
     """
     Process the genomic file through the pipeline:
     1. Call variants with GATK (if not a VCF)
-    2. Call CYP2D6 star alleles with Stargazer
+    2. Call CYP2D6 star alleles with PyPGx (formerly Stargazer)
     3. Call PharmCAT for overall PGx annotation
     4. Generate a report
     """
@@ -1007,61 +1007,75 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
             print(f"[PROCESSING WARNING] Job {job_id} missing before Stargazer - recreating")
             update_job_progress(job_id, "star_allele_calling", 35, "Preparing for star allele calling")
         
-        # Step 2: Process CYP2D6 with Stargazer
-        update_job_progress(job_id, "star_allele_calling", 40, "Calling CYP2D6 star alleles with Stargazer")
-        logger.info(f"Job {job_id}: Calling CYP2D6 star alleles with Stargazer")
-        print(f"[STARGAZER] Job {job_id}: Calling CYP2D6 star alleles")
+        # Step 2: Process CYP2D6 with PyPGx (formerly Stargazer)
+        update_job_progress(job_id, "star_allele_calling", 40, "Calling CYP2D6 star alleles with PyPGx")
+        logger.info(f"Job {job_id}: Calling CYP2D6 star alleles with PyPGx")
+        print(f"[PYPGX] Job {job_id}: Calling CYP2D6 star alleles")
         
         cyp2d6_results = {}
         try:
+            # TEMPORARILY DISABLED: PyPGx integration is under development
+            # The following code is commented out until PyPGx is properly set up
+            """
             files = {'file': open(vcf_path, 'rb')}
             data = {
                 'gene': 'CYP2D6',
                 'reference_genome': reference_genome
             }
             
-            stargazer_url = f"{STARGAZER_SERVICE_URL}/genotype"
-            logger.info(f"Job {job_id}: Calling Stargazer at {stargazer_url}")
-            print(f"[STARGAZER] Job {job_id}: Sending request to {stargazer_url}")
+            py_p_g_x_url = f"{PYPGX_SERVICE_URL}/genotype"
+            logger.info(f"Job {job_id}: Calling PyPGx at {py_p_g_x_url}")
+            print(f"[PYPGX] Job {job_id}: Sending request to {py_p_g_x_url}")
             
             response = requests.post(
-                stargazer_url,
+                py_p_g_x_url,
                 files=files,
                 data=data
             )
             response.raise_for_status()
             
             cyp2d6_results = response.json()
-            logger.info(f"Job {job_id}: Stargazer returned: {cyp2d6_results}")
-            print(f"[STARGAZER] Job {job_id}: Results received: {cyp2d6_results.get('diplotype', 'Unknown')}")
+            """
+            
+            # Instead, use a placeholder result
+            logger.info(f"Job {job_id}: PyPGx functionality is temporarily disabled")
+            print(f"[PYPGX] Job {job_id}: PyPGx functionality is temporarily disabled")
+            
+            cyp2d6_results = {
+                "status": "disabled",
+                "message": "PyPGx functionality is temporarily disabled",
+                "diplotype": "Unknown/Unknown",
+                "phenotype": "Unknown", 
+                "activity_score": None
+            }
             
             # Save CYP2D6 results
             cyp2d6_output_path = os.path.join(job_dir, f"{job_id}_cyp2d6.json")
             with open(cyp2d6_output_path, 'w') as f:
                 json.dump(cyp2d6_results, f, indent=2)
             
-            logger.info(f"Job {job_id}: Saved CYP2D6 results to {cyp2d6_output_path}")
-            print(f"[STARGAZER] Job {job_id}: Saved results to {cyp2d6_output_path}")
+            logger.info(f"Job {job_id}: Saved CYP2D6 placeholder results to {cyp2d6_output_path}")
+            print(f"[PYPGX] Job {job_id}: Saved placeholder results to {cyp2d6_output_path}")
             
             # Verify job tracking is maintained
             if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing after Stargazer - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing after Stargazer - recreating")
+                logger.warning(f"Job {job_id} missing after PyPGx - recreating status")
+                print(f"[PROCESSING WARNING] Job {job_id} missing after PyPGx - recreating")
             
             update_job_progress(
                 job_id, "star_allele_calling", 60, 
-                f"CYP2D6 calling completed: {cyp2d6_results.get('diplotype', 'Unknown')}"
+                f"CYP2D6 calling: PyPGx temporarily disabled"
             )
             
         except requests.RequestException as e:
-            logger.error(f"Job {job_id}: Stargazer service error: {str(e)}")
-            print(f"[STARGAZER ERROR] Job {job_id}: {str(e)}")
-            # Continue even if Stargazer fails
+            logger.error(f"Job {job_id}: PyPGx service error: {str(e)}")
+            print(f"[PYPGX ERROR] Job {job_id}: {str(e)}")
+            # Continue even if PyPGx fails
             
             # Verify job still exists
             if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing during Stargazer error - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing during Stargazer error - recreating")
+                logger.warning(f"Job {job_id} missing during PyPGx error - recreating status")
+                print(f"[PROCESSING WARNING] Job {job_id} missing during PyPGx error - recreating")
                 
             update_job_progress(
                 job_id, "star_allele_calling", 60, 
@@ -1472,7 +1486,7 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
         if os.path.exists(pharmcat_report_path):
             return "report_generation", 90, "Generating final report"
             
-        # Check for CYP2D6 results (Stargazer output)
+        # Check for CYP2D6 results (PyPGx output)
         cyp2d6_path = os.path.join(TEMP_DIR, job_id, f"{job_id}_cyp2d6.json")
         if os.path.exists(cyp2d6_path):
             return "pharmcat", 60, "Running PharmCAT analysis" 
@@ -1491,7 +1505,7 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
             
             # If we have a VCF file, we'd be further along in the process
             if has_vcf:
-                return "star_allele_calling", 40, "Calling CYP2D6 star alleles with Stargazer"
+                return "star_allele_calling", 40, "Calling CYP2D6 star alleles with PyPGx"
             # If BAM, likely in variant calling
             elif has_bam:
                 return "variant_calling", 20, "Calling variants with GATK"
@@ -1882,93 +1896,86 @@ async def api_status():
         }
 
 @app.get("/services-status", response_class=JSONResponse)
-async def services_status(current_user: str = Depends(get_optional_user)):
-    """Check status of all connected services"""
-    try:
-        services = {
-            # TEMPORARILY DISABLED: PharmCAT container health check
-            # The PharmCAT container frequently restarts, making health checks unreliable
-            # This is a temporary workaround until a more stable health check implementation is available
-            # TODO: Re-enable PharmCAT health check when container stability is improved
-            # "pharmcat": {
-            #     "url": os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match").replace("/match", "") + "/health",
-            #     "timeout": 10
-            # },
-            "gatk": {
-                "url": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
-                "timeout": 10
-            },
-            "stargazer": {
-                "url": os.getenv("STARGAZER_API_URL", "http://stargazer:5000") + "/health",
-                "timeout": 10
-            },
-            "database": {
-                "url": os.getenv("DATABASE_URL", "postgresql://cpic_user:cpic_password@db:5432/cpic_db"),
-                "timeout": 5
-            }
+async def services_status(request: Request, current_user: str = Depends(get_optional_user)):
+    """Check the status of all services and return a comprehensive health check"""
+    services_to_check = {
+        "app": {
+            "url": f"{request.base_url}health",
+            "timeout": 5
+        },
+        "gatk": {
+            "url": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
+            "timeout": 10
+        },
+        "pharmcat": {
+            "url": os.getenv("PHARMCAT_API_URL", "http://pharmcat-wrapper:5000") + "/health",
+            "timeout": 10 
+        },
+        "pypgx": {
+            "url": os.getenv("PYPGX_API_URL", "http://pypgx:5000") + "/health",
+            "timeout": 10
+        },
+        "database": {
+            "url": os.getenv("DATABASE_URL", "postgresql://cpic_user:cpic_password@db:5432/cpic_db"),
+            "timeout": 5
         }
-        
-        # For debugging - log the URLs we're trying to check
-        service_urls = []
-        for k, v in services.items():
-            if k != 'database':
-                service_urls.append(f"{k}: {v['url']}")
-        logger.info(f"Checking services: {', '.join(service_urls)}")
-        
-        # Check each service
-        unhealthy_services = {}
-        
-        # Use httpx for concurrent requests
-        async with httpx.AsyncClient() as client:
-            for service_name, service_info in services.items():
-                if service_name == "database":
-                    # Special handling for database check
-                    try:
-                        # Try to connect to the database
-                        from sqlalchemy import create_engine, text
-                        engine = create_engine(service_info["url"])
-                        with engine.connect() as connection:
-                            result = connection.execute(text("SELECT 1"))
-                            if not result.fetchone():
-                                unhealthy_services[service_name] = "Database connection test failed"
-                    except Exception as e:
-                        unhealthy_services[service_name] = f"Database error: {str(e)}"
-                else:
-                    # HTTP services
-                    try:
-                        # Add some extra request headers and increase timeout
-                        response = await client.get(
-                            service_info["url"],
-                            timeout=service_info["timeout"],
-                            headers={"User-Agent": "ZaroPGx-HealthCheck"},
-                            follow_redirects=True
-                        )
-                        
-                        # Accept 200-299 status codes as success
-                        if response.status_code < 200 or response.status_code >= 300:
-                            unhealthy_services[service_name] = f"HTTP {response.status_code}"
-                            logger.warning(f"Service {service_name} returned status {response.status_code}")
-                    except Exception as e:
-                        logger.warning(f"Error checking {service_name} health: {str(e)}")
-                        unhealthy_services[service_name] = str(e)
-        
-        # Return status
-        if unhealthy_services:
-            return {
-                "status": "error",
-                "message": "Some services are unavailable",
-                "unhealthy_services": unhealthy_services
-            }
-        else:
-            return {
-                "status": "ok",
-                "message": "All services are available"
-            }
-    except Exception as e:
-        logger.error(f"Error checking services status: {str(e)}")
+    }
+    
+    # For debugging - log the URLs we're trying to check
+    service_urls = []
+    for k, v in services_to_check.items():
+        if k != 'database':
+            service_urls.append(f"{k}: {v['url']}")
+    logger.info(f"Checking services: {', '.join(service_urls)}")
+    
+    # Check each service
+    unhealthy_services = {}
+    
+    # Use httpx for concurrent requests
+    async with httpx.AsyncClient() as client:
+        for service_name, service_info in services_to_check.items():
+            if service_name == "database":
+                # Special handling for database check
+                try:
+                    # Try to connect to the database
+                    from sqlalchemy import create_engine, text
+                    engine = create_engine(service_info["url"])
+                    with engine.connect() as connection:
+                        result = connection.execute(text("SELECT 1"))
+                        if not result.fetchone():
+                            unhealthy_services[service_name] = "Database connection test failed"
+                except Exception as e:
+                    unhealthy_services[service_name] = f"Database error: {str(e)}"
+            else:
+                # HTTP services
+                try:
+                    # Add some extra request headers and increase timeout
+                    response = await client.get(
+                        service_info["url"],
+                        timeout=service_info["timeout"],
+                        headers={"User-Agent": "ZaroPGx-HealthCheck"},
+                        follow_redirects=True
+                    )
+                    
+                    # Accept 200-299 status codes as success
+                    if response.status_code < 200 or response.status_code >= 300:
+                        unhealthy_services[service_name] = f"HTTP {response.status_code}"
+                        logger.warning(f"Service {service_name} returned status {response.status_code}")
+                except Exception as e:
+                    logger.warning(f"Error checking {service_name} health: {str(e)}")
+                    unhealthy_services[service_name] = str(e)
+    
+    # Return status
+    if unhealthy_services:
         return {
             "status": "error",
-            "message": f"Error checking services: {str(e)}"
+            "message": "Some services are unavailable",
+            "unhealthy_services": unhealthy_services
+        }
+    else:
+        return {
+            "status": "ok",
+            "message": "All services are available"
         }
 
 # Wait for services to be ready
@@ -1982,7 +1989,7 @@ async def startup_event():
     services = {
         "GATK API": f"{GATK_SERVICE_URL}/health",
         "PharmCAT Wrapper": f"{os.getenv('PHARMCAT_API_URL', 'http://pharmcat-wrapper:5000')}/health",
-        "Stargazer": f"{STARGAZER_SERVICE_URL}/health"
+        "PyPGx": f"{PYPGX_SERVICE_URL}/health"  # Renamed from Stargazer to PyPGx
     }
     
     max_retries = 12  # Increased from 6 to 12
@@ -2617,5 +2624,114 @@ async def run_pharmcat_analysis(genome_path: str) -> Dict[str, Any]:
             "success": False,
             "message": f"Error in PharmCAT analysis: {str(e)}"
         }
+
+@app.post("/run-demo", response_class=JSONResponse)
+async def run_demo(
+    data: Dict[str, Any],
+    current_user: str = Depends(get_optional_user)
+):
+    """Run a simulated analysis using a sample VCF file."""
+    logger.info(f"Received demo run request with data: {data}")
+    print(f"[DEMO] Received demo run request: {data}")
+    
+    # Extract parameters
+    sample_id = data.get("sampleId", "PharmCAT-Demo")
+    reference_genome = data.get("referenceGenome", "hg38")
+    
+    # Generate a unique job ID
+    job_id = str(uuid.uuid4())
+    logger.info(f"Generated job ID for demo: {job_id}")
+    print(f"[DEMO] Generated job ID: {job_id}")
+    
+    # Path to the sample VCF file - use absolute path
+    sample_vcf_path = "/test_data/pharmcat.example.vcf"
+    
+    # Check if the file exists at the absolute path
+    if not os.path.exists(sample_vcf_path):
+        # Try relative path from project root
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        sample_vcf_path = os.path.join(project_root, "test_data", "pharmcat.example.vcf")
+        
+        # If still not found, try Docker mounted path
+        if not os.path.exists(sample_vcf_path):
+            sample_vcf_path = "/app/test_data/pharmcat.example.vcf"
+            
+            # If still not found, try one more location
+            if not os.path.exists(sample_vcf_path):
+                sample_vcf_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "test_data", "pharmcat.example.vcf")
+    
+    # Ensure the file exists
+    if not os.path.exists(sample_vcf_path):
+        logger.error(f"Sample VCF file not found. Tried paths including {sample_vcf_path}")
+        print(f"[DEMO ERROR] Sample VCF file not found. Tried multiple paths.")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Sample VCF file not found", "success": False}
+        )
+    
+    # Log the path that was found
+    logger.info(f"Found sample VCF file at {sample_vcf_path}")
+    print(f"[DEMO] Found sample VCF file at {sample_vcf_path}")
+    
+    # Create a copy of the file in the uploads directory
+    target_dir = os.path.join(UPLOADS_DIR, str(1))  # Use folder "1" for demo files
+    os.makedirs(target_dir, exist_ok=True)
+    
+    target_file = os.path.join(target_dir, f"{job_id}.vcf")
+    try:
+        shutil.copy(sample_vcf_path, target_file)
+        logger.info(f"Copied sample VCF to {target_file}")
+        print(f"[DEMO] Copied sample VCF to {target_file}")
+    except Exception as e:
+        logger.error(f"Error copying sample VCF: {str(e)}")
+        print(f"[DEMO ERROR] Error copying sample VCF: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Error preparing sample file: {str(e)}", "success": False}
+        )
+    
+    # Initialize job status
+    update_job_progress(job_id, "uploaded", 0, "Sample file loaded, starting demo analysis")
+    
+    # Start background processing using asyncio task
+    logger.info(f"Starting background processing for demo job: {job_id}")
+    print(f"[DEMO] Starting background processing for demo job: {job_id}")
+    
+    # Create a new task that doesn't block the response
+    asyncio.create_task(
+        process_file_in_background(
+            job_id=job_id,
+            file_path=target_file,
+            file_type="vcf",  # It's a VCF file
+            sample_id=sample_id,
+            reference_genome=reference_genome
+        )
+    )
+    
+    return JSONResponse(
+        status_code=202,
+        content={
+            "job_id": job_id,
+            "success": True,
+            "status": "processing",
+            "message": "Demo started successfully",
+            "progress_url": f"/progress/{job_id}",
+            "status_url": f"/job-status/{job_id}"
+        }
+    )
+
+@app.get("/demo", response_class=JSONResponse)
+async def run_demo_simple(
+    current_user: str = Depends(get_optional_user)
+):
+    """Simple GET endpoint to run the demo analysis without requiring a POST request."""
+    # Use the POST endpoint with default parameters
+    data = {
+        "sampleId": "PharmCAT-Demo",
+        "referenceGenome": "hg38"
+    }
+    
+    # Call the POST endpoint directly
+    return await run_demo(data, current_user)
 
 
