@@ -2644,21 +2644,21 @@ async def run_demo(
     print(f"[DEMO] Generated job ID: {job_id}")
     
     # Path to the sample VCF file - use absolute path
-    sample_vcf_path = "/test_data/pharmcat.example.vcf"
+    sample_vcf_path = "/test_data/pharmcat.example2.vcf"
     
     # Check if the file exists at the absolute path
     if not os.path.exists(sample_vcf_path):
         # Try relative path from project root
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        sample_vcf_path = os.path.join(project_root, "test_data", "pharmcat.example.vcf")
+        sample_vcf_path = os.path.join(project_root, "test_data", "pharmcat.example2.vcf")
         
         # If still not found, try Docker mounted path
         if not os.path.exists(sample_vcf_path):
-            sample_vcf_path = "/app/test_data/pharmcat.example.vcf"
+            sample_vcf_path = "/app/test_data/pharmcat.example2.vcf"
             
             # If still not found, try one more location
             if not os.path.exists(sample_vcf_path):
-                sample_vcf_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "test_data", "pharmcat.example.vcf")
+                sample_vcf_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "test_data", "pharmcat.example2.vcf")
     
     # Ensure the file exists
     if not os.path.exists(sample_vcf_path):
