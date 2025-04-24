@@ -162,8 +162,9 @@ cython_debug/
 # Project specific ignores
 /data/uploads/
 /data/reports/
+# Exclude VCF files except test sample files
 *.vcf
-*.vcf.gz
+!test_data/*.vcf
 
 # Reference genomes
 reference/
@@ -172,6 +173,6 @@ reference/*
 # Stargazer .zip -- do not commit. There will be another means of distributing this.
 stargazer.zip
 
-# Test data
-test_data/
-test_data/*
+# No longer excluding test data
+# test_data/
+# test_data/*
