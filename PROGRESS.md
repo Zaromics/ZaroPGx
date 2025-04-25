@@ -655,3 +655,86 @@ This change allows our FHIR server to properly connect to the PostgreSQL databas
 - Ensuring data persistence across container restarts
 
 All configuration changes have been documented in troubleshooting.txt for future reference.
+
+## 2025-04-10: PharmCAT Service Unification
+
+We have successfully unified the previously separate PharmCAT services (PharmCAT JAR and Wrapper API) into a single container solution. This consolidation resolves several architectural and operational challenges we were facing with the dual-container approach.
+
+### Background
+
+Previously, our architecture used two separate containers for PharmCAT functionality:
+1. **PharmCAT container**: Running the Java-based PharmCAT tool directly
+2. **PharmCAT-wrapper container**: Providing a REST API interface to the PharmCAT tool
+
+This setup required complex volume sharing between containers and introduced networking overhead and dependency challenges.
+
+### Implementation Details
+
+The unification involved:
+
+1. **Creating a unified Dockerfile**:
+   - Based on the `openjdk:17-slim` image to provide Java runtime
+   - Includes system dependencies for both PharmCAT and the wrapper API
+   - Installs bcftools and htslib from source for proper VCF processing
+   - Downloads and sets up PharmCAT v3.0.0 pipeline distribution
+   - Installs both PharmCAT Python dependencies and Flask API requirements
+   - Sets up proper environment variables and paths
+
+2. **Enhanced Wrapper API**:
+   - Updated the Flask-based wrapper to directly access the PharmCAT JAR and pipeline tools
+   - Added robust error handling and logging
+   - Implemented multiple endpoint options for flexible API use
+   - Created a reliable reporting system with multiple result file copies
+
+3. **Docker Compose Integration**:
+   - Removed the separate `pharmcat` and `pharmcat-wrapper` services
+   - Added a single `pharmcat-unified` service
+   - Updated environment variables and container references
+   - Simplified volume mounts by eliminating the shared JAR volume
+
+4. **Application Integration**:
+   - Updated all references in the main application from:
+     - `http://pharmcat-wrapper:5000` → `http://pharmcat-unified:5000`
+     - `http://pharmcat:8080` → removed (no longer needed)
+
+### Key Benefits
+
+1. **Simplified Architecture**:
+   - Single container handling all PharmCAT operations
+   - Direct access to PharmCAT JAR from the API
+   - Elimination of inter-container dependencies
+
+2. **Improved Performance and Reliability**:
+   - Removed network overhead between components
+   - Eliminated volume sharing complexity
+   - Reduced container startup dependencies
+   - More efficient resource utilization
+
+3. **Enhanced Maintainability**:
+   - Single Dockerfile to maintain and update
+   - Simpler deployment and updates
+   - Consolidated logging and monitoring
+   - Easier troubleshooting with all components in one container
+
+4. **Better Error Handling**:
+   - Direct access to PharmCAT errors without network translation
+   - Improved error reporting and recovery
+   - Consistent logging across PharmCAT operations
+
+### Testing and Verification
+
+The unified service has been tested with various VCF files and integrated successfully with the main application. Health checks confirm proper functionality of both the Java and API components within the single container.
+
+### Future Work
+
+1. **Performance Optimization**:
+   - Fine-tune Java memory settings based on usage patterns
+   - Optimize Python wrapper for larger file processing
+   - Consider implementing request queuing for high-load scenarios
+
+2. **Enhanced Reporting**:
+   - Expand report format options (PDF, CSV, etc.)
+   - Add more detailed gene information extraction
+   - Improve report reliability and fallback mechanisms
+
+This consolidation is part of our ongoing effort to simplify the architecture, improve reliability, and enhance the maintainability of the ZaroPGx platform.

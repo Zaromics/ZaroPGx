@@ -18,6 +18,7 @@ import re
 import tempfile
 import uuid
 import traceback
+from typing import Dict, Any, Optional
 
 # Configure logging
 logging.basicConfig(
@@ -31,8 +32,10 @@ app = Flask(__name__)
 
 # Data directory for VCF files
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
-# Path to the PharmCAT JAR file (mounted from the PharmCAT container)
+# Path to the PharmCAT JAR file (for backward compatibility)
 PHARMCAT_JAR = os.environ.get("PHARMCAT_JAR", "/pharmcat/pharmcat.jar")
+# Path to the PharmCAT pipeline directory
+PHARMCAT_PIPELINE_DIR = os.environ.get("PHARMCAT_PIPELINE_DIR", "/pharmcat/pipeline")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -213,11 +216,12 @@ def process_file():
                 # Before running PharmCAT, set up Java options for memory management
                 java_options = "-Xmx2g"
                 
-                # Build the PharmCAT command - use pharmcat_pipeline instead of direct JAR call
-                # The pharmcat_pipeline command includes the preprocessing step
-                # Format: pharmcat_pipeline [input file] -o [output dir] [other options]
+                # Build the PharmCAT command - use pharmcat instead of pharmcat_pipeline
+                # PharmCAT v3.0.0 uses the 'pharmcat' command
+                # Format: pharmcat pipeline [input file] -o [output dir] [other options]
                 pharmcat_cmd = [
-                    "pharmcat_pipeline",
+                    "pharmcat",
+                    "pipeline",
                     vcf_path,  # Input file as positional argument
                     "-o", output_dir,
                     "-reporterJson"  # Explicitly request JSON report
@@ -426,6 +430,174 @@ def test_connection():
         "pharmcat_jar": PHARMCAT_JAR,
         "jar_exists": os.path.exists(PHARMCAT_JAR)
     })
+
+def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Run PharmCAT directly using the pipeline distribution.
+    
+    Args:
+        input_file: Path to the input file
+        output_dir: Directory to store the results
+        sample_id: Optional sample ID to use
+        
+    Returns:
+        Dictionary containing PharmCAT results
+    """
+    try:
+        # Make sure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Use just the filename without extension as base name
+        base_name = Path(input_file).stem
+        if base_name.endswith('.vcf'):
+            base_name = base_name[:-4]
+        
+        # Use the pharmcat command from the pipeline distribution
+        logger.info(f"Running PharmCAT pipeline with input: {input_file}")
+        
+        # Prepare command
+        cmd = [
+            "pharmcat",
+            "pipeline",
+            "-G",  # Bypass gVCF check
+            "-o", output_dir,  # Output directory
+            "-v",  # Verbose output
+            input_file  # Input file should be the last argument
+        ]
+        
+        # Add sample ID if provided
+        if sample_id:
+            cmd.extend(["-s", sample_id])
+        
+        # Set environment variables
+        env = os.environ.copy()
+        env["JAVA_TOOL_OPTIONS"] = "-Xmx4g -XX:+UseG1GC"
+        env["PHARMCAT_LOG_LEVEL"] = "DEBUG"
+        
+        # Run PharmCAT pipeline
+        logger.info(f"Executing PharmCAT command: {' '.join(cmd)}")
+        process = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300  # 5 minute timeout
+        )
+        
+        logger.info(f"PharmCAT execution completed with output: {process.stdout}")
+        
+        # Expected output files
+        results_files = {
+            "match_results": os.path.join(output_dir, f"{base_name}.match.json"),
+            "phenotype_results": os.path.join(output_dir, f"{base_name}.phenotype.json"),
+            "report": os.path.join(output_dir, f"{base_name}.report.html")
+        }
+        
+        # Check if all expected files exist
+        if not all(os.path.exists(f) for f in results_files.values()):
+            missing_files = [k for k, v in results_files.items() if not os.path.exists(v)]
+            error_msg = f"Missing required output files: {', '.join(missing_files)}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg
+            }
+        
+        # Read results
+        results = {}
+        for name, path in results_files.items():
+            with open(path, 'r') as f:
+                if name == "report":
+                    results[name] = f.read()
+                else:
+                    results[name] = json.load(f)
+        
+        # Copy PharmCAT reports to /data/reports for direct access
+        reports_dir = Path("/data/reports")
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        
+        dest_html_path = reports_dir / f"{base_name}_pgx_report.html"
+        src_html_path = Path(output_dir) / f"{base_name}.report.html"
+        
+        if os.path.exists(src_html_path):
+            shutil.copy2(src_html_path, dest_html_path)
+            logger.info(f"HTML report copied to {dest_html_path}")
+            
+        # Also copy the JSON report for inspection
+        dest_json_path = reports_dir / f"{base_name}_pgx_report.json"
+        src_json_path = Path(output_dir) / f"{base_name}.report.json"
+        
+        if os.path.exists(src_json_path):
+            shutil.copy2(src_json_path, dest_json_path)
+            logger.info(f"JSON report copied to {dest_json_path}")
+        else:
+            logger.warning(f"JSON report not found at {src_json_path}")
+        
+        # Extract gene data and drug recommendations
+        genes_data = []
+        drug_recommendations = []
+        
+        phenotype_path = Path(output_dir) / f"{base_name}.phenotype.json"
+        if os.path.exists(phenotype_path):
+            try:
+                with open(phenotype_path, 'r') as f:
+                    phenotype_data = json.load(f)
+                    
+                # Extract gene data from phenotype file
+                if "phenotypes" in phenotype_data:
+                    for gene_id, gene_info in phenotype_data["phenotypes"].items():
+                        gene_entry = {
+                            "gene": gene_id,
+                            "diplotype": {
+                                "name": gene_info.get("diplotype", "Unknown"),
+                                "activityScore": gene_info.get("activityScore")
+                            },
+                            "phenotype": {
+                                "info": gene_info.get("phenotype", "Unknown")
+                            }
+                        }
+                        genes_data.append(gene_entry)
+                        
+                # Extract drug recommendations
+                if "drugRecommendations" in phenotype_data:
+                    drug_recommendations = phenotype_data["drugRecommendations"]
+                    
+                logger.info(f"Extracted {len(genes_data)} genes and {len(drug_recommendations)} drug recommendations")
+            except Exception as e:
+                logger.error(f"Error parsing phenotype file: {str(e)}")
+        
+        # Prepare the result data
+        return {
+            "success": True,
+            "message": "PharmCAT analysis completed successfully",
+            "data": {
+                "job_id": base_name,
+                "pdf_report_url": f"/reports/{base_name}_pgx_report.pdf",
+                "html_report_url": f"/reports/{base_name}_pgx_report.html",
+                "genes": genes_data,
+                "drugRecommendations": drug_recommendations,
+                "results": results
+            }
+        }
+    
+    except subprocess.CalledProcessError as e:
+        error_msg = f"PharmCAT execution failed: {e.stderr}" if e.stderr else str(e)
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "message": "PharmCAT execution failed",
+            "error": str(e),
+            "stderr": e.stderr if hasattr(e, 'stderr') else None
+        }
+    
+    except Exception as e:
+        error_msg = f"Error running PharmCAT: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "message": error_msg
+        }
 
 if __name__ == '__main__':
     # Start the Flask app

@@ -15,9 +15,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # PharmCAT service configuration
-PHARMCAT_SERVICE_URL = os.environ.get("PHARMCAT_SERVICE_URL", "http://pharmcat:8080")
+PHARMCAT_SERVICE_URL = os.environ.get("PHARMCAT_SERVICE_URL", "http://pharmcat-unified:5000")
 PHARMCAT_DOCKER_IMAGE = os.environ.get("PHARMCAT_DOCKER_IMAGE", "pgkb/pharmcat:latest")
-PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/app/lib/pharmcat.jar")
+PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/pharmcat/pharmcat.jar")
 
 def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -45,11 +45,11 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
             return {"success": False, "message": f"Input file is empty: {vcf_path}"}
         
         # Try the wrapper API first as it's more reliable
-        logger.info("Trying PharmCAT wrapper API")
-        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat-wrapper:5000")
+        logger.info("Trying PharmCAT unified API")
+        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat-unified:5000")
         
         try:
-            logger.info(f"Calling PharmCAT wrapper API at {pharmcat_api_url}/process")
+            logger.info(f"Calling PharmCAT unified API at {pharmcat_api_url}/process")
             with open(vcf_path, 'rb') as f:
                 files = {'file': f}
                 data = {}
@@ -391,7 +391,7 @@ async def async_call_pharmcat_api(input_file: str) -> Dict[str, Any]:
             file_content = f.read()
         
         # Prepare the file for upload
-        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat-wrapper:5000")
+        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat-unified:5000")
         
         async with httpx.AsyncClient(timeout=300) as client:  # 5 minute timeout
             # Create form data

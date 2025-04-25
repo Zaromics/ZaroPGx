@@ -43,24 +43,27 @@ services:
     networks:
       - pgx-network
 
-  # PharmCAT Service - using official Docker image
-  pharmcat:
-    image: pgkb/pharmcat
+  # PharmCAT Unified Service - combines JAR and API wrapper
+  pharmcat-unified:
+    build:
+      context: ./docker/pharmcat-unified
+      dockerfile: Dockerfile
     container_name: pgx_pharmcat
     restart: unless-stopped
     volumes:
-      - ./data:/pharmcat/data
-      - pharmcat-jar:/pharmcat
+      - ./data:/data
     ports:
-      - "2323:8080"
+      - "5001:5000"  # Flask API port
     environment:
+      - DATA_DIR=/data
       - JAVA_OPTS=-Xmx4g
       - PHARMCAT_LOG_LEVEL=DEBUG
     healthcheck:
-      test: ["CMD", "echo", "Healthcheck disabled for debugging"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
       timeout: 5s
-      retries: 1
+      retries: 5
+      start_period: 30s
     networks:
       - pgx-network
 
@@ -98,32 +101,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    networks:
-      - pgx-network
-
-  # PharmCAT Wrapper Service
-  pharmcat-wrapper:
-    build:
-      context: ./docker/pharmcat
-      dockerfile: Dockerfile.pharmcat-wrapper
-    container_name: pgx_pharmcat_wrapper
-    restart: unless-stopped
-    depends_on:
-      - pharmcat
-    environment:
-      - DATA_DIR=/data
-      - PHARMCAT_JAR=/pharmcat/pharmcat.jar
-    volumes:
-      - ./data:/data
-      - pharmcat-jar:/pharmcat:ro
-    ports:
-      - "5001:5000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
     networks:
       - pgx-network
 
@@ -197,14 +174,14 @@ services:
     restart: unless-stopped
     depends_on:
       - db
-      - pharmcat-wrapper
+      - pharmcat-unified  # Updated dependency from pharmcat-wrapper to pharmcat-unified
       - gatk-api
       - pypgx
     environment:
       - DATABASE_URL=postgresql://cpic_user:${POSTGRES_PASSWORD}@db:5432/cpic_db
       - SECRET_KEY=${SECRET_KEY}
-      - PHARMCAT_API_URL=http://pharmcat-wrapper:5000
-      - PHARMCAT_SERVICE_URL=http://pharmcat:8080
+      - PHARMCAT_API_URL=http://pharmcat-unified:5000  # Updated from pharmcat-wrapper:5000
+      - PHARMCAT_SERVICE_URL=http://pharmcat-unified:5000  # Updated from pharmcat:8080
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
       - GATK_API_URL=http://gatk-api:5000
       - PYPGX_API_URL=http://pypgx:5000
@@ -229,8 +206,6 @@ services:
 
 volumes:
   pgdata:
-    driver: local
-  pharmcat-jar:
     driver: local
   fhir-data:
     driver: local

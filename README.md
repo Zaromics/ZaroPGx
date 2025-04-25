@@ -124,7 +124,7 @@ ZaroPGx/
 
 - [CPIC](https://cpicpgx.org/) for pharmacogenomic guidelines
 - [PharmCAT](https://pharmcat.org/) for allele calling algorithms
-- [Aldy](https://github.com/aldy-team/aldy) for CYP2D6 calling
+- [PyPGx](https://github.com/...) for CYP2D6 calling
 
 ## Dependency Management
 

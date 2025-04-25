@@ -57,7 +57,7 @@ logger.info(f"Starting app with log level: {log_level}")
 print(f"=========== ZaroPGx STARTUP AT {datetime.utcnow()} ===========")
 print(f"LOG LEVEL: {log_level}")
 print(f"GATK SERVICE URL: {os.getenv('GATK_API_URL', 'http://gatk-api:5000')}")
-print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_SERVICE_URL', 'http://pharmcat:8080/match')}")
+print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_SERVICE_URL', 'http://pharmcat-unified:5000')}")
 print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")  # Updated from Stargazer to PyPGx
 
 # Load environment variables
@@ -71,7 +71,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 # Constants
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
 PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")  # Updated from Stargazer to PyPGx
-PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:8080/match")
+PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat-unified:5000")
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path("/data/reports")
@@ -90,7 +90,7 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="ZaroPGx - Pharmacogenomic Report Generator",
+    title="ZaroPGx - Intelligent Pharmacogenomic Pipeline",
     description="API for processing genetic data and generating pharmacogenomic reports",
     version="0.1.0"
 )
@@ -110,7 +110,7 @@ app.add_middleware(
     allow_origins=[
         # Production domain
         "https://pgx.zimerguz.net", 
-        "http://pgx.zimerguz.net",
+        "http://pgx.zimerguz.net", # HTTP is disabled
         
         # Localhost development - main app ports
         "http://localhost:8765",  # Main FastAPI app external port
