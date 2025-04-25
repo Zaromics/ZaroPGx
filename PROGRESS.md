@@ -688,13 +688,13 @@ The unification involved:
 
 3. **Docker Compose Integration**:
    - Removed the separate `pharmcat` and `pharmcat-wrapper` services
-   - Added a single `pharmcat-unified` service
+   - Added a single `pharmcat` service
    - Updated environment variables and container references
    - Simplified volume mounts by eliminating the shared JAR volume
 
 4. **Application Integration**:
    - Updated all references in the main application from:
-     - `http://pharmcat-wrapper:5000` → `http://pharmcat-unified:5000`
+     - `http://pharmcat-wrapper:5000` → `http://pharmcat:5000`
      - `http://pharmcat:8080` → removed (no longer needed)
 
 ### Key Benefits

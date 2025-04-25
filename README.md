@@ -23,11 +23,10 @@ This software is currently being built and is not near completion. It is less li
 The application consists of several containerized services:
 
 1. **PostgreSQL Database**: Stores CPIC guidelines, gene-drug interactions, and patient data
-2. **FastAPI Backend**: Handles file uploads, report generation, and API endpoints
-3. **GATK**: Handles variant calling and converts WGS to VCF format
-3. **PharmCAT Service**: Performs allele calling for 23andMe data
-4. **Stargazer**: Specialized in CYP2D6 calling from VCF files
-5. **PharmCAT Wrapper**: Python wrapper providing a REST API for PharmCAT
+2. **Main App with FastAPI Backend**: Handles file uploads, report generation, and API endpoints
+3. **GATK Service**: Handles variant calling and converts WGS to VCF format
+4. **PharmCAT Service**: Performs allele calling for VCF files, with REST API wrapper
+5. **PyPGx Service**: Specialized in CYP2D6 calling from VCF files
 
 ## Setup
 
@@ -35,9 +34,9 @@ The application consists of several containerized services:
 
 - Docker and Docker Compose
 - Git
-- Make sure to download Stargazer in case it is not bundled. It is free software but requires signup.
-- 8GB RAM minimum
-- 20GB free disk space
+- PyPGx is used by default. If instead you wish to use Stargazer, make sure to download it as it is not bundled. It is free software but requires signup.
+- 8GB RAM minimum. 16GB RAM minimum if using GATK as it is very RAM-heavy.
+- 20GB free disk space. 100GB+ free disk space if using WGS files.
 
 ### Installation
 
@@ -134,16 +133,14 @@ The services are organized in a Docker Compose configuration with clear dependen
 
 1. The PostgreSQL database is the foundation service
 2. The PharmCAT service runs independently
-3. The PharmCAT Wrapper depends on the PharmCAT service
-4. The FastAPI application depends on all other services
+3. The FastAPI application depends on all other services
 
 ### Service-Specific Dependencies
 
 Each service manages its dependencies within its own container:
 
 - **PostgreSQL**: Version 15 with initialization scripts in `db/init`
-- **PharmCAT**: Java 17 with PharmCAT v3.0.0 JAR file
-- **PharmCAT Wrapper**: Python 3.10 with Flask and other requirements in `docker/pharmcat/requirements.txt`
+- **PharmCAT**: Java 17 with PharmCAT v3.0.0 JAR file. Python 3.10 with Flask and other requirements in `docker/pharmcat/requirements.txt`
 - **GATK Service**:
 - **FastAPI Backend**: Python 3.10 with requirements specified in `requirements.txt`
 

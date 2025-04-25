@@ -43,10 +43,10 @@ services:
     networks:
       - pgx-network
 
-  # PharmCAT Unified Service - combines JAR and API wrapper
-  pharmcat-unified:
+  # PharmCAT Service - combines JAR and API wrapper
+  pharmcat:
     build:
-      context: ./docker/pharmcat-unified
+      context: ./docker/pharmcat
       dockerfile: Dockerfile
     container_name: pgx_pharmcat
     restart: unless-stopped
@@ -174,14 +174,14 @@ services:
     restart: unless-stopped
     depends_on:
       - db
-      - pharmcat-unified  # Updated dependency from pharmcat-wrapper to pharmcat-unified
+      - pharmcat  # Updated to the new simplified service name
       - gatk-api
       - pypgx
     environment:
       - DATABASE_URL=postgresql://cpic_user:${POSTGRES_PASSWORD}@db:5432/cpic_db
       - SECRET_KEY=${SECRET_KEY}
-      - PHARMCAT_API_URL=http://pharmcat-unified:5000  # Updated from pharmcat-wrapper:5000
-      - PHARMCAT_SERVICE_URL=http://pharmcat-unified:5000  # Updated from pharmcat:8080
+      - PHARMCAT_API_URL=http://pharmcat:5000  # Updated with the new service name
+      - PHARMCAT_SERVICE_URL=http://pharmcat:5000  # Updated with the new service name
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
       - GATK_API_URL=http://gatk-api:5000
       - PYPGX_API_URL=http://pypgx:5000

@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # PharmCAT service configuration
-PHARMCAT_SERVICE_URL = os.environ.get("PHARMCAT_SERVICE_URL", "http://pharmcat-unified:5000")
+PHARMCAT_SERVICE_URL = os.environ.get("PHARMCAT_SERVICE_URL", "http://pharmcat:5000")
 PHARMCAT_DOCKER_IMAGE = os.environ.get("PHARMCAT_DOCKER_IMAGE", "pgkb/pharmcat:latest")
 PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/pharmcat/pharmcat.jar")
 
@@ -45,11 +45,11 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
             return {"success": False, "message": f"Input file is empty: {vcf_path}"}
         
         # Try the wrapper API first as it's more reliable
-        logger.info("Trying PharmCAT unified API")
-        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat-unified:5000")
+        logger.info("Trying PharmCAT API")
+        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
         
         try:
-            logger.info(f"Calling PharmCAT unified API at {pharmcat_api_url}/process")
+            logger.info(f"Calling PharmCAT API at {pharmcat_api_url}/process")
             with open(vcf_path, 'rb') as f:
                 files = {'file': f}
                 data = {}
@@ -374,24 +374,23 @@ def get_logger():
 
 async def async_call_pharmcat_api(input_file: str) -> Dict[str, Any]:
     """
-    Call PharmCAT REST API service asynchronously.
+    Call the PharmCAT API asynchronously
     
     Args:
-        input_file: Path to the input file
+        input_file: Path to the VCF file to analyze
         
     Returns:
-        Dictionary containing PharmCAT results
+        Dictionary containing PharmCAT results or error information
     """
     try:
-        logger = get_logger()
-        logger.info(f"Async calling PharmCAT API for file: {input_file}")
+        logger.info(f"Calling PharmCAT API asynchronously for file: {input_file}")
         
+        # Get the PharmCAT API URL from environment or use default
+        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
+
         # Read the file as bytes
         with open(input_file, 'rb') as f:
             file_content = f.read()
-        
-        # Prepare the file for upload
-        pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat-unified:5000")
         
         async with httpx.AsyncClient(timeout=300) as client:  # 5 minute timeout
             # Create form data

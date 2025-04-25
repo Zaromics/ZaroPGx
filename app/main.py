@@ -57,7 +57,7 @@ logger.info(f"Starting app with log level: {log_level}")
 print(f"=========== ZaroPGx STARTUP AT {datetime.utcnow()} ===========")
 print(f"LOG LEVEL: {log_level}")
 print(f"GATK SERVICE URL: {os.getenv('GATK_API_URL', 'http://gatk-api:5000')}")
-print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_SERVICE_URL', 'http://pharmcat-unified:5000')}")
+print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_SERVICE_URL', 'http://pharmcat:5000')}")
 print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")  # Updated from Stargazer to PyPGx
 
 # Load environment variables
@@ -71,7 +71,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 # Constants
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
 PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")  # Updated from Stargazer to PyPGx
-PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat-unified:5000")
+PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:5000")
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path("/data/reports")
@@ -128,7 +128,7 @@ app.add_middleware(
         "http://localhost:5050",  # genome-downloader
         "http://localhost:2323",  # pharmcat
         "http://localhost:8090",  # fhir-server
-        "http://localhost:5001",  # pharmcat-wrapper
+        "http://localhost:5001",  # pharmcat API port
         "http://localhost:5002",  # gatk-api
         "http://localhost:5003",  # pypgx (formerly stargazer)
         "http://localhost:5444",  # PostgreSQL
