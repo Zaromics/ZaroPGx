@@ -60,7 +60,7 @@ COPY requirements.txt /tmp/
 RUN pip3 install -r /tmp/requirements.txt
 
 # Copy the wrapper script and start script
-COPY pharmcat_wrapper.py /app/
+COPY pharmcat.py /app/
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 

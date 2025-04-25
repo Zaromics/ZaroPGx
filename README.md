@@ -101,7 +101,7 @@ The repository includes sample VCF files for testing:
 ZaroPGx/
 ├── app/                    # Python application code
 │   ├── api/                # API endpoints and database access
-│   ├── pharmcat_wrapper/   # PharmCAT integration
+│   ├── pharmcat/   # PharmCAT integration
 │   └── reports/            # Report generation logic
 ├── db/                     # Database migrations
 │   └── migrations/
@@ -230,7 +230,7 @@ Services communicate with each other using their service names as hostnames:
 
 - Database: `db:5432`
 - PharmCAT: `pharmcat:8080`
-- PharmCAT Wrapper: `pharmcat-wrapper:5000`
+- PharmCAT Wrapper: `pharmcat:5000`
 - Aldy: `aldy:5000`
 
 ## Troubleshooting

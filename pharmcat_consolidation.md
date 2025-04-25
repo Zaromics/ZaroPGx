@@ -14,14 +14,14 @@ touch docker/pharmcat-unified/Dockerfile
 
 2. Copy the wrapper code and dependencies:
 ```bash
-cp docker/pharmcat/pharmcat_wrapper.py docker/pharmcat-unified/
+cp docker/pharmcat/pharmcat.py docker/pharmcat-unified/
 cp docker/pharmcat/requirements.txt docker/pharmcat-unified/
 cp docker/pharmcat/start.sh docker/pharmcat-unified/ # if needed
 ```
 
 3. Update your docker-compose.yml to use the new unified container:
 ```bash
-# Edit docker-compose.yml to replace both pharmcat and pharmcat-wrapper services
+# Edit docker-compose.yml to replace both pharmcat and pharmcat services
 ```
 
 4. Rebuild and restart the Docker containers:
@@ -80,7 +80,7 @@ COPY requirements.txt .
 RUN pip3 install -r requirements.txt
 
 # Copy the wrapper script
-COPY pharmcat_wrapper.py /app/
+COPY pharmcat.py /app/
 
 # Set up environment variables
 ENV DATA_DIR=/data
@@ -94,12 +94,12 @@ EXPOSE 5000
 WORKDIR /app
 
 # Start the Flask API (or use start.sh if you have one)
-CMD ["python3", "/app/pharmcat_wrapper.py"]
+CMD ["python3", "/app/pharmcat.py"]
 ```
 
 ### Docker-Compose Changes
 
-Update your `docker-compose.yml` file to replace both `pharmcat` and `pharmcat-wrapper` services with:
+Update your `docker-compose.yml` file to replace both `pharmcat` and `pharmcat` services with:
 
 ```yaml
 # PharmCAT Unified Service
@@ -134,7 +134,7 @@ Remove the `pharmcat-jar` volume from the `volumes:` section in docker-compose.y
 ### Dependency Updates
 
 Update all references in your application code:
-- Replace `http://pharmcat-wrapper:5000` with `http://pharmcat-unified:5000`
+- Replace `http://pharmcat:5000` with `http://pharmcat-unified:5000`
 - Remove any references to `http://pharmcat:8080` as it won't exist anymore
 
 ### Major Benefits

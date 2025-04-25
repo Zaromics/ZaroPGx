@@ -18,6 +18,7 @@ class FileType(Enum):
     CRAM = "cram"
     SAM = "sam"
     FASTQ = "fastq"
+    FASTA = "fasta"
     TWENTYTHREE_AND_ME = "23andme"
     UNKNOWN = "unknown"
 
@@ -168,7 +169,8 @@ class FileProcessor:
         - CRAM (.cram)
         - SAM (.sam)
         - FASTQ (.fastq, .fq, .fastq.gz, .fq.gz)
-        - 23andMe text files
+        - FASTA (.fasta ??? ) (to add)
+        - 23andMe (.txt)
         """
         # Debug logging
         logger.info(f"Detecting file type for: {file_path}")

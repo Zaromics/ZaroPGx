@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "zaropgx"
 version = "0.1.0"
-description = "Pharmacogenomic Analysis Pipeline using GATK, Stargazer and PharmCAT"
-authors = ["Your Name <your.email@example.com>"]
+description = "Pharmacogenomic Analysis Pipeline using GATK, PyPGx and PharmCAT"
+authors = ["Iliya Yaroshevskiy <ilya.yaroshevskiy@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]

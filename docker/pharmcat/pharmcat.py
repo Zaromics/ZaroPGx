@@ -25,7 +25,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("pharmcat_wrapper")
+logger = logging.getLogger("pharmcat")
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -71,7 +71,7 @@ def health_check():
     
     return jsonify({
         "status": "ok",
-        "service": "pharmcat-wrapper",
+        "service": "pharmcat",
         "java_version": subprocess.check_output(["java", "-version"], stderr=subprocess.STDOUT).decode(),
         "pharmcat_jar_exists": jar_exists,
         "pharmcat_jar_path": PHARMCAT_JAR,
@@ -150,7 +150,7 @@ def get_status():
         
         return jsonify({
             "status": "ok",
-            "service": "pharmcat-wrapper",
+            "service": "pharmcat",
             "processing_status": processing_status,
             "process_stats": process_stats,
             "container_stats": container_stats,

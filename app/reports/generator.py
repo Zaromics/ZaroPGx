@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 from weasyprint import HTML, CSS
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from app.pharmcat_wrapper.pharmcat_client import normalize_pharmcat_results
+from app.pharmcat.pharmcat_client import normalize_pharmcat_results
 
 # Version
 __version__ = "1.0.0"

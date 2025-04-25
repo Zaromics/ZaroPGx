@@ -13,7 +13,7 @@ import json
 
 from app.api.db import get_db, create_patient, register_genetic_data
 from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis as PydanticFileAnalysis, VCFHeaderInfo
-from app.pharmcat_wrapper.pharmcat_client import call_pharmcat_service
+from app.pharmcat.pharmcat_client import call_pharmcat_service
 from app.api.utils.file_processor import FileProcessor
 from ..utils.security import get_current_user, get_optional_user
 
@@ -604,7 +604,7 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
         if status.get("status") == "processing" and status.get("stage") == "PharmCAT":
             try:
                 logger.info("Checking PharmCAT wrapper status")
-                wrapper_response = requests.get("http://pharmcat-wrapper:5000/status", timeout=2)
+                wrapper_response = requests.get("http://pharmcat:5000/status", timeout=2)
                 if wrapper_response.ok:
                     wrapper_status = wrapper_response.json()
                     logger.info(f"PharmCAT wrapper status: {wrapper_status}")

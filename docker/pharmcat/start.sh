@@ -28,4 +28,4 @@ echo "Testing PharmCAT pipeline command:"
 pharmcat --help | head -n 5
 
 echo "Starting Flask app..."
-python3 /app/pharmcat_wrapper.py 
+python3 /app/pharmcat.py 

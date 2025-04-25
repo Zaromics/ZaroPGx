@@ -109,31 +109,18 @@
                 <!-- Main Content (hidden until logged in) -->
                 <div id="mainContent">
                 <!-- Display messages if any -->
-                {% if message %}
-                <div class="alert {{ 'alert-success' if success else 'alert-danger' }}" role="alert">
-                    {{ message }}
-                    {% if success and report_id %}
-                    <div class="mt-3">
-                        <p>Your report is ready!</p>
-                        <a href="{{ report_pdf }}" target="_blank" class="btn btn-primary">View PDF Report</a>
-                        <a href="{{ report_html }}" target="_blank" class="btn btn-info">View Interactive Report</a>
-                    </div>
-                    {% endif %}
-                </div>
-                {% endif %}
+                
 
-                <!-- Service status alert - shown only if services are down -->
-                {% if service_alert %}
-                <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                    <div class="d-flex align-items-center">
+                <!-- Service status alert - hidden by default -->
+                <div id="serviceStatusAlert" class="alert alert-danger d-none" role="alert">
+                    <div class="d-flex justify-content-between align-items-center">
                         <div>
                             <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>Service Issue Detected</strong>
-                            <span> - {{ service_alert }}</span>
+                            <span id="serviceStatusMessage"></span>
                         </div>
+                        <button type="button" class="btn-close" aria-label="Close" onclick="dismissServiceAlert()"></button>
                     </div>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
-                {% endif %}
 
                 <div class="card">
                     <div class="card-header">Upload Genomic File for Analysis</div>
@@ -834,6 +821,244 @@
             }
         });
         
+        // Service status monitoring - updated to work without auth token
+        const serviceStatusAlert = document.getElementById('serviceStatusAlert');
+        const serviceStatusMessage = document.getElementById('serviceStatusMessage');
+        let serviceCheckInterval = null;
+        let lastServiceStatus = "ok";
+        let alertDismissed = false;
+        
+        // Function to check services status
+        async function checkServicesStatus() {
+            try {
+                // Get references to elements
+                const serviceStatusAlert = document.getElementById('serviceStatusAlert');
+                const serviceStatusMessage = document.getElementById('serviceStatusMessage');
+                
+                if (!serviceStatusAlert || !serviceStatusMessage) {
+                    console.error("Service status elements not found");
+                    return;
+                }
+                
+                // Make the request without the Authorization header
+                const response = await fetch('/services-status');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // If status changed or new unhealthy services detected
+                    if (data.status !== lastServiceStatus) {
+                        lastServiceStatus = data.status;
+                        
+                        if (data.status === "error" && !alertDismissed) {
+                            // Build message about unhealthy services
+                            const unhealthyServices = Object.keys(data.unhealthy_services);
+                            const message = unhealthyServices.length === 1 
+                                ? `${unhealthyServices[0]} is unavailable.`
+                                : `${unhealthyServices.join(', ')} are unavailable.`;
+                                
+                            serviceStatusMessage.textContent = ` - ${message}`;
+                            serviceStatusAlert.classList.remove('d-none');
+                        } else if (data.status === "ok") {
+                            // All services are healthy, hide alert and reset dismissal
+                            serviceStatusAlert.classList.add('d-none');
+                            alertDismissed = false;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error("Error checking services status:", error);
+            }
+        }
+        
+        // Function to dismiss the service alert
+        function dismissServiceAlert() {
+            serviceStatusAlert.classList.add('d-none');
+            alertDismissed = true;
+            
+            // Auto-reset dismissed state after 5 minutes
+            setTimeout(() => {
+                alertDismissed = false;
+                checkServicesStatus(); // Check again
+            }, 5 * 60 * 1000);
+        }
+        
+        // Start service status checking when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initial check
+            checkServicesStatus();
+            
+            // Set up interval (check every 30 seconds)
+            serviceCheckInterval = setInterval(checkServicesStatus, 30000);
+        });
+        
+        // Stop checking when page unloads
+        window.addEventListener('beforeunload', function() {
+            if (serviceCheckInterval) {
+                clearInterval(serviceCheckInterval);
+            }
+        });
+
+        // Function to manually check report status - updated to work without auth token
+        async function checkReportStatus() {
+            const jobId = document.getElementById('jobIdInput').value.trim();
+            if (!jobId) {
+                alert("Please enter a job ID");
+                return;
+            }
+            
+            // Log messages element
+            const logMessages = document.getElementById('logMessages');
+            const addLogMessage = (message, type = 'info') => {
+                if (!logMessages) return;
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = `text-${type}`;
+                logEntry.textContent = `[${timestamp}] ${message}`;
+                logMessages.appendChild(logEntry);
+                logMessages.scrollTop = logMessages.scrollHeight;
+            };
+            
+            addLogMessage(`Checking report status for job ${jobId}...`);
+            
+            try {
+                // First try the regular status endpoint without authorization
+                const response = await fetch(`/status/${jobId}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log("Job status data:", data);
+                    
+                    if (data.status === "completed" && data.data) {
+                        // Use the globally defined showResults function
+                        window.showResults(data.data);
+                        addLogMessage(`Found reports for job ${jobId}`, 'success');
+                        return;
+                    }
+                }
+                
+                // If that doesn't work, try the dedicated reports endpoint without authorization
+                const reportResponse = await fetch(`/reports/${jobId}`);
+                
+                if (reportResponse.ok) {
+                    const reportData = await reportResponse.json();
+                    console.log("Report data:", reportData);
+                    
+                    if (reportData.status === "completed") {
+                        // Build a data object compatible with showResults
+                        const resultsData = {
+                            pdf_report_url: reportData.pdf_report_url,
+                            html_report_url: reportData.html_report_url
+                        };
+                        
+                        window.showResults(resultsData);
+                        addLogMessage(`Found reports for job ${jobId}`, 'success');
+                        return;
+                    } else {
+                        addLogMessage(`Job ${jobId} is still processing: ${reportData.message}`, 'warning');
+                    }
+                } else {
+                    try {
+                        const errorData = await reportResponse.json();
+                        addLogMessage(`Error checking reports: ${errorData.detail || "Unknown error"}`, 'danger');
+                    } catch (e) {
+                        addLogMessage(`Error checking reports: ${reportResponse.statusText}`, 'danger');
+                    }
+                }
+                
+                // Fall back to direct file paths if endpoints don't work
+                const manualData = {
+                    pdf_report_url: `/reports/${jobId}_pgx_report.pdf`,
+                    html_report_url: `/reports/${jobId}_pgx_report.html`
+                };
+                
+                window.showResults(manualData);
+                addLogMessage(`Trying direct report links for job ${jobId}. These may not work if reports don't exist.`, 'warning');
+                
+            } catch (error) {
+                console.error("Error checking report status:", error);
+                addLogMessage(`Error checking report status: ${error.message}`, 'danger');
+            }
+        }
+
+        // Function to manually trigger completion for job
+        async function triggerCompletion() {
+            const jobId = document.getElementById('jobIdInput').value.trim();
+            if (!jobId) {
+                alert("Please enter a job ID");
+                return;
+            }
+            
+            try {
+                // Add log message
+                const logMessages = document.getElementById('logMessages');
+                if (logMessages) {
+                    const addLogMessage = (message, type = 'info') => {
+                        const timestamp = new Date().toLocaleTimeString();
+                        const logEntry = document.createElement('div');
+                        logEntry.className = `text-${type}`;
+                        logEntry.textContent = `[${timestamp}] ${message}`;
+                        logMessages.appendChild(logEntry);
+                        logMessages.scrollTop = logMessages.scrollHeight;
+                    };
+                    
+                    addLogMessage(`Manually triggering completion for job ${jobId}...`);
+                }
+                
+                // Open the trigger-completion endpoint in a new tab
+                window.open(`/trigger-completion/${jobId}`, '_blank');
+                
+                // Also try to update the UI directly
+                const response = await fetch(`/status/${jobId}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log("Manual trigger - Job status data:", data);
+                    
+                    // If job is complete, show results
+                    if (data.status === "completed") {
+                        // Create results display
+                        const resultsDiv = document.getElementById('analysisResults');
+                        if (resultsDiv) {
+                            let pdfUrl = `/reports/${jobId}_pgx_report.pdf`;
+                            let htmlUrl = `/reports/${jobId}_pgx_report.html`;
+                            
+                            // Try to get URLs from response
+                            if (data.data && data.data.pdf_report_url) {
+                                pdfUrl = data.data.pdf_report_url;
+                            }
+                            if (data.data && data.data.html_report_url) {
+                                htmlUrl = data.data.html_report_url;
+                            }
+                            
+                            resultsDiv.innerHTML = `
+                                <div class="alert alert-success">
+                                    <h4>Analysis Complete! (Manual Trigger)</h4>
+                                    <p>Your pharmacogenomic analysis has been completed successfully.</p>
+                                    <div class="mt-3">
+                                        <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
+                                            <i class="bi bi-file-pdf"></i> View PDF Report
+                                        </a>
+                                    </div>
+                                    <div class="mt-2">
+                                        <a href="${htmlUrl}" class="btn btn-info" target="_blank">
+                                            <i class="bi bi-file-code"></i> View Interactive Report
+                                        </a>
+                                    </div>
+                                </div>
+                            `;
+                            resultsDiv.classList.remove('d-none');
+                            if (logMessages) addLogMessage(`Report links are now available (Manual Trigger)`, 'success');
+                        }
+                    }
+                }
+                
+            } catch (error) {
+                console.error("Error triggering completion:", error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+
         // Global variables for VCF auto-polling
         let vcfPollingInterval = null;
         let currentJobId = null;

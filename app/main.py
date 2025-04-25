@@ -27,10 +27,10 @@ import requests
 from werkzeug.utils import secure_filename
 import traceback
 import httpx
-from app.pharmcat_wrapper import pharmcat_client
+from app.pharmcat import pharmcat_client
 
 from app.api.models import Token, TokenData
-from app.pharmcat_wrapper.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
+from app.pharmcat.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
 from app.reports.generator import generate_pdf_report, create_interactive_html_report, generate_report
 from app.api.db import get_db
 from app.api.utils.security import get_current_user, get_optional_user
@@ -318,7 +318,63 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    """Root endpoint to serve the homepage with pharmacogenomics analysis form"""
+    try:
+        # Check service status before rendering page
+        service_status = {"status": "ok", "message": "All services are available", "unhealthy_services": {}}
+        
+        # Internal check of services - don't expose network errors to users
+        try:
+            # Since we're in the app code, app is by definition running
+            # Only check external services
+            service_urls = {
+                "gatk": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
+                "pharmcat": os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000") + "/health", 
+                "pypgx": os.getenv("PYPGX_API_URL", "http://pypgx:5000") + "/health"
+            }
+            
+            unhealthy_services = []
+            
+            async with httpx.AsyncClient() as client:
+                for service_name, url in service_urls.items():
+                    try:
+                        response = await client.get(url, timeout=2.0, follow_redirects=True)
+                        if response.status_code < 200 or response.status_code >= 300:
+                            unhealthy_services.append(service_name)
+                    except Exception:
+                        # If we can't reach a service, mark it as unhealthy
+                        unhealthy_services.append(service_name)
+            
+            # If any services are unhealthy, set status to error
+            if unhealthy_services:
+                service_status = {
+                    "status": "error",
+                    "message": "Some services are unavailable",
+                    "unhealthy_services": unhealthy_services
+                }
+        except Exception as e:
+            # If something goes wrong with the check, just log it
+            logger.exception(f"Error checking services: {str(e)}")
+        
+        # Render the template with service status
+        service_alert = None
+        if service_status["status"] == "error":
+            unhealthy_list = service_status["unhealthy_services"]
+            # Format names for display
+            if len(unhealthy_list) == 1:
+                service_message = f"{unhealthy_list[0]} is unavailable."
+            else:
+                service_message = f"{', '.join(unhealthy_list)} are unavailable."
+                
+            service_alert = service_message
+                
+        return templates.TemplateResponse(
+            "index.html", 
+            {"request": request, "service_alert": service_alert}
+        )
+    except Exception as e:
+        logger.exception(f"Error in home route: {str(e)}")
+        return HTMLResponse(f"<h1>Error</h1><p>{str(e)}</p>")
 
 @app.get("/api")
 async def api_root():
@@ -1898,9 +1954,14 @@ async def api_status():
 @app.get("/services-status", response_class=JSONResponse)
 async def services_status(request: Request, current_user: str = Depends(get_optional_user)):
     """Check the status of all services and return a comprehensive health check"""
+    # Log the request details for debugging
+    logger.info(f"==== SERVICE STATUS CHECK REQUEST ====")
+    logger.info(f"Client IP: {request.client.host}, Method: {request.method}, Path: {request.url.path}")
+    logger.info(f"Headers: {request.headers}")
+    
     services_to_check = {
         "app": {
-            "url": f"{request.base_url}health",
+            "url": "http://localhost:8000/health",  # Using internal port 8000 instead of request.base_url
             "timeout": 5
         },
         "gatk": {
@@ -1908,7 +1969,7 @@ async def services_status(request: Request, current_user: str = Depends(get_opti
             "timeout": 10
         },
         "pharmcat": {
-            "url": os.getenv("PHARMCAT_API_URL", "http://pharmcat-wrapper:5000") + "/health",
+            "url": os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000") + "/health",
             "timeout": 10 
         },
         "pypgx": {
@@ -1928,55 +1989,138 @@ async def services_status(request: Request, current_user: str = Depends(get_opti
             service_urls.append(f"{k}: {v['url']}")
     logger.info(f"Checking services: {', '.join(service_urls)}")
     
+    # Debugging for environment variables
+    logger.info(f"PYPGX_API_URL: {os.getenv('PYPGX_API_URL', 'not set')}")
+    logger.info(f"GATK_API_URL: {os.getenv('GATK_API_URL', 'not set')}")
+    logger.info(f"PHARMCAT_API_URL: {os.getenv('PHARMCAT_API_URL', 'not set')}")
+    
     # Check each service
     unhealthy_services = {}
+    service_check_results = {}
     
     # Use httpx for concurrent requests
     async with httpx.AsyncClient() as client:
-        for service_name, service_info in services_to_check.items():
-            if service_name == "database":
-                # Special handling for database check
+        # Check app health directly first (no HTTP request)
+        logger.info("Checking app health (direct check)")
+        service_check_results["app"] = {"status": "healthy", "method": "direct"}
+        
+        # Check database separately
+        db_service = services_to_check.get("database")
+        if db_service:
+            logger.info(f"Checking database at {db_service['url']}")
+            try:
+                # Try to connect to the database
+                from sqlalchemy import create_engine, text
+                engine = create_engine(db_service["url"])
+                with engine.connect() as connection:
+                    result = connection.execute(text("SELECT 1"))
+                    if not result.fetchone():
+                        logger.error("Database connection test failed")
+                        unhealthy_services["database"] = "Database connection test failed"
+                        service_check_results["database"] = {"status": "error", "message": "Connection test failed"}
+                    else:
+                        logger.info("Database connection test succeeded")
+                        service_check_results["database"] = {"status": "healthy"}
+            except Exception as e:
+                logger.error(f"Database error: {str(e)}")
+                unhealthy_services["database"] = f"Database error: {str(e)}"
+                service_check_results["database"] = {"status": "error", "message": str(e)}
+        
+        # Check pypgx with retries
+        pypgx_service = services_to_check.get("pypgx")
+        if pypgx_service:
+            logger.info(f"Checking pypgx at {pypgx_service['url']}")
+            max_retries = 2
+            retry_count = 0
+            success = False
+            
+            while retry_count <= max_retries and not success:
                 try:
-                    # Try to connect to the database
-                    from sqlalchemy import create_engine, text
-                    engine = create_engine(service_info["url"])
-                    with engine.connect() as connection:
-                        result = connection.execute(text("SELECT 1"))
-                        if not result.fetchone():
-                            unhealthy_services[service_name] = "Database connection test failed"
-                except Exception as e:
-                    unhealthy_services[service_name] = f"Database error: {str(e)}"
-            else:
-                # HTTP services
-                try:
-                    # Add some extra request headers and increase timeout
+                    logger.info(f"PyPGx check attempt {retry_count+1}/{max_retries+1}")
+                    # Add some extra request headers and a very short timeout to avoid blocking
                     response = await client.get(
-                        service_info["url"],
-                        timeout=service_info["timeout"],
+                        pypgx_service["url"],
+                        timeout=5.0,  # Reduced timeout for faster retries
                         headers={"User-Agent": "ZaroPGx-HealthCheck"},
                         follow_redirects=True
                     )
                     
+                    logger.info(f"PyPGx response: status={response.status_code}, body={response.text[:100]}...")
+                    
                     # Accept 200-299 status codes as success
-                    if response.status_code < 200 or response.status_code >= 300:
-                        unhealthy_services[service_name] = f"HTTP {response.status_code}"
-                        logger.warning(f"Service {service_name} returned status {response.status_code}")
+                    if 200 <= response.status_code < 300:
+                        success = True
+                        service_check_results["pypgx"] = {"status": "healthy", "response_code": response.status_code}
+                        logger.info(f"PyPGx check successful on attempt {retry_count+1}")
+                        break
+                    else:
+                        retry_count += 1
+                        logger.warning(f"PyPGx returned status {response.status_code} (retry {retry_count}/{max_retries})")
+                        service_check_results["pypgx"] = {"status": "error", "response_code": response.status_code, "attempt": retry_count}
+                        await asyncio.sleep(0.5)  # Short delay between retries
                 except Exception as e:
-                    logger.warning(f"Error checking {service_name} health: {str(e)}")
-                    unhealthy_services[service_name] = str(e)
+                    retry_count += 1
+                    logger.warning(f"Error checking PyPGx health (retry {retry_count}/{max_retries}): {str(e)}")
+                    service_check_results["pypgx"] = {"status": "error", "message": str(e), "attempt": retry_count}
+                    await asyncio.sleep(0.5)  # Short delay between retries
+            
+            if not success:
+                logger.error(f"PyPGx health check failed after {max_retries+1} attempts")
+                unhealthy_services["pypgx"] = f"Failed after {max_retries} retries"
+        
+        # Check other HTTP services
+        for service_name, service_info in services_to_check.items():
+            # Skip services we've already checked
+            if service_name in ["app", "database", "pypgx"]:
+                continue
+                
+            logger.info(f"Checking {service_name} at {service_info['url']}")
+            try:
+                # Add some extra request headers and increase timeout
+                response = await client.get(
+                    service_info["url"],
+                    timeout=service_info["timeout"],
+                    headers={"User-Agent": "ZaroPGx-HealthCheck"},
+                    follow_redirects=True
+                )
+                
+                logger.info(f"{service_name} response: status={response.status_code}")
+                
+                # Accept 200-299 status codes as success
+                if 200 <= response.status_code < 300:
+                    service_check_results[service_name] = {"status": "healthy", "response_code": response.status_code}
+                else:
+                    unhealthy_services[service_name] = f"HTTP {response.status_code}"
+                    service_check_results[service_name] = {"status": "error", "response_code": response.status_code}
+                    logger.warning(f"Service {service_name} returned status {response.status_code}")
+            except Exception as e:
+                logger.warning(f"Error checking {service_name} health: {str(e)}")
+                unhealthy_services[service_name] = str(e)
+                service_check_results[service_name] = {"status": "error", "message": str(e)}
+    
+    # Log the final results
+    logger.info(f"==== SERVICE STATUS CHECK RESULTS ====")
+    for service, result in service_check_results.items():
+        logger.info(f"{service}: {result}")
     
     # Return status
     if unhealthy_services:
-        return {
+        result = {
             "status": "error",
             "message": "Some services are unavailable",
-            "unhealthy_services": unhealthy_services
+            "unhealthy_services": unhealthy_services,
+            "check_time": str(datetime.now())
         }
+        logger.info(f"Returning error result: {result}")
+        return result
     else:
-        return {
+        result = {
             "status": "ok",
-            "message": "All services are available"
+            "message": "All services are available",
+            "check_time": str(datetime.now())
         }
+        logger.info(f"Returning success result: {result}")
+        return result
 
 # Wait for services to be ready
 @app.on_event("startup")
@@ -1988,8 +2132,8 @@ async def startup_event():
     # Services to check
     services = {
         "GATK API": f"{GATK_SERVICE_URL}/health",
-        "PharmCAT Wrapper": f"{os.getenv('PHARMCAT_API_URL', 'http://pharmcat-wrapper:5000')}/health",
-        "PyPGx": f"{PYPGX_SERVICE_URL}/health"  # Renamed from Stargazer to PyPGx
+        "PharmCAT Wrapper": f"{os.getenv('PHARMCAT_API_URL', 'http://pharmcat:5000')}/health",
+        "PyPGx": f"{PYPGX_SERVICE_URL}/health"
     }
     
     max_retries = 12  # Increased from 6 to 12

@@ -664,7 +664,7 @@ We have successfully unified the previously separate PharmCAT services (PharmCAT
 
 Previously, our architecture used two separate containers for PharmCAT functionality:
 1. **PharmCAT container**: Running the Java-based PharmCAT tool directly
-2. **PharmCAT-wrapper container**: Providing a REST API interface to the PharmCAT tool
+2. **pharmcat container**: Providing a REST API interface to the PharmCAT tool
 
 This setup required complex volume sharing between containers and introduced networking overhead and dependency challenges.
 
@@ -687,14 +687,14 @@ The unification involved:
    - Created a reliable reporting system with multiple result file copies
 
 3. **Docker Compose Integration**:
-   - Removed the separate `pharmcat` and `pharmcat-wrapper` services
+   - Removed the separate `pharmcat` and `pharmcat` services
    - Added a single `pharmcat` service
    - Updated environment variables and container references
    - Simplified volume mounts by eliminating the shared JAR volume
 
 4. **Application Integration**:
    - Updated all references in the main application from:
-     - `http://pharmcat-wrapper:5000` → `http://pharmcat:5000`
+     - `http://pharmcat:5000` → `http://pharmcat:5000`
      - `http://pharmcat:8080` → removed (no longer needed)
 
 ### Key Benefits
@@ -738,3 +738,7 @@ The unified service has been tested with various VCF files and integrated succes
    - Improve report reliability and fallback mechanisms
 
 This consolidation is part of our ongoing effort to simplify the architecture, improve reliability, and enhance the maintainability of the ZaroPGx platform.
+
+
+# TO DO: Remove the "manual" completion and report checking as the actual system should be working. Same for the top message part that says report is being made
+# HAVE ALL THE FORMATS OF REPORTS BE GENERATED AND PLACED IN FOLDER. THE NEW FORMATS WILL MAKE IT EASIER TO INTERFACE WITH OURS. USE THE DB TO STORE THE RESULTS AND THEN GENERATE OUR FORMAT REPORTS!

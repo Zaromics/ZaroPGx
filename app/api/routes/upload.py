@@ -164,7 +164,7 @@ async def call_pharmcat(job_id: str, vcf_file: str):
             data = aiohttp.FormData()
             data.add_field('file', open(vcf_file, 'rb'))
             
-            async with session.post('http://pharmcat-wrapper:5000/analyze', data=data) as response:
+            async with session.post('http://pharmcat:5000/analyze', data=data) as response:
                 if response.status == 200:
                     result = await response.json()
                     return result.get('report_file')

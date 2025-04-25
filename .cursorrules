@@ -62,7 +62,7 @@
     "commonDirectories": {
       "backend": "/app/api",
       "cpic_integration": "/db/migrations/cpic",
-      "allele_calling": "/app/pharmcat_wrapper",
+      "allele_calling": "/app/pharmcat",
       "report_templates": "/app/reports/templates"
     },
     "cliCommands": {

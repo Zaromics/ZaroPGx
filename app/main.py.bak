@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 
 from app.api.models import Token, TokenData
-from app.pharmcat_wrapper.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
+from app.pharmcat.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
 from app.reports.generator import generate_pdf_report, create_interactive_html_report, generate_report
 from app.api.db import get_db
 from app.api.utils.security import get_current_user, get_optional_user
@@ -1859,7 +1859,7 @@ async def startup_event():
     # Services to check
     services = {
         "GATK API": f"{GATK_SERVICE_URL}/health",
-        "PharmCAT Wrapper": f"{os.getenv('PHARMCAT_API_URL', 'http://pharmcat-wrapper:5000')}/health",
+        "PharmCAT Wrapper": f"{os.getenv('PHARMCAT_API_URL', 'http://pharmcat:5000')}/health",
         "Stargazer": f"{STARGAZER_SERVICE_URL}/health"
     }
     

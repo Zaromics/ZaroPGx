@@ -191,7 +191,7 @@ SOLUTION - LATEST PHARMCAT REPORT SYSTEM:
    - Sample report fallback when needed
 
 IMPLEMENTATION DETAILS:
-- Modified docker/pharmcat/pharmcat_wrapper.py to create and maintain multiple report files
+- Modified docker/pharmcat/pharmcat.py to create and maintain multiple report files
 - Ensured direct writing to files using json.dump() with validation
 - Added logging for all file operations with detailed error reporting
 - Created a sample report with CYP2C9 gene data and warfarin recommendations
