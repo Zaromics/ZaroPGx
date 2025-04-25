@@ -58,7 +58,7 @@ print(f"=========== ZaroPGx STARTUP AT {datetime.utcnow()} ===========")
 print(f"LOG LEVEL: {log_level}")
 print(f"GATK SERVICE URL: {os.getenv('GATK_API_URL', 'http://gatk-api:5000')}")
 print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_SERVICE_URL', 'http://pharmcat:5000')}")
-print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")  # Updated from Stargazer to PyPGx
+print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")
 
 # Load environment variables
 load_dotenv()
@@ -70,7 +70,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Constants
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
-PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")  # Updated from Stargazer to PyPGx
+PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
 PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:5000")
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
@@ -1057,10 +1057,10 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
             )
             return
             
-        # Verify job is still being tracked before Stargazer step
+        # Verify job is still being tracked before PyPGx step
         if job_id not in job_status:
-            logger.warning(f"Job {job_id} missing before Stargazer - recreating status")
-            print(f"[PROCESSING WARNING] Job {job_id} missing before Stargazer - recreating")
+            logger.warning(f"Job {job_id} missing before PyPGx - recreating status")
+            print(f"[PROCESSING WARNING] Job {job_id} missing before PyPGx - recreating")
             update_job_progress(job_id, "star_allele_calling", 35, "Preparing for star allele calling")
         
         # Step 2: Process CYP2D6 with PyPGx (formerly Stargazer)

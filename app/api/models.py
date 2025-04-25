@@ -57,7 +57,7 @@ class WorkflowInfo(BaseModel):
     # Processing requirements
     needs_gatk: bool = False
     needs_alignment: bool = False
-    needs_stargazer: bool = False 
+    needs_pypgx: bool = False 
     needs_conversion: bool = False
     
     # File processing flags

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PyPGx Wrapper Service for ZaroPGx
-Provides REST API endpoints for calling CYP2D6 star alleles using PyPGx
+Provides REST API endpoints for calling PyPGx supported star alleles
 """
 
 import os
@@ -67,7 +67,7 @@ SUPPORTED_GENES = [
 
 app = FastAPI(
     title="PyPGx Wrapper API",
-    description="REST API for CYP2D6 star allele calling with PyPGx",
+    description="REST API for PyPGx supported star allele calling",
     version="1.0.0",
 )
 
@@ -93,7 +93,7 @@ def root():
     """API root endpoint"""
     return {
         "message": "PyPGx Wrapper API",
-        "usage": "POST to /genotype with a VCF file to call CYP2D6 star alleles",
+        "usage": "POST to /genotype with a VCF file to call PyPGx supported star alleles",
         "supported_genes": SUPPORTED_GENES
     }
 

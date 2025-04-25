@@ -46,9 +46,9 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
     the appropriate pipeline based on the file type and workflow configuration.
     
     Pipeline flow:
-    1. For BAM/CRAM/SAM files: GATK → Stargazer → PharmCAT → Reports
+    1. For BAM/CRAM/SAM files: GATK → PyPGx → PharmCAT → Reports
     2. For VCF files: Direct to PharmCAT → Reports (or GATK if needed)
-    3. Future: For FASTQ: Alignment → GATK → Stargazer → PharmCAT → Reports
+    3. Future: For FASTQ: Alignment → GATK → PyPGx → PharmCAT → Reports
     4. Future: For 23andMe: Conversion → PharmCAT → Reports
     """
     try:
@@ -156,33 +156,33 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # For now, just sleep to simulate processing time
                 await asyncio.sleep(2)
             
-            # Step 4: Stargazer for CYP2D6 analysis
-            if workflow.get("needs_stargazer", False):
+            # Step 4: PyPGx for CYP2D6 analysis
+            if workflow.get("needs_pypgx", False):
                 job_status[data_id].update({
                     "percent": 50,
-                    "stage": "Stargazer",
-                    "message": "Analyzing CYP2D6 with Stargazer..."
+                    "stage": "PyPGx",
+                    "message": "Analyzing PyPGx supported star alleles..."
                 })
                 
                 try:
-                    # Call Stargazer service
-                    # This would be a real implementation to call Stargazer
+                    # Call PyPGx service
+                    # This would be a real implementation to call PyPGx
                     # For example:
-                    # stargazer_output = await call_stargazer_service(output_file)
-                    # output_file = stargazer_output
+                    # pypgx_output = await call_pypgx_service(output_file)
+                    # output_file = pypgx_output
                     
                     # For now, simulate processing
-                    logger.info(f"Would call Stargazer for {output_file}")
-                    await asyncio.sleep(3)  # Simulate Stargazer processing time
+                    logger.info(f"Would call PyPGx for {output_file}")
+                    await asyncio.sleep(3)  # Simulate PyPGx processing time
                     
-                    # Update status after Stargazer
+                    # Update status after PyPGx
                     job_status[data_id].update({
                         "percent": 60,
-                        "stage": "Stargazer",
-                        "message": "CYP2D6 analysis complete."
+                        "stage": "PyPGx",
+                        "message": "PyPGx analysis complete."
                     })
                 except Exception as e:
-                    error_msg = f"Stargazer processing failed: {str(e)}"
+                    error_msg = f"PyPGx processing failed: {str(e)}"
                     logger.error(error_msg)
                     job_status[data_id].update({
                         "status": "error",
