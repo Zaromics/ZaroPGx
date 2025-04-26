@@ -586,7 +586,7 @@ def update_job_progress(job_id: str, stage: str, percent: int, message: str,
         "initializing": "Upload",
         "uploaded": "Upload",
         "variant_calling": "GATK",
-        "star_allele_calling": "PyPGx",  # Updated from Stargazer to PyPGx
+        "star_allele_calling": "PyPGx",
         "pharmcat": "PharmCAT",
         "report_generation": "Report",
         "complete": "Report",
@@ -905,7 +905,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
     """
     Process the genomic file through the pipeline:
     1. Call variants with GATK (if not a VCF)
-    2. Call CYP2D6 star alleles with PyPGx (formerly Stargazer)
+    2. Call CYP2D6 star alleles with PyPGx
     3. Call PharmCAT for overall PGx annotation
     4. Generate a report
     """
@@ -1066,7 +1066,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
             print(f"[PROCESSING WARNING] Job {job_id} missing before PyPGx - recreating")
             update_job_progress(job_id, "star_allele_calling", 35, "Preparing for star allele calling")
         
-        # Step 2: Process CYP2D6 with PyPGx (formerly Stargazer)
+        # Step 2: Process CYP2D6 with PyPGx
         update_job_progress(job_id, "star_allele_calling", 40, "Calling CYP2D6 star alleles with PyPGx")
         logger.info(f"Job {job_id}: Calling CYP2D6 star alleles with PyPGx")
         print(f"[PYPGX] Job {job_id}: Calling CYP2D6 star alleles")
@@ -1519,7 +1519,7 @@ async def get_progress(job_id: str, current_user: str = Depends(get_optional_use
 
 async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
     """Separate generator function for progress events"""
-    last_status = None
+    last_status_json = None  # Track the last status as JSON string instead of dict
     keepalive_count = 0
     last_update_time = time.time()
     connection_start_time = time.time()
@@ -1535,9 +1535,14 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
             Tuple[str, int, str]: (stage, percent, message)
         """
         # Check for finished reports first - highest priority
-        pdf_report_path = os.path.join(REPORTS_DIR, f"{job_id}_pgx_report.pdf")
-        html_report_path = os.path.join(REPORTS_DIR, f"{job_id}_pgx_report.html")
-        if os.path.exists(pdf_report_path) or os.path.exists(html_report_path):
+        
+        # heck in the patient-specific directory that might be used
+        patient_dir = os.path.join(REPORTS_DIR, job_id)
+        patient_pdf_path = os.path.join(patient_dir, f"{job_id}_pgx_report.pdf")
+        patient_html_path = os.path.join(patient_dir, f"{job_id}_pgx_report.html")
+        
+        # Check all possible locations
+        if (os.path.exists(patient_pdf_path) or os.path.exists(patient_html_path)):
             return "complete", 100, "Analysis complete"
             
         # Check for PharmCAT reports
@@ -1562,15 +1567,19 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
                 elif filename.lower().endswith('.bam'):
                     has_bam = True
             
-            # If we have a VCF file, we'd be further along in the process
+            # If we have a VCF file but no evidence of further processing,
+            # the job is likely in initial processing or variant calling
             if has_vcf:
-                return "star_allele_calling", 40, "Calling CYP2D6 star alleles with PyPGx"
+                return "processing", 15, "Processing VCF file"
             # If BAM, likely in variant calling
             elif has_bam:
                 return "variant_calling", 20, "Calling variants with GATK"
         
-        # Default fallback if we can't determine the stage
-        return "processing", 30, "Processing genomic data - connection reestablished"
+        # Default fallback - just return a generic status instead of guessing
+        return "unknown", 0, "Processing status unavailable"
+    
+    # Track status recreation to avoid repeated guessing
+    status_recreated = False
     
     while True:
         # Check if connection has been open too long and should be recycled
@@ -1587,41 +1596,53 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
         
         # Safety check in case the job was removed since we started
         if current_status is None:
-            logger.warning(f"Job {job_id} status disappeared during streaming")
-            print(f"[PROGRESS WARNING] Job {job_id} status gone during streaming - recreating")
-            
-            # Intelligently guess the current stage based on available information
-            stage, percent, message = guess_processing_stage(job_id)
-            
-            # Recreate the job status with the guessed information
-            job_status[job_id] = {
-                "job_id": job_id,
-                "stage": stage,
-                "percent": percent,
-                "message": f"{message} - connection reestablished",
-                "complete": stage == "complete",
-                "success": stage == "complete",
-                "timestamp": datetime.utcnow().isoformat(),
-                "reconnected": True
-            }
-            
-            # Log the intelligent recreation
-            logger.info(f"Job {job_id} status recreated: stage={stage}, percent={percent}")
-            print(f"[PROGRESS] Job {job_id} status recreated: stage={stage}, percent={percent}")
-            
-            current_status = job_status[job_id]
+            # Only recreate status once per connection to avoid spam
+            if not status_recreated:
+                logger.warning(f"Job {job_id} status disappeared during streaming")
+                print(f"[PROGRESS WARNING] Job {job_id} status gone during streaming - recreating")
+                
+                # Intelligently guess the current stage based on available information
+                stage, percent, message = guess_processing_stage(job_id)
+                
+                # Recreate the job status with the guessed information
+                job_status[job_id] = {
+                    "job_id": job_id,
+                    "stage": stage,
+                    "percent": percent,
+                    "message": message,
+                    "complete": stage == "complete",
+                    "success": stage == "complete",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "reconnected": True
+                }
+                
+                # Log the intelligent recreation
+                logger.info(f"Job {job_id} status recreated: stage={stage}, percent={percent}")
+                print(f"[PROGRESS] Job {job_id} status recreated: stage={stage}, percent={percent}")
+                
+                # Mark that we've already recreated status for this connection
+                status_recreated = True
+                
+                current_status = job_status[job_id]
+            else:
+                # If we've already tried to recreate the status once, just wait
+                # This prevents spamming the same recreation message over and over
+                await asyncio.sleep(1.0)
+                continue
+        
+        # Convert current status to JSON for reliable comparison
+        current_status_json = json.dumps(current_status)
         
         # If status has changed, send an update
-        if current_status != last_status:
+        if current_status_json != last_status_json:
             # Send the updated status
-            status_json = json.dumps(current_status)
-            yield f"data: {status_json}\n\n"
+            yield f"data: {current_status_json}\n\n"
             
             # Debug logging for status changes
             logger.debug(f"Sent updated status for job {job_id}: stage={current_status.get('stage')}, percent={current_status.get('percent')}")
             
             # Update last sent status and time
-            last_status = current_status.copy()
+            last_status_json = current_status_json
             last_update_time = current_time
         
         # Determine the keepalive interval based on the stage
@@ -1647,26 +1668,30 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
                 keepalive_status["keepalive"] = True
                 keepalive_status["keepalive_count"] = keepalive_count
                 
-                # For GATK stages, add special animation
-                if current_status.get("stage") == "gatk" or current_status.get("stage") == "variant_calling":
-                    message = keepalive_status.get("message", "")
-                    if not message.endswith("..."):
-                        keepalive_status["message"] = message + "..."
-                    
-                    # Every 5th keepalive, update the message to show progress animation
-                    if keepalive_count % 5 == 0:
-                        dots = "." * ((keepalive_count // 5) % 4 + 1)
-                        base_message = message.rstrip('.')
-                        keepalive_status["message"] = f"{base_message}{dots}"
+                # Send keepalive only every 4 seconds to reduce traffic
+                if keepalive_count % 4 == 0:
+                    # For GATK stages, add special animation
+                    if current_status.get("stage") == "gatk" or current_status.get("stage") == "variant_calling":
+                        message = keepalive_status.get("message", "")
+                        if not message.endswith("..."):
+                            keepalive_status["message"] = message + "..."
                         
-                    # Log occasional keepalives for debugging
-                    if keepalive_count % 20 == 0:
-                        logger.debug(f"Sent keepalive #{keepalive_count} for job {job_id}")
-                
-                yield f"data: {json.dumps(keepalive_status)}\n\n"
+                        # Every 5th keepalive, update the message to show progress animation
+                        if keepalive_count % 20 == 0:
+                            dots = "." * ((keepalive_count // 5) % 4 + 1)
+                            base_message = message.rstrip('.')
+                            keepalive_status["message"] = f"{base_message}{dots}"
+                            
+                        # Log occasional keepalives for debugging
+                        if keepalive_count % 40 == 0:
+                            logger.debug(f"Sent keepalive #{keepalive_count} for job {job_id}")
+                    
+                    keepalive_json = json.dumps(keepalive_status)
+                    yield f"data: {keepalive_json}\n\n"
             else:
-                # If status is unavailable, send a basic keepalive
-                yield f"data: {json.dumps({'keepalive': True, 'job_id': job_id})}\n\n"
+                # If status is unavailable, send a basic keepalive only occasionally
+                if keepalive_count % 20 == 0:
+                    yield f"data: {json.dumps({'keepalive': True, 'job_id': job_id})}\n\n"
             last_update_time = current_time
         
         # If job is complete, send a final update and break the loop
@@ -1676,11 +1701,57 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
             print(f"[PROGRESS] Job {job_id} complete, ending progress stream")
             
             # Make sure we send the final status
-            yield f"data: {json.dumps(current_status)}\n\n"
+            yield f"data: {current_status_json}\n\n"
             break
         
-        # Wait a bit before checking again - use shorter interval for more responsive updates
-        await asyncio.sleep(0.25)  # Check 4 times per second
+        # IMPORTANT: Check for report files even if the job status doesn't indicate completion
+        # This will ensure the progress bar completes properly when auto-polling detects a complete report
+        # Check in the patient-specific directory that might be used
+        patient_dir = os.path.join(REPORTS_DIR, job_id)
+        patient_pdf_path = os.path.join(patient_dir, f"{job_id}_pgx_report.pdf")
+        patient_html_path = os.path.join(patient_dir, f"{job_id}_pgx_report.html")
+        
+        # If reports exist in any location, mark the job as complete
+        if (os.path.exists(patient_pdf_path) or os.path.exists(patient_html_path)):
+            # Reports exist but job status hasn't been updated - update it now
+            logger.info(f"Job {job_id} has reports but status doesn't show completion, updating status")
+            print(f"[PROGRESS] Job {job_id} has reports but status not marked as complete, fixing")
+            
+            # Determine the report URLs based on which files exist
+            pdf_url = None
+            html_url = None
+            
+            if os.path.exists(patient_pdf_path):
+                pdf_url = f"/reports/{job_id}/{job_id}_pgx_report.pdf"
+                
+            if os.path.exists(patient_html_path):
+                html_url = f"/reports/{job_id}/{job_id}_pgx_report.html"
+            
+            # Update job status
+            job_status[job_id] = {
+                "job_id": job_id,
+                "stage": "Report",
+                "percent": 100,
+                "message": "Analysis complete - reports ready",
+                "complete": True,
+                "success": True,
+                "timestamp": datetime.utcnow().isoformat(),
+                "data": {
+                    "pdf_report_url": pdf_url,
+                    "html_report_url": html_url
+                }
+            }
+            
+            # Send final completion status and end the stream
+            completion_status = job_status[job_id]
+            yield f"data: {json.dumps(completion_status)}\n\n"
+            
+            logger.info(f"Job {job_id} marked as complete after finding reports, ending stream")
+            print(f"[PROGRESS] Job {job_id} marked as complete after finding reports")
+            break
+        
+        # Wait a bit before checking again - use longer interval to reduce CPU usage
+        await asyncio.sleep(0.5)  # Check twice per second instead of 4 times
 
 @app.get("/job-status/{job_id}")
 async def get_job_status(job_id: str):
@@ -2670,21 +2741,54 @@ async def process_genome_analysis(
             "message": f"Error in genome analysis: {str(e)}"
         }
 
-async def run_pharmcat_analysis(genome_path: str) -> Dict[str, Any]:
+async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Run PharmCAT analysis on genome file and extract data from report.json
     
     Args:
         genome_path: Path to the genome file
+        report_id: Optional report ID to use for consistent directory naming
         
     Returns:
         Dict with PharmCAT results and status
     """
     try:
-        logger.info(f"Starting PharmCAT analysis for {genome_path}")
+        logger.info(f"Starting PharmCAT analysis for {genome_path}" + (f" with report_id: {report_id}" if report_id else ""))
         
         # Call the PharmCAT service
-        response = await pharmcat_client.async_call_pharmcat_api(genome_path)
+        # If report_id is provided, use async_call_pharmcat_api with the report_id
+        # Otherwise use the standard async_call_pharmcat_api
+        if report_id:
+            # First try with the async client that supports report_id
+            try:
+                # Create form data with report_id
+                with open(genome_path, 'rb') as f:
+                    file_content = f.read()
+                
+                # Get PharmCAT API URL
+                pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
+                
+                # Call PharmCAT API with report_id
+                async with httpx.AsyncClient(timeout=300) as client:  # 5 minute timeout
+                    files = {"file": (os.path.basename(genome_path), file_content, "application/octet-stream")}
+                    data = {"reportId": report_id}
+                    
+                    response = await client.post(
+                        f"{pharmcat_api_url}/process",
+                        files=files,
+                        data=data
+                    )
+                    
+                    response.raise_for_status()
+                    response = response.json()
+                    logger.info(f"Async PharmCAT API call with report_id successful")
+            except Exception as e:
+                logger.warning(f"Error with custom async call with report_id: {str(e)}. Falling back to standard call.")
+                # Fall back to the standard call if needed
+                response = await pharmcat_client.async_call_pharmcat_api(genome_path)
+        else:
+            # Use standard async call without report_id
+            response = await pharmcat_client.async_call_pharmcat_api(genome_path)
         
         # Check if we received a proper response
         if not isinstance(response, dict):

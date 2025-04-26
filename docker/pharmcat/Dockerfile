@@ -53,7 +53,9 @@ RUN wget -q https://github.com/PharmGKB/PharmCAT/releases/download/v${PHARMCAT_V
 RUN pip3 install -r /pharmcat/pipeline/requirements.txt
 
 # Add PharmCAT pipeline scripts to path
-ENV PATH="/pharmcat/pipeline:${PATH}"
+RUN chmod +x /pharmcat/pipeline/pharmcat_pipeline && \
+    ln -sf /pharmcat/pipeline/pharmcat_pipeline /usr/local/bin/pharmcat_pipeline
+ENV PATH="/pharmcat/pipeline:/usr/local/bin:${PATH}"
 
 # Install Flask wrapper API dependencies
 COPY requirements.txt /tmp/

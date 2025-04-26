@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Setup script for reference genomes used by GATK and Stargazer
+# Setup script for reference genomes used by GATK and PyPGx
 # This script downloads and prepares reference genomes for the ZaroPGx pipeline
 
 set -e

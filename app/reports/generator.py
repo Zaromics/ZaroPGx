@@ -47,7 +47,7 @@ def generate_pdf_report(
         Path to the generated PDF file
     """
     try:
-        logger.info(f"Generating PDF report for patient {patient_id}")
+        logger.info(f"Generating PDF report for patient {patient_id}, report {report_id}")
         
         # Ensure the directory exists
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
@@ -183,7 +183,7 @@ def create_interactive_html_report(
         Path to the generated HTML file
     """
     try:
-        logger.info(f"Generating interactive HTML report for patient {patient_id}")
+        logger.info(f"Generating interactive HTML report for patient {patient_id}, report {report_id}")
         
         # Ensure the directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -216,7 +216,7 @@ def create_interactive_html_report(
         return output_path
     except Exception as e:
         logger.error(f"Error generating interactive HTML report: {str(e)}")
-        raise 
+        raise
 
 def map_recommendations_for_template(drug_recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -284,18 +284,24 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         "version": __version__
     }
     
-    # Create a unique filename based on timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Get patient and report IDs
     patient_id = patient_info.get("id", "unknown") if patient_info else "unknown"
-    base_filename = f"pgx_report_{patient_id}_{timestamp}"
+    # Use report_id from patient_info or generate one if not available
+    report_id = patient_info.get("report_id", patient_id) if patient_info else patient_id
     
-    # Ensure the output directory exists
-    os.makedirs(output_dir, exist_ok=True)
+    # Create a report-specific directory using report_id as the directory name
+    # This matches the approach in upload_router.py
+    report_dir = os.path.join(output_dir, report_id)
+    os.makedirs(report_dir, exist_ok=True)
+    logger.info(f"Created report directory: {report_dir}")
+    
+    # Create a unique filename based on report_id
+    base_filename = f"{report_id}_pgx_report"
     
     try:
         # Generate both standard HTML report and interactive HTML report
-        html_path = os.path.join(output_dir, f"{base_filename}.html")
-        interactive_html_path = os.path.join(output_dir, f"{base_filename}_interactive.html")
+        html_path = os.path.join(report_dir, f"{base_filename}.html")
+        interactive_html_path = os.path.join(report_dir, f"{base_filename}_interactive.html")
         
         # Generate standard HTML report
         env = Environment(
@@ -312,7 +318,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         # Generate interactive HTML report
         create_interactive_html_report(
             patient_id=patient_id,
-            report_id=base_filename,
+            report_id=report_id,
             diplotypes=data.get("genes", []),
             recommendations=template_recommendations,
             output_path=interactive_html_path
@@ -320,15 +326,15 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         logger.info(f"Interactive HTML report generated: {interactive_html_path}")
         
         # Generate PDF report from the HTML
-        pdf_path = os.path.join(output_dir, f"{base_filename}.pdf")
+        pdf_path = os.path.join(report_dir, f"{base_filename}.pdf")
         html = HTML(string=html_content)
         html.write_pdf(pdf_path)
         logger.info(f"PDF report generated: {pdf_path}")
         
-        # Return file paths
-        server_html_path = f"/reports/{base_filename}.html"
-        server_interactive_html_path = f"/reports/{base_filename}_interactive.html"
-        server_pdf_path = f"/reports/{base_filename}.pdf"
+        # Return file paths that include the report directory
+        server_html_path = f"/reports/{report_id}/{base_filename}.html"
+        server_interactive_html_path = f"/reports/{report_id}/{base_filename}_interactive.html"
+        server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
         
         # Update the normalized results with the report paths
         normalized_results["data"]["html_report_url"] = server_html_path

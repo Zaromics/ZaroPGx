@@ -190,9 +190,16 @@ def process_file():
         
         # Create a temporary directory for this job
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Generate a unique name for this job
-            base_name = str(uuid.uuid4())[:8]
-            logger.info(f"Processing file with base name: {base_name}")
+            # Get or generate a unique name for this job
+            # Use reportId from request data if provided (for consistent directory naming)
+            report_id = request.form.get('reportId')
+            if report_id:
+                base_name = report_id
+                logger.info(f"Using provided report ID for base name: {base_name}")
+            else:
+                # Generate a random ID if none provided
+                base_name = str(uuid.uuid4())[:8]
+                logger.info(f"Generated random base name: {base_name}")
             
             # Save the uploaded file
             vcf_path = os.path.join(temp_dir, f"{base_name}.vcf")
@@ -216,12 +223,10 @@ def process_file():
                 # Before running PharmCAT, set up Java options for memory management
                 java_options = "-Xmx2g"
                 
-                # Build the PharmCAT command - use pharmcat instead of pharmcat_pipeline
-                # PharmCAT v3.0.0 uses the 'pharmcat' command
-                # Format: pharmcat pipeline [input file] -o [output dir] [other options]
+                # Build the PharmCAT command using pharmcat_pipeline as per official documentation
+                # Format: pharmcat_pipeline [input file] -o [output dir] [other options]
                 pharmcat_cmd = [
-                    "pharmcat",
-                    "pipeline",
+                    "pharmcat_pipeline",
                     "-G",  # Bypass gVCF check
                     "-o", output_dir,  # Output directory
                     "-v",  # Verbose output
@@ -231,14 +236,32 @@ def process_file():
                     vcf_path  # Input file should be the last argument
                 ]
                 
-                # Execute PharmCAT command
-                logger.info(f"Running PharmCAT command: {' '.join(pharmcat_cmd)}")
+                # Set environment variables
+                env = os.environ.copy()
+                env["JAVA_TOOL_OPTIONS"] = "-Xmx4g -XX:+UseG1GC"
+                env["PHARMCAT_LOG_LEVEL"] = "DEBUG"
+                
+                # Log important environment info for debugging
+                logger.info(f"PHARMCAT_JAR location: {PHARMCAT_JAR}")
+                logger.info(f"PHARMCAT_PIPELINE_DIR: {PHARMCAT_PIPELINE_DIR}")
+                logger.info(f"PATH environment: {env.get('PATH', 'Not set')}")
+                
+                # Check if pharmcat_pipeline exists and is executable
+                try:
+                    subprocess.run(["which", "pharmcat_pipeline"], check=True, capture_output=True, text=True)
+                    logger.info("pharmcat_pipeline command found in PATH")
+                except subprocess.CalledProcessError:
+                    logger.warning("pharmcat_pipeline command NOT found in PATH")
+                
+                # Run PharmCAT pipeline
+                logger.info(f"Executing PharmCAT command: {' '.join(pharmcat_cmd)}")
                 process = subprocess.run(
                     pharmcat_cmd,
                     check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=300  # 5 minute timeout
                 )
                 
                 logger.info(f"PharmCAT process completed with output: {process.stdout}")
@@ -266,9 +289,14 @@ def process_file():
                 reports_dir = Path("/data/reports")
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Copy PharmCAT HTML report to /data/reports if available
+                # Create a patient-specific directory for this job
+                patient_dir = reports_dir / base_name
+                patient_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Created patient-specific directory: {patient_dir}")
+                
+                # Copy PharmCAT HTML report to patient directory if available
                 if report_html_file:
-                    dest_html_path = reports_dir / f"{base_name}_pgx_report.html"
+                    dest_html_path = patient_dir / f"{base_name}_pgx_report.html"
                     src_html_path = Path(temp_dir) / report_html_file
                     
                     logger.info(f"Copying PharmCAT report from {src_html_path} to {dest_html_path}")
@@ -276,15 +304,10 @@ def process_file():
                     if os.path.exists(src_html_path):
                         shutil.copy2(src_html_path, dest_html_path)
                         logger.info(f"HTML report copied to {dest_html_path}")
-                        
-                        # Also save a reference copy with a fixed name
-                        ref_html_path = reports_dir / "latest_pharmcat_report.html"
-                        shutil.copy2(src_html_path, ref_html_path)
-                        logger.info(f"Latest reference HTML report saved to {ref_html_path}")
                 
                 # Copy PharmCAT TSV report to /data/reports if available
                 if report_tsv_file:
-                    dest_tsv_path = reports_dir / f"{base_name}_pgx_report.tsv"
+                    dest_tsv_path = patient_dir / f"{base_name}_pgx_report.tsv"
                     src_tsv_path = Path(temp_dir) / report_tsv_file
                     
                     logger.info(f"Copying PharmCAT TSV report from {src_tsv_path} to {dest_tsv_path}")
@@ -292,15 +315,10 @@ def process_file():
                     if os.path.exists(src_tsv_path):
                         shutil.copy2(src_tsv_path, dest_tsv_path)
                         logger.info(f"TSV report copied to {dest_tsv_path}")
-                        
-                        # Also save a reference copy with a fixed name
-                        ref_tsv_path = reports_dir / "latest_pharmcat_report.tsv"
-                        shutil.copy2(src_tsv_path, ref_tsv_path)
-                        logger.info(f"Latest reference TSV report saved to {ref_tsv_path}")
                 
                 # Copy the report.json file to reports directory for inspection
                 if report_json_file:
-                    dest_json_path = reports_dir / f"{base_name}_pgx_report.json"
+                    dest_json_path = patient_dir / f"{base_name}_pgx_report.json"
                     src_json_path = Path(temp_dir) / report_json_file
                     
                     logger.info(f"Copying JSON report from {src_json_path} to {dest_json_path}")
@@ -325,7 +343,7 @@ def process_file():
                         
                         # Create a backup JSON file with basic structure for inspection
                         logger.info("Creating a backup JSON file for inspection")
-                        backup_json_path = reports_dir / f"{base_name}_pgx_report.json"
+                        backup_json_path = patient_dir / f"{base_name}_pgx_report.json"
                         try:
                             # Get data from the phenotype.json file if available
                             phenotype_file = next((f for f in actual_files if f.endswith('.phenotype.json')), None)
@@ -372,9 +390,9 @@ def process_file():
                 
                 logger.info(f"Loaded report data successfully. Keys: {list(report_data.keys())}")
                 
-                # Always create a permanent copy of the raw report.json in the reports directory
+                # Always create a permanent copy of the raw report.json in the patient directory
                 # Try a more direct approach to ensure the file is created
-                raw_report_path = reports_dir / f"{base_name}_raw_report.json"
+                raw_report_path = patient_dir / f"{base_name}_raw_report.json"
                 try:
                     with open(raw_report_path, 'w') as f:
                         json.dump(report_data, f, indent=2)
@@ -388,20 +406,21 @@ def process_file():
                 except Exception as e:
                     logger.error(f"Error saving raw report.json: {str(e)}")
                     
-                # Also create a backup copy with a simpler name for easier reference
-                backup_report_path = reports_dir / "latest_pharmcat_report.json"
+                # We no longer create backup copies since patient directories work better
+                # backup_report_path = reports_dir / "latest_pharmcat_report.json"
+                # try:
+                #     with open(backup_report_path, 'w') as f:
+                #         json.dump(report_data, f, indent=2)
+                #     logger.info(f"Backup report.json saved to {backup_report_path}")
+                
+                # Create a standard JSON report in the patient directory
                 try:
-                    with open(backup_report_path, 'w') as f:
-                        json.dump(report_data, f, indent=2)
-                    logger.info(f"Backup report.json saved to {backup_report_path}")
-                    
-                    # Create a consistent named copy with _pgx_report.json suffix to match HTML naming pattern
-                    standard_json_path = reports_dir / f"{base_name}_pgx_report.json"
+                    standard_json_path = patient_dir / f"{base_name}_pgx_report.json"
                     with open(standard_json_path, 'w') as f:
                         json.dump(report_data, f, indent=2)
                     logger.info(f"Standard JSON report saved to {standard_json_path}")
                 except Exception as e:
-                    logger.error(f"Error saving backup report.json: {str(e)}")
+                    logger.error(f"Error saving standard JSON report: {str(e)}")
                 
                 # Return success response with report URLs
                 return jsonify({
@@ -409,10 +428,10 @@ def process_file():
                     "message": "PharmCAT analysis completed successfully",
                     "data": {
                         "job_id": base_name,
-                        "html_report_url": f"/reports/{base_name}_pgx_report.html" if report_html_file else None,
-                        "json_report_url": f"/reports/{base_name}_pgx_report.json" if report_json_file else None,
-                        "tsv_report_url": f"/reports/{base_name}_pgx_report.tsv" if report_tsv_file else None,
-                        "raw_report_url": f"/reports/{base_name}_raw_report.json",
+                        "html_report_url": f"/reports/{base_name}/{base_name}_pgx_report.html" if report_html_file else None,
+                        "json_report_url": f"/reports/{base_name}/{base_name}_pgx_report.json" if report_json_file else None,
+                        "tsv_report_url": f"/reports/{base_name}/{base_name}_pgx_report.tsv" if report_tsv_file else None,
+                        "raw_report_url": f"/reports/{base_name}/{base_name}_raw_report.json",
                         "genes": report_data.get("genes", []),
                         "drugs": report_data.get("drugs", []),
                         "messages": report_data.get("messages", [])
@@ -455,7 +474,7 @@ def test_connection():
         "jar_exists": os.path.exists(PHARMCAT_JAR)
     })
 
-def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] = None) -> Dict[str, Any]:
+def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] = None, report_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Run PharmCAT directly using the pipeline distribution.
     
@@ -463,6 +482,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         input_file: Path to the input file
         output_dir: Directory to store the results
         sample_id: Optional sample ID to use
+        report_id: Optional report ID to use for consistent directory naming
         
     Returns:
         Dictionary containing PharmCAT results
@@ -471,18 +491,23 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         # Make sure output directory exists
         os.makedirs(output_dir, exist_ok=True)
         
-        # Use just the filename without extension as base name
-        base_name = Path(input_file).stem
-        if base_name.endswith('.vcf'):
-            base_name = base_name[:-4]
+        # Use report_id if provided, otherwise use filename without extension as base name
+        if report_id:
+            base_name = report_id
+            logger.info(f"Using provided report ID: {base_name}")
+        else:
+            # Use just the filename without extension as base name
+            base_name = Path(input_file).stem
+            if base_name.endswith('.vcf'):
+                base_name = base_name[:-4]
+            logger.info(f"Using file stem as base name: {base_name}")
         
-        # Use the pharmcat command from the pipeline distribution
+        # Use pharmcat_pipeline as per official documentation
         logger.info(f"Running PharmCAT pipeline with input: {input_file}")
         
         # Prepare command
         cmd = [
-            "pharmcat",
-            "pipeline",
+            "pharmcat_pipeline",
             "-G",  # Bypass gVCF check
             "-o", output_dir,  # Output directory
             "-v",  # Verbose output
@@ -500,6 +525,18 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         env = os.environ.copy()
         env["JAVA_TOOL_OPTIONS"] = "-Xmx4g -XX:+UseG1GC"
         env["PHARMCAT_LOG_LEVEL"] = "DEBUG"
+        
+        # Log important environment info for debugging
+        logger.info(f"PHARMCAT_JAR location: {PHARMCAT_JAR}")
+        logger.info(f"PHARMCAT_PIPELINE_DIR: {PHARMCAT_PIPELINE_DIR}")
+        logger.info(f"PATH environment: {env.get('PATH', 'Not set')}")
+        
+        # Check if pharmcat_pipeline exists and is executable
+        try:
+            subprocess.run(["which", "pharmcat_pipeline"], check=True, capture_output=True, text=True)
+            logger.info("pharmcat_pipeline command found in PATH")
+        except subprocess.CalledProcessError:
+            logger.warning("pharmcat_pipeline command NOT found in PATH")
         
         # Run PharmCAT pipeline
         logger.info(f"Executing PharmCAT command: {' '.join(cmd)}")
@@ -550,6 +587,11 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         reports_dir = Path("/data/reports")
         reports_dir.mkdir(parents=True, exist_ok=True)
         
+        # Create a patient-specific directory for this job
+        patient_dir = reports_dir / base_name
+        patient_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created patient-specific directory: {patient_dir}")
+        
         # Map of source files to destination files
         report_files = {
             f"{base_name}.report.html": f"{base_name}_pgx_report.html",
@@ -562,7 +604,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         # Copy all report files that exist
         for src_name, dest_name in report_files.items():
             src_path = Path(output_dir) / src_name
-            dest_path = reports_dir / dest_name
+            dest_path = patient_dir / dest_name
             
             if os.path.exists(src_path):
                 shutil.copy2(src_path, dest_path)
@@ -570,28 +612,6 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             else:
                 logger.warning(f"Report file not found at {src_path}")
                 
-        # Also create reference copies with consistent names
-        if os.path.exists(Path(output_dir) / f"{base_name}.report.json"):
-            shutil.copy2(
-                Path(output_dir) / f"{base_name}.report.json",
-                reports_dir / "latest_pharmcat_report.json"
-            )
-            logger.info("Updated latest_pharmcat_report.json reference")
-            
-        if os.path.exists(Path(output_dir) / f"{base_name}.report.html"):
-            shutil.copy2(
-                Path(output_dir) / f"{base_name}.report.html",
-                reports_dir / "latest_pharmcat_report.html"
-            )
-            logger.info("Updated latest_pharmcat_report.html reference")
-            
-        if os.path.exists(Path(output_dir) / f"{base_name}.report.tsv"):
-            shutil.copy2(
-                Path(output_dir) / f"{base_name}.report.tsv",
-                reports_dir / "latest_pharmcat_report.tsv"
-            )
-            logger.info("Updated latest_pharmcat_report.tsv reference")
-        
         # Extract gene data and drug recommendations
         genes_data = []
         drug_recommendations = []
@@ -631,12 +651,12 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             "message": "PharmCAT analysis completed successfully",
             "data": {
                 "job_id": base_name,
-                "pdf_report_url": f"/reports/{base_name}_pgx_report.pdf",
-                "html_report_url": f"/reports/{base_name}_pgx_report.html",
-                "json_report_url": f"/reports/{base_name}_pgx_report.json",
-                "tsv_report_url": f"/reports/{base_name}_pgx_report.tsv",
-                "match_json_url": f"/reports/{base_name}_pgx_match.json",
-                "phenotype_json_url": f"/reports/{base_name}_pgx_phenotype.json",
+                "pdf_report_url": f"/reports/{base_name}/{base_name}_pgx_report.pdf",
+                "html_report_url": f"/reports/{base_name}/{base_name}_pgx_report.html",
+                "json_report_url": f"/reports/{base_name}/{base_name}_pgx_report.json",
+                "tsv_report_url": f"/reports/{base_name}/{base_name}_pgx_report.tsv",
+                "match_json_url": f"/reports/{base_name}/{base_name}_pgx_match.json",
+                "phenotype_json_url": f"/reports/{base_name}/{base_name}_pgx_phenotype.json",
                 "genes": genes_data,
                 "drugRecommendations": drug_recommendations,
                 "results": results

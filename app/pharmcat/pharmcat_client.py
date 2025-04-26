@@ -19,7 +19,7 @@ PHARMCAT_SERVICE_URL = os.environ.get("PHARMCAT_SERVICE_URL", "http://pharmcat:5
 PHARMCAT_DOCKER_IMAGE = os.environ.get("PHARMCAT_DOCKER_IMAGE", "pgkb/pharmcat:latest")
 PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/pharmcat/pharmcat.jar")
 
-def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None) -> Dict[str, Any]:
+def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT service to process a VCF file.
     
@@ -27,6 +27,7 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
         vcf_path: Path to the VCF file
         output_json: Optional path to save the JSON output
         sample_id: Optional sample ID to use
+        report_id: Optional report ID to use for consistent directory naming
         
     Returns:
         Dictionary containing PharmCAT results or error information
@@ -55,6 +56,9 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                 data = {}
                 if sample_id:
                     data['sampleId'] = sample_id
+                if report_id:
+                    data['reportId'] = report_id
+                    logger.info(f"Using report_id: {report_id} for consistent directory naming")
                 
                 response = requests.post(
                     f"{pharmcat_api_url}/process",
@@ -372,18 +376,20 @@ def get_logger():
     """Get the module logger"""
     return logging.getLogger(__name__)
 
-async def async_call_pharmcat_api(input_file: str) -> Dict[str, Any]:
+async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT API asynchronously
     
     Args:
         input_file: Path to the VCF file to analyze
+        report_id: Optional report ID to use for consistent directory naming
         
     Returns:
         Dictionary containing PharmCAT results or error information
     """
     try:
-        logger.info(f"Calling PharmCAT API asynchronously for file: {input_file}")
+        logger.info(f"Calling PharmCAT API asynchronously for file: {input_file}" + 
+                    (f" with report_id: {report_id}" if report_id else ""))
         
         # Get the PharmCAT API URL from environment or use default
         pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
@@ -392,14 +398,21 @@ async def async_call_pharmcat_api(input_file: str) -> Dict[str, Any]:
         with open(input_file, 'rb') as f:
             file_content = f.read()
         
+        # Prepare form data
+        files = {"file": (os.path.basename(input_file), file_content, "application/octet-stream")}
+        data = {}
+        
+        # Add report_id if provided
+        if report_id:
+            data["reportId"] = report_id
+            logger.info(f"Added report_id to request: {report_id}")
+        
         async with httpx.AsyncClient(timeout=300) as client:  # 5 minute timeout
-            # Create form data
-            files = {"file": (os.path.basename(input_file), file_content, "application/octet-stream")}
-            
-            # Make the POST request
+            # Make the POST request with both files and form data
             response = await client.post(
                 f"{pharmcat_api_url}/process",
-                files=files
+                files=files,
+                data=data
             )
             
             # Check if request was successful

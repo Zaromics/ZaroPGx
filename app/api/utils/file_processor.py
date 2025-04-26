@@ -415,7 +415,7 @@ class FileProcessor:
         workflow = {
             "needs_gatk": False,
             "needs_alignment": False,
-            "needs_stargazer": False,
+            "needs_pypgx": False,
             "needs_conversion": False,
             "is_provisional": False,
             "go_directly_to_pharmcat": False,
@@ -452,11 +452,11 @@ class FileProcessor:
                 "latest GATK pipeline."
             )
             
-            # For WGS data, use Stargazer for CYP2D6
+            # For WGS data, use PyPGx for CYP2D6
             if vcf_info.sequencing_profile == SequencingProfile.WGS:
-                workflow["needs_stargazer"] = True
+                workflow["needs_pypgx"] = True
                 workflow["recommendations"].append(
-                    "Using Stargazer for enhanced analysis thanks to whole genome sequencing data"
+                    "Using PyPGx for enhanced analysis thanks to whole genome sequencing data"
                 )
             else:
                 workflow["warnings"].append(
@@ -472,7 +472,7 @@ class FileProcessor:
         # BAM/CRAM/SAM files go through the GATK pipeline
         elif analysis.file_type in [FileType.BAM, FileType.CRAM, FileType.SAM]:
             workflow["needs_gatk"] = True
-            workflow["needs_stargazer"] = True  # Typically needed for these full files
+            workflow["needs_pypgx"] = True  # Typically needed for these full files
             
             if analysis.file_type == FileType.BAM:
                 workflow["recommendations"].append(
@@ -497,7 +497,7 @@ class FileProcessor:
         elif analysis.file_type == FileType.FASTQ:
             workflow["needs_alignment"] = True
             workflow["needs_gatk"] = True
-            workflow["needs_stargazer"] = True
+            workflow["needs_pypgx"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
                 "FASTQ files require alignment to a reference genome before variant calling. "

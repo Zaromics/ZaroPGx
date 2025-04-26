@@ -203,11 +203,11 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         try:
             # Use the run_pharmcat_analysis function from main.py if available
             from app.main import run_pharmcat_analysis
-            results = await run_pharmcat_analysis(output_file)
+            results = await run_pharmcat_analysis(output_file, data_id)
         except ImportError:
             # Fall back to direct call if the function isn't available
             logger.warning("run_pharmcat_analysis not found, falling back to direct call")
-            results = call_pharmcat_service(output_file)
+            results = call_pharmcat_service(output_file, report_id=data_id)
             
         logger.info(f"PharmCAT processing complete")
         
@@ -243,9 +243,14 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 reports_dir = Path("/data/reports")
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Set up the output paths
-                report_path = reports_dir / f"{data_id}_pgx_report.pdf"
-                html_report_path = reports_dir / f"{data_id}_pgx_report.html"
+                # Create a patient-specific directory
+                patient_dir = reports_dir / data_id
+                patient_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Created patient-specific directory: {patient_dir}")
+                
+                # Set up the output paths with patient-specific directory
+                report_path = patient_dir / f"{data_id}_pgx_report.pdf"
+                html_report_path = patient_dir / f"{data_id}_pgx_report.html"
                 
                 # Extract data needed for the reports
                 pharmcat_data = results.get("data", {})
@@ -357,8 +362,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Update job status with report URLs and results
                 job_status[data_id].update({
                     "data": {
-                        "pdf_report_url": f"/reports/{data_id}_pgx_report.pdf",
-                        "html_report_url": f"/reports/{data_id}_pgx_report.html",
+                        "pdf_report_url": f"/reports/{data_id}/{data_id}_pgx_report.pdf",
+                        "html_report_url": f"/reports/{data_id}/{data_id}_pgx_report.html",
                         "diplotypes": formatted_diplotypes,
                         "recommendations": formatted_recommendations,
                         "is_provisional": is_provisional,
@@ -371,7 +376,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 if is_provisional:
                     completion_message += " (PROVISIONAL RESULTS)"
                 
-                logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}_pgx_report.html")
+                logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}/{data_id}_pgx_report.html")
             
             else:
                 # Handle PharmCAT error
@@ -574,9 +579,10 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
         if file_id not in job_status:
             logger.warning(f"Status request for unknown job ID: {file_id}")
             
-            # Check if reports exist for this ID - maybe job was processed but status lost
-            pdf_path = f"/data/reports/{file_id}_pgx_report.pdf"
-            html_path = f"/data/reports/{file_id}_pgx_report.html"
+            # Check if reports exist for this ID in patient directory
+            patient_dir = Path(f"/data/reports/{file_id}")
+            pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
+            html_path = patient_dir / f"{file_id}_pgx_report.html"
             
             pdf_exists = os.path.exists(pdf_path)
             html_exists = os.path.exists(html_path)
@@ -590,11 +596,11 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
                     "message": "Analysis completed successfully",
                     "current_stage": "Complete",
                     "data": {
-                        "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                        "html_report_url": f"/reports/{file_id}_pgx_report.html" if html_exists else None
+                        "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                        "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report.html" if html_exists else None
                     }
                 }
-                
+            
             raise HTTPException(status_code=404, detail=f"Job {file_id} not found")
             
         status = job_status[file_id]
@@ -623,8 +629,10 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
         
         # Check for completed reports even if job status doesn't show completion
         if status.get("status") != "completed" and not status.get("complete", False):
-            pdf_path = f"/data/reports/{file_id}_pgx_report.pdf"
-            html_path = f"/data/reports/{file_id}_pgx_report.html"
+            # Check in patient directory
+            patient_dir = Path(f"/data/reports/{file_id}")
+            pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
+            html_path = patient_dir / f"{file_id}_pgx_report.html"
             
             pdf_exists = os.path.exists(pdf_path)
             html_exists = os.path.exists(html_path)
@@ -638,8 +646,8 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
                     "message": "Analysis completed successfully",
                     "complete": True,
                     "data": {
-                        "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                        "html_report_url": f"/reports/{file_id}_pgx_report.html" if html_exists else None
+                        "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                        "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report.html" if html_exists else None
                     }
                 })
         
@@ -673,19 +681,23 @@ async def get_report_urls(file_id: str):
     try:
         # Check if job exists and is complete
         if file_id not in job_status:
-            # Check for direct report files if not in job status
-            pdf_path = f"/data/reports/{file_id}_pgx_report.pdf"
-            html_path = f"/data/reports/{file_id}_pgx_report.html"
+            # Check in patient directory
+            patient_dir = Path(f"/data/reports/{file_id}")
+            pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
+            html_path = patient_dir / f"{file_id}_pgx_report.html"
             
             pdf_exists = os.path.exists(pdf_path)
             html_exists = os.path.exists(html_path)
             
             if pdf_exists or html_exists:
+                report_paths = {
+                    "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                    "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report.html" if html_exists else None
+                }
                 return {
                     "file_id": file_id,
                     "status": "completed",
-                    "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                    "html_report_url": f"/reports/{file_id}_pgx_report.html" if html_exists else None
+                    **report_paths
                 }
             else:
                 raise HTTPException(status_code=404, detail="Job not found")
