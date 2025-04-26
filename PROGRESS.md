@@ -739,6 +739,51 @@ The unified service has been tested with various VCF files and integrated succes
 
 This consolidation is part of our ongoing effort to simplify the architecture, improve reliability, and enhance the maintainability of the ZaroPGx platform.
 
+## 2025-04-25: PyPGx Service Port Configuration and Browser Cache Issues
+
+We identified and fixed an issue with the PyPGx service connectivity that was causing a "Service Issue Detected - pypgx is unavailable" alert on the homepage:
+
+1. **Root Cause Analysis**:
+   - PyPGx service was running on port 5000 inside the container
+   - Container port was being mapped to host port 5053 (5053:5000)
+   - Several parts of the codebase were incorrectly referencing port 5053 for internal container-to-container communication
+
+2. **Applied Fixes**:
+   - Updated the environment variable `PYPGX_API_URL` in both docker-compose.yml and docker-composeLOCAL.yml to use the correct internal port:
+     ```yaml
+     - PYPGX_API_URL=http://pypgx:5000
+     ```
+   - Fixed hardcoded URL in app/api/routes/upload.py that was still using port 5053:
+     ```python
+     async with session.post('http://pypgx:5000/genotype', data=data) as response:
+     ```
+   - Modified app/main.py to directly use port 5000 for PyPGx health checks in the homepage route:
+     ```python
+     service_urls = {
+         "gatk": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
+         "pharmcat": os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000") + "/health", 
+         "pypgx": "http://pypgx:5000/health"  # Force to port 5000 directly
+     }
+     ```
+   - Added additional debugging in the home route to better track service status checks
+
+3. **Testing and Verification**:
+   - Confirmed direct connectivity from app container to PyPGx service:
+     ```bash
+     docker exec -it pgx_app curl -v http://pypgx:5000/health
+     ```
+   - Verified correct IP address resolution using Python:
+     ```python
+     import socket; print(socket.gethostbyname('pypgx'))
+     ```
+   - Confirmed the services-status endpoint returns "status":"ok"
+   
+4. **Browser-Specific Issues**:
+   - Firefox displayed persistent caching issues where the service alert continued to display
+   - Chrome, Edge, and Brave showed the fixed page without the alert
+   - This suggests a more aggressive caching mechanism in Firefox that persists even with hard refreshes and incognito mode
+
+The fix ensures proper container-to-container communication while maintaining the existing port mapping for external access (5053 externally, 5000 internally). This approach aligns with Docker networking best practices where services refer to each other by their internal ports.
 
 # TO DO: Remove the "manual" completion and report checking as the actual system should be working. Same for the top message part that says report is being made
 # HAVE ALL THE FORMATS OF REPORTS BE GENERATED AND PLACED IN FOLDER. THE NEW FORMATS WILL MAKE IT EASIER TO INTERFACE WITH OURS. USE THE DB TO STORE THE RESULTS AND THEN GENERATE OUR FORMAT REPORTS!
