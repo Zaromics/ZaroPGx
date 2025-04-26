@@ -489,6 +489,9 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             "-G",  # Bypass gVCF check
             "-o", output_dir,  # Output directory
             "-v",  # Verbose output
+            "-reporterHtml",    # Generate HTML report
+            "-reporterJson",    # Generate JSON report
+            "-reporterCallsOnlyTsv",  # Generate TSV report with only calls data
             input_file  # Input file should be the last argument
         ]
         
@@ -518,12 +521,15 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         results_files = {
             "match_results": os.path.join(output_dir, f"{base_name}.match.json"),
             "phenotype_results": os.path.join(output_dir, f"{base_name}.phenotype.json"),
-            "report": os.path.join(output_dir, f"{base_name}.report.html")
+            "report_html": os.path.join(output_dir, f"{base_name}.report.html"),
+            "report_json": os.path.join(output_dir, f"{base_name}.report.json"),
+            "report_tsv": os.path.join(output_dir, f"{base_name}.report.tsv")
         }
         
-        # Check if all expected files exist
-        if not all(os.path.exists(f) for f in results_files.values()):
-            missing_files = [k for k, v in results_files.items() if not os.path.exists(v)]
+        # Check if the essential output files exist (match and phenotype)
+        essential_files = ["match_results", "phenotype_results"]
+        if not all(os.path.exists(results_files[f]) for f in essential_files):
+            missing_files = [k for k in essential_files if not os.path.exists(results_files[k])]
             error_msg = f"Missing required output files: {', '.join(missing_files)}"
             logger.error(error_msg)
             return {
@@ -534,32 +540,62 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         # Read results
         results = {}
         for name, path in results_files.items():
-            with open(path, 'r') as f:
-                if name == "report":
-                    results[name] = f.read()
-                else:
-                    results[name] = json.load(f)
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    if name == "report_html":
+                        results[name] = f.read()
+                    elif name == "report_tsv":
+                        results[name] = f.read()
+                    else:
+                        results[name] = json.load(f)
+            else:
+                logger.warning(f"Optional output file not found: {path}")
         
-        # Copy PharmCAT reports to /data/reports for direct access
+        # Copy all PharmCAT reports to /data/reports for direct access
         reports_dir = Path("/data/reports")
         reports_dir.mkdir(parents=True, exist_ok=True)
         
-        dest_html_path = reports_dir / f"{base_name}_pgx_report.html"
-        src_html_path = Path(output_dir) / f"{base_name}.report.html"
+        # Map of source files to destination files
+        report_files = {
+            f"{base_name}.report.html": f"{base_name}_pgx_report.html",
+            f"{base_name}.report.json": f"{base_name}_pgx_report.json",
+            f"{base_name}.report.tsv": f"{base_name}_pgx_report.tsv",
+            f"{base_name}.match.json": f"{base_name}_pgx_match.json",
+            f"{base_name}.phenotype.json": f"{base_name}_pgx_phenotype.json"
+        }
         
-        if os.path.exists(src_html_path):
-            shutil.copy2(src_html_path, dest_html_path)
-            logger.info(f"HTML report copied to {dest_html_path}")
+        # Copy all report files that exist
+        for src_name, dest_name in report_files.items():
+            src_path = Path(output_dir) / src_name
+            dest_path = reports_dir / dest_name
             
-        # Also copy the JSON report for inspection
-        dest_json_path = reports_dir / f"{base_name}_pgx_report.json"
-        src_json_path = Path(output_dir) / f"{base_name}.report.json"
+            if os.path.exists(src_path):
+                shutil.copy2(src_path, dest_path)
+                logger.info(f"Report file copied to {dest_path}")
+            else:
+                logger.warning(f"Report file not found at {src_path}")
         
-        if os.path.exists(src_json_path):
-            shutil.copy2(src_json_path, dest_json_path)
-            logger.info(f"JSON report copied to {dest_json_path}")
-        else:
-            logger.warning(f"JSON report not found at {src_json_path}")
+        # Also keep a copy of the latest report for each format as reference
+        if os.path.exists(Path(output_dir) / f"{base_name}.report.json"):
+            shutil.copy2(
+                Path(output_dir) / f"{base_name}.report.json", 
+                reports_dir / "latest_pharmcat_report.json"
+            )
+            logger.info("Updated latest_pharmcat_report.json reference")
+            
+        if os.path.exists(Path(output_dir) / f"{base_name}.report.html"):
+            shutil.copy2(
+                Path(output_dir) / f"{base_name}.report.html", 
+                reports_dir / "latest_pharmcat_report.html"
+            )
+            logger.info("Updated latest_pharmcat_report.html reference")
+            
+        if os.path.exists(Path(output_dir) / f"{base_name}.report.tsv"):
+            shutil.copy2(
+                Path(output_dir) / f"{base_name}.report.tsv", 
+                reports_dir / "latest_pharmcat_report.tsv"
+            )
+            logger.info("Updated latest_pharmcat_report.tsv reference")
         
         # Extract gene data and drug recommendations
         genes_data = []
@@ -594,7 +630,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             except Exception as e:
                 logger.error(f"Error parsing phenotype file: {str(e)}")
         
-        # Prepare the result data
+        # Prepare the result data with URLs to all report formats
         return {
             "success": True,
             "message": "PharmCAT analysis completed successfully",
@@ -602,6 +638,10 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
                 "job_id": base_name,
                 "pdf_report_url": f"/reports/{base_name}_pgx_report.pdf",
                 "html_report_url": f"/reports/{base_name}_pgx_report.html",
+                "json_report_url": f"/reports/{base_name}_pgx_report.json",
+                "tsv_report_url": f"/reports/{base_name}_pgx_report.tsv",
+                "match_json_url": f"/reports/{base_name}_pgx_match.json",
+                "phenotype_json_url": f"/reports/{base_name}_pgx_phenotype.json",
                 "genes": genes_data,
                 "drugRecommendations": drug_recommendations,
                 "results": results

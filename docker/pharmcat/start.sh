@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "Starting PharmCAT wrapper..."
+echo "Starting PharmCAT service..."
 echo "Checking Java version:"
 java -version
 
