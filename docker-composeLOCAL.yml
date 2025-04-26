@@ -154,7 +154,7 @@ services:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
     ports:
-      - "5003:5000"
+      - "5053:5000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s

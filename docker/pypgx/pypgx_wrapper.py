@@ -85,6 +85,7 @@ def health_check():
     return {
         'status': 'healthy',
         'service': 'pypgx-wrapper',
+        'supported_genes': ["CYP2D6"],
         'timestamp': time.time()
     }
 
@@ -93,8 +94,8 @@ def root():
     """API root endpoint"""
     return {
         "message": "PyPGx Wrapper API",
-        "usage": "POST to /genotype with a VCF file to call PyPGx supported star alleles",
-        "supported_genes": SUPPORTED_GENES
+        "usage": "POST to /genotype with a VCF file to call CYP2D6 star alleles",
+        "version": "1.0.0"
     }
 
 @app.post("/genotype")
@@ -245,12 +246,12 @@ def parse_pypgx_results(pipeline_dir: Path) -> tuple:
             return diplotype, details
         else:
             # If no results file exists, return a placeholder result
-            return "*1/*1", {"note": "Results file not found, using default values"}
+            return "*?/*?", {"note": "Results file not found, using default values"}
         
     except Exception as e:
         logger.exception(f"Error parsing PyPGx results: {str(e)}")
         # Return placeholder values in case of error
-        return "*1/*1", {"error": str(e)}
+        return "*?/*?", {"error": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run("pypgx_wrapper:app", host="0.0.0.0", port=5000, reload=True) 

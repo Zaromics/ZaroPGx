@@ -27,6 +27,7 @@ fi
 mkdir -p /data/temp
 
 # Install dependencies for the wrapper
+pip install --upgrade pip
 pip install --no-cache-dir fastapi uvicorn python-multipart
 
 # Verify that PyPGx is working

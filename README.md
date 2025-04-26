@@ -1,6 +1,6 @@
 # ZaroPGx - Pharmacogenomic Report Generator
 
-A containerized pharmacogenomic report generator that processes genetic data and generates clinical reports based on CPIC guidelines. The system focuses on pharmacogenomic analysis for psychiatric and neurological medications.
+A containerized pharmacogenomic report generator that processes genetic data and generates clinical reports based on CPIC guidelines. The system will eventually offer many types of reports, starting with a complete general report and a report oriented toward neurological pgx.
 
 # Notice
 
@@ -9,11 +9,12 @@ This software is currently being built and is not near completion. It is less li
 ## Features
 
 - Process genetic data from various sources (23andMe, VCF)
-- Call variants using GATK and Stargazer
-- Call alleles using PharmCAT and Stargazer
+- Call variants using GATK and PyPGx
+- Call alleles using PharmCAT and PyPGx
 - Generate PDF and interactive HTML reports
 - HIPAA-compliant data handling
 - RESTful API with authentication
+- Option to export reports via HAPI FHIR server
 - User-friendly web interface for file uploads
 - Comprehensive gene coverage including CYP2D6, CYP2C19, CYP2C9, and others
 - Interactive HTML reports with visualizations
@@ -34,7 +35,7 @@ The application consists of several containerized services:
 
 - Docker and Docker Compose
 - Git
-- PyPGx is used by default. If instead you wish to use Stargazer, make sure to download it as it is not bundled. It is free software but requires signup.
+- Internet connection is required during first run while the genome downloader downloads reference genome FASTA sequence, and while other containers download and install their dependencies. After this is complete the program does not connection to the internet and can be run locally - see the reference docker-composeLOCAL.yml optimized for local-only use.
 - 8GB RAM minimum. 16GB RAM minimum if using GATK as it is very RAM-heavy.
 - 20GB free disk space. 100GB+ free disk space if using WGS files.
 
@@ -140,9 +141,10 @@ The services are organized in a Docker Compose configuration with clear dependen
 Each service manages its dependencies within its own container:
 
 - **PostgreSQL**: Version 15 with initialization scripts in `db/init`
-- **PharmCAT**: Java 17 with PharmCAT v3.0.0 JAR file. Python 3.10 with Flask and other requirements in `docker/pharmcat/requirements.txt`
+- **PharmCAT Service**: Java 17 with PharmCAT v3.0.0 JAR file. Python 3.10 with Flask and other requirements in `docker/pharmcat/requirements.txt`
 - **GATK Service**:
 - **FastAPI Backend**: Python 3.10 with requirements specified in `requirements.txt`
+- **HAPI-FHIR**: 
 
 ### Data Sharing
 
@@ -230,8 +232,9 @@ Services communicate with each other using their service names as hostnames:
 
 - Database: `db:5432`
 - PharmCAT: `pharmcat:8080`
-- PharmCAT Wrapper: `pharmcat:5000`
-- Aldy: `aldy:5000`
+- GATK: 
+- PyPGx
+- HAPI-FHIR:
 
 ## Troubleshooting
 

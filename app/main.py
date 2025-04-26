@@ -130,7 +130,7 @@ app.add_middleware(
         "http://localhost:8090",  # fhir-server
         "http://localhost:5001",  # pharmcat API port
         "http://localhost:5002",  # gatk-api
-        "http://localhost:5003",  # pypgx (formerly stargazer)
+        "http://localhost:5053",  # pypgx
         "http://localhost:5444",  # PostgreSQL
         
         # 127.0.0.1 equivalents
@@ -139,7 +139,7 @@ app.add_middleware(
         "http://127.0.0.1:8090",
         "http://127.0.0.1:5001",
         "http://127.0.0.1:5002",
-        "http://127.0.0.1:5003",
+        "http://127.0.0.1:5053",
         "http://127.0.0.1:5444"
     ],
     allow_credentials=True,
@@ -330,7 +330,7 @@ async def home(request: Request):
             service_urls = {
                 "gatk": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
                 "pharmcat": os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000") + "/health", 
-                "pypgx": os.getenv("PYPGX_API_URL", "http://pypgx:5000") + "/health"
+                "pypgx": "http://pypgx:5000/health"  # Force to port 5000 directly
             }
             
             unhealthy_services = []
@@ -338,11 +338,14 @@ async def home(request: Request):
             async with httpx.AsyncClient() as client:
                 for service_name, url in service_urls.items():
                     try:
+                        logger.info(f"Homepage check: Checking {service_name} at {url}")
                         response = await client.get(url, timeout=2.0, follow_redirects=True)
+                        logger.info(f"Homepage check: {service_name} response status={response.status_code}")
                         if response.status_code < 200 or response.status_code >= 300:
                             unhealthy_services.append(service_name)
-                    except Exception:
+                    except Exception as e:
                         # If we can't reach a service, mark it as unhealthy
+                        logger.error(f"Homepage check: Error checking {service_name}: {str(e)}")
                         unhealthy_services.append(service_name)
             
             # If any services are unhealthy, set status to error
@@ -2133,7 +2136,7 @@ async def startup_event():
     services = {
         "GATK API": f"{GATK_SERVICE_URL}/health",
         "PharmCAT Wrapper": f"{os.getenv('PHARMCAT_API_URL', 'http://pharmcat:5000')}/health",
-        "PyPGx": f"{PYPGX_SERVICE_URL}/health"
+        "PyPGx": f"{os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}/health"
     }
     
     max_retries = 12  # Increased from 6 to 12
