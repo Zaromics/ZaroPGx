@@ -868,29 +868,28 @@
                 // Show progress container
                 progressContainer.classList.remove('d-none');
                 
-                // Disable the upload button and demo button
+                // Update progress status
+                const progressStatus = document.getElementById('progressStatus');
+                if (progressStatus) {
+                    progressStatus.textContent = "Preparing PharmCAT example VCF...";
+                }
+                
+                // Disable the upload button
                 const uploadButton = document.getElementById('uploadButton');
                 const demoButton = document.getElementById('demoButton');
                 if (uploadButton) uploadButton.disabled = true;
                 if (demoButton) demoButton.disabled = true;
                 
-                // Update progress status
-                const progressStatus = document.getElementById('progressStatus');
-                if (progressStatus) {
-                    progressStatus.textContent = "Preparing PharmCAT demo file...";
+                // Instead of creating a VCF in memory, fetch the sample file
+                const response = await fetch('/static/demo/pharmcat.example.vcf');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch example VCF: ${response.status}`);
                 }
+
+                const vcfContent = await response.text();
                 
-                // First, fetch the demo VCF file
-                const fileResponse = await fetch('/static/demo/pharmcat.example.vcf');
-                if (!fileResponse.ok) {
-                    throw new Error(`Failed to fetch demo file: ${fileResponse.status}`);
-                }
-                
-                // Get the file blob
-                const fileBlob = await fileResponse.blob();
-                
-                // Create a File object from the blob
-                const demoFile = new File([fileBlob], 'pharmcat-demo.vcf', { type: 'text/plain' });
+                // Create a File object from the fetched VCF content
+                const demoFile = new File([vcfContent], 'pharmcat-demo.vcf', { type: 'text/plain' });
                 
                 // Create FormData object just like a regular file upload
                 const formData = new FormData();
@@ -906,16 +905,16 @@
                 }
                 
                 // Make the request to the same endpoint used for regular uploads
-                const response = await fetch('/upload/genomic-data', {
+                const uploadResponse = await fetch('/upload/genomic-data', {
                     method: 'POST',
                     body: formData
                 });
                 
-                if (!response.ok) {
-                    throw new Error(`Failed to upload demo file: ${response.status}`);
+                if (!uploadResponse.ok) {
+                    throw new Error(`Failed to upload demo file: ${uploadResponse.status}`);
                 }
                 
-                const result = await response.json();
+                const result = await uploadResponse.json();
                 console.log("Demo upload result:", result);
                 
                 // Process the response just like a regular upload

@@ -1095,34 +1095,59 @@
                 if (uploadButton) uploadButton.disabled = true;
                 if (demoButton) demoButton.disabled = true;
                 
-                // Call the simplified demo endpoint
-                const response = await fetch('/demo');
-                
+                // Instead of calling /demo endpoint, fetch the sample file
+                const response = await fetch('/static/demo/pharmcat.example.vcf');
                 if (!response.ok) {
-                    throw new Error(`Failed to run demo: ${response.status} ${response.statusText}`);
+                    throw new Error(`Failed to fetch example VCF: ${response.status}`);
+                }
+
+                const vcfContent = await response.text();
+                
+                // Create a File object from the fetched VCF content
+                const demoFile = new File([vcfContent], 'pharmcat-demo.vcf', { type: 'text/plain' });
+                
+                // Create FormData object just like a regular file upload
+                const formData = new FormData();
+                formData.append('file', demoFile);
+                formData.append('patient_identifier', 'PharmCAT-Demo');
+                
+                // Mark this as a VCF file for consistent handling
+                window.isVcfFile = true;
+                
+                // Start progress tracking
+                if (window.GenomeDownloadProgress && window.GenomeDownloadProgress.startProgressTracking) {
+                    window.GenomeDownloadProgress.startProgressTracking();
                 }
                 
-                const result = await response.json();
-                console.log("Demo run result:", result);
+                // Make the request to the same endpoint used for regular uploads
+                const uploadResponse = await fetch('/upload/genomic-data', {
+                    method: 'POST',
+                    body: formData
+                });
                 
-                if (result.job_id) {
-                    window.addLogMessage(`Demo started with job ID: ${result.job_id}`, "success");
-                    
-                    // Show VCF polling notification
-                    const vcfPollingNotification = document.getElementById('vcfPollingNotification');
-                    if (vcfPollingNotification) {
-                        vcfPollingNotification.classList.remove('d-none');
-                    }
-                    
-                    // Start monitoring progress
-                    window.monitorProgress(result.job_id);
-                    
-                    // Also start VCF auto-polling
-                    startVcfAutoPolling(result.job_id);
-                } else {
-                    window.addLogMessage("Demo run failed: No job ID returned", "danger");
-                    if (uploadButton) uploadButton.disabled = false;
-                    if (demoButton) demoButton.disabled = false;
+                if (!uploadResponse.ok) {
+                    throw new Error(`Failed to upload demo file: ${uploadResponse.status}`);
+                }
+                
+                const result = await uploadResponse.json();
+                console.log("Demo upload result:", result);
+                
+                // Process the response just like a regular upload
+                window.addLogMessage("Demo file uploaded successfully", "success");
+                
+                // Update file analysis display
+                if (window.updateFileAnalysis) {
+                    window.updateFileAnalysis(result);
+                }
+                
+                // Start monitoring progress
+                if (window.monitorProgress && result.file_id) {
+                    window.monitorProgress(result.file_id);
+                }
+                
+                // Start VCF auto-polling
+                if (window.startVcfAutoPolling && result.file_id) {
+                    window.startVcfAutoPolling(result.file_id);
                 }
                 
             } catch (error) {
