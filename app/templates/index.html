@@ -236,24 +236,6 @@
                                     <i class="bi bi-play-fill"></i> Run Demo with PharmCAT VCF
                                 </button>
                             </div>
-                            
-                            <!-- Debug button to check for report status -->
-                            <div class="mt-3 p-2 border-top">
-                                <div class="row">
-                                    <div class="col-md-8">
-                                        <input type="text" class="form-control form-control-sm" id="jobIdInput" 
-                                               placeholder="Enter job ID (e.g., 1) to check report status">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="btn-group">
-                                            <button type="button" class="btn btn-secondary btn-sm" id="checkReportBtn" 
-                                                    onclick="checkReportStatus()">Check Reports</button>
-                                            <button type="button" class="btn btn-info btn-sm" id="triggerCompletionBtn" 
-                                                    onclick="triggerCompletion()">Manual Complete</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
                         </form>
                     </div>
                 </div>
@@ -714,44 +696,60 @@
                     console.warn("No job_id found in data");
                 }
                 
-                // Extract URLs - might be directly in data or nested in data.data
-                let pdfUrl = data.pdf_report_url;
-                let htmlUrl = data.html_report_url;
+                // Extract URLs from all possible locations in the data object
+                const reportUrls = {};
                 
-                // Check if URLs are in a nested data object
-                if (data.data) {
-                    console.log("Checking nested data.data for URLs:", data.data);
-                    if (data.data.pdf_report_url) {
-                        console.log("Found PDF URL in data.data:", data.data.pdf_report_url);
-                        pdfUrl = data.data.pdf_report_url;
-                    }
-                    if (data.data.html_report_url) {
-                        console.log("Found HTML URL in data.data:", data.data.html_report_url);
-                        htmlUrl = data.data.html_report_url;
-                    }
+                // Function to extract URLs from a data object (handles nesting)
+                function extractUrls(dataObj) {
+                    if (!dataObj) return;
                     
-                    // Check even deeper nesting (data.data.data)
-                    if (data.data.data) {
-                        console.log("Checking deep nested data.data.data for URLs:", data.data.data);
-                        if (data.data.data.pdf_report_url) {
-                            console.log("Found PDF URL in data.data.data:", data.data.data.pdf_report_url);
-                            pdfUrl = data.data.data.pdf_report_url;
+                    // URL keys to look for
+                    const urlKeys = [
+                        'pdf_report_url',
+                        'html_report_url',
+                        'interactive_html_report_url',
+                        'pharmcat_html_report_url',
+                        'pharmcat_json_report_url',
+                        'pharmcat_tsv_report_url'
+                    ];
+                    
+                    // Extract each URL type
+                    urlKeys.forEach(key => {
+                        if (dataObj[key] && !reportUrls[key]) {
+                            reportUrls[key] = dataObj[key];
                         }
-                        if (data.data.data.html_report_url) {
-                            console.log("Found HTML URL in data.data.data:", data.data.data.html_report_url);
-                            htmlUrl = data.data.data.html_report_url;
-                        }
-                        
-                        // Try to get job ID from deep nesting if not found yet
-                        if (!jobId && data.data.data.job_id) {
-                            console.log("Found job_id in deep nested data:", data.data.data.job_id);
-                            jobId = data.data.data.job_id;
-                        }
+                    });
+                    
+                    // Check nested data objects
+                    if (dataObj.data) {
+                        extractUrls(dataObj.data);
                     }
                 }
-
-                // Check final URL values
-                console.log("Final URL values - PDF:", pdfUrl, "HTML:", htmlUrl);
+                
+                // Extract URLs from all possible locations
+                extractUrls(data);
+                
+                // If we have a job ID but are missing URLs, try to construct default URLs
+                if (jobId) {
+                    // Default URL templates for each report type
+                    const defaultUrls = {
+                        'pdf_report_url': `/reports/${jobId}/${jobId}_pgx_report.pdf`,
+                        'html_report_url': `/reports/${jobId}/${jobId}_pgx_report.html`,
+                        'interactive_html_report_url': `/reports/${jobId}/${jobId}_pgx_report_interactive.html`,
+                        'pharmcat_html_report_url': `/reports/${jobId}/${jobId}_pgx_pharmcat.html`,
+                        'pharmcat_json_report_url': `/reports/${jobId}/${jobId}_pgx_pharmcat.json`,
+                        'pharmcat_tsv_report_url': `/reports/${jobId}/${jobId}_pgx_pharmcat.tsv`
+                    };
+                    
+                    // Fill in any missing URLs with defaults
+                    Object.keys(defaultUrls).forEach(key => {
+                        if (!reportUrls[key]) {
+                            reportUrls[key] = defaultUrls[key];
+                        }
+                    });
+                }
+                
+                console.log("Extracted report URLs:", reportUrls);
 
                 let resultsHtml = `
                     <div class="alert alert-success">
@@ -759,48 +757,60 @@
                         <p>Your pharmacogenomic analysis has been completed successfully.</p>
                 `;
 
-                if (!pdfUrl && !htmlUrl) {
+                // Check if we found any report URLs
+                if (Object.keys(reportUrls).length === 0) {
                     console.warn("No report URLs found in data:", data);
                     resultsHtml += `
                         <div class="mt-3 alert alert-warning">
-                            <p>Report URLs not found in results data. Trying default URLs.</p>
+                            <p>Report URLs not found in results data.</p>
                         </div>
                     `;
-                    
-                    // See if we can construct default URLs using job ID
-                    if (jobId) {
-                        pdfUrl = `/reports/${jobId}_pgx_report.pdf`;
-                        htmlUrl = `/reports/${jobId}_pgx_report.html`;
-                        
-                        console.log(`Using default URLs based on job ID ${jobId}:`, { pdfUrl, htmlUrl });
-                        
-                        resultsHtml += `
-                            <div class="mt-3 alert alert-info">
-                                <p>Using default report URLs based on job ID: ${jobId}</p>
-                            </div>
-                        `;
+                }
+
+                // Group the reports by type for better organization
+                const reportGroups = [
+                    {
+                        title: "Main Reports",
+                        reports: [
+                            { key: 'pdf_report_url', label: 'View PDF Report', icon: 'bi-file-pdf' },
+                            { key: 'html_report_url', label: 'View HTML Report', icon: 'bi-file-earmark-text' },
+                            { key: 'interactive_html_report_url', label: 'View Interactive Report', icon: 'bi-file-code' }
+                        ]
+                    },
+                    {
+                        title: "PharmCAT Original Reports",
+                        reports: [
+                            { key: 'pharmcat_html_report_url', label: 'View PharmCAT HTML Report', icon: 'bi-file-medical' },
+                            { key: 'pharmcat_json_report_url', label: 'View PharmCAT JSON Report', icon: 'bi-filetype-json' },
+                            { key: 'pharmcat_tsv_report_url', label: 'View PharmCAT TSV Report', icon: 'bi-filetype-csv' }
+                        ]
                     }
-                }
-
-                if (pdfUrl) {
-                    resultsHtml += `
-                        <div class="mt-3">
-                            <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
-                                <i class="bi bi-file-pdf"></i> View PDF Report
-                            </a>
-                        </div>
-                    `;
-                }
-
-                if (htmlUrl) {
-                    resultsHtml += `
-                        <div class="mt-2">
-                            <a href="${htmlUrl}" class="btn btn-info" target="_blank">
-                                <i class="bi bi-file-code"></i> View Interactive Report
-                            </a>
-                        </div>
-                    `;
-                }
+                ];
+                
+                // Add report links by group
+                reportGroups.forEach(group => {
+                    // Check if there are any reports in this group
+                    const availableReports = group.reports.filter(report => reportUrls[report.key]);
+                    
+                    if (availableReports.length > 0) {
+                        resultsHtml += `
+                            <div class="mt-3">
+                                <h5>${group.title}</h5>
+                        `;
+                        
+                        availableReports.forEach(report => {
+                            resultsHtml += `
+                                <div class="mt-2">
+                                    <a href="${reportUrls[report.key]}" class="btn btn-primary" target="_blank">
+                                        <i class="bi ${report.icon}"></i> ${report.label}
+                                    </a>
+                                </div>
+                            `;
+                        });
+                        
+                        resultsHtml += `</div>`;
+                    }
+                });
 
                 resultsHtml += `</div>`;
                 resultsDiv.innerHTML = resultsHtml;
@@ -858,46 +868,72 @@
                 // Show progress container
                 progressContainer.classList.remove('d-none');
                 
-                // Update progress status
-                const progressStatus = document.getElementById('progressStatus');
-                if (progressStatus) {
-                    progressStatus.textContent = "Preparing PharmCAT example VCF...";
-                }
-                
-                // Disable the upload button
+                // Disable the upload button and demo button
                 const uploadButton = document.getElementById('uploadButton');
                 const demoButton = document.getElementById('demoButton');
                 if (uploadButton) uploadButton.disabled = true;
                 if (demoButton) demoButton.disabled = true;
                 
-                // Call the simplified demo endpoint
-                const response = await fetch('/demo');
+                // Update progress status
+                const progressStatus = document.getElementById('progressStatus');
+                if (progressStatus) {
+                    progressStatus.textContent = "Preparing PharmCAT demo file...";
+                }
+                
+                // First, fetch the demo VCF file
+                const fileResponse = await fetch('/static/demo/pharmcat.example.vcf');
+                if (!fileResponse.ok) {
+                    throw new Error(`Failed to fetch demo file: ${fileResponse.status}`);
+                }
+                
+                // Get the file blob
+                const fileBlob = await fileResponse.blob();
+                
+                // Create a File object from the blob
+                const demoFile = new File([fileBlob], 'pharmcat-demo.vcf', { type: 'text/plain' });
+                
+                // Create FormData object just like a regular file upload
+                const formData = new FormData();
+                formData.append('file', demoFile);
+                formData.append('patient_identifier', 'PharmCAT-Demo');
+                
+                // Mark this as a VCF file for consistent handling
+                window.isVcfFile = true;
+                
+                // Start progress tracking
+                if (window.GenomeDownloadProgress && window.GenomeDownloadProgress.startProgressTracking) {
+                    window.GenomeDownloadProgress.startProgressTracking();
+                }
+                
+                // Make the request to the same endpoint used for regular uploads
+                const response = await fetch('/upload/genomic-data', {
+                    method: 'POST',
+                    body: formData
+                });
                 
                 if (!response.ok) {
-                    throw new Error(`Failed to run demo: ${response.status} ${response.statusText}`);
+                    throw new Error(`Failed to upload demo file: ${response.status}`);
                 }
                 
                 const result = await response.json();
-                console.log("Demo run result:", result);
+                console.log("Demo upload result:", result);
                 
-                if (result.job_id) {
-                    window.addLogMessage(`Demo started with job ID: ${result.job_id}`, "success");
-                    
-                    // Show VCF polling notification
-                    const vcfPollingNotification = document.getElementById('vcfPollingNotification');
-                    if (vcfPollingNotification) {
-                        vcfPollingNotification.classList.remove('d-none');
-                    }
-                    
-                    // Start monitoring progress
-                    window.monitorProgress(result.job_id);
-                    
-                    // Also start VCF auto-polling
-                    startVcfAutoPolling(result.job_id);
-                } else {
-                    window.addLogMessage("Demo run failed: No job ID returned", "danger");
-                    if (uploadButton) uploadButton.disabled = false;
-                    if (demoButton) demoButton.disabled = false;
+                // Process the response just like a regular upload
+                window.addLogMessage("Demo file uploaded successfully", "success");
+                
+                // Update file analysis display
+                if (window.updateFileAnalysis) {
+                    window.updateFileAnalysis(result);
+                }
+                
+                // Start monitoring progress
+                if (window.monitorProgress && result.file_id) {
+                    window.monitorProgress(result.file_id);
+                }
+                
+                // Start VCF auto-polling
+                if (window.startVcfAutoPolling && result.file_id) {
+                    window.startVcfAutoPolling(result.file_id);
                 }
                 
             } catch (error) {

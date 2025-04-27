@@ -10,6 +10,20 @@ from app.pharmcat.pharmcat_client import normalize_pharmcat_results
 # Version
 __version__ = "1.0.0"
 
+# Report display configuration
+# Controls which reports are included in the response and shown to users
+REPORT_CONFIG = {
+    # Our generated reports
+    "show_pdf_report": True,          # Standard PDF report
+    "show_html_report": True,         # Standard HTML report -- but isn't this just what is made into the PDF report with weasyprint?
+    "show_interactive_report": True,  # Interactive HTML report with JavaScript visualizations
+    
+    # PharmCAT original reports
+    "show_pharmcat_html_report": True,  # Original HTML report from PharmCAT
+    "show_pharmcat_json_report": False, # Original JSON report from PharmCAT
+    "show_pharmcat_tsv_report": False,  # Original TSV report from PharmCAT
+}
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -262,7 +276,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         patient_info: Optional patient information
         
     Returns:
-        Dict containing file paths for HTML and PDF reports
+        Dict containing file paths for all enabled reports
     """
     logger.info("Generating report from PharmCAT results")
     
@@ -303,50 +317,117 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         html_path = os.path.join(report_dir, f"{base_filename}.html")
         interactive_html_path = os.path.join(report_dir, f"{base_filename}_interactive.html")
         
-        # Generate standard HTML report
-        env = Environment(
-            loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "templates")),
-            autoescape=select_autoescape(['html', 'xml'])
-        )
-        template = env.get_template("report_template.html")
-        html_content = template.render(**template_data)
+        # Initialize the report paths dictionary that will be returned
+        report_paths = {}
         
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-        logger.info(f"HTML report generated: {html_path}")
+        # Generate standard HTML report if enabled
+        if REPORT_CONFIG["show_html_report"]:
+            env = Environment(
+                loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "templates")),
+                autoescape=select_autoescape(['html', 'xml'])
+            )
+            template = env.get_template("report_template.html")
+            html_content = template.render(**template_data)
+            
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            logger.info(f"HTML report generated: {html_path}")
+            
+            # Add to report paths
+            server_html_path = f"/reports/{report_id}/{base_filename}.html"
+            report_paths["html_path"] = server_html_path
+            normalized_results["data"]["html_report_url"] = server_html_path
         
-        # Generate interactive HTML report
-        create_interactive_html_report(
-            patient_id=patient_id,
-            report_id=report_id,
-            diplotypes=data.get("genes", []),
-            recommendations=template_recommendations,
-            output_path=interactive_html_path
-        )
-        logger.info(f"Interactive HTML report generated: {interactive_html_path}")
+        # Generate interactive HTML report if enabled
+        if REPORT_CONFIG["show_interactive_report"]:
+            create_interactive_html_report(
+                patient_id=patient_id,
+                report_id=report_id,
+                diplotypes=data.get("genes", []),
+                recommendations=template_recommendations,
+                output_path=interactive_html_path
+            )
+            logger.info(f"Interactive HTML report generated: {interactive_html_path}")
+            
+            # Add to report paths
+            server_interactive_html_path = f"/reports/{report_id}/{base_filename}_interactive.html"
+            report_paths["interactive_html_path"] = server_interactive_html_path
+            normalized_results["data"]["interactive_html_report_url"] = server_interactive_html_path
         
-        # Generate PDF report from the HTML
-        pdf_path = os.path.join(report_dir, f"{base_filename}.pdf")
-        html = HTML(string=html_content)
-        html.write_pdf(pdf_path)
-        logger.info(f"PDF report generated: {pdf_path}")
+        # Generate PDF report from the HTML if enabled
+        if REPORT_CONFIG["show_pdf_report"]:
+            pdf_path = os.path.join(report_dir, f"{base_filename}.pdf")
+            html = HTML(string=html_content if REPORT_CONFIG["show_html_report"] else template.render(**template_data))
+            html.write_pdf(pdf_path)
+            logger.info(f"PDF report generated: {pdf_path}")
+            
+            # Add to report paths
+            server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
+            report_paths["pdf_path"] = server_pdf_path
+            normalized_results["data"]["pdf_report_url"] = server_pdf_path
         
-        # Return file paths that include the report directory
-        server_html_path = f"/reports/{report_id}/{base_filename}.html"
-        server_interactive_html_path = f"/reports/{report_id}/{base_filename}_interactive.html"
-        server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
+        # Include PharmCAT original reports if enabled
+        # Check if pharmacat report files already exist in the report directory
+        pharmcat_html_filename = f"{report_id}_pgx_pharmcat.html"
+        pharmcat_html_path = os.path.join(report_dir, pharmcat_html_filename)
         
-        # Update the normalized results with the report paths
-        normalized_results["data"]["html_report_url"] = server_html_path
-        normalized_results["data"]["interactive_html_report_url"] = server_interactive_html_path
-        normalized_results["data"]["pdf_report_url"] = server_pdf_path
+        # PharmCAT HTML report
+        if REPORT_CONFIG["show_pharmcat_html_report"]:
+            # Look for the original PharmCAT HTML report
+            pharmcat_html_file = os.path.join(report_dir, f"{report_id}.report.html")
+            if os.path.exists(pharmcat_html_file):
+                # Copy it with our standardized naming if it doesn't already exist
+                if not os.path.exists(pharmcat_html_path):
+                    import shutil
+                    shutil.copy(pharmcat_html_file, pharmcat_html_path)
+                    logger.info(f"PharmCAT HTML report copied to: {pharmcat_html_path}")
+            
+            # Add to report paths if the file exists
+            if os.path.exists(pharmcat_html_path):
+                server_pharmcat_html_path = f"/reports/{report_id}/{pharmcat_html_filename}"
+                report_paths["pharmcat_html_path"] = server_pharmcat_html_path
+                normalized_results["data"]["pharmcat_html_report_url"] = server_pharmcat_html_path
+            else:
+                logger.warning("PharmCAT HTML report not found in report directory")
         
-        return {
-            "html_path": server_html_path,
-            "interactive_html_path": server_interactive_html_path,
-            "pdf_path": server_pdf_path,
-            "normalized_results": normalized_results
-        }
+        # PharmCAT JSON report
+        if REPORT_CONFIG["show_pharmcat_json_report"]:
+            pharmcat_json_filename = f"{report_id}_pgx_pharmcat.json"
+            pharmcat_json_path = os.path.join(report_dir, pharmcat_json_filename)
+            pharmcat_json_file = os.path.join(report_dir, f"{report_id}.report.json")
+            
+            if os.path.exists(pharmcat_json_file):
+                if not os.path.exists(pharmcat_json_path):
+                    import shutil
+                    shutil.copy(pharmcat_json_file, pharmcat_json_path)
+                    logger.info(f"PharmCAT JSON report copied to: {pharmcat_json_path}")
+            
+            if os.path.exists(pharmcat_json_path):
+                server_pharmcat_json_path = f"/reports/{report_id}/{pharmcat_json_filename}"
+                report_paths["pharmcat_json_path"] = server_pharmcat_json_path
+                normalized_results["data"]["pharmcat_json_report_url"] = server_pharmcat_json_path
+        
+        # PharmCAT TSV report
+        if REPORT_CONFIG["show_pharmcat_tsv_report"]:
+            pharmcat_tsv_filename = f"{report_id}_pgx_pharmcat.tsv"
+            pharmcat_tsv_path = os.path.join(report_dir, pharmcat_tsv_filename)
+            pharmcat_tsv_file = os.path.join(report_dir, f"{report_id}.report.tsv")
+            
+            if os.path.exists(pharmcat_tsv_file):
+                if not os.path.exists(pharmcat_tsv_path):
+                    import shutil
+                    shutil.copy(pharmcat_tsv_file, pharmcat_tsv_path)
+                    logger.info(f"PharmCAT TSV report copied to: {pharmcat_tsv_path}")
+            
+            if os.path.exists(pharmcat_tsv_path):
+                server_pharmcat_tsv_path = f"/reports/{report_id}/{pharmcat_tsv_filename}"
+                report_paths["pharmcat_tsv_path"] = server_pharmcat_tsv_path
+                normalized_results["data"]["pharmcat_tsv_report_url"] = server_pharmcat_tsv_path
+        
+        # Add the normalized results to the report paths
+        report_paths["normalized_results"] = normalized_results
+        
+        return report_paths
     
     except Exception as e:
         logger.error(f"Error generating report: {str(e)}")
