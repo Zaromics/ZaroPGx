@@ -120,10 +120,11 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
 
 def normalize_pharmcat_results(response):
     """
-    Normalize PharmCAT results from report.json format
+    Normalize PharmCAT results from report.json or report.tsv format.
+    Prioritizes JSON parsing with TSV as a backup option.
     
     Args:
-        response (dict): Raw PharmCAT API response
+        response (dict): Raw PharmCAT API response or direct report.json content
         
     Returns:
         dict: Normalized response with gene and drug data
@@ -134,242 +135,401 @@ def normalize_pharmcat_results(response):
     normalized_response = {
         "success": False,
         "message": "",
-        "genes": [],
-        "drugRecommendations": [],
-        "pdf_report_url": response.get("data", {}).get("pdf_report_url", ""),
-        "html_report_url": response.get("data", {}).get("html_report_url", "")
+        "data": {
+            "genes": [],
+            "drugRecommendations": [],
+            "pdf_report_url": "",
+            "html_report_url": ""
+        }
     }
     
     try:
-        # Check if we received a successful response
-        if not response.get("success", False):
-            error_msg = f"PharmCAT analysis failed: {response.get('message', 'Unknown error')}"
-            logger.error(error_msg)
-            normalized_response["message"] = error_msg
-            return normalized_response
-        
-        # Extract genes data from the CPIC section
-        genes_data = []
-        genes_section = response.get("genes", {}).get("CPIC", {})
-        
-        if not genes_section:
-            logger.warning("No genes.CPIC data found in PharmCAT report - trying alternative structure")
-            # Try alternative structure - directly in genes object
-            genes_section = response.get("genes", {})
-        
-        # Process each gene in the CPIC section
-        for gene_id, gene_info in genes_section.items():
-            logger.info(f"Processing gene {gene_id}")
+        # If response is a direct report.json (common PharmCAT output format)
+        # Check if it has the expected top-level format of a PharmCAT report
+        if all(key in response for key in ["pharmcatVersion", "genes", "drugs"]):
+            logger.info("Input appears to be a direct PharmCAT report.json structure")
+            # Use the response directly as the JSON data
+            json_data = response
+            json_processing_success = True
+        else:
+            # Check if we received a successful response from the API
+            if "success" in response and not response.get("success", False):
+                error_msg = f"PharmCAT analysis failed: {response.get('message', 'Unknown error')}"
+                logger.error(error_msg)
+                normalized_response["message"] = error_msg
+                return normalized_response
             
-            # First try the direct gene call structure
-            diplotype = "Unknown/Unknown"
-            function = "Unknown"
-            activity_score = None
+            # APPROACH 1: Process JSON data (primary method)
+            json_processing_success = False
+            json_data = None
+            tsv_content = None
             
-            # Try to get data from sourceDiplotypes first (most reliable)
-            if "sourceDiplotypes" in gene_info and isinstance(gene_info["sourceDiplotypes"], list) and gene_info["sourceDiplotypes"]:
-                source_diplotype = gene_info["sourceDiplotypes"][0]
+            # Find the JSON data in the response structure
+            if "report_json" in response:
+                json_data = response["report_json"]
+                logger.info("Found JSON data in response.report_json")
+            elif "data" in response and "results" in response["data"] and "report_json" in response["data"]["results"]:
+                json_data = response["data"]["results"]["report_json"]
+                logger.info("Found JSON data in response.data.results.report_json")
+            elif "results" in response and "report_json" in response["results"]:
+                json_data = response["results"]["report_json"]
+                logger.info("Found JSON data in response.results.report_json")
+            
+            # Also look for TSV data as a backup
+            if "report_tsv" in response:
+                tsv_content = response["report_tsv"]
+                logger.info("Found TSV data in response.report_tsv")
+            elif "data" in response and "results" in response["data"] and "report_tsv" in response["data"]["results"]:
+                tsv_content = response["data"]["results"]["report_tsv"]
+                logger.info("Found TSV data in response.data.results.report_tsv")
+            elif "results" in response and "report_tsv" in response["results"]:
+                tsv_content = response["results"]["report_tsv"]
+                logger.info("Found TSV data in response.results.report_tsv")
+        
+        # If we have JSON data, try to process it
+        if json_data:
+            genes_data = []
+            
+            # Check if this is the classic PharmCAT format (title, timestamp, genes, etc.)
+            # If so, proceed directly with that structure
+            if all(key in json_data for key in ["pharmcatVersion", "genes", "drugs"]):
+                logger.info("Using direct PharmCAT JSON format")
+                genes_section = {}
+                if "genes" in json_data and "CPIC" in json_data["genes"]:
+                    genes_section = json_data["genes"]["CPIC"]
+                    logger.info(f"Found {len(genes_section)} genes in CPIC section")
                 
-                # Get alleles from source diplotype
-                if "allele1" in source_diplotype and "allele2" in source_diplotype:
-                    allele1 = source_diplotype.get("allele1")
-                    allele2 = source_diplotype.get("allele2")
+                # Extract genes
+                for gene_id, gene_info in genes_section.items():
+                    # Basic validation
+                    if not isinstance(gene_info, dict):
+                        continue
                     
-                    # Extract diplotype from alleles - handle case where alleles can be None
-                    allele1_name = allele1.get("name", "Unknown") if allele1 is not None else "Unknown"
-                    allele2_name = allele2.get("name", "Unknown") if allele2 is not None else "Unknown"
-                    diplotype = f"{allele1_name}/{allele2_name}"
+                    diplotype = "Unknown/Unknown"
+                    function = "Unknown"
+                    activity_score = None
                     
-                    # Extract function/phenotype
-                    if "phenotypes" in source_diplotype and source_diplotype["phenotypes"]:
-                        function = ", ".join(source_diplotype["phenotypes"])
-                    
-                    # Extract activity score
-                    activity_score = source_diplotype.get("activityScore")
-            
-            # If no sourceDiplotypes, look in other places
-            elif "call" in gene_info:
-                # PharmCAT v2 structure - most detailed
-                call_info = gene_info.get("call", {})
-                diplotype = call_info.get("diplotype", "Unknown/Unknown")
-                function = call_info.get("function", "Unknown")
-                activity_score = call_info.get("activityScore")
-            elif "diplotype" in gene_info:
-                # Direct diplotype field - simpler structure
-                diplotype = gene_info.get("diplotype", "Unknown/Unknown")
-                function = gene_info.get("phenotype", "Unknown")
-            elif "alleles" in gene_info:
-                # Extract from alleles if present
-                alleles = gene_info.get("alleles", [])
-                if len(alleles) > 0:
-                    diplotype = "/".join([a.get("name", "Unknown") for a in alleles[:2]])
-            
-            # Sometimes diplotype might be in a nested structure
-            if isinstance(diplotype, dict):
-                diplotype = diplotype.get("name", "Unknown/Unknown")
-            
-            # Set activity_score to 2.0 for Normal Metabolizers if not specified
-            if activity_score is None and function == "Normal Metabolizer":
-                activity_score = 2.0
-            
-            gene_entry = {
-                "gene": gene_id,
-                "diplotype": diplotype,
-                "phenotype": function,
-                "activity_score": activity_score
-            }
-            
-            genes_data.append(gene_entry)
-            logger.info(f"Added gene: {gene_entry}")
-        
-        # Extract drug recommendations
-        drug_recommendations = []
-        
-        # First try to find drugs in the main "drugs" section
-        drugs_section = response.get("drugs", {})
-        if not drugs_section:
-            logger.warning("No drugs data found in PharmCAT report")
-        
-        # Look for annotations and guidelines
-        for drug_id, drug_info in drugs_section.items():
-            logger.info(f"Processing drug {drug_id}")
-            
-            # First try to extract information from guidelines->annotations (PharmCAT v2 structure)
-            if "guidelines" in drug_info and drug_info["guidelines"]:
-                for guideline in drug_info["guidelines"]:
-                    # Extract annotations for each guideline
-                    annotations = guideline.get("annotations", [])
-                    guideline_name = guideline.get("name", "")
-                    
-                    for annotation in annotations:
-                        # Try different fields for recommendation text
-                        recommendation_text = None
-                        if "text" in annotation:
-                            recommendation_text = annotation.get("text", "")
-                        elif "drugRecommendation" in annotation:
-                            recommendation_text = annotation.get("drugRecommendation", "")
-                        elif "recommendation" in annotation:
-                            recommendation_text = annotation.get("recommendation", "")
+                    # Extract using recommendationDiplotypes
+                    if "recommendationDiplotypes" in gene_info and isinstance(gene_info["recommendationDiplotypes"], list) and gene_info["recommendationDiplotypes"]:
+                        # Use the first recommendation diplotype
+                        rec_diplotype = gene_info["recommendationDiplotypes"][0]
                         
-                        if not recommendation_text:
-                            recommendation_text = "See report for details"
+                        # Extract diplotype
+                        if "label" in rec_diplotype:
+                            diplotype = rec_diplotype["label"]
                         
-                        # Try to get classification
-                        classification = ""
-                        if "classification" in annotation:
-                            # Could be a string or object
-                            class_obj = annotation.get("classification", {})
-                            if isinstance(class_obj, dict):
-                                classification = class_obj.get("term", "")
+                        # Extract phenotype
+                        if "phenotypes" in rec_diplotype:
+                            phenotypes = rec_diplotype["phenotypes"]
+                            if isinstance(phenotypes, list):
+                                function = ", ".join(phenotypes)
                             else:
-                                classification = str(class_obj)
+                                function = str(phenotypes)
                         
-                        # Identify genes for this drug - multiple ways to find them
-                        genes_for_drug = []
-                        
-                        # Try different places to find associated genes
-                        if "genes" in drug_info:
-                            genes_for_drug = drug_info.get("genes", [])
-                        elif "phenotypes" in annotation:
-                            # Extract gene names from phenotypes keys
-                            genes_for_drug = list(annotation.get("phenotypes", {}).keys())
-                        elif "gene" in annotation:
-                            genes_for_drug = [annotation.get("gene", "")]
-                        
-                        # If no genes found, still create at least one recommendation
-                        if not genes_for_drug:
-                            genes_for_drug = ["Unknown"]
-                        
-                        # Create a recommendation for each gene associated with this drug
-                        for gene in genes_for_drug:
-                            drug_rec = {
-                                "gene": gene,
-                                "drug": drug_id,
-                                "drugId": drug_info.get("rxnormId", ""),
-                                "guideline": guideline_name,
-                                "recommendation": recommendation_text,
-                                "classification": classification
-                            }
-                            drug_recommendations.append(drug_rec)
-                            logger.info(f"Added drug recommendation: {drug_rec}")
-            
-            # Handle case with no guidelines structure but direct annotations
-            elif "annotations" in drug_info:
-                annotations = drug_info.get("annotations", [])
-                for annotation in annotations:
-                    # Create a generic recommendation
-                    drug_rec = {
-                        "gene": "Multiple",
-                        "drug": drug_id,
-                        "drugId": drug_info.get("rxnormId", ""),
-                        "guideline": drug_info.get("guidelineName", ""),
-                        "recommendation": annotation.get("text", "See report for details"),
-                        "classification": ""
-                    }
-                    drug_recommendations.append(drug_rec)
-                    logger.info(f"Added drug recommendation from direct annotation: {drug_rec}")
-            
-            # If no guidelines or annotations, but the drug section has a generic recommendation
-            elif "recommendation" in drug_info:
-                drug_rec = {
-                    "gene": "Multiple",
-                    "drug": drug_id,
-                    "drugId": drug_info.get("rxnormId", ""),
-                    "guideline": drug_info.get("guidelineName", ""),
-                    "recommendation": drug_info.get("recommendation", "See report for details"),
-                    "classification": drug_info.get("classification", "")
-                }
-                drug_recommendations.append(drug_rec)
-                logger.info(f"Added generic drug recommendation: {drug_rec}")
-                
-        # If still no drug recommendations, try to find them in the messages section
-        if len(drug_recommendations) == 0:
-            messages = response.get("messages", [])
-            for message in messages:
-                if isinstance(message, dict) and "text" in message:
-                    text = message.get("text", "")
+                        # Extract activity score
+                        if "activityScore" in rec_diplotype:
+                            activity_score = rec_diplotype["activityScore"]
+                    elif "diplotype" in gene_info:
+                        # Direct diplotype field - simpler structure
+                        diplotype = gene_info.get("diplotype", "Unknown/Unknown")
+                        function = gene_info.get("phenotype", "Unknown")
+                    elif "alleles" in gene_info:
+                        # Extract from alleles if present
+                        alleles = gene_info.get("alleles", [])
+                        if len(alleles) > 0:
+                            diplotype = "/".join([a.get("name", "Unknown") for a in alleles[:2]])
                     
-                    # Try to extract gene and drug info from the message
-                    if ":" in text:
-                        parts = text.split(":", 1)
-                        gene_drug_info = parts[0].strip()
-                        recommendation = parts[1].strip()
+                    # Sometimes diplotype might be in a nested structure
+                    if isinstance(diplotype, dict):
+                        diplotype = diplotype.get("name", "Unknown/Unknown")
+                    
+                    # Set activity_score to 2.0 for Normal Metabolizers if not specified
+                    if activity_score is None and function == "Normal Metabolizer":
+                        activity_score = 2.0
+                    
+                    gene_entry = {
+                        "gene": gene_id,
+                        "diplotype": diplotype,
+                        "phenotype": function,
+                        "activity_score": activity_score
+                    }
+                    
+                    genes_data.append(gene_entry)
+                    logger.info(f"Added gene: {gene_entry}")
+                
+                # Extract drug recommendations
+                drug_recommendations = []
+                
+                # Check for direct drugRecommendations array
+                if "drugRecommendations" in json_data and isinstance(json_data["drugRecommendations"], list):
+                    logger.info("Found top-level drugRecommendations array")
+                    for drug_rec in json_data["drugRecommendations"]:
+                        if not isinstance(drug_rec, dict):
+                            continue
+                            
+                        # Extract drug name
+                        drug_name = "Unknown"
+                        drug_id = ""
                         
-                        # Check if it contains gene and drug info
-                        if ":" in gene_drug_info:
-                            gene = gene_drug_info.split(":")[0].strip()
-                            drug = "Multiple"
-                        else:
-                            gene = "Unknown"
-                            drug = gene_drug_info
+                        if "drug" in drug_rec:
+                            if isinstance(drug_rec["drug"], dict) and "name" in drug_rec["drug"]:
+                                drug_name = drug_rec["drug"]["name"]
+                                if "rxnormId" in drug_rec["drug"]:
+                                    drug_id = drug_rec["drug"]["rxnormId"]
+                            else:
+                                drug_name = str(drug_rec["drug"])
                         
-                        drug_rec = {
-                            "gene": gene,
-                            "drug": drug,
-                            "drugId": "",
-                            "guideline": "From messages",
+                        # Extract recommendation text - multiple possible field names
+                        recommendation = None
+                        if "drugRecommendation" in drug_rec:
+                            recommendation = drug_rec["drugRecommendation"]
+                        elif "recommendation" in drug_rec:
+                            recommendation = drug_rec["recommendation"]
+                        elif "recommendationText" in drug_rec:
+                            recommendation = drug_rec["recommendationText"]
+                        
+                        if recommendation is None:
+                            recommendation = "See report for details"
+                        
+                        # Extract guideline info
+                        guideline = ""
+                        if "guidelineName" in drug_rec:
+                            guideline = drug_rec["guidelineName"]
+                        elif "guideline" in drug_rec and isinstance(drug_rec["guideline"], dict) and "name" in drug_rec["guideline"]:
+                            guideline = drug_rec["guideline"]["name"]
+                        
+                        # Extract classification
+                        classification = ""
+                        if "classification" in drug_rec:
+                            if isinstance(drug_rec["classification"], dict) and "term" in drug_rec["classification"]:
+                                classification = drug_rec["classification"]["term"]
+                            else:
+                                classification = str(drug_rec["classification"])
+                        
+                        # Create normalized drug recommendation
+                        drug_recommendations.append({
+                            "gene": drug_rec.get("gene", "Multiple"),
+                            "drug": drug_name,
+                            "drugId": drug_id,
+                            "guideline": guideline,
                             "recommendation": recommendation,
+                            "classification": classification
+                        })
+                
+                # Extract from recommendations section if no direct drugRecommendations found
+                if not drug_recommendations and "recommendations" in json_data and isinstance(json_data["recommendations"], dict):
+                    logger.info("Extracting from recommendations section")
+                    for drug_id, drug_data in json_data["recommendations"].items():
+                        if not isinstance(drug_data, dict):
+                            continue
+                        
+                        # Get drug name
+                        drug_name = drug_id
+                        if "drug" in drug_data and isinstance(drug_data["drug"], dict) and "name" in drug_data["drug"]:
+                            drug_name = drug_data["drug"]["name"]
+                        
+                        # Process annotations if present
+                        if "annotations" in drug_data and isinstance(drug_data["annotations"], list):
+                            for annotation in drug_data["annotations"]:
+                                # Extract recommendation
+                                recommendation = "See report for details"
+                                if "drugRecommendation" in annotation:
+                                    recommendation = annotation["drugRecommendation"]
+                                
+                                # Extract classification
+                                classification = "Unknown"
+                                if "classification" in annotation:
+                                    if isinstance(annotation["classification"], dict) and "term" in annotation["classification"]:
+                                        classification = annotation["classification"]["term"]
+                                    else:
+                                        classification = str(annotation["classification"])
+                                
+                                # Create recommendation entry
+                                drug_recommendations.append({
+                                    "gene": annotation.get("gene", "Multiple"),
+                                    "drug": drug_name,
+                                    "drugId": drug_data.get("rxnormId", ""),
+                                    "guideline": drug_data.get("guidelineName", ""),
+                                    "recommendation": recommendation,
+                                    "classification": classification
+                                })
+                        else:
+                            # Add basic entry
+                            drug_recommendations.append({
+                                "gene": "Multiple",
+                                "drug": drug_name,
+                                "drugId": drug_data.get("rxnormId", ""),
+                                "guideline": drug_data.get("guidelineName", ""),
+                                "recommendation": "See PharmCAT report for details",
+                                "classification": "Unknown"
+                            })
+                
+                # If still no drug recommendations, try extracting from the drugs section
+                if not drug_recommendations and "drugs" in json_data and isinstance(json_data["drugs"], dict):
+                    logger.info("Extracting from drugs section")
+                    for drug_id, drug_info in json_data["drugs"].items():
+                        if not isinstance(drug_info, dict):
+                            continue
+                        
+                        # Try to extract from guidelines structure (more detailed)
+                        if "guidelines" in drug_info and isinstance(drug_info["guidelines"], list):
+                            for guideline in drug_info["guidelines"]:
+                                guideline_name = guideline.get("name", "")
+                                
+                                # Extract annotations
+                                annotations = guideline.get("annotations", [])
+                                for annotation in annotations:
+                                    # Extract recommendation text
+                                    recommendation_text = ""
+                                    if "drugRecommendation" in annotation:
+                                        recommendation_text = annotation["drugRecommendation"]
+                                    elif "text" in annotation:
+                                        recommendation_text = annotation["text"]
+                                    else:
+                                        recommendation_text = "See report for details"
+                                    
+                                    # Extract classification
+                                    classification = ""
+                                    if "classification" in annotation:
+                                        # Could be a string or object
+                                        class_obj = annotation.get("classification", {})
+                                        if isinstance(class_obj, dict):
+                                            classification = class_obj.get("term", "")
+                                        else:
+                                            classification = str(class_obj)
+                                    
+                                    # Identify genes for this drug - multiple ways to find them
+                                    genes_for_drug = []
+                                    
+                                    # Try different places to find associated genes
+                                    if "genes" in drug_info:
+                                        genes_for_drug = drug_info.get("genes", [])
+                                    elif "phenotypes" in annotation:
+                                        # Extract gene names from phenotypes keys
+                                        genes_for_drug = list(annotation.get("phenotypes", {}).keys())
+                                    elif "gene" in annotation:
+                                        genes_for_drug = [annotation.get("gene", "")]
+                                    
+                                    # If no genes found, still create at least one recommendation
+                                    if not genes_for_drug:
+                                        genes_for_drug = ["Unknown"]
+                                    
+                                    # Create a recommendation for each gene associated with this drug
+                                    for gene in genes_for_drug:
+                                        drug_rec = {
+                                            "gene": gene,
+                                            "drug": drug_id,
+                                            "drugId": drug_info.get("rxnormId", ""),
+                                            "guideline": guideline_name,
+                                            "recommendation": recommendation_text,
+                                            "classification": classification
+                                        }
+                                        drug_recommendations.append(drug_rec)
+                        
+                        # Handle case with no guidelines structure but direct annotations
+                        elif "annotations" in drug_info:
+                            annotations = drug_info.get("annotations", [])
+                            for annotation in annotations:
+                                # Create a generic recommendation
+                                drug_rec = {
+                                    "gene": "Multiple",
+                                    "drug": drug_id,
+                                    "drugId": drug_info.get("rxnormId", ""),
+                                    "guideline": drug_info.get("guidelineName", ""),
+                                    "recommendation": annotation.get("text", "See report for details"),
+                                    "classification": ""
+                                }
+                                drug_recommendations.append(drug_rec)
+                
+                # Handle case where we found genes but no drug recommendations
+                if genes_data and not drug_recommendations:
+                    logger.warning("Found genes but no drug recommendations - creating basic recommendations")
+                    # Create empty recommendations for each gene
+                    for gene_entry in genes_data:
+                        drug_recommendations.append({
+                            "gene": gene_entry["gene"],
+                            "drug": "Multiple",
+                            "drugId": "",
+                            "guideline": "N/A",
+                            "recommendation": "No specific recommendations available",
                             "classification": ""
+                        })
+                
+                # If we found either genes or drug recommendations, consider JSON processing successful
+                if genes_data or drug_recommendations:
+                    json_processing_success = True
+                    normalized_response.update({
+                        "success": True,
+                        "message": "PharmCAT results normalized successfully",
+                        "data": {
+                            "genes": genes_data,
+                            "drugRecommendations": drug_recommendations
                         }
-                        drug_recommendations.append(drug_rec)
-                        logger.info(f"Added drug recommendation from messages: {drug_rec}")
+                    })
+                    
+                    logger.info(f"Successfully parsed {len(genes_data)} genes and {len(drug_recommendations)} drug recommendations")
+                    return normalized_response
+                
+            # If initial direct format processing failed, try alternative parsing approaches
+            # more parsing strategies would be implemented here
+                
+        # If JSON processing failed or no suitable data found, try TSV as a backup
+        if not json_processing_success:
+            logger.warning("No JSON data found in PharmCAT response, trying TSV")
+            
+            # If we have TSV content, try to use it
+            if tsv_content:
+                try:
+                    logger.info("Trying TSV processing as backup method")
+                    
+                    # Try to get phenotype data for drug recommendations
+                    phenotype_data = None
+                    if "data" in response and "results" in response["data"] and "phenotype_results" in response["data"]["results"]:
+                        logger.info("Found phenotype data in response.data.results.phenotype_results")
+                        phenotype_data = response["data"]["results"]["phenotype_results"]
+                    elif "results" in response and "phenotype_results" in response["results"]:
+                        logger.info("Found phenotype data in response.results.phenotype_results")
+                        phenotype_data = response["results"]["phenotype_results"]
+                    elif "phenotype_results" in response:
+                        logger.info("Found phenotype data in response.phenotype_results")
+                        phenotype_data = response["phenotype_results"]
+                    
+                    # Use TSV report parser with phenotype data if available
+                    normalized_data = parse_pharmcat_tsv_report(tsv_content, phenotype_data)
+                    normalized_response.update({
+                        "success": True,
+                        "message": "PharmCAT results normalized successfully from TSV (backup method)",
+                        "data": {
+                            "genes": normalized_data["genes"],
+                            "drugRecommendations": normalized_data.get("drugRecommendations", [])
+                        }
+                    })
+                    logger.info(f"Normalized {len(normalized_data['genes'])} genes from TSV report")
+                    
+                    # Return the normalized response
+                    return normalized_response
+                except Exception as e:
+                    logger.error(f"Error parsing PharmCAT TSV report: {str(e)}")
+                    # Continue to error handling below
+            else:
+                logger.error("No TSV report found and JSON processing failed")
         
-        # Update the normalized response
+        # If we get here, both JSON and TSV processing failed
+        error_msg = "Failed to normalize PharmCAT results: No valid JSON structure and no TSV backup available"
         normalized_response.update({
-            "success": True,
-            "message": "PharmCAT results normalized successfully",
-            "genes": genes_data,
-            "drugRecommendations": drug_recommendations
+            "success": False,
+            "message": error_msg
         })
-        
-        logger.info(f"Normalized {len(genes_data)} genes and {len(drug_recommendations)} drug recommendations")
         return normalized_response
         
     except Exception as e:
-        error_msg = f"Error normalizing PharmCAT results: {str(e)}"
+        error_msg = f"Failed to normalize PharmCAT results: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        normalized_response["message"] = error_msg
+        normalized_response.update({
+            "success": False,
+            "message": error_msg
+        })
         return normalized_response
 
 def get_logger():
@@ -679,64 +839,6 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             "message": error_msg
         }
 
-def run_pharmcat_docker(input_file: str) -> Dict[str, Any]:
-    """
-    Run PharmCAT using Docker container.
-    
-    Args:
-        input_file: Path to the input file
-        
-    Returns:
-        Dictionary containing PharmCAT results
-    """
-    try:
-        # Create a temporary directory for output
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Get the absolute path to the input file and temporary directory
-            abs_input_file = os.path.abspath(input_file)
-            abs_temp_dir = os.path.abspath(temp_dir)
-            
-            # Extract directory and filename
-            input_dir = os.path.dirname(abs_input_file)
-            input_filename = os.path.basename(abs_input_file)
-            
-            logger.info(f"Running PharmCAT Docker for file: {input_filename}")
-            
-            # Docker run command
-            command = [
-                "docker", "run", "--rm",
-                "-v", f"{input_dir}:/input",
-                "-v", f"{abs_temp_dir}:/output",
-                PHARMCAT_DOCKER_IMAGE,
-                "-m", "23andme",
-                "-i", f"/input/{input_filename}",
-                "-o", "/output"
-            ]
-            
-            process = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            logger.info(f"PharmCAT Docker execution successful: {process.stdout}")
-            
-            # Read the results JSON file
-            results_file = os.path.join(temp_dir, "results.json")
-            if os.path.exists(results_file):
-                with open(results_file, 'r') as f:
-                    results = json.load(f)
-                return results
-            else:
-                raise FileNotFoundError(f"PharmCAT results file not found: {results_file}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error running PharmCAT Docker: {e.stderr}")
-        raise
-    except Exception as e:
-        logger.error(f"Error processing PharmCAT Docker results: {str(e)}")
-        raise
-
 def parse_pharmcat_results(results: Dict[str, Any]) -> Dict[str, Any]:
     """
     Parse PharmCAT results into a standardized format.
@@ -836,4 +938,242 @@ def parse_pharmcat_results(results: Dict[str, Any]) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Error parsing PharmCAT results: {str(e)}")
-        raise 
+        raise
+
+def parse_pharmcat_tsv_report(tsv_content, phenotype_data=None):
+    """
+    Parse PharmCAT TSV report format into normalized data structure.
+    This is used as a backup method when JSON parsing fails.
+    
+    NOTE: Future enhancement possibility - integrate with a local database of 
+    drug recommendations instead of relying on the phenotype JSON data.
+    This would make the TSV format fully self-sufficient.
+    
+    Args:
+        tsv_content (str): Raw TSV content as string
+        phenotype_data (dict, optional): Phenotype data from PharmCAT phenotype.json file
+        
+    Returns:
+        dict: Normalized data with genes and drug recommendations
+    """
+    logger = get_logger()
+    
+    # Initialize return structure
+    normalized_data = {
+        "genes": [],
+        "drugRecommendations": []
+    }
+    
+    try:
+        lines = tsv_content.strip().split('\n')
+        
+        if len(lines) < 2:
+            raise ValueError("TSV content has insufficient data")
+        
+        # Extract PharmCAT version from first line
+        pharmcat_version = lines[0].strip()
+        logger.info(f"Parsing PharmCAT TSV report: {pharmcat_version}")
+        
+        # Parse header row to get column indices
+        headers = lines[1].split('\t')
+        
+        # Define column indices with safe fallbacks (-1 indicates column not found)
+        try:
+            col_indices = {
+                "gene": headers.index("Gene") if "Gene" in headers else -1,
+                "diplotype": headers.index("Source Diplotype") if "Source Diplotype" in headers else -1,
+                "phenotype": headers.index("Phenotype") if "Phenotype" in headers else -1,
+                "activity_score": headers.index("Activity Score") if "Activity Score" in headers else -1,
+                "hap1": headers.index("Haplotype 1") if "Haplotype 1" in headers else -1,
+                "hap1_function": headers.index("Haplotype 1 Function") if "Haplotype 1 Function" in headers else -1,
+                "hap1_activity": headers.index("Haplotype 1 Activity Value") if "Haplotype 1 Activity Value" in headers else -1,
+                "hap2": headers.index("Haplotype 2") if "Haplotype 2" in headers else -1,
+                "hap2_function": headers.index("Haplotype 2 Function") if "Haplotype 2 Function" in headers else -1,
+                "hap2_activity": headers.index("Haplotype 2 Activity Value") if "Haplotype 2 Activity Value" in headers else -1,
+                "outside_call": headers.index("Outside Call") if "Outside Call" in headers else -1,
+                "match_score": headers.index("Match Score") if "Match Score" in headers else -1,
+                "missing_positions": headers.index("Missing positions") if "Missing positions" in headers else -1,
+                "lookup_diplotype": headers.index("Recommendation Lookup Diplotype") if "Recommendation Lookup Diplotype" in headers else -1,
+                "lookup_phenotype": headers.index("Recommendation Lookup Phenotype") if "Recommendation Lookup Phenotype" in headers else -1,
+                "lookup_activity_score": headers.index("Recommendation Lookup Activity Score") if "Recommendation Lookup Activity Score" in headers else -1
+            }
+            
+            # Validate that we have at least the essential columns
+            if col_indices["gene"] == -1:
+                logger.warning("No 'Gene' column found in TSV, trying alternate headers")
+                # Try an alternate header format
+                if "gene" in [h.lower() for h in headers]:
+                    col_indices["gene"] = [h.lower() for h in headers].index("gene")
+                else:
+                    raise ValueError("Required 'Gene' column not found in TSV headers")
+                    
+        except ValueError as e:
+            logger.error(f"Error parsing TSV headers: {e}")
+            logger.error(f"Available headers: {headers}")
+            raise ValueError(f"Error parsing TSV headers: {e}")
+        
+        # Check if essential columns are present
+        essential_columns = ["gene"]
+        missing_columns = [col for col in essential_columns if col_indices[col] == -1]
+        if missing_columns:
+            raise ValueError(f"Required columns missing from TSV: {', '.join(missing_columns)}")
+        
+        # Process each gene data row (skip header rows)
+        for i in range(2, len(lines)):
+            row = lines[i].split('\t')
+            
+            if len(row) < max(c for c in col_indices.values() if c >= 0) + 1:
+                # Skip incomplete rows
+                logger.warning(f"Skipping incomplete row (line {i+1}): expected {len(headers)} columns, got {len(row)}")
+                continue
+                
+            # Extract gene information
+            gene_id = row[col_indices["gene"]] if col_indices["gene"] >= 0 and col_indices["gene"] < len(row) else "Unknown"
+            
+            # Skip rows with empty gene IDs
+            if not gene_id or gene_id.strip() == "":
+                logger.warning(f"Skipping row with empty gene ID (line {i+1})")
+                continue
+                
+            diplotype = row[col_indices["diplotype"]] if col_indices["diplotype"] >= 0 and col_indices["diplotype"] < len(row) else "Unknown/Unknown"
+            phenotype = row[col_indices["phenotype"]] if col_indices["phenotype"] >= 0 and col_indices["phenotype"] < len(row) else "Unknown"
+            
+            # Extract activity score (may be empty)
+            activity_score_str = row[col_indices["activity_score"]] if col_indices["activity_score"] >= 0 and col_indices["activity_score"] < len(row) else ""
+            activity_score = None
+            if activity_score_str:
+                try:
+                    activity_score = float(activity_score_str)
+                except ValueError:
+                    logger.warning(f"Invalid activity score value '{activity_score_str}' for gene {gene_id}")
+            
+            # Use Recommendation Lookup fields when available, otherwise use main fields
+            lookup_diplotype = None
+            if col_indices["lookup_diplotype"] >= 0 and col_indices["lookup_diplotype"] < len(row):
+                lookup_diplotype = row[col_indices["lookup_diplotype"]]
+            
+            lookup_phenotype = None
+            if col_indices["lookup_phenotype"] >= 0 and col_indices["lookup_phenotype"] < len(row):
+                lookup_phenotype = row[col_indices["lookup_phenotype"]]
+            
+            # Use lookup values if available, otherwise use main values
+            final_diplotype = lookup_diplotype if lookup_diplotype else diplotype
+            final_phenotype = lookup_phenotype if lookup_phenotype else phenotype
+            
+            # Extract lookup activity score
+            lookup_activity_score = None
+            if col_indices["lookup_activity_score"] >= 0 and col_indices["lookup_activity_score"] < len(row):
+                try:
+                    val = row[col_indices["lookup_activity_score"]]
+                    if val and val.strip():
+                        lookup_activity_score = float(val)
+                except ValueError:
+                    logger.warning(f"Invalid lookup activity score value for gene {gene_id}")
+            
+            # If no lookup activity score, use main activity score
+            final_activity_score = lookup_activity_score if lookup_activity_score is not None else activity_score
+            
+            # Set activity_score to 2.0 for Normal Metabolizers if not specified
+            if final_activity_score is None and ("Normal Metabolizer" in final_phenotype or "Normal Function" in final_phenotype):
+                final_activity_score = 2.0
+            
+            gene_entry = {
+                "gene": gene_id,
+                "diplotype": final_diplotype,
+                "phenotype": final_phenotype,
+                "activity_score": final_activity_score
+            }
+            
+            normalized_data["genes"].append(gene_entry)
+            logger.info(f"Added gene from TSV: {gene_entry}")
+        
+        # Extract drug recommendations from phenotype data if available
+        if phenotype_data:
+            drug_recs = extract_drug_recommendations_from_phenotype(phenotype_data)
+            normalized_data["drugRecommendations"] = drug_recs
+            logger.info(f"Added {len(drug_recs)} drug recommendations from phenotype data")
+        
+        logger.info(f"Successfully parsed {len(normalized_data['genes'])} genes from TSV report")
+        return normalized_data
+        
+    except Exception as e:
+        logger.error(f"Error parsing PharmCAT TSV report: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
+def extract_drug_recommendations_from_phenotype(phenotype_data):
+    """
+    Extract drug recommendations from PharmCAT phenotype.json data
+    
+    Args:
+        phenotype_data (dict): PharmCAT phenotype.json data
+        
+    Returns:
+        list: List of normalized drug recommendation objects
+    """
+    logger = get_logger()
+    drug_recommendations = []
+    
+    try:
+        # Extract directly from the drugRecommendations field if present
+        if "drugRecommendations" in phenotype_data and isinstance(phenotype_data["drugRecommendations"], list):
+            for drug_rec in phenotype_data["drugRecommendations"]:
+                if not isinstance(drug_rec, dict):
+                    continue
+                    
+                # Extract drug name
+                drug_name = "Unknown"
+                if "drug" in drug_rec:
+                    if isinstance(drug_rec["drug"], dict) and "name" in drug_rec["drug"]:
+                        drug_name = drug_rec["drug"]["name"]
+                    else:
+                        drug_name = str(drug_rec["drug"])
+                
+                # Create normalized drug recommendation
+                normalized_rec = {
+                    "gene": drug_rec.get("gene", "Multiple"),
+                    "drug": drug_name,
+                    "drugId": drug_rec.get("drugId", ""),
+                    "guideline": drug_rec.get("guidelineName", ""),
+                    "recommendation": drug_rec.get("recommendationText", "See report for details"),
+                    "classification": drug_rec.get("classification", "")
+                }
+                
+                drug_recommendations.append(normalized_rec)
+                logger.info(f"Added drug recommendation from phenotype data: {normalized_rec}")
+        
+        # Also check for other phenotype data structures
+        elif "phenotypes" in phenotype_data:
+            # Extract drug recommendations from phenotypes if possible
+            for gene_id, gene_data in phenotype_data["phenotypes"].items():
+                if "drugRecommendations" in gene_data and isinstance(gene_data["drugRecommendations"], list):
+                    for drug_rec in gene_data["drugRecommendations"]:
+                        if not isinstance(drug_rec, dict):
+                            continue
+                            
+                        # Extract drug name
+                        drug_name = "Unknown"
+                        if "drug" in drug_rec:
+                            if isinstance(drug_rec["drug"], dict) and "name" in drug_rec["drug"]:
+                                drug_name = drug_rec["drug"]["name"]
+                            else:
+                                drug_name = str(drug_rec["drug"])
+                        
+                        # Create normalized drug recommendation
+                        normalized_rec = {
+                            "gene": gene_id,
+                            "drug": drug_name,
+                            "drugId": drug_rec.get("drugId", ""),
+                            "guideline": drug_rec.get("guidelineName", ""),
+                            "recommendation": drug_rec.get("recommendationText", "See report for details"),
+                            "classification": drug_rec.get("classification", "")
+                        }
+                        
+                        drug_recommendations.append(normalized_rec)
+                        logger.info(f"Added drug recommendation from phenotype.phenotypes data: {normalized_rec}")
+        
+        return drug_recommendations
+    except Exception as e:
+        logger.error(f"Error extracting drug recommendations from phenotype data: {str(e)}")
+        logger.error(traceback.format_exc())
+        return [] 

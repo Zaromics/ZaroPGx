@@ -52,6 +52,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data
+      - pharmcat-references:/pharmcat/pipeline
     ports:
       - "5001:5000"  # Flask API port
     environment:
@@ -208,6 +209,8 @@ volumes:
   pgdata:
     driver: local
   fhir-data:
+    driver: local
+  pharmcat-references:
     driver: local
 
 networks:

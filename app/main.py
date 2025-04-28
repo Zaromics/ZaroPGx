@@ -2755,6 +2755,35 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
     try:
         logger.info(f"Starting PharmCAT analysis for {genome_path}" + (f" with report_id: {report_id}" if report_id else ""))
         
+        # If we have a report_id, first check if there's already a raw report file
+        if report_id:
+            raw_report_path = f"/data/reports/{report_id}/{report_id}_raw_report.json"
+            if os.path.exists(raw_report_path):
+                logger.info(f"Found existing raw report file at {raw_report_path}")
+                try:
+                    with open(raw_report_path, "r") as f:
+                        raw_report = json.load(f)
+                        logger.info(f"Successfully loaded raw report with keys: {list(raw_report.keys())}")
+                        
+                        # Normalize this raw report directly
+                        normalized_results = pharmcat_client.normalize_pharmcat_results(raw_report)
+                        
+                        if normalized_results.get("success", False):
+                            return {
+                                "success": normalized_results["success"],
+                                "message": normalized_results["message"],
+                                "data": {
+                                    "genes": normalized_results.get("data", {}).get("genes", []),
+                                    "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
+                                    "pdf_report_url": f"/reports/{report_id}/{report_id}_pgx_report.pdf",
+                                    "html_report_url": f"/reports/{report_id}/{report_id}_pgx_report.html"
+                                }
+                            }
+                        else:
+                            logger.warning(f"Failed to normalize existing raw report: {normalized_results.get('message', 'Unknown error')}")
+                except Exception as e:
+                    logger.warning(f"Error reading existing raw report file: {str(e)}")
+        
         # Call the PharmCAT service
         # If report_id is provided, use async_call_pharmcat_api with the report_id
         # Otherwise use the standard async_call_pharmcat_api
@@ -2780,8 +2809,49 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
                     )
                     
                     response.raise_for_status()
-                    response = response.json()
+                    raw_response = response.json()
+                    
+                    # Log raw response structure for debugging
+                    logger.info(f"Raw PharmCAT API response structure: {json.dumps(list(raw_response.keys()), indent=2)}")
+                    
+                    if "data" in raw_response:
+                        logger.info(f"Response 'data' keys: {json.dumps(list(raw_response.get('data', {}).keys()), indent=2)}")
+                        
+                        # Get the actual report URL from the response
+                        for url_key in ["pharmcat_json_report_url", "json_report_url", "raw_report_url"]:
+                            if url_key in raw_response.get("data", {}):
+                                url = raw_response["data"][url_key]
+                                logger.info(f"Found report URL ({url_key}): {url}")
+                                
+                                # Try to fetch the report content from the URL
+                                if url.startswith("/"):
+                                    # Convert relative URL to absolute path
+                                    file_path = url.lstrip("/")
+                                    if os.path.exists(file_path):
+                                        logger.info(f"Found report file at {file_path}")
+                                        with open(file_path, "r") as f:
+                                            try:
+                                                report_content = json.load(f)
+                                                logger.info(f"Loaded JSON report with keys: {list(report_content.keys())}")
+                                                
+                                                # Normalize this report content directly
+                                                normalized_results = pharmcat_client.normalize_pharmcat_results(report_content)
+                                                
+                                                return {
+                                                    "success": normalized_results["success"],
+                                                    "message": normalized_results["message"],
+                                                    "data": {
+                                                        "genes": normalized_results.get("data", {}).get("genes", []),
+                                                        "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
+                                                        "pdf_report_url": raw_response.get("data", {}).get("pdf_report_url", ""),
+                                                        "html_report_url": raw_response.get("data", {}).get("html_report_url", "")
+                                                    }
+                                                }
+                                            except json.JSONDecodeError as e:
+                                                logger.error(f"Error parsing JSON report: {str(e)}")
+                    
                     logger.info(f"Async PharmCAT API call with report_id successful")
+                    response = raw_response
             except Exception as e:
                 logger.warning(f"Error with custom async call with report_id: {str(e)}. Falling back to standard call.")
                 # Fall back to the standard call if needed
@@ -2798,6 +2868,109 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
                 "message": "Invalid response from PharmCAT service"
             }
         
+        # Deeper inspection of the response structure
+        logger.info(f"Response keys: {list(response.keys())}")
+        
+        # Check for report paths in the response
+        if "data" in response and isinstance(response["data"], dict):
+            # Check for raw report URL first
+            if report_id:
+                # Look for various potential report files
+                for report_file in [
+                    f"/data/reports/{report_id}/{report_id}_raw_report.json",
+                    f"/data/reports/{report_id}/{report_id}_pgx_report.json",
+                    f"/data/reports/{report_id}/{report_id}.report.json"
+                ]:
+                    if os.path.exists(report_file):
+                        logger.info(f"Found report file: {report_file}")
+                        try:
+                            with open(report_file, "r") as f:
+                                report_content = json.load(f)
+                                logger.info(f"Successfully loaded report with keys: {list(report_content.keys())}")
+                                
+                                # Normalize this report content directly
+                                normalized_results = pharmcat_client.normalize_pharmcat_results(report_content)
+                                
+                                if normalized_results.get("success", False):
+                                    return {
+                                        "success": normalized_results["success"],
+                                        "message": normalized_results["message"],
+                                        "data": {
+                                            "genes": normalized_results.get("data", {}).get("genes", []),
+                                            "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
+                                            "pdf_report_url": f"/reports/{report_id}/{report_id}_pgx_report.pdf",
+                                            "html_report_url": f"/reports/{report_id}/{report_id}_pgx_report.html"
+                                        }
+                                    }
+                        except Exception as e:
+                            logger.warning(f"Error reading report file {report_file}: {str(e)}")
+        
+            # If we haven't returned yet, check for file URLs in the response
+            for url_key in ["pharmcat_json_report_url", "json_report_url", "raw_report_url"]:
+                if url_key in response.get("data", {}):
+                    url = response["data"][url_key]
+                    logger.info(f"Found report URL in response.data.{url_key}: {url}")
+                    
+                    # Try to fetch the report content from the URL
+                    if url.startswith("/"):
+                        # Convert relative URL to absolute path
+                        file_path = url.lstrip("/")
+                        if os.path.exists(file_path):
+                            logger.info(f"Found report file at {file_path}")
+                            with open(file_path, "r") as f:
+                                try:
+                                    report_content = json.load(f)
+                                    logger.info(f"Loaded JSON report with keys: {list(report_content.keys())}")
+                                    
+                                    # Normalize this report content directly
+                                    normalized_results = pharmcat_client.normalize_pharmcat_results(report_content)
+                                    
+                                    if normalized_results.get("success", False):
+                                        return {
+                                            "success": normalized_results["success"],
+                                            "message": normalized_results["message"],
+                                            "data": {
+                                                "genes": normalized_results.get("data", {}).get("genes", []),
+                                                "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
+                                                "pdf_report_url": response.get("data", {}).get("pdf_report_url", ""),
+                                                "html_report_url": response.get("data", {}).get("html_report_url", "")
+                                            }
+                                        }
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Error parsing JSON report: {str(e)}")
+        
+        # If the response has a nested results structure, extract it for normalization
+        if "data" in response and "results" in response.get("data", {}):
+            logger.info("Found nested results structure in data.results")
+            if "report_json" in response["data"]["results"]:
+                logger.info("Found report_json in data.results.report_json")
+                # Create a wrapper that keeps this nested structure for normalization
+                wrapper_response = {
+                    "success": response.get("success", True),
+                    "data": {
+                        "results": {
+                            "report_json": response["data"]["results"]["report_json"]
+                        }
+                    }
+                }
+                # If there's also report_tsv, include it
+                if "report_tsv" in response["data"]["results"]:
+                    logger.info("Found report_tsv in data.results")
+                    wrapper_response["data"]["results"]["report_tsv"] = response["data"]["results"]["report_tsv"]
+                
+                # Normalize with the preserved structure
+                normalized_results = pharmcat_client.normalize_pharmcat_results(wrapper_response)
+                return {
+                    "success": normalized_results["success"],
+                    "message": normalized_results["message"],
+                    "data": {
+                        "genes": normalized_results.get("data", {}).get("genes", []),
+                        "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
+                        "pdf_report_url": normalized_results.get("data", {}).get("pdf_report_url", ""),
+                        "html_report_url": normalized_results.get("data", {}).get("html_report_url", "")
+                    }
+                }
+        
         # Check if the response is in the report.json format (has expected keys)
         required_keys = ["title", "timestamp", "pharmcatVersion", "genes", "drugs"]
         has_report_json_format = all(key in response for key in required_keys)
@@ -2812,10 +2985,10 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
                 "success": normalized_results["success"],
                 "message": normalized_results["message"],
                 "data": {
-                    "genes": normalized_results["genes"],
-                    "drugRecommendations": normalized_results["drugRecommendations"],
-                    "pdf_report_url": normalized_results["pdf_report_url"],
-                    "html_report_url": normalized_results["html_report_url"]
+                    "genes": normalized_results.get("data", {}).get("genes", []),
+                    "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
+                    "pdf_report_url": normalized_results.get("data", {}).get("pdf_report_url", ""),
+                    "html_report_url": normalized_results.get("data", {}).get("html_report_url", "")
                 }
             }
         
@@ -2845,10 +3018,10 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
                 "success": normalized_results["success"],
                 "message": normalized_results["message"],
                 "data": {
-                    "genes": normalized_results["genes"],
-                    "drugRecommendations": normalized_results["drugRecommendations"],
-                    "pdf_report_url": normalized_results["pdf_report_url"],
-                    "html_report_url": normalized_results["html_report_url"]
+                    "genes": normalized_results.get("data", {}).get("genes", []),
+                    "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
+                    "pdf_report_url": normalized_results.get("data", {}).get("pdf_report_url", ""),
+                    "html_report_url": normalized_results.get("data", {}).get("html_report_url", "")
                 }
             }
         
@@ -2874,4 +3047,84 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
         return {
             "success": False,
             "message": f"Error in PharmCAT analysis: {str(e)}"
+        }
+
+# Add near the end of the file, before the last functions
+
+@app.post("/reprocess-report/{report_id}")
+async def reprocess_report(report_id: str):
+    """
+    Reprocess an existing report by re-running PharmCAT analysis with the updated parser.
+    This is primarily for testing parser changes.
+    """
+    try:
+        logger.info(f"Reprocessing report {report_id}")
+        
+        # Find the VCF file for the given report ID
+        report_dir = Path(f"/data/reports/{report_id}")
+        uploads_dir = Path(f"/data/uploads/{report_id}")
+        
+        # Look for VCF files in both directories
+        vcf_files = []
+        for directory in [report_dir, uploads_dir]:
+            if directory.exists():
+                vcf_files.extend(list(directory.glob("*.vcf")) + list(directory.glob("*.vcf.gz")))
+        
+        if not vcf_files:
+            # If no VCF files found, return an error
+            logger.error(f"No VCF files found for report {report_id}")
+            return {
+                "success": False,
+                "message": f"No VCF files found for report {report_id}"
+            }
+        
+        # Use the first VCF file found
+        vcf_path = str(vcf_files[0])
+        logger.info(f"Using VCF file: {vcf_path}")
+        
+        # Run PharmCAT analysis with the existing report ID
+        results = await run_pharmcat_analysis(vcf_path, report_id)
+        
+        # Check if the analysis was successful
+        if not results.get("success", False):
+            logger.error(f"PharmCAT analysis failed for report {report_id}: {results.get('message', 'Unknown error')}")
+            return {
+                "success": False,
+                "message": f"PharmCAT analysis failed: {results.get('message', 'Unknown error')}"
+            }
+        
+        # Generate reports using the updated results
+        from app.reports.generator import generate_report
+        
+        # Create patient info dictionary
+        patient_info = {
+            "id": f"patient_{report_id}",
+            "report_id": report_id,
+            "name": f"Patient {report_id}",
+            "age": "N/A",
+            "sex": "N/A",
+            "encounter_date": datetime.now().strftime("%Y-%m-%d")
+        }
+        
+        # Generate report files
+        report_paths = generate_report(results, f"/data/reports/{report_id}", patient_info)
+        
+        # Return the results with report paths
+        return {
+            "success": True,
+            "message": "Report reprocessed successfully",
+            "data": {
+                "report_id": report_id,
+                "report_paths": report_paths,
+                "genes": results.get("data", {}).get("genes", []),
+                "drugRecommendations": results.get("data", {}).get("drugRecommendations", [])
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Error reprocessing report {report_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "message": f"Error reprocessing report: {str(e)}"
         }
