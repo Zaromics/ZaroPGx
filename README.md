@@ -1,5 +1,7 @@
 # ZaroPGx - Pharmacogenomic Report Generator
 
+![Screenshot 2025-05-02 011020](https://github.com/user-attachments/assets/f352c10a-23ba-4583-a6b1-196ae32c06ae)
+
 A containerized pharmacogenomic report generator that processes genetic data and generates clinical reports based on CPIC guidelines. The system will eventually offer many types of reports, starting with a complete general report and a report oriented toward neurological pgx.
 
 # Notice
