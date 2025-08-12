@@ -1,5 +1,5 @@
 # Use a smaller base image with Python
-FROM python:3.10-slim
+FROM python:3.12-bookworm
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -33,6 +33,10 @@ RUN apt-get update && \
     libopenjp2-7-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
 # Install bcftools from source
 RUN git clone --recurse-submodules https://github.com/samtools/htslib.git && \
     cd htslib && \
@@ -53,14 +57,12 @@ RUN git clone --recurse-submodules https://github.com/samtools/htslib.git && \
 # Set work directory
 WORKDIR /app
 
-# Copy requirements.txt and install dependencies
-COPY requirements.txt .
-
-# Install Python dependencies - install directly from requirements.txt for better versioning
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Ensure aiohttp is installed explicitly with a specific version
-RUN pip install --no-cache-dir aiohttp
+# Copy dependency manifests and install with uv into system site-packages
+COPY pyproject.toml uv.lock ./
+# Export locked requirements and sync them into the system environment
+RUN uv export --frozen --format requirements-txt > requirements.lock \
+    && uv pip sync --system requirements.lock \
+    && rm -f requirements.lock
 
 # Create directories for data and reports
 RUN mkdir -p /data/reports /data/uploads

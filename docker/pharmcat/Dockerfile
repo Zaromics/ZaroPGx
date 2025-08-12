@@ -49,8 +49,10 @@ RUN wget -q https://github.com/PharmGKB/PharmCAT/releases/download/v${PHARMCAT_V
     && rm pharmcat-pipeline-${PHARMCAT_VERSION}.tar.gz \
     && ln -s /pharmcat/pipeline/pharmcat-${PHARMCAT_VERSION}-all.jar /pharmcat/pharmcat.jar
 
-# Install PharmCAT Python dependencies
-RUN pip3 install -r /pharmcat/pipeline/requirements.txt
+# Install uv and PharmCAT Python dependencies
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+RUN uv pip install --system -r /pharmcat/pipeline/requirements.txt
 
 # Add PharmCAT pipeline scripts to path
 RUN chmod +x /pharmcat/pipeline/pharmcat_pipeline && \
@@ -59,7 +61,7 @@ ENV PATH="/pharmcat/pipeline:/usr/local/bin:${PATH}"
 
 # Install Flask wrapper API dependencies
 COPY requirements.txt /tmp/
-RUN pip3 install -r /tmp/requirements.txt
+RUN uv pip install --system -r /tmp/requirements.txt
 
 # Copy the wrapper script and start script
 COPY pharmcat.py /app/

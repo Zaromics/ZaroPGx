@@ -143,9 +143,9 @@ The services are organized in a Docker Compose configuration with clear dependen
 Each service manages its dependencies within its own container:
 
 - **PostgreSQL**: Version 15 with initialization scripts in `db/init`
-- **PharmCAT Service**: Java 17 with PharmCAT v3.0.0 JAR file. Python 3.10 with Flask and other requirements in `docker/pharmcat/requirements.txt`
+- **PharmCAT Service**: Java 17 with PharmCAT v3.0.0 JAR file. Python 3.12 with Flask; Python deps installed via uv in Docker.
 - **GATK Service**:
-- **FastAPI Backend**: Python 3.10 with requirements specified in `requirements.txt`
+- **FastAPI Backend**: Python 3.12 with dependencies defined in `pyproject.toml` and locked by `uv.lock` (installed via uv)
 - **HAPI-FHIR**: 
 
 ### Data Sharing
@@ -220,7 +220,7 @@ The application includes a robust system for handling PharmCAT report JSON data:
 
 ### Adding New Dependencies
 
-1. For Python services, add new requirements to the appropriate requirements.txt file
+1. For Python services, add new dependencies to `pyproject.toml` and run `uv lock` (or update service-specific installs in Dockerfiles where applicable)
 2. For system dependencies, add them to the appropriate Dockerfile
 3. Rebuild the affected containers:
    ```bash

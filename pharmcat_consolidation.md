@@ -15,7 +15,7 @@ touch docker/pharmcat-unified/Dockerfile
 2. Copy the wrapper code and dependencies:
 ```bash
 cp docker/pharmcat/pharmcat.py docker/pharmcat-unified/
-cp docker/pharmcat/requirements.txt docker/pharmcat-unified/
+# Note: dependency management now uses uv for the main app; PharmCAT image still uses its own requirements file internally if needed.
 cp docker/pharmcat/start.sh docker/pharmcat-unified/ # if needed
 ```
 

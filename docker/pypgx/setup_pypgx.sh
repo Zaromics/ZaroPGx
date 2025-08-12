@@ -26,9 +26,12 @@ fi
 # Create required directories
 mkdir -p /data/temp
 
-# Install dependencies for the wrapper
-pip install --upgrade pip
-pip install --no-cache-dir fastapi uvicorn python-multipart
+# Install dependencies for the wrapper (use uv if available)
+if command -v uv >/dev/null 2>&1; then
+  uv pip install --system fastapi uvicorn python-multipart
+else
+  pip install --no-cache-dir fastapi uvicorn python-multipart
+fi
 
 # Verify that PyPGx is working
 echo "Testing PyPGx installation..."

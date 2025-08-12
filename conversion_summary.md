@@ -13,7 +13,7 @@ GATK → Stargazer (for CYP2D6 only) → PharmCAT
 
 ## Changes Made
 
-1. Created `pyproject.toml` for Poetry dependency management.
+1. Created `pyproject.toml` for dependency management (now PEP 621-based for uv).
 2. Updated `docker-compose.yml` to replace Aldy service with GATK and Stargazer services.
 3. Created new Dockerfiles and service wrappers:
    - docker/gatk/Dockerfile.gatk
@@ -46,11 +46,17 @@ The following files should be deleted as they're no longer needed:
 
 4. Update the app's main code to use GATK and Stargazer instead of Aldy.
 
-5. Setup Poetry for dependency management:
+5. Setup uv for dependency management:
    ```
-   pip install poetry
-   poetry init
-   poetry install
+   # Install uv
+   # Windows
+   iwr -useb https://astral.sh/uv/install.ps1 | iex
+   # macOS/Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   
+   # Lock and install
+   uv lock
+   uv sync
    ```
 
 6. Rebuild and restart the services:

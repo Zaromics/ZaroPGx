@@ -1,41 +1,65 @@
-[tool.poetry]
+## PEP 621 project metadata for uv
+[project]
 name = "zaropgx"
 version = "0.1.0"
 description = "Pharmacogenomic Analysis Pipeline using GATK, PyPGx and PharmCAT"
-authors = ["Iliya Yaroshevskiy <ilya.yaroshevskiy@gmail.com>"]
 readme = "README.md"
+requires-python = ">=3.9,<4.0"
+authors = [
+  { name = "Iliya Yaroshevskiy", email = "ilya.yaroshevskiy@gmail.com" }
+]
 
-[tool.poetry.dependencies]
-python = "^3.9"
-fastapi = "^0.95.0"
-uvicorn = "^0.21.1"
-python-multipart = "^0.0.6"
-python-jose = "^3.3.0"
-passlib = "^1.7.4"
-bcrypt = "^4.0.1"
-sqlalchemy = "^2.0.7"
-psycopg2-binary = "^2.9.5"
-alembic = "^1.10.2"
-pandas = "^2.0.0"
-numpy = "^1.24.2"
-pydantic = "^1.10.7"
-python-dotenv = "^1.0.0"
-weasyprint = "^52.5"
-jinja2 = "^3.1.2"
-pdfkit = "^1.0.0"
-requests = "^2.28.2"
-httpx = "^0.23.3"
-aiofiles = "^23.1.0"
-aiohttp = "^3.8.0"
-biopython = "^1.81"  # Common for bioinformatics
+dependencies = [
+  # Web and ASGI
+  "fastapi>=0.95.0,<1.0.0",
+  "uvicorn>=0.21.1,<1.0.0",
+  "python-multipart>=0.0.6,<1.0.0",
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.3.1"
-black = "^23.3.0"
-isort = "^5.12.0"
-flake8 = "^6.0.0"
-mypy = "^1.2.0"
+  # Auth and security
+  "python-jose>=3.3.0,<4.0.0",
+  "passlib>=1.7.4,<2.0.0",
+  "bcrypt>=4.0.1,<5.0.0",
+
+  # Database
+  "sqlalchemy>=2.0.7,<3.0.0",
+  "psycopg2-binary>=2.9.5,<3.0.0",
+  "alembic>=1.10.2,<2.0.0",
+
+  # Data processing
+  "pandas>=2.0.0,<3.0.0",
+  "numpy>=1.24.2,<2.0.0",
+  "pydantic>=1.10.7,<2.0.0",
+  "python-dotenv>=1.0.0,<2.0.0",
+
+  # Reporting
+  "weasyprint>=52.5,<53.0",
+  "jinja2>=3.1.2,<4.0.0",
+  "pdfkit>=1.0.0,<2.0.0",
+
+  # HTTP and async utilities
+  "requests>=2.28.2,<3.0.0",
+  "httpx>=0.23.3,<1.0.0",
+  "aiofiles>=23.1.0,<24.0.0",
+  "aiohttp>=3.8.0,<4.0.0",
+
+  # Bioinformatics
+  "biopython>=1.81,<2.0.0",
+
+  # Additional utilities (from requirements.txt)
+  "starlette",
+  "sse-starlette",
+  "werkzeug",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "black",
+  "isort",
+  "flake8",
+  "mypy",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api" 
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

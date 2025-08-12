@@ -5,7 +5,7 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 
 ## Project Status
 - **Current Phase**: Phase 1 Implementation - Core Gene Groups
-- **Last Updated**: April 7, 2025
+- **Last Updated**: August 12, 2025
 
 ## Components & Services
 
@@ -46,6 +46,25 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 | **Progress Tracking** | 🟢 Fixed | Real-time progress monitoring | Fixed issue with VCF processing progress |
 
 ## Recent Changes
+
+0. **Full Dependency Management Migration to uv (August 12, 2025)**:
+   - Switched from plain pip/Poetry to `uv` for dependency management and installs.
+   - Converted `pyproject.toml` to PEP 621 `[project]` format and added `uv.lock` for reproducible builds.
+   - Updated Dockerfiles to use uv:
+     - `Dockerfile` (main app): now copies `pyproject.toml` and `uv.lock` and runs `uv sync --system --frozen --no-dev`.
+     - `docker/pharmcat/Dockerfile`: installs `uv` and uses `uv pip install --system -r ...` for both PharmCAT pipeline and wrapper requirements.
+     - `docker/gatk-api/Dockerfile.gatk-api`: uses `uv pip install --system` for Flask/requests/psutil.
+     - `docker/pypgx/Dockerfile.pypgx`: uses `uv pip install --system pypgx scikit-learn` (Python 3.8 compatible).
+     - `docker/genome-downloader/Dockerfile.downloader`: uses `uv pip install --system` for Flask/requests/tqdm.
+   - Compose files remain unchanged; service startup commands are the same.
+   - Notes:
+     - `uvicorn` is the ASGI server; `uv` is the package manager now used for installs.
+     - Root `requirements.txt` has been removed. PharmCAT still uses its own `requirements.txt` inside the image context.
+   - Local dev quickstart:
+     - Install uv on Windows: `iwr -useb https://astral.sh/uv/install.ps1 | iex`
+     - Install uv on macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+     - Sync deps: `uv sync`
+     - Run app: `uv run uvicorn app.main:app --host 0.0.0.0 --port 8000`
 
 1. **FHIR Server Database Storage Fix (April 8, 2025)**:
    - Fixed critical error with FHIR server database access permissions
@@ -259,7 +278,7 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
 - Using Docker version 28.0.4
 - Using official PharmCAT Docker image (pgkb/pharmcat)
 - Directly calling PharmCAT JAR file as per documentation: https://pharmcat.org/using/Running-PharmCAT/
-- Python 3.10 for Flask/FastAPI services
+- Python 3.12 for Flask/FastAPI services
 - PostgreSQL 15 for database
 - The FastAPI application is accessible at http://localhost:8765
 - API documentation is available at http://localhost:8765/docs

@@ -1,4 +1,4 @@
-FROM python:3.8-slim
+FROM python:3.12-slim
 
 LABEL description="PyPGx service for CYP2D6 calling in the ZaroPGx pipeline"
 LABEL maintainer="ZaroPGx Team"
@@ -24,9 +24,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set up working directories
 RUN mkdir -p /app /data /reference /tmp/pypgx
 
-# Install PyPGx with pip and its dependencies
-# Using PyPGx version 0.24.0 which should be compatible with Python 3.8
-RUN pip install --no-cache-dir pypgx scikit-learn
+# Install uv and use it for Python deps
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+# Install PyPGx and dependencies (ensure compatibility with Python 3.12)
+RUN uv pip install --system pypgx scikit-learn
 
 # Clone the matching PyPGx bundle repository
 RUN cd /root && git clone --branch $(pip show pypgx | grep -oP 'Version: \K.*') --depth 1 https://github.com/sbslee/pypgx-bundle || \
