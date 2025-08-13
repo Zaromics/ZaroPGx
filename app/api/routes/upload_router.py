@@ -354,7 +354,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     report_id=data_id,
                     diplotypes=formatted_diplotypes,
                     recommendations=formatted_recommendations,
-                    output_path=str(interactive_html_path)
+                    output_path=str(interactive_html_path),
+                    workflow=workflow_ctx,
                 )
                 
                 # Add provisional flag if the workflow was marked as provisional

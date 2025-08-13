@@ -249,6 +249,26 @@
                 <li>Not available</li>
             {% endif %}
         </ul>
+        <h3>PharmCAT</h3>
+        <p>We acknowledge the use of PharmCAT (Pharmacogenomics Clinical Annotation Tool) for gene-level interpretations and recommendations.</p>
+        <ul>
+            <li>Sangkuhl K, Whirl-Carrillo M, et al. Pharmacogenomics Clinical Annotation Tool (PharmCAT). <em>Clinical Pharmacology &amp; Therapeutics</em>. 2020;107(1):203–210. See also the <a href="https://pharmcat.clinpgx.org/faqs/#create-ones-own-pdf-report-based-on-the-pharmcat-json-file" target="_blank" rel="noopener">PharmCAT FAQ</a>.</li>
+        </ul>
+        <h3>GATK</h3>
+        <p>We acknowledge the use of the Genome Analysis Toolkit (GATK) for variant discovery.</p>
+        <ul>
+            <li>McKenna A, et al. The Genome Analysis Toolkit: a MapReduce framework for analyzing next-generation DNA sequencing data. <em>Genome Research</em>. 2010;20(9):1297–1303.</li>
+            <li>DePristo MA, et al. A framework for variation discovery and genotyping using next-generation DNA sequencing data. <em>Nature Genetics</em>. 2011;43(5):491–498.</li>
+        </ul>
+        <p class="small">Additional guidance: <a href="https://gatk.broadinstitute.org/hc/en-us/articles/360035530852-How-should-I-cite-GATK-in-my-own-publications" target="_blank" rel="noopener">How to cite GATK</a>.</p>
+        <h3>PyPGx</h3>
+        <p>We acknowledge the use of PyPGx for star‑allele calling.</p>
+        <ul>
+            <li>Lee S‑B, et&nbsp;al. ClinPharmSeq: A targeted sequencing panel for clinical pharmacogenetics implementation. <em>PLOS ONE</em>. 2022.</li>
+            <li>Lee S‑B, et&nbsp;al. Stargazer: a software tool for calling star alleles from next‑generation sequencing data using CYP2D6 as a model. <em>Genetics in Medicine</em>. 2018.</li>
+            <li>Lee S‑B, et&nbsp;al. Calling star alleles with Stargazer in 28 pharmacogenes with whole‑genome sequences. <em>Clinical Pharmacology &amp; Therapeutics</em>. 2019.</li>
+        </ul>
+        <!-- Removed duplicated instructional PyPGx block -->
     </div>
 
     <div class="disclaimer">
@@ -282,8 +302,16 @@
     </div>
 
     <div class="footer">
-        <p>ZaroPGx Pharmacogenomic Report &copy; {{ report_date.split(" ")[0].split("-")[0] }} ZaroPGx, Inc.</p>
+        <p>&copy; 2025 {{ author_name or 'Unknown Author' }}</p>
+        <p>This program is licensed under the <a href="{{ license_url }}" target="_blank" rel="noopener">{{ license_name }}</a>.</p>
+        <p>Source code: <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>.</p>
         <p>Generated on {{ report_date }}</p>
     </div>
+    <!-- Debug veneer: remove in production -->
+    {% if debug_json %}
+    <pre style="white-space: pre-wrap; font-size: 10px; color: #666; background: #f7f7f7; border: 1px dashed #ccc; padding: 8px; margin-top: 12px;">
+{{ debug_json }}
+    </pre>
+    {% endif %}
 </body>
 </html> 

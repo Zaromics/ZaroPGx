@@ -32,6 +32,7 @@ RUN apt-get update && \
     libjpeg-dev \
     libopenjp2-7-dev \
     graphviz \
+    python3-graphviz \
     fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
@@ -64,6 +65,7 @@ COPY pyproject.toml uv.lock ./
 # Export locked requirements and sync them into the system environment
 RUN uv export --frozen --format requirements-txt > requirements.lock \
     && uv pip sync --system requirements.lock \
+    && uv pip install --system "graphviz>=0.20.3,<1.0.0" \
     && rm -f requirements.lock
 
 # Create directories for data and reports

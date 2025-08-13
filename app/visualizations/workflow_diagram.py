@@ -276,31 +276,43 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
 
 
 def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optional[Dict[str, Any]] = None) -> bytes:
-    """Convenience wrapper to render the workflow diagram in the requested format.
+    """Render the workflow diagram in the requested format.
 
-    Tries Kroki first, then falls back to a checked-in static asset if available.
+    Preference order:
+      1) Local Graphviz (when a per-sample workflow dict is provided)
+      2) Kroki (Mermaid)
+      3) Checked-in static asset fallback
     """
+    # Prefer local Graphviz when we have structured workflow info
+    if workflow:
+        try:
+            if fmt in ("svg", "png"):
+                return render_with_graphviz(workflow, fmt=fmt)
+            # For PDF, render SVG and let the caller embed it
+            return render_with_graphviz(workflow, fmt="svg")
+        except Exception as e:
+            logger.warning("Graphviz render failed (%s); trying Kroki", str(e))
+
+    # Try Kroki (use Mermaid from workflow or repo file)
     mermaid = build_mermaid_from_workflow(workflow) if workflow else read_workflow_mermaid()
-    # First try Kroki
     try:
         return render_with_kroki(mermaid, fmt=fmt)
     except Exception as e:
-        logger.warning("Kroki render failed (%s); trying Graphviz", str(e))
-        # Try local Graphviz
-        if workflow:
-            try:
-                if fmt in ("svg", "png"):
-                    return render_with_graphviz(workflow, fmt=fmt)
-                # If PDF requested, produce SVG and let caller embed it
-                return render_with_graphviz(workflow, fmt="svg")
-            except Exception as e2:
-                logger.warning("Graphviz render failed (%s); trying static asset", str(e2))
-        # Static asset fallback
-        static = try_read_static_asset(preferred=fmt)
-        if static is not None:
-            _static_fmt, content = static
-            return content
-        return b""
+        logger.warning("Kroki render failed (%s); trying static asset", str(e))
+
+    # Static asset fallback
+    static = try_read_static_asset(preferred=fmt)
+    if static is not None:
+        _static_fmt, content = static
+        return content
+
+    # Final: pure-Python PNG breadcrumb if requested and workflow provided
+    if workflow and fmt == "png":
+        try:
+            return render_simple_png_from_workflow(workflow)
+        except Exception:
+            pass
+    return b""
 
 def render_workflow_png_data_uri(workflow: Optional[Dict[str, Any]] = None) -> str:
     """Render workflow to PNG and return a data URI suitable for <img src> embedding."""

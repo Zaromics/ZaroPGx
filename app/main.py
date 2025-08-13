@@ -412,6 +412,30 @@ async def home(request: Request):
         logger.exception(f"Error in home route: {str(e)}")
         return HTMLResponse(f"<h1>Error</h1><p>{str(e)}</p>")
 
+@app.get("/license")
+async def license_text():
+    try:
+        project_root = Path(__file__).resolve().parent.parent
+        license_path = project_root / "LICENSE"
+        if license_path.exists():
+            return FileResponse(str(license_path), media_type="text/plain")
+        return HTMLResponse("<pre>LICENSE file not found.</pre>", status_code=404)
+    except Exception:
+        return HTMLResponse("<pre>Unable to serve LICENSE.</pre>", status_code=500)
+
+
+@app.get("/notice")
+async def notice_text():
+    try:
+        project_root = Path(__file__).resolve().parent.parent
+        notice_path = project_root / "NOTICE"
+        if notice_path.exists():
+            return FileResponse(str(notice_path), media_type="text/plain")
+        return HTMLResponse("<pre>NOTICE file not found.</pre>", status_code=404)
+    except Exception:
+        return HTMLResponse("<pre>Unable to serve NOTICE.</pre>", status_code=500)
+
+
 @app.get("/api")
 async def api_root():
     return {"message": "Welcome to ZaroPGx API", "docs": "/docs"}

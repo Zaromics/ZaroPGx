@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime
 import re
+import base64
 from typing import List, Dict, Any
 import requests
 from weasyprint import HTML, CSS
@@ -43,6 +44,43 @@ def get_zaropgx_version() -> str:
     if env_version:
         return env_version
     return _read_version_from_pyproject()
+
+
+def _read_author_from_pyproject() -> str:
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        pyproject_path = os.path.join(project_root, "pyproject.toml")
+        if not os.path.exists(pyproject_path):
+            return "Unknown Author"
+        with open(pyproject_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        authors_block_match = re.search(r"^\s*authors\s*=\s*\[(.*?)\]", content, flags=re.DOTALL | re.MULTILINE)
+        block = authors_block_match.group(1) if authors_block_match else content
+        name_match = re.search(r"name\s*=\s*\"([^\"]+)\"", block)
+        if name_match:
+            return name_match.group(1).strip()
+        return "Unknown Author"
+    except Exception:
+        return "Unknown Author"
+
+
+def get_author_name() -> str:
+    env_author = os.getenv("AUTHOR_NAME")
+    if env_author:
+        return env_author
+    return _read_author_from_pyproject()
+
+
+def get_license_name() -> str:
+    return "GNU Affero General Public License v3.0"
+
+
+def get_license_url() -> str:
+    return "https://www.gnu.org/licenses/agpl-3.0.html"
+
+
+def get_source_url() -> str:
+    return os.getenv("SOURCE_URL", "https://github.com/Zaroganos/ZaroPGx")
 
 
 def _normalize_version_text(version_text: str) -> str:
@@ -118,7 +156,39 @@ def _get_hapi_fhir_version() -> str:
 def build_platform_info() -> List[Dict[str, str]]:
     items: List[Dict[str, str]] = []
     items.append({"name": "ZaroPGx", "version": get_zaropgx_version()})
-    items.extend(_load_versions_from_shared_dir())
+    # Merge from /data/versions and repo data/versions (for dev)
+    merged: Dict[str, str] = {}
+    for src in (_load_versions_from_shared_dir,):
+        for it in src():
+            name = it.get("name", "").strip()
+            ver = _normalize_version_text(it.get("version", "N/A"))
+            if name:
+                merged.setdefault(name.lower(), ver)
+    # Try repo data/versions as well
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        repo_versions_dir = os.path.join(project_root, "data", "versions")
+        if os.path.isdir(repo_versions_dir):
+            for fname in os.listdir(repo_versions_dir):
+                if not fname.endswith(".json"):
+                    continue
+                fpath = os.path.join(repo_versions_dir, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if isinstance(data, dict):
+                        name = str(data.get("name", os.path.splitext(fname)[0])).strip()
+                        ver = _normalize_version_text(str(data.get("version", "N/A")).strip())
+                        if name:
+                            merged.setdefault(name.lower(), ver)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    # Append merged entries
+    for key, ver in merged.items():
+        display = {"gatk": "GATK", "pharmcat": "PharmCAT", "pypgx": "PyPGx"}.get(key, key.capitalize())
+        items.append({"name": display, "version": ver})
     # Add HAPI FHIR Server version
     # Only add if not already provided by a versions manifest
     lower_names = {i.get("name", "").lower() for i in items}
@@ -242,6 +312,7 @@ def generate_pdf_report(
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
         
         # Prepare the report data
+        platform = build_platform_info()
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
@@ -249,8 +320,12 @@ def generate_pdf_report(
             "diplotypes": diplotypes,
             "recommendations": recommendations,
             "disclaimer": get_disclaimer(),
-            "platform_info": build_platform_info(),
+            "platform_info": platform,
             "citations": build_citations(),
+            "author_name": get_author_name(),
+            "license_name": get_license_name(),
+            "license_url": get_license_url(),
+            "source_url": get_source_url(),
         }
         
         # Load and render the HTML template
@@ -454,7 +529,17 @@ def create_interactive_html_report(
         except Exception:
             workflow_png_url = ""
         if not workflow_png_url:
-            # Try data-URI PNG (Kroki/Graphviz)
+            # Try to render a PNG, save it, and expose as URL
+            try:
+                png_bytes = render_workflow(fmt="png", workflow=workflow)
+                if png_bytes:
+                    with open(os.path.join(report_dir, f"{report_id}_workflow.png"), "wb") as f_out:
+                        f_out.write(png_bytes)
+                    workflow_png_url = f"/reports/{report_id}/{report_id}_workflow.png"
+            except Exception:
+                workflow_png_url = ""
+        if not workflow_png_url:
+            # Fall back to data-URI PNG
             try:
                 workflow_png_data_uri = render_workflow_png_data_uri(workflow=workflow)
             except Exception:
@@ -499,6 +584,10 @@ def create_interactive_html_report(
             "workflow_html_fallback": workflow_html_fallback,
             "platform_info": build_platform_info(),
             "citations": build_citations(),
+            "author_name": get_author_name(),
+            "license_name": get_license_name(),
+            "license_url": get_license_url(),
+            "source_url": get_source_url(),
         }
         
         # Load and render the HTML template
@@ -571,6 +660,9 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     template_recommendations = map_recommendations_for_template(data.get("drugRecommendations", []))
     
     # Prepare the template data
+    # Build platform info once and include in both outputs
+    platform = build_platform_info()
+
     template_data = {
         "patient": patient_info or {},
         "report_date": datetime.now().strftime("%Y-%m-%d"),
@@ -579,8 +671,12 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         "recommendations": template_recommendations,  # Use mapped recommendations
         "drug_recommendations": data.get("drugRecommendations", []),  # Keep original for reference
         "version": get_zaropgx_version(),
-        "platform_info": build_platform_info(),
+        "platform_info": platform,
         "citations": build_citations(),
+        "author_name": get_author_name(),
+        "license_name": get_license_name(),
+        "license_url": get_license_url(),
+        "source_url": get_source_url(),
     }
     
     # Get patient and report IDs
@@ -594,12 +690,19 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     os.makedirs(report_dir, exist_ok=True)
     logger.info(f"Created report directory: {report_dir}")
 
-    # Determine per-sample workflow for dynamic diagram
+    # Determine per-sample workflow for dynamic diagram from explicit flags or inference
+    file_type = str(data.get("file_type", "vcf")).lower()
+    used_gatk_flag = bool(data.get("used_gatk", False))
+    used_pypgx_flag = bool(data.get("used_pypgx", False))
+    # Infer usage conservatively: only show as used if we actually ran the step or if upstream recorded it
+    inferred_gatk = used_gatk_flag or file_type in {"bam", "cram", "sam"} and bool(data.get("gatk_output_path"))
+    inferred_pypgx = used_pypgx_flag and any(g for g in data.get("genes", []) if isinstance(g, dict) and g.get("gene", "").upper() == "CYP2D6")
+
     per_sample_workflow = {
-        "file_type": data.get("file_type", "vcf"),
+        "file_type": file_type,
         "extracted_file_type": data.get("extracted_file_type"),
-        "used_gatk": data.get("used_gatk", False),
-        "used_pypgx": data.get("used_pypgx", False),
+        "used_gatk": inferred_gatk,
+        "used_pypgx": inferred_pypgx,
         "used_pharmcat": True,
         "exported_to_fhir": False,
     }
@@ -650,30 +753,76 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 autoescape=select_autoescape(['html', 'xml'])
             )
             template = env.get_template("report_template.html")
-            # Prepare all workflow variants for HTML
+            # Prepare workflow visuals for HTML, preferring pre-rendered files
             workflow_svg_in_html = ""
             workflow_png_data_uri_html = ""
             workflow_html_fallback_html = ""
-            try:
-                svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
-                workflow_svg_in_html = svg_bytes.decode("utf-8", errors="ignore")
-            except Exception:
-                workflow_svg_in_html = ""
-            try:
-                workflow_png_data_uri_html = render_workflow_png_data_uri(workflow=per_sample_workflow)
-            except Exception:
-                workflow_png_data_uri_html = ""
+
+            # Prefer previously written assets
+            svg_path = os.path.join(report_dir, workflow_svg_filename)
+            png_path = os.path.join(report_dir, workflow_png_filename)
+
+            if os.path.exists(svg_path):
+                try:
+                    with open(svg_path, "r", encoding="utf-8") as f_svg:
+                        workflow_svg_in_html = f_svg.read()
+                except Exception:
+                    workflow_svg_in_html = ""
+            if not workflow_svg_in_html and os.path.exists(png_path):
+                try:
+                    with open(png_path, "rb") as f_png:
+                        b64 = base64.b64encode(f_png.read()).decode("ascii")
+                        workflow_png_data_uri_html = f"data:image/png;base64,{b64}"
+                except Exception:
+                    workflow_png_data_uri_html = ""
+
+            # If no local assets available, try dynamic renderers and finally HTML fallback
             if not workflow_svg_in_html and not workflow_png_data_uri_html:
                 try:
-                    workflow_html_fallback_html = build_simple_html_from_workflow(per_sample_workflow)
+                    svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
+                    workflow_svg_in_html = svg_bytes.decode("utf-8", errors="ignore")
                 except Exception:
-                    workflow_html_fallback_html = ""
+                    workflow_svg_in_html = ""
+                if not workflow_svg_in_html:
+                    try:
+                        workflow_png_data_uri_html = render_workflow_png_data_uri(workflow=per_sample_workflow)
+                    except Exception:
+                        workflow_png_data_uri_html = ""
+                if not workflow_svg_in_html and not workflow_png_data_uri_html:
+                    try:
+                        workflow_html_fallback_html = build_simple_html_from_workflow(per_sample_workflow)
+                    except Exception:
+                        workflow_html_fallback_html = ""
+
+            # Build debug veneer payload
+            try:
+                debug_info = {
+                    "per_sample_workflow": per_sample_workflow,
+                    "workflow_render": {
+                        "pre_svg_path_exists": bool(os.path.exists(svg_path)),
+                        "pre_png_path_exists": bool(os.path.exists(png_path)),
+                        "used_inline_svg": bool(workflow_svg_in_html),
+                        "used_png_data_uri": bool(workflow_png_data_uri_html),
+                        "used_html_fallback": bool(workflow_html_fallback_html),
+                    },
+                    "platform_info": platform,
+                    "footer_context": {
+                        "author_name": template_data.get("author_name"),
+                        "license_name": template_data.get("license_name"),
+                        "license_url": template_data.get("license_url"),
+                        "source_url": template_data.get("source_url"),
+                    },
+                }
+                debug_json = json.dumps(debug_info, indent=2)
+            except Exception:
+                debug_json = "{}"
 
             html_content = template.render(
                 **template_data,
                 workflow_svg=workflow_svg_in_html,
                 workflow_png_data_uri=workflow_png_data_uri_html,
                 workflow_html_fallback=workflow_html_fallback_html,
+                debug_json=debug_json,
             )
             
             with open(html_path, "w", encoding="utf-8") as f:
