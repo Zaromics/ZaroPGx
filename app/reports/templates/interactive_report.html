@@ -343,7 +343,7 @@
     <div class="container">
         <div class="report-info">
             <div class="report-info-item">
-                <strong>Patient ID:</strong> {{ patient_id }}
+                <strong>Sample ID:</strong> {{ patient_id }}
             </div>
             <div class="report-info-item">
                 <strong>Report ID:</strong> {{ report_id }}
@@ -365,7 +365,7 @@
             
             <div id="summary" class="tab-content active">
                 <h3>Executive Summary</h3>
-                <p>This interactive report provides comprehensive pharmacogenomic information based on the patient's genetic analysis. The information can be used to guide medication selection and dosing based on the patient's genetic profile.</p>
+                <p>This interactive report provides comprehensive pharmacogenomic information based on the sample's genetic analysis.</p>
                 
                 <h4>Key Findings</h4>
                 <div class="grid">
@@ -448,7 +448,7 @@
             
             <div id="drugs" class="tab-content">
                 <h3>Drug Recommendations</h3>
-                <p>The following recommendations are based on CPIC guidelines and the patient's genetic profile:</p>
+                <p>The following recommendations are based on CPIC guidelines and this sample's genetic profile:</p>
                 
                 <div class="grid">
                     {% for rec in recommendations %}
@@ -475,6 +475,32 @@
                 <h3>Interactive Visualizations</h3>
                 
                 <div class="chart-container">
+                    <h4>Sample Workflow</h4>
+                    {% if workflow_png_url %}
+                      <img src="{{ workflow_png_url }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+                    {% elif workflow_png_data_uri %}
+                      <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+                    {% elif workflow_svg %}
+                      {{ workflow_svg | safe }}
+                    {% elif workflow_html_fallback %}
+                      {{ workflow_html_fallback | safe }}
+                    {% else %}
+                      <!-- Hard fail-safe directly in template -->
+                      <div>
+                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
+                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
+                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
+                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
+                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
+                      </div>
+                    {% endif %}
+                </div>
+                
+                <div class="chart-container">
                     <h4>Drug-Gene Interaction Network</h4>
                     <div id="networkVisualization"></div>
                 </div>
@@ -488,7 +514,7 @@
         
         <div class="section">
             <h2>Methodology</h2>
-            <p>The patient's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), which follows the guidelines of the Clinical Pharmacogenetics Implementation Consortium (CPIC). The genetic data was processed to identify star alleles and diplotypes, which were then used to determine phenotypes and drug recommendations.</p>
+            <p>The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC guidelines.</p>
             
             <p>The recommendations in this report are based on the following sources:</p>
             <ul>
@@ -498,10 +524,48 @@
             </ul>
         </div>
         
+        <div class="section">
+            <h2>Platform and Citations</h2>
+            <h3>Software Platform</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Component</th>
+                        <th>Version</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if platform_info and platform_info|length > 0 %}
+                        {% for item in platform_info %}
+                        <tr>
+                            <td>{{ item.name }}</td>
+                            <td>{{ item.version }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="2">Not available</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+
+            <h3>Citations</h3>
+            <ul>
+                {% if citations and citations|length > 0 %}
+                    {% for c in citations %}
+                    <li>{{ c.text }}</li>
+                    {% endfor %}
+                {% else %}
+                    <li>Not available</li>
+                {% endif %}
+            </ul>
+        </div>
+
         <div class="disclaimer">
             {{ disclaimer }}
         </div>
-        
+
         <!-- FHIR Export Section -->
         <div class="section" id="fhirExportSection">
             <h2>Export to Electronic Health Record</h2>
@@ -548,7 +612,7 @@
     </div>
     
     <footer>
-        <p>&copy; {{ report_date.split(" ")[0].split("-")[0] }} ZaroPGx - Pharmacogenomics Analysis Platform</p>
+        <p>&copy; {{ report_date.split(" ")[0].split("-")[0] }} Iliya Yaroshevskiy</p>
     </footer>
     
     <!-- Store report data in a hidden element for JavaScript to access -->

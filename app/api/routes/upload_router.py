@@ -237,8 +237,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 logger.warning("Missing 'drugRecommendations' in results data, adding empty list")
                 results.setdefault("data", {})["drugRecommendations"] = []
             
-            # Generate reports
-            if results.get("success", False):
+            # Generate reports (proceed even if normalization 'success' is False; use whatever data is available)
+            try:
                 # Create directory for reports if it doesn't exist
                 reports_dir = Path("/data/reports")
                 reports_dir.mkdir(parents=True, exist_ok=True)
@@ -250,10 +250,11 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 
                 # Set up the output paths with patient-specific directory
                 report_path = patient_dir / f"{data_id}_pgx_report.pdf"
-                html_report_path = patient_dir / f"{data_id}_pgx_report.html"
+                interactive_html_path = patient_dir / f"{data_id}_pgx_report_interactive.html"
+                pharmcat_html_path = patient_dir / f"{data_id}_pgx_pharmcat.html"
                 
                 # Extract data needed for the reports
-                pharmcat_data = results.get("data", {})
+                pharmcat_data = results.get("data", {}) if isinstance(results, dict) else {}
                 
                 # Extract diplotypes from PharmCAT results - should be normalized already
                 diplotypes = pharmcat_data.get("genes", [])
@@ -310,20 +311,18 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Log the number of recommendations found
                 logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
                 
-                # Check if the HTML report already exists (may have been copied by PharmCAT wrapper)
-                html_report_exists = html_report_path.exists()
-                
-                # Try to copy the HTML report directly from PharmCAT output if it exists in the data
-                if not html_report_exists and "html_report_url" in pharmcat_data:
+                # Try to copy the PharmCAT HTML report to a distinct file if it exists in the data
+                pharmcat_html_exists = False
+                if "html_report_url" in pharmcat_data:
                     source_path = pharmcat_data["html_report_url"]
                     if source_path.startswith("/"):
                         # This is a direct file path, not a URL
                         source_path = source_path.lstrip("/")
                         full_source_path = Path("/") / source_path
                         if full_source_path.exists():
-                            shutil.copy2(full_source_path, html_report_path)
-                            html_report_exists = True
-                            logger.info(f"Copied HTML report from {full_source_path} to {html_report_path}")
+                            shutil.copy2(full_source_path, pharmcat_html_path)
+                            pharmcat_html_exists = True
+                            logger.info(f"Copied PharmCAT HTML report from {full_source_path} to {pharmcat_html_path}")
                 
                 # Log warning if no data was found
                 if len(formatted_diplotypes) == 0:
@@ -337,39 +336,42 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 
                 # Generate PDF report (even if HTML report already exists)
                 logger.info(f"Generating PDF report to {report_path}")
+                # Derive workflow context for per-sample diagram
+                workflow_ctx = workflow.copy() if isinstance(workflow, dict) else {}
                 generate_pdf_report(
                     patient_id=patient_id,
                     report_id=data_id,
                     diplotypes=formatted_diplotypes,
                     recommendations=formatted_recommendations,
-                    report_path=str(report_path)
+                    report_path=str(report_path),
+                    workflow=workflow_ctx,
                 )
                 
-                # Generate HTML report if it doesn't already exist
-                if not html_report_exists:
-                    logger.info(f"Generating interactive HTML report to {html_report_path}")
-                    create_interactive_html_report(
-                        patient_id=patient_id,
-                        report_id=data_id,
-                        diplotypes=formatted_diplotypes,
-                        recommendations=formatted_recommendations,
-                        output_path=str(html_report_path)
-                    )
+                # Always generate our interactive HTML report to a distinct filename
+                logger.info(f"Generating interactive HTML report to {interactive_html_path}")
+                create_interactive_html_report(
+                    patient_id=patient_id,
+                    report_id=data_id,
+                    diplotypes=formatted_diplotypes,
+                    recommendations=formatted_recommendations,
+                    output_path=str(interactive_html_path)
+                )
                 
                 # Add provisional flag if the workflow was marked as provisional
                 is_provisional = workflow.get("is_provisional", False)
                 
                 # Update job status with report URLs and results
-                job_status[data_id].update({
-                    "data": {
-                        "pdf_report_url": f"/reports/{data_id}/{data_id}_pgx_report.pdf",
-                        "html_report_url": f"/reports/{data_id}/{data_id}_pgx_report.html",
-                        "diplotypes": formatted_diplotypes,
-                        "recommendations": formatted_recommendations,
-                        "is_provisional": is_provisional,
-                        "warnings": workflow.get("warnings", [])
-                    }
-                })
+                response_data = {
+                    "pdf_report_url": f"/reports/{data_id}/{data_id}_pgx_report.pdf",
+                    "html_report_url": f"/reports/{data_id}/{data_id}_pgx_report_interactive.html",
+                    "diplotypes": formatted_diplotypes,
+                    "recommendations": formatted_recommendations,
+                    "is_provisional": is_provisional,
+                    "warnings": workflow.get("warnings", [])
+                }
+                if pharmcat_html_exists:
+                    response_data["pharmcat_html_report_url"] = f"/reports/{data_id}/{data_id}_pgx_pharmcat.html"
+                job_status[data_id].update({"data": response_data})
                 
                 # Add completion message with provisional status if applicable
                 completion_message = "Analysis completed successfully"
@@ -377,14 +379,12 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     completion_message += " (PROVISIONAL RESULTS)"
                 
                 logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}/{data_id}_pgx_report.html")
-            
-            else:
-                # Handle PharmCAT error
-                error_msg = results.get("message", "Unknown error in PharmCAT processing")
-                logger.error(f"PharmCAT processing failed: {error_msg}")
+            except Exception as gen_err:
+                # If our custom generation failed, attempt to surface PharmCAT HTML if available
+                logger.error(f"Error during custom report generation: {str(gen_err)}")
                 job_status[data_id].update({
                     "status": "error",
-                    "message": f"PharmCAT processing failed: {error_msg}"
+                    "message": f"Report generation failed: {str(gen_err)}",
                 })
                 return
                 
@@ -530,7 +530,11 @@ async def upload_genomic_data(
             vcf_info = VCFHeaderInfo(
                 reference_genome=file_analysis.vcf_info.reference_genome,
                 sequencing_platform=file_analysis.vcf_info.sequencing_platform,
-                sequencing_profile=file_analysis.vcf_info.sequencing_profile,
+                sequencing_profile=(
+                    file_analysis.vcf_info.sequencing_profile.value
+                    if hasattr(file_analysis.vcf_info.sequencing_profile, "value")
+                    else file_analysis.vcf_info.sequencing_profile
+                ),
                 has_index=file_analysis.vcf_info.has_index,
                 is_bgzipped=file_analysis.vcf_info.is_bgzipped,
                 contigs=file_analysis.vcf_info.contigs,
@@ -539,7 +543,11 @@ async def upload_genomic_data(
             )
         
         analysis_info = PydanticFileAnalysis(
-            file_type=file_analysis.file_type,
+            file_type=(
+                file_analysis.file_type.value
+                if hasattr(file_analysis.file_type, "value")
+                else file_analysis.file_type
+            ),
             is_compressed=file_analysis.is_compressed,
             has_index=file_analysis.has_index,
             vcf_info=vcf_info,

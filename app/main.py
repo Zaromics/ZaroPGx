@@ -1309,13 +1309,22 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 logger.warning("No recommendations found for report. Using empty list.")
                 # No longer using dummy data - will proceed with empty list
             
-            # Generate PDF
+            # Generate PDF with dynamic workflow diagram
+            from app.visualizations.workflow_diagram import build_mermaid_from_workflow  # noqa: F401
+            per_sample_workflow = {
+                "file_type": file_type,
+                "used_gatk": True if file_type in ["bam", "cram", "sam"] else False,
+                "used_pypgx": bool(cyp2d6_results),
+                "used_pharmcat": True,
+                "exported_to_fhir": False,
+            }
             generate_pdf_report(
                 patient_id=sample_id or job_id,
                 report_id=job_id,
                 diplotypes=diplotypes,
                 recommendations=recommendations,
-                report_path=report_path
+                report_path=report_path,
+                workflow=per_sample_workflow,
             )
             
             # Generate interactive HTML
@@ -1324,7 +1333,8 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 report_id=job_id,
                 diplotypes=diplotypes,
                 recommendations=recommendations,
-                output_path=html_report_path
+                output_path=html_report_path,
+                workflow=per_sample_workflow,
             )
             
             # Final check for job tracking 

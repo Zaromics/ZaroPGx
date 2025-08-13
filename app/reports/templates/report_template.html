@@ -124,17 +124,45 @@
     </div>
     
     <div class="report-info">
-        <p><strong>Patient ID:</strong> {{ patient_id }}</p>
+        <p><strong>Sample ID:</strong> {{ patient_id }}</p>
         <p><strong>Report ID:</strong> {{ report_id }}</p>
         <p><strong>Report Date:</strong> {{ report_date }}</p>
     </div>
-    
+
+    <div class="section">
+        <h2>Workflow Overview</h2>
+        <div style="border:1px solid #eee; padding:10px; background:#fff">
+            {% if workflow_svg %}
+              {{ workflow_svg | safe }}
+            {% elif workflow_png_data_uri %}
+              <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+            {% elif workflow_html_fallback %}
+              {{ workflow_html_fallback | safe }}
+            {% else %}
+              <!-- Hard fail-safe directly in template -->
+              <div>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
+              </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="page-break"></div>
+
     <div class="section">
         <h2>Executive Summary</h2>
-        <p>This report provides pharmacogenomic information based on the patient's genetic analysis. The information can be used to guide medication selection and dosing based on the patient's genetic profile.</p>
+        <p>This report provides pharmacogenomic information based on the sample's genetic analysis. The information can be used to inform interpretation of genetic profiles in context.</p>
         
         <div class="summary-highlights">
-            <p>The patient's genetic profile indicates:</p>
+            <p>This sample's genetic profile indicates:</p>
             <ul>
                 {% for d in diplotypes %}
                 <li>
@@ -190,7 +218,7 @@
     
     <div class="section">
         <h2>Drug Recommendations</h2>
-        <p>The following recommendations are based on CPIC guidelines and the patient's genetic profile:</p>
+        <p>The following recommendations are based on CPIC guidelines and this sample's genetic profile:</p>
         
         {% for rec in recommendations %}
         <div class="drug-recommendation 
@@ -210,13 +238,57 @@
     
     <div class="section">
         <h2>Methodology</h2>
-        <p>The patient's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), which follows the guidelines of the Clinical Pharmacogenetics Implementation Consortium (CPIC). The genetic data was processed to identify star alleles and diplotypes, which were then used to determine phenotypes and drug recommendations.</p>
+        <p>The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC (Clinical Pharmacogenetics Implementation Consortium) guidelines. Genetic variants were processed to identify star alleles and diplotypes, which were then mapped to phenotypes and relevant recommendations.</p>
+        {% if workflow_svg %}
+        <h3>Pipeline Overview</h3>
+        <div style="border:1px solid #eee; padding:10px; background:#fff">
+            {{ workflow_svg | safe }}
+        </div>
+        {% endif %}
     </div>
     
+    <div class="section">
+        <h2>Platform and Citations</h2>
+        <h3>Software Platform</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Component</th>
+                    <th>Version</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if platform_info and platform_info|length > 0 %}
+                    {% for item in platform_info %}
+                    <tr>
+                        <td>{{ item.name }}</td>
+                        <td>{{ item.version }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="2">Not available</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+        <h3>Citations</h3>
+        <ul>
+            {% if citations and citations|length > 0 %}
+                {% for c in citations %}
+                <li>{{ c.text }}</li>
+                {% endfor %}
+            {% else %}
+                <li>Not available</li>
+            {% endif %}
+        </ul>
+    </div>
+
     <div class="disclaimer">
         {{ disclaimer }}
     </div>
-    
+
     <div class="footer">
         <p>ZaroPGx Pharmacogenomic Report &copy; {{ report_date.split(" ")[0].split("-")[0] }} ZaroPGx, Inc.</p>
         <p>Generated on {{ report_date }}</p>

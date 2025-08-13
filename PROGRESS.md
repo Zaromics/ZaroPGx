@@ -174,6 +174,25 @@ ZaroPGx is a pharmacogenomics analysis platform using Docker-based microservices
    - Improved error reporting and recovery mechanisms
    - Added support for tracking non-human contigs in job results
 
+16. **Workflow Visualization (Aug 12, 2025)**:
+   - Implemented per-sample workflow visualization and embedding.
+     - Added `visualizations/workflow.mmd` (Mermaid) and `visualizations/workflow.md` (docs).
+     - PDF template (`app/reports/templates/report_template.html`) now shows a "Workflow Overview" section under Sample ID; Executive Summary starts on page 2.
+     - Interactive HTML (`app/reports/templates/interactive_report.html`) shows a "Sample Workflow" panel in the Visualizations tab.
+   - Rendering pipeline (in order) wired via `app/visualizations/workflow_diagram.py` and `app/reports/generator.py`:
+     1) Kroki (Mermaid → SVG/PNG)
+     2) Local Graphviz (SVG/PNG)
+     3) Static asset fallback (`visualizations/workflow.svg/png`)
+     4) Pure-Python PNG (Pillow) breadcrumb
+     5) Simple HTML breadcrumb as last resort
+   - Terminology: switched report/UI wording from "Patient" to "Sample" where applicable.
+   - Current status: In the deployed environment, only the breadcrumb ("train of boxes") fallback is visible in PDF and HTML; full diagram likely blocked by runtime renderer constraints (network or headless rendering).
+   - Next steps:
+     - Ensure no-cache rebuild applied system deps (Graphviz, fonts) and Python deps (Pillow). Verify inside container: `dot -V`.
+     - If outbound HTTP is blocked, consider running a local Kroki service or disable Kroki path entirely.
+     - Force embedding on-disk PNG only (skip inline SVG) to avoid WeasyPrint SVG quirks; add structured logs around render attempts.
+     - Optionally pre-render per-sample PNGs before templating and always embed the file path.
+
 ## Current Challenges
 
 1. **Gene Definition Files**: 

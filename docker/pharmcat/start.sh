@@ -26,5 +26,14 @@ echo "bgzip: $(which bgzip)"
 echo "Testing PharmCAT pipeline command:"
 pharmcat_pipeline --help | head -n 5
 
+# Write version manifest
+mkdir -p /data/versions
+PC_VER=${PHARMCAT_VERSION}
+if [ -z "$PC_VER" ]; then
+  # Try to parse from pharmcat_pipeline --version output
+  PC_VER=$(pharmcat_pipeline --version 2>/dev/null | head -n1 | sed 's/[^0-9.]*\([0-9][0-9.]*\).*/\1/')
+fi
+echo "{\"name\":\"PharmCAT\",\"version\":\"${PC_VER:-unknown}\"}" > /data/versions/pharmcat.json
+
 echo "Starting Flask app..."
 python3 /app/pharmcat.py 

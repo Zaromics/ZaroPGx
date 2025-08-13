@@ -1,0 +1,70 @@
+### ZaroPGx end-to-end processing workflow
+
+This diagram summarizes how a genomic sample flows through ZaroPGx from upload to reporting and optional FHIR export.
+
+```mermaid
+flowchart TD
+  %% ZaroPGx end-to-end processing flow
+
+  subgraph Client["Client/UI"]
+    U[User]
+    U -->|Upload VCF/BAM/CRAM/ZIP| UploadEndpoints["POST /upload-vcf<br/>POST /upload/genomic-data"]
+  end
+
+  subgraph FastAPI["FastAPI App (app/main.py, app/api/routes)"]
+    UploadEndpoints --> SaveTmp[/Save to /tmp and /data/uploads/]
+    SaveTmp --> Detect[Detect file type]
+    Detect -->|ZIP| Extract[Extract ZIP → locate genomic file]
+    Extract --> Detect
+    Detect -->|BAM/SAM/CRAM| GATK
+    Detect -->|VCF| VCF[VCF]
+    GATK --> VCF
+
+    VCF --> PYP_DEC{CYP2D6 star alleles?}
+    PYP_DEC -->|Yes| PYP
+    PYP --> VCF
+    PYP_DEC -->|No| VCF
+
+    VCF --> PCAT
+    PCAT --> PCOutputs["report.json<br/>report.html<br/>report.tsv<br/>match.json<br/>phenotype.json"]
+    PCOutputs --> Normalize["Normalize results<br/>(pharmcat_client.normalize_...)"]
+    Normalize --> Generate["Generate reports<br/>(app/reports/generator.py)"]
+    Generate --> ReportsDir[/Write to /data/reports/<report_id>/]
+    ReportsDir --> Serve["Serve at /reports/* (StaticFiles)"]
+    Serve --> ExportDec{Export to FHIR?}
+    ExportDec -->|No| Done((Complete))
+  end
+
+  subgraph Services["External services (docker-compose)"]
+    GATK["GATK API<br/>(docker/gatk-api)"]
+    PYP["PyPGx Service<br/>(docker/pypgx)"]
+    PCAT["PharmCAT API/JAR<br/>(docker/pharmcat or JAR)"]
+  end
+
+  subgraph FHIR["FHIR Export (optional)"]
+    ExportDec -->|Yes| FhirRoute["POST /reports/<report_id>/export-to-fhir"]
+    FhirRoute --> FhirClient["FhirClient<br/>(app/reports/fhir_client.py)"]
+    FhirClient --> Patient[(Patient)]
+    FhirClient --> Observations[(Observation per gene)]
+    FhirClient --> DiagnosticReport[(DiagnosticReport with links)]
+    DiagnosticReport --> EHR[External FHIR server]
+  end
+
+  %% Progress tracking
+  UploadEndpoints -. updates .-> JobStatus["/progress/<job_id><br/>/job-status/<job_id>"]
+
+  classDef app fill:#e7f0ff,stroke:#5b8def,stroke-width:1px;
+  classDef svc fill:#f8f1ff,stroke:#9b59b6,stroke-width:1px;
+  classDef fhir fill:#eaffea,stroke:#27ae60,stroke-width:1px;
+  classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:1px;
+
+  class ReportsDir,Serve,SaveTmp io;
+```
+
+Notes
+- Upload endpoints include `POST /upload-vcf` (in `app/main.py`) and `POST /upload/genomic-data` (in `app/api/routes/upload_router.py`).
+- Variant calling for BAM/SAM/CRAM goes through the GATK API. Direct VCFs skip this step.
+- PharmCAT can be invoked via the API container or directly via the JAR; results are normalized and rendered to HTML/PDF (including an interactive HTML report).
+- FHIR export creates `Patient`, `Observation`(s), and a `DiagnosticReport` referencing the rendered reports.
+
+

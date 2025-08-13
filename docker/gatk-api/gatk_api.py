@@ -42,6 +42,21 @@ app = Flask(__name__)
 # Store startup time
 app.config["START_TIME"] = time.time()
 
+# Write version manifest at startup
+try:
+    os.makedirs("/data/versions", exist_ok=True)
+    try:
+        result = subprocess.run(["gatk", "--version"], capture_output=True, text=True, timeout=10)
+        gatk_version = (result.stdout or result.stderr or "").strip().splitlines()[0]
+    except Exception:
+        gatk_version = "unknown"
+    with open("/data/versions/gatk.json", "w") as vf:
+        # Keep only the first token if it's a long banner
+        ver_token = gatk_version.replace("GATK", "").strip()
+        vf.write(json.dumps({"name": "GATK", "version": ver_token}))
+except Exception:
+    pass
+
 # Configuration
 GATK_CONTAINER = os.environ.get('GATK_CONTAINER', 'gatk')
 DATA_DIR = os.environ.get('DATA_DIR', '/data')

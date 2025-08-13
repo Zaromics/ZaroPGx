@@ -41,6 +41,10 @@ pypgx -h
 echo "PyPGx supported genes:"
 pypgx list-genes 2>/dev/null || echo "Gene list not available, but proceeding with wrapper startup"
 
+# Write version manifest
+mkdir -p /data/versions
+echo "{\"name\":\"PyPGx\",\"version\":\"${PYPGX_VERSION:-unknown}\"}" > /data/versions/pypgx.json
+
 # Start the FastAPI wrapper
 echo "Starting PyPGx wrapper API..."
 cd /app

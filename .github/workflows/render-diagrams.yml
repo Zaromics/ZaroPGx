@@ -1,0 +1,36 @@
+name: Render Mermaid diagrams
+
+on:
+  push:
+    paths:
+      - 'visualizations/**/*.mmd'
+      - '.github/workflows/render-diagrams.yml'
+  workflow_dispatch: {}
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install mermaid-cli
+        run: npm i -g @mermaid-js/mermaid-cli
+
+      - name: Render diagrams
+        run: |
+          mmdc -i visualizations/workflow.mmd -o visualizations/workflow.svg --scale 1 --backgroundColor transparent
+          mmdc -i visualizations/workflow.mmd -o visualizations/workflow.png --scale 2 --backgroundColor white
+
+      - name: Commit rendered diagrams
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore: render Mermaid diagrams'
+          file_pattern: visualizations/*.svg visualizations/*.png
+
+

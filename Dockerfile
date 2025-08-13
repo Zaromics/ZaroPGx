@@ -31,6 +31,8 @@ RUN apt-get update && \
     libglib2.0-0 \
     libjpeg-dev \
     libopenjp2-7-dev \
+    graphviz \
+    fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)
