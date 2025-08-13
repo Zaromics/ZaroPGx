@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 import re
 from typing import List, Dict, Any
+import requests
 from weasyprint import HTML, CSS
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
@@ -44,6 +45,23 @@ def get_zaropgx_version() -> str:
     return _read_version_from_pyproject()
 
 
+def _normalize_version_text(version_text: str) -> str:
+    """Extract a clean, numeric version string from arbitrary text.
+
+    Examples:
+    - "The Genome Analysis Toolkit () v4.6.1.0" -> "4.6.1.0"
+    - "v6.8.0" -> "6.8.0"
+    - "3.0.0" -> "3.0.0"
+    - "N/A" -> "N/A"
+    """
+    if not version_text:
+        return "N/A"
+    text = str(version_text).strip()
+    # Find the first dotted numeric sequence (at least major.minor)
+    match = re.search(r"\d+(?:\.\d+)+", text)
+    return match.group(0) if match else text
+
+
 def _load_versions_from_shared_dir() -> List[Dict[str, str]]:
     """Read version manifests from the shared /data/versions directory if present."""
     versions_dir = os.path.join("/data", "versions")
@@ -61,7 +79,8 @@ def _load_versions_from_shared_dir() -> List[Dict[str, str]]:
                 if isinstance(data, dict):
                     name = str(data.get("name", os.path.splitext(fname)[0])).strip()
                     version = str(data.get("version", "N/A")).strip()
-                    items.append({"name": name, "version": version})
+                    # Normalize version display for consistency
+                    items.append({"name": name, "version": _normalize_version_text(version)})
             except Exception:
                 continue
     except Exception:
@@ -69,10 +88,46 @@ def _load_versions_from_shared_dir() -> List[Dict[str, str]]:
     return items
 
 
+def _get_hapi_fhir_version() -> str:
+    """Retrieve HAPI FHIR server version from its CapabilityStatement.
+
+    Tries to fetch <FHIR_SERVER_URL>/metadata and parse software.version.
+    Falls back to environment variable HAPI_FHIR_VERSION or "N/A" if not available.
+    """
+    # Prefer explicit env var override if present
+    env_ver = os.getenv("HAPI_FHIR_VERSION")
+    if env_ver:
+        return _normalize_version_text(env_ver)
+
+    server_url = os.environ.get("FHIR_SERVER_URL", "http://fhir-server:8080/fhir")
+    metadata_url = server_url.rstrip("/") + "/metadata"
+    try:
+        headers = {"Accept": "application/fhir+json"}
+        resp = requests.get(metadata_url, headers=headers, timeout=3)
+        if resp.status_code == 200:
+            data = resp.json()
+            software = data.get("software") or {}
+            version = software.get("version") or ""
+            if version:
+                return _normalize_version_text(version)
+    except Exception:
+        pass
+    return "N/A"
+
+
 def build_platform_info() -> List[Dict[str, str]]:
     items: List[Dict[str, str]] = []
     items.append({"name": "ZaroPGx", "version": get_zaropgx_version()})
     items.extend(_load_versions_from_shared_dir())
+    # Add HAPI FHIR Server version
+    # Only add if not already provided by a versions manifest
+    lower_names = {i.get("name", "").lower() for i in items}
+    if not any(name in lower_names for name in ("hapi fhir", "hapi fhir server", "fhir", "hapi")):
+        items.append({"name": "HAPI FHIR Server", "version": _get_hapi_fhir_version()})
+
+    # Ensure all version strings are normalized and not empty
+    for item in items:
+        item["version"] = _normalize_version_text(item.get("version", "N/A"))
     return items
 
 
@@ -80,9 +135,12 @@ def _versions_index() -> Dict[str, str]:
     idx: Dict[str, str] = {}
     for item in _load_versions_from_shared_dir():
         name = item.get("name", "").strip()
-        ver = item.get("version", "").strip()
+        ver = _normalize_version_text(item.get("version", "").strip())
         if name:
             idx[name.lower()] = ver
+    # Include ZaroPGx and HAPI FHIR in the index for citation use if needed
+    idx.setdefault("zaropgx", _normalize_version_text(get_zaropgx_version()))
+    idx.setdefault("hapi fhir server", _normalize_version_text(_get_hapi_fhir_version()))
     return idx
 
 
