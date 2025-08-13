@@ -361,6 +361,9 @@
                 <div class="tab" onclick="showTab('genes')">Genes</div>
                 <div class="tab" onclick="showTab('drugs')">Drugs</div>
                 <div class="tab" onclick="showTab('visualizations')">Visualizations</div>
+                <div class="tab" onclick="showTab('method')">Method</div>
+                <div class="tab" onclick="showTab('export')">Export</div>
+                <div class="tab" onclick="showTab('acknowledgements')">Acknowledgements</div>
             </div>
             
             <div id="summary" class="tab-content active">
@@ -473,33 +476,6 @@
             
             <div id="visualizations" class="tab-content">
                 <h3>Interactive Visualizations</h3>
-                
-                <div class="chart-container">
-                    <h4>Sample Workflow</h4>
-                    {% if workflow_png_url %}
-                      <img src="{{ workflow_png_url }}" alt="Workflow" style="max-width:100%; height:auto;"/>
-                    {% elif workflow_png_data_uri %}
-                      <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
-                    {% elif workflow_svg %}
-                      {{ workflow_svg | safe }}
-                    {% elif workflow_html_fallback %}
-                      {{ workflow_html_fallback | safe }}
-                    {% else %}
-                      <!-- Hard fail-safe directly in template -->
-                      <div>
-                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
-                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
-                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
-                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
-                        <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                        <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
-                      </div>
-                    {% endif %}
-                </div>
-                
                 <div class="chart-container">
                     <h4>Drug-Gene Interaction Network</h4>
                     <div id="networkVisualization"></div>
@@ -510,105 +486,121 @@
                     <canvas id="recommendationChart"></canvas>
                 </div>
             </div>
-        </div>
-        
-        <div class="section">
-            <h2>Methodology</h2>
-            <p>The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC guidelines.</p>
-            
-            <p>The recommendations in this report are based on the following sources:</p>
-            <ul>
-                <li>CPIC guidelines (cpicpgx.org)</li>
-                <li>PharmGKB knowledge base (pharmgkb.org)</li>
-                <li>FDA pharmacogenomic biomarker information</li>
-            </ul>
-        </div>
-        
-        <div class="section">
-            <h2>Platform and Citations</h2>
-            <h3>Software Platform</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Component</th>
-                        <th>Version</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% if platform_info and platform_info|length > 0 %}
-                        {% for item in platform_info %}
-                        <tr>
-                            <td>{{ item.name }}</td>
-                            <td>{{ item.version }}</td>
-                        </tr>
-                        {% endfor %}
-                    {% else %}
-                        <tr>
-                            <td colspan="2">Not available</td>
-                        </tr>
-                    {% endif %}
-                </tbody>
-            </table>
 
-            <h3>Citations</h3>
-            <ul>
-                {% if citations and citations|length > 0 %}
-                    {% for c in citations %}
-                    <li>{{ c.text }}</li>
-                    {% endfor %}
-                {% else %}
-                    <li>Not available</li>
-                {% endif %}
-            </ul>
-        </div>
-
-        <div class="disclaimer">
-            {{ disclaimer }}
-        </div>
-
-        <!-- FHIR Export Section -->
-        <div class="section" id="fhirExportSection">
-            <h2>Export to Electronic Health Record</h2>
-            <p>You can export this pharmacogenomic report to your Electronic Health Record (EHR) system 
-               using FHIR (Fast Healthcare Interoperability Resources) standard.</p>
-               
-            <div class="card">
-                <form id="fhirExportForm">
-                    <div class="mb-3">
-                        <label for="fhirServerUrl" class="form-label">FHIR Server URL</label>
-                        <input type="url" class="form-control" id="fhirServerUrl" name="fhirServerUrl" 
-                               placeholder="https://your-ehr-fhir-server.com/fhir">
-                        <div class="form-text">Enter the FHIR server URL of your EHR system</div>
+            <div id="method" class="tab-content">
+                <h3>Method</h3>
+                <div class="card" style="page-break-inside: avoid;">
+                    <h4>Software Platform</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Component</th>
+                                <th>Version</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if platform_info and platform_info|length > 0 %}
+                                {% for item in platform_info %}
+                                <tr>
+                                    <td>{{ item.name }}</td>
+                                    <td>{{ item.version }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="2">Not available</td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card" style="page-break-inside: avoid;">
+                    <h4>Methodology</h4>
+                    <p>The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC guidelines.</p>
+                </div>
+                <div class="card" style="page-break-inside: avoid;">
+                    <h4>Workflow</h4>
+                    <div class="chart-container">
+                        {% if workflow_png_url %}
+                          <img src="{{ workflow_png_url }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+                        {% elif workflow_png_data_uri %}
+                          <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+                        {% elif workflow_svg %}
+                          {{ workflow_svg | safe }}
+                        {% elif workflow_html_fallback %}
+                          {{ workflow_html_fallback | safe }}
+                        {% else %}
+                          <div>
+                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
+                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
+                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
+                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
+                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
+                          </div>
+                        {% endif %}
                     </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Patient Information (Optional)</label>
-                        <div>
-                            <input type="text" class="form-control" id="patientFamilyName" 
-                                   placeholder="Family Name" style="margin-bottom: 0.5rem;">
-                            <input type="text" class="form-control" id="patientGivenName" 
-                                   placeholder="Given Name" style="margin-bottom: 0.5rem;">
+                </div>
+            </div>
+
+            <div id="export" class="tab-content">
+                <h3>Export to Electronic Health Record</h3>
+                <p>You can export this pharmacogenomic report to your Electronic Health Record (EHR) system 
+                   using FHIR (Fast Healthcare Interoperability Resources) standard.</p>
+                <div class="card">
+                    <form id="fhirExportForm">
+                        <div class="mb-3">
+                            <label for="fhirServerUrl" class="form-label">FHIR Server URL</label>
+                            <input type="url" class="form-control" id="fhirServerUrl" name="fhirServerUrl" 
+                                   placeholder="https://your-ehr-fhir-server.com/fhir">
+                            <div class="form-text">Enter the FHIR server URL of your EHR system</div>
                         </div>
-                        <select class="form-select" id="patientGender">
-                            <option value="" selected>Gender (Optional)</option>
-                            <option value="male">Male</option>
-                            <option value="female">Female</option>
-                            <option value="other">Other</option>
-                            <option value="unknown">Unknown</option>
-                        </select>
-                        <input type="date" class="form-control" id="patientBirthDate" placeholder="Birth Date (Optional)">
-                    </div>
-                    
-                    <div>
-                        <button type="button" class="btn btn-primary" id="fhirExportBtn">Export to EHR</button>
-                    </div>
-                </form>
-                
-                <div id="exportResult" style="margin-top: 1rem; display: none;">
-                    <!-- Export results will appear here -->
+                        <div class="mb-3">
+                            <label class="form-label">Patient Information (Optional)</label>
+                            <div>
+                                <input type="text" class="form-control" id="patientFamilyName" 
+                                       placeholder="Family Name" style="margin-bottom: 0.5rem;">
+                                <input type="text" class="form-control" id="patientGivenName" 
+                                       placeholder="Given Name" style="margin-bottom: 0.5rem;">
+                            </div>
+                            <select class="form-select" id="patientGender">
+                                <option value="" selected>Gender (Optional)</option>
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                                <option value="other">Other</option>
+                                <option value="unknown">Unknown</option>
+                            </select>
+                            <input type="date" class="form-control" id="patientBirthDate" placeholder="Birth Date (Optional)">
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-primary" id="fhirExportBtn">Export to EHR</button>
+                        </div>
+                    </form>
+                    <div id="exportResult" style="margin-top: 1rem; display: none;"></div>
+                </div>
+            </div>
+
+            <div id="acknowledgements" class="tab-content">
+                <h3>Acknowledgements</h3>
+                <div class="card">
+                    <h4>Citations</h4>
+                    <ul>
+                        {% if citations and citations|length > 0 %}
+                            {% for c in citations %}
+                            <li>{{ c.text }}</li>
+                            {% endfor %}
+                        {% else %}
+                            <li>Not available</li>
+                        {% endif %}
+                    </ul>
                 </div>
             </div>
         </div>
+        
+        
     </div>
     
     <footer>

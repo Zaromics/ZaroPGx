@@ -130,32 +130,9 @@
     </div>
 
     <div class="section">
-        <h2>Workflow Overview</h2>
-        <div style="border:1px solid #eee; padding:10px; background:#fff">
-            {% if workflow_svg %}
-              {{ workflow_svg | safe }}
-            {% elif workflow_png_data_uri %}
-              <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
-            {% elif workflow_html_fallback %}
-              {{ workflow_html_fallback | safe }}
-            {% else %}
-              <!-- Hard fail-safe directly in template -->
-              <div>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
-              </div>
-            {% endif %}
-        </div>
+        <h2>Methodology</h2>
+        <p>The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC (Clinical Pharmacogenetics Implementation Consortium) guidelines. Genetic variants were processed to identify star alleles and diplotypes, which were then mapped to phenotypes and relevant recommendations.</p>
     </div>
-
-    <div class="page-break"></div>
 
     <div class="section">
         <h2>Executive Summary</h2>
@@ -214,8 +191,6 @@
         </table>
     </div>
     
-    <div class="page-break"></div>
-    
     <div class="section">
         <h2>Drug Recommendations</h2>
         <p>The following recommendations are based on CPIC guidelines and this sample's genetic profile:</p>
@@ -236,16 +211,7 @@
         {% endfor %}
     </div>
     
-    <div class="section">
-        <h2>Methodology</h2>
-        <p>The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC (Clinical Pharmacogenetics Implementation Consortium) guidelines. Genetic variants were processed to identify star alleles and diplotypes, which were then mapped to phenotypes and relevant recommendations.</p>
-        {% if workflow_svg %}
-        <h3>Pipeline Overview</h3>
-        <div style="border:1px solid #eee; padding:10px; background:#fff">
-            {{ workflow_svg | safe }}
-        </div>
-        {% endif %}
-    </div>
+    
     
     <div class="section">
         <h2>Platform and Citations</h2>
@@ -287,6 +253,32 @@
 
     <div class="disclaimer">
         {{ disclaimer }}
+    </div>
+
+    <div class="section">
+        <h2>Workflow Overview</h2>
+        <div style="border:1px solid #eee; padding:10px; background:#fff">
+            {% if workflow_svg %}
+              {{ workflow_svg | safe }}
+            {% elif workflow_png_data_uri %}
+              <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+            {% elif workflow_html_fallback %}
+              {{ workflow_html_fallback | safe }}
+            {% else %}
+              <!-- Hard fail-safe directly in template -->
+              <div>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
+                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
+              </div>
+            {% endif %}
+        </div>
     </div>
 
     <div class="footer">

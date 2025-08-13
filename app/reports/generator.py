@@ -211,6 +211,20 @@ def generate_pdf_report(
             workflow_png_data_uri = render_workflow_png_data_uri(workflow=workflow)
         except Exception:
             workflow_png_data_uri = ""
+        # If dynamic rendering failed, try to backport the saved PNG from the HTML report
+        if not workflow_svg and not workflow_png_data_uri:
+            try:
+                # The PDF path lives in /data/reports/<report_id>/<report_id>_pgx_report.pdf
+                # Reuse that directory to find the pre-rendered PNG
+                report_dir = os.path.dirname(report_path)
+                png_path = os.path.join(report_dir, f"{report_id}_workflow.png")
+                if os.path.exists(png_path):
+                    import base64
+                    with open(png_path, "rb") as pf:
+                        b64 = base64.b64encode(pf.read()).decode("ascii")
+                        workflow_png_data_uri = f"data:image/png;base64,{b64}"
+            except Exception:
+                pass
         if not workflow_svg and not workflow_png_data_uri:
             # Try pure-Python PNG rasterizer
             try:
