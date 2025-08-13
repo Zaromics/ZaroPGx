@@ -7,31 +7,80 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Add Bootstrap Icons -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <script>
+        (function() {
+            try {
+                const storedTheme = localStorage.getItem('zpgx-theme');
+                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const theme = storedTheme || (prefersDark ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-bs-theme', theme);
+            } catch (e) {
+                document.documentElement.setAttribute('data-bs-theme', 'light');
+            }
+        })();
+    </script>
     <style>
+        :root {
+            color-scheme: light;
+            --header-bg: #0066cc;
+            --header-text: #ffffff;
+            --footer-bg: #f8f9fa;
+            --card-header-bg: #0066cc;
+            --card-header-text: #ffffff;
+        }
+        [data-bs-theme='dark'] {
+            color-scheme: dark;
+            --header-bg: #0b3d91;
+            --header-text: #e6e6e6;
+            --footer-bg: #0f172a;
+            --card-header-bg: #0b3d91;
+            --card-header-text: #e6e6e6;
+        }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             padding-top: 20px;
+            background-color: var(--bs-body-bg);
+            color: var(--bs-body-color);
         }
         .header {
-            background-color: #0066cc;
-            color: white;
-            padding: 2rem 0;
+            background-color: var(--header-bg);
+            color: var(--header-text);
+            padding: 1.25rem 1rem;
             margin-bottom: 2rem;
             border-radius: 0.5rem;
+        }
+        .header-inner {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 1rem;
+        }
+        .header-icon-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-color: rgba(255, 255, 255, 0.65) !important;
+            color: var(--header-text) !important;
+        }
+        .header-icon-btn:hover {
+            background-color: rgba(255, 255, 255, 0.1);
         }
         .card {
             margin-bottom: 1.5rem;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
         .card-header {
-            background-color: #0066cc;
-            color: white;
+            background-color: var(--card-header-bg);
+            color: var(--card-header-text);
             font-weight: bold;
         }
         .footer {
             margin-top: 3rem;
             padding: 1.5rem 0;
-            background-color: #f8f9fa;
+            background-color: var(--footer-bg);
             text-align: center;
         }
         .stage-indicator {
@@ -56,13 +105,13 @@
         }
         */
         /* Apply color styling to both icons and text */
-        .stage-indicator.text-primary i, 
+        .stage-indicator.text-primary i,
         .stage-indicator.text-primary span {
-            color: #0066cc !important;
+            color: var(--bs-primary) !important;
         }
-        .stage-indicator.text-success i, 
+        .stage-indicator.text-success i,
         .stage-indicator.text-success span {
-            color: #198754 !important;
+            color: var(--bs-success) !important;
         }
         /* Removing connector line coloring
         .stage-indicator.text-success::after {
@@ -81,9 +130,23 @@
 </head>
 <body>
     <div class="container">
-        <div class="header text-center">
-            <h1>ZaroPGx</h1>
-            <p class="lead">Pharmacogenomics Analysis Platform</p>
+        <div class="header">
+            <div class="header-inner">
+                <div class="header-left d-flex">
+                    <a href="/" class="btn btn-outline-light header-icon-btn" aria-label="Home" title="Home">
+                        <i class="bi bi-house-door-fill"></i>
+                    </a>
+                </div>
+                <div class="header-center text-center">
+                    <h1 class="mb-0">ZaroPGx</h1>
+                    <p class="lead mb-0">Pharmacogenomics Analysis Platform</p>
+                </div>
+                <div class="header-right d-flex justify-content-end">
+                    <button id="themeToggle" class="btn btn-outline-light header-icon-btn" aria-label="Toggle theme" title="Toggle theme">
+                        <i id="themeIcon" class="bi bi-moon-stars-fill"></i>
+                    </button>
+                </div>
+            </div>
         </div>
 
         <div class="row">
@@ -283,6 +346,43 @@
     
     <!-- Add JavaScript for real progress tracking using Server-Sent Events -->
     <script>
+        // Theme toggle
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeToggle = document.getElementById('themeToggle');
+            const themeIcon = document.getElementById('themeIcon');
+            function setTheme(theme) {
+                document.documentElement.setAttribute('data-bs-theme', theme);
+                try { localStorage.setItem('zpgx-theme', theme); } catch (e) {}
+                if (themeIcon) {
+                    themeIcon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars-fill';
+                }
+                if (themeToggle) {
+                    const label = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+                    themeToggle.setAttribute('aria-label', label);
+                    themeToggle.title = label;
+                }
+            }
+            const stored = (function(){ try { return localStorage.getItem('zpgx-theme'); } catch(e) { return null; } })();
+            const initial = stored || document.documentElement.getAttribute('data-bs-theme') || 'light';
+            setTheme(initial);
+            if (themeToggle) {
+                themeToggle.addEventListener('click', function() {
+                    const current = document.documentElement.getAttribute('data-bs-theme') || 'light';
+                    setTheme(current === 'dark' ? 'light' : 'dark');
+                });
+            }
+            if (window.matchMedia) {
+                try {
+                    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+                        const explicit = (function(){ try { return localStorage.getItem('zpgx-theme'); } catch(e) { return null; } })();
+                        if (!explicit) {
+                            setTheme(e.matches ? 'dark' : 'light');
+                        }
+                    });
+                } catch (e) {}
+            }
+        });
+
         // Define accessToken globally so it can be accessed by all functions
         let accessToken = null; // Will be set on page load
         

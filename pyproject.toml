@@ -6,7 +6,7 @@ description = "Pharmacogenomic Analysis Pipeline using GATK, PyPGx and PharmCAT"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"
 authors = [
-  { name = "Iliya Yaroshevskiy", email = "ilya.yaroshevskiy@gmail.com" }
+  { name = "Iliya Yaroshevskiy", email = "iyarosh1@binghamton.edu" }
 ]
 
 dependencies = [
