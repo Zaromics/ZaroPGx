@@ -188,6 +188,7 @@ services:
       - PYPGX_API_URL=http://pypgx:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
+      - SOURCE_URL=https://github.com/Zaroganos/ZaroPGx
       - PYTHONPATH=/app
       - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
       - LOG_LEVEL=DEBUG # Increase logging verbosity

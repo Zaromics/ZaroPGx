@@ -1,0 +1,110 @@
+ZaroPGx
+Copyright (C) 2025 Iliya Yaroshevskiy
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, version 3.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see https://www.gnu.org/licenses/.
+
+Third-Party Notices
+-------------------
+
+This project redistributes or uses the following third-party components.
+Their respective licenses apply as noted below. A copy of each license can be
+found at the provided links.
+
+- Bootstrap (CSS/JS)
+  License: MIT License
+  Source: https://getbootstrap.com/
+  License text: https://github.com/twbs/bootstrap/blob/main/LICENSE
+
+- Bootstrap Icons
+  License: MIT License
+  Source: https://icons.getbootstrap.com/
+  License text: https://github.com/twbs/icons/blob/main/LICENSE
+
+- WeasyPrint
+  License: BSD-3-Clause
+  Source: https://weasyprint.org/
+  License text: https://github.com/Kozea/WeasyPrint/blob/main/LICENSE
+
+- Jinja2
+  License: BSD-3-Clause
+  Source: https://palletsprojects.com/p/jinja/
+  License text: https://github.com/pallets/jinja/blob/main/LICENSE.rst
+
+- FastAPI
+  License: MIT License
+  Source: https://fastapi.tiangolo.com/
+  License text: https://github.com/tiangolo/fastapi/blob/master/LICENSE
+
+- Starlette
+  License: BSD-3-Clause
+  Source: https://www.starlette.io/
+  License text: https://github.com/encode/starlette/blob/master/LICENSE.md
+
+- Requests
+  License: Apache-2.0
+  Source: https://requests.readthedocs.io/
+  License text: https://github.com/psf/requests/blob/main/LICENSE
+
+- Aiohttp
+  License: Apache-2.0
+  Source: https://docs.aiohttp.org/
+  License text: https://github.com/aio-libs/aiohttp/blob/master/LICENSE.txt
+
+- Pydantic
+  License: MIT License
+  Source: https://docs.pydantic.dev/
+  License text: https://github.com/pydantic/pydantic/blob/main/LICENSE
+
+- NumPy
+  License: BSD-3-Clause
+  Source: https://numpy.org/
+  License text: https://github.com/numpy/numpy/blob/main/LICENSE.txt
+
+- Pandas
+  License: BSD-3-Clause
+  Source: https://pandas.pydata.org/
+  License text: https://github.com/pandas-dev/pandas/blob/main/LICENSE
+
+- Biopython
+  License: Biopython License Agreement
+  Source: https://biopython.org/
+  License text: https://github.com/biopython/biopython/blob/master/LICENSE.rst
+
+- Graphviz (Python bindings)
+  License: MIT License
+  Source: https://graphviz.readthedocs.io/
+  License text: https://github.com/xflr6/graphviz/blob/master/LICENSE.txt
+
+- Pillow
+  License: HPND License (PIL) / Historical Permission Notice and Disclaimer
+  Source: https://python-pillow.org/
+  License text: https://github.com/python-pillow/Pillow/blob/main/LICENSE
+
+- sse-starlette
+  License: MIT License
+  Source: https://github.com/sysid/sse-starlette
+  License text: https://github.com/sysid/sse-starlette/blob/master/LICENSE
+
+- Uvicorn
+  License: BSD-3-Clause
+  Source: https://www.uvicorn.org/
+  License text: https://github.com/encode/uvicorn/blob/master/LICENSE
+
+- SQLAlchemy
+  License: MIT License
+  Source: https://www.sqlalchemy.org/
+  License text: https://github.com/sqlalchemy/sqlalchemy/blob/main/LICENSE
+
+Additional third-party packages may be installed via the Python dependency
+lockfile (uv.lock/pyproject.toml). Refer to their respective repositories for
+license details.

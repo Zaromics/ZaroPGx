@@ -334,8 +334,10 @@
             </div>
         </div>
 
-        <div class="footer">
-            <p>Iliya Yaroshevskiy &copy; 2025</p>
+        <div class="footer small">
+            <p class="mb-1">&copy; 2025 {{ author_name or 'Unknown Author' }}</p>
+            <p class="mb-1">This program is licensed under the <a href="{{ license_url }}" target="_blank" rel="noopener">{{ license_name }}</a>.</p>
+            <p class="mb-0">Source code: <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>. Provided without warranty; see license for details.</p>
         </div>
     </div>
 

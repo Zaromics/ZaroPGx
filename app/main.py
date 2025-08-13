@@ -88,6 +88,32 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
+# ----- Legal/Attribution helpers for AGPL notices -----
+def _read_author_from_pyproject() -> str:
+    try:
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        pyproject_path = os.path.join(project_root, "pyproject.toml")
+        if not os.path.exists(pyproject_path):
+            return "Unknown Author"
+        with open(pyproject_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # Extract authors array content
+        authors_block_match = re.search(r"^\s*authors\s*=\s*\[(.*?)\]", content, flags=re.DOTALL | re.MULTILINE)
+        block = authors_block_match.group(1) if authors_block_match else content
+        name_match = re.search(r"name\s*=\s*\"([^\"]+)\"", block)
+        if name_match:
+            return name_match.group(1).strip()
+        return "Unknown Author"
+    except Exception:
+        return "Unknown Author"
+
+
+def get_author_name() -> str:
+    env_author = os.getenv("AUTHOR_NAME")
+    if env_author:
+        return env_author
+    return _read_author_from_pyproject()
+
 # Initialize FastAPI app
 app = FastAPI(
     title="ZaroPGx - Intelligent Pharmacogenomic Pipeline",
@@ -372,8 +398,15 @@ async def home(request: Request):
             service_alert = service_message
                 
         return templates.TemplateResponse(
-            "index.html", 
-            {"request": request, "service_alert": service_alert}
+            "index.html",
+            {
+                "request": request,
+                "service_alert": service_alert,
+                "author_name": get_author_name(),
+                "license_name": "GNU Affero General Public License v3.0",
+                "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
+                "source_url": os.getenv("SOURCE_URL", "https://github.com/Zaroganos/ZaroPGx"),
+            },
         )
     except Exception as e:
         logger.exception(f"Error in home route: {str(e)}")
