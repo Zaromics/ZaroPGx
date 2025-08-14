@@ -38,6 +38,17 @@ file_processor = FileProcessor(temp_dir=UPLOAD_DIR)
 # Initialize job status dictionary
 job_status = {}
 
+# Feature flags via environment for easy developer toggling
+def _env_flag(name: str, default: bool = True) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
+INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
+INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
+
 async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict):
     """
     Process file based on determined workflow
@@ -311,18 +322,43 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Log the number of recommendations found
                 logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
                 
-                # Try to copy the PharmCAT HTML report to a distinct file if it exists in the data
+                # Detect PharmCAT outputs and copy if needed
                 pharmcat_html_exists = False
-                if "html_report_url" in pharmcat_data:
-                    source_path = pharmcat_data["html_report_url"]
-                    if source_path.startswith("/"):
-                        # This is a direct file path, not a URL
-                        source_path = source_path.lstrip("/")
-                        full_source_path = Path("/") / source_path
-                        if full_source_path.exists():
-                            shutil.copy2(full_source_path, pharmcat_html_path)
-                            pharmcat_html_exists = True
-                            logger.info(f"Copied PharmCAT HTML report from {full_source_path} to {pharmcat_html_path}")
+                pharmcat_json_exists = False
+                pharmcat_tsv_exists = False
+
+                # Prefer directly checking the patient directory first (wrapper saves here)
+                direct_html = patient_dir / f"{data_id}_pgx_pharmcat.html"
+                direct_json = patient_dir / f"{data_id}_pgx_pharmcat.json"
+                direct_tsv = patient_dir / f"{data_id}_pgx_pharmcat.tsv"
+
+                if direct_html.exists():
+                    pharmcat_html_exists = True
+                    logger.info(f"Found PharmCAT HTML at {direct_html}")
+                    # Ensure standardized destination name is present (same path)
+                    if direct_html != pharmcat_html_path:
+                        try:
+                            shutil.copy2(direct_html, pharmcat_html_path)
+                        except Exception:
+                            pass
+                else:
+                    # Fallback to any URL hints in results
+                    for key in ("pharmcat_html_report_url", "html_report_url"):
+                        source_path = pharmcat_data.get(key)
+                        if not source_path:
+                            continue
+                        if source_path.startswith("/"):
+                            full_source_path = Path(source_path)
+                            if full_source_path.exists():
+                                shutil.copy2(full_source_path, pharmcat_html_path)
+                                pharmcat_html_exists = True
+                                logger.info(f"Copied PharmCAT HTML report from {full_source_path} to {pharmcat_html_path}")
+                                break
+
+                if direct_json.exists():
+                    pharmcat_json_exists = True
+                if direct_tsv.exists():
+                    pharmcat_tsv_exists = True
                 
                 # Log warning if no data was found
                 if len(formatted_diplotypes) == 0:
@@ -401,8 +437,13 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     "is_provisional": is_provisional,
                     "warnings": workflow.get("warnings", [])
                 }
-                if pharmcat_html_exists:
+                # Respect feature flags for PharmCAT outputs
+                if INCLUDE_PHARMCAT_HTML and pharmcat_html_exists:
                     response_data["pharmcat_html_report_url"] = f"/reports/{data_id}/{data_id}_pgx_pharmcat.html"
+                if INCLUDE_PHARMCAT_JSON and pharmcat_json_exists:
+                    response_data["pharmcat_json_report_url"] = f"/reports/{data_id}/{data_id}_pgx_pharmcat.json"
+                if INCLUDE_PHARMCAT_TSV and pharmcat_tsv_exists:
+                    response_data["pharmcat_tsv_report_url"] = f"/reports/{data_id}/{data_id}_pgx_pharmcat.tsv"
                 job_status[data_id].update({"data": response_data})
                 
                 # Add completion message with provisional status if applicable
@@ -623,22 +664,37 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
             patient_dir = Path(f"/data/reports/{file_id}")
             pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
             html_path = patient_dir / f"{file_id}_pgx_report.html"
+            interactive_path = patient_dir / f"{file_id}_pgx_report_interactive.html"
+            pharmcat_html = patient_dir / f"{file_id}_pgx_pharmcat.html"
+            pharmcat_json = patient_dir / f"{file_id}_pgx_pharmcat.json"
+            pharmcat_tsv = patient_dir / f"{file_id}_pgx_pharmcat.tsv"
             
             pdf_exists = os.path.exists(pdf_path)
-            html_exists = os.path.exists(html_path)
+            html_exists = os.path.exists(html_path) or os.path.exists(interactive_path)
             
             if pdf_exists or html_exists:
                 logger.info(f"Reports found for job {file_id}, returning completed status")
+                data = {
+                    "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                    # Prefer interactive HTML if present
+                    "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
+                        f"/reports/{file_id}/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
+                    )
+                }
+                if pharmcat_html.exists():
+                    data["pharmcat_html_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.html"
+                if pharmcat_json.exists():
+                    data["pharmcat_json_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.json"
+                if pharmcat_tsv.exists():
+                    data["pharmcat_tsv_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.tsv"
+
                 return {
                     "file_id": file_id,
                     "status": "completed",
                     "progress": 100,
                     "message": "Analysis completed successfully",
                     "current_stage": "Complete",
-                    "data": {
-                        "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                        "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report.html" if html_exists else None
-                    }
+                    "data": data
                 }
             
             raise HTTPException(status_code=404, detail=f"Job {file_id} not found")
@@ -675,7 +731,7 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
             html_path = patient_dir / f"{file_id}_pgx_report.html"
             
             pdf_exists = os.path.exists(pdf_path)
-            html_exists = os.path.exists(html_path)
+            html_exists = os.path.exists(html_path) or os.path.exists(patient_dir / f"{file_id}_pgx_report_interactive.html")
             
             if pdf_exists or html_exists:
                 logger.info(f"Found reports for job {file_id} but status not marked as complete, updating status")
@@ -687,7 +743,11 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
                     "complete": True,
                     "data": {
                         "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                        "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report.html" if html_exists else None
+                        "html_report_url": (
+                            f"/reports/{file_id}/{file_id}_pgx_report_interactive.html" if os.path.exists(patient_dir / f"{file_id}_pgx_report_interactive.html") else (
+                                f"/reports/{file_id}/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
+                            )
+                        )
                     }
                 })
         
@@ -725,15 +785,29 @@ async def get_report_urls(file_id: str):
             patient_dir = Path(f"/data/reports/{file_id}")
             pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
             html_path = patient_dir / f"{file_id}_pgx_report.html"
+            interactive_path = patient_dir / f"{file_id}_pgx_report_interactive.html"
+            pharmcat_html = patient_dir / f"{file_id}_pgx_pharmcat.html"
+            pharmcat_json = patient_dir / f"{file_id}_pgx_pharmcat.json"
+            pharmcat_tsv = patient_dir / f"{file_id}_pgx_pharmcat.tsv"
             
             pdf_exists = os.path.exists(pdf_path)
-            html_exists = os.path.exists(html_path)
+            html_exists = os.path.exists(html_path) or os.path.exists(interactive_path)
             
             if pdf_exists or html_exists:
                 report_paths = {
                     "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                    "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report.html" if html_exists else None
+                    "html_report_url": (
+                        f"/reports/{file_id}/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
+                            f"/reports/{file_id}/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
+                        )
+                    )
                 }
+                if pharmcat_html.exists():
+                    report_paths["pharmcat_html_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.html"
+                if pharmcat_json.exists():
+                    report_paths["pharmcat_json_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.json"
+                if pharmcat_tsv.exists():
+                    report_paths["pharmcat_tsv_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.tsv"
                 return {
                     "file_id": file_id,
                     "status": "completed",
@@ -753,12 +827,17 @@ async def get_report_urls(file_id: str):
                 "message": status.get("message", "Processing in progress")
             }
             
-        return {
+        response = {
             "file_id": file_id,
             "status": "completed" if status.get("success", False) else "failed",
             "pdf_report_url": data.get("pdf_report_url"),
             "html_report_url": data.get("html_report_url")
         }
+        # Bubble up PharmCAT URLs if present
+        for k in ("pharmcat_html_report_url", "pharmcat_json_report_url", "pharmcat_tsv_report_url"):
+            if k in data:
+                response[k] = data[k]
+        return response
     
     except Exception as e:
         logger.error(f"Error retrieving report URLs: {str(e)}")

@@ -296,7 +296,8 @@ def process_file():
                 
                 # Copy PharmCAT HTML report to patient directory if available
                 if report_html_file:
-                    dest_html_path = patient_dir / f"{base_name}_pgx_report.html"
+                    # Save with pharmcat-specific filename to avoid colliding with our own HTML report
+                    dest_html_path = patient_dir / f"{base_name}_pgx_pharmcat.html"
                     src_html_path = Path(temp_dir) / report_html_file
                     
                     logger.info(f"Copying PharmCAT report from {src_html_path} to {dest_html_path}")
@@ -307,7 +308,7 @@ def process_file():
                 
                 # Copy PharmCAT TSV report to /data/reports if available
                 if report_tsv_file:
-                    dest_tsv_path = patient_dir / f"{base_name}_pgx_report.tsv"
+                    dest_tsv_path = patient_dir / f"{base_name}_pgx_pharmcat.tsv"
                     src_tsv_path = Path(temp_dir) / report_tsv_file
                     
                     logger.info(f"Copying PharmCAT TSV report from {src_tsv_path} to {dest_tsv_path}")
@@ -318,7 +319,8 @@ def process_file():
                 
                 # Copy the report.json file to reports directory for inspection
                 if report_json_file:
-                    dest_json_path = patient_dir / f"{base_name}_pgx_report.json"
+                    # Save with pharmcat-specific filename to avoid colliding with our own JSON export
+                    dest_json_path = patient_dir / f"{base_name}_pgx_pharmcat.json"
                     src_json_path = Path(temp_dir) / report_json_file
                     
                     logger.info(f"Copying JSON report from {src_json_path} to {dest_json_path}")

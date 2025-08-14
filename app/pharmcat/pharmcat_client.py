@@ -724,15 +724,17 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             else:
                 logger.warning(f"Optional output file not found: {path}")
         
-        # Copy all PharmCAT reports to /data/reports for direct access
-        reports_dir = Path("/data/reports")
-        reports_dir.mkdir(parents=True, exist_ok=True)
+        # Copy PharmCAT reports to per-job directory for direct access
+        reports_root = Path("/data/reports")
+        reports_root.mkdir(parents=True, exist_ok=True)
+        patient_dir = reports_root / base_name
+        patient_dir.mkdir(parents=True, exist_ok=True)
         
         # Map of source files to destination files
         report_files = {
-            f"{base_name}.report.html": f"{base_name}_pgx_report.html",
-            f"{base_name}.report.json": f"{base_name}_pgx_report.json",
-            f"{base_name}.report.tsv": f"{base_name}_pgx_report.tsv",
+            f"{base_name}.report.html": f"{base_name}_pgx_pharmcat.html",
+            f"{base_name}.report.json": f"{base_name}_pgx_pharmcat.json",
+            f"{base_name}.report.tsv": f"{base_name}_pgx_pharmcat.tsv",
             f"{base_name}.match.json": f"{base_name}_pgx_match.json",
             f"{base_name}.phenotype.json": f"{base_name}_pgx_phenotype.json"
         }
@@ -740,7 +742,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         # Copy all report files that exist
         for src_name, dest_name in report_files.items():
             src_path = Path(output_dir) / src_name
-            dest_path = reports_dir / dest_name
+            dest_path = patient_dir / dest_name
             
             if os.path.exists(src_path):
                 shutil.copy2(src_path, dest_path)
@@ -752,21 +754,21 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         if os.path.exists(Path(output_dir) / f"{base_name}.report.json"):
             shutil.copy2(
                 Path(output_dir) / f"{base_name}.report.json", 
-                reports_dir / "latest_pharmcat_report.json"
+                reports_root / "latest_pharmcat_report.json"
             )
             logger.info("Updated latest_pharmcat_report.json reference")
             
         if os.path.exists(Path(output_dir) / f"{base_name}.report.html"):
             shutil.copy2(
                 Path(output_dir) / f"{base_name}.report.html", 
-                reports_dir / "latest_pharmcat_report.html"
+                reports_root / "latest_pharmcat_report.html"
             )
             logger.info("Updated latest_pharmcat_report.html reference")
             
         if os.path.exists(Path(output_dir) / f"{base_name}.report.tsv"):
             shutil.copy2(
                 Path(output_dir) / f"{base_name}.report.tsv", 
-                reports_dir / "latest_pharmcat_report.tsv"
+                reports_root / "latest_pharmcat_report.tsv"
             )
             logger.info("Updated latest_pharmcat_report.tsv reference")
         
@@ -809,12 +811,16 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             "message": "PharmCAT analysis completed successfully",
             "data": {
                 "job_id": base_name,
-                "pdf_report_url": f"/reports/{base_name}_pgx_report.pdf",
-                "html_report_url": f"/reports/{base_name}_pgx_report.html",
-                "json_report_url": f"/reports/{base_name}_pgx_report.json",
-                "tsv_report_url": f"/reports/{base_name}_pgx_report.tsv",
-                "match_json_url": f"/reports/{base_name}_pgx_match.json",
-                "phenotype_json_url": f"/reports/{base_name}_pgx_phenotype.json",
+                "pdf_report_url": f"/reports/{base_name}/{base_name}_pgx_report.pdf",
+                "html_report_url": f"/reports/{base_name}/{base_name}_pgx_report.html",
+                "interactive_html_report_url": f"/reports/{base_name}/{base_name}_pgx_report_interactive.html",
+                "json_report_url": f"/reports/{base_name}/{base_name}_pgx_report.json",
+                "tsv_report_url": f"/reports/{base_name}/{base_name}_pgx_report.tsv",
+                "match_json_url": f"/reports/{base_name}/{base_name}_pgx_match.json",
+                "phenotype_json_url": f"/reports/{base_name}/{base_name}_pgx_phenotype.json",
+                "pharmcat_html_report_url": f"/reports/{base_name}/{base_name}_pgx_pharmcat.html",
+                "pharmcat_json_report_url": f"/reports/{base_name}/{base_name}_pgx_pharmcat.json",
+                "pharmcat_tsv_report_url": f"/reports/{base_name}/{base_name}_pgx_pharmcat.tsv",
                 "genes": genes_data,
                 "drugRecommendations": drug_recommendations,
                 "results": results

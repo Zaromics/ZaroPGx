@@ -56,17 +56,21 @@
             gap: 1rem;
         }
         .header-icon-btn {
-            width: 44px;
-            height: 44px;
+            width: 64px;
+            height: 64px;
             border-radius: 50%;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             border-color: rgba(255, 255, 255, 0.65) !important;
             color: var(--header-text) !important;
+            font-size: 1.5rem;
+            transition: all 0.3s ease;
         }
         .header-icon-btn:hover {
-            background-color: rgba(255, 255, 255, 0.1);
+            background-color: rgba(255, 255, 255, 0.15);
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
         .card {
             margin-bottom: 1.5rem;
@@ -335,7 +339,7 @@
         </div>
 
         <div class="footer small">
-            <p class="mb-1">&copy; 2025 {{ author_name or 'Unknown Author' }}</p>
+            <p class="mb-1">&copy; 2024-2025 {{ author_name or 'Unknown Author' }}</p>
             <p class="mb-1">This program is licensed under the <a href="{{ license_url }}" target="_blank" rel="noopener">{{ license_name }}</a>.</p>
             <p class="mb-0">Source code: <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>. Provided without warranty; see license for details.</p>
         </div>

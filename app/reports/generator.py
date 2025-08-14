@@ -161,11 +161,70 @@ def _load_versions_from_shared_dir() -> List[Dict[str, str]]:
     return items
 
 
+def _parse_docker_compose_version(service_name: str) -> str:
+    """Parse docker-compose.yml to extract version from image tag for a specific service.
+    
+    This is a fallback method when the service metadata is not accessible.
+    """
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        
+        # Try multiple compose file names in order of preference
+        compose_files = [
+            "docker-compose.yml",
+            "docker-compose-local-LAN.yml", 
+            "docker-compose.override.yml"
+        ]
+        
+        compose_path = None
+        for compose_file in compose_files:
+            test_path = os.path.join(project_root, compose_file)
+            if os.path.exists(test_path):
+                compose_path = test_path
+                break
+        
+        if not compose_path:
+            logging.debug(f"No docker-compose file found for {service_name}")
+            return "N/A"
+        
+        with open(compose_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        # Look for the specific service section
+        service_pattern = rf"^\s*{service_name}:\s*$"
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            if re.match(service_pattern, line.strip()):
+                # Look for image line in this service section
+                for j in range(i + 1, min(i + 20, len(lines))):  # Look ahead up to 20 lines
+                    next_line = lines[j].strip()
+                    if next_line.startswith('image:'):
+                        # Extract version from image tag
+                        image_line = next_line
+                        if ':' in image_line:
+                            version = image_line.split(':', 2)[-1].strip()
+                            logging.debug(f"Found version {version} for {service_name} in {compose_path}")
+                            return _normalize_version_text(version)
+                        break
+                    elif next_line and not next_line.startswith(' ') and not next_line.startswith('\t'):
+                        # We've moved to the next service, stop looking
+                        break
+                break
+        
+        logging.debug(f"Service {service_name} not found in {compose_path}")
+        
+    except Exception as e:
+        logging.debug(f"Failed to parse docker-compose.yml for {service_name}: {e}")
+    
+    return "N/A"
+
+
 def _get_hapi_fhir_version() -> str:
     """Retrieve HAPI FHIR server version from its CapabilityStatement.
 
     Tries to fetch <FHIR_SERVER_URL>/metadata and parse software.version.
-    Falls back to environment variable HAPI_FHIR_VERSION or "N/A" if not available.
+    Falls back to environment variable HAPI_FHIR_VERSION, docker-compose.yml parsing, or "N/A" if not available.
     """
     # Prefer explicit env var override if present
     env_ver = os.getenv("HAPI_FHIR_VERSION")
@@ -185,6 +244,15 @@ def _get_hapi_fhir_version() -> str:
                 return _normalize_version_text(version)
     except Exception:
         pass
+    
+    # Fallback: Parse docker-compose.yml for the image version
+    compose_version = _parse_docker_compose_version("fhir-server")
+    if compose_version != "N/A":
+        logging.info(f"Using docker-compose.yml fallback for HAPI FHIR version: {compose_version}")
+        return compose_version
+    else:
+        logging.debug("HAPI FHIR version not available from metadata or docker-compose.yml")
+    
     return "N/A"
 
 
@@ -229,6 +297,13 @@ def build_platform_info() -> List[Dict[str, str]]:
     lower_names = {i.get("name", "").lower() for i in items}
     if not any(name in lower_names for name in ("hapi fhir", "hapi fhir server", "fhir", "hapi")):
         items.append({"name": "HAPI FHIR Server", "version": _get_hapi_fhir_version()})
+    
+    # Add PostgreSQL version if not already present
+    if not any(name in lower_names for name in ("postgresql", "postgres", "db")):
+        postgres_version = _parse_docker_compose_version("db")
+        if postgres_version != "N/A":
+            logging.info(f"Added PostgreSQL version from docker-compose.yml: {postgres_version}")
+            items.append({"name": "PostgreSQL", "version": postgres_version})
 
     # Ensure all version strings are normalized and not empty
     for item in items:
@@ -246,6 +321,7 @@ def _versions_index() -> Dict[str, str]:
     # Include ZaroPGx and HAPI FHIR in the index for citation use if needed
     idx.setdefault("zaropgx", _normalize_version_text(get_zaropgx_version()))
     idx.setdefault("hapi fhir server", _normalize_version_text(_get_hapi_fhir_version()))
+    idx.setdefault("postgresql", _normalize_version_text(_parse_docker_compose_version("db")))
     return idx
 
 
@@ -286,6 +362,13 @@ def build_citations() -> List[Dict[str, str]]:
 
 # Report display configuration
 # Controls which reports are included in the response and shown to users
+def _env_flag(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+
 REPORT_CONFIG = {
     # Our generated reports
     "show_pdf_report": True,          # Standard PDF report
@@ -297,9 +380,11 @@ REPORT_CONFIG = {
     "write_workflow_png": True,       # Also write workflow.png for robust PDF embedding
 
     # PharmCAT original reports
-    "show_pharmcat_html_report": True,  # Original HTML report from PharmCAT
-    "show_pharmcat_json_report": False, # Original JSON report from PharmCAT
-    "show_pharmcat_tsv_report": False,  # Original TSV report from PharmCAT
+    # Toggle via environment for developer convenience
+    # INCLUDE_PHARMCAT_HTML=1 to include the original PharmCAT HTML alongside our reports
+    "show_pharmcat_html_report": _env_flag("INCLUDE_PHARMCAT_HTML", True),
+    "show_pharmcat_json_report": _env_flag("INCLUDE_PHARMCAT_JSON", False),
+    "show_pharmcat_tsv_report": _env_flag("INCLUDE_PHARMCAT_TSV", False),
 }
 
 # Configure logging

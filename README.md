@@ -1,282 +1,190 @@
-# ZaroPGx - Pharmacogenomic Report Generator
+### ZaroPGx — Pharmacogenomic Report Generator
 
 ![Screenshot 2025-05-02 011020](https://github.com/user-attachments/assets/f352c10a-23ba-4583-a6b1-196ae32c06ae)
 
-A containerized pharmacogenomic report generator that processes genetic data and generates clinical reports based on CPIC guidelines. The system will eventually offer many types of reports, starting with a complete general report and a report oriented toward neurological pgx.
+Containerized pipeline that processes genetic data and generates pharmacogenomic reports guided by CPIC resources. The system is under active development; expect breaking changes.
 
-# Notice
+### Status
 
-This software is currently being built and is not near completion. It is less likely to work than not.
+This project is a work in progress and not production‑ready.
 
-## Features
+### Features (current state)
 
-- Process genetic data from various sources (23andMe, VCF)
-- Call variants using GATK and PyPGx
-- Call alleles using PharmCAT and PyPGx
-- Generate PDF and interactive HTML reports
-- HIPAA-compliant data handling
-- RESTful API with authentication
-- Option to export reports via HAPI FHIR server
-- User-friendly web interface for file uploads
-- Comprehensive gene coverage including CYP2D6, CYP2C19, CYP2C9, and others
-- Interactive HTML reports with visualizations
+- Process VCF files directly; BAM/CRAM → GATK path is scaffolded but not fully implemented in the app flow yet
+- Allele calling via PharmCAT (pipeline v3.0.0); optional PyPGx service for CYP2D6 when enabled
+- Generate reports: PDF and interactive HTML; optionally include original PharmCAT HTML/JSON/TSV outputs
+- REST API and web UI for uploads and status; authentication is disabled by default in development mode
+- Optional export of reports to a bundled HAPI FHIR server
 
-## Architecture
+### Architecture
 
-The application consists of several containerized services:
+Containerized services orchestrated with Docker Compose:
 
-1. **PostgreSQL Database**: Stores CPIC guidelines, gene-drug interactions, and patient data
-2. **Main App with FastAPI Backend**: Handles file uploads, report generation, and API endpoints
-3. **GATK Service**: Handles variant calling and converts WGS to VCF format
-4. **PharmCAT Service**: Performs allele calling for VCF files, with REST API wrapper
-5. **PyPGx Service**: Specialized in CYP2D6 calling from VCF files
+- PostgreSQL 15 (schemas: `cpic`, `user_data`, `reports`)
+- FastAPI application (web UI, API, report generation, SSE progress)
+- PharmCAT wrapper service (Flask) invoking PharmCAT pipeline v3.0.0
+- GATK API service (HTTP wrapper; heavy memory usage)
+- PyPGx service (CYP2D6 star‑allele calling)
+- Reference genome downloader
+- HAPI FHIR server (optional integration target)
 
-## Setup
+Default host ports (host → container):
 
-### Prerequisites
+- App/UI: 8765 → 8000
+- PostgreSQL: 5444 → 5432
+- PharmCAT wrapper: 5001 → 5000
+- GATK API: 5002 → 5000
+- PyPGx: 5053 → 5000
+- Genome downloader: 5050 → 5050
+- HAPI FHIR: 8090 → 8080
+
+Data directories (mounted):
+
+- Shared data: `./data` → `/data`
+- Reference data: `./reference` → `/reference`
+- Reports: `/data/reports/<file_id>/` (per‑job directory)
+
+### Requirements
 
 - Docker and Docker Compose
 - Git
-- Internet connection is required during first run while the genome downloader downloads reference genome FASTA sequence, and while other containers download and install their dependencies. After this is complete the program does not connection to the internet and can be run locally - see the reference docker-composeLOCAL.yml optimized for local-only use.
-- 8GB RAM minimum. 16GB RAM minimum if using GATK as it is very RAM-heavy.
-- 20GB free disk space. 100GB+ free disk space if using WGS files.
+- First run requires internet to fetch images and reference genomes
+- Minimum: 8 GB RAM (≥16 GB recommended if using GATK), 20 GB disk (≫100 GB for WGS)
 
-### Installation
+### Quick start
 
-1. Clone the repository:
+1) Clone the repo
+
    ```bash
    git clone https://github.com/Zaroganos/ZaroPGx.git
    cd ZaroPGx
    ```
 
-2. Create and configure the `.env` file:
-   ```bash
-   cp .env.example .env
-   # Edit .env file with your desired settings
-   ```
-
-3. Build and start the containers:
-   ```bash
-   docker-compose up -d
-   ```
-
-4. Access the application:
-   - Web UI: http://localhost:8765
-   - API documentation: http://localhost:8765/docs
-
-## Usage
-
-### Using the Web Interface
-
-1. Open the web interface at http://localhost:8765
-2. Upload a genoset file using the upload form
-3. View and download the generated reports
-
-### Uploading genetic data via API
+2) Create a `.env` from the example
 
 ```bash
-curl -X POST -F 'file=@sample.txt' -F 'patient_identifier=patient123' \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:8000/upload/23andme
+cp .env.example .env
+# edit .env as needed (at minimum set SECRET_KEY)
 ```
 
-### Generating a report via API
+3) Start services
 
 ```bash
-curl -X POST -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{"patient_id":"1","file_id":"1","report_type":"comprehensive"}' \
-  http://localhost:8000/reports/generate
+docker compose up -d --build
 ```
 
-### Sample Data
+4) Access
 
-The repository includes sample VCF files for testing:
+- Web UI: `http://localhost:8765`
+- API docs: `http://localhost:8765/docs`
+- HAPI FHIR (optional): `http://localhost:8090`
 
-- `sample_cyp2c19.vcf` - Sample with CYP2C19 variants
-- `sample_cyp2d6.vcf` - Sample with CYP2D6 variants
+Tip: For LAN‑exposed runs, see `docker-compose-local-LAN.yml`.
 
-## Development
+### Using the web UI
 
-### Project Structure
+1) Open `http://localhost:8765`
+2) Upload a VCF file
+3) Observe progress; on completion you’ll see links to PDF and interactive HTML reports
+
+### REST API usage
+
+- Upload a genomic file (VCF; BAM/CRAM path is not fully wired end‑to‑end yet):
+
+```bash
+curl -X POST \
+  -F "file=@test_data/sample_cpic.vcf" \
+  -F "patient_identifier=patient123" \
+  http://localhost:8765/upload/genomic-data
+```
+
+- Check processing status:
+
+```bash
+curl http://localhost:8765/status/<file_id>
+```
+
+- Get report URLs (PDF/HTML/interactive and optional PharmCAT artifacts):
+
+   ```bash
+curl http://localhost:8765/reports/<file_id>
+```
+
+- Generate a report (utility endpoint; separate from the upload pipeline):
+
+   ```bash
+curl -X POST http://localhost:8765/reports/generate \
+  -H "Content-Type: application/json" \
+  -d '{"patient_id":"1","file_id":"1","report_type":"comprehensive"}'
+```
+
+Notes
+
+- Development mode disables authentication by default (`ZAROPGX_DEV_MODE=true`); tokens are not required.
+- Reports are written to `/data/reports/<file_id>/` with filenames:
+  - `<file_id>_pgx_report.pdf`
+  - `<file_id>_pgx_report_interactive.html`
+  - Optional PharmCAT originals: `<file_id>_pgx_pharmcat.{html,json,tsv}`
+
+### Sample data
+
+Sample VCFs available in the repo:
+
+- `app/static/demo/pharmcat.example.vcf`
+- `test_data/sample_cpic.vcf`
+- Additional examples under `test_data/`
+
+### Project structure
 
 ```
 ZaroPGx/
-├── app/                    # Python application code
-│   ├── api/                # API endpoints and database access
-│   ├── pharmcat/   # PharmCAT integration
-│   └── reports/            # Report generation logic
-├── db/                     # Database migrations
-│   └── migrations/
-│       └── cpic/           # CPIC schema and seed data
-├── docker/                 # Additional Dockerfiles
-└── docker-compose.yml      # Service orchestration
+├── app/                    # FastAPI app, templates, static assets
+│   ├── api/                # API routers, DB helpers, models
+│   ├── pharmcat/           # PharmCAT client integration
+│   └── reports/            # Report generation (PDF/HTML, FHIR export)
+├── db/                     # Initialization and migrations
+│   └── migrations/cpic/    # CPIC schema and sample data
+├── docker/                 # Service Dockerfiles and wrappers
+└── docker-compose*.yml     # Orchestration
 ```
 
-### Adding new genes or drugs
+### Service specifics
 
-1. Edit the SQL seed files in `db/migrations/cpic/`
-2. Restart the containers with `docker-compose restart`
+- PostgreSQL 15 with initialization under `db/init` and `db/migrations`
+- PharmCAT pipeline v3.0.0 (Java 17) with a Flask wrapper API on port 5000 (exposed as 5001 on host)
+- FastAPI app (Python 3.12; dependencies in `pyproject.toml`/`uv.lock`)
+- GATK API service and PyPGx service are available via internal endpoints (`GATK_API_URL`, `PYPGX_API_URL`); the app currently stubs GATK/PyPGx steps in the background workflow
 
-## License
+### PharmCAT outputs and report handling
 
-[AGPLv3](LICENSE)
+- Each run writes a per‑job directory: `/data/reports/<file_id>/`
+- The app consistently generates its own reports (PDF + interactive HTML)
+- When available, original PharmCAT reports are copied with normalized names (`<file_id>_pgx_pharmcat.*`)
+- A single global `latest_pharmcat_report.json` is not maintained; rely on per‑job directories
 
-## Acknowledgements
+### FHIR export (optional)
 
-- PharmCAT (Pharmacogenomics Clinical Annotation Tool). See methods: Sangkuhl K, Whirl-Carrillo M, et al. Clinical Pharmacology & Therapeutics. 2020;107(1):203–210. Project: https://github.com/PharmGKB/PharmCAT
-- GATK (Genome Analysis Toolkit). Core papers: McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. Nature Genetics. 2011;43(5):491–498. Guidance: https://gatk.broadinstitute.org/
-- PyPGx for star‑allele calling. References: Lee S‑B, et al. PLOS ONE. 2022 (ClinPharmSeq); Lee S‑B, et al. Genetics in Medicine. 2018 (Stargazer); Lee S‑B, et al. Clinical Pharmacology & Therapeutics. 2019 (Stargazer, 28 genes). Docs: https://pypgx.readthedocs.io/en/latest/index.html
+- HAPI FHIR server is bundled and exposed at `http://localhost:8090`
+- Report export endpoint: `POST /reports/{report_id}/export-to-fhir`
 
-## Dependency Management
+### Dependency management
 
-### Container Dependencies
+- Python dependencies are managed via `pyproject.toml` (locked in `uv.lock`)
+- Container‑specific dependencies are installed in each Dockerfile
 
-The services are organized in a Docker Compose configuration with clear dependency chains:
+### Troubleshooting
 
-1. The PostgreSQL database is the foundation service
-2. The PharmCAT service runs independently
-3. The FastAPI application depends on all other services
+- Service connectivity: confirm the `pgx-network` bridge exists and containers are healthy
+- File processing: ensure input VCF is valid and non‑empty
+- PDF generation: WeasyPrint is used; if PDF fails, an HTML fallback may be written alongside
 
-### Service-Specific Dependencies
+### Contributing
 
-Each service manages its dependencies within its own container:
+1) Create a feature branch: `git checkout -b feature/your-change`
+2) Commit: `git commit -m "Describe your change"`
+3) Push: `git push origin feature/your-change`
+4) Open a Pull Request
 
-- **PostgreSQL**: Version 15 with initialization scripts in `db/init`
-- **PharmCAT Service**: Java 17 with PharmCAT v3.0.0 JAR file. Python 3.12 with Flask; Python deps installed via uv in Docker.
-- **GATK Service**:
-- **FastAPI Backend**: Python 3.12 with dependencies defined in `pyproject.toml` and locked by `uv.lock` (installed via uv)
-- **HAPI-FHIR**: 
+### License
 
-### Data Sharing
-
-Services share data through:
-
-1. **Shared Volumes**: The `/data` volume is mounted across containers for file exchange
-2. **Network Communication**: All services communicate over the `pgx-network` bridge network
-3. **Environment Variables**: Container configuration is managed through environment variables
-
-## Getting Started
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Git
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Zaroganos/ZaroPGx.git
-   cd ZaroPGx
-   ```
-
-2. Create a `.env` file with necessary environment variables:
-   ```bash
-   POSTGRES_PASSWORD=your_secure_password
-   SECRET_KEY=your_secret_key
-   ```
-
-3. Build and start the containers:
-   ```bash
-   docker-compose up -d
-   ```
-
-4. The services will be available at:
-   - FastAPI Application: http://localhost:8000
-   - PharmCAT Service: http://localhost:8080
-   - PharmCAT Wrapper: http://localhost:5001
-   - Aldy Service: http://localhost:5002
-   - Web UI: http://localhost:8765
-
-## Technical Details
-
-### PharmCAT Report System
-
-The application includes a robust system for handling PharmCAT report JSON data:
-
-1. **Report File Management**: 
-   - Each PharmCAT analysis generates multiple JSON files:
-     - `{job_id}_pgx_report.json`: Standard job-specific report
-     - `{job_id}_raw_report.json`: Unmodified raw report for debugging
-     - `latest_pharmcat_report.json`: Always updated with most recent report data
-
-2. **Reliability Mechanism**:
-   - The `latest_pharmcat_report.json` file serves as a persistent reference
-   - This file is always available for gene and drug data extraction
-   - Each successful PharmCAT run updates this file automatically
-
-3. **Fallback System**:
-   - If PharmCAT fails to generate a report, the system falls back to `latest_pharmcat_report.json`
-   - A sample report with valid structure can be copied to this location if needed
-   - This ensures report generation can proceed even with limited gene data
-
-4. **Maintenance Considerations**:
-   - The `latest_pharmcat_report.json` file should be preserved across container restarts
-   - It may need occasional updates to include additional genes or drugs
-   - New versions of PharmCAT may require adjustments to JSON parsing logic
-
-## Development
-
-### Adding New Dependencies
-
-1. For Python services, add new dependencies to `pyproject.toml` and run `uv lock` (or update service-specific installs in Dockerfiles where applicable)
-2. For system dependencies, add them to the appropriate Dockerfile
-3. Rebuild the affected containers:
-   ```bash
-   docker-compose build <service_name>
-   docker-compose up -d <service_name>
-   ```
-
-### Service Communication
-
-Services communicate with each other using their service names as hostnames:
-
-- Database: `db:5432`
-- PharmCAT: `pharmcat:8080`
-- GATK: 
-- PyPGx
-- HAPI-FHIR:
-
-## Troubleshooting
-
-- **Service Connection Issues**: Check Docker network configuration
-- **File Processing Errors**: Ensure VCF file format is valid
-- **Report Generation Fails**: Check weasyprint dependencies
-
-## Contributing
-
-1. Create a feature branch (`git checkout -b feature/amazing-feature`)
-2. Commit your changes (`git commit -m 'Add some amazing feature'`)
-3. Push to the branch (`git push origin feature/amazing-feature`)
-4. Open a Pull Request
-
-## License
-
-This project is licensed under the AGPLv3 License.
-
-## Emergency Report Access System
-
-For cases where the automatic report display in the UI fails, we've implemented a robust emergency access system:
-
-### Direct Report Access
-
-1. After uploading your VCF file, if reports don't appear automatically:
-   - Note your job ID (typically "1" for the first upload after restart)
-   - Find the "Manual Complete" button at the bottom of the page
-   - Enter your job ID and click the button
-
-2. A new tab will open showing:
-   - Direct links to your PDF and HTML reports
-   - Detailed troubleshooting information
-   - Job status details for debugging
-
-### Using the Emergency System
-
-The emergency system provides three ways to access your reports:
-
-1. **Direct Links**: Click the PDF or HTML report buttons in the new tab
-2. **Main UI Update**: The main page should also update to show report links
-3. **Manual Status Check**: Use the "Check Reports" button with your job ID
-
-This ensures you can always access your reports even if the normal UI flow encounters issues with the Server-Sent Events (SSE) progress monitoring system.
+AGPLv3 — see `LICENSE`.

@@ -3074,7 +3074,7 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
         required_keys = ["title", "timestamp", "pharmcatVersion", "genes", "drugs"]
         has_report_json_format = all(key in response for key in required_keys)
         
-        # If we have a direct report.json format
+            # If we have a direct report.json format
         if has_report_json_format:
             logger.info("Received direct report.json format from PharmCAT service")
             
