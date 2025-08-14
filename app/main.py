@@ -229,11 +229,6 @@ async def get_status(file_id: str, db: Session = Depends(get_db), current_user: 
     """Forward to upload_router status endpoint"""
     return await upload_router.get_upload_status(file_id, db)
 
-@app.get("/reports/{file_id}")
-async def get_reports(file_id: str, current_user: str = Depends(get_optional_user)):
-    """Forward to upload_router reports endpoint"""
-    return await upload_router.get_report_urls(file_id)
-
 @app.get("/reports/{filename}")
 async def serve_report(filename: str):
     """
@@ -276,6 +271,11 @@ async def serve_report(filename: str):
             status_code=500,
             content={"detail": f"Error serving report: {str(e)}"}
         )
+
+@app.get("/reports/job/{file_id}")
+async def get_reports(file_id: str, current_user: str = Depends(get_optional_user)):
+    """Forward to upload_router reports endpoint"""
+    return await upload_router.get_report_urls(file_id)
 
 # JWT token functions
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -1839,10 +1839,10 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
             html_url = None
             
             if os.path.exists(patient_pdf_path):
-                pdf_url = f"/reports/{job_id}/{job_id}_pgx_report.pdf"
+                pdf_url = f"/reports/{job_id}_pgx_report.pdf"
                 
             if os.path.exists(patient_html_path):
-                html_url = f"/reports/{job_id}/{job_id}_pgx_report.html"
+                html_url = f"/reports/{job_id}_pgx_report.html"
             
             # Update job status
             job_status[job_id] = {
@@ -2892,8 +2892,8 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
                                 "data": {
                                     "genes": normalized_results.get("data", {}).get("genes", []),
                                     "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
-                                    "pdf_report_url": f"/reports/{report_id}/{report_id}_pgx_report.pdf",
-                                    "html_report_url": f"/reports/{report_id}/{report_id}_pgx_report.html"
+                                    "pdf_report_url": f"/reports/{report_id}_pgx_report.pdf",
+                                    "html_report_url": f"/reports/{report_id}_pgx_report.html"
                                 }
                             }
                         else:
@@ -3015,8 +3015,8 @@ async def run_pharmcat_analysis(genome_path: str, report_id: Optional[str] = Non
                                         "data": {
                                             "genes": normalized_results.get("data", {}).get("genes", []),
                                             "drugRecommendations": normalized_results.get("data", {}).get("drugRecommendations", []),
-                                            "pdf_report_url": f"/reports/{report_id}/{report_id}_pgx_report.pdf",
-                                            "html_report_url": f"/reports/{report_id}/{report_id}_pgx_report.html"
+                                            "pdf_report_url": f"/reports/{report_id}_pgx_report.pdf",
+                                            "html_report_url": f"/reports/{report_id}_pgx_report.html"
                                         }
                                     }
                         except Exception as e:

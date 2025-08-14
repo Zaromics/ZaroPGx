@@ -430,8 +430,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 
                 # Update job status with report URLs and results
                 response_data = {
-                    "pdf_report_url": f"/reports/{data_id}/{data_id}_pgx_report.pdf",
-                    "html_report_url": f"/reports/{data_id}/{data_id}_pgx_report_interactive.html",
+                    "pdf_report_url": f"/reports/{data_id}_pgx_report.pdf",
+                    "html_report_url": f"/reports/{data_id}_pgx_report_interactive.html",
                     "diplotypes": formatted_diplotypes,
                     "recommendations": formatted_recommendations,
                     "is_provisional": is_provisional,
@@ -439,11 +439,11 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 }
                 # Respect feature flags for PharmCAT outputs
                 if INCLUDE_PHARMCAT_HTML and pharmcat_html_exists:
-                    response_data["pharmcat_html_report_url"] = f"/reports/{data_id}/{data_id}_pgx_pharmcat.html"
+                    response_data["pharmcat_html_report_url"] = f"/reports/{data_id}_pgx_pharmcat.html"
                 if INCLUDE_PHARMCAT_JSON and pharmcat_json_exists:
-                    response_data["pharmcat_json_report_url"] = f"/reports/{data_id}/{data_id}_pgx_pharmcat.json"
+                    response_data["pharmcat_json_report_url"] = f"/reports/{data_id}_pgx_pharmcat.json"
                 if INCLUDE_PHARMCAT_TSV and pharmcat_tsv_exists:
-                    response_data["pharmcat_tsv_report_url"] = f"/reports/{data_id}/{data_id}_pgx_pharmcat.tsv"
+                    response_data["pharmcat_tsv_report_url"] = f"/reports/{data_id}_pgx_pharmcat.tsv"
                 job_status[data_id].update({"data": response_data})
                 
                 # Add completion message with provisional status if applicable
@@ -451,7 +451,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 if is_provisional:
                     completion_message += " (PROVISIONAL RESULTS)"
                 
-                logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}/{data_id}_pgx_report.html")
+                logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}_pgx_report.html")
             except Exception as gen_err:
                 # If our custom generation failed, attempt to surface PharmCAT HTML if available
                 logger.error(f"Error during custom report generation: {str(gen_err)}")
@@ -675,18 +675,18 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
             if pdf_exists or html_exists:
                 logger.info(f"Reports found for job {file_id}, returning completed status")
                 data = {
-                    "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                    "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
                     # Prefer interactive HTML if present
-                    "html_report_url": f"/reports/{file_id}/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
-                        f"/reports/{file_id}/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
+                    "html_report_url": f"/reports/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
+                        f"/reports/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
                     )
                 }
                 if pharmcat_html.exists():
-                    data["pharmcat_html_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.html"
+                    data["pharmcat_html_report_url"] = f"/reports/{file_id}_pgx_pharmcat.html"
                 if pharmcat_json.exists():
-                    data["pharmcat_json_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.json"
+                    data["pharmcat_json_report_url"] = f"/reports/{file_id}_pgx_pharmcat.json"
                 if pharmcat_tsv.exists():
-                    data["pharmcat_tsv_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.tsv"
+                    data["pharmcat_tsv_report_url"] = f"/reports/{file_id}_pgx_pharmcat.tsv"
 
                 return {
                     "file_id": file_id,
@@ -742,10 +742,10 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
                     "message": "Analysis completed successfully",
                     "complete": True,
                     "data": {
-                        "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                        "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
                         "html_report_url": (
-                            f"/reports/{file_id}/{file_id}_pgx_report_interactive.html" if os.path.exists(patient_dir / f"{file_id}_pgx_report_interactive.html") else (
-                                f"/reports/{file_id}/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
+                            f"/reports/{file_id}_pgx_report_interactive.html" if os.path.exists(patient_dir / f"{file_id}_pgx_report_interactive.html") else (
+                                f"/reports/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
                             )
                         )
                     }
@@ -773,7 +773,7 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
         logger.error(f"Error getting status for job {file_id}: {str(e)}")
         raise HTTPException(status_code=404, detail=f"File not found or error retrieving status: {str(e)}")
 
-@router.get("/reports/{file_id}")
+@router.get("/reports/job/{file_id}")
 async def get_report_urls(file_id: str):
     """
     Get the report URLs for a completed job
@@ -795,19 +795,19 @@ async def get_report_urls(file_id: str):
             
             if pdf_exists or html_exists:
                 report_paths = {
-                    "pdf_report_url": f"/reports/{file_id}/{file_id}_pgx_report.pdf" if pdf_exists else None,
+                    "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
                     "html_report_url": (
-                        f"/reports/{file_id}/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
-                            f"/reports/{file_id}/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
+                        f"/reports/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
+                            f"/reports/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
                         )
                     )
                 }
                 if pharmcat_html.exists():
-                    report_paths["pharmcat_html_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.html"
+                    report_paths["pharmcat_html_report_url"] = f"/reports/{file_id}_pgx_pharmcat.html"
                 if pharmcat_json.exists():
-                    report_paths["pharmcat_json_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.json"
+                    report_paths["pharmcat_json_report_url"] = f"/reports/{file_id}_pgx_pharmcat.json"
                 if pharmcat_tsv.exists():
-                    report_paths["pharmcat_tsv_report_url"] = f"/reports/{file_id}/{file_id}_pgx_pharmcat.tsv"
+                    report_paths["pharmcat_tsv_report_url"] = f"/reports/{file_id}_pgx_pharmcat.tsv"
                 return {
                     "file_id": file_id,
                     "status": "completed",
