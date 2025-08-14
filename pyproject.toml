@@ -4,7 +4,7 @@ name = "zaropgx"
 version = "0.1.0"
 description = "Pharmacogenomic Analysis Pipeline using GATK, PyPGx and PharmCAT"
 readme = "README.md"
-requires-python = ">=3.9,<4.0"
+requires-python = ">=3.12,<4.0"
 authors = [
   { name = "Iliya Yaroshevskiy", email = "iyarosh1@binghamton.edu" }
 ]

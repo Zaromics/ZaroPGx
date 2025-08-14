@@ -15,6 +15,7 @@ from app.api.db import get_db, create_patient, register_genetic_data
 from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis as PydanticFileAnalysis, VCFHeaderInfo
 from app.pharmcat.pharmcat_client import call_pharmcat_service
 from app.api.utils.file_processor import FileProcessor
+from app.reports.generator import create_interactive_html_report
 from ..utils.security import get_current_user, get_optional_user
 
 # Configure logging
@@ -212,13 +213,11 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # Call PharmCAT service for final analysis
         logger.info(f"Calling PharmCAT service with file: {output_file}")
         try:
-            # Use the run_pharmcat_analysis function from main.py if available
-            from app.main import run_pharmcat_analysis
-            results = await run_pharmcat_analysis(output_file, data_id)
-        except ImportError:
-            # Fall back to direct call if the function isn't available
-            logger.warning("run_pharmcat_analysis not found, falling back to direct call")
+            # Use the direct PharmCAT service call to avoid duplicate report generation
             results = call_pharmcat_service(output_file, report_id=data_id)
+        except Exception as e:
+            logger.error(f"PharmCAT service call failed: {str(e)}")
+            results = {"success": False, "message": f"PharmCAT service error: {str(e)}", "data": {}}
             
         logger.info(f"PharmCAT processing complete")
         
@@ -250,19 +249,21 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             
             # Generate reports (proceed even if normalization 'success' is False; use whatever data is available)
             try:
-                # Create directory for reports if it doesn't exist
+                # Create a single reports directory for this job
                 reports_dir = Path("/data/reports")
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Create a patient-specific directory
-                patient_dir = reports_dir / data_id
-                patient_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Created patient-specific directory: {patient_dir}")
+                # Create a unique job directory with a descriptive name
+                job_dir = reports_dir / f"job_{data_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+                job_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Created unified job directory: {job_dir}")
                 
-                # Set up the output paths with patient-specific directory
-                report_path = patient_dir / f"{data_id}_pgx_report.pdf"
-                interactive_html_path = patient_dir / f"{data_id}_pgx_report_interactive.html"
-                pharmcat_html_path = patient_dir / f"{data_id}_pgx_pharmcat.html"
+                # Set up all output paths in the same directory
+                pdf_report_path = job_dir / f"pharmacogenomic_report_{data_id}.pdf"
+                interactive_html_path = job_dir / f"interactive_report_{data_id}.html"
+                pharmcat_html_path = job_dir / f"pharmcat_analysis_{data_id}.html"
+                pharmcat_json_path = job_dir / f"pharmcat_results_{data_id}.json"
+                pharmcat_tsv_path = job_dir / f"pharmcat_summary_{data_id}.tsv"
                 
                 # Extract data needed for the reports
                 pharmcat_data = results.get("data", {}) if isinstance(results, dict) else {}
@@ -327,94 +328,471 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 pharmcat_json_exists = False
                 pharmcat_tsv_exists = False
 
-                # Prefer directly checking the patient directory first (wrapper saves here)
-                direct_html = patient_dir / f"{data_id}_pgx_pharmcat.html"
-                direct_json = patient_dir / f"{data_id}_pgx_pharmcat.json"
-                direct_tsv = patient_dir / f"{data_id}_pgx_pharmcat.tsv"
+                # Check for PharmCAT outputs in the patient directory (wrapper saves here)
+                patient_dir = reports_dir / data_id
+                logger.info(f"Looking for PharmCAT files in: {patient_dir}")
+                
+                if patient_dir.exists():
+                    logger.info(f"Patient directory exists, contents: {list(patient_dir.glob('*'))}")
+                    
+                    # Copy PharmCAT outputs to our unified job directory
+                    pharmcat_pattern = f"{data_id}_pgx_pharmcat.*"
+                    logger.info(f"Searching for files matching pattern: {pharmcat_pattern}")
+                    
+                    pharmcat_files = list(patient_dir.glob(pharmcat_pattern))
+                    logger.info(f"Found PharmCAT files: {pharmcat_files}")
+                    
+                    for pharmcat_file in pharmcat_files:
+                        logger.info(f"Processing PharmCAT file: {pharmcat_file}")
+                        if pharmcat_file.suffix == '.html':
+                            shutil.copy2(pharmcat_file, pharmcat_html_path)
+                            pharmcat_html_exists = True
+                            logger.info(f"Copied PharmCAT HTML to {pharmcat_html_path}")
+                        elif pharmcat_file.suffix == '.json':
+                            shutil.copy2(pharmcat_file, pharmcat_json_path)
+                            pharmcat_json_exists = True
+                            logger.info(f"Copied PharmCAT JSON to {pharmcat_json_path}")
+                        elif pharmcat_file.suffix == '.tsv':
+                            shutil.copy2(pharmcat_file, pharmcat_tsv_path)
+                            pharmcat_tsv_exists = True
+                            logger.info(f"Copied PharmCAT TSV to {pharmcat_tsv_path}")
 
-                if direct_html.exists():
-                    pharmcat_html_exists = True
-                    logger.info(f"Found PharmCAT HTML at {direct_html}")
-                    # Ensure standardized destination name is present (same path)
-                    if direct_html != pharmcat_html_path:
-                        try:
-                            shutil.copy2(direct_html, pharmcat_html_path)
-                        except Exception:
-                            pass
-                else:
-                    # Fallback to any URL hints in results
-                    for key in ("pharmcat_html_report_url", "html_report_url"):
-                        source_path = pharmcat_data.get(key)
-                        if not source_path:
-                            continue
-                        if source_path.startswith("/"):
-                            full_source_path = Path(source_path)
-                            if full_source_path.exists():
-                                shutil.copy2(full_source_path, pharmcat_html_path)
-                                pharmcat_html_exists = True
-                                logger.info(f"Copied PharmCAT HTML report from {full_source_path} to {pharmcat_html_path}")
-                                break
 
-                if direct_json.exists():
-                    pharmcat_json_exists = True
-                if direct_tsv.exists():
-                    pharmcat_tsv_exists = True
+                # Generate unified PDF report using ReportLab
+                logger.info(f"Generating unified PDF report to {pdf_report_path}")
                 
-                # Log warning if no data was found
-                if len(formatted_diplotypes) == 0:
-                    logger.warning("No diplotypes found for report. Raw data structure: " + json.dumps(pharmcat_data)[:1000])
-                
-                if len(formatted_recommendations) == 0:
-                    logger.warning("No recommendations found for report. Raw data structure: " + json.dumps(pharmcat_data)[:1000])
-                
-                # ALWAYS generate our own reports, regardless of whether PharmCAT created them
-                from app.reports.generator import create_interactive_html_report
-                from app.reports.pdf_generators import generate_pdf_report_dual_lane
-                
-                # Generate PDF report using dual-lane system (ReportLab + WeasyPrint fallback)
-                logger.info(f"Generating PDF report using dual-lane system to {report_path}")
-                # Derive workflow context for per-sample diagram
-                workflow_ctx = workflow.copy() if isinstance(workflow, dict) else {}
-                
-                # Prepare template data for dual-lane PDF generation
-                template_data = {
-                    "patient_id": patient_id,
-                    "report_id": data_id,
-                    "diplotypes": formatted_diplotypes,
-                    "recommendations": formatted_recommendations,
-                    "workflow": workflow_ctx,
-                }
-                
-                # Generate PNG workflow image for PDF
                 try:
-                    from app.visualizations.workflow_diagram import render_workflow
-                    png_bytes = render_workflow(fmt="png", workflow=workflow_ctx)
-                    if png_bytes:
-                        logger.info(f"✓ Generated PNG workflow image for PDF: {len(png_bytes)} bytes")
-                    else:
-                        logger.warning("✗ PNG workflow generation failed, using empty bytes")
-                        png_bytes = None
+                    from reportlab.lib.pagesizes import A4
+                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+                    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                    from reportlab.lib.units import mm, inch
+                    from reportlab.lib import colors
+                    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+                    from reportlab.platypus.flowables import Image, HRFlowable
+                    from reportlab.lib.units import cm
+                    from reportlab.pdfgen import canvas
+                    from reportlab.lib.utils import ImageReader
+                    from io import BytesIO
+                    import base64
+                    
+                    # Create PDF document with professional margins
+                    doc = SimpleDocTemplate(
+                        str(pdf_report_path),
+                        pagesize=A4,
+                        rightMargin=20*mm,
+                        leftMargin=20*mm,
+                        topMargin=25*mm,
+                        bottomMargin=20*mm
+                    )
+                    
+                    # Build story (content)
+                    story = []
+                    styles = getSampleStyleSheet()
+                    
+                    # Professional color scheme matching the HTML template
+                    primary_color = colors.HexColor('#2c3e50')
+                    secondary_color = colors.HexColor('#3498db')
+                    accent_color = colors.HexColor('#e67e22')
+                    success_color = colors.HexColor('#28a745')
+                    warning_color = colors.HexColor('#ffc107')
+                    danger_color = colors.HexColor('#dc3545')
+                    info_color = colors.HexColor('#17a2b8')
+                    light_color = colors.HexColor('#f8f9fa')
+                    
+                    # Enhanced styles matching the HTML template
+                    title_style = ParagraphStyle(
+                        'CustomTitle',
+                        parent=styles['Heading1'],
+                        fontSize=24,
+                        spaceAfter=15,
+                        alignment=TA_CENTER,
+                        textColor=primary_color,
+                        fontName='Helvetica-Bold',
+                        spaceBefore=10
+                    )
+                    
+                    subtitle_style = ParagraphStyle(
+                        'CustomSubtitle',
+                        parent=styles['Normal'],
+                        fontSize=14,
+                        spaceAfter=20,
+                        alignment=TA_CENTER,
+                        textColor=colors.HexColor('#7f8c8d'),
+                        fontName='Helvetica'
+                    )
+                    
+                    heading_style = ParagraphStyle(
+                        'CustomHeading',
+                        parent=styles['Heading2'],
+                        fontSize=16,
+                        spaceAfter=12,
+                        spaceBefore=20,
+                        textColor=primary_color,
+                        fontName='Helvetica-Bold',
+                        borderWidth=1,
+                        borderColor=light_color,
+                        borderPadding=8,
+                        backColor=light_color
+                    )
+                    
+                    subheading_style = ParagraphStyle(
+                        'CustomSubheading',
+                        parent=styles['Heading3'],
+                        fontSize=14,
+                        spaceAfter=8,
+                        spaceBefore=15,
+                        textColor=secondary_color,
+                        fontName='Helvetica-Bold'
+                    )
+                    
+                    normal_style = ParagraphStyle(
+                        'CustomNormal',
+                        parent=styles['Normal'],
+                        fontSize=11,
+                        spaceAfter=6,
+                        alignment=TA_JUSTIFY,
+                        fontName='Helvetica'
+                    )
+                    
+                    table_header_style = ParagraphStyle(
+                        'TableHeader',
+                        parent=styles['Normal'],
+                        fontSize=11,
+                        fontName='Helvetica-Bold',
+                        textColor=colors.white,
+                        alignment=TA_CENTER
+                    )
+                    
+                    table_cell_style = ParagraphStyle(
+                        'TableCell',
+                        parent=styles['Normal'],
+                        fontSize=10,
+                        fontName='Helvetica',
+                        alignment=TA_LEFT
+                    )
+                    
+                    # Header with logo placeholder and title
+                    story.append(Paragraph("ZaroPGx Pharmacogenomic Report", title_style))
+                    story.append(Paragraph("Precision Medicine through Genetic Analysis", subtitle_style))
+                    
+                    # Report Information Box
+                    report_info_data = [
+                        [Paragraph("<b>Sample ID:</b>", normal_style), Paragraph(str(patient_id), normal_style)],
+                        [Paragraph("<b>Report ID:</b>", normal_style), Paragraph(str(data_id), normal_style)],
+                        [Paragraph("<b>Generated:</b>", normal_style), Paragraph(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), normal_style)]
+                    ]
+                    
+                    report_info_table = Table(report_info_data, colWidths=[2*inch, 3*inch])
+                    report_info_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, -1), light_color),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                        ('ROUNDEDCORNERS', [6]),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                        ('TOPPADDING', (0, 0), (-1, -1), 8),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ]))
+                    story.append(report_info_table)
+                    story.append(Spacer(1, 20))
+                    
+                    # Methodology Section
+                    story.append(Paragraph("Methodology", heading_style))
+                    methodology_text = """The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC (Clinical Pharmacogenetics Implementation Consortium) guidelines. Genetic variants were processed to identify star alleles and diplotypes, which were then mapped to phenotypes and relevant recommendations."""
+                    story.append(Paragraph(methodology_text, normal_style))
+                    story.append(Spacer(1, 15))
+                    
+                    # Executive Summary
+                    story.append(Paragraph("Executive Summary", heading_style))
+                    summary_text = """This report provides pharmacogenomic information based on the sample's genetic analysis. The information can be used to inform interpretation of genetic profiles in context."""
+                    story.append(Paragraph(summary_text, normal_style))
+                    
+                    if formatted_diplotypes:
+                        story.append(Paragraph("This sample's genetic profile indicates:", normal_style))
+                        story.append(Spacer(1, 8))
+                        
+                        # Create summary highlights table
+                        summary_data = []
+                        for diplotype in formatted_diplotypes:
+                            if isinstance(diplotype, dict):
+                                gene_name = diplotype.get('gene', 'Unknown')
+                                diplotype_value = diplotype.get('diplotype', 'Unknown')
+                                phenotype = diplotype.get('phenotype', 'Unknown')
+                                
+                                # Determine phenotype color
+                                if 'Normal' in str(phenotype):
+                                    phenotype_color = success_color
+                                elif 'Poor' in str(phenotype):
+                                    phenotype_color = danger_color
+                                elif 'Intermediate' in str(phenotype):
+                                    phenotype_color = warning_color
+                                elif 'Rapid' in str(phenotype) or 'Ultrarapid' in str(phenotype):
+                                    phenotype_color = info_color
+                                else:
+                                    phenotype_color = colors.grey
+                                
+                                summary_data.append([
+                                    Paragraph(f"<b>{gene_name}</b>", normal_style),
+                                    Paragraph(str(diplotype_value), normal_style),
+                                    Paragraph(str(phenotype), ParagraphStyle('Phenotype', parent=normal_style, textColor=phenotype_color))
+                                ])
+                        
+                        if summary_data:
+                            summary_table = Table(summary_data, colWidths=[1.5*inch, 2*inch, 2*inch])
+                            summary_table.setStyle(TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), secondary_color),
+                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                                ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                                ('ROUNDEDCORNERS', [6]),
+                                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                            ]))
+                            story.append(summary_table)
+                    
+                    story.append(Spacer(1, 20))
+                    
+                    # Genetic Results Section
+                    if formatted_diplotypes:
+                        story.append(Paragraph("Genetic Results", heading_style))
+                        
+                        # Create comprehensive gene results table
+                        gene_headers = ['Gene', 'Diplotype', 'Phenotype', 'Activity Score', 'Implications']
+                        gene_data = [gene_headers]
+                        
+                        for diplotype in formatted_diplotypes:
+                            if isinstance(diplotype, dict):
+                                gene_name = diplotype.get('gene', 'Unknown')
+                                diplotype_value = diplotype.get('diplotype', 'Unknown')
+                                phenotype = diplotype.get('phenotype', 'Unknown')
+                                activity_score = diplotype.get('activity_score', 'N/A')
+                                
+                                # Generate implications based on phenotype
+                                if 'Normal' in str(phenotype):
+                                    implications = "Standard drug metabolism expected"
+                                elif 'Poor' in str(phenotype):
+                                    implications = "Reduced drug metabolism may require dose adjustments"
+                                elif 'Intermediate' in str(phenotype):
+                                    implications = "Slightly reduced metabolism may require monitoring"
+                                elif 'Rapid' in str(phenotype) or 'Ultrarapid' in str(phenotype):
+                                    implications = "Increased metabolism may reduce efficacy at standard doses"
+                                else:
+                                    implications = "Consult clinical guidelines"
+                                
+                                gene_data.append([
+                                    Paragraph(str(gene_name), table_cell_style),
+                                    Paragraph(str(diplotype_value), table_cell_style),
+                                    Paragraph(str(phenotype), table_cell_style),
+                                    Paragraph(str(activity_score), table_cell_style),
+                                    Paragraph(implications, table_cell_style)
+                                ])
+                        
+                        if len(gene_data) > 1:  # More than just headers
+                            gene_table = Table(gene_data, colWidths=[1*inch, 1.2*inch, 1.2*inch, 1*inch, 2.5*inch])
+                            gene_table.setStyle(TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), primary_color),
+                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                                ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                                ('ROUNDEDCORNERS', [6]),
+                                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                                ('ALIGN', (4, 1), (4, -1), 'LEFT'),  # Implications column left-aligned
+                            ]))
+                            story.append(gene_table)
+                        
+                        story.append(Spacer(1, 20))
+                    
+                    # Drug Recommendations Section
+                    if formatted_recommendations:
+                        story.append(Paragraph("Drug Recommendations", heading_style))
+                        story.append(Paragraph("The following recommendations are based on CPIC guidelines and this sample's genetic profile:", normal_style))
+                        story.append(Spacer(1, 12))
+                        
+                        for recommendation in formatted_recommendations:
+                            if isinstance(recommendation, dict):
+                                drug_name = recommendation.get('drug', 'Unknown')
+                                recommendation_text = recommendation.get('recommendation', 'See report for details')
+                                gene = recommendation.get('gene', '')
+                                classification = recommendation.get('classification', 'Not specified')
+                                
+                                # Create recommendation box with appropriate styling
+                                rec_title = f"{drug_name}"
+                                if gene:
+                                    rec_title += f" ({gene})"
+                                
+                                # Determine recommendation type for styling
+                                rec_text = recommendation_text.lower()
+                                if 'standard' in rec_text or 'normal' in rec_text:
+                                    box_color = success_color
+                                    border_color = success_color
+                                elif 'avoid' in rec_text:
+                                    box_color = danger_color
+                                    border_color = danger_color
+                                elif 'consider' in rec_text or 'alternative' in rec_text:
+                                    box_color = warning_color
+                                    border_color = warning_color
+                                else:
+                                    box_color = info_color
+                                    border_color = info_color
+                                
+                                # Create recommendation table
+                                rec_data = [
+                                    [Paragraph("<b>Drug:</b>", normal_style), Paragraph(rec_title, normal_style)],
+                                    [Paragraph("<b>Recommendation:</b>", normal_style), Paragraph(recommendation_text, normal_style)],
+                                    [Paragraph("<b>Strength of Evidence:</b>", normal_style), Paragraph(classification, normal_style)]
+                                ]
+                                
+                                rec_table = Table(rec_data, colWidths=[1.5*inch, 4*inch])
+                                rec_table.setStyle(TableStyle([
+                                    ('BACKGROUND', (0, 0), (0, -1), box_color),
+                                    ('TEXTCOLOR', (0, 0), (0, -1), colors.white),
+                                    ('BACKGROUND', (1, 0), (1, -1), colors.white),
+                                    ('GRID', (0, 0), (-1, -1), 2, border_color),
+                                    ('ROUNDEDCORNERS', [6]),
+                                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                                    ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                                    ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                                    ('TOPPADDING', (0, 0), (-1, -1), 8),
+                                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                                    ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                                ]))
+                                story.append(rec_table)
+                                story.append(Spacer(1, 12))
+                    
+                    # Platform and Citations Section
+                    story.append(Paragraph("Platform and Citations", heading_style))
+                    
+                    # Software Platform Table
+                    # Is this deprecated?
+                    story.append(Paragraph("Software Platform", subheading_style))
+                    platform_data = [
+                        ['Component', 'Version'],
+                        ['PharmCAT', 'Latest'],
+                        ['GATK', '4.x'],
+                        ['PyPGx', 'Latest'],
+                        ['ZaroPGx', '1.0']
+                    ]
+                    
+                    platform_table = Table(platform_data, colWidths=[2*inch, 2*inch])
+                    platform_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), secondary_color),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 11),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                        ('ROUNDEDCORNERS', [6]),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                        ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ]))
+                    story.append(platform_table)
+                    story.append(Spacer(1, 15))
+                    
+                    # Citations
+                    story.append(Paragraph("Citations", subheading_style))
+                    citations = [
+                        "Sangkuhl K, Whirl-Carrillo M, et al. Pharmacogenomics Clinical Annotation Tool (PharmCAT). Clinical Pharmacology & Therapeutics. 2020;107(1):203–210.",
+                        "McKenna A, et al. The Genome Analysis Toolkit: a MapReduce framework for analyzing next-generation DNA sequencing data. Genome Research. 2010;20(9):1297–1303.",
+                        "Lee S‑B, et al. Stargazer: a software tool for calling star alleles from next‑generation sequencing data using CYP2D6 as a model. Genetics in Medicine. 2018."
+                    ]
+                    
+                    for citation in citations:
+                        story.append(Paragraph(f"• {citation}", normal_style))
+                        story.append(Spacer(1, 3))
+                    
+                    story.append(Spacer(1, 20))
+                    
+                    # Workflow Overview Section
+                    story.append(Paragraph("Workflow Overview", heading_style))
+                    
+                    # Create professional workflow representation
+                    workflow_steps = [
+                        ("1. Upload", "Sample file uploaded for analysis"),
+                        ("2. Detect", "File type detected and processed"),
+                        ("3. VCF", "Variant Call Format generation"),
+                        ("4. PharmCAT", "Pharmacogenomic annotation"),
+                        ("5. Reports", "Comprehensive report generation")
+                    ]
+                    
+                    workflow_data = []
+                    for step, description in workflow_steps:
+                        workflow_data.append([
+                            Paragraph(step, ParagraphStyle('WorkflowStep', parent=normal_style, textColor=primary_color, fontName='Helvetica-Bold')),
+                            Paragraph(description, normal_style)
+                        ])
+                    
+                    workflow_table = Table(workflow_data, colWidths=[1*inch, 4*inch])
+                    workflow_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (0, -1), light_color),
+                        ('BACKGROUND', (1, 0), (1, -1), colors.white),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                        ('ROUNDEDCORNERS', [6]),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                        ('TOPPADDING', (0, 0), (-1, -1), 8),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ]))
+                    story.append(workflow_table)
+                    
+                    # Disclaimer
+                    story.append(Spacer(1, 25))
+                    disclaimer_style = ParagraphStyle(
+                        'Disclaimer',
+                        parent=normal_style,
+                        fontSize=10,
+                        textColor=colors.grey,
+                        alignment=TA_CENTER,
+                        backColor=light_color,
+                        borderWidth=1,
+                        borderColor=colors.grey,
+                        borderPadding=10
+                    )
+                    disclaimer_text = "DISCLAIMER: This pharmacogenomic report is for informational purposes only. Clinical decisions should be made by qualified healthcare professionals based on comprehensive patient evaluation."
+                    story.append(Paragraph(disclaimer_text, disclaimer_style))
+                    
+                    # Footer
+                    story.append(Spacer(1, 25))
+                    footer_style = ParagraphStyle(
+                        'Footer',
+                        parent=normal_style,
+                        fontSize=9,
+                        textColor=colors.grey,
+                        alignment=TA_CENTER
+                    )
+                    story.append(Paragraph("Generated by ZaroPGx - Pharmacogenomic Analysis Platform", footer_style))
+                    story.append(Paragraph(f"© 2024-{datetime.now().year} Iliya Yaroshevskiy", footer_style))
+                    story.append(Paragraph("Licensed under GNU Affero General Public License v3.0", footer_style))
+                    
+                    # Build PDF
+                    doc.build(story)
+                    logger.info(f"✓ Comprehensive PDF report generated successfully: {pdf_report_path}")
+                    
                 except Exception as e:
-                    logger.error(f"✗ PNG workflow generation failed: {str(e)}", exc_info=True)
-                    png_bytes = None
+                    logger.error(f"✗ PDF generation failed: {str(e)}")
+                    raise Exception(f"PDF generation failed: {str(e)}")
                 
-                # Use dual-lane PDF generation system
-                result = generate_pdf_report_dual_lane(
-                    template_data=template_data,
-                    output_path=str(report_path),
-                    workflow_diagram=png_bytes,
-                    preferred_generator="reportlab"  # Prefer ReportLab for better text rendering
-                )
-                
-                if result["success"]:
-                    logger.info(f"✓ PDF generated successfully using {result['generator_used']}")
-                    if result["fallback_used"]:
-                        logger.info("⚠ Fallback generator was used")
-                else:
-                    logger.error(f"✗ Dual-lane PDF generation failed: {result['error']}")
-                    raise Exception(f"PDF generation failed: {result['error']}")
-                
-                # Always generate our interactive HTML report to a distinct filename
+                # Generate interactive HTML report
                 logger.info(f"Generating interactive HTML report to {interactive_html_path}")
                 create_interactive_html_report(
                     patient_id=patient_id,
@@ -422,28 +800,31 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     diplotypes=formatted_diplotypes,
                     recommendations=formatted_recommendations,
                     output_path=str(interactive_html_path),
-                    workflow=workflow_ctx,
+                    workflow=workflow.copy() if isinstance(workflow, dict) else {},
                 )
                 
                 # Add provisional flag if the workflow was marked as provisional
                 is_provisional = workflow.get("is_provisional", False)
                 
-                # Update job status with report URLs and results
+                # Update job status with unified report URLs
                 response_data = {
-                    "pdf_report_url": f"/reports/{data_id}_pgx_report.pdf",
-                    "html_report_url": f"/reports/{data_id}_pgx_report_interactive.html",
+                    "pdf_report_url": f"/reports/{pdf_report_path.name}",
+                    "html_report_url": f"/reports/{interactive_html_path.name}",
                     "diplotypes": formatted_diplotypes,
                     "recommendations": formatted_recommendations,
                     "is_provisional": is_provisional,
-                    "warnings": workflow.get("warnings", [])
+                    "warnings": workflow.get("warnings", []),
+                    "job_directory": str(job_dir)
                 }
-                # Respect feature flags for PharmCAT outputs
-                if INCLUDE_PHARMCAT_HTML and pharmcat_html_exists:
-                    response_data["pharmcat_html_report_url"] = f"/reports/{data_id}_pgx_pharmcat.html"
-                if INCLUDE_PHARMCAT_JSON and pharmcat_json_exists:
-                    response_data["pharmcat_json_report_url"] = f"/reports/{data_id}_pgx_pharmcat.json"
-                if INCLUDE_PHARMCAT_TSV and pharmcat_tsv_exists:
-                    response_data["pharmcat_tsv_report_url"] = f"/reports/{data_id}_pgx_pharmcat.tsv"
+                
+                # Add PharmCAT report URLs if they exist
+                if pharmcat_html_exists:
+                    response_data["pharmcat_html_report_url"] = f"/reports/{pharmcat_html_path.name}"
+                if pharmcat_json_exists:
+                    response_data["pharmcat_json_report_url"] = f"/reports/{pharmcat_json_path.name}"
+                if pharmcat_tsv_exists:
+                    response_data["pharmcat_tsv_report_url"] = f"/reports/{pharmcat_tsv_path.name}"
+                
                 job_status[data_id].update({"data": response_data})
                 
                 # Add completion message with provisional status if applicable
@@ -451,10 +832,11 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 if is_provisional:
                     completion_message += " (PROVISIONAL RESULTS)"
                 
-                logger.info(f"Updated job status with report URLs: PDF=/reports/{data_id}_pgx_report.pdf, HTML=/reports/{data_id}_pgx_report.html")
+                logger.info(f"Updated job status with unified report URLs. Job directory: {job_dir}")
+                
             except Exception as gen_err:
                 # If our custom generation failed, attempt to surface PharmCAT HTML if available
-                logger.error(f"Error during custom report generation: {str(gen_err)}")
+                logger.error(f"Error during unified report generation: {str(gen_err)}")
                 job_status[data_id].update({
                     "status": "error",
                     "message": f"Report generation failed: {str(gen_err)}",

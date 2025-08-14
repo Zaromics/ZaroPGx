@@ -5,7 +5,6 @@ from datetime import datetime
 import re
 import base64
 from typing import List, Dict, Any
-import requests
 from weasyprint import HTML, CSS
 try:
     # WeasyPrint >= 53
@@ -24,6 +23,7 @@ from app.visualizations.workflow_diagram import (
     build_simple_html_from_workflow,
     render_simple_png_from_workflow,
 )
+from app.core.version_manager import get_all_versions, get_versions_dict
 
 # Version
 # Do not hardcode; derive from pyproject when available
@@ -135,194 +135,44 @@ def _sanitize_graphviz_svg(svg_str: str) -> str:
         return svg_str
 
 
-def _load_versions_from_shared_dir() -> List[Dict[str, str]]:
-    """Read version manifests from the shared /data/versions directory if present."""
-    versions_dir = os.path.join("/data", "versions")
-    items: List[Dict[str, str]] = []
-    try:
-        if not os.path.isdir(versions_dir):
-            return items
-        for fname in os.listdir(versions_dir):
-            if not fname.endswith(".json"):
-                continue
-            fpath = os.path.join(versions_dir, fname)
-            try:
-                with open(fpath, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    name = str(data.get("name", os.path.splitext(fname)[0])).strip()
-                    version = str(data.get("version", "N/A")).strip()
-                    # Normalize version display for consistency
-                    items.append({"name": name, "version": _normalize_version_text(version)})
-            except Exception:
-                continue
-    except Exception:
-        return items
-    return items
 
-
-def _parse_docker_compose_version(service_name: str) -> str:
-    """Parse docker-compose.yml to extract version from image tag for a specific service.
-    
-    This is a fallback method when the service metadata is not accessible.
-    """
-    try:
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        
-        # Try multiple compose file names in order of preference
-        compose_files = [
-            "docker-compose.yml",
-            "docker-compose-local-LAN.yml", 
-            "docker-compose.override.yml"
-        ]
-        
-        compose_path = None
-        for compose_file in compose_files:
-            test_path = os.path.join(project_root, compose_file)
-            if os.path.exists(test_path):
-                compose_path = test_path
-                break
-        
-        if not compose_path:
-            logging.debug(f"No docker-compose file found for {service_name}")
-            return "N/A"
-        
-        with open(compose_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        # Look for the specific service section
-        service_pattern = rf"^\s*{service_name}:\s*$"
-        lines = content.split('\n')
-        
-        for i, line in enumerate(lines):
-            if re.match(service_pattern, line.strip()):
-                # Look for image line in this service section
-                for j in range(i + 1, min(i + 20, len(lines))):  # Look ahead up to 20 lines
-                    next_line = lines[j].strip()
-                    if next_line.startswith('image:'):
-                        # Extract version from image tag
-                        image_line = next_line
-                        if ':' in image_line:
-                            version = image_line.split(':', 2)[-1].strip()
-                            logging.debug(f"Found version {version} for {service_name} in {compose_path}")
-                            return _normalize_version_text(version)
-                        break
-                    elif next_line and not next_line.startswith(' ') and not next_line.startswith('\t'):
-                        # We've moved to the next service, stop looking
-                        break
-                break
-        
-        logging.debug(f"Service {service_name} not found in {compose_path}")
-        
-    except Exception as e:
-        logging.debug(f"Failed to parse docker-compose.yml for {service_name}: {e}")
-    
-    return "N/A"
-
-
-def _get_hapi_fhir_version() -> str:
-    """Retrieve HAPI FHIR server version from its CapabilityStatement.
-
-    Tries to fetch <FHIR_SERVER_URL>/metadata and parse software.version.
-    Falls back to environment variable HAPI_FHIR_VERSION, docker-compose.yml parsing, or "N/A" if not available.
-    """
-    # Prefer explicit env var override if present
-    env_ver = os.getenv("HAPI_FHIR_VERSION")
-    if env_ver:
-        return _normalize_version_text(env_ver)
-
-    server_url = os.environ.get("FHIR_SERVER_URL", "http://fhir-server:8080/fhir")
-    metadata_url = server_url.rstrip("/") + "/metadata"
-    try:
-        headers = {"Accept": "application/fhir+json"}
-        resp = requests.get(metadata_url, headers=headers, timeout=3)
-        if resp.status_code == 200:
-            data = resp.json()
-            software = data.get("software") or {}
-            version = software.get("version") or ""
-            if version:
-                return _normalize_version_text(version)
-    except Exception:
-        pass
-    
-    # Fallback: Parse docker-compose.yml for the image version
-    compose_version = _parse_docker_compose_version("fhir-server")
-    if compose_version != "N/A":
-        logging.info(f"Using docker-compose.yml fallback for HAPI FHIR version: {compose_version}")
-        return compose_version
-    else:
-        logging.debug("HAPI FHIR version not available from metadata or docker-compose.yml")
-    
-    return "N/A"
 
 
 def build_platform_info() -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    items.append({"name": "ZaroPGx", "version": get_zaropgx_version()})
-    # Merge from /data/versions and repo data/versions (for dev)
-    merged: Dict[str, str] = {}
-    for src in (_load_versions_from_shared_dir,):
-        for it in src():
-            name = it.get("name", "").strip()
-            ver = _normalize_version_text(it.get("version", "N/A"))
-            if name:
-                merged.setdefault(name.lower(), ver)
-    # Try repo data/versions as well
-    try:
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        repo_versions_dir = os.path.join(project_root, "data", "versions")
-        if os.path.isdir(repo_versions_dir):
-            for fname in os.listdir(repo_versions_dir):
-                if not fname.endswith(".json"):
-                    continue
-                fpath = os.path.join(repo_versions_dir, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if isinstance(data, dict):
-                        name = str(data.get("name", os.path.splitext(fname)[0])).strip()
-                        ver = _normalize_version_text(str(data.get("version", "N/A")).strip())
-                        if name:
-                            merged.setdefault(name.lower(), ver)
-                except Exception:
-                    continue
-    except Exception:
-        pass
-    # Append merged entries
-    for key, ver in merged.items():
-        display = {"gatk": "GATK", "pharmcat": "PharmCAT", "pypgx": "PyPGx"}.get(key, key.capitalize())
-        items.append({"name": display, "version": ver})
-    # Add HAPI FHIR Server version
-    # Only add if not already provided by a versions manifest
-    lower_names = {i.get("name", "").lower() for i in items}
-    if not any(name in lower_names for name in ("hapi fhir", "hapi fhir server", "fhir", "hapi")):
-        items.append({"name": "HAPI FHIR Server", "version": _get_hapi_fhir_version()})
+    """Build platform information using centralized version management."""
+    items = []
     
-    # Add PostgreSQL version if not already present
-    if not any(name in lower_names for name in ("postgresql", "postgres", "db")):
-        postgres_version = _parse_docker_compose_version("db")
-        if postgres_version != "N/A":
-            logging.info(f"Added PostgreSQL version from docker-compose.yml: {postgres_version}")
-            items.append({"name": "PostgreSQL", "version": postgres_version})
-
-    # Ensure all version strings are normalized and not empty
+    # Add ZaroPGx version
+    items.append({"name": "ZaroPGx", "version": get_zaropgx_version()})
+    
+    # Get all versions from centralized manager
+    all_versions = get_all_versions()
+    
+    # Add service versions, avoiding duplicates
+    seen_names = {"zaropgx"}
+    for version_info in all_versions:
+        name = version_info.get("name", "").strip()
+        version = version_info.get("version", "N/A").strip()
+        source = version_info.get("source", "unknown")
+        
+        if name and name.lower() not in seen_names:
+            seen_names.add(name.lower())
+            items.append({
+                "name": name,
+                "version": _normalize_version_text(version),
+                "source": source
+            })
+    
+    # Ensure all version strings are normalized
     for item in items:
         item["version"] = _normalize_version_text(item.get("version", "N/A"))
+    
     return items
 
 
 def _versions_index() -> Dict[str, str]:
-    idx: Dict[str, str] = {}
-    for item in _load_versions_from_shared_dir():
-        name = item.get("name", "").strip()
-        ver = _normalize_version_text(item.get("version", "").strip())
-        if name:
-            idx[name.lower()] = ver
-    # Include ZaroPGx and HAPI FHIR in the index for citation use if needed
-    idx.setdefault("zaropgx", _normalize_version_text(get_zaropgx_version()))
-    idx.setdefault("hapi fhir server", _normalize_version_text(_get_hapi_fhir_version()))
-    idx.setdefault("postgresql", _normalize_version_text(_parse_docker_compose_version("db")))
-    return idx
+    """Get versions index using centralized version management."""
+    return get_versions_dict()
 
 
 def build_citations() -> List[Dict[str, str]]:

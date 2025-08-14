@@ -118,7 +118,9 @@ class ReportLabGenerator(PDFGenerator):
             )
             
             # Title
-            if 'sample_id' in template_data:
+            if 'patient_id' in template_data:
+                title = f"Pharmacogenomic Report - Patient {template_data['patient_id']}"
+            elif 'sample_id' in template_data:
                 title = f"Pharmacogenomic Report - Sample {template_data['sample_id']}"
             else:
                 title = "Pharmacogenomic Report"
@@ -126,37 +128,73 @@ class ReportLabGenerator(PDFGenerator):
             story.append(Spacer(1, 12))
             
             # Sample Information
-            if 'sample_id' in template_data:
+            if 'patient_id' in template_data:
+                story.append(Paragraph("Patient Information", heading_style))
+                story.append(Paragraph(f"<b>Patient ID:</b> {template_data['patient_id']}", normal_style))
+                if 'report_id' in template_data:
+                    story.append(Paragraph(f"<b>Report ID:</b> {template_data['report_id']}", normal_style))
+                story.append(Spacer(1, 12))
+            elif 'sample_id' in template_data:
                 story.append(Paragraph("Sample Information", heading_style))
                 story.append(Paragraph(f"<b>Sample ID:</b> {template_data['sample_id']}", normal_style))
                 if 'file_type' in template_data:
                     story.append(Paragraph(f"<b>File Type:</b> {template_data['file_type']}", normal_style))
                 story.append(Spacer(1, 12))
             
+            # Add timestamp if available
+            from datetime import datetime
+            current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            story.append(Paragraph(f"<b>Report Generated:</b> {current_time}", normal_style))
+            story.append(Spacer(1, 12))
+            
+            # Add workflow information if available
+            if 'workflow' in template_data and template_data['workflow']:
+                story.append(Paragraph("Workflow Information", heading_style))
+                workflow = template_data['workflow']
+                if isinstance(workflow, dict):
+                    if 'file_type' in workflow:
+                        story.append(Paragraph(f"<b>File Type:</b> {workflow['file_type']}", normal_style))
+                    if 'used_gatk' in workflow:
+                        story.append(Paragraph(f"<b>GATK Used:</b> {'Yes' if workflow['used_gatk'] else 'No'}", normal_style))
+                    if 'used_pypgx' in workflow:
+                        story.append(Paragraph(f"<b>PyPGx Used:</b> {'Yes' if workflow['used_pypgx'] else 'No'}", normal_style))
+                    if 'used_pharmcat' in workflow:
+                        story.append(Paragraph(f"<b>PharmCAT Used:</b> {'Yes' if workflow['used_pharmcat'] else 'No'}", normal_style))
+                story.append(Spacer(1, 12))
+            
             # Workflow Diagram
             story.append(Paragraph("Analysis Workflow", heading_style))
             story.append(Spacer(1, 6))
             
-            # Check if we have SVG workflow content in template data or workflow_diagram parameter
+            # Check if we have workflow content in template data or workflow_diagram parameter
             workflow_text_extracted = False
             
-            # First, try to extract from workflow_diagram parameter (SVG bytes)
+            # First, try to extract from workflow_diagram parameter
             if workflow_diagram and isinstance(workflow_diagram, bytes):
                 try:
-                    svg_content = workflow_diagram.decode('utf-8')
-                    # Extract text content from SVG for ReportLab
-                    import re
-                    text_matches = re.findall(r'<text[^>]*>(.*?)</text>', svg_content, re.DOTALL)
-                    if text_matches:
-                        # Create a text-based workflow representation
-                        workflow_text = "Workflow Steps:\n"
-                        for i, text in enumerate(text_matches, 1):
-                            workflow_text += f"{i}. {text.strip()}\n"
-                        story.append(Paragraph(workflow_text, normal_style))
-                        logger.info(f"✓ Workflow text extracted from SVG bytes using {self.name}")
-                        workflow_text_extracted = True
+                    # Check if it's SVG content (text-based)
+                    try:
+                        svg_content = workflow_diagram.decode('utf-8')
+                        if '<svg' in svg_content or '<text' in svg_content:
+                            # Extract text content from SVG for ReportLab
+                            import re
+                            text_matches = re.findall(r'<text[^>]*>(.*?)</text>', svg_content, re.DOTALL)
+                            if text_matches:
+                                # Create a text-based workflow representation
+                                workflow_text = "Workflow Steps:\n"
+                                for i, text in enumerate(text_matches, 1):
+                                    workflow_text += f"{i}. {text.strip()}\n"
+                                story.append(Paragraph(workflow_text, normal_style))
+                                logger.info(f"✓ Workflow text extracted from SVG bytes using {self.name}")
+                                workflow_text_extracted = True
+                        else:
+                            # Not SVG content, might be PNG or other binary
+                            logger.info(f"Workflow diagram is binary data (likely PNG), using fallback text")
+                    except UnicodeDecodeError:
+                        # Binary data (PNG, etc.) - can't extract text
+                        logger.info(f"Workflow diagram is binary data (likely PNG), using fallback text")
                 except Exception as e:
-                    logger.warning(f"Failed to extract text from workflow_diagram bytes: {e}")
+                    logger.warning(f"Failed to process workflow_diagram: {e}")
             
             # If no text extracted from workflow_diagram, try template_html
             if not workflow_text_extracted and 'template_html' in template_data:
@@ -235,10 +273,70 @@ class ReportLabGenerator(PDFGenerator):
                             story.append(Paragraph(f"<b>{key}:</b> {value}", normal_style))
                 story.append(Spacer(1, 12))
             
+            # Handle diplotypes data specifically
+            if 'diplotypes' in template_data and template_data['diplotypes']:
+                story.append(Paragraph("Gene Diplotypes", heading_style))
+                story.append(Spacer(1, 6))
+                
+                diplotypes = template_data['diplotypes']
+                if isinstance(diplotypes, list):
+                    for diplotype in diplotypes:
+                        if isinstance(diplotype, dict):
+                            # Handle different diplotype formats
+                            if 'gene' in diplotype:
+                                gene_name = diplotype.get('gene', 'Unknown')
+                                diplotype_value = diplotype.get('diplotype', 'Unknown')
+                                phenotype = diplotype.get('phenotype', 'Unknown')
+                                activity_score = diplotype.get('activity_score', 'Unknown')
+                                
+                                diplotype_text = f"<b>{gene_name}:</b> {diplotype_value}"
+                                if phenotype != 'Unknown':
+                                    diplotype_text += f" (Phenotype: {phenotype})"
+                                if activity_score != 'Unknown':
+                                    diplotype_text += f" (Activity Score: {activity_score})"
+                                
+                                story.append(Paragraph(diplotype_text, normal_style))
+                            elif 'name' in diplotype:
+                                # Alternative format
+                                story.append(Paragraph(f"<b>{diplotype.get('name', 'Unknown')}:</b> {diplotype.get('value', 'Unknown')}", normal_style))
+                            else:
+                                # Generic format
+                                story.append(Paragraph(f"• {str(diplotype)}", normal_style))
+                        else:
+                            story.append(Paragraph(f"• {str(diplotype)}", normal_style))
+                story.append(Spacer(1, 12))
+            
+            # Handle recommendations data specifically
+            if 'recommendations' in template_data and template_data['recommendations']:
+                story.append(Paragraph("Drug Recommendations", heading_style))
+                story.append(Spacer(1, 6))
+                
+                recommendations = template_data['recommendations']
+                if isinstance(recommendations, list):
+                    for recommendation in recommendations:
+                        if isinstance(recommendation, dict):
+                            # Handle different recommendation formats
+                            if 'drug' in recommendation:
+                                drug_name = recommendation.get('drug', 'Unknown')
+                                recommendation_text = recommendation.get('recommendation', 'See report for details')
+                                guidelines = recommendation.get('guidelines', [])
+                                
+                                rec_text = f"<b>{drug_name}:</b> {recommendation_text}"
+                                if guidelines:
+                                    rec_text += f" (Guidelines: {', '.join(guidelines)})"
+                                
+                                story.append(Paragraph(rec_text, normal_style))
+                            else:
+                                # Generic format
+                                story.append(Paragraph(f"• {str(recommendation)}", normal_style))
+                        else:
+                            story.append(Paragraph(f"• {str(recommendation)}", normal_style))
+                story.append(Spacer(1, 12))
+            
             # Add all other template data that contains the actual pharmacogenomic information
             # This ensures we get the full report content, not just basic info
             for key, value in template_data.items():
-                if key not in ['sample_id', 'file_type', 'analysis_results', 'workflow_diagram'] and value:
+                if key not in ['sample_id', 'file_type', 'analysis_results', 'workflow_diagram', 'diplotypes', 'recommendations', 'workflow'] and value:
                     if isinstance(value, str) and len(value) > 0:
                         story.append(Paragraph(f"<b>{key.replace('_', ' ').title()}:</b> {value}", normal_style))
                     elif isinstance(value, dict) and value:
