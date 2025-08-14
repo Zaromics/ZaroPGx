@@ -124,9 +124,9 @@ ZaroPGx/
 
 ## Acknowledgements
 
-- [CPIC](https://cpicpgx.org/) for pharmacogenomic guidelines
-- [PharmCAT](https://pharmcat.org/) for allele calling algorithms
-- [PyPGx](https://github.com/...) for CYP2D6 calling
+- PharmCAT (Pharmacogenomics Clinical Annotation Tool). See methods: Sangkuhl K, Whirl-Carrillo M, et al. Clinical Pharmacology & Therapeutics. 2020;107(1):203–210. Project: https://github.com/PharmGKB/PharmCAT
+- GATK (Genome Analysis Toolkit). Core papers: McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. Nature Genetics. 2011;43(5):491–498. Guidance: https://gatk.broadinstitute.org/
+- PyPGx for star‑allele calling. References: Lee S‑B, et al. PLOS ONE. 2022 (ClinPharmSeq); Lee S‑B, et al. Genetics in Medicine. 2018 (Stargazer); Lee S‑B, et al. Clinical Pharmacology & Therapeutics. 2019 (Stargazer, 28 genes). Docs: https://pypgx.readthedocs.io/en/latest/index.html
 
 ## Dependency Management
 

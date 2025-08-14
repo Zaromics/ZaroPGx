@@ -1375,14 +1375,46 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 "used_pharmcat": True,
                 "exported_to_fhir": False,
             }
-            generate_pdf_report(
-                patient_id=sample_id or job_id,
-                report_id=job_id,
-                diplotypes=diplotypes,
-                recommendations=recommendations,
-                report_path=report_path,
-                workflow=per_sample_workflow,
+            # Generate PDF report using dual-lane system
+            from app.reports.pdf_generators import generate_pdf_report_dual_lane
+            
+            # Prepare template data for dual-lane PDF generation
+            template_data = {
+                "patient_id": sample_id or job_id,
+                "report_id": job_id,
+                "diplotypes": diplotypes,
+                "recommendations": recommendations,
+                "workflow": per_sample_workflow,
+            }
+            
+            # Generate PNG workflow image for PDF
+            try:
+                from app.visualizations.workflow_diagram import render_workflow
+                png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                if png_bytes:
+                    logger.info(f"✓ Generated PNG workflow image for PDF: {len(png_bytes)} bytes")
+                else:
+                    logger.warning("✗ PNG workflow generation failed, using empty bytes")
+                    png_bytes = None
+            except Exception as e:
+                logger.error(f"✗ PNG workflow generation failed: {str(e)}", exc_info=True)
+                png_bytes = None
+            
+            # Use dual-lane PDF generation system
+            result = generate_pdf_report_dual_lane(
+                template_data=template_data,
+                output_path=report_path,
+                workflow_diagram=png_bytes,
+                preferred_generator="reportlab"  # Prefer ReportLab for better text rendering
             )
+            
+            if result["success"]:
+                logger.info(f"✓ PDF generated successfully using {result['generator_used']}")
+                if result["fallback_used"]:
+                    logger.info("⚠ Fallback generator was used")
+            else:
+                logger.error(f"✗ Dual-lane PDF generation failed: {result['error']}")
+                raise Exception(f"PDF generation failed: {result['error']}")
             
             # Generate interactive HTML
             create_interactive_html_report(

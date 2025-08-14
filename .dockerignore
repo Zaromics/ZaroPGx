@@ -41,6 +41,7 @@ docker-compose*
 venv/
 env/
 ENV/
+.venv/
 
 # Don't include the data directory, it's mounted at runtime
 data/

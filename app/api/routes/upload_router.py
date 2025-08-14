@@ -332,20 +332,51 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     logger.warning("No recommendations found for report. Raw data structure: " + json.dumps(pharmcat_data)[:1000])
                 
                 # ALWAYS generate our own reports, regardless of whether PharmCAT created them
-                from app.reports.generator import generate_pdf_report, create_interactive_html_report
+                from app.reports.generator import create_interactive_html_report
+                from app.reports.pdf_generators import generate_pdf_report_dual_lane
                 
-                # Generate PDF report (even if HTML report already exists)
-                logger.info(f"Generating PDF report to {report_path}")
+                # Generate PDF report using dual-lane system (ReportLab + WeasyPrint fallback)
+                logger.info(f"Generating PDF report using dual-lane system to {report_path}")
                 # Derive workflow context for per-sample diagram
                 workflow_ctx = workflow.copy() if isinstance(workflow, dict) else {}
-                generate_pdf_report(
-                    patient_id=patient_id,
-                    report_id=data_id,
-                    diplotypes=formatted_diplotypes,
-                    recommendations=formatted_recommendations,
-                    report_path=str(report_path),
-                    workflow=workflow_ctx,
+                
+                # Prepare template data for dual-lane PDF generation
+                template_data = {
+                    "patient_id": patient_id,
+                    "report_id": data_id,
+                    "diplotypes": formatted_diplotypes,
+                    "recommendations": formatted_recommendations,
+                    "workflow": workflow_ctx,
+                }
+                
+                # Generate PNG workflow image for PDF
+                try:
+                    from app.visualizations.workflow_diagram import render_workflow
+                    png_bytes = render_workflow(fmt="png", workflow=workflow_ctx)
+                    if png_bytes:
+                        logger.info(f"✓ Generated PNG workflow image for PDF: {len(png_bytes)} bytes")
+                    else:
+                        logger.warning("✗ PNG workflow generation failed, using empty bytes")
+                        png_bytes = None
+                except Exception as e:
+                    logger.error(f"✗ PNG workflow generation failed: {str(e)}", exc_info=True)
+                    png_bytes = None
+                
+                # Use dual-lane PDF generation system
+                result = generate_pdf_report_dual_lane(
+                    template_data=template_data,
+                    output_path=str(report_path),
+                    workflow_diagram=png_bytes,
+                    preferred_generator="reportlab"  # Prefer ReportLab for better text rendering
                 )
+                
+                if result["success"]:
+                    logger.info(f"✓ PDF generated successfully using {result['generator_used']}")
+                    if result["fallback_used"]:
+                        logger.info("⚠ Fallback generator was used")
+                else:
+                    logger.error(f"✗ Dual-lane PDF generation failed: {result['error']}")
+                    raise Exception(f"PDF generation failed: {result['error']}")
                 
                 # Always generate our interactive HTML report to a distinct filename
                 logger.info(f"Generating interactive HTML report to {interactive_html_path}")

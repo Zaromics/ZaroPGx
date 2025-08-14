@@ -157,10 +157,156 @@
         }
         
         .card {
+            background-color: white;
+            border-radius: 8px;
             padding: 20px;
             margin-bottom: 20px;
-            border-radius: 8px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        /* Enhanced workflow diagram styling to prevent overlaps and clashes */
+        .workflow-section {
+            margin-top: 40px;
+            margin-bottom: 40px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .workflow-figure {
+            margin: 20px 0;
+            padding: 20px;
+            background: #ffffff;
+            border: 2px solid #e1e8ed;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            z-index: 1;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .workflow-figure svg {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .workflow-figure img {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .workflow-figure > * {
+            margin: 0;
+            padding: 0;
+        }
+        
+        .workflow-figure + * {
+            margin-top: 20px;
+        }
+        
+        .workflow-section + .section {
+            margin-top: 30px;
+        }
+        
+        /* Ensure proper spacing around workflow section */
+        .card:has(h4:contains("Workflow")) {
+            margin-bottom: 40px;
+        }
+        
+        /* Chart container enhancements */
+        .chart-container {
+            max-width: 100%;
+            padding: 20px;
+            border: 2px solid #e1e8ed;
+            background: #ffffff;
+            margin: 20px 0 30px 0;
+            text-align: center;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1;
+            overflow: hidden;
+        }
+        
+        /* Ensure SVG text is visible */
+        .chart-container svg text,
+        .chart-container svg tspan {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+            font-size: 12px !important;
+            fill: #2c3e50 !important;
+        }
+        
+        /* Workflow text fallback styling */
+        .workflow-text {
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        
+        /* Print media queries for PDF generation */
+        @media print {
+            .workflow-figure,
+            .chart-container {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                margin: 20px 0 !important;
+                padding: 15px !important;
+                border: 2px solid #000 !important;
+                background: #ffffff !important;
+                position: relative !important;
+                z-index: 1 !important;
+            }
+            
+            .workflow-figure svg,
+            .workflow-figure img,
+            .chart-container svg,
+            .chart-container img {
+                max-width: 100% !important;
+                height: auto !important;
+                display: block !important;
+                margin: 0 auto !important;
+                background: #ffffff !important;
+                position: relative !important;
+                z-index: 1 !important;
+            }
+            
+            .workflow-figure text,
+            .workflow-figure tspan,
+            .chart-container text,
+            .chart-container tspan {
+                font-family: 'Arial', sans-serif !important;
+                font-size: 12px !important;
+                fill: #000000 !important;
+                color: #000000 !important;
+            }
+            
+            .workflow-figure div,
+            .chart-container div {
+                position: relative !important;
+                z-index: 1 !important;
+            }
+            
+            .workflow-figure *,
+            .chart-container * {
+                position: relative !important;
+                z-index: 1 !important;
+            }
         }
         
         .drug-card {
@@ -518,28 +664,28 @@
                     <h4>Methodology</h4>
                     <p>The sample's genetic data was analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), referencing CPIC guidelines.</p>
                 </div>
-                <div class="card" style="page-break-inside: avoid;">
+                <div class="card workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
                     <h4>Workflow</h4>
-                    <div class="chart-container">
+                    <div class="workflow-figure">
                         {% if workflow_png_url %}
-                          <img src="{{ workflow_png_url }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+                          <img src="{{ workflow_png_url }}" alt="Workflow Diagram" />
                         {% elif workflow_png_data_uri %}
-                          <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+                          <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
                         {% elif workflow_svg %}
                           {{ workflow_svg | safe }}
                         {% elif workflow_html_fallback %}
                           {{ workflow_html_fallback | safe }}
                         {% else %}
-                          <div>
-                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
-                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
-                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
-                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
-                            <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                            <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
+                          <div class="workflow-text">
+                            <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Upload</span>
+                            <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Detect</span>
+                            <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>VCF</span>
+                            <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>PharmCAT</span>
+                            <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                            <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Reports</span>
                           </div>
                         {% endif %}
                     </div>

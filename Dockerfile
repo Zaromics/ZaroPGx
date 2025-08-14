@@ -21,19 +21,30 @@ RUN apt-get update && \
     libtool \
     pkg-config \
     gettext \
-    # WeasyPrint dependencies
-    libcairo2 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
-    libffi-dev \
-    shared-mime-info \
-    libglib2.0-0 \
-    libjpeg-dev \
-    libopenjp2-7-dev \
-    graphviz \
-    python3-graphviz \
-    fonts-dejavu \
+    # WeasyPrint dependencies - complete set for proper SVG rendering
+         libcairo2 \
+         libpango-1.0-0 \
+         libpangocairo-1.0-0 \
+         libgdk-pixbuf2.0-0 \
+         libffi-dev \
+         shared-mime-info \
+         libglib2.0-0 \
+         libgirepository-1.0-1 \
+         libjpeg-dev \
+         libopenjp2-7-dev \
+         graphviz \
+         python3-graphviz \
+         fonts-dejavu \
+         # Additional WeasyPrint dependencies for better compatibility
+         libharfbuzz0b \
+         libpangoft2-1.0-0 \
+         libwoff1 \
+         # Font packages for better text rendering
+         fonts-liberation \
+         fonts-dejavu-core \
+         fonts-dejavu-extra \
+         fonts-noto \
+         fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)

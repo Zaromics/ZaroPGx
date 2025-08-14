@@ -198,7 +198,11 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
 
 def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = "svg") -> bytes:
     """Local fallback renderer using Graphviz to avoid external dependencies."""
+    logger.info(f"[GRAPHVIZ] Rendering workflow diagram - format: {fmt}")
+    logger.debug(f"[GRAPHVIZ] Workflow data: {workflow}")
+    
     if Digraph is None:
+        logger.error("[GRAPHVIZ] Graphviz library not available")
         raise RuntimeError("graphviz is not available")
 
     file_type = str(workflow.get("file_type", "vcf")).lower()
@@ -208,14 +212,116 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
     used_pharmcat = bool(workflow.get("used_pharmcat", True))
     exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
 
-    g = Digraph("workflow", format=fmt)
-    g.attr(rankdir="TB", fontsize="10")
+    # Try two different approaches for PNG to ensure text renders
+    attempts = []
+    
+    if fmt == "png":
+        # Attempt 1: WeasyPrint-optimized settings with Arial (best compatibility)
+        attempts.append({
+            "name": "weasyprint_optimized",
+            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "Arial", "fontsize": "12"},
+            "node_attrs": {"fontname": "Arial", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
+                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
+            "edge_attrs": {"fontname": "Arial", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
+        })
+        
+        # Attempt 2: System fonts with guaranteed text visibility
+        attempts.append({
+            "name": "system_default",
+            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "sans-serif"},
+            "node_attrs": {"fontname": "sans-serif", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
+                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
+            "edge_attrs": {"fontname": "sans-serif", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
+        })
+        
+        # Attempt 3: Liberation Sans fallback with explicit text color
+        attempts.append({
+            "name": "liberation_sans",
+            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "Liberation Sans"},
+            "node_attrs": {"fontname": "Liberation Sans", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
+                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
+            "edge_attrs": {"fontname": "Liberation Sans", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
+        })
+    else:
+        # SVG version optimized for WeasyPrint with guaranteed text rendering
+        attempts.append({
+            "name": "svg_weasyprint_text",
+            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "Arial", "fontsize": "12"},
+            "node_attrs": {"fontname": "Arial", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
+                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
+            "edge_attrs": {"fontname": "Arial", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
+        })
+        
+        # SVG version with system fonts for better compatibility
+        attempts.append({
+            "name": "svg_system_fonts",
+            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "sans-serif", "fontsize": "12"},
+            "node_attrs": {"fontname": "sans-serif", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
+                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
+            "edge_attrs": {"fontname": "sans-serif", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
+        })
+        
+        # Fallback SVG version with minimal font requirements
+        attempts.append({
+            "name": "svg_fallback",
+            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white"},
+            "node_attrs": {"fontsize": "12", "shape": "box", "style": "rounded,filled", 
+                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "fontcolor": "#2c3e50"},
+            "edge_attrs": {"fontsize": "11", "color": "#2c3e50", "fontcolor": "#2c3e50"}
+        })
+
+    last_error = None
+    for attempt in attempts:
+        try:
+            g = Digraph("workflow", format=fmt)
+            g.attr(**attempt["graph_attrs"])
+            g.node_attr.update(**attempt["node_attrs"])
+            g.edge_attr.update(**attempt["edge_attrs"])
+            
+            logger.info(f"[GRAPHVIZ] Trying render with {attempt['name']} settings")
+            logger.debug(f"[GRAPHVIZ] Graph attrs: {attempt['graph_attrs']}")
+            logger.debug(f"[GRAPHVIZ] Node attrs: {attempt['node_attrs']}")
+            
+            result = _render_graphviz_diagram(g, file_type, extracted, used_gatk, used_pypgx, used_pharmcat, exported_to_fhir)
+            if result and len(result) > 1000:  # Reasonable size check for a real image
+                logger.info(f"[GRAPHVIZ] ✓ Successfully rendered with {attempt['name']} settings, size: {len(result)} bytes")
+                
+                # For PNG, try to debug if text is included by checking for common text patterns
+                if fmt == "png":
+                    # Save debug copy for inspection
+                    try:
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(suffix=f"_debug_{attempt['name']}.png", delete=False) as tmp:
+                            tmp.write(result)
+                            logger.info(f"[GRAPHVIZ] Debug PNG saved: {tmp.name}")
+                    except Exception as debug_e:
+                        logger.debug(f"[GRAPHVIZ] Could not save debug PNG: {debug_e}")
+                
+                return result
+            else:
+                logger.warning(f"[GRAPHVIZ] ✗ Render with {attempt['name']} produced small/empty result: {len(result) if result else 0} bytes")
+        except Exception as e:
+            logger.warning(f"Graphviz render failed with {attempt['name']}: {str(e)}")
+            last_error = e
+            continue
+    
+    # If all attempts failed, raise the last error
+    if last_error:
+        raise last_error
+    else:
+        raise RuntimeError("All Graphviz rendering attempts failed")
+
+
+def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool, used_pypgx: bool, used_pharmcat: bool, exported_to_fhir: bool) -> bytes:
+    """Helper function to build the actual Graphviz diagram structure."""
+    logger.debug(f"[GRAPHVIZ] Building diagram structure - file_type: {file_type}, gatk: {used_gatk}, pypgx: {used_pypgx}")
 
     def n(name: str, label: str, active: bool = False, shape: str = "box"):
-        style = "filled" if active else "rounded"
-        fillcolor = "#cfe8ff" if active else "#f5f7fa"
-        color = "#5b8def" if active else "#b5bdc9"
-        g.node(name, label=label, shape=shape, style=style, fillcolor=fillcolor, color=color)
+        node_kwargs = {}
+        if active:
+            node_kwargs = {"fillcolor": "#cfe8ff", "color": "#5b8def"}
+        logger.debug(f"[GRAPHVIZ] Adding node: {name} = '{label}' (active: {active})")
+        g.node(name, label=label, shape=shape, **node_kwargs)
 
     def e(a: str, b: str, label: str = "", active: bool = False, style: str = "solid"):
         color = "#5b8def" if active else "#b5bdc9"
@@ -255,7 +361,7 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
     n("PCAT", "PharmCAT", active=used_pharmcat)
     e("VCF", "PCAT", active=used_pharmcat)
 
-    n("Outputs", "report.json|report.html|phenotype.json", active=True, shape="component")
+    n("Outputs", "report.json | report.html | phenotype.json", active=True, shape="box")
     e("PCAT", "Outputs", active=True)
     n("Generate", "Generate reports", active=True)
     e("Outputs", "Generate", active=True)
@@ -272,19 +378,65 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
             n("FhirRoute", "POST /reports/:report_id/export-to-fhir")
             e("Generate", "FhirRoute", style="dashed")
 
-    return g.pipe()
+    logger.debug(f"[GRAPHVIZ] Starting final pipe rendering for {g.format}")
+    logger.debug(f"[GRAPHVIZ] Graphviz source:\n{g.source}")
+    
+    result = g.pipe()
+    logger.debug(f"[GRAPHVIZ] Pipe completed successfully, result size: {len(result) if result else 0} bytes")
+    return result
 
 
 def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optional[Dict[str, Any]] = None) -> bytes:
     """Render the workflow diagram in the requested format.
 
-    Preference order:
-      1) Local Graphviz (when a per-sample workflow dict is provided)
-      2) Kroki (Mermaid)
-      3) Checked-in static asset fallback
+    For PNG (especially for PDF embedding), prioritize fallbacks that guarantee text rendering.
     """
-    # Prefer local Graphviz when we have structured workflow info
-    if workflow:
+    # For PNG format with workflow data, prioritize Python PNG for guaranteed text rendering
+    if workflow and fmt == "png":
+        # Always use Python PNG for guaranteed text - WeasyPrint has font issues with Graphviz PNG
+        try:
+            python_png = render_simple_png_from_workflow(workflow)
+            if python_png:
+                logger.info("Using Python/Pillow PNG for guaranteed text rendering (size: %d bytes)", len(python_png))
+                return python_png
+        except Exception as e:
+            logger.warning("Python PNG failed (%s); trying alternatives", str(e))
+        
+        # Try other methods only if Python PNG fails
+        for method_name, method_func in [
+            ("Graphviz", lambda: render_with_graphviz(workflow, fmt=fmt)),
+            ("Kroki", lambda: render_with_kroki(build_mermaid_from_workflow(workflow), fmt=fmt))
+        ]:
+            try:
+                result = method_func()
+                if result and len(result) > 1000:
+                    logger.info("Using %s PNG (size: %d bytes)", method_name, len(result))
+                    return result
+            except Exception as e:
+                logger.warning("%s PNG render failed (%s)", method_name, str(e))
+                continue
+            
+    # For SVG, prioritize Graphviz since it renders text properly in WeasyPrint
+    elif workflow and fmt == "svg":
+        try:
+            result = render_with_graphviz(workflow, fmt=fmt)
+            if result:
+                logger.info("Using Graphviz SVG (size: %d bytes)", len(result))
+                return result
+        except Exception as e:
+            logger.warning("Graphviz SVG render failed (%s); trying Kroki", str(e))
+        
+        # Kroki fallback for SVG
+        try:
+            mermaid = build_mermaid_from_workflow(workflow)
+            result = render_with_kroki(mermaid, fmt=fmt)
+            logger.info("Using Kroki SVG (size: %d bytes)", len(result))
+            return result
+        except Exception as e:
+            logger.warning("Kroki SVG render failed (%s)", str(e))
+            
+    # For other formats or when no workflow data
+    elif workflow:
         try:
             if fmt in ("svg", "png"):
                 return render_with_graphviz(workflow, fmt=fmt)
@@ -294,11 +446,12 @@ def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optiona
             logger.warning("Graphviz render failed (%s); trying Kroki", str(e))
 
     # Try Kroki (use Mermaid from workflow or repo file)
-    mermaid = build_mermaid_from_workflow(workflow) if workflow else read_workflow_mermaid()
-    try:
-        return render_with_kroki(mermaid, fmt=fmt)
-    except Exception as e:
-        logger.warning("Kroki render failed (%s); trying static asset", str(e))
+    if not workflow or fmt != "png":  # Skip if we already tried Kroki above for PNG
+        mermaid = build_mermaid_from_workflow(workflow) if workflow else read_workflow_mermaid()
+        try:
+            return render_with_kroki(mermaid, fmt=fmt)
+        except Exception as e:
+            logger.warning("Kroki render failed (%s); trying static asset", str(e))
 
     # Static asset fallback
     static = try_read_static_asset(preferred=fmt)
@@ -306,7 +459,7 @@ def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optiona
         _static_fmt, content = static
         return content
 
-    # Final: pure-Python PNG breadcrumb if requested and workflow provided
+    # Final fallback: pure-Python PNG if all else fails
     if workflow and fmt == "png":
         try:
             return render_simple_png_from_workflow(workflow)
@@ -323,38 +476,79 @@ def render_workflow_png_data_uri(workflow: Optional[Dict[str, Any]] = None) -> s
     return f"data:image/png;base64,{b64}"
 
 
-def build_simple_html_from_workflow(workflow: Optional[Dict[str, Any]]) -> str:
-    """Very simple HTML fallback rendering when all image renderers fail."""
-    if workflow is None:
-        workflow = {}
-    file_type = str(workflow.get("file_type", "vcf")).upper()
-    used_gatk = bool(workflow.get("used_gatk", file_type in {"BAM", "CRAM", "SAM"}))
-    used_pypgx = bool(workflow.get("used_pypgx", False))
-    exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
+def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
+    """Build a simple HTML representation of the workflow diagram.
+    
+    This function creates a pure HTML/CSS workflow diagram that should render
+    reliably in WeasyPrint without external dependencies.
+    """
+    try:
+        # Extract workflow information
+        file_type = workflow.get('file_type', 'unknown')
+        used_gatk = workflow.get('used_gatk', False)
+        used_pypgx = workflow.get('used_pypgx', False)
+        used_pharmcat = workflow.get('used_pharmcat', False)
+        exported_to_fhir = workflow.get('exported_to_fhir', False)
+        
+        # Build workflow steps
+        steps = []
+        
+        # Always start with Upload
+        steps.append('Upload')
+        
+        # Add detection step
+        if file_type.lower() in ['vcf', 'vcf.gz']:
+            steps.append('Detect (VCF)')
+        elif file_type.lower() in ['bam', 'sam']:
+            steps.append('Detect (BAM)')
+        else:
+            steps.append(f'Detect ({file_type.upper()})')
+        
+        # Add file type step
+        steps.append(file_type.upper())
+        
+        # Add processing steps
+        if used_gatk:
+            steps.append('GATK')
+        
+        if used_pypgx:
+            steps.append('PyPGx')
+            
+        if used_pharmcat:
+            steps.append('PharmCAT')
+            
+        # Add final steps
+        steps.append('Reports')
+        
+        if exported_to_fhir:
+            steps.append('FHIR Export')
+        
+        # Create simple HTML with basic styling
+        html_parts = []
+        html_parts.append('<div style="text-align: center; padding: 20px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; margin: 10px 0;">')
+        
+        for i, step in enumerate(steps):
+            # Add step
+            html_parts.append(f'<span style="display: inline-block; padding: 12px 16px; border: 2px solid #2c3e50; border-radius: 8px; background: #ffffff; margin: 4px 6px; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; color: #2c3e50; text-align: center; min-width: 80px;">{step}</span>')
+            
+            # Add arrow (except after last step)
+            if i < len(steps) - 1:
+                html_parts.append('<span style="color: #2c3e50; font-size: 18px; font-weight: bold; margin: 0 8px; font-family: Arial, sans-serif;">→</span>')
+        
+        html_parts.append('</div>')
+        
+        return ''.join(html_parts)
+        
+    except Exception as e:
+        logger.error(f"Error building HTML workflow: {str(e)}")
+        # Return a simple fallback
+        return '<div style="text-align: center; padding: 20px; color: #666;">Workflow diagram could not be generated</div>'
 
-    steps = ["Upload", "Detect ({})".format(file_type)]
-    if file_type in {"BAM", "CRAM", "SAM"}:
-        steps.append("GATK" + (" ✔" if used_gatk else " (skipped)"))
-    steps.append("VCF")
-    if used_pypgx:
-        steps.append("PyPGx")
-    steps.append("PharmCAT")
-    steps.append("Reports")
-    if exported_to_fhir:
-        steps.append("FHIR Export")
 
-    parts = []
-    for i, s in enumerate(steps):
-        parts.append(f"<span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>{s}</span>")
-        if i < len(steps) - 1:
-            parts.append("<span style='color:#5b8def'>&nbsp;→&nbsp;</span>")
-    return "".join(parts)
-
-
-def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: int = 1400, height: int = 200) -> bytes:
+def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: int = 1600, height: int = 300) -> bytes:
     """Pure-Python rasterizer: draw a breadcrumb of steps to a PNG via Pillow.
 
-    This avoids external services and ensures we always have an image for PDF/HTML.
+    This avoids external services and ensures we always have an image for PDF/HTML with guaranteed text rendering.
     """
     if Image is None or ImageDraw is None:
         return b""
@@ -378,30 +572,420 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
 
     img = Image.new("RGB", (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
+    
+    # Try to load a better font for clearer text rendering
+    font = None
     try:
-        font = ImageFont.load_default()
+        # Try to load a TrueType font for better rendering
+        font_size = 18  # Larger font for better visibility
+        for font_path in ["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                         "/System/Library/Fonts/Arial.ttf",  # macOS
+                         "C:/Windows/Fonts/arial.ttf"]:      # Windows
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                break
+            except (OSError, IOError):
+                continue
     except Exception:
-        font = None  # type: ignore
+        pass
+    
+    if font is None:
+        try:
+            font = ImageFont.load_default()
+        except Exception:
+            font = None  # type: ignore
 
-    x = 10
-    y = max(10, (height // 2) - 15)
+    # Calculate positioning to center the workflow
+    total_width = sum(max(140, len(s) * 12 + 30) for s in steps) + (len(steps) - 1) * 35
+    start_x = max(10, (width - total_width) // 2)
+    y = max(30, (height // 2) - 35)
+
+    x = start_x
     for i, s in enumerate(steps):
-        # Draw rounded rectangle
-        # Estimate width by text length
-        char_w = 8
-        box_w = max(120, char_w * len(s) + 20)
-        box_h = 30
-        draw.rounded_rectangle([x, y, x + box_w, y + box_h], radius=8, outline=(91, 141, 239), fill=(245, 247, 250), width=2)
-        # Draw text
-        draw.text((x + 10, y + 8), s, fill=(0, 0, 0), font=font)
-        x += box_w + 20
+        # Draw rounded rectangle with better styling
+        char_w = 12  # Larger character estimate for bigger text
+        box_w = max(140, char_w * len(s) + 30)
+        box_h = 70  # Much taller boxes
+        
+        # Draw box with better colors for PDF visibility
+        draw.rounded_rectangle([x, y, x + box_w, y + box_h], 
+                             radius=8, 
+                             outline=(44, 62, 80),   # Darker outline
+                             fill=(245, 247, 250),   # Light background
+                             width=2)
+        
+        # Draw text with better positioning and color
+        text_x = x + (box_w - len(s) * char_w) // 2
+        text_y = y + (box_h - 20) // 2
+        draw.text((text_x, text_y), s, fill=(44, 62, 80), font=font)
+        
+        x += box_w + 35
+        
+        # Draw arrow between steps with larger size
         if i < len(steps) - 1:
-            draw.text((x - 12, y + 8), "→", fill=(91, 141, 239), font=font)
+            arrow_y = y + box_h // 2
+            # Use larger arrow character and better positioning
+            draw.text((x - 25, arrow_y - 12), "→", fill=(91, 141, 239), font=font)
 
     import io
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
+
+
+def build_simple_text_workflow(workflow: Dict[str, Any]) -> str:
+    """Build a simple text-based workflow diagram that renders reliably in WeasyPrint.
+    
+    This function creates a plain text representation using basic HTML elements
+    that should work consistently across all WeasyPrint versions.
+    """
+    try:
+        # Extract workflow information
+        file_type = workflow.get('file_type', 'unknown')
+        used_gatk = workflow.get('used_gatk', False)
+        used_pypgx = workflow.get('used_pypgx', False)
+        used_pharmcat = workflow.get('used_pharmcat', False)
+        exported_to_fhir = workflow.get('exported_to_fhir', False)
+        
+        # Build workflow steps
+        steps = []
+        
+        # Always start with Upload
+        steps.append('Upload')
+        
+        # Add detection step
+        if file_type.lower() in ['vcf', 'vcf.gz']:
+            steps.append('Detect (VCF)')
+        elif file_type.lower() in ['bam', 'sam']:
+            steps.append('Detect (BAM)')
+        else:
+            steps.append(f'Detect ({file_type.upper()})')
+        
+        # Add file type step
+        steps.append(file_type.upper())
+        
+        # Add processing steps
+        if used_gatk:
+            steps.append('GATK')
+        
+        if used_pypgx:
+            steps.append('PyPGx')
+            
+        if used_pharmcat:
+            steps.append('PharmCAT')
+            
+        # Add final steps
+        steps.append('Reports')
+        
+        if exported_to_fhir:
+            steps.append('FHIR Export')
+        
+        # Create simple text-based HTML using basic elements
+        html_parts = []
+        html_parts.append('<div class="workflow-text">')
+        html_parts.append('<h3>Workflow Summary</h3>')
+        
+        for i, step in enumerate(steps):
+            # Add step number and name
+            html_parts.append(f'<p><strong>{i+1}.</strong> {step}</p>')
+            
+            # Add arrow (except after last step)
+            if i < len(steps) - 1:
+                html_parts.append('<p style="text-align: center; margin: 5px 0;">↓</p>')
+        
+        html_parts.append('</div>')
+        
+        return ''.join(html_parts)
+        
+    except Exception as e:
+        logger.error(f"Error building text workflow: {str(e)}")
+        # Return a simple fallback
+        return '<div class="workflow-text"><p>Workflow diagram could not be generated</p></div>'
+
+
+def build_plain_text_workflow(workflow: Dict[str, Any]) -> str:
+    """Build a plain text workflow diagram that renders reliably in WeasyPrint.
+    
+    This function creates a plain text representation using only basic text elements
+    that should work consistently across all WeasyPrint versions.
+    """
+    try:
+        # Extract workflow information
+        file_type = workflow.get('file_type', 'unknown')
+        used_gatk = workflow.get('used_gatk', False)
+        used_pypgx = workflow.get('used_pypgx', False)
+        used_pharmcat = workflow.get('used_pharmcat', False)
+        exported_to_fhir = workflow.get('exported_to_fhir', False)
+        
+        # Build workflow steps
+        steps = []
+        
+        # Always start with Upload
+        steps.append('Upload')
+        
+        # Add detection step
+        if file_type.lower() in ['vcf', 'vcf.gz']:
+            steps.append('Detect (VCF)')
+        elif file_type.lower() in ['bam', 'sam']:
+            steps.append('Detect (BAM)')
+        else:
+            steps.append(f'Detect ({file_type.upper()})')
+        
+        # Add file type step
+        steps.append(file_type.upper())
+        
+        # Add processing steps
+        if used_gatk:
+            steps.append('GATK')
+        
+        if used_pypgx:
+            steps.append('PyPGx')
+            
+        if used_pharmcat:
+            steps.append('PharmCAT')
+            
+        # Add final steps
+        steps.append('Reports')
+        
+        if exported_to_fhir:
+            steps.append('FHIR Export')
+        
+        # Create plain text representation
+        text_parts = []
+        text_parts.append('WORKFLOW SUMMARY')
+        text_parts.append('=' * 20)
+        
+        for i, step in enumerate(steps):
+            # Add step number and name
+            text_parts.append(f'{i+1}. {step}')
+            
+            # Add arrow (except after last step)
+            if i < len(steps) - 1:
+                text_parts.append('   ↓')
+        
+        return '\n'.join(text_parts)
+        
+    except Exception as e:
+        logger.error(f"Error building plain text workflow: {str(e)}")
+        # Return a simple fallback
+        return 'Workflow diagram could not be generated'
+
+
+def build_table_workflow(workflow: Dict[str, Any]) -> str:
+    """Build a table-based workflow diagram that renders reliably in WeasyPrint.
+    
+    This function creates a table representation using basic HTML table elements
+    that should work consistently across all WeasyPrint versions.
+    """
+    try:
+        # Extract workflow information
+        file_type = workflow.get('file_type', 'unknown')
+        used_gatk = workflow.get('used_gatk', False)
+        used_pypgx = workflow.get('used_pypgx', False)
+        used_pharmcat = workflow.get('used_pharmcat', False)
+        exported_to_fhir = workflow.get('exported_to_fhir', False)
+        
+        # Build workflow steps
+        steps = []
+        
+        # Always start with Upload
+        steps.append('Upload')
+        
+        # Add detection step
+        if file_type.lower() in ['vcf', 'vcf.gz']:
+            steps.append('Detect (VCF)')
+        elif file_type.lower() in ['bam', 'sam']:
+            steps.append('Detect (BAM)')
+        else:
+            steps.append(f'Detect ({file_type.upper()})')
+        
+        # Add file type step
+        steps.append(file_type.upper())
+        
+        # Add processing steps
+        if used_gatk:
+            steps.append('GATK')
+        
+        if used_pypgx:
+            steps.append('PyPGx')
+            
+        if used_pharmcat:
+            steps.append('PharmCAT')
+            
+        # Add final steps
+        steps.append('Reports')
+        
+        if exported_to_fhir:
+            steps.append('FHIR Export')
+        
+        # Create table-based HTML
+        html_parts = []
+        html_parts.append('<table class="workflow-table" style="width: 100%; border-collapse: collapse; margin: 20px 0; font-family: Arial, sans-serif;">')
+        html_parts.append('<thead>')
+        html_parts.append('<tr>')
+        html_parts.append('<th style="border: 1px solid #ddd; padding: 12px; text-align: center; background-color: #f8f9fa; font-weight: bold;">Step</th>')
+        html_parts.append('<th style="border: 1px solid #ddd; padding: 12px; text-align: center; background-color: #f8f9fa; font-weight: bold;">Description</th>')
+        html_parts.append('</tr>')
+        html_parts.append('</thead>')
+        html_parts.append('<tbody>')
+        
+        for i, step in enumerate(steps):
+            html_parts.append('<tr>')
+            html_parts.append(f'<td style="border: 1px solid #ddd; padding: 8px; text-align: center; font-weight: bold;">{i+1}</td>')
+            html_parts.append(f'<td style="border: 1px solid #ddd; padding: 8px; text-align: center;">{step}</td>')
+            html_parts.append('</tr>')
+        
+        html_parts.append('</tbody>')
+        html_parts.append('</table>')
+        
+        return ''.join(html_parts)
+        
+    except Exception as e:
+        logger.error(f"Error building table workflow: {str(e)}")
+        # Return a simple fallback
+        return '<p>Workflow diagram could not be generated</p>'
+
+
+def build_simple_text_workflow_v2(workflow: Dict[str, Any]) -> str:
+    """Build a simple text-based workflow diagram using minimal HTML.
+    
+    This function creates a very basic text representation using only
+    the simplest HTML elements possible to avoid WeasyPrint rendering issues.
+    """
+    try:
+        # Extract workflow information
+        file_type = workflow.get('file_type', 'unknown')
+        used_gatk = workflow.get('used_gatk', False)
+        used_pypgx = workflow.get('used_pypgx', False)
+        used_pharmcat = workflow.get('used_pharmcat', False)
+        exported_to_fhir = workflow.get('exported_to_fhir', False)
+        
+        # Build workflow steps
+        steps = []
+        
+        # Always start with Upload
+        steps.append('Upload')
+        
+        # Add detection step
+        if file_type.lower() in ['vcf', 'vcf.gz']:
+            steps.append('Detect (VCF)')
+        elif file_type.lower() in ['bam', 'sam']:
+            steps.append('Detect (BAM)')
+        else:
+            steps.append(f'Detect ({file_type.upper()})')
+        
+        # Add file type step
+        steps.append(file_type.upper())
+        
+        # Add processing steps
+        if used_gatk:
+            steps.append('GATK')
+        
+        if used_pypgx:
+            steps.append('PyPGx')
+            
+        if used_pharmcat:
+            steps.append('PharmCAT')
+            
+        # Add final steps
+        steps.append('Reports')
+        
+        if exported_to_fhir:
+            steps.append('FHIR Export')
+        
+        # Create simple text representation with minimal HTML
+        html_parts = []
+        html_parts.append('<div>')
+        html_parts.append('<h3>Workflow Summary</h3>')
+        
+        for i, step in enumerate(steps):
+            # Add step number and name
+            html_parts.append(f'<p>{i+1}. {step}</p>')
+            
+            # Add arrow (except after last step)
+            if i < len(steps) - 1:
+                html_parts.append('<p>↓</p>')
+        
+        html_parts.append('</div>')
+        
+        return ''.join(html_parts)
+        
+    except Exception as e:
+        logger.error(f"Error building simple text workflow v2: {str(e)}")
+        # Return a simple fallback
+        return '<p>Workflow diagram could not be generated</p>'
+
+
+def build_plain_text_workflow_v2(workflow: Dict[str, Any]) -> str:
+    """Build a completely plain text workflow diagram.
+    
+    This function creates a plain text representation using only
+    basic text elements to avoid any WeasyPrint rendering issues.
+    """
+    try:
+        # Extract workflow information
+        file_type = workflow.get('file_type', 'unknown')
+        used_gatk = workflow.get('used_gatk', False)
+        used_pypgx = workflow.get('used_pypgx', False)
+        used_pharmcat = workflow.get('used_pharmcat', False)
+        exported_to_fhir = workflow.get('exported_to_fhir', False)
+        
+        # Build workflow steps
+        steps = []
+        
+        # Always start with Upload
+        steps.append('Upload')
+        
+        # Add detection step
+        if file_type.lower() in ['vcf', 'vcf.gz']:
+            steps.append('Detect (VCF)')
+        elif file_type.lower() in ['bam', 'sam']:
+            steps.append('Detect (BAM)')
+        else:
+            steps.append(f'Detect ({file_type.upper()})')
+        
+        # Add file type step
+        steps.append(file_type.upper())
+        
+        # Add processing steps
+        if used_gatk:
+            steps.append('GATK')
+        
+        if used_pypgx:
+            steps.append('PyPGx')
+            
+        if used_pharmcat:
+            steps.append('PharmCAT')
+            
+        # Add final steps
+        steps.append('Reports')
+        
+        if exported_to_fhir:
+            steps.append('FHIR Export')
+        
+        # Create plain text representation
+        text_parts = []
+        text_parts.append('Workflow Summary')
+        text_parts.append('')
+        
+        for i, step in enumerate(steps):
+            # Add step number and name
+            text_parts.append(f'{i+1}. {step}')
+            
+            # Add arrow (except after last step)
+            if i < len(steps) - 1:
+                text_parts.append('↓')
+                text_parts.append('')
+        
+        # Join with newlines and wrap in a simple div
+        plain_text = '\n'.join(text_parts)
+        return f'<div style="font-family: monospace; white-space: pre; text-align: center; padding: 20px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px;">{plain_text}</div>'
+        
+    except Exception as e:
+        logger.error(f"Error building plain text workflow: {str(e)}")
+        # Return a simple fallback
+        return '<div style="font-family: monospace; padding: 20px; text-align: center;">Workflow diagram could not be generated</div>'
 
 
 

@@ -9,7 +9,6 @@ import json
 
 from app.api.db import get_db, register_report, get_guidelines_for_gene_drug
 from app.api.models import ReportRequest, ReportResponse, DrugRecommendation
-from app.reports.generator import generate_pdf_report
 from app.reports.fhir_client import FhirClient
 from ..utils.security import get_current_user, get_optional_user
 
@@ -61,15 +60,33 @@ def generate_report_background(patient_id: str, file_id: str, report_type: str, 
                     )
                 )
         
-        # Generate PDF report
+        # Generate PDF report using dual-lane system
         report_path = os.path.join(REPORT_DIR, f"{report_id}.pdf")
-        generate_pdf_report(
-            patient_id=patient_id,
-            report_id=report_id,
-            diplotypes=diplotypes,
-            recommendations=recommendations,
-            report_path=report_path
+        from app.reports.pdf_generators import generate_pdf_report_dual_lane
+        
+        # Prepare template data for dual-lane PDF generation
+        template_data = {
+            "patient_id": patient_id,
+            "report_id": report_id,
+            "diplotypes": diplotypes,
+            "recommendations": recommendations,
+        }
+        
+        # Use dual-lane PDF generation system
+        result = generate_pdf_report_dual_lane(
+            template_data=template_data,
+            output_path=report_path,
+            workflow_diagram=None,  # No workflow diagram for this simple report
+            preferred_generator="reportlab"  # Prefer ReportLab for better text rendering
         )
+        
+        if result["success"]:
+            logger.info(f"✓ PDF generated successfully using {result['generator_used']}")
+            if result["fallback_used"]:
+                logger.info("⚠ Fallback generator was used")
+        else:
+            logger.error(f"✗ Dual-lane PDF generation failed: {result['error']}")
+            raise Exception(f"PDF generation failed: {result['error']}")
         
         # Register report in database
         register_report(db, patient_id, report_type, report_path)

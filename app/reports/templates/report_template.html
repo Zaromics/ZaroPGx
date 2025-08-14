@@ -32,11 +32,19 @@
         }
         .section {
             margin-bottom: 30px;
+            position: relative;
+            padding-bottom: 10px;
+        }
+        
+        /* Ensure workflow section has proper spacing */
+        .workflow-section {
+            margin-bottom: 40px;
         }
         h2 {
             color: #2c3e50;
             border-bottom: 1px solid #eee;
             padding-bottom: 5px;
+            margin-bottom: 20px;
         }
         table {
             width: 100%;
@@ -102,6 +110,8 @@
             border: 1px solid #ddd;
             font-size: 0.9em;
             color: #666;
+            position: relative;
+            z-index: 0;
         }
         .footer {
             margin-top: 50px;
@@ -110,9 +120,172 @@
             color: #666;
             border-top: 1px solid #eee;
             padding-top: 20px;
+            position: relative;
+            z-index: 0;
         }
         .page-break {
             page-break-before: always;
+        }
+        
+        .workflow-text {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            margin: 10px 0;
+            position: relative;
+            z-index: 1;
+        }
+        .workflow-figure {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            z-index: 1;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            clear: both;
+            display: block;
+        }
+        
+        /* Ensure proper spacing around workflow content */
+        .workflow-figure > * {
+            margin: 0;
+            padding: 0;
+        }
+        
+        /* Ensure workflow diagram doesn't interfere with other elements */
+        .workflow-figure + * {
+            margin-top: 20px;
+        }
+        
+        /* Ensure proper spacing before workflow section */
+        .workflow-section {
+            margin-top: 40px;
+        }
+        
+        /* Ensure proper spacing after workflow section */
+        .workflow-section + .section {
+            margin-top: 30px;
+        }
+        .workflow-figure svg {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+            background: white;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1;
+        }
+        .workflow-figure img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1;
+        }
+        /* Special styling for PDF SVG workflow */
+        .workflow-svg-pdf svg {
+            font-family: Arial, sans-serif !important;
+            font-size: 12px !important;
+            position: relative;
+            z-index: 1;
+        }
+        .workflow-svg-pdf text {
+            font-family: Arial, sans-serif !important;
+            font-size: 12px !important;
+            fill: #2c3e50 !important;
+            position: relative;
+            z-index: 1;
+        }
+        /* Enhanced PDF-specific styles for HTML workflow */
+        @media print {
+            .workflow-figure {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                margin: 20px 0 !important;
+                padding: 15px !important;
+                background: #f8f9fa !important;
+                border: 1px solid #dee2e6 !important;
+                border-radius: 8px !important;
+            }
+            .workflow-figure img {
+                max-width: 100% !important;
+                height: auto !important;
+                display: block !important;
+                margin: 0 auto !important;
+                border-radius: 4px !important;
+            }
+            .workflow-figure svg {
+                max-width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                border-radius: 4px !important;
+            }
+                    /* Ensure SVG text is visible in PDF */
+        .workflow-figure svg text {
+            font-family: Arial, sans-serif !important;
+            font-size: 12px !important;
+            fill: #2c3e50 !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: relative !important;
+            z-index: 1 !important;
+        }
+        .workflow-figure svg tspan {
+            font-family: Arial, sans-serif !important;
+            font-size: 12px !important;
+            fill: #2c3e50 !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: relative !important;
+            z-index: 1 !important;
+        }
+            /* Ensure HTML workflow renders properly in PDF */
+            .workflow-figure div {
+                page-break-inside: avoid !important;
+                font-family: Arial, sans-serif !important;
+                font-size: 12px !important;
+            }
+            .workflow-figure span {
+                font-family: Arial, sans-serif !important;
+                display: inline-block !important;
+            }
+                    /* Ensure HTML workflow content is visible */
+        .workflow-figure * {
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: relative !important;
+            z-index: 1 !important;
+        }
+            
+                    /* Style for plain text workflow */
+        .workflow-text {
+            font-family: 'Courier New', monospace !important;
+            font-size: 12px !important;
+            text-align: center !important;
+            margin: 20px 0 !important;
+            padding: 15px !important;
+            background-color: #f8f9fa !important;
+            border: 1px solid #dee2e6 !important;
+            border-radius: 5px !important;
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+            color: #2c3e50 !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: relative !important;
+            z-index: 1 !important;
+        }
         }
     </style>
 </head>
@@ -275,27 +448,29 @@
         {{ disclaimer }}
     </div>
 
-    <div class="section">
+    <div class="section workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
         <h2>Workflow Overview</h2>
-        <div style="border:1px solid #eee; padding:10px; background:#fff">
+        <div class="workflow-figure">
             {% if workflow_svg %}
               {{ workflow_svg | safe }}
+            {% elif workflow_png_file_url %}
+              <img src="{{ workflow_png_file_url }}" alt="Workflow Diagram" />
             {% elif workflow_png_data_uri %}
-              <img src="{{ workflow_png_data_uri }}" alt="Workflow" style="max-width:100%; height:auto;"/>
+              <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
             {% elif workflow_html_fallback %}
               {{ workflow_html_fallback | safe }}
             {% else %}
               <!-- Hard fail-safe directly in template -->
-              <div>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Upload</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Detect</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>VCF</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>PharmCAT</span>
-                <span style='color:#5b8def'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:6px 10px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px'>Reports</span>
+              <div class="workflow-text">
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Upload</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Detect</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>VCF</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>PharmCAT</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Reports</span>
               </div>
             {% endif %}
         </div>

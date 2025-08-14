@@ -7,6 +7,15 @@ import base64
 from typing import List, Dict, Any
 import requests
 from weasyprint import HTML, CSS
+try:
+    # WeasyPrint >= 53
+    from weasyprint.text.fonts import FontConfiguration  # type: ignore
+except Exception:
+    try:
+        # WeasyPrint <= 52.x
+        from weasyprint.fonts import FontConfiguration  # type: ignore
+    except Exception:
+        FontConfiguration = None  # type: ignore
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
 from app.visualizations.workflow_diagram import (
@@ -98,6 +107,32 @@ def _normalize_version_text(version_text: str) -> str:
     # Find the first dotted numeric sequence (at least major.minor)
     match = re.search(r"\d+(?:\.\d+)+", text)
     return match.group(0) if match else text
+
+
+def _sanitize_graphviz_svg(svg_str: str) -> str:
+    """Make Graphviz SVG responsive-friendly for HTML/PDF rendering.
+
+    - Remove absolute width/height attributes
+    - Ensure preserveAspectRatio is set to keep centering
+    - Ensure text elements are visible and properly styled
+    """
+    try:
+        # Remove width/height attributes on root <svg>
+        svg_str = re.sub(r'(<svg[^>]*?)\s+width="[^"]+"', r"\1", svg_str, count=1)
+        svg_str = re.sub(r'(<svg[^>]*?)\s+height="[^"]+"', r"\1", svg_str, count=1)
+        
+        # Add preserveAspectRatio if missing
+        if "preserveAspectRatio" not in svg_str[:200]:
+            svg_str = svg_str.replace("<svg", "<svg preserveAspectRatio=\"xMidYMid meet\"", 1)
+        
+        # Ensure text elements have proper styling for visibility
+        # Add font-family and font-size to text elements if missing
+        svg_str = re.sub(r'<text([^>]*?)>', r'<text\1 style="font-family: Arial, sans-serif; font-size: 12px;">', svg_str)
+        svg_str = re.sub(r'<tspan([^>]*?)>', r'<tspan\1 style="font-family: Arial, sans-serif; font-size: 12px;">', svg_str)
+        
+        return svg_str
+    except Exception:
+        return svg_str
 
 
 def _load_versions_from_shared_dir() -> List[Dict[str, str]]:
@@ -225,12 +260,11 @@ def build_citations() -> List[Dict[str, str]]:
     citations: List[Dict[str, str]] = []
     citations.append({
         "name": "PyPGx",
-        "text": f"PyPGx, version {pypgx_ver}. Available at: https://pypgx.readthedocs.io/ (accessed {today}). Citation guidance: https://github.com/sbslee/pypgx?tab=readme-ov-file#citation",
-        "link": "https://github.com/sbslee/pypgx?tab=readme-ov-file#citation",
+        "text": f"PyPGx, version {pypgx_ver}. Available at: https://pypgx.readthedocs.io/en/latest/index.html (accessed {today}).",
     })
     citations.append({
-        "name": "PharmCAT",
-        "text": f"PharmCAT (Pharmacogenomics Clinical Annotation Tool), version {pharmcat_ver}. Available at: https://github.com/PharmGKB/PharmCAT (accessed {today}).",
+        "name": "Pharmacogenomics Clinical Annotation Tool (PharmCAT)",
+        "text": f"Pharmacogenomics Clinical Annotation Tool (PharmCAT), version {pharmcat_ver}. Available at: https://github.com/PharmGKB/PharmCAT (accessed {today}).",
         "link": "https://github.com/PharmGKB/PharmCAT",
     })
     citations.append({
@@ -271,6 +305,14 @@ REPORT_CONFIG = {
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Configure WeasyPrint logging for debugging text rendering issues
+weasyprint_logger = logging.getLogger('weasyprint')
+weasyprint_logger.setLevel(logging.DEBUG)
+if not weasyprint_logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('[WEASYPRINT] %(levelname)s: %(message)s'))
+    weasyprint_logger.addHandler(handler)
 
 # Constants
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -334,51 +376,54 @@ def generate_pdf_report(
         # Provide both SVG (preferred) and a PNG data URI fallback.
         workflow_svg: str = ""
         workflow_png_data_uri: str = ""
-        # Try SVG via Kroki/Graphviz
+        # DEBUG: Test all workflow diagram generation methods with WeasyPrint 66.0
+        logger.info("=== PDF WORKFLOW DIAGRAM DEBUG START ===")
+        logger.info(f"Workflow data: {workflow}")
+        
+        workflow_svg = ""
+        workflow_png_data_uri = ""
+        workflow_html_fallback = ""
+        
+        # For PDF generation, use SVG workflow diagrams to preserve text content
+        # SVG preserves text as searchable/selectable content, while PNG is just raster pixels
         try:
-            svg_bytes = render_workflow(fmt="svg", workflow=workflow)
-            workflow_svg = svg_bytes.decode("utf-8", errors="ignore")
-        except Exception:
-            workflow_svg = ""
-        try:
-            workflow_png_data_uri = render_workflow_png_data_uri(workflow=workflow)
-        except Exception:
-            workflow_png_data_uri = ""
-        # If dynamic rendering failed, try to backport the saved PNG from the HTML report
-        if not workflow_svg and not workflow_png_data_uri:
-            try:
-                # The PDF path lives in /data/reports/<report_id>/<report_id>_pgx_report.pdf
-                # Reuse that directory to find the pre-rendered PNG
-                report_dir = os.path.dirname(report_path)
-                png_path = os.path.join(report_dir, f"{report_id}_workflow.png")
-                if os.path.exists(png_path):
-                    import base64
-                    with open(png_path, "rb") as pf:
-                        b64 = base64.b64encode(pf.read()).decode("ascii")
-                        workflow_png_data_uri = f"data:image/png;base64,{b64}"
-            except Exception:
-                pass
-        if not workflow_svg and not workflow_png_data_uri:
-            # Try pure-Python PNG rasterizer
-            try:
-                png_bytes_alt = render_simple_png_from_workflow(workflow)
-                if png_bytes_alt:
-                    import base64
-                    b64 = base64.b64encode(png_bytes_alt).decode("ascii")
-                    workflow_png_data_uri = f"data:image/png;base64,{b64}"
-            except Exception:
-                pass
-        # Always produce a simple HTML fallback so the block is never empty
-        try:
-            workflow_html_fallback = build_simple_html_from_workflow(workflow)
-            if not workflow_html_fallback:
-                workflow_html_fallback = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
-        except Exception:
-            workflow_html_fallback = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
-
-        # If nothing rendered, force the fallback into the primary slot to guarantee display
-        if not workflow_svg and not workflow_png_data_uri and workflow_html_fallback:
-            workflow_svg = workflow_html_fallback
+            # First, try to get the SVG workflow image that was already generated
+            report_dir = os.path.dirname(report_path)
+            report_id = os.path.basename(report_path).replace('.pdf', '').replace('_pgx_report', '')
+            svg_path = os.path.join(report_dir, f"{report_id}_workflow.svg")
+            
+            if os.path.exists(svg_path):
+                # Read SVG content directly for PDF embedding
+                with open(svg_path, "r", encoding="utf-8") as f_svg:
+                    svg_content = f_svg.read()
+                    workflow_svg = f'<div class="workflow-figure">{svg_content}</div>'
+                    logger.info(f"✓ Using existing SVG workflow for PDF: {len(svg_content)} chars")
+            else:
+                # If SVG doesn't exist, generate it first
+                from app.visualizations.workflow_diagram import render_workflow
+                logger.info("Generating SVG workflow for PDF...")
+                svg_bytes = render_workflow(fmt="svg", workflow=workflow)
+                if svg_bytes:
+                    svg_content = svg_bytes.decode('utf-8')
+                    workflow_svg = f'<div class="workflow-figure">{svg_content}</div>'
+                    logger.info(f"✓ Generated SVG workflow for PDF: {len(svg_content)} chars")
+                    
+                    # Also save the SVG file for future use
+                    with open(svg_path, "w", encoding="utf-8") as f_svg:
+                        f_svg.write(svg_content)
+                    logger.info(f"✓ Saved SVG workflow to: {svg_path}")
+                else:
+                    logger.warning("✗ SVG workflow generation failed, using fallback text")
+                    workflow_svg = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+        except Exception as e:
+            logger.error(f"✗ SVG workflow approach failed: {str(e)}", exc_info=True)
+            workflow_svg = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+        logger.info(f"Final PDF workflow - HTML: {len(workflow_svg) if workflow_svg else 0}, PNG: {len(workflow_png_data_uri) if workflow_png_data_uri else 0}")
+        logger.info("=== PDF WORKFLOW DIAGRAM DEBUG END ===")
+        
+        # Ensure we always have a workflow display
+        if not workflow_svg:
+            workflow_svg = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
 
         html_content = template.render(
             **report_data,
@@ -414,17 +459,69 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
         output_path: Path to save the PDF
     """
     try:
-        # Load CSS if it exists
-        css = None
+        # Load CSS if it exists and configure fonts
+        stylesheets = []
+        # Add project stylesheet if present
         if os.path.exists(CSS_FILE):
-            css = CSS(filename=CSS_FILE)
-        
-        # Generate PDF - Using string_io instead of string to avoid passing positional arguments
-        html = HTML(string=html_content)
-        if css:
-            html.write_pdf(target=output_path, stylesheets=[css])
+            if FontConfiguration:
+                stylesheets.append(CSS(filename=CSS_FILE, font_config=FontConfiguration()))
+            else:
+                stylesheets.append(CSS(filename=CSS_FILE))
+        # Enhanced print-safe defaults via inline CSS for better workflow diagram handling
+        # Focus on PNG image rendering which works reliably in WeasyPrint
+        pdf_css = '''
+            @page { size: A4; margin: 18mm; }
+            img, svg { max-width: 100%; height: auto; }
+            .workflow-figure { 
+                page-break-inside: avoid; 
+                break-inside: avoid; 
+                margin-bottom: 15px; 
+                text-align: center;
+                max-height: 300px;
+                overflow: visible;
+            }
+            .workflow-figure img { 
+                max-width: 100% !important; 
+                max-height: 280px !important;
+                height: auto !important; 
+                display: block !important;
+                margin: 0 auto !important;
+                border: 1px solid #dee2e6 !important;
+                border-radius: 5px !important;
+            }
+            .workflow-figure svg { 
+                max-width: 100% !important; 
+                max-height: 280px !important;
+                height: auto !important; 
+                display: block;
+                margin: 0 auto;
+            }
+            .section { 
+                page-break-inside: avoid; 
+                break-inside: avoid; 
+            }
+            /* Ensure PNG workflow images render properly in PDF */
+            .workflow-figure img[src*="data:image/png"] {
+                max-width: 100% !important;
+                max-height: 280px !important;
+                height: auto !important;
+                display: block !important;
+                margin: 0 auto !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }
+        '''
+        if FontConfiguration:
+            stylesheets.append(CSS(string=pdf_css, font_config=FontConfiguration()))
         else:
-            html.write_pdf(target=output_path)
+            stylesheets.append(CSS(string=pdf_css))
+
+        # Generate PDF
+        html = HTML(string=html_content)
+        if FontConfiguration:
+            html.write_pdf(target=output_path, stylesheets=stylesheets, font_config=FontConfiguration(), zoom=1.0)
+        else:
+            html.write_pdf(target=output_path, stylesheets=stylesheets, zoom=1.0)
     except Exception as e:
         logger.error(f"Error converting HTML to PDF: {str(e)}")
         # Create simple text file as fallback if PDF generation fails
@@ -559,7 +656,11 @@ def create_interactive_html_report(
             # Try inline SVG as a last renderer option
             try:
                 svg_bytes = render_workflow(fmt="svg", workflow=workflow)
-                workflow_svg_inline = svg_bytes.decode("utf-8", errors="ignore") if svg_bytes else ""
+                if svg_bytes:
+                    svg_text = svg_bytes.decode("utf-8", errors="ignore")
+                    workflow_svg_inline = _sanitize_graphviz_svg(svg_text)
+                else:
+                    workflow_svg_inline = ""
             except Exception:
                 workflow_svg_inline = ""
         if not (workflow_png_url or workflow_png_data_uri or workflow_svg_inline):
@@ -780,7 +881,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             if not workflow_svg_in_html and not workflow_png_data_uri_html:
                 try:
                     svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
-                    workflow_svg_in_html = svg_bytes.decode("utf-8", errors="ignore")
+                    svg_text = svg_bytes.decode("utf-8", errors="ignore")
+                    workflow_svg_in_html = _sanitize_graphviz_svg(svg_text)
                 except Exception:
                     workflow_svg_in_html = ""
                 if not workflow_svg_in_html:
@@ -861,17 +963,190 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             report_paths["interactive_html_path"] = server_interactive_html_path
             normalized_results["data"]["interactive_html_report_url"] = server_interactive_html_path
         
-        # Generate PDF report from the HTML if enabled
+        # Generate PDF report using dual-lane system (ReportLab + WeasyPrint fallback)
         if REPORT_CONFIG["show_pdf_report"]:
             pdf_path = os.path.join(report_dir, f"{base_filename}.pdf")
-            html = HTML(string=html_content if REPORT_CONFIG["show_html_report"] else template.render(**template_data))
-            html.write_pdf(pdf_path)
-            logger.info(f"PDF report generated: {pdf_path}")
             
-            # Add to report paths
-            server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
-            report_paths["pdf_path"] = server_pdf_path
-            normalized_results["data"]["pdf_report_url"] = server_pdf_path
+            logger.info("=== DUAL-LANE PDF GENERATION START ===")
+            logger.info(f"Workflow data: {per_sample_workflow}")
+            
+            # Generate SVG workflow diagram for PDF (preserves text content)
+            try:
+                from app.visualizations.workflow_diagram import render_workflow
+                logger.info("Generating SVG workflow diagram for PDF...")
+                svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
+                if svg_bytes:
+                    logger.info(f"✓ Generated SVG workflow diagram for PDF: {len(svg_bytes)} bytes")
+                    # Convert SVG to PNG for backward compatibility with dual-lane system
+                    png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                    if png_bytes:
+                        logger.info(f"✓ Also generated PNG workflow image for compatibility: {len(png_bytes)} bytes")
+                    else:
+                        logger.warning("✗ PNG workflow generation failed, using empty bytes")
+                        png_bytes = None
+                else:
+                    logger.warning("✗ SVG workflow generation failed, trying PNG fallback")
+                    png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                    if png_bytes:
+                        logger.info(f"✓ Generated PNG workflow image as fallback: {len(png_bytes)} bytes")
+                    else:
+                        logger.warning("✗ PNG workflow generation also failed, using empty bytes")
+                        png_bytes = None
+            except Exception as e:
+                logger.error(f"✗ Workflow diagram generation failed: {str(e)}", exc_info=True)
+                png_bytes = None
+            
+            # Prepare template data for dual-lane PDF generation
+            pdf_template_data = template_data.copy()
+            
+            # Add the actual rendered HTML template so the dual-lane system can use it
+            # This ensures we get the full pharmacogenomic report content, not just basic info
+            # For PDF generation, use SVG workflow diagrams to preserve text content
+            # Initialize variables to ensure they're always defined
+            pdf_png_data_uri = ""
+            svg_bytes = None
+            workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+            
+            if per_sample_workflow:
+                from app.visualizations.workflow_diagram import render_workflow
+                # Prioritize SVG for PDF to preserve text content
+                svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
+                if svg_bytes:
+                    svg_content = svg_bytes.decode('utf-8')
+                    # Ensure SVG has proper styling for PDF rendering
+                    workflow_svg_for_pdf = f'<div class="workflow-figure workflow-svg-pdf">{svg_content}</div>'
+                    logger.info(f"✓ Generated SVG workflow for PDF with {len(svg_content)} chars")
+                else:
+                    # Fallback to PNG if SVG fails
+                    try:
+                        png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                        if png_bytes:
+                            import base64
+                            pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
+                            workflow_svg_for_pdf = f'<div class="workflow-figure"><img src="{pdf_png_data_uri}" alt="Workflow Diagram" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" /></div>'
+                            logger.info(f"✓ Generated PNG workflow fallback for PDF: {len(png_bytes)} bytes")
+                    except Exception as e:
+                        logger.warning(f"✗ PNG workflow generation also failed: {str(e)}")
+            
+            # Render the actual HTML template that contains all the pharmacogenomic data
+            actual_html_content = template.render(
+                **template_data,
+                workflow_svg=workflow_svg_for_pdf,
+                workflow_png_file_url="",
+                workflow_png_data_uri=pdf_png_data_uri,
+                workflow_html_fallback=workflow_html_fallback_html,
+            )
+            
+            # Add the actual rendered HTML to the template data
+            pdf_template_data['template_html'] = actual_html_content
+            
+            # Use dual-lane PDF generation system
+            try:
+                from app.reports.pdf_generators import generate_pdf_report_dual_lane
+                
+                # For workflow diagrams with SVG content, prefer WeasyPrint for better SVG handling
+                # ReportLab struggles with SVG, while WeasyPrint handles it excellently
+                if svg_bytes and len(svg_bytes) > 1000:
+                    logger.info("🎯 SVG workflow detected - preferring WeasyPrint for better SVG support")
+                    preferred_generator = "weasyprint"
+                    
+                    # Ensure the SVG content is properly embedded in the template HTML
+                    if 'template_html' in pdf_template_data:
+                        # Check if the template HTML already contains the workflow SVG
+                        if '<div class="workflow-figure">' in pdf_template_data['template_html']:
+                            logger.info("✓ Workflow SVG already embedded in template HTML")
+                        else:
+                            logger.warning("⚠ Workflow SVG not found in template HTML, may affect PDF rendering")
+                else:
+                    logger.info("🎯 No SVG workflow - using ReportLab as preferred generator")
+                    preferred_generator = "reportlab"
+                
+                # Try preferred generator first (WeasyPrint for SVG, ReportLab for PNG), fallback to other if needed
+                result = generate_pdf_report_dual_lane(
+                    template_data=pdf_template_data,
+                    output_path=pdf_path,
+                    workflow_diagram=svg_bytes if 'svg_bytes' in locals() else None,  # Pass SVG for WeasyPrint
+                    preferred_generator=preferred_generator
+                )
+                
+                if result["success"]:
+                    logger.info(f"✓ PDF generated successfully using {result['generator_used']}")
+                    if result["fallback_used"]:
+                        logger.info("⚠ Fallback generator was used")
+                    
+                    # Log additional information about the workflow diagram processing
+                    if svg_bytes:
+                        logger.info(f"✓ SVG workflow diagram processed: {len(svg_bytes)} bytes")
+                        if result["generator_used"] == "WeasyPrint":
+                            logger.info("✓ WeasyPrint successfully handled SVG workflow diagram")
+                        elif result["generator_used"] == "ReportLab":
+                            logger.info("⚠ ReportLab used for SVG workflow - text extraction may be limited")
+                    else:
+                        logger.info("ℹ No SVG workflow diagram available for PDF generation")
+                    
+                    # Add to report paths
+                    server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
+                    report_paths["pdf_path"] = server_pdf_path
+                    normalized_results["data"]["pdf_report_url"] = server_pdf_path
+                    
+                else:
+                    logger.error(f"✗ Dual-lane PDF generation failed: {result['error']}")
+                    # Fallback to old method if dual-lane fails
+                    logger.info("🔄 Falling back to legacy PDF generation method...")
+                    
+                    # Generate legacy HTML-based PDF
+                    if png_bytes:
+                        import base64
+                        pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
+                        workflow_svg_for_pdf = f'<div class="workflow-figure"><img src="{pdf_png_data_uri}" alt="Workflow Diagram" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" /></div>'
+                    else:
+                        workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+                        pdf_png_data_uri = ""
+                    
+                    pdf_html_content = template.render(
+                        **template_data,
+                        workflow_svg=workflow_svg_for_pdf,
+                        workflow_png_file_url="",
+                        workflow_png_data_uri=pdf_png_data_uri,
+                        workflow_html_fallback=workflow_html_fallback_html,
+                    )
+                    generate_pdf_from_html(pdf_html_content, pdf_path)
+                    logger.info(f"PDF report generated using legacy method: {pdf_path}")
+                    
+                    # Add to report paths
+                    server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
+                    report_paths["pdf_path"] = server_pdf_path
+                    normalized_results["data"]["pdf_report_url"] = server_pdf_path
+                    
+            except ImportError as e:
+                logger.warning(f"⚠ Dual-lane PDF system not available: {e}")
+                logger.info("🔄 Falling back to legacy PDF generation method...")
+                
+                # Fallback to old method
+                if png_bytes:
+                    import base64
+                    pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
+                    workflow_svg_for_pdf = f'<div class="workflow-figure"><img src="{pdf_png_data_uri}" alt="Workflow Diagram" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" /></div>'
+                else:
+                    workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+                    pdf_png_data_uri = ""
+                
+                pdf_html_content = template.render(
+                    **template_data,
+                    workflow_svg=workflow_svg_for_pdf,
+                    workflow_png_file_url="",
+                    workflow_png_data_uri=pdf_png_data_uri,
+                    workflow_html_fallback=workflow_html_fallback_html,
+                )
+                generate_pdf_from_html(pdf_html_content, pdf_path)
+                logger.info(f"PDF report generated using legacy method: {pdf_path}")
+                
+                # Add to report paths
+                server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
+                report_paths["pdf_path"] = server_pdf_path
+                normalized_results["data"]["pdf_report_url"] = server_pdf_path
+            
+            logger.info("=== DUAL-LANE PDF GENERATION END ===")
         
         # Include PharmCAT original reports if enabled
         # Check if pharmacat report files already exist in the report directory

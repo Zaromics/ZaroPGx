@@ -88,7 +88,7 @@ class UploadResponse(BaseModel):
     message: str
     analysis_info: Optional[FileAnalysis] = None
     workflow: Optional[WorkflowInfo] = None
-    created_at: datetime = datetime.utcnow()
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ProcessingStatus(BaseModel):
@@ -98,7 +98,7 @@ class ProcessingStatus(BaseModel):
     message: str
     current_stage: Optional[str] = None
     error: Optional[str] = None
-    last_updated: datetime = datetime.utcnow()
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
 
 
 class GeneticDataStatus(BaseModel):
