@@ -106,13 +106,13 @@ curl http://localhost:8765/status/<file_id>
 
 - Get report URLs (PDF/HTML/interactive and optional PharmCAT artifacts):
 
-   ```bash
+```bash
 curl http://localhost:8765/reports/<file_id>
 ```
 
 - Generate a report (utility endpoint; separate from the upload pipeline):
 
-   ```bash
+```bash
 curl -X POST http://localhost:8765/reports/generate \
   -H "Content-Type: application/json" \
   -d '{"patient_id":"1","file_id":"1","report_type":"comprehensive"}'
