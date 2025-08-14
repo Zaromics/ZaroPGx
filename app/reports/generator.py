@@ -362,13 +362,6 @@ def build_citations() -> List[Dict[str, str]]:
 
 # Report display configuration
 # Controls which reports are included in the response and shown to users
-def _env_flag(name: str, default: bool = False) -> bool:
-    val = os.getenv(name)
-    if val is None:
-        return default
-    return str(val).strip().lower() in {"1", "true", "yes", "on"}
-
-
 REPORT_CONFIG = {
     # Our generated reports
     "show_pdf_report": True,          # Standard PDF report
@@ -380,11 +373,9 @@ REPORT_CONFIG = {
     "write_workflow_png": True,       # Also write workflow.png for robust PDF embedding
 
     # PharmCAT original reports
-    # Toggle via environment for developer convenience
-    # INCLUDE_PHARMCAT_HTML=1 to include the original PharmCAT HTML alongside our reports
-    "show_pharmcat_html_report": _env_flag("INCLUDE_PHARMCAT_HTML", True),
-    "show_pharmcat_json_report": _env_flag("INCLUDE_PHARMCAT_JSON", False),
-    "show_pharmcat_tsv_report": _env_flag("INCLUDE_PHARMCAT_TSV", False),
+    "show_pharmcat_html_report": True,  # Original HTML report from PharmCAT
+    "show_pharmcat_json_report": False, # Original JSON report from PharmCAT
+    "show_pharmcat_tsv_report": False,  # Original TSV report from PharmCAT
 }
 
 # Configure logging
@@ -863,6 +854,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         "license_name": get_license_name(),
         "license_url": get_license_url(),
         "source_url": get_source_url(),
+        "current_year": datetime.now().year,
     }
     
     # Get patient and report IDs

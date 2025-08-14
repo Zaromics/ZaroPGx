@@ -406,6 +406,7 @@ async def home(request: Request):
                 "license_name": "GNU Affero General Public License v3.0",
                 "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
                 "source_url": os.getenv("SOURCE_URL", "https://github.com/Zaroganos/ZaroPGx"),
+                "current_year": datetime.utcnow().year,
             },
         )
     except Exception as e:
