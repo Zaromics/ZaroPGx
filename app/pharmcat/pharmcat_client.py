@@ -15,11 +15,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # PharmCAT service configuration
-PHARMCAT_SERVICE_URL = os.environ.get("PHARMCAT_SERVICE_URL", "http://pharmcat:5000")
-PHARMCAT_DOCKER_IMAGE = os.environ.get("PHARMCAT_DOCKER_IMAGE", "pgkb/pharmcat:latest")
+PHARMCAT_API_URL = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
 PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/pharmcat/pharmcat.jar")
 
-def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None) -> Dict[str, Any]:
+def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None, patient_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT service to process a VCF file.
     
@@ -28,6 +27,7 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
         output_json: Optional path to save the JSON output
         sample_id: Optional sample ID to use
         report_id: Optional report ID to use for consistent directory naming
+        patient_id: Optional patient ID to use for organizing reports in patient directories
         
     Returns:
         Dictionary containing PharmCAT results or error information
@@ -59,6 +59,9 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                 if report_id:
                     data['reportId'] = report_id
                     logger.info(f"Using report_id: {report_id} for consistent directory naming")
+                if patient_id:
+                    data['patientId'] = patient_id
+                    logger.info(f"Using patient_id: {patient_id} for organizing reports in patient directory")
                 
                 response = requests.post(
                     f"{pharmcat_api_url}/process",
@@ -97,7 +100,7 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
             logger.info(f"Found PharmCAT JAR at {pharmcat_jar}, using direct execution")
             # If output_json is provided, use it for storing results
             output_dir = os.path.dirname(output_json) if output_json else tempfile.mkdtemp()
-            results = run_pharmcat_jar(vcf_path, output_dir, sample_id)
+            results = run_pharmcat_jar(vcf_path, output_dir, sample_id, patient_id)
             
             # Save output to the specified location if requested
             if output_json and isinstance(results, dict) and results.get("success", False):
@@ -536,20 +539,22 @@ def get_logger():
     """Get the module logger"""
     return logging.getLogger(__name__)
 
-async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = None) -> Dict[str, Any]:
+async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = None, patient_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT API asynchronously
     
     Args:
         input_file: Path to the VCF file to analyze
         report_id: Optional report ID to use for consistent directory naming
+        patient_id: Optional patient ID to use for organizing reports in patient directories
         
     Returns:
         Dictionary containing PharmCAT results or error information
     """
     try:
         logger.info(f"Calling PharmCAT API asynchronously for file: {input_file}" + 
-                    (f" with report_id: {report_id}" if report_id else ""))
+                    (f" with report_id: {report_id}" if report_id else "") +
+                    (f" with patient_id: {patient_id}" if patient_id else ""))
         
         # Get the PharmCAT API URL from environment or use default
         pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
@@ -566,6 +571,11 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
         if report_id:
             data["reportId"] = report_id
             logger.info(f"Added report_id to request: {report_id}")
+        
+        # Add patient_id if provided
+        if patient_id:
+            data["patientId"] = patient_id
+            logger.info(f"Added patient_id to request: {patient_id}")
         
         async with httpx.AsyncClient(timeout=300) as client:  # 5 minute timeout
             # Make the POST request with both files and form data
@@ -611,7 +621,7 @@ def call_pharmcat_api(input_file: str) -> Dict[str, Any]:
             
             # Make the POST request
             response = requests.post(
-                f"{PHARMCAT_SERVICE_URL}/api/process",
+                f"{PHARMCAT_API_URL}/api/process",
                 files=files,
                 timeout=300  # 5 minute timeout
             )
@@ -628,7 +638,7 @@ def call_pharmcat_api(input_file: str) -> Dict[str, Any]:
         logger.error(f"Error calling PharmCAT API: {str(e)}")
         raise
 
-def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] = None) -> Dict[str, Any]:
+def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] = None, patient_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Run PharmCAT directly using the JAR file.
     
@@ -636,6 +646,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         input_file: Path to the input file
         output_dir: Directory to store the results
         sample_id: Optional sample ID to use
+        patient_id: Optional patient ID to use for organizing reports in patient directories
         
     Returns:
         Dictionary containing PharmCAT results
@@ -725,19 +736,37 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
                 logger.warning(f"Optional output file not found: {path}")
         
         # Copy PharmCAT reports to per-job directory for direct access
-        reports_root = Path("/data/reports")
+        reports_root = Path(os.getenv("REPORT_DIR", "/data/reports"))
         reports_root.mkdir(parents=True, exist_ok=True)
-        patient_dir = reports_root / base_name
+        
+        # Use patient_id for directory naming if provided, otherwise use base_name
+        if patient_id:
+            patient_dir = reports_root / str(patient_id)
+            logger.info(f"Using patient_id {patient_id} for directory: {patient_dir}")
+        else:
+            patient_dir = reports_root / base_name
+            logger.info(f"Using base_name {base_name} for directory: {patient_dir}")
+        
         patient_dir.mkdir(parents=True, exist_ok=True)
         
         # Map of source files to destination files
-        report_files = {
-            f"{base_name}.report.html": f"{base_name}_pgx_pharmcat.html",
-            f"{base_name}.report.json": f"{base_name}_pgx_pharmcat.json",
-            f"{base_name}.report.tsv": f"{base_name}_pgx_pharmcat.tsv",
-            f"{base_name}.match.json": f"{base_name}_pgx_match.json",
-            f"{base_name}.phenotype.json": f"{base_name}_pgx_phenotype.json"
-        }
+        # Use patient_id in filename if provided, otherwise use base_name
+        if patient_id:
+            report_files = {
+                f"{base_name}.report.html": f"{patient_id}_pgx_pharmcat.html",
+                f"{base_name}.report.json": f"{patient_id}_pgx_pharmcat.json",
+                f"{base_name}.report.tsv": f"{patient_id}_pgx_pharmcat.tsv",
+                f"{base_name}.match.json": f"{patient_id}_pgx_match.json",
+                f"{base_name}.phenotype.json": f"{patient_id}_pgx_phenotype.json"
+            }
+        else:
+            report_files = {
+                f"{base_name}.report.html": f"{base_name}_pgx_pharmcat.html",
+                f"{base_name}.report.json": f"{base_name}_pgx_pharmcat.json",
+                f"{base_name}.report.tsv": f"{base_name}_pgx_pharmcat.tsv",
+                f"{base_name}.match.json": f"{base_name}_pgx_match.json",
+                f"{base_name}.phenotype.json": f"{base_name}_pgx_phenotype.json"
+            }
         
         # Copy all report files that exist
         for src_name, dest_name in report_files.items():

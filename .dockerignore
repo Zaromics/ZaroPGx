@@ -45,7 +45,3 @@ ENV/
 
 # Don't include the data directory, it's mounted at runtime
 data/
-
-# Don't include stargazer zip - it's mounted separately
-# Keep it included for now. May need to separate it out later.
-# stargazer.zip 

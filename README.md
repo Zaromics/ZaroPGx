@@ -60,18 +60,38 @@ Data directories (mounted):
    cd ZaroPGx
    ```
 
-2) Create a `.env` from the example
+2) Choose your environment configuration:
 
-```bash
-cp .env.example .env
-# edit .env as needed (at minimum set SECRET_KEY)
-```
+   **Local Development (default):**
+   ```bash
+   cp .env.local .env
+   # edit .env as needed (at minimum set SECRET_KEY)
+   ```
+
+   **Production/Web Deployment:**
+   ```bash
+   cp .env.production .env
+   # edit .env as needed (at minimum set SECRET_KEY)
+   ```
+
+   **Custom Configuration:**
+   ```bash
+   cp .env.example .env
+   # edit .env as needed
+   ```
 
 3) Start services
 
-```bash
-docker compose up -d --build
-```
+   **Using default .env:**
+   ```bash
+   docker compose up -d --build
+   ```
+
+   **Using specific environment file:**
+   ```bash
+   docker compose --env-file .env.local up -d --build
+   docker compose --env-file .env.production up -d --build
+   ```
 
 4) Access
 
@@ -79,7 +99,9 @@ docker compose up -d --build
 - API docs: `http://localhost:8765/docs`
 - HAPI FHIR (optional): `http://localhost:8090`
 
-Tip: For LAN‑exposed runs, see `docker-compose-local-LAN.yml`.
+**Environment Differences:**
+- **Local Development**: Binds to localhost only, uses development subnet
+- **Production/Web**: Binds to all interfaces (0.0.0.0), uses production subnet
 
 ### Using the web UI
 
@@ -145,7 +167,7 @@ ZaroPGx/
 ├── db/                     # Initialization and migrations
 │   └── migrations/cpic/    # CPIC schema and sample data
 ├── docker/                 # Service Dockerfiles and wrappers
-└── docker-compose*.yml     # Orchestration
+└── docker-compose.yml      # Orchestration (environment-specific via .env files)
 ```
 
 ### Service specifics

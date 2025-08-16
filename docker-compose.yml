@@ -1,5 +1,4 @@
 services:
-  # This docker compose file is for running on the web, not locally. Make sure you are using the correct one.
   # PostgreSQL Database with CPIC data
   db:
     image: postgres:15
@@ -48,6 +47,8 @@ services:
     build:
       context: ./docker/pharmcat
       dockerfile: Dockerfile
+      args:
+        PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.0.0}
     container_name: pgx_pharmcat
     restart: unless-stopped
     volumes:
@@ -70,7 +71,7 @@ services:
 
   # HAPI FHIR Server for EHR integration
   fhir-server:
-    image: hapiproject/hapi:v6.8.0
+    image: hapiproject/hapi:latest
     container_name: pgx_fhir_server
     restart: unless-stopped
     ports:
@@ -129,7 +130,7 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
       start_period: 40s
     networks:
@@ -139,7 +140,7 @@ services:
         limits:
           memory: 28G
 
-  # PyPGx Service for CYP2D6 star allele calling
+  # PyPGx Service for allele calling
   pypgx:
     build:
       context: ./docker/pypgx
@@ -160,13 +161,13 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
       start_period: 40s
     networks:
       - pgx-network
 
-  # Main FastAPI Application
+  # Main FastAPI Application with Web UI and API
   app:
     build:
       context: .
@@ -175,28 +176,27 @@ services:
     restart: unless-stopped
     depends_on:
       - db
-      - pharmcat  # Updated to the new simplified service name
+      - pharmcat
       - gatk-api
       - pypgx
     environment:
-      - DATABASE_URL=postgresql://cpic_user:${POSTGRES_PASSWORD}@db:5432/cpic_db
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
       - SECRET_KEY=${SECRET_KEY}
-      - PHARMCAT_API_URL=http://pharmcat:5000  # Updated with the new service name
-      - PHARMCAT_SERVICE_URL=http://pharmcat:5000  # Updated with the new service name
+      - PHARMCAT_API_URL=http://pharmcat:5000
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
       - GATK_API_URL=http://gatk-api:5000
       - PYPGX_API_URL=http://pypgx:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
-      - SOURCE_URL=https://github.com/Zaroganos/ZaroPGx
+      - SOURCE_URL=${SOURCE_URL}
       - PYTHONPATH=/app
-      - PYTHONDONTWRITEBYTECODE=1 # Prevent creation of .pyc files for debugging
-      - LOG_LEVEL=DEBUG # Increase logging verbosity
+      - PYTHONDONTWRITEBYTECODE=1
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
     volumes:
-      - ./:/app  # Mount the entire project directory to /app instead of root
+      - ./:/app
       - ./data:/data
     ports:
-      - "0.0.0.0:8765:8000"
+      - "${BIND_ADDRESS:-8765}:8000"
     healthcheck:
       test: ["CMD", "echo", "Healthcheck disabled for debugging"]
       interval: 10s
@@ -221,4 +221,4 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 172.28.0.0/16
+        - subnet: ${NETWORK_SUBNET:-172.28.0.0/16}

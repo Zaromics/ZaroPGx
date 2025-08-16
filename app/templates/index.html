@@ -880,13 +880,13 @@
                         reports: [
                             { key: 'pdf_report_url', label: 'View PDF Report', icon: 'bi-file-pdf' },
                             { key: 'html_report_url', label: 'View HTML Report', icon: 'bi-file-earmark-text' },
-                            { key: 'interactive_html_report_url', label: 'View Interactive Report', icon: 'bi-file-code' }
+                            { key: 'pharmcat_html_report_url', label: 'View PharmCAT Report', icon: 'bi-file-medical' }
                         ]
                     },
                     {
-                        title: "PharmCAT Original Reports",
+                        title: "Additional Reports",
                         reports: [
-                            { key: 'pharmcat_html_report_url', label: 'View PharmCAT HTML Report', icon: 'bi-file-medical' },
+                            { key: 'interactive_html_report_url', label: 'View Interactive Report', icon: 'bi-file-code' },
                             { key: 'pharmcat_json_report_url', label: 'View PharmCAT JSON Report', icon: 'bi-filetype-json' },
                             { key: 'pharmcat_tsv_report_url', label: 'View PharmCAT TSV Report', icon: 'bi-filetype-csv' }
                         ]
@@ -923,7 +923,7 @@
                 resultsDiv.classList.remove('d-none');
                 
                 // Log the completion in the log panel
-                addLogMessage("Analysis complete! Reports are available.", "success");
+                addLogMessage("Analysis complete! 3 main reports are available: PDF, HTML, and PharmCAT.", "success");
             }
 
             // Function to show error

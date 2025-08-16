@@ -11,5 +11,3 @@ This directory contains sample VCF files and other test data used by the applica
 - `sample_cpic.vcf` - Sample CPIC VCF file
 - `NA12878.mini.bam` - Sample BAM file for testing
 - `test.bam` - Test BAM file
-
-**Note:** This directory and its files are now included in version control to ensure the demo functionality works correctly when cloning the repository. 

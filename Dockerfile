@@ -1,4 +1,4 @@
-# Use a smaller base image with Python
+# Use a small base image with Python
 FROM python:3.12-bookworm
 
 # Set environment variables
@@ -35,11 +35,9 @@ RUN apt-get update && \
          graphviz \
          python3-graphviz \
          fonts-dejavu \
-         # Additional WeasyPrint dependencies for better compatibility
          libharfbuzz0b \
          libpangoft2-1.0-0 \
          libwoff1 \
-         # Font packages for better text rendering
          fonts-liberation \
          fonts-dejavu-core \
          fonts-dejavu-extra \
@@ -47,7 +45,7 @@ RUN apt-get update && \
          fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (fast Python package manager)
+# Install uv package manager
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 

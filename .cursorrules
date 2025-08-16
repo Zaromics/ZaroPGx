@@ -21,7 +21,7 @@
         "framework": "FastAPI",
         "libraries": [
           "sqlalchemy", "psycopg2", "pandas", "biopython",
-          "weasyprint", "jinja2", "pydantic"
+          "weasyprint", "reportlab", "jinja2", "pydantic"
         ]
       },
       "javascript": {
@@ -30,13 +30,13 @@
       },
       "sql": {
         "dialect": "PostgreSQL",
-        "schemas": ["cpic", "user_data", "reports"]
+        "schemas": ["cpic", "user_data", "reports", "fhir"]
       }
     },
     "keyConcepts": [
-      "pharmacogenomics", "cpic", "star_allele", "cyp2d6",
-      "vcf_parsing", "hippa_compliance", "docker_networking",
-      "pharmcat", "aldy", "stargazer", "gatk", "pypgx"
+      "pharmacogenomics", "cpic", "ClinGen","star_allele", "cyp2d6",
+      "vcf_parsing", "HIPAA_compliance", "docker_networking",
+      "pharmcat", "aldy", "stargazer", "gatk", "pypgx", "FHIR", "HL7", "SMART_on_FHIR"
     ]
   },
   "codeActions": {

@@ -15,12 +15,12 @@ if [ -d "/root/pypgx-bundle" ]; then
         echo "Updating PyPGx bundle to version $PYPGX_VERSION..."
         cd /root && rm -rf pypgx-bundle
         git clone --branch $PYPGX_VERSION --depth 1 https://github.com/sbslee/pypgx-bundle || \
-        git clone --branch 0.24.0 --depth 1 https://github.com/sbslee/pypgx-bundle
+        git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle
     fi
 else
     echo "PyPGx bundle not found, cloning version $PYPGX_VERSION..."
     cd /root && git clone --branch $PYPGX_VERSION --depth 1 https://github.com/sbslee/pypgx-bundle || \
-    git clone --branch 0.24.0 --depth 1 https://github.com/sbslee/pypgx-bundle
+    git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle
 fi
 
 # Create required directories

@@ -30,6 +30,7 @@ router = APIRouter(
 
 # Constants
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/data/uploads")
+REPORTS_DIR = os.environ.get("REPORT_DIR", "/data/reports")
 # Ensure upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -214,7 +215,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         logger.info(f"Calling PharmCAT service with file: {output_file}")
         try:
             # Use the direct PharmCAT service call to avoid duplicate report generation
-            results = call_pharmcat_service(output_file, report_id=data_id)
+            results = call_pharmcat_service(output_file, report_id=data_id, patient_id=patient_id)
         except Exception as e:
             logger.error(f"PharmCAT service call failed: {str(e)}")
             results = {"success": False, "message": f"PharmCAT service error: {str(e)}", "data": {}}
@@ -250,20 +251,21 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             # Generate reports (proceed even if normalization 'success' is False; use whatever data is available)
             try:
                 # Create a single reports directory for this job
-                reports_dir = Path("/data/reports")
+                reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Create a unique job directory with a descriptive name
-                job_dir = reports_dir / f"job_{data_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-                job_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Created unified job directory: {job_dir}")
+                # Use the patient directory directly instead of creating a new job directory
+                # This ensures all reports (ours and PharmCAT's) are in the same place
+                patient_dir = reports_dir / str(patient_id)
+                patient_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Using patient directory: {patient_dir}")
                 
-                # Set up all output paths in the same directory
-                pdf_report_path = job_dir / f"pharmacogenomic_report_{data_id}.pdf"
-                interactive_html_path = job_dir / f"interactive_report_{data_id}.html"
-                pharmcat_html_path = job_dir / f"pharmcat_analysis_{data_id}.html"
-                pharmcat_json_path = job_dir / f"pharmcat_results_{data_id}.json"
-                pharmcat_tsv_path = job_dir / f"pharmcat_summary_{data_id}.tsv"
+                # Set up all output paths in the patient directory
+                pdf_report_path = patient_dir / f"{patient_id}_pgx_report.pdf"
+                interactive_html_path = patient_dir / f"{patient_id}_pgx_report_interactive.html"
+                pharmcat_html_path = patient_dir / f"{patient_id}_pgx_pharmcat.html"
+                pharmcat_json_path = patient_dir / f"{patient_id}_pgx_pharmcat.json"
+                pharmcat_tsv_path = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
                 
                 # Extract data needed for the reports
                 pharmcat_data = results.get("data", {}) if isinstance(results, dict) else {}
@@ -328,15 +330,14 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 pharmcat_json_exists = False
                 pharmcat_tsv_exists = False
 
-                # Check for PharmCAT outputs in the patient directory (wrapper saves here)
-                patient_dir = reports_dir / data_id
+                # Check for PharmCAT outputs in the patient directory (PharmCAT client saves here)
                 logger.info(f"Looking for PharmCAT files in: {patient_dir}")
                 
                 if patient_dir.exists():
                     logger.info(f"Patient directory exists, contents: {list(patient_dir.glob('*'))}")
                     
-                    # Copy PharmCAT outputs to our unified job directory
-                    pharmcat_pattern = f"{data_id}_pgx_pharmcat.*"
+                    # Look for PharmCAT files with the correct naming pattern
+                    pharmcat_pattern = f"{patient_id}_pgx_pharmcat.*"
                     logger.info(f"Searching for files matching pattern: {pharmcat_pattern}")
                     
                     pharmcat_files = list(patient_dir.glob(pharmcat_pattern))
@@ -814,7 +815,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     "recommendations": formatted_recommendations,
                     "is_provisional": is_provisional,
                     "warnings": workflow.get("warnings", []),
-                    "job_directory": str(job_dir)
+                    "job_directory": str(patient_dir)
                 }
                 
                 # Add PharmCAT report URLs if they exist
@@ -832,7 +833,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 if is_provisional:
                     completion_message += " (PROVISIONAL RESULTS)"
                 
-                logger.info(f"Updated job status with unified report URLs. Job directory: {job_dir}")
+                logger.info(f"Updated job status with unified report URLs. Job directory: {patient_dir}")
                 
             except Exception as gen_err:
                 # If our custom generation failed, attempt to surface PharmCAT HTML if available
@@ -1043,7 +1044,7 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
             logger.warning(f"Status request for unknown job ID: {file_id}")
             
             # Check if reports exist for this ID in patient directory
-            patient_dir = Path(f"/data/reports/{file_id}")
+            patient_dir = Path(f"{REPORTS_DIR}/{file_id}")
             pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
             html_path = patient_dir / f"{file_id}_pgx_report.html"
             interactive_path = patient_dir / f"{file_id}_pgx_report_interactive.html"
@@ -1108,7 +1109,7 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
         # Check for completed reports even if job status doesn't show completion
         if status.get("status") != "completed" and not status.get("complete", False):
             # Check in patient directory
-            patient_dir = Path(f"/data/reports/{file_id}")
+            patient_dir = Path(f"{REPORTS_DIR}/{file_id}")
             pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
             html_path = patient_dir / f"{file_id}_pgx_report.html"
             
@@ -1164,7 +1165,7 @@ async def get_report_urls(file_id: str):
         # Check if job exists and is complete
         if file_id not in job_status:
             # Check in patient directory
-            patient_dir = Path(f"/data/reports/{file_id}")
+            patient_dir = Path(f"{REPORTS_DIR}/{file_id}")
             pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
             html_path = patient_dir / f"{file_id}_pgx_report.html"
             interactive_path = patient_dir / f"{file_id}_pgx_report_interactive.html"

@@ -57,7 +57,7 @@ logger.info(f"Starting app with log level: {log_level}")
 print(f"=========== ZaroPGx STARTUP AT {datetime.utcnow()} ===========")
 print(f"LOG LEVEL: {log_level}")
 print(f"GATK SERVICE URL: {os.getenv('GATK_API_URL', 'http://gatk-api:5000')}")
-print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_SERVICE_URL', 'http://pharmcat:5000')}")
+print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_API_URL', 'http://pharmcat:5000')}")
 print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")
 
 # Load environment variables
@@ -71,11 +71,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 # Constants
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
 PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
-PHARMCAT_SERVICE_URL = os.getenv("PHARMCAT_SERVICE_URL", "http://pharmcat:5000")
+PHARMCAT_API_URL = os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000")
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
-REPORTS_DIR = Path("/data/reports")
-UPLOADS_DIR = Path("/data/uploads")
+REPORTS_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
+UPLOADS_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / "templates"
 
@@ -125,7 +125,7 @@ app = FastAPI(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Set up static file serving for reports
-app.mount("/reports", StaticFiles(directory="/data/reports"), name="reports")
+app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
 # Set up static file serving for application static assets
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -236,7 +236,7 @@ async def serve_report(filename: str):
     """
     try:
         # Define reports directory
-        reports_dir = Path("/data/reports")
+        reports_dir = REPORTS_DIR
         reports_dir.mkdir(parents=True, exist_ok=True)
         
         # First, check if the file exists in the root reports directory
@@ -418,7 +418,7 @@ async def home(request: Request):
                 "license_name": "GNU Affero General Public License v3.0",
                 "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
                 "source_url": os.getenv("SOURCE_URL", "https://github.com/Zaroganos/ZaroPGx"),
-                "current_year": datetime.utcnow().year,
+                "current_year": datetime.now().year,
             },
         )
     except Exception as e:
@@ -1890,122 +1890,114 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
             logger.info(f"Job {job_id} total processing time: {process_tracking[job_id]['duration']:.2f} seconds")
             print(f"[PROCESSING] Job {job_id} completed in {process_tracking[job_id]['duration']:.2f} seconds")
 
-@app.post("/upload-vcf", response_class=JSONResponse)
-async def upload_vcf(
-    background_tasks: BackgroundTasks,
-    genomicFile: UploadFile = File(...),
-    sampleId: Optional[str] = Form(None),
-    referenceGenome: str = Form("hg19"),
-    current_user: str = Depends(get_optional_user)
-):
-    """Upload a VCF file for analysis."""
-    logger.info(f"Received file upload request: {genomicFile.filename}, Sample ID: {sampleId}, Reference: {referenceGenome}")
-    print(f"[UPLOAD] Received file: {genomicFile.filename}, Sample ID: {sampleId}, Reference: {referenceGenome}")
-    
-    # Validate reference genome
-    valid_references = ["hg19", "hg38", "grch37", "grch38"]
-    if referenceGenome not in valid_references:
-        logger.warning(f"Invalid reference genome: {referenceGenome}")
-        print(f"[UPLOAD ERROR] Invalid reference genome: {referenceGenome}")
-        return JSONResponse(
-            status_code=400,
-            content={"detail": f"Invalid reference genome. Supported: {valid_references}", "success": False}
-        )
-    
-    # Generate a unique job ID
-    job_id = str(uuid.uuid4())
-    logger.info(f"Generated job ID: {job_id}")
-    print(f"[UPLOAD] Generated job ID: {job_id}")
-    
-    # Sanitize the filename
-    original_filename = sanitize_filename(genomicFile.filename)
-    
-    # Create a temporary file
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, dir=TEMP_DIR, suffix=os.path.splitext(original_filename)[1]) as tmp:
-            # Copy the uploaded file to the temporary file
-            shutil.copyfileobj(genomicFile.file, tmp)
-            tmp_path = tmp.name
-        
-        logger.info(f"Saved uploaded file to: {tmp_path}")
-        print(f"[UPLOAD] Saved file to: {tmp_path}")
-    except Exception as e:
-        logger.error(f"Error saving uploaded file: {str(e)}")
-        print(f"[UPLOAD ERROR] Error saving file: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Error saving uploaded file: {str(e)}", "success": False}
-        )
-    
-    try:
-        # Detect the file type
-        file_type = detect_file_type(tmp_path)
-        logger.info(f"Detected file type: {file_type}")
-        print(f"[UPLOAD] Detected file type: {file_type}")
-        
-        extract_dir = None
-        if file_type == 'zip':
-            # Extract the zip file to get the genomic file
-            extracted_file, extract_dir = extract_zip_file(tmp_path)
-            if not extracted_file:
-                logger.warning("No valid genomic file found in ZIP archive")
-                print("[UPLOAD ERROR] No valid genomic file found in ZIP archive")
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "No valid genomic file found in the ZIP archive", "success": False}
-                )
-            
-            # Update the file path and detect the actual genomic file type
-            tmp_path = extracted_file
-            file_type = detect_file_type(tmp_path)
-            logger.info(f"Extracted file type: {file_type}, path: {tmp_path}")
-            print(f"[UPLOAD] Extracted file type: {file_type}, path: {tmp_path}")
-        
-        if file_type not in ['vcf', 'bam', 'sam', 'cram']:
-            logger.warning(f"Unsupported file type: {file_type}")
-            print(f"[UPLOAD ERROR] Unsupported file type: {file_type}")
-            return JSONResponse(
-                status_code=400,
-                content={"detail": f"Unsupported file type: {file_type}. Supported: vcf, bam, sam, cram", "success": False}
-            )
-        
-        # Initialize job status
-        update_job_progress(job_id, "uploaded", 0, "File received, starting processing")
-        
-        # Start background processing using asyncio task instead of background_tasks
-        logger.info(f"Starting background processing for job: {job_id}")
-        print(f"[UPLOAD] Starting background processing for job: {job_id}")
-        
-        # Create a new task that doesn't block the response
-        asyncio.create_task(
-            process_file_in_background(
-                job_id=job_id,
-                file_path=tmp_path,
-                file_type=file_type,
-                sample_id=sampleId,
-                reference_genome=referenceGenome
-            )
-        )
-        
-        return JSONResponse(
-            status_code=202,
-            content={
-                "job_id": job_id,
-                "success": True,
-                "status": "processing",
-                "message": "File uploaded successfully and queued for processing",
-                "progress_url": f"/progress/{job_id}",
-                "status_url": f"/job-status/{job_id}"
-            }
-        )
-    
-    except Exception as e:
-        logger.exception(f"Error processing upload: {str(e)}")
-        print(f"[UPLOAD ERROR] Processing error: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Error processing file: {str(e)}", "success": False}
-        )
+# LEGACY WORKFLOW - DISABLED TO PREVENT CONFLICTS WITH NEW PATIENT-BASED WORKFLOW
+# @app.post("/upload-vcf", response_class=JSONResponse)
+# async def upload_vcf(
+#     background_tasks: BackgroundTasks,
+#     genomicFile: UploadFile = File(...),
+#     sampleId: Optional[str] = Form(None),
+#     referenceGenome: str = Form("hg19"),
+#     current_user: str = Depends(get_optional_user)
+# ):
+    # """Upload a VCF file for analysis."""
+    # logger.info(f"Received file upload request: {genomicFile.filename}, Sample ID: {sampleId}, Reference: {referenceGenome}")
+    # print(f"[UPLOAD] Received file: {genomicFile.filename}, Sample ID: {sampleId}, Reference: {referenceGenome}")
+    # 
+    # # Validate reference genome
+    # valid_references = ["hg19", "hg38", "grch37", "grch38"]
+    # if referenceGenome not in valid_references:
+    #     logger.warning(f"Invalid reference genome: {referenceGenome}")
+    #     print(f"[UPLOAD ERROR] Invalid reference genome: {referenceGenome}")
+    #     return JSONResponse(
+    #         status_code=400,
+    #         content={"detail": f"Invalid reference genome. Supported: {valid_references}", "success": False}
+    #         )
+    # 
+    # # Generate a unique job ID
+    # job_id = str(uuid.uuid4())
+    # logger.info(f"Generated job ID: {job_id}")
+    # print(f"[UPLOAD] Generated job ID: {job_id}")
+    # 
+    # # Sanitize the filename
+    # original_filename = sanitize_filename(genomicFile.filename)
+    # 
+    # # Create a temporary file
+    # try:
+    #     with tempfile.NamedTemporaryFile(delete=False, dir=TEMP_DIR, suffix=os.path.splitext(original_filename)[1]) as tmp:
+    #         # Copy the uploaded file to the temporary file
+    #         shutil.copyfileobj(genomicFile.file, tmp)
+    #         tmp_path = tmp.name
+    #     
+    #     logger.info(f"Saved uploaded file to: {tmp_path}")
+    #     print(f"[UPLOAD] Saved file to: {tmp_path}")
+    # except Exception as e:
+    #     logger.error(f"Error saving uploaded file: {str(e)}")
+    #     print(f"[UPLOAD ERROR] Error saving file: {str(e)}")
+    #     return JSONResponse(
+    #         status_code=500,
+    #         content={"detail": f"Error saving uploaded file: {str(e)}", "success": False}
+    #         )
+    # 
+    # try:
+    #     # Detect the file type
+    #     file_type = detect_file_type(tmp_path)
+    #     logger.info(f"Detected file type: {file_type}")
+    #     print(f"[UPLOAD] Detected file type: {file_type}")
+    #     
+    #     extract_dir = None
+    #     if file_type == 'zip':
+    #         # Extract the zip file to get the genomic file
+    #         extracted_file, extract_dir = extract_zip_file(tmp_path)
+    #         if not extracted_file:
+    #         logger.warning("No valid genomic file found in ZIP archive")
+    #         print("[UPLOAD ERROR] No valid genomic file found in ZIP archive")
+    #         return JSONResponse(
+    #             status_code=400,
+    #             content={"detail": "No valid genomic file found in the ZIP archive", "success": False}
+    #         )
+    #         
+    #         # Update the file path and detect the actual genomic file type
+    #         tmp_path = extracted_file
+    #         file_type = detect_file_type(tmp_path)
+    #         logger.info(f"Extracted file type: {file_type}, path: {tmp_path}")
+    #         print(f"[UPLOAD] Extracted file type: {file_type}, path: {tmp_path}")
+    #     
+    #     if file_type not in ['vcf', 'bam', 'sam', 'cram']:
+    #         logger.warning(f"Unsupported file type: {file_type}")
+    #         print(f"[UPLOAD ERROR] Unsupported file type: {file_type}")
+    #         return JSONResponse(
+    #         status_code=400,
+    #         content={"detail": f"Unsupported file type: {file_type}. Supported: vcf, bam, sam, cram", "success": False}
+    #         )
+    #     
+    #     # Initialize job status
+    #     update_job_progress(job_id, "uploaded", 0, "File received, starting processing")
+    #     
+    #     # Start background processing using asyncio task instead of background_tasks
+    #     logger.info(f"Starting background processing for job: {job_id}")
+    #         print(f"[UPLOAD] Starting background processing for job: {job_id}")
+    #         
+    #         # Create a new task that doesn't block the response
+    #         asyncio.create_task(
+    #             process_file_in_background(
+    #                 job_id=job_id,
+    #                 file_path=tmp_path,
+    #                 file_type=file_type,
+    #                 sample_id=sampleId,
+    #                 reference_genome=referenceGenome
+    #             )
+    #         )
+    #         
+    #         return JSONResponse(
+    #             status_code=202,
+    #             content={
+    #                 "job_id": job_id,
+    #                 "success": True,
+    #                 "status": "processing",
+    #                 "message": "File uploaded successfully and queued for processing",
+    #                 "progress_url": f"/progress/{job_id}",
+    #                 content={"detail": f"Error processing file: {str(e)}", "success": False}
+    #         )
 
 @app.get("/progress/{job_id}")
 async def get_progress(job_id: str, current_user: str = Depends(get_optional_user)):
@@ -2879,7 +2871,7 @@ async def check_reports(job_id: str):
     """
     try:
         # Define reports directory
-        reports_dir = Path("/data/reports")
+        reports_dir = REPORTS_DIR
         
         # Check for report files
         pdf_path = reports_dir / f"{job_id}_pgx_report.pdf"
@@ -3022,55 +3014,56 @@ async def trigger_completion(job_id: str):
     
     return HTMLResponse(content=html_content)
 
-@app.post("/analyze")
-async def analyze_genome(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    genome_file: UploadFile = File(...),
-    patient_id: Optional[str] = Form(None),
-    patient_name: Optional[str] = Form(None),
-    patient_mrn: Optional[str] = Form(None)
-):
-    """
-    Analyze a genome file using PharmCAT and return the results
-    
-    This endpoint accepts a genome file upload and patient information,
-    then processes the file using PharmCAT in the background and
-    returns Server-Sent Events with progress updates
-    """
-    try:
-        # Generate a unique ID for this analysis
-        analysis_id = str(uuid.uuid4())
-        logger.info(f"Starting genome analysis {analysis_id} for patient {patient_id or 'unknown'}")
-        
-        # Create a queue for SSE messages
-        client_queue = Queue()
-        
-        # Define a function to send SSE updates to client
-        async def send_update(message: Dict[str, Any]):
-            await client_queue.put(message)
-        
-        # Start the analysis in the background
-        background_tasks.add_task(
-            process_genome_analysis,
-            upload_file=genome_file,
-            genome_id=analysis_id,
-            patient_id=patient_id,
-            patient_name=patient_name,
-            patient_mrn=patient_mrn,
-            notify_client=send_update
-        )
-        
-        # Return SSE response
-        return StreamingResponse(
-            sse_results(client_queue, analysis_id),
-            media_type="text/event-stream"
-        )
-        
-    except Exception as e:
-        logger.error(f"Error starting genome analysis: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error starting analysis: {str(e)}")
+# LEGACY WORKFLOW - DISABLED TO PREVENT CONFLICTS WITH NEW PATIENT-BASED WORKFLOW
+# @app.post("/analyze")
+# async def analyze_genome(
+#     request: Request,
+#     background_tasks: BackgroundTasks,
+#     genome_file: UploadFile = File(...),
+#     patient_id: Optional[str] = Form(None),
+#     patient_name: Optional[str] = Form(None),
+#     patient_mrn: Optional[str] = Form(None)
+# ):
+    # """
+    # Analyze a genome file using PharmCAT and return the results
+    # 
+    # This endpoint accepts a genome file upload and patient information,
+    # then processes the file using PharmCAT in the background and
+    # returns Server-Sent Events with progress updates
+    # """
+    # try:
+    #     # Generate a unique ID for this analysis
+    #     analysis_id = str(uuid.uuid4())
+    #     logger.info(f"Starting genome analysis {analysis_id} for patient {patient_id or 'unknown'}")
+    #     
+    #     # Create a queue for SSE messages
+    #     client_queue = Queue()
+    #     
+    #     # Define a function to send SSE updates to client
+    #     async def send_update(message: Dict[str, Any]):
+    #         await client_queue.put(message)
+    #     
+    #     # Start the analysis in the background
+    #     background_tasks.add_task(
+    #         process_genome_analysis,
+    #         upload_file=genome_file,
+    #         genome_id=analysis_id,
+    #         patient_id=patient_id,
+    #         patient_name=patient_name,
+    #         patient_mrn=patient_mrn,
+    #         notify_client=send_update
+    #     )
+    #     
+    #     # Return SSE response
+    #     return StreamingResponse(
+    #         sse_results(client_queue, analysis_id),
+    #         media_type="text/event-stream"
+    #     )
+    #     
+    # except Exception as e:
+    #     logger.error(f"Error starting genome analysis: {str(e)}")
+    #     logger.error(traceback.format_exc())
+    #     raise HTTPException(status_code=500, detail=f"Error starting analysis: {str(e)}")
 
 
 async def sse_results(queue: Queue, task_id: str):

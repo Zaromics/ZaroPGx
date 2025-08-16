@@ -172,9 +172,13 @@ cython_debug/
 reference/
 reference/*
 
-# Stargazer .zip -- do not commit. There will be another means of distributing this.
-stargazer.zip
-
 # No longer excluding test data
 # test_data/
 # test_data/*
+
+# Development files and notes
+/dev-notes/*
+/resources/*
+
+# Cursor rules
+.cursorrules

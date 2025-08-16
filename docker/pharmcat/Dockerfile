@@ -41,8 +41,8 @@ RUN git clone --recurse-submodules https://github.com/samtools/htslib.git && \
 ENV BCFTOOLS_PATH=/usr/local/bin/bcftools
 ENV BGZIP_PATH=/usr/local/bin/bgzip
 
-# Download PharmCAT pipeline distribution (v3.0.0)
-ENV PHARMCAT_VERSION=3.0.0
+# Download PharmCAT pipeline distribution
+ARG PHARMCAT_VERSION
 RUN wget -q https://github.com/PharmGKB/PharmCAT/releases/download/v${PHARMCAT_VERSION}/pharmcat-pipeline-${PHARMCAT_VERSION}.tar.gz \
     && mkdir -p /pharmcat/pipeline \
     && tar -xzf pharmcat-pipeline-${PHARMCAT_VERSION}.tar.gz -C /pharmcat/pipeline \

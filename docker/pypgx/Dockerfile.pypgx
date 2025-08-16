@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 LABEL description="PyPGx service for the ZaroPGx pipeline"
-LABEL maintainer="ZaroPGx Team"
+LABEL maintainer="ZaroPGx"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,11 +28,11 @@ RUN mkdir -p /app /data /reference /tmp/pypgx
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 # Install PyPGx and dependencies (ensure compatibility with Python 3.12)
-RUN uv pip install --system "setuptools<81" fuc pypgx scikit-learn autodocsumm sphinx==4.1.2 sphinx_rtd_theme==0.5.2 sphinx_issues
+RUN uv pip install --system setuptools==80.9.0 fuc pypgx scikit-learn autodocsumm sphinx==4.1.2 sphinx_rtd_theme==0.5.2 sphinx_issues
 
 # Clone the matching PyPGx bundle repository
 RUN cd /root && git clone --branch $(pip show pypgx | grep -oP 'Version: \K.*') --depth 1 https://github.com/sbslee/pypgx-bundle || \
-    git clone --branch 0.24.0 --depth 1 https://github.com/sbslee/pypgx-bundle
+    git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle
 
 # Create a simple script to setup environment and run server
 WORKDIR /app

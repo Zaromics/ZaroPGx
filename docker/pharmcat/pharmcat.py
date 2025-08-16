@@ -191,9 +191,14 @@ def process_file():
         # Create a temporary directory for this job
         with tempfile.TemporaryDirectory() as temp_dir:
             # Get or generate a unique name for this job
-            # Use reportId from request data if provided (for consistent directory naming)
+            # Use patientId from request data if provided (for organizing reports in patient directories)
+            patient_id = request.form.get('patientId')
             report_id = request.form.get('reportId')
-            if report_id:
+            
+            if patient_id:
+                base_name = str(patient_id)
+                logger.info(f"Using provided patient ID for base name: {base_name}")
+            elif report_id:
                 base_name = report_id
                 logger.info(f"Using provided report ID for base name: {base_name}")
             else:
@@ -286,7 +291,7 @@ def process_file():
                     }), 500
                 
                 # Create report directory if it doesn't exist
-                reports_dir = Path("/data/reports")
+                reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 
                 # Create a patient-specific directory for this job
@@ -357,7 +362,7 @@ def process_file():
                                 # Create a minimal report structure
                                 backup_data = {
                                     "title": "PharmCAT Report (Backup)",
-                                    "timestamp": datetime.datetime.now().isoformat(),
+                                    "timestamp": datetime.now().isoformat(),
                                     "pharmcatVersion": "2.15.5",
                                     "dataVersion": "N/A",
                                     "genes": phenotype_data.get("phenotypes", {}),
@@ -368,7 +373,7 @@ def process_file():
                                 # Create a minimal empty structure
                                 backup_data = {
                                     "title": "PharmCAT Report (Backup)",
-                                    "timestamp": datetime.datetime.now().isoformat(),
+                                    "timestamp": datetime.now().isoformat(),
                                     "pharmcatVersion": "2.15.5",
                                     "dataVersion": "N/A",
                                     "genes": {},
@@ -593,7 +598,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
                 logger.warning(f"Optional output file not found: {path}")
         
         # Copy PharmCAT reports to /data/reports for direct access
-        reports_dir = Path("/data/reports")
+        reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
         reports_dir.mkdir(parents=True, exist_ok=True)
         
         # Create a patient-specific directory for this job

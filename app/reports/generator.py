@@ -320,8 +320,8 @@ def generate_pdf_report(
         try:
             # First, try to get the SVG workflow image that was already generated
             report_dir = os.path.dirname(report_path)
-            report_id = os.path.basename(report_path).replace('.pdf', '').replace('_pgx_report', '')
-            svg_path = os.path.join(report_dir, f"{report_id}_workflow.svg")
+            # Use patient_id for workflow filenames to match the new directory structure
+            svg_path = os.path.join(report_dir, f"{patient_id}_workflow.svg")
             
             if os.path.exists(svg_path):
                 # Read SVG content directly for PDF embedding
@@ -551,9 +551,10 @@ def create_interactive_html_report(
         report_dir = os.path.dirname(output_path)
         try:
             # Prefer a pre-rendered PNG served by the app
-            png_path_local = os.path.join(report_dir, f"{report_id}_workflow.png")
+            # Use patient_id for the workflow.png filename to match the directory structure
+            png_path_local = os.path.join(report_dir, f"{patient_id}_workflow.png")
             if os.path.exists(png_path_local):
-                workflow_png_url = f"/reports/{report_id}/{report_id}_workflow.png"
+                workflow_png_url = f"/reports/{patient_id}/{patient_id}_workflow.png"
         except Exception:
             workflow_png_url = ""
         if not workflow_png_url:
@@ -561,9 +562,9 @@ def create_interactive_html_report(
             try:
                 png_bytes = render_workflow(fmt="png", workflow=workflow)
                 if png_bytes:
-                    with open(os.path.join(report_dir, f"{report_id}_workflow.png"), "wb") as f_out:
+                    with open(os.path.join(report_dir, f"{patient_id}_workflow.png"), "wb") as f_out:
                         f_out.write(png_bytes)
-                    workflow_png_url = f"/reports/{report_id}/{report_id}_workflow.png"
+                    workflow_png_url = f"/reports/{patient_id}/{patient_id}_workflow.png"
             except Exception:
                 workflow_png_url = ""
         if not workflow_png_url:
@@ -620,6 +621,7 @@ def create_interactive_html_report(
             "license_name": get_license_name(),
             "license_url": get_license_url(),
             "source_url": get_source_url(),
+            "current_year": datetime.now().year,
         }
         
         # Load and render the HTML template
@@ -717,9 +719,9 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     # Use report_id from patient_info or generate one if not available
     report_id = patient_info.get("report_id", patient_id) if patient_info else patient_id
     
-    # Create a report-specific directory using report_id as the directory name
-    # This matches the approach in upload_router.py
-    report_dir = os.path.join(output_dir, report_id)
+    # Create a report-specific directory using patient_id as the directory name
+    # This matches the new approach in upload_router.py where all reports go to patient directories
+    report_dir = os.path.join(output_dir, patient_id)
     os.makedirs(report_dir, exist_ok=True)
     logger.info(f"Created report directory: {report_dir}")
 
@@ -741,8 +743,9 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     }
 
     # Optionally write workflow images alongside the report outputs
-    workflow_svg_filename = f"{report_id}_workflow.svg"
-    workflow_png_filename = f"{report_id}_workflow.png"
+    # Use patient_id for filenames to match the directory structure
+    workflow_svg_filename = f"{patient_id}_workflow.svg"
+    workflow_png_filename = f"{patient_id}_workflow.png"
     try:
         if REPORT_CONFIG.get("write_workflow_svg", True):
             svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
@@ -768,8 +771,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     except Exception as e:
         logger.warning(f"Could not render workflow PNG; continuing without ({str(e)})")
     
-    # Create a unique filename based on report_id
-    base_filename = f"{report_id}_pgx_report"
+    # Create a unique filename based on patient_id
+    base_filename = f"{patient_id}_pgx_report"
     
     try:
         # Generate both standard HTML report and interactive HTML report
@@ -864,18 +867,18 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             logger.info(f"HTML report generated: {html_path}")
             
             # Add to report paths
-            server_html_path = f"/reports/{report_id}/{base_filename}.html"
+            server_html_path = f"/reports/{patient_id}/{base_filename}.html"
             report_paths["html_path"] = server_html_path
             normalized_results["data"]["html_report_url"] = server_html_path
 
             # Surface workflow asset URLs if present
             svg_path = os.path.join(report_dir, workflow_svg_filename)
             if os.path.exists(svg_path):
-                report_paths["workflow_svg_path"] = f"/reports/{report_id}/{workflow_svg_filename}"
+                report_paths["workflow_svg_path"] = f"/reports/{patient_id}/{workflow_svg_filename}"
                 normalized_results["data"]["workflow_svg_url"] = report_paths["workflow_svg_path"]
             png_path = os.path.join(report_dir, workflow_png_filename)
             if os.path.exists(png_path):
-                report_paths["workflow_png_path"] = f"/reports/{report_id}/{workflow_png_filename}"
+                report_paths["workflow_png_path"] = f"/reports/{patient_id}/{workflow_png_filename}"
                 normalized_results["data"]["workflow_png_url"] = report_paths["workflow_png_path"]
         
         # Generate interactive HTML report if enabled
@@ -891,7 +894,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
             
             # Add to report paths
-            server_interactive_html_path = f"/reports/{report_id}/{base_filename}_interactive.html"
+            server_interactive_html_path = f"/reports/{patient_id}/{base_filename}_interactive.html"
             report_paths["interactive_html_path"] = server_interactive_html_path
             normalized_results["data"]["interactive_html_report_url"] = server_interactive_html_path
         
@@ -935,7 +938,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 logger.info(f"✓ PDF report generated successfully using WeasyPrint: {pdf_path}")
                 
                 # Add to report paths
-                server_pdf_path = f"/reports/{report_id}/{base_filename}.pdf"
+                server_pdf_path = f"/reports/{patient_id}/{base_filename}.pdf"
                 report_paths["pdf_path"] = server_pdf_path
                 normalized_results["data"]["pdf_report_url"] = server_pdf_path
                 
@@ -956,13 +959,13 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         
         # Include PharmCAT original reports if enabled
         # Check if pharmacat report files already exist in the report directory
-        pharmcat_html_filename = f"{report_id}_pgx_pharmcat.html"
+        pharmcat_html_filename = f"{patient_id}_pgx_pharmcat.html"
         pharmcat_html_path = os.path.join(report_dir, pharmcat_html_filename)
         
         # PharmCAT HTML report
         if REPORT_CONFIG["show_pharmcat_html_report"]:
             # Look for the original PharmCAT HTML report
-            pharmcat_html_file = os.path.join(report_dir, f"{report_id}.report.html")
+            pharmcat_html_file = os.path.join(report_dir, f"{patient_id}.report.html")
             if os.path.exists(pharmcat_html_file):
                 # Copy it with our standardized naming if it doesn't already exist
                 if not os.path.exists(pharmcat_html_path):
@@ -972,7 +975,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             
             # Add to report paths if the file exists
             if os.path.exists(pharmcat_html_path):
-                server_pharmcat_html_path = f"/reports/{report_id}/{pharmcat_html_filename}"
+                server_pharmcat_html_path = f"/reports/{patient_id}/{pharmcat_html_filename}"
                 report_paths["pharmcat_html_path"] = server_pharmcat_html_path
                 normalized_results["data"]["pharmcat_html_report_url"] = server_pharmcat_html_path
             else:
@@ -980,9 +983,9 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         
         # PharmCAT JSON report
         if REPORT_CONFIG["show_pharmcat_json_report"]:
-            pharmcat_json_filename = f"{report_id}_pgx_pharmcat.json"
+            pharmcat_json_filename = f"{patient_id}_pgx_pharmcat.json"
             pharmcat_json_path = os.path.join(report_dir, pharmcat_json_filename)
-            pharmcat_json_file = os.path.join(report_dir, f"{report_id}.report.json")
+            pharmcat_json_file = os.path.join(report_dir, f"{patient_id}.report.json")
             
             if os.path.exists(pharmcat_json_file):
                 if not os.path.exists(pharmcat_json_path):
@@ -991,15 +994,15 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     logger.info(f"PharmCAT JSON report copied to: {pharmcat_json_path}")
             
             if os.path.exists(pharmcat_json_path):
-                server_pharmcat_json_path = f"/reports/{report_id}/{pharmcat_json_filename}"
+                server_pharmcat_json_path = f"/reports/{patient_id}/{pharmcat_json_filename}"
                 report_paths["pharmcat_json_path"] = server_pharmcat_json_path
                 normalized_results["data"]["pharmcat_json_report_url"] = server_pharmcat_json_path
         
         # PharmCAT TSV report
         if REPORT_CONFIG["show_pharmcat_tsv_report"]:
-            pharmcat_tsv_filename = f"{report_id}_pgx_pharmcat.tsv"
+            pharmcat_tsv_filename = f"{patient_id}_pgx_pharmcat.tsv"
             pharmcat_tsv_path = os.path.join(report_dir, pharmcat_tsv_filename)
-            pharmcat_tsv_file = os.path.join(report_dir, f"{report_id}.report.tsv")
+            pharmcat_tsv_file = os.path.join(report_dir, f"{patient_id}.report.tsv")
             
             if os.path.exists(pharmcat_tsv_file):
                 if not os.path.exists(pharmcat_tsv_path):
@@ -1008,7 +1011,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     logger.info(f"PharmCAT TSV report copied to: {pharmcat_tsv_path}")
             
             if os.path.exists(pharmcat_tsv_path):
-                server_pharmcat_tsv_path = f"/reports/{report_id}/{pharmcat_tsv_filename}"
+                server_pharmcat_tsv_path = f"/reports/{patient_id}/{pharmcat_tsv_filename}"
                 report_paths["pharmcat_tsv_path"] = server_pharmcat_tsv_path
                 normalized_results["data"]["pharmcat_tsv_report_url"] = server_pharmcat_tsv_path
         
