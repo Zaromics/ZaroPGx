@@ -94,7 +94,7 @@ def root():
     """API root endpoint"""
     return {
         "message": "PyPGx Wrapper API",
-        "usage": "POST to /genotype with a VCF file to call CYP2D6 star alleles",
+        "usage": "POST to /genotype with a VCF file to call alleles",
         "version": "1.0.0"
     }
 
@@ -105,7 +105,7 @@ async def genotype(
     reference_genome: str = Form("hg19")
 ):
     """
-    Run PyPGx on a VCF file to determine CYP2D6 star alleles
+    Run PyPGx on a VCF file to determine alleles
     
     Args:
         file: The VCF file to analyze

@@ -124,9 +124,6 @@ app = FastAPI(
 # OAuth2
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Set up static file serving for reports
-app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
-
 # Set up static file serving for application static assets
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
@@ -229,7 +226,7 @@ async def get_status(file_id: str, db: Session = Depends(get_db), current_user: 
     """Forward to upload_router status endpoint"""
     return await upload_router.get_upload_status(file_id, db)
 
-@app.get("/reports/{filename}")
+@app.api_route("/reports/{filename}", methods=["GET", "HEAD"])
 async def serve_report(filename: str):
     """
     Serve report files from the reports directory.
@@ -246,36 +243,43 @@ async def serve_report(filename: str):
         if not report_path.exists():
             # Search through all job directories for the file
             for job_dir in reports_dir.iterdir():
-                if job_dir.is_dir() and job_dir.name.startswith("job_"):
+                if job_dir.is_dir():
                     potential_path = job_dir / filename
                     if potential_path.exists():
                         report_path = potential_path
                         logger.info(f"Found report in job directory: {report_path}")
                         break
             else:
+                # File not found in any directory
                 logger.warning(f"Requested report not found anywhere: {filename}")
-            return JSONResponse(
-                status_code=404,
-                content={"detail": f"Report not found: {filename}"}
-            )
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": f"Report not found: {filename}"}
+                )
         
-        # Determine content type based on file extension
+        # Determine content type and disposition based on file extension
         content_type = "application/octet-stream"  # Default
+        disposition = "attachment"  # Default to download
+        
         if filename.endswith(".pdf"):
             content_type = "application/pdf"
+            disposition = "inline"  # Open PDFs in new tab
         elif filename.endswith(".html"):
             content_type = "text/html"
+            disposition = "inline"  # Open HTML in new tab
         elif filename.endswith(".json"):
             content_type = "application/json"
+            disposition = "inline"  # Open JSON in new tab
         elif filename.endswith(".tsv"):
             content_type = "text/tab-separated-values"
+            disposition = "attachment"  # Download TSV files
         
-        # Serve the file
-        logger.info(f"Serving report: {report_path}")
+        # Serve the file with appropriate headers
+        logger.info(f"Serving report: {report_path} with disposition: {disposition}")
         return FileResponse(
             path=report_path,
-            filename=filename,
-            media_type=content_type
+            media_type=content_type,
+            headers={"Content-Disposition": f"{disposition}; filename={filename}"}
         )
     except Exception as e:
         logger.exception(f"Error serving report: {str(e)}")

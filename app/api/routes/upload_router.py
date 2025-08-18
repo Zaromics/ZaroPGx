@@ -29,7 +29,7 @@ router = APIRouter(
 )
 
 # Constants
-UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/data/uploads")
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
 REPORTS_DIR = os.environ.get("REPORT_DIR", "/data/reports")
 # Ensure upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -325,38 +325,54 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Log the number of recommendations found
                 logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
                 
-                # Detect PharmCAT outputs and copy if needed
+                # Check for existing PharmCAT outputs in the patient directory
+                # Note: PharmCAT service already copies these files, so we just check if they exist
+                logger.info(f"Looking for PharmCAT files in: {patient_dir}")
+                
                 pharmcat_html_exists = False
                 pharmcat_json_exists = False
                 pharmcat_tsv_exists = False
-
-                # Check for PharmCAT outputs in the patient directory (PharmCAT client saves here)
-                logger.info(f"Looking for PharmCAT files in: {patient_dir}")
                 
                 if patient_dir.exists():
                     logger.info(f"Patient directory exists, contents: {list(patient_dir.glob('*'))}")
                     
-                    # Look for PharmCAT files with the correct naming pattern
-                    pharmcat_pattern = f"{patient_id}_pgx_pharmcat.*"
-                    logger.info(f"Searching for files matching pattern: {pharmcat_pattern}")
+                    # Check if PharmCAT files already exist (they should have been copied by the PharmCAT service)
+                    pharmcat_html_exists = pharmcat_html_path.exists()
+                    pharmcat_json_exists = pharmcat_json_path.exists()
+                    pharmcat_tsv_exists = pharmcat_tsv_path.exists()
                     
+                    logger.info(f"PharmCAT files exist - HTML: {pharmcat_html_exists}, JSON: {pharmcat_json_exists}, TSV: {pharmcat_tsv_exists}")
+                    
+                    # Log the actual files found for debugging
+                    pharmcat_pattern = f"{patient_id}_pgx_pharmcat.*"
                     pharmcat_files = list(patient_dir.glob(pharmcat_pattern))
                     logger.info(f"Found PharmCAT files: {pharmcat_files}")
                     
-                    for pharmcat_file in pharmcat_files:
-                        logger.info(f"Processing PharmCAT file: {pharmcat_file}")
-                        if pharmcat_file.suffix == '.html':
-                            shutil.copy2(pharmcat_file, pharmcat_html_path)
-                            pharmcat_html_exists = True
-                            logger.info(f"Copied PharmCAT HTML to {pharmcat_html_path}")
-                        elif pharmcat_file.suffix == '.json':
-                            shutil.copy2(pharmcat_file, pharmcat_json_path)
-                            pharmcat_json_exists = True
-                            logger.info(f"Copied PharmCAT JSON to {pharmcat_json_path}")
-                        elif pharmcat_file.suffix == '.tsv':
-                            shutil.copy2(pharmcat_file, pharmcat_tsv_path)
-                            pharmcat_tsv_exists = True
-                            logger.info(f"Copied PharmCAT TSV to {pharmcat_tsv_path}")
+                    # Additional debugging: check if destination paths already exist
+                    logger.info(f"Destination paths - HTML: {pharmcat_html_path}, JSON: {pharmcat_json_path}, TSV: {pharmcat_tsv_path}")
+                    logger.info(f"Source files found: {[f.name for f in pharmcat_files]}")
+                    
+                    # Verify that the files are actually accessible and have content
+                    if pharmcat_html_exists:
+                        try:
+                            html_size = pharmcat_html_path.stat().st_size
+                            logger.info(f"PharmCAT HTML file size: {html_size} bytes")
+                        except Exception as e:
+                            logger.warning(f"Could not get HTML file size: {e}")
+                    
+                    if pharmcat_json_exists:
+                        try:
+                            json_size = pharmcat_json_path.stat().st_size
+                            logger.info(f"PharmCAT JSON file size: {json_size} bytes")
+                        except Exception as e:
+                            logger.warning(f"Could not get JSON file size: {e}")
+                    
+                    if pharmcat_tsv_exists:
+                        try:
+                            tsv_size = pharmcat_tsv_path.stat().st_size
+                            logger.info(f"PharmCAT TSV file size: {tsv_size} bytes")
+                        except Exception as e:
+                            logger.warning(f"Could not get TSV file size: {e}")
 
 
                 # Generate unified PDF report using ReportLab

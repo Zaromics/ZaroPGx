@@ -31,6 +31,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN uv pip install --system setuptools==80.9.0 fuc pypgx scikit-learn autodocsumm sphinx==4.1.2 sphinx_rtd_theme==0.5.2 sphinx_issues
 
 # Clone the matching PyPGx bundle repository
+# NB: pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81
 RUN cd /root && git clone --branch $(pip show pypgx | grep -oP 'Version: \K.*') --depth 1 https://github.com/sbslee/pypgx-bundle || \
     git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle
 

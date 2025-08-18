@@ -1,0 +1,63 @@
+## This PyProject.toml is for typical use.
+## PEP 621 project metadata for uv
+[project]
+name = "zaropgx"
+version = "0.1.0"
+description = "Pharmacogenomic Analysis Pipeline using GATK, PyPGx and PharmCAT"
+readme = "README.md"
+requires-python = ">=3.12,<4.0"
+authors = [
+  { name = "Iliya Yaroshevskiy", email = "iyarosh1@binghamton.edu" }
+]
+
+dependencies = [
+  # Web and ASGI - Major updates for performance and features
+  "fastapi[standard]>=0.116.0,<1.0.0", # Major update with new features
+  "uvicorn>=0.27.0,<1.0.0", # Updated for FastAPI compatibility
+  "python-multipart>=0.0.6,<1.0.0",
+  # Auth and security
+  "python-jose>=3.3.0,<4.0.0",
+  "passlib>=1.7.4,<2.0.0",
+  "bcrypt>=4.0.1,<5.0.0",
+  # Database
+  "sqlalchemy>=2.0.7,<3.0.0",
+  "psycopg2-binary>=2.9.5,<3.0.0",
+  "alembic>=1.10.2,<2.0.0",
+  # Data processing - Pydantic v2 for compatibility with FastAPI
+  "pandas>=2.0.0,<3.0.0",
+  "numpy>=1.24.2,<2.0.0",
+  "pydantic>=2.5.0,<3.0.0", # Major update - includes v1 compatibility layer
+  "pydantic-settings>=2.1.0,<3.0.0", # New requirement for Pydantic v2
+  "python-dotenv>=1.0.0,<2.0.0",
+  # Reporting
+  "weasyprint>=66.0,<67.0",
+  "jinja2>=3.1.2,<4.0.0",
+  "pdfkit>=1.0.0,<2.0.0",
+  "graphviz>=0.20.3,<1.0.0",
+  "Pillow>=10.0.0,<11.0.0",
+  "reportlab>=4.0.0,<5.0.0", # Professional PDF generation with excellent text rendering
+  # HTTP and async utilities - Minor updates
+  "requests>=2.31.0,<3.0.0", # Security and bug fixes
+  "httpx>=0.25.0,<1.0.0", # Updated for async improvements
+  "aiofiles>=23.2.0,<24.0.0", # Minor update
+  "aiohttp>=3.9.0,<4.0.0", # Updated for security fixes
+  # Bioinformatics
+  "biopython>=1.81,<2.0.0",
+  # Additional utilities (from requirements.txt)
+  "starlette",
+  "sse-starlette",
+  "werkzeug",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "black",
+  "isort",
+  "flake8",
+  "mypy",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

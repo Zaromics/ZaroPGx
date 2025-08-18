@@ -22,7 +22,10 @@ download_status = {
     "genomes": {
         "hg19": {"progress": 0, "size_mb": 850, "status": "pending"},
         "hg38": {"progress": 0, "size_mb": 920, "status": "pending"},
-        "grch37": {"progress": 0, "size_mb": 810, "status": "pending"}
+        "grch37": {"progress": 0, "size_mb": 810, "status": "pending"},
+        "pharmcat_grch38": {"progress": 0, "size_mb": 150, "status": "pending"},
+        "pharmcat_positions": {"progress": 0, "size_mb": 5, "status": "pending"},
+        "pharmcat_regions": {"progress": 0, "size_mb": 1, "status": "pending"}
     },
     "overall_progress": 0
 }
@@ -96,6 +99,25 @@ def extract_file(file_path, output_path, genome_name):
         save_status()
         return False
 
+def extract_tar_file(file_path, output_path, genome_name):
+    """Extract tar file"""
+    try:
+        download_status["genomes"][genome_name]["status"] = "extracting"
+        save_status()
+        
+        # Extract tar file to output directory
+        subprocess.run(["tar", "-xf", file_path, "-C", os.path.dirname(output_path)], check=True)
+        
+        download_status["genomes"][genome_name]["status"] = "extracted"
+        save_status()
+        return True
+    except Exception as e:
+        print(f"Error extracting tar file {file_path}: {str(e)}")
+        download_status["genomes"][genome_name]["status"] = "error"
+        download_status["genomes"][genome_name]["error"] = str(e)
+        save_status()
+        return False
+
 def index_genome(fasta_path, genome_name):
     """Create genome index files using samtools"""
     try:
@@ -126,7 +148,7 @@ def download_genomes():
     save_status()
     
     # Create required directories
-    for dir_name in ["hg19", "hg38", "grch37", "grch38"]:
+    for dir_name in ["hg19", "hg38", "grch37", "grch38", "pharmcat"]:
         os.makedirs(f"/reference/{dir_name}", exist_ok=True)
     
     # Start downloads
@@ -148,6 +170,27 @@ def download_genomes():
             "url": "ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/human_g1k_v37.fasta.gz",
             "gz_path": "/reference/grch37/human_g1k_v37.fasta.gz",
             "fasta_path": "/reference/grch37/human_g1k_v37.fasta"
+        },
+        {
+            "name": "pharmcat_grch38",
+            "url": "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar",
+            "gz_path": "/reference/pharmcat/GRCh38_reference_fasta.tar",
+            "fasta_path": "/reference/pharmcat/GRCh38_reference_fasta",
+            "is_tar": True
+        },
+        {
+            "name": "pharmcat_positions",
+            "url": "https://github.com/PharmGKB/PharmCAT/raw/development/pharmcat_positions.vcf",
+            "gz_path": "/reference/pharmcat/pharmcat_positions.vcf",
+            "fasta_path": "/reference/pharmcat/pharmcat_positions.vcf",
+            "is_vcf": True
+        },
+        {
+            "name": "pharmcat_regions",
+            "url": "https://github.com/PharmGKB/PharmCAT/raw/development/pharmcat_regions.bed",
+            "gz_path": "/reference/pharmcat/pharmcat_regions.bed",
+            "fasta_path": "/reference/pharmcat/pharmcat_regions.bed",
+            "is_bed": True
         }
     ]
     
@@ -169,12 +212,31 @@ def download_genomes():
         
         # Extract
         if not os.path.exists(genome["fasta_path"]):
-            if not extract_file(genome["gz_path"], genome["fasta_path"], genome["name"]):
-                success = False
-                continue
+            if genome.get("is_tar"):
+                # Handle tar files (PharmCAT GRCh38 reference)
+                if not extract_tar_file(genome["gz_path"], genome["fasta_path"], genome["name"]):
+                    success = False
+                    continue
+            elif genome.get("is_vcf") or genome.get("is_bed"):
+                # VCF and BED files don't need extraction, just copy
+                if not os.path.exists(genome["fasta_path"]):
+                    import shutil
+                    shutil.copy2(genome["gz_path"], genome["fasta_path"])
+                    download_status["genomes"][genome["name"]]["status"] = "ready"
+                    download_status["genomes"][genome["name"]]["progress"] = 100
+                    save_status()
+                    continue
+            else:
+                # Handle regular gzipped files
+                if not extract_file(genome["gz_path"], genome["fasta_path"], genome["name"]):
+                    success = False
+                    continue
         
         # Index
-        if not index_genome(genome["fasta_path"], genome["name"]):
+        if genome.get("is_vcf") or genome.get("is_bed"):
+            # VCF and BED files don't need indexing
+            continue
+        elif not index_genome(genome["fasta_path"], genome["name"]):
             success = False
             continue
     

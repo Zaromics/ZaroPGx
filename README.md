@@ -20,7 +20,7 @@ This project is a work in progress and not production‑ready.
 
 Containerized services orchestrated with Docker Compose:
 
-- PostgreSQL 15 (schemas: `cpic`, `user_data`, `reports`)
+- PostgreSQL 17 (schemas: `cpic`, `user_data`, `reports`)
 - FastAPI application (web UI, API, report generation, SSE progress)
 - PharmCAT wrapper service (Flask) invoking PharmCAT pipeline v3.0.0
 - GATK API service (HTTP wrapper; heavy memory usage)
@@ -172,7 +172,7 @@ ZaroPGx/
 
 ### Service specifics
 
-- PostgreSQL 15 with initialization under `db/init` and `db/migrations`
+- PostgreSQL 17 with initialization under `db/init` and `db/migrations`
 - PharmCAT pipeline v3.0.0 (Java 17) with a Flask wrapper API on port 5000 (exposed as 5001 on host)
 - FastAPI app (Python 3.12; dependencies in `pyproject.toml`/`uv.lock`)
 - GATK API service and PyPGx service are available via internal endpoints (`GATK_API_URL`, `PYPGX_API_URL`); the app currently stubs GATK/PyPGx steps in the background workflow

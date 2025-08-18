@@ -213,14 +213,28 @@ def build_citations() -> List[Dict[str, str]]:
 # Report display configuration
 # Controls which reports are included in the response and shown to users
 # 
-# TEMPORARY CHANGE: PDF generation has been switched from dual-lane system (ReportLab + WeasyPrint)
-# back to simple WeasyPrint-only method due to report quality issues.
-# To restore dual-lane system later, search for "SIMPLE PDF GENERATION" and restore the original code.
-#
+# Configure logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# PDF Generation Configuration
+# Can be configured via environment variables:
+# - PDF_ENGINE: 'weasyprint' (default) or 'reportlab'
+# - PDF_FALLBACK: 'true' or 'false' (default: true)
+PDF_ENGINE = os.environ.get("PDF_ENGINE", "weasyprint").lower()
+PDF_FALLBACK = os.environ.get("PDF_FALLBACK", "true").lower() == "true"
+
+# Validate PDF engine setting
+if PDF_ENGINE not in ["weasyprint", "reportlab"]:
+    logger.warning(f"Invalid PDF_ENGINE '{PDF_ENGINE}', defaulting to 'weasyprint'")
+    PDF_ENGINE = "weasyprint"
+
+logger.info(f"PDF Generation Configuration: Engine={PDF_ENGINE}, Fallback={PDF_FALLBACK}")
+
 REPORT_CONFIG = {
     # Our generated reports
     "show_pdf_report": True,          # Standard PDF report
-    "show_html_report": True,         # Standard HTML report -- but isn't this just what is made into the PDF report with weasyprint?
+    "show_html_report": True,         # Standard HTML report
     "show_interactive_report": True,  # Interactive HTML report with JavaScript visualizations
 
     # Visualization assets
@@ -232,10 +246,6 @@ REPORT_CONFIG = {
     "show_pharmcat_json_report": False, # Original JSON report from PharmCAT
     "show_pharmcat_tsv_report": False,  # Original TSV report from PharmCAT
 }
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Configure WeasyPrint logging for debugging text rendering issues
 weasyprint_logger = logging.getLogger('weasyprint')
@@ -677,7 +687,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     Generate a report from PharmCAT results
     
     Args:
-        pharmcat_results: Results from PharmCAT
+        pharmcat_results: Results from PharmCAT (already normalized from main.py)
         output_dir: Directory to write report files to
         patient_info: Optional patient information
         
@@ -685,20 +695,46 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         Dict containing file paths for all enabled reports
     """
     logger.info("Generating report from PharmCAT results")
+    logger.info(f"Input pharmcat_results keys: {list(pharmcat_results.keys())}")
+    logger.info(f"Input patient_info: {patient_info}")
     
-    # Ensure normalized data is used consistently
-    normalized_results = normalize_pharmcat_results(pharmcat_results)
-    data = normalized_results["data"]
+    # The data coming from main.py is already normalized, so we don't need to normalize again
+    # Check if the data is already in the expected format
+    if "data" in pharmcat_results and isinstance(pharmcat_results["data"], dict):
+        # Data is already in the expected format from main.py
+        data = pharmcat_results["data"]
+        logger.info("Using pre-normalized data from main.py")
+        logger.info(f"Data keys: {list(data.keys())}")
+    else:
+        # Fallback: try to normalize if the data structure is unexpected
+        logger.warning("Unexpected data structure, attempting normalization")
+        logger.warning(f"Expected 'data' key not found in: {list(pharmcat_results.keys())}")
+        try:
+            normalized_results = normalize_pharmcat_results(pharmcat_results)
+            data = normalized_results["data"]
+            logger.info("Successfully normalized data")
+        except Exception as e:
+            logger.error(f"Failed to normalize data: {str(e)}")
+            # Create minimal data structure to prevent crashes
+            data = {
+                "genes": [],
+                "drugRecommendations": [],
+                "file_type": "unknown"
+            }
     
     # Map recommendations to template-compatible format
     template_recommendations = map_recommendations_for_template(data.get("drugRecommendations", []))
+    logger.info(f"Mapped {len(template_recommendations)} recommendations for template")
     
     # Prepare the template data
     # Build platform info once and include in both outputs
     platform = build_platform_info()
+    logger.info(f"Built platform info with {len(platform)} items")
 
     template_data = {
         "patient": patient_info or {},
+        "patient_id": patient_info.get("id", "unknown") if patient_info else "unknown",
+        "report_id": patient_info.get("report_id", "unknown") if patient_info else "unknown",
         "report_date": datetime.now().strftime("%Y-%m-%d"),
         "genes": data.get("genes", []),
         "diplotypes": data.get("genes", []),  # For compatibility with template
@@ -712,7 +748,26 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         "license_url": get_license_url(),
         "source_url": get_source_url(),
         "current_year": datetime.now().year,
+        # Add missing fields that PDF generators expect
+        "sample_id": patient_info.get("id", "unknown") if patient_info else "unknown",
+        "file_type": data.get("file_type", "vcf"),
+        "analysis_results": {
+            "genes_found": len(data.get("genes", [])),
+            "recommendations_found": len(data.get("drugRecommendations", [])),
+            "file_type": data.get("file_type", "vcf")
+        },
+        "workflow": {
+            "file_type": data.get("file_type", "vcf"),
+            "used_gatk": data.get("used_gatk", False),
+            "used_pypgx": data.get("used_pypgx", False),
+            "used_pharmcat": True
+        }
     }
+    
+    logger.info(f"Template data prepared with {len(template_data)} fields")
+    logger.info(f"Template data keys: {list(template_data.keys())}")
+    logger.info(f"Genes count: {len(template_data['genes'])}")
+    logger.info(f"Recommendations count: {len(template_data['recommendations'])}")
     
     # Get patient and report IDs
     patient_id = patient_info.get("id", "unknown") if patient_info else "unknown"
@@ -741,6 +796,11 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         "used_pharmcat": True,
         "exported_to_fhir": False,
     }
+    
+    logger.info(f"Generated workflow configuration: {per_sample_workflow}")
+    logger.info(f"Data keys available: {list(data.keys())}")
+    logger.info(f"Genes count: {len(data.get('genes', []))}")
+    logger.info(f"Drug recommendations count: {len(data.get('drugRecommendations', []))}")
 
     # Optionally write workflow images alongside the report outputs
     # Use patient_id for filenames to match the directory structure
@@ -784,11 +844,14 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         
         # Generate standard HTML report if enabled
         if REPORT_CONFIG["show_html_report"]:
+            logger.info("Loading HTML template...")
             env = Environment(
                 loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "templates")),
                 autoescape=select_autoescape(['html', 'xml'])
             )
             template = env.get_template("report_template.html")
+            logger.info("HTML template loaded successfully")
+            
             # Prepare workflow visuals for HTML, preferring pre-rendered files
             workflow_svg_in_html = ""
             workflow_png_data_uri_html = ""
@@ -849,6 +912,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                         "license_url": template_data.get("license_url"),
                         "source_url": template_data.get("source_url"),
                     },
+                    "template_data_keys": list(template_data.keys()),
+                    "template_data_sample": {k: str(v)[:100] + "..." if len(str(v)) > 100 else str(v) for k, v in list(template_data.items())[:5]},
                 }
                 debug_json = json.dumps(debug_info, indent=2)
             except Exception:
@@ -862,6 +927,12 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 debug_json=debug_json,
             )
             
+            logger.info(f"Template rendered successfully, HTML content length: {len(html_content)}")
+            logger.info(f"Template data keys used: {list(template_data.keys())}")
+            
+            # Add the rendered HTML content to template_data for PDF generation
+            template_data["template_html"] = html_content
+            
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html_content)
             logger.info(f"HTML report generated: {html_path}")
@@ -869,17 +940,18 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             # Add to report paths
             server_html_path = f"/reports/{patient_id}/{base_filename}.html"
             report_paths["html_path"] = server_html_path
-            normalized_results["data"]["html_report_url"] = server_html_path
+            # Store the HTML report URL in the data structure for later use
+            data["html_report_url"] = server_html_path
 
             # Surface workflow asset URLs if present
             svg_path = os.path.join(report_dir, workflow_svg_filename)
             if os.path.exists(svg_path):
                 report_paths["workflow_svg_path"] = f"/reports/{patient_id}/{workflow_svg_filename}"
-                normalized_results["data"]["workflow_svg_url"] = report_paths["workflow_svg_path"]
+                data["workflow_svg_url"] = report_paths["workflow_svg_path"]
             png_path = os.path.join(report_dir, workflow_png_filename)
             if os.path.exists(png_path):
                 report_paths["workflow_png_path"] = f"/reports/{patient_id}/{workflow_png_filename}"
-                normalized_results["data"]["workflow_png_url"] = report_paths["workflow_png_path"]
+                data["workflow_png_url"] = report_paths["workflow_png_path"]
         
         # Generate interactive HTML report if enabled
         if REPORT_CONFIG["show_interactive_report"]:
@@ -896,13 +968,13 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             # Add to report paths
             server_interactive_html_path = f"/reports/{patient_id}/{base_filename}_interactive.html"
             report_paths["interactive_html_path"] = server_interactive_html_path
-            normalized_results["data"]["interactive_html_report_url"] = server_interactive_html_path
+            data["interactive_html_report_url"] = server_interactive_html_path
         
-        # Generate PDF report using simple WeasyPrint method (temporarily bypassing dual-lane system)
+        # Generate PDF report using configured engine
         if REPORT_CONFIG["show_pdf_report"]:
             pdf_path = os.path.join(report_dir, f"{base_filename}.pdf")
             
-            logger.info("=== SIMPLE PDF GENERATION START (WeasyPrint only) ===")
+            logger.info(f"=== PDF GENERATION START (Engine: {PDF_ENGINE}) ===")
             logger.info(f"Workflow data: {per_sample_workflow}")
             
             # Simple workflow diagram generation for PDF
@@ -932,30 +1004,88 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 workflow_html_fallback="",
             )
             
-            # Generate PDF using simple WeasyPrint method
-            try:
-                generate_pdf_from_html(pdf_html_content, pdf_path)
-                logger.info(f"✓ PDF report generated successfully using WeasyPrint: {pdf_path}")
-                
-                # Add to report paths
+            # Add the PDF HTML content to template_data for PDF generators
+            template_data["template_html"] = pdf_html_content
+            
+            # Generate PDF using configured engine
+            pdf_generated = False
+            
+            if PDF_ENGINE == "weasyprint":
+                try:
+                    generate_pdf_from_html(pdf_html_content, pdf_path)
+                    logger.info(f"✓ PDF report generated successfully using WeasyPrint: {pdf_path}")
+                    pdf_generated = True
+                except Exception as e:
+                    logger.error(f"✗ WeasyPrint PDF generation failed: {str(e)}")
+                    if PDF_FALLBACK:
+                        logger.info("🔄 Attempting ReportLab fallback...")
+                        try:
+                            from app.reports.pdf_generators import generate_pdf_report_dual_lane
+                            result = generate_pdf_report_dual_lane(
+                                template_data=template_data,
+                                output_path=pdf_path,
+                                workflow_diagram=per_sample_workflow,
+                                preferred_generator="reportlab"
+                            )
+                            if result["success"]:
+                                logger.info(f"✓ PDF generated successfully using ReportLab fallback: {result['generator_used']}")
+                                pdf_generated = True
+                            else:
+                                logger.error(f"✗ ReportLab fallback also failed: {result['error']}")
+                        except Exception as fallback_error:
+                            logger.error(f"✗ ReportLab fallback failed: {str(fallback_error)}")
+            
+            elif PDF_ENGINE == "reportlab":
+                try:
+                    from app.reports.pdf_generators import generate_pdf_report_dual_lane
+                    result = generate_pdf_report_dual_lane(
+                        template_data=template_data,
+                        output_path=pdf_path,
+                        workflow_diagram=per_sample_workflow,
+                        preferred_generator="reportlab"
+                    )
+                    if result["success"]:
+                        logger.info(f"✓ PDF report generated successfully using ReportLab: {result['generator_used']}")
+                        pdf_generated = True
+                    else:
+                        logger.error(f"✗ ReportLab PDF generation failed: {result['error']}")
+                        if PDF_FALLBACK:
+                            logger.info("🔄 Attempting WeasyPrint fallback...")
+                            try:
+                                generate_pdf_from_html(pdf_html_content, pdf_path)
+                                logger.info(f"✓ PDF generated successfully using WeasyPrint fallback")
+                                pdf_generated = True
+                            except Exception as fallback_error:
+                                logger.error(f"✗ WeasyPrint fallback failed: {str(fallback_error)}")
+                except Exception as e:
+                    logger.error(f"✗ ReportLab PDF generation failed: {str(e)}")
+                    if PDF_FALLBACK:
+                        logger.info("🔄 Attempting WeasyPrint fallback...")
+                        try:
+                            generate_pdf_from_html(pdf_html_content, pdf_path)
+                            logger.info(f"✓ PDF generated successfully using WeasyPrint fallback")
+                            pdf_generated = True
+                        except Exception as fallback_error:
+                            logger.error(f"✗ WeasyPrint fallback failed: {str(fallback_error)}")
+            
+            # Add to report paths if PDF was generated
+            if pdf_generated:
                 server_pdf_path = f"/reports/{patient_id}/{base_filename}.pdf"
                 report_paths["pdf_path"] = server_pdf_path
-                normalized_results["data"]["pdf_report_url"] = server_pdf_path
-                
-            except Exception as e:
-                logger.error(f"✗ PDF generation failed: {str(e)}")
+                data["pdf_report_url"] = server_pdf_path
+            else:
                 # Create a simple text file as fallback
                 try:
                     txt_path = pdf_path.replace('.pdf', '.txt')
                     with open(txt_path, 'w', encoding='utf-8') as f:
-                        f.write(f"PDF GENERATION FAILED: {str(e)}\n\n")
+                        f.write(f"PDF GENERATION FAILED: All engines failed\n\n")
                         f.write("Report content would be here.\n")
                         f.write("Please check the HTML report instead.\n")
                     logger.info(f"Created fallback text file: {txt_path}")
                 except Exception as txt_error:
                     logger.error(f"Failed to create fallback text file: {str(txt_error)}")
             
-            logger.info("=== SIMPLE PDF GENERATION END ===")
+            logger.info(f"=== PDF GENERATION END (Engine: {PDF_ENGINE}) ===")
         
         # Include PharmCAT original reports if enabled
         # Check if pharmacat report files already exist in the report directory
@@ -977,7 +1107,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             if os.path.exists(pharmcat_html_path):
                 server_pharmcat_html_path = f"/reports/{patient_id}/{pharmcat_html_filename}"
                 report_paths["pharmcat_html_path"] = server_pharmcat_html_path
-                normalized_results["data"]["pharmcat_html_report_url"] = server_pharmcat_html_path
+                data["pharmcat_html_report_url"] = server_pharmcat_html_path
             else:
                 logger.warning("PharmCAT HTML report not found in report directory")
         
@@ -996,7 +1126,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             if os.path.exists(pharmcat_json_path):
                 server_pharmcat_json_path = f"/reports/{patient_id}/{pharmcat_json_filename}"
                 report_paths["pharmcat_json_path"] = server_pharmcat_json_path
-                normalized_results["data"]["pharmcat_json_report_url"] = server_pharmcat_json_path
+                data["pharmcat_json_report_url"] = server_pharmcat_json_path
         
         # PharmCAT TSV report
         if REPORT_CONFIG["show_pharmcat_tsv_report"]:
@@ -1013,10 +1143,14 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             if os.path.exists(pharmcat_tsv_path):
                 server_pharmcat_tsv_path = f"/reports/{patient_id}/{pharmcat_tsv_filename}"
                 report_paths["pharmcat_tsv_path"] = server_pharmcat_tsv_path
-                normalized_results["data"]["pharmcat_tsv_report_url"] = server_pharmcat_tsv_path
+                data["pharmcat_tsv_report_url"] = server_pharmcat_tsv_path
         
-        # Add the normalized results to the report paths
-        report_paths["normalized_results"] = normalized_results
+        # Add the processed data to the report paths for reference
+        report_paths["processed_data"] = data
+        
+        logger.info(f"Report generation completed successfully")
+        logger.info(f"Generated {len(report_paths)} report paths")
+        logger.info(f"Report paths keys: {list(report_paths.keys())}")
         
         return report_paths
     

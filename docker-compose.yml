@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Database with CPIC data
   db:
-    image: postgres:15
+    image: postgres:16.10
     container_name: pgx_db
     restart: unless-stopped
     environment:
@@ -48,11 +48,12 @@ services:
       context: ./docker/pharmcat
       dockerfile: Dockerfile
       args:
-        PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.0.0}
+        PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.0.1}
     container_name: pgx_pharmcat
     restart: unless-stopped
     volumes:
       - ./data:/data
+      - ./reference:/reference
       - pharmcat-references:/pharmcat/pipeline
     ports:
       - "5001:5000"  # Flask API port
@@ -60,6 +61,7 @@ services:
       - DATA_DIR=/data
       - JAVA_OPTS=-Xmx4g
       - PHARMCAT_LOG_LEVEL=DEBUG
+      - REFERENCE_DIR=/reference
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
@@ -84,9 +86,15 @@ services:
       - spring.datasource.username=cpic_user
       - spring.datasource.password=test123
       - spring.datasource.driverClassName=org.postgresql.Driver
-      - spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQL95Dialect
+      # Use HAPI FHIR's PostgreSQL dialect for best compatibility
+      - spring.jpa.properties.hibernate.dialect=ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
       - spring.jpa.hibernate.ddl-auto=update
       - spring.jpa.properties.hibernate.default_schema=fhir
+      - hapi.fhir.jpa.database_schema=update
+      - hapi.fhir.jpa.auto_create_tables=true
+      - hapi.fhir.jpa.database_schema_auto_create=true
+      - hapi.fhir.jpa.database_schema_auto_validate=true
+      - hapi.fhir.jpa.disable_temporary_table_creation=true
       - spring.jpa.open-in-view=false
       - hapi.fhir.max_page_size=50
       - hapi.fhir.default_page_size=20

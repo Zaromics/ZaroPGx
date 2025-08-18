@@ -23,7 +23,7 @@ router = APIRouter(
 )
 
 # Constants
-REPORT_DIR = os.environ.get("REPORT_DIR", "/app/data/reports")
+REPORT_DIR = os.environ.get("REPORT_DIR", "/data/reports")
 # Ensure reports directory exists
 os.makedirs(REPORT_DIR, exist_ok=True)
 
@@ -73,11 +73,15 @@ def generate_report_background(patient_id: str, file_id: str, report_type: str, 
         }
         
         # Use dual-lane PDF generation system
+        preferred_generator = os.environ.get("PDF_ENGINE", "weasyprint").lower()
+        if preferred_generator not in ["weasyprint", "reportlab"]:
+            preferred_generator = "weasyprint"  # Default fallback
+            
         result = generate_pdf_report_dual_lane(
             template_data=template_data,
             output_path=report_path,
             workflow_diagram=None,  # No workflow diagram for this simple report
-            preferred_generator="reportlab"  # Prefer ReportLab for better text rendering
+            preferred_generator=preferred_generator  # Use configured engine preference
         )
         
         if result["success"]:
