@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Dual-Lane PDF Generation System
+Environment-Configured Dual-Lane PDF Generation System
 
 This module provides an abstracted interface for PDF generation with two backends:
-1. ReportLab (Primary) - Professional PDF generation with excellent text rendering
-2. WeasyPrint (Fallback) - HTML-to-PDF conversion for complex layouts
+- Primary engine: Configured via PDF_ENGINE environment variable (weasyprint or reportlab)
+- Fallback engine: Automatically selected based on PDF_FALLBACK environment variable
 
 Both backends implement the same interface, making them interchangeable.
+The system respects environment configuration for engine priority and fallback behavior.
 """
 
 import os
@@ -414,85 +415,66 @@ class WeasyPrintGenerator(PDFGenerator):
             
             logger.info(f"🔄 Using {self.name} as fallback for PDF generation")
             
-            # Use the actual template data instead of hardcoded basic template
-            # This ensures we get the full pharmacogenomic report content
-            if 'template_html' in template_data:
-                # Use the actual template HTML directly - this contains the SVG workflow diagram
-                html_content = template_data['template_html']
-                logger.info(f"✓ Using actual template HTML for {self.name}")
+            # Generate proper HTML using the PDF template structure
+            # This ensures we get the right template for PDF generation
+            try:
+                from jinja2 import Environment, FileSystemLoader
+                import os
                 
-                # Add PDF-specific CSS optimizations for better SVG workflow diagram rendering
+                # Get the template directory path
+                template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+                env = Environment(loader=FileSystemLoader(template_dir))
+                
+                # Use the PDF template (report_template.html) for proper PDF generation
+                template = env.get_template("report_template.html")
+                
+                # Prepare the data for the PDF template
+                from datetime import datetime
+                from app.reports.generator import build_platform_info, build_citations, get_disclaimer, get_author_name, get_license_name, get_license_url, get_source_url
+                
+                # Build the template data structure expected by report_template.html
+                report_data = {
+                    "patient_id": template_data.get("patient_id", "Unknown"),
+                    "report_id": template_data.get("report_id", "Unknown"),
+                    "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "diplotypes": template_data.get("diplotypes", []),
+                    "recommendations": template_data.get("recommendations", []),
+                    "disclaimer": get_disclaimer(),
+                    "platform_info": build_platform_info(),
+                    "citations": build_citations(),
+                    "author_name": get_author_name(),
+                    "license_name": get_license_name(),
+                    "license_url": get_license_url(),
+                    "source_url": get_source_url(),
+                    "current_year": datetime.now().year,
+                    "workflow": template_data.get("workflow", {}),
+                    "workflow_diagram": template_data.get("workflow_diagram", {})
+                }
+                
+                # Generate the HTML content using the PDF template
+                html_content = template.render(**report_data)
+                logger.info(f"✓ Generated HTML content using PDF template for {self.name}: {len(html_content)} characters")
+                
+                # Add PDF-specific CSS optimizations
                 pdf_optimization_css = """
                 <style>
-                    /* PDF-specific optimizations for workflow diagrams */
+                    /* PDF-specific optimizations */
                     @page { 
                         size: A4; 
                         margin: 18mm; 
                     }
                     
-                    /* Ensure SVG workflow diagrams render properly in PDF */
-                    .workflow-figure {
+                    /* Ensure proper page breaks */
+                    .workflow-section {
                         page-break-inside: avoid !important;
                         break-inside: avoid !important;
-                        margin: 20px 0 !important;
-                        padding: 15px !important;
-                        border: 2px solid #000 !important;
-                        background: #ffffff !important;
-                        text-align: center !important;
-                        max-width: 100% !important;
                     }
                     
-                    .workflow-figure svg {
-                        max-width: 100% !important;
-                        height: auto !important;
-                        display: block !important;
-                        margin: 0 auto !important;
-                        background: #ffffff !important;
-                    }
-                    
-                    .workflow-figure img {
-                        max-width: 100% !important;
-                        height: auto !important;
-                        display: block !important;
-                        margin: 0 auto !important;
-                    }
-                    
-                    /* Ensure SVG text is visible in PDF */
-                    .workflow-figure text,
-                    .workflow-figure tspan {
-                        font-family: Arial, sans-serif !important;
-                        font-size: 12px !important;
-                        fill: #000000 !important;
-                        color: #000000 !important;
-                    }
-                    
-                    /* Additional SVG text visibility improvements */
-                    .workflow-figure svg text,
-                    .workflow-figure svg tspan {
-                        font-family: Arial, sans-serif !important;
-                        font-size: 12px !important;
-                        fill: #000000 !important;
-                        color: #000000 !important;
-                        font-weight: normal !important;
-                    }
-                    
-                    /* Ensure SVG elements are properly sized */
-                    .workflow-figure svg {
-                        width: 100% !important;
-                        height: auto !important;
-                        max-height: 400px !important;
-                    }
-                    
-                    /* Print-specific styles */
+                    /* Print-friendly styles */
                     @media print {
-                        .workflow-figure {
+                        .workflow-section {
                             page-break-inside: avoid !important;
                             break-inside: avoid !important;
-                        }
-                        
-                        .workflow-figure * {
-                            position: relative !important;
-                            z-index: 1 !important;
                         }
                     }
                 </style>
@@ -502,14 +484,12 @@ class WeasyPrintGenerator(PDFGenerator):
                 if '<head>' in html_content:
                     html_content = html_content.replace('<head>', f'<head>{pdf_optimization_css}')
                 else:
-                    # If no head tag, add one at the beginning
                     html_content = f'<head>{pdf_optimization_css}</head>{html_content}'
                 
-            else:
-                # Fallback to basic template if no actual template data
-                logger.warning(f"⚠ No actual template HTML found, using basic template for {self.name}")
+            except Exception as e:
+                logger.warning(f"⚠ Failed to generate HTML using PDF template: {e}, using fallback template")
                 
-                # Basic fallback template for when no actual template is available
+                # Fallback to basic template if PDF template generation fails
                 html_template = """
                 <!DOCTYPE html>
                 <html>
@@ -523,7 +503,6 @@ class WeasyPrintGenerator(PDFGenerator):
                         .section { margin-bottom: 15px; }
                         .section-title { font-size: 14px; font-weight: bold; color: #2c3e50; margin-bottom: 8px; }
                         .content { margin-bottom: 6px; }
-                        .workflow-img { max-width: 100%; height: auto; text-align: center; margin: 15px 0; }
                         .footer { text-align: center; color: #7f8c8d; font-size: 9px; margin-top: 30px; }
                     </style>
                 </head>
@@ -532,19 +511,8 @@ class WeasyPrintGenerator(PDFGenerator):
                     
                     <div class="section">
                         <div class="section-title">Sample Information</div>
-                        <div class="content"><strong>Sample ID:</strong> {{ sample_id or 'N/A' }}</div>
-                        <div class="content"><strong>File Type:</strong> {{ file_type or 'N/A' }}</div>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">Analysis Workflow</div>
-                        {% if workflow_diagram %}
-                        <div class="workflow-img">
-                            <img src="data:image/png;base64,{{ workflow_diagram_b64 }}" alt="Workflow Diagram">
-                        </div>
-                        {% else %}
-                        <div class="content">Workflow diagram not available</div>
-                        {% endif %}
+                        <div class="content"><strong>Sample ID:</strong> {{ patient_id or 'N/A' }}</div>
+                        <div class="content"><strong>Report ID:</strong> {{ report_id or 'N/A' }}</div>
                     </div>
                     
                     <div class="section">
@@ -617,25 +585,70 @@ class PDFGeneratorFactory:
         self._initialize_generators()
     
     def _initialize_generators(self):
-        """Initialize available PDF generators in priority order."""
-        # Try ReportLab first (primary)
-        try:
-            import reportlab
-            self.generators.append(ReportLabGenerator())
-            logger.info("✓ ReportLab generator initialized")
-        except ImportError:
-            logger.warning("⚠ ReportLab not available")
+        """Initialize available PDF generators based on environment configuration."""
+        # Read environment configuration
+        pdf_engine = os.environ.get("PDF_ENGINE", "weasyprint").lower()
+        pdf_fallback = os.environ.get("PDF_FALLBACK", "true").lower() == "true"
         
-        # Try WeasyPrint as fallback
-        try:
-            import weasyprint
-            self.generators.append(WeasyPrintGenerator())
-            logger.info("✓ WeasyPrint generator initialized")
-        except ImportError:
-            logger.warning("⚠ WeasyPrint not available")
+        logger.info(f"📋 PDF Configuration: Engine={pdf_engine}, Fallback={pdf_fallback}")
+        
+        # Initialize primary generator based on environment
+        primary_generator = None
+        fallback_generator = None
+        
+        if pdf_engine == "reportlab":
+            try:
+                import reportlab
+                primary_generator = ReportLabGenerator()
+                logger.info("✓ ReportLab generator initialized as primary")
+            except ImportError:
+                logger.warning("⚠ ReportLab not available for primary engine")
+        elif pdf_engine == "weasyprint":
+            try:
+                import weasyprint
+                primary_generator = WeasyPrintGenerator()
+                logger.info("✓ WeasyPrint generator initialized as primary")
+            except ImportError:
+                logger.warning("⚠ WeasyPrint not available for primary engine")
+        else:
+            logger.warning(f"⚠ Invalid PDF_ENGINE '{pdf_engine}', defaulting to 'weasyprint'")
+            try:
+                import weasyprint
+                primary_generator = WeasyPrintGenerator()
+                logger.info("✓ WeasyPrint generator initialized as primary (default)")
+            except ImportError:
+                logger.warning("⚠ WeasyPrint not available for default engine")
+        
+        # Initialize fallback generator if enabled
+        if pdf_fallback:
+            if pdf_engine == "reportlab":
+                # Try WeasyPrint as fallback
+                try:
+                    import weasyprint
+                    fallback_generator = WeasyPrintGenerator()
+                    logger.info("✓ WeasyPrint generator initialized as fallback")
+                except ImportError:
+                    logger.warning("⚠ WeasyPrint not available for fallback")
+            elif pdf_engine == "weasyprint":
+                # Try ReportLab as fallback
+                try:
+                    import reportlab
+                    fallback_generator = ReportLabGenerator()
+                    logger.info("✓ ReportLab generator initialized as fallback")
+                except ImportError:
+                    logger.warning("⚠ ReportLab not available for fallback")
+        
+        # Build generators list in priority order
+        self.generators = []
+        if primary_generator:
+            self.generators.append(primary_generator)
+        if fallback_generator:
+            self.generators.append(fallback_generator)
         
         if not self.generators:
             raise RuntimeError("No PDF generators available!")
+        
+        logger.info(f"📋 Final generator order: {[gen.name for gen in self.generators]}")
     
     def get_generator(self, preferred_type: Optional[str] = None) -> PDFGenerator:
         """
@@ -723,11 +736,12 @@ class PDFGeneratorFactory:
     def get_generator_info(self) -> Dict[str, Dict[str, Any]]:
         """Get detailed information about all available generators."""
         info = {}
-        for generator in self.generators:
+        for i, generator in enumerate(self.generators):
             info[generator.name] = {
                 "version": generator.version,
                 "features": generator.get_supported_features(),
-                "priority": "Primary" if generator.name == "ReportLab" else "Fallback"
+                "priority": "Primary" if i == 0 else "Fallback",
+                "order": i + 1
             }
         return info
 

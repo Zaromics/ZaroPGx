@@ -1185,8 +1185,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                             result = generate_pdf_report_dual_lane(
                                 template_data=template_data,
                                 output_path=pdf_path,
-                                workflow_diagram=per_sample_workflow,
-                                preferred_generator="reportlab"
+                                workflow_diagram=per_sample_workflow
                             )
                             if result["success"]:
                                 logger.info(f"✓ PDF generated successfully using ReportLab fallback: {result['generator_used']}")
@@ -1202,8 +1201,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     result = generate_pdf_report_dual_lane(
                         template_data=template_data,
                         output_path=pdf_path,
-                        workflow_diagram=per_sample_workflow,
-                        preferred_generator="reportlab"
+                        workflow_diagram=per_sample_workflow
                     )
                     if result["success"]:
                         logger.info(f"✓ PDF report generated successfully using ReportLab: {result['generator_used']}")
