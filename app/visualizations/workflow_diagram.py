@@ -25,40 +25,53 @@ logger = logging.getLogger(__name__)
 
 
 def get_repo_root() -> Path:
-    """Return the repository root directory (two levels up from this file)."""
-    return Path(__file__).resolve().parents[2]
+    """Return the directory containing this file (app/visualizations)."""
+    return Path(__file__).resolve().parent
 
 
 def read_workflow_mermaid() -> str:
-    """Read the Mermaid source for the workflow diagram from visualizations/workflow.mmd.
-
+    """Read the Mermaid source for the workflow diagram from workflow.mmd in the same directory.
+    
     Falls back to a minimal inline diagram if the file is not found.
     """
-    visualizations_dir = get_repo_root() / "visualizations"
-    mmd_path = visualizations_dir / "workflow.mmd"
+    current_dir = Path(__file__).resolve().parent
+    mmd_path = current_dir / "workflow.mmd"
+    logger.info(f"Looking for workflow.mmd at: {mmd_path}")
+    logger.info(f"Current directory exists: {current_dir.exists()}")
+    logger.info(f"workflow.mmd file exists: {mmd_path.exists()}")
+    
     try:
-        return mmd_path.read_text(encoding="utf-8")
+        content = mmd_path.read_text(encoding="utf-8")
+        logger.info(f"Successfully read workflow.mmd: {len(content)} chars")
+        return content
     except FileNotFoundError:
         logger.warning("Mermaid source not found at %s; using fallback", mmd_path)
-        return "flowchart TD; A[ZaroPGx] --> B[Workflow]; B --> C[Reports]"
+        fallback = "flowchart TD; A[ZaroPGx] --> B[Workflow]; B --> C[Reports]"
+        logger.info(f"Using fallback diagram: {fallback}")
+        return fallback
+    except Exception as e:
+        logger.error(f"Error reading workflow.mmd: {str(e)}")
+        fallback = "flowchart TD; A[ZaroPGx] --> B[Workflow]; B --> C[Reports]"
+        logger.info(f"Using fallback diagram due to error: {fallback}")
+        return fallback
 
 
 def try_read_static_asset(preferred: str = "svg") -> tuple[str, bytes] | None:
-    """Try to read a pre-rendered static asset from visualizations/.
-
+    """Try to read a pre-rendered static asset from the current directory.
+    
     Returns tuple of (fmt, content_bytes) or None if not found.
     """
-    root = get_repo_root() / "visualizations"
+    current_dir = Path(__file__).resolve().parent
     candidates: list[tuple[str, Path]] = []
     if preferred == "svg":
         candidates.extend([
-            ("svg", root / "workflow.svg"),
-            ("png", root / "workflow.png"),
+            ("svg", current_dir / "workflow.svg"),
+            ("png", current_dir / "workflow.png"),
         ])
     else:
         candidates.extend([
-            ("png", root / "workflow.png"),
-            ("svg", root / "workflow.svg"),
+            ("png", current_dir / "workflow.png"),
+            ("svg", current_dir / "workflow.svg"),
         ])
     for fmt, p in candidates:
         if p.exists():
@@ -84,8 +97,25 @@ def render_with_kroki(
     Returns:
         bytes of rendered image
     """
-    base = kroki_url or os.environ.get("KROKI_URL", "https://kroki.io")
+    # Get base URL, handling empty strings properly
+    env_kroki_url = os.environ.get("KROKI_URL", "").strip()
+    if kroki_url:
+        base = kroki_url
+        logger.debug("Using provided kroki_url parameter: %s", base)
+    elif env_kroki_url:
+        base = env_kroki_url
+        logger.debug("Using KROKI_URL environment variable: %s", base)
+    else:
+        base = "http://localhost:8001"
+        logger.debug("Using default local Kroki URL: %s", base)
+    
     url = f"{base.rstrip('/')}/mermaid/{fmt}"
+    
+    # Validate URL format
+    if not url.startswith(('http://', 'https://')):
+        logger.error("Invalid Kroki URL format: %s (missing scheme)", url)
+        raise ValueError(f"Invalid Kroki URL format: {url} (missing scheme)")
+    
     headers = {"Content-Type": "text/plain; charset=utf-8"}
     logger.info("Rendering Mermaid via Kroki: %s", url)
     resp = requests.post(url, data=mermaid_source.encode("utf-8"), headers=headers, timeout=30)
@@ -386,86 +416,171 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
     return result
 
 
+def render_kroki_mermaid_svg(workflow: Optional[Dict[str, Any]] = None) -> bytes:
+    """Render workflow to SVG using Kroki Mermaid for comparison purposes.
+    
+    This function prioritizes the sophisticated Mermaid template from workflow.mmd
+    for better quality diagrams, with workflow-specific diagrams as fallback.
+    """
+    try:
+        # First try the sophisticated Mermaid template from workflow.mmd
+        mermaid = read_workflow_mermaid()
+        result = render_with_kroki(mermaid, fmt="svg")
+        if result:
+            logger.info("Generated sophisticated Kroki Mermaid SVG from workflow.mmd (size: %d bytes)", len(result))
+            return result
+    except Exception as e:
+        logger.warning("Sophisticated Mermaid template failed (%s); trying workflow-specific", str(e))
+    
+    # Fallback to workflow-specific Mermaid if sophisticated template fails
+    if workflow:
+        try:
+            mermaid = build_mermaid_from_workflow(workflow)
+            result = render_with_kroki(mermaid, fmt="svg")
+            if result:
+                logger.info("Generated workflow-specific Kroki Mermaid SVG (size: %d bytes)", len(result))
+                return result
+            else:
+                logger.warning("Workflow-specific Kroki Mermaid SVG generation returned empty result")
+                return b""
+        except Exception as e:
+            logger.error("Workflow-specific Kroki Mermaid SVG generation failed: %s", str(e))
+            return b""
+    
+    # If no workflow data and sophisticated template failed, return empty
+    return b""
+
+
 def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optional[Dict[str, Any]] = None) -> bytes:
     """Render the workflow diagram in the requested format.
 
-    For PNG (especially for PDF embedding), prioritize fallbacks that guarantee text rendering.
+    For SVG, prioritize the sophisticated Mermaid template from workflow.mmd since it's more detailed.
+    For PNG, prioritize Python PNG for guaranteed text rendering in PDFs.
     """
+    logger.info(f"render_workflow called with fmt={fmt}, workflow={workflow is not None}")
+    
+    # For SVG, prioritize the sophisticated Mermaid template from workflow.mmd
+    if fmt == "svg":
+        logger.info("SVG format requested - prioritizing sophisticated Mermaid template from workflow.mmd")
+        try:
+            # First try the sophisticated Mermaid template from workflow.mmd
+            mermaid = read_workflow_mermaid()
+            logger.info(f"Read sophisticated Mermaid template: {len(mermaid)} chars")
+            result = render_with_kroki(mermaid, fmt=fmt)
+            if result:
+                logger.info("✓ Using sophisticated Mermaid template from workflow.mmd (size: %d bytes)", len(result))
+                return result
+            else:
+                logger.warning("Sophisticated Mermaid template returned empty result")
+        except Exception as e:
+            logger.warning("Sophisticated Mermaid template failed (%s); trying workflow-specific Mermaid", str(e))
+        
+        # If sophisticated template fails, try workflow-specific Mermaid
+        if workflow:
+            logger.info("Trying workflow-specific Mermaid as fallback")
+            try:
+                mermaid = build_mermaid_from_workflow(workflow)
+                logger.info(f"Built workflow-specific Mermaid: {len(mermaid)} chars")
+                result = render_with_kroki(mermaid, fmt=fmt)
+                if result:
+                    logger.info("✓ Using workflow-specific Mermaid (size: %d bytes)", len(result))
+                    return result
+                else:
+                    logger.warning("Workflow-specific Mermaid returned empty result")
+            except Exception as e:
+                logger.warning("Workflow-specific Mermaid failed (%s); trying Graphviz", str(e))
+        
+        # Fallback to Graphviz for SVG
+        if workflow:
+            logger.info("Trying Graphviz SVG as final fallback")
+            try:
+                result = render_with_graphviz(workflow, fmt=fmt)
+                if result:
+                    logger.info("✓ Using Graphviz SVG fallback (size: %d bytes)", len(result))
+                    return result
+                else:
+                    logger.warning("Graphviz SVG fallback returned empty result")
+            except Exception as e:
+                logger.warning("Graphviz SVG fallback failed (%s)", str(e))
+    
     # For PNG format with workflow data, prioritize Python PNG for guaranteed text rendering
-    if workflow and fmt == "png":
+    elif workflow and fmt == "png":
+        logger.info("PNG format requested with workflow data - prioritizing Python PNG")
         # Always use Python PNG for guaranteed text - WeasyPrint has font issues with Graphviz PNG
         try:
             python_png = render_simple_png_from_workflow(workflow)
             if python_png:
-                logger.info("Using Python/Pillow PNG for guaranteed text rendering (size: %d bytes)", len(python_png))
+                logger.info("✓ Using Python/Pillow PNG for guaranteed text rendering (size: %d bytes)", len(python_png))
                 return python_png
+            else:
+                logger.warning("Python PNG returned empty result")
         except Exception as e:
             logger.warning("Python PNG failed (%s); trying alternatives", str(e))
         
         # Try other methods only if Python PNG fails
         for method_name, method_func in [
-            ("Graphviz", lambda: render_with_graphviz(workflow, fmt=fmt)),
-            ("Kroki", lambda: render_with_kroki(build_mermaid_from_workflow(workflow), fmt=fmt))
+            ("Sophisticated Mermaid", lambda: render_with_kroki(read_workflow_mermaid(), fmt=fmt)),
+            ("Workflow-specific Mermaid", lambda: render_with_kroki(build_mermaid_from_workflow(workflow), fmt=fmt)),
+            ("Graphviz", lambda: render_with_graphviz(workflow, fmt=fmt))
         ]:
             try:
                 result = method_func()
                 if result and len(result) > 1000:
-                    logger.info("Using %s PNG (size: %d bytes)", method_name, len(result))
+                    logger.info("✓ Using %s PNG (size: %d bytes)", method_name, len(result))
                     return result
+                else:
+                    logger.warning("%s PNG returned empty or too small result", method_name)
             except Exception as e:
                 logger.warning("%s PNG render failed (%s)", method_name, str(e))
                 continue
             
-    # For SVG, prioritize Graphviz since it renders text properly in WeasyPrint
-    elif workflow and fmt == "svg":
-        try:
-            result = render_with_graphviz(workflow, fmt=fmt)
-            if result:
-                logger.info("Using Graphviz SVG (size: %d bytes)", len(result))
-                return result
-        except Exception as e:
-            logger.warning("Graphviz SVG render failed (%s); trying Kroki", str(e))
-        
-        # Kroki fallback for SVG
-        try:
-            mermaid = build_mermaid_from_workflow(workflow)
-            result = render_with_kroki(mermaid, fmt=fmt)
-            logger.info("Using Kroki SVG (size: %d bytes)", len(result))
-            return result
-        except Exception as e:
-            logger.warning("Kroki SVG render failed (%s)", str(e))
-            
     # For other formats or when no workflow data
     elif workflow:
+        logger.info("Other format or no workflow data - trying Graphviz")
         try:
             if fmt in ("svg", "png"):
                 return render_with_graphviz(workflow, fmt=fmt)
             # For PDF, render SVG and let the caller embed it
             return render_with_graphviz(workflow, fmt="svg")
         except Exception as e:
-            logger.warning("Graphviz render failed (%s); trying Kroki", str(e))
+            logger.warning("Graphviz render failed (%s); trying Mermaid", str(e))
 
-    # Try Kroki (use Mermaid from workflow or repo file)
-    if not workflow or fmt != "png":  # Skip if we already tried Kroki above for PNG
-        mermaid = build_mermaid_from_workflow(workflow) if workflow else read_workflow_mermaid()
-        try:
-            return render_with_kroki(mermaid, fmt=fmt)
-        except Exception as e:
-            logger.warning("Kroki render failed (%s); trying static asset", str(e))
+    # Try sophisticated Mermaid template as final fallback
+    logger.info("Trying sophisticated Mermaid template as final fallback")
+    try:
+        mermaid = read_workflow_mermaid()
+        logger.info(f"Read sophisticated Mermaid template for fallback: {len(mermaid)} chars")
+        result = render_with_kroki(mermaid, fmt=fmt)
+        if result:
+            logger.info("✓ Using sophisticated Mermaid template as final fallback (size: %d bytes)", len(result))
+            return result
+        else:
+            logger.warning("Sophisticated Mermaid template fallback returned empty result")
+    except Exception as e:
+        logger.warning("Sophisticated Mermaid template fallback failed (%s)", str(e))
 
     # Static asset fallback
+    logger.info("Trying static asset fallback")
     static = try_read_static_asset(preferred=fmt)
     if static is not None:
         _static_fmt, content = static
+        logger.info("✓ Using static asset fallback (size: %d bytes)", len(content))
         return content
 
     # Final fallback: pure-Python PNG if all else fails
     if workflow and fmt == "png":
+        logger.info("Trying pure-Python PNG as final fallback")
         try:
-            return render_simple_png_from_workflow(workflow)
-        except Exception:
-            pass
+            result = render_simple_png_from_workflow(workflow)
+            if result:
+                logger.info("✓ Using pure-Python PNG as final fallback (size: %d bytes)", len(result))
+                return result
+        except Exception as e:
+            logger.warning("Pure-Python PNG final fallback failed (%s)", str(e))
+    
+    logger.error("All workflow diagram generation methods failed - returning empty result")
     return b""
+
 
 def render_workflow_png_data_uri(workflow: Optional[Dict[str, Any]] = None) -> str:
     """Render workflow to PNG and return a data URI suitable for <img src> embedding."""

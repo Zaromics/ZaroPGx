@@ -22,6 +22,7 @@ from app.visualizations.workflow_diagram import (
     render_workflow_png_data_uri,
     build_simple_html_from_workflow,
     render_simple_png_from_workflow,
+    render_kroki_mermaid_svg,
 )
 from app.core.version_manager import get_all_versions, get_versions_dict
 
@@ -231,20 +232,39 @@ if PDF_ENGINE not in ["weasyprint", "reportlab"]:
 
 logger.info(f"PDF Generation Configuration: Engine={PDF_ENGINE}, Fallback={PDF_FALLBACK}")
 
-REPORT_CONFIG = {
-    # Our generated reports
-    "show_pdf_report": True,          # Standard PDF report
-    "show_html_report": True,         # Standard HTML report
-    "show_interactive_report": True,  # Interactive HTML report with JavaScript visualizations
+# Environment variable helper function
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Helper function to read boolean environment variables."""
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
+# Read PharmCAT report configuration from environment variables
+INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
+INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
+INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
+
+# Log the configuration for debugging
+logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
+
+# Report configuration dictionary
+REPORT_CONFIG = {
+    # Core report settings
+    "write_pdf": True,                # Generate PDF report
+    "write_html": True,               # Generate HTML report
+    "write_interactive_html": True,   # Generate interactive HTML report
+    "write_json": True,               # Generate JSON export
+    "write_tsv": True,                # Generate TSV export
+    
     # Visualization assets
     "write_workflow_svg": True,       # Write workflow.svg alongside report outputs
     "write_workflow_png": True,       # Also write workflow.png for robust PDF embedding
 
-    # PharmCAT original reports
-    "show_pharmcat_html_report": True,  # Original HTML report from PharmCAT
-    "show_pharmcat_json_report": False, # Original JSON report from PharmCAT
-    "show_pharmcat_tsv_report": False,  # Original TSV report from PharmCAT
+    # PharmCAT original reports - now controlled by environment variables
+    "show_pharmcat_html_report": INCLUDE_PHARMCAT_HTML,  # Original HTML report from PharmCAT
+    "show_pharmcat_json_report": INCLUDE_PHARMCAT_JSON,  # Original JSON report from PharmCAT
+    "show_pharmcat_tsv_report": INCLUDE_PHARMCAT_TSV,   # Original TSV report from PharmCAT
 }
 
 # Configure WeasyPrint logging for debugging text rendering issues
@@ -557,8 +577,23 @@ def create_interactive_html_report(
         workflow_png_url = ""
         workflow_png_data_uri = ""
         workflow_svg_inline = ""
+        workflow_kroki_svg_inline = ""
         workflow_html_fallback = ""
         report_dir = os.path.dirname(output_path)
+        
+        # Generate Kroki Mermaid SVG for comparison
+        try:
+            kroki_svg_bytes = render_kroki_mermaid_svg(workflow=workflow)
+            if kroki_svg_bytes:
+                kroki_svg_text = kroki_svg_bytes.decode("utf-8", errors="ignore")
+                workflow_kroki_svg_inline = _sanitize_graphviz_svg(kroki_svg_text)
+                logger.info(f"✓ Generated Kroki Mermaid SVG for interactive report: {len(workflow_kroki_svg_inline)} chars")
+            else:
+                logger.warning("⚠ Kroki Mermaid SVG generation returned empty result for interactive report")
+        except Exception as e:
+            logger.error(f"✗ Kroki Mermaid SVG generation failed for interactive report: {str(e)}")
+            workflow_kroki_svg_inline = ""
+        
         try:
             # Prefer a pre-rendered PNG served by the app
             # Use patient_id for the workflow.png filename to match the directory structure
@@ -625,6 +660,7 @@ def create_interactive_html_report(
             "workflow_png_data_uri": workflow_png_data_uri,
             "workflow_svg": workflow_svg_inline,
             "workflow_html_fallback": workflow_html_fallback,
+            "workflow_kroki_svg": workflow_kroki_svg_inline, # Added for interactive report
             "platform_info": build_platform_info(),
             "citations": build_citations(),
             "author_name": get_author_name(),
@@ -748,6 +784,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         "license_url": get_license_url(),
         "source_url": get_source_url(),
         "current_year": datetime.now().year,
+        "disclaimer": get_disclaimer(),  # Add missing disclaimer variable
         # Add missing fields that PDF generators expect
         "sample_id": patient_info.get("id", "unknown") if patient_info else "unknown",
         "file_type": data.get("file_type", "vcf"),
@@ -806,30 +843,64 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     # Use patient_id for filenames to match the directory structure
     workflow_svg_filename = f"{patient_id}_workflow.svg"
     workflow_png_filename = f"{patient_id}_workflow.png"
+    
+    logger.info(f"=== WORKFLOW DIAGRAM GENERATION START ===")
+    logger.info(f"Workflow configuration: {per_sample_workflow}")
+    
+    # Import the workflow diagram functions
+    from app.visualizations.workflow_diagram import render_workflow, render_simple_png_from_workflow
+    
     try:
         if REPORT_CONFIG.get("write_workflow_svg", True):
+            logger.info("Generating Graphviz SVG workflow diagram...")
             svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
             if svg_bytes:
-                with open(os.path.join(report_dir, workflow_svg_filename), "wb") as f_out:
+                svg_path = os.path.join(report_dir, workflow_svg_filename)
+                with open(svg_path, "wb") as f_out:
                     f_out.write(svg_bytes)
+                logger.info(f"✓ Graphviz Workflow SVG generated successfully: {svg_path} ({len(svg_bytes)} bytes)")
             else:
-                logger.warning("Workflow SVG empty; skipping file write")
-    except Exception:
-        logger.warning("Could not render workflow SVG; continuing without")
+                logger.warning("⚠ Graphviz Workflow SVG generation returned empty result")
+    except Exception as e:
+        logger.error(f"✗ Graphviz Workflow SVG generation failed: {str(e)}", exc_info=True)
+    
+    # Generate Kroki Mermaid SVG for comparison
+    try:
+        if REPORT_CONFIG.get("write_workflow_svg", True):
+            logger.info("Generating Kroki Mermaid SVG workflow diagram for comparison...")
+            kroki_svg_bytes = render_kroki_mermaid_svg(workflow=per_sample_workflow)
+            if kroki_svg_bytes:
+                kroki_svg_filename = f"{patient_id}_workflow_kroki_mermaid.svg"
+                kroki_svg_path = os.path.join(report_dir, kroki_svg_filename)
+                with open(kroki_svg_path, "wb") as f_out:
+                    f_out.write(kroki_svg_bytes)
+                logger.info(f"✓ Kroki Mermaid Workflow SVG generated successfully: {kroki_svg_path} ({len(kroki_svg_bytes)} bytes)")
+            else:
+                logger.warning("⚠ Kroki Mermaid Workflow SVG generation returned empty result")
+    except Exception as e:
+        logger.error(f"✗ Kroki Mermaid Workflow SVG generation failed: {str(e)}", exc_info=True)
+    
     try:
         if REPORT_CONFIG.get("write_workflow_png", False):
+            logger.info("Generating PNG workflow diagram...")
             png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
             if not png_bytes:
                 # Force pure-Python PNG fallback so a file is always present
-                from app.visualizations.workflow_diagram import render_simple_png_from_workflow
+                logger.info("PNG generation failed, trying Python fallback...")
                 png_bytes = render_simple_png_from_workflow(per_sample_workflow)
             if png_bytes:
-                with open(os.path.join(report_dir, workflow_png_filename), "wb") as f_out:
+                png_path = os.path.join(report_dir, workflow_png_filename)
+                with open(png_path, "wb") as f_out:
                     f_out.write(png_bytes)
+                logger.info(f"✓ Workflow PNG generated successfully: {png_path} ({len(png_bytes)} bytes)")
             else:
-                logger.warning("Workflow PNG still empty; skipping file write")
+                logger.warning("⚠ Workflow PNG generation still failed after fallback")
+        else:
+            logger.info("PNG workflow generation disabled in config")
     except Exception as e:
-        logger.warning(f"Could not render workflow PNG; continuing without ({str(e)})")
+        logger.error(f"✗ Workflow PNG generation failed: {str(e)}", exc_info=True)
+    
+    logger.info(f"=== WORKFLOW DIAGRAM GENERATION END ===")
     
     # Create a unique filename based on patient_id
     base_filename = f"{patient_id}_pgx_report"
@@ -843,7 +914,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         report_paths = {}
         
         # Generate standard HTML report if enabled
-        if REPORT_CONFIG["show_html_report"]:
+        if REPORT_CONFIG["write_html"]:
+            logger.info("=== HTML REPORT GENERATION START ===")
             logger.info("Loading HTML template...")
             env = Environment(
                 loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "templates")),
@@ -854,54 +926,116 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             
             # Prepare workflow visuals for HTML, preferring pre-rendered files
             workflow_svg_in_html = ""
+            workflow_kroki_svg_in_html = ""
             workflow_png_data_uri_html = ""
             workflow_html_fallback_html = ""
 
             # Prefer previously written assets
             svg_path = os.path.join(report_dir, workflow_svg_filename)
+            kroki_svg_filename = f"{patient_id}_workflow_kroki_mermaid.svg"
+            kroki_svg_path = os.path.join(report_dir, kroki_svg_filename)
             png_path = os.path.join(report_dir, workflow_png_filename)
+
+            logger.info(f"Checking for pre-generated workflow files...")
+            logger.info(f"Graphviz SVG path: {svg_path} (exists: {os.path.exists(svg_path)})")
+            logger.info(f"Kroki Mermaid SVG path: {kroki_svg_path} (exists: {os.path.exists(kroki_svg_path)})")
+            logger.info(f"PNG path: {png_path} (exists: {os.path.exists(png_path)})")
 
             if os.path.exists(svg_path):
                 try:
                     with open(svg_path, "r", encoding="utf-8") as f_svg:
                         workflow_svg_in_html = f_svg.read()
-                except Exception:
+                    logger.info(f"✓ Loaded pre-generated Graphviz SVG workflow: {len(workflow_svg_in_html)} chars")
+                except Exception as e:
+                    logger.error(f"✗ Failed to read pre-generated Graphviz SVG: {str(e)}")
                     workflow_svg_in_html = ""
+            
+            # Load Kroki Mermaid SVG for comparison
+            if os.path.exists(kroki_svg_path):
+                try:
+                    with open(kroki_svg_path, "r", encoding="utf-8") as f_kroki_svg:
+                        workflow_kroki_svg_in_html = f_kroki_svg.read()
+                    logger.info(f"✓ Loaded pre-generated Kroki Mermaid SVG workflow: {len(workflow_kroki_svg_in_html)} chars")
+                except Exception as e:
+                    logger.error(f"✗ Failed to read pre-generated Kroki Mermaid SVG: {str(e)}")
+                    workflow_kroki_svg_in_html = ""
+                    
             if not workflow_svg_in_html and os.path.exists(png_path):
                 try:
                     with open(png_path, "rb") as f_png:
                         b64 = base64.b64encode(f_png.read()).decode("ascii")
                         workflow_png_data_uri_html = f"data:image/png;base64,{b64}"
-                except Exception:
+                    logger.info(f"✓ Loaded pre-generated PNG workflow: {len(workflow_png_data_uri_html)} chars")
+                except Exception as e:
+                    logger.error(f"✗ Failed to read pre-generated PNG: {str(e)}")
                     workflow_png_data_uri_html = ""
 
             # If no local assets available, try dynamic renderers and finally HTML fallback
             if not workflow_svg_in_html and not workflow_png_data_uri_html:
+                logger.info("No pre-generated workflow files found, trying dynamic generation...")
                 try:
+                    logger.info("Attempting SVG generation...")
                     svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
                     svg_text = svg_bytes.decode("utf-8", errors="ignore")
                     workflow_svg_in_html = _sanitize_graphviz_svg(svg_text)
-                except Exception:
+                    logger.info(f"✓ Generated SVG workflow dynamically: {len(workflow_svg_in_html)} chars")
+                except Exception as e:
+                    logger.error(f"✗ Dynamic SVG generation failed: {str(e)}")
                     workflow_svg_in_html = ""
+                    
                 if not workflow_svg_in_html:
                     try:
+                        logger.info("Attempting PNG data URI generation...")
                         workflow_png_data_uri_html = render_workflow_png_data_uri(workflow=per_sample_workflow)
-                    except Exception:
+                        logger.info(f"✓ Generated PNG data URI: {len(workflow_png_data_uri_html)} chars")
+                    except Exception as e:
+                        logger.error(f"✗ PNG data URI generation failed: {str(e)}")
                         workflow_png_data_uri_html = ""
+                        
                 if not workflow_svg_in_html and not workflow_png_data_uri_html:
                     try:
+                        logger.info("Attempting HTML fallback generation...")
                         workflow_html_fallback_html = build_simple_html_from_workflow(per_sample_workflow)
-                    except Exception:
+                        logger.info(f"✓ Generated HTML fallback: {len(workflow_html_fallback_html)} chars")
+                    except Exception as e:
+                        logger.error(f"✗ HTML fallback generation failed: {str(e)}")
                         workflow_html_fallback_html = ""
 
-            # Build debug veneer payload
+            # Log what we have for the template
+            logger.info(f"Workflow content prepared for HTML template:")
+            logger.info(f"  Graphviz SVG: {len(workflow_svg_in_html)} chars")
+            logger.info(f"  Kroki Mermaid SVG: {len(workflow_kroki_svg_in_html)} chars")
+            logger.info(f"  PNG data URI: {len(workflow_png_data_uri_html)} chars")
+            logger.info(f"  HTML fallback: {len(workflow_html_fallback_html)} chars")
+
+            # Prepare template data
+            template_data = {
+                "patient_id": patient_id,
+                "report_id": report_id,
+                "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "diplotypes": data.get("genes", []),
+                "recommendations": template_recommendations,
+                "disclaimer": get_disclaimer(),
+                "platform_info": platform,
+                "citations": build_citations(),
+                "author_name": get_author_name(),
+                "license_name": get_license_name(),
+                "license_url": get_license_url(),
+                "source_url": get_source_url(),
+                "workflow": per_sample_workflow,
+                "workflow_diagrams": True,
+            }
+
+            # Add debug information for troubleshooting
             try:
                 debug_info = {
-                    "per_sample_workflow": per_sample_workflow,
-                    "workflow_render": {
-                        "pre_svg_path_exists": bool(os.path.exists(svg_path)),
+                    "workflow_config": per_sample_workflow,
+                    "workflow_assets": {
+                        "svg_path_exists": bool(os.path.exists(svg_path)),
+                        "kroki_svg_path_exists": bool(os.path.exists(kroki_svg_path)),
                         "pre_png_path_exists": bool(os.path.exists(png_path)),
                         "used_inline_svg": bool(workflow_svg_in_html),
+                        "used_kroki_svg": bool(workflow_kroki_svg_in_html),
                         "used_png_data_uri": bool(workflow_png_data_uri_html),
                         "used_html_fallback": bool(workflow_html_fallback_html),
                     },
@@ -919,23 +1053,37 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             except Exception:
                 debug_json = "{}"
 
-            html_content = template.render(
-                **template_data,
-                workflow_svg=workflow_svg_in_html,
-                workflow_png_data_uri=workflow_png_data_uri_html,
-                workflow_html_fallback=workflow_html_fallback_html,
-                debug_json=debug_json,
-            )
+            # Render the HTML template with error handling
+            try:
+                logger.info("Rendering HTML template...")
+                html_content = template.render(
+                    **template_data,
+                    workflow_svg=workflow_svg_in_html,
+                    workflow_kroki_svg=workflow_kroki_svg_in_html,
+                    workflow_png_data_uri=workflow_png_data_uri_html,
+                    workflow_html_fallback=workflow_html_fallback_html,
+                    debug_json=debug_json,
+                )
+                logger.info(f"✓ Template rendered successfully, HTML content length: {len(html_content)}")
+            except Exception as e:
+                logger.error(f"✗ Template rendering failed: {str(e)}", exc_info=True)
+                # Try to provide more context about what might be missing
+                logger.error(f"Template data keys: {list(template_data.keys())}")
+                logger.error(f"Workflow content lengths - Graphviz SVG: {len(workflow_svg_in_html)}, Kroki SVG: {len(workflow_kroki_svg_in_html)}, PNG: {len(workflow_png_data_uri_html)}, HTML: {len(workflow_html_fallback_html)}")
+                raise
             
-            logger.info(f"Template rendered successfully, HTML content length: {len(html_content)}")
             logger.info(f"Template data keys used: {list(template_data.keys())}")
             
             # Add the rendered HTML content to template_data for PDF generation
             template_data["template_html"] = html_content
             
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(html_content)
-            logger.info(f"HTML report generated: {html_path}")
+            try:
+                with open(html_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                logger.info(f"✓ HTML report written to file: {html_path}")
+            except Exception as e:
+                logger.error(f"✗ Failed to write HTML report to file: {str(e)}")
+                raise
             
             # Add to report paths
             server_html_path = f"/reports/{patient_id}/{base_filename}.html"
@@ -948,13 +1096,26 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             if os.path.exists(svg_path):
                 report_paths["workflow_svg_path"] = f"/reports/{patient_id}/{workflow_svg_filename}"
                 data["workflow_svg_url"] = report_paths["workflow_svg_path"]
+                logger.info(f"✓ Workflow Graphviz SVG URL added: {report_paths['workflow_svg_path']}")
+            
+            kroki_svg_path = os.path.join(report_dir, kroki_svg_filename)
+            if os.path.exists(kroki_svg_path):
+                report_paths["workflow_kroki_svg_path"] = f"/reports/{patient_id}/{kroki_svg_filename}"
+                data["workflow_kroki_svg_url"] = report_paths["workflow_kroki_svg_path"]
+                logger.info(f"✓ Workflow Kroki Mermaid SVG URL added: {report_paths['workflow_kroki_svg_path']}")
+            
             png_path = os.path.join(report_dir, workflow_png_filename)
             if os.path.exists(png_path):
                 report_paths["workflow_png_path"] = f"/reports/{patient_id}/{workflow_png_filename}"
                 data["workflow_png_url"] = report_paths["workflow_png_path"]
+                logger.info(f"✓ Workflow PNG URL added: {report_paths['workflow_png_path']}")
+            
+            logger.info(f"=== HTML REPORT GENERATION COMPLETE ===")
+        else:
+            logger.info("HTML report generation disabled in config")
         
         # Generate interactive HTML report if enabled
-        if REPORT_CONFIG["show_interactive_report"]:
+        if REPORT_CONFIG["write_interactive_html"]:
             create_interactive_html_report(
                 patient_id=patient_id,
                 report_id=report_id,
@@ -971,7 +1132,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             data["interactive_html_report_url"] = server_interactive_html_path
         
         # Generate PDF report using configured engine
-        if REPORT_CONFIG["show_pdf_report"]:
+        if REPORT_CONFIG["write_pdf"]:
             pdf_path = os.path.join(report_dir, f"{base_filename}.pdf")
             
             logger.info(f"=== PDF GENERATION START (Engine: {PDF_ENGINE}) ===")
@@ -1094,6 +1255,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         
         # PharmCAT HTML report
         if REPORT_CONFIG["show_pharmcat_html_report"]:
+            logger.info("Processing PharmCAT HTML report (enabled via INCLUDE_PHARMCAT_HTML)")
             # Look for the original PharmCAT HTML report
             pharmcat_html_file = os.path.join(report_dir, f"{patient_id}.report.html")
             if os.path.exists(pharmcat_html_file):
@@ -1108,11 +1270,15 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 server_pharmcat_html_path = f"/reports/{patient_id}/{pharmcat_html_filename}"
                 report_paths["pharmcat_html_path"] = server_pharmcat_html_path
                 data["pharmcat_html_report_url"] = server_pharmcat_html_path
+                logger.info(f"PharmCAT HTML report URL added: {server_pharmcat_html_path}")
             else:
                 logger.warning("PharmCAT HTML report not found in report directory")
+        else:
+            logger.info("PharmCAT HTML report processing disabled via INCLUDE_PHARMCAT_HTML environment variable")
         
         # PharmCAT JSON report
         if REPORT_CONFIG["show_pharmcat_json_report"]:
+            logger.info("Processing PharmCAT JSON report (enabled via INCLUDE_PHARMCAT_JSON)")
             pharmcat_json_filename = f"{patient_id}_pgx_pharmcat.json"
             pharmcat_json_path = os.path.join(report_dir, pharmcat_json_filename)
             pharmcat_json_file = os.path.join(report_dir, f"{patient_id}.report.json")
@@ -1127,9 +1293,15 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 server_pharmcat_json_path = f"/reports/{patient_id}/{pharmcat_json_filename}"
                 report_paths["pharmcat_json_path"] = server_pharmcat_json_path
                 data["pharmcat_json_report_url"] = server_pharmcat_json_path
+                logger.info(f"PharmCAT JSON report URL added: {server_pharmcat_json_path}")
+            else:
+                logger.warning("PharmCAT JSON report not found in report directory")
+        else:
+            logger.info("PharmCAT JSON report processing disabled via INCLUDE_PHARMCAT_JSON environment variable")
         
         # PharmCAT TSV report
         if REPORT_CONFIG["show_pharmcat_tsv_report"]:
+            logger.info("Processing PharmCAT TSV report (enabled via INCLUDE_PHARMCAT_TSV)")
             pharmcat_tsv_filename = f"{patient_id}_pgx_pharmcat.tsv"
             pharmcat_tsv_path = os.path.join(report_dir, pharmcat_tsv_filename)
             pharmcat_tsv_file = os.path.join(report_dir, f"{patient_id}.report.tsv")
@@ -1144,6 +1316,11 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 server_pharmcat_tsv_path = f"/reports/{patient_id}/{pharmcat_tsv_filename}"
                 report_paths["pharmcat_tsv_path"] = server_pharmcat_tsv_path
                 data["pharmcat_tsv_report_url"] = server_pharmcat_tsv_path
+                logger.info(f"PharmCAT TSV report URL added: {server_pharmcat_tsv_path}")
+            else:
+                logger.warning("PharmCAT TSV report not found in report directory")
+        else:
+            logger.info("PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable")
         
         # Add the processed data to the report paths for reference
         report_paths["processed_data"] = data

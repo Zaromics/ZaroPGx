@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 PHARMCAT_API_URL = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
 PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/pharmcat/pharmcat.jar")
 
-def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None, patient_id: Optional[str] = None) -> Dict[str, Any]:
+def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None, patient_id: Optional[str] = None, patient_identifier: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT service to process a VCF file.
     
@@ -28,6 +28,7 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
         sample_id: Optional sample ID to use
         report_id: Optional report ID to use for consistent directory naming
         patient_id: Optional patient ID to use for organizing reports in patient directories
+        patient_identifier: Optional original patient identifier from user input (preferred over patient_id)
         
     Returns:
         Dictionary containing PharmCAT results or error information
@@ -59,9 +60,14 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                 if report_id:
                     data['reportId'] = report_id
                     logger.info(f"Using report_id: {report_id} for consistent directory naming")
-                if patient_id:
+                
+                # Prioritize patient_identifier (user's original input) over patient_id (database UUID)
+                if patient_identifier:
+                    data['patientId'] = patient_identifier
+                    logger.info(f"Using user's patient identifier: {patient_identifier} for organizing reports")
+                elif patient_id:
                     data['patientId'] = patient_id
-                    logger.info(f"Using patient_id: {patient_id} for organizing reports in patient directory")
+                    logger.info(f"Using database patient ID: {patient_id} for organizing reports in patient directory")
                 
                 response = requests.post(
                     f"{pharmcat_api_url}/process",
@@ -127,6 +133,7 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                                     logger.warning(f"Failed to read JSON report from {file_path}: {str(e)}")
                     
                     # Try to get the TSV report content if available
+                    logger.info("Checking for TSV report content...")
                     for url_key in ["pharmcat_tsv_report_url", "tsv_report_url"]:
                         if url_key in data:
                             url = data[url_key]
@@ -164,6 +171,12 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                                 except Exception as e:
                                     logger.warning(f"Failed to read TSV report from {file_path}: {str(e)}")
                     
+                    # Log TSV content availability
+                    if report_tsv_content:
+                        logger.info("TSV report content successfully loaded and will be included in response")
+                    else:
+                        logger.info("No TSV report content found")
+                    
                     # If we found report content, include it in the response
                     if report_json_content or report_tsv_content:
                         # Create a response structure that normalize_pharmcat_results can process
@@ -174,6 +187,10 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                             "report_tsv": report_tsv_content
                         }
                         logger.info("Enhanced response with actual report content")
+                        if report_json_content:
+                            logger.info(f"Included JSON report content ({len(report_json_content)} characters)")
+                        if report_tsv_content:
+                            logger.info(f"Included TSV report content ({len(report_tsv_content)} characters)")
                         results = enhanced_results
                 
                 # Process and normalize the results
@@ -687,7 +704,7 @@ def get_logger():
     """Get the module logger"""
     return logging.getLogger(__name__)
 
-async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = None, patient_id: Optional[str] = None) -> Dict[str, Any]:
+async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = None, patient_id: Optional[str] = None, patient_identifier: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT API asynchronously
     
@@ -695,6 +712,7 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
         input_file: Path to the VCF file to analyze
         report_id: Optional report ID to use for consistent directory naming
         patient_id: Optional patient ID to use for organizing reports in patient directories
+        patient_identifier: Optional original patient identifier from user input (preferred over patient_id)
         
     Returns:
         Dictionary containing PharmCAT results or error information
@@ -702,7 +720,8 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
     try:
         logger.info(f"Calling PharmCAT API asynchronously for file: {input_file}" + 
                     (f" with report_id: {report_id}" if report_id else "") +
-                    (f" with patient_id: {patient_id}" if patient_id else ""))
+                    (f" with patient_id: {patient_id}" if patient_id else "") +
+                    (f" with patient_identifier: {patient_identifier}" if patient_identifier else ""))
         
         # Get the PharmCAT API URL from environment or use default
         pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
@@ -720,10 +739,13 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
             data["reportId"] = report_id
             logger.info(f"Added report_id to request: {report_id}")
         
-        # Add patient_id if provided
-        if patient_id:
+        # Prioritize patient_identifier (user's original input) over patient_id (database UUID)
+        if patient_identifier:
+            data["patientId"] = patient_identifier
+            logger.info(f"Added user's patient identifier to request: {patient_identifier}")
+        elif patient_id:
             data["patientId"] = patient_id
-            logger.info(f"Added patient_id to request: {patient_id}")
+            logger.info(f"Added database patient ID to request: {patient_id}")
         
         async with httpx.AsyncClient(timeout=300) as client:  # 5 minute timeout
             # Make the POST request with both files and form data
@@ -838,6 +860,10 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
                         "report_tsv": report_tsv_content
                     }
                     logger.info("Enhanced response with actual report content")
+                    if report_json_content:
+                        logger.info(f"Included JSON report content ({len(report_json_content)} characters)")
+                    if report_tsv_content:
+                        logger.info(f"Included TSV report content ({len(report_tsv_content)} characters)")
                     return enhanced_results
             
             return results

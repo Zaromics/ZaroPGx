@@ -150,8 +150,8 @@ def process_genotype():
             # Create a temporary directory for this job
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Get or generate a unique name for this job
-                patient_id = request.form.get('patient_id')
-                report_id = request.form.get('report_id')
+                patient_id = request.form.get('patientId')
+                report_id = request.form.get('reportId')
                 
                 if patient_id:
                     base_name = str(patient_id)
@@ -196,7 +196,7 @@ def process_genotype():
                     "-o", output_dir,  # Specify output directory explicitly
                     "-reporterJson",  # Generate reporter JSON with drug recommendations
                     "-reporterHtml",  # Generate HTML report
-                    "-reporterTsv",   # Generate TSV report for easy parsing
+                    "-reporterCallsOnlyTsv",   # Generate TSV report for easy parsing
                     vcf_path  # Input file should be the last argument
                 ]
                 
@@ -204,7 +204,7 @@ def process_genotype():
                 # 1. NamedAlleleMatcher (generates .match.json)
                 # 2. Phenotyper (generates .phenotype.json) 
                 # 3. Reporter (generates HTML, JSON, TSV reports with drug recommendations)
-                # The -reporterJson, -reporterHtml, and -reporterTsv flags ensure we get all formats
+                # The -reporterJson, -reporterHtml, and -reporterCallsOnlyTsv flags ensure we get all formats
                 
                 # Set environment variables
                 env = os.environ.copy()
@@ -731,7 +731,7 @@ def process_file():
                     "-o", output_dir,  # Specify output directory explicitly
                     "-reporterJson",  # Generate reporter JSON with drug recommendations
                     "-reporterHtml",  # Generate HTML report
-                    "-reporterTsv",   # Generate TSV report for easy parsing
+                    "-reporterCallsOnlyTsv",   # Generate TSV report for easy parsing
                     vcf_path  # Input file should be the last argument
                 ]
                 
@@ -739,7 +739,7 @@ def process_file():
                 # 1. NamedAlleleMatcher (generates .match.json)
                 # 2. Phenotyper (generates .phenotype.json) 
                 # 3. Reporter (generates HTML, JSON, TSV reports with drug recommendations)
-                # The -reporterJson, -reporterHtml, and -reporterTsv flags ensure we get all formats
+                # The -reporterJson, -reporterHtml, and -reporterCallsOnlyTsv flags ensure we get all formats
                 
                 # Set environment variables
                 env = os.environ.copy()

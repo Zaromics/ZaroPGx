@@ -24,7 +24,7 @@ flowchart TD
     PCAT --> PCOutputs["report.json<br/>report.html<br/>report.tsv<br/>match.json<br/>phenotype.json"]
     PCOutputs --> Normalize["Normalize results<br/>(pharmcat_client.normalize_...)"]
     Normalize --> Generate["Generate reports<br/>(app/reports/generator.py)"]
-    Generate --> ReportsDir[/Write to /data/reports/:report_id/]
+    Generate --> ReportsDir[/Write to /data/reports/<report_id>/]
     ReportsDir --> Serve["Serve at /reports/* (StaticFiles)"]
     Serve --> ExportDec{Export to FHIR?}
     ExportDec -->|No| Done((Complete))
@@ -37,7 +37,7 @@ flowchart TD
   end
 
   subgraph FHIR["FHIR Export (optional)"]
-    ExportDec -->|Yes| FhirRoute["POST /reports/:report_id/export-to-fhir"]
+    ExportDec -->|Yes| FhirRoute["POST /reports/<report_id>/export-to-fhir"]
     FhirRoute --> FhirClient["FhirClient<br/>(app/reports/fhir_client.py)"]
     FhirClient --> Patient[(Patient)]
     FhirClient --> Observations[(Observation per gene)]
@@ -46,7 +46,7 @@ flowchart TD
   end
 
   %% Progress tracking
-  UploadEndpoints -. updates .-> JobStatus["/progress/:job_id<br/>/job-status/:job_id"]
+  UploadEndpoints -. updates .-> JobStatus["/progress/<job_id><br/>/job-status/<job_id>"]
 
   classDef app fill:#e7f0ff,stroke:#5b8def,stroke-width:1px;
   classDef svc fill:#f8f1ff,stroke:#9b59b6,stroke-width:1px;
@@ -54,5 +54,3 @@ flowchart TD
   classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:1px;
 
   class ReportsDir,Serve,SaveTmp io;
-
-

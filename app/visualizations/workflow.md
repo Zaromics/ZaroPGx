@@ -66,5 +66,3 @@ Notes
 - Variant calling for BAM/SAM/CRAM goes through the GATK API. Direct VCFs skip this step.
 - PharmCAT can be invoked via the API container or directly via the JAR; results are normalized and rendered to HTML/PDF (including an interactive HTML report).
 - FHIR export creates `Patient`, `Observation`(s), and a `DiagnosticReport` referencing the rendered reports.
-
-

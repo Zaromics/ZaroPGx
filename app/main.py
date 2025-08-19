@@ -226,38 +226,76 @@ async def get_status(file_id: str, db: Session = Depends(get_db), current_user: 
     """Forward to upload_router status endpoint"""
     return await upload_router.get_upload_status(file_id, db)
 
-@app.api_route("/reports/{filename}", methods=["GET", "HEAD"])
-async def serve_report(filename: str):
+@app.api_route("/reports/{path:path}", methods=["GET", "HEAD"])
+async def serve_report(path: str):
     """
-    Serve report files from the reports directory.
+    Serve report files from the reports directory, including nested paths.
     """
     try:
         # Define reports directory
         reports_dir = REPORTS_DIR
         reports_dir.mkdir(parents=True, exist_ok=True)
         
-        # First, check if the file exists in the root reports directory
-        report_path = reports_dir / filename
+        # Handle nested paths like "1/1_workflow.png"
+        report_path = reports_dir / path
         
-        # If not found in root, search in job directories
+        # If the file doesn't exist at the specified path, try to find it
         if not report_path.exists():
-            # Search through all job directories for the file
-            for job_dir in reports_dir.iterdir():
-                if job_dir.is_dir():
-                    potential_path = job_dir / filename
-                    if potential_path.exists():
-                        report_path = potential_path
-                        logger.info(f"Found report in job directory: {report_path}")
-                        break
+            # First, check if this is a request for a file in a patient directory
+            # like "1/1_workflow.png" -> look in /data/reports/1/1_workflow.png
+            if "/" in path:
+                # This is a nested path, check if it exists
+                if report_path.exists():
+                    logger.info(f"Found report at nested path: {report_path}")
+                else:
+                    # Try to find the file by searching through directories
+                    parts = path.split("/")
+                    if len(parts) == 2:
+                        patient_id, filename = parts
+                        # Search in the patient directory
+                        patient_dir = reports_dir / patient_id
+                        if patient_dir.exists() and patient_dir.is_dir():
+                            potential_path = patient_dir / filename
+                            if potential_path.exists():
+                                report_path = potential_path
+                                logger.info(f"Found report in patient directory: {report_path}")
+                            else:
+                                logger.warning(f"File not found in patient directory: {potential_path}")
+                                return JSONResponse(
+                                    status_code=404,
+                                    content={"detail": f"Report not found: {path}"}
+                                )
+                        else:
+                            logger.warning(f"Patient directory not found: {patient_dir}")
+                            return JSONResponse(
+                                status_code=404,
+                                content={"detail": f"Patient directory not found: {patient_id}"}
+                            )
+                    else:
+                        logger.warning(f"Invalid nested path format: {path}")
+                        return JSONResponse(
+                            status_code=400,
+                            content={"detail": f"Invalid path format: {path}"}
+                        )
             else:
-                # File not found in any directory
-                logger.warning(f"Requested report not found anywhere: {filename}")
-                return JSONResponse(
-                    status_code=404,
-                    content={"detail": f"Report not found: {filename}"}
-                )
+                # This is a flat filename, search through all job directories for the file
+                for job_dir in reports_dir.iterdir():
+                    if job_dir.is_dir():
+                        potential_path = job_dir / path
+                        if potential_path.exists():
+                            report_path = potential_path
+                            logger.info(f"Found report in job directory: {report_path}")
+                            break
+                else:
+                    # File not found in any directory
+                    logger.warning(f"Requested report not found anywhere: {path}")
+                    return JSONResponse(
+                        status_code=404,
+                        content={"detail": f"Report not found: {path}"}
+                    )
         
         # Determine content type and disposition based on file extension
+        filename = path.split("/")[-1]  # Get the actual filename from the path
         content_type = "application/octet-stream"  # Default
         disposition = "attachment"  # Default to download
         
@@ -273,6 +311,12 @@ async def serve_report(filename: str):
         elif filename.endswith(".tsv"):
             content_type = "text/tab-separated-values"
             disposition = "attachment"  # Download TSV files
+        elif filename.endswith(".png"):
+            content_type = "image/png"
+            disposition = "inline"  # Display PNG images inline
+        elif filename.endswith(".svg"):
+            content_type = "image/svg+xml"
+            disposition = "inline"  # Display SVG images inline
         
         # Serve the file with appropriate headers
         logger.info(f"Serving report: {report_path} with disposition: {disposition}")

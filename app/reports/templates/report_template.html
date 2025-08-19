@@ -450,14 +450,24 @@
 
     <div class="section workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
         <h2>Workflow Overview</h2>
+        
+        <!-- Primary Workflow Diagram (Mermaid preferred, Graphviz fallback) -->
         <div class="workflow-figure">
-            {% if workflow_svg %}
+            <h3>Workflow Overview</h3>
+            {% if workflow_kroki_svg %}
+              <!-- Prefer Mermaid diagram -->
+              {{ workflow_kroki_svg | safe }}
+            {% elif workflow_svg %}
+              <!-- Fallback to Graphviz SVG -->
               {{ workflow_svg | safe }}
             {% elif workflow_png_file_url %}
+              <!-- Fallback to PNG file -->
               <img src="{{ workflow_png_file_url }}" alt="Workflow Diagram" />
             {% elif workflow_png_data_uri %}
+              <!-- Fallback to PNG data URI -->
               <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
             {% elif workflow_html_fallback %}
+              <!-- Fallback to HTML -->
               {{ workflow_html_fallback | safe }}
             {% else %}
               <!-- Hard fail-safe directly in template -->

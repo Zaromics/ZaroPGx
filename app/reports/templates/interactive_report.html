@@ -666,16 +666,27 @@
                 </div>
                 <div class="card workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
                     <h4>Workflow</h4>
+                    
+                    <!-- Primary Workflow Diagram (Mermaid preferred, Graphviz fallback) -->
                     <div class="workflow-figure">
-                        {% if workflow_png_url %}
+                        <h5>Workflow Overview</h5>
+                        {% if workflow_kroki_svg %}
+                          <!-- Prefer Mermaid diagram -->
+                          {{ workflow_kroki_svg | safe }}
+                        {% elif workflow_png_url %}
+                          <!-- Fallback to PNG file -->
                           <img src="{{ workflow_png_url }}" alt="Workflow Diagram" />
                         {% elif workflow_png_data_uri %}
+                          <!-- Fallback to PNG data URI -->
                           <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
                         {% elif workflow_svg %}
+                          <!-- Fallback to Graphviz SVG -->
                           {{ workflow_svg | safe }}
                         {% elif workflow_html_fallback %}
+                          <!-- Fallback to HTML -->
                           {{ workflow_html_fallback | safe }}
                         {% else %}
+                          <!-- Hard fail-safe directly in template -->
                           <div class="workflow-text">
                             <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Upload</span>
                             <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>

@@ -3,7 +3,7 @@ name: Render Mermaid diagrams
 on:
   push:
     paths:
-      - 'visualizations/**/*.mmd'
+      - 'app/visualizations/**/*.mmd'
       - '.github/workflows/render-diagrams.yml'
   workflow_dispatch: {}
 
@@ -24,13 +24,13 @@ jobs:
 
       - name: Render diagrams
         run: |
-          mmdc -i visualizations/workflow.mmd -o visualizations/workflow.svg --scale 1 --backgroundColor transparent
-          mmdc -i visualizations/workflow.mmd -o visualizations/workflow.png --scale 2 --backgroundColor white
+          mmdc -i app/visualizations/workflow.mmd -o app/visualizations/workflow.svg --scale 1 --backgroundColor transparent
+          mmdc -i app/visualizations/workflow.mmd -o app/visualizations/workflow.png --scale 2 --backgroundColor white
 
       - name: Commit rendered diagrams
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: 'chore: render Mermaid diagrams'
-          file_pattern: visualizations/*.svg visualizations/*.png
+          file_pattern: app/visualizations/*.svg app/visualizations/*.png
 
 

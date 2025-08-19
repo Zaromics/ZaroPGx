@@ -40,8 +40,9 @@ file_processor = FileProcessor(temp_dir=UPLOAD_DIR)
 # Initialize job status dictionary
 job_status = {}
 
-# Feature flags via environment for easy developer toggling
-def _env_flag(name: str, default: bool = True) -> bool:
+# Environment variable helper function
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Helper function to read boolean environment variables."""
     val = os.getenv(name)
     if val is None:
         return default
@@ -50,6 +51,9 @@ def _env_flag(name: str, default: bool = True) -> bool:
 INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
+
+# Log the configuration for debugging
+logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
 
 async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict):
     """
@@ -214,8 +218,20 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # Call PharmCAT service for final analysis
         logger.info(f"Calling PharmCAT service with file: {output_file}")
         try:
+            # Since we're already getting the patient_id from the function parameters,
+            # we can use that directly. The patient_identifier is the same as patient_id
+            # in this context since we're using the database ID for directory naming.
+            patient_identifier = str(patient_id)
+            logger.info(f"Using patient_id as patient_identifier: {patient_identifier}")
+            
             # Use the direct PharmCAT service call to avoid duplicate report generation
-            results = call_pharmcat_service(output_file, report_id=data_id, patient_id=patient_id)
+            # Pass both patient_id (for database consistency) and patient_identifier (for user experience)
+            results = call_pharmcat_service(
+                output_file, 
+                report_id=data_id, 
+                patient_id=patient_id,
+                patient_identifier=patient_identifier
+            )
         except Exception as e:
             logger.error(f"PharmCAT service call failed: {str(e)}")
             results = {"success": False, "message": f"PharmCAT service error: {str(e)}", "data": {}}
@@ -325,8 +341,72 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Log the number of recommendations found
                 logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
                 
-                # Check for existing PharmCAT outputs in the patient directory
-                # Note: PharmCAT service already copies these files, so we just check if they exist
+                # Generate workflow diagrams for this sample
+                logger.info("=== WORKFLOW DIAGRAM GENERATION START ===")
+                try:
+                    from app.visualizations.workflow_diagram import render_workflow, render_simple_png_from_workflow
+                    
+                    # Determine workflow configuration based on the data
+                    workflow_config = {
+                        "file_type": "vcf",  # Default to VCF since we're processing VCF files
+                        "used_gatk": False,  # We're going directly to PharmCAT
+                        "used_pypgx": False,  # Not using PyPGx in this flow
+                        "used_pharmcat": True,  # Always using PharmCAT
+                        "exported_to_fhir": False  # FHIR export is optional
+                    }
+                    
+                    logger.info(f"Workflow configuration: {workflow_config}")
+                    
+                    # Generate SVG workflow diagram
+                    try:
+                        svg_bytes = render_workflow(fmt="svg", workflow=workflow_config)
+                        if svg_bytes:
+                            svg_path = patient_dir / f"{patient_id}_workflow.svg"
+                            with open(svg_path, "wb") as f_out:
+                                f_out.write(svg_bytes)
+                            logger.info(f"✓ Graphviz Workflow SVG generated successfully: {svg_path} ({len(svg_bytes)} bytes)")
+                        else:
+                            logger.warning("⚠ Graphviz Workflow SVG generation returned empty result")
+                    except Exception as e:
+                        logger.error(f"✗ Graphviz Workflow SVG generation failed: {str(e)}", exc_info=True)
+                    
+                    # Generate Kroki Mermaid SVG workflow diagram for comparison
+                    try:
+                        from app.visualizations.workflow_diagram import render_kroki_mermaid_svg
+                        kroki_svg_bytes = render_kroki_mermaid_svg(workflow=workflow_config)
+                        if kroki_svg_bytes:
+                            kroki_svg_path = patient_dir / f"{patient_id}_workflow_kroki_mermaid.svg"
+                            with open(kroki_svg_path, "wb") as f_out:
+                                f_out.write(kroki_svg_bytes)
+                            logger.info(f"✓ Kroki Mermaid Workflow SVG generated successfully: {kroki_svg_path} ({len(kroki_svg_bytes)} bytes)")
+                        else:
+                            logger.warning("⚠ Kroki Mermaid Workflow SVG generation returned empty result")
+                    except Exception as e:
+                        logger.error(f"✗ Kroki Mermaid Workflow SVG generation failed: {str(e)}", exc_info=True)
+                    
+                    # Generate PNG workflow diagram
+                    try:
+                        png_bytes = render_workflow(fmt="png", workflow=workflow_config)
+                        if not png_bytes:
+                            # Force pure-Python PNG fallback so a file is always present
+                            logger.info("PNG generation failed, trying Python fallback...")
+                            png_bytes = render_simple_png_from_workflow(workflow_config)
+                        if png_bytes:
+                            png_path = patient_dir / f"{patient_id}_workflow.png"
+                            with open(png_path, "wb") as f_out:
+                                f_out.write(png_bytes)
+                            logger.info(f"✓ Workflow PNG generated successfully: {png_path} ({len(png_bytes)} bytes)")
+                        else:
+                            logger.warning("⚠ Workflow PNG generation still failed after fallback")
+                    except Exception as e:
+                        logger.error(f"✗ Workflow PNG generation failed: {str(e)}", exc_info=True)
+                    
+                    logger.info(f"=== WORKFLOW DIAGRAM GENERATION END ===")
+                except Exception as e:
+                    logger.error(f"✗ Workflow diagram generation failed: {str(e)}", exc_info=True)
+                    logger.info("Continuing without workflow diagrams...")
+            
+            # Check for existing PharmCAT outputs in the patient directory
                 logger.info(f"Looking for PharmCAT files in: {patient_dir}")
                 
                 pharmcat_html_exists = False
@@ -834,13 +914,24 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     "job_directory": str(patient_dir)
                 }
                 
-                # Add PharmCAT report URLs if they exist
-                if pharmcat_html_exists:
+                # Add PharmCAT report URLs if they exist and are enabled via environment variables
+                if pharmcat_html_exists and INCLUDE_PHARMCAT_HTML:
                     response_data["pharmcat_html_report_url"] = f"/reports/{pharmcat_html_path.name}"
-                if pharmcat_json_exists:
+                    logger.info(f"Added PharmCAT HTML report URL (enabled via INCLUDE_PHARMCAT_HTML)")
+                if pharmcat_json_exists and INCLUDE_PHARMCAT_JSON:
                     response_data["pharmcat_json_report_url"] = f"/reports/{pharmcat_json_path.name}"
-                if pharmcat_tsv_exists:
+                    logger.info(f"Added PharmCAT JSON report URL (enabled via INCLUDE_PHARMCAT_JSON)")
+                if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
                     response_data["pharmcat_tsv_report_url"] = f"/reports/{pharmcat_tsv_path.name}"
+                    logger.info(f"Added PharmCAT TSV report URL (enabled via INCLUDE_PHARMCAT_TSV)")
+                
+                # Log which reports were skipped due to environment variable settings
+                if pharmcat_html_exists and not INCLUDE_PHARMCAT_HTML:
+                    logger.info("PharmCAT HTML report exists but skipped due to INCLUDE_PHARMCAT_HTML=false")
+                if pharmcat_json_exists and not INCLUDE_PHARMCAT_JSON:
+                    logger.info("PharmCAT JSON report exists but skipped due to INCLUDE_PHARMCAT_JSON=false")
+                if pharmcat_tsv_exists and not INCLUDE_PHARMCAT_TSV:
+                    logger.info("PharmCAT TSV report exists but skipped due to INCLUDE_PHARMCAT_TSV=false")
                 
                 job_status[data_id].update({"data": response_data})
                 
@@ -1080,12 +1171,15 @@ async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
                         f"/reports/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
                     )
                 }
-                if pharmcat_html.exists():
+                if pharmcat_html.exists() and INCLUDE_PHARMCAT_HTML:
                     data["pharmcat_html_report_url"] = f"/reports/{file_id}_pgx_pharmcat.html"
-                if pharmcat_json.exists():
+                    logger.info(f"Added PharmCAT HTML report URL to status (enabled via INCLUDE_PHARMCAT_HTML)")
+                if pharmcat_json.exists() and INCLUDE_PHARMCAT_JSON:
                     data["pharmcat_json_report_url"] = f"/reports/{file_id}_pgx_pharmcat.json"
-                if pharmcat_tsv.exists():
+                    logger.info(f"Added PharmCAT JSON report URL to status (enabled via INCLUDE_PHARMCAT_JSON)")
+                if pharmcat_tsv.exists() and INCLUDE_PHARMCAT_TSV:
                     data["pharmcat_tsv_report_url"] = f"/reports/{file_id}_pgx_pharmcat.tsv"
+                    logger.info(f"Added PharmCAT TSV report URL to status (enabled via INCLUDE_PHARMCAT_TSV)")
 
                 return {
                     "file_id": file_id,
@@ -1201,12 +1295,15 @@ async def get_report_urls(file_id: str):
                         )
                     )
                 }
-                if pharmcat_html.exists():
+                if pharmcat_html.exists() and INCLUDE_PHARMCAT_HTML:
                     report_paths["pharmcat_html_report_url"] = f"/reports/{file_id}_pgx_pharmcat.html"
-                if pharmcat_json.exists():
+                    logger.info(f"Added PharmCAT HTML report URL to report paths (enabled via INCLUDE_PHARMCAT_HTML)")
+                if pharmcat_json.exists() and INCLUDE_PHARMCAT_JSON:
                     report_paths["pharmcat_json_report_url"] = f"/reports/{file_id}_pgx_pharmcat.json"
-                if pharmcat_tsv.exists():
+                    logger.info(f"Added PharmCAT JSON report URL to report paths (enabled via INCLUDE_PHARMCAT_JSON)")
+                if pharmcat_tsv.exists() and INCLUDE_PHARMCAT_TSV:
                     report_paths["pharmcat_tsv_report_url"] = f"/reports/{file_id}_pgx_pharmcat.tsv"
+                    logger.info(f"Added PharmCAT TSV report URL to report paths (enabled via INCLUDE_PHARMCAT_TSV)")
                 return {
                     "file_id": file_id,
                     "status": "completed",
@@ -1232,10 +1329,16 @@ async def get_report_urls(file_id: str):
             "pdf_report_url": data.get("pdf_report_url"),
             "html_report_url": data.get("html_report_url")
         }
-        # Bubble up PharmCAT URLs if present
-        for k in ("pharmcat_html_report_url", "pharmcat_json_report_url", "pharmcat_tsv_report_url"):
-            if k in data:
-                response[k] = data[k]
+        # Bubble up PharmCAT URLs if present and enabled via environment variables
+        if "pharmcat_html_report_url" in data and INCLUDE_PHARMCAT_HTML:
+            response["pharmcat_html_report_url"] = data["pharmcat_html_report_url"]
+            logger.info("Bubbled up PharmCAT HTML report URL (enabled via INCLUDE_PHARMCAT_HTML)")
+        if "pharmcat_json_report_url" in data and INCLUDE_PHARMCAT_JSON:
+            response["pharmcat_json_report_url"] = data["pharmcat_json_report_url"]
+            logger.info("Bubbled up PharmCAT JSON report URL (enabled via INCLUDE_PHARMCAT_JSON)")
+        if "pharmcat_tsv_report_url" in data and INCLUDE_PHARMCAT_TSV:
+            response["pharmcat_tsv_report_url"] = data["pharmcat_tsv_report_url"]
+            logger.info("Bubbled up PharmCAT TSV report URL (enabled via INCLUDE_PHARMCAT_TSV)")
         return response
     
     except Exception as e:
