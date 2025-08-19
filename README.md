@@ -40,13 +40,13 @@ The system is designed to:
 
 Containerized services orchestrated with Docker Compose to provide a complete pharmacogenomic analysis pipeline:
 
-- **PostgreSQL 17** (schemas: `cpic`, `user_data`, `reports`) - Stores CPIC guidelines, user data, and generated reports
+- **PostgreSQL 16** (schemas: `cpic`, `user_data`, `reports`) - Stores CPIC guidelines, user data, and generated reports
 - **FastAPI application** (web UI, API, report generation, SSE progress) - Main application orchestrating the analysis workflow
 - **GATK API service** (HTTP wrapper) - Handles preprocessing of BAM/CRAM files to VCF format
 - **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, including CYP2D6 and others
-- **PharmCAT wrapper service** (Flask) - Executes PharmCAT pipeline v3.0.0 with PyPGx outside calls to unlock full 23-gene coverage
+- **PharmCAT wrapper service** (Flask) - Executes PharmCAT pipeline v3.0.1 with PyPGx outside calls to unlock full 23-gene coverage
 - **Reference genome downloader** - Manages reference genome data for accurate variant calling
-- **HAPI FHIR server** - Enables export of pharmacogenomic results to Electronic Health Records and Personal Health Records
+- **HAPI FHIR server** - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records if the protocol is supported. 
 
 **Workflow**: Genomic Data → GATK Preprocessing (if needed) → PyPGx Allele Calling → PharmCAT Analysis with PyPGx Outside Calls → Comprehensive Reporting → FHIR Export
 
@@ -70,8 +70,8 @@ Data directories (mounted):
 
 - Docker and Docker Compose
 - Git
-- First run requires internet to fetch images and reference genomes
-- Minimum: 8 GB RAM (≥16 GB recommended if using GATK), 20 GB disk (≫100 GB for WGS)
+- First run requires significant internet bandwidth to fetch images and reference genomes, if they are not already cached
+- Recommended Minimum: 8 GB RAM (≥16 GB recommended if using GATK), 30 GB disk (≫100 GB for WGS)
 
 ### Quick start
 
@@ -83,12 +83,14 @@ Data directories (mounted):
    ```
 
 2) Choose your environment configuration:
+For personal and home use, a local deployment is strongly recommended.
 
    **Local Development (default):**
    ```bash
    cp .env.local .env
    # edit .env as needed (at minimum set SECRET_KEY)
    ```
+Not recommended to deploy the production web stack unless you are aware of the consequences. 
 
    **Production/Web Deployment:**
    ```bash
@@ -102,7 +104,7 @@ Data directories (mounted):
    # edit .env as needed
    ```
 
-3) Start services
+4) Start services
 
    **Using default .env:**
    ```bash
@@ -115,7 +117,7 @@ Data directories (mounted):
    docker compose --env-file .env.production up -d --build
    ```
 
-4) Access
+5) Access
 
 - Web UI: `http://localhost:8765`
 - API docs: `http://localhost:8765/docs`
@@ -205,8 +207,8 @@ ZaroPGx/
 
 ### Service specifics
 
-- **PostgreSQL 17** with initialization under `db/init` and `db/migrations` - Stores CPIC guidelines and user data
-- **PharmCAT pipeline v3.0.0** (Java 17) with a Flask wrapper API on port 5000 (exposed as 5001 on host) - Core pharmacogenomic analysis engine
+- **PostgreSQL 16** with initialization under `db/init` and `db/migrations` - Stores CPIC guidelines and user data
+- **PharmCAT pipeline v3.0.1** (Java 17) with a Flask wrapper API on port 5000 (exposed as 5001 on host) - Core pharmacogenomic analysis engine
 - **FastAPI app** (Python 3.12; dependencies in `pyproject.toml`/`uv.lock`) - Main application orchestrating the complete workflow
 - **GATK API service** - Handles preprocessing of BAM/CRAM files to VCF format for downstream analysis
 - **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, enabling PharmCAT to achieve full 23-gene coverage through outside calls
