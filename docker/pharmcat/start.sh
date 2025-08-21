@@ -22,6 +22,26 @@ echo "Checking required tools:"
 echo "bcftools: $(which bcftools)"
 echo "bgzip: $(which bgzip)"
 
+# Copy reference genome files to pipeline directory where PharmCAT expects them
+echo "Setting up reference genome files..."
+if [ -f "/pharmcat/reference.fna.bgz" ]; then
+    cp /pharmcat/reference.fna.bgz /pharmcat/pipeline/
+    echo "✓ Reference genome copied to pipeline directory"
+else
+    echo "⚠ Warning: reference.fna.bgz not found"
+fi
+
+if [ -f "/pharmcat/reference.fna.bgz.gzi" ]; then
+    cp /pharmcat/reference.fna.bgz.gzi /pharmcat/pipeline/
+    echo "✓ Reference genome index copied to pipeline directory"
+else
+    echo "⚠ Warning: reference.fna.bgz.gzi not found"
+fi
+
+# Verify the files are in place
+echo "Verifying reference files in pipeline directory:"
+ls -la /pharmcat/pipeline/reference.fna.bgz* 2>/dev/null || echo "No reference files found in pipeline directory"
+
 # Execute the command to verify it works
 echo "Testing PharmCAT pipeline command:"
 pharmcat_pipeline --help | head -n 5

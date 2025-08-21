@@ -181,16 +181,16 @@ class GenomeDownloadProgress {
                         
                         // Start progress monitoring if the function exists
                         if (window.monitorProgress) {
-                            console.log("Starting pipeline progress monitoring with file_id:", response.file_id);
-                            window.monitorProgress(response.file_id);
+                            console.log("Starting pipeline progress monitoring with job_id:", response.job_id);
+                            window.monitorProgress(response.job_id);
                         } else {
                             console.warn("monitorProgress function not found");
                         }
                         
                         // If this is a VCF file and we have the auto-polling function, start it
                         if (window.isVcfFile && window.startVcfAutoPolling) {
-                            console.log("Starting VCF auto-polling for file_id:", response.file_id);
-                            window.startVcfAutoPolling(response.file_id);
+                            console.log("Starting VCF auto-polling for job_id:", response.job_id);
+                            window.startVcfAutoPolling(response.job_id);
                         }
                         
                         // Dispatch success event

@@ -120,6 +120,20 @@ RUN if [ -f "/pharmcat/pipeline/pharmcat_vcf_preprocessor" ]; then \
         echo "Warning: pharmcat_regions.bed not found"; \
     fi
 
+# Copy reference genome files to pipeline directory where PharmCAT expects them
+RUN if [ -f "/pharmcat/reference.fna.bgz" ]; then \
+        cp /pharmcat/reference.fna.bgz /pharmcat/pipeline/; \
+        echo "Reference genome copied to pipeline directory"; \
+    else \
+        echo "Warning: reference.fna.bgz not found"; \
+    fi && \
+    if [ -f "/pharmcat/reference.fna.bgz.gzi" ]; then \
+        cp /pharmcat/reference.fna.bgz.gzi /pharmcat/pipeline/; \
+        echo "Reference genome index copied to pipeline directory"; \
+    else \
+        echo "Warning: reference.fna.bgz.gzi not found"; \
+    fi
+
 # Set permissions for files that exist
 RUN chmod 755 /pharmcat/pharmcat.jar && \
     if [ -f "/pharmcat/pharmcat_vcf_preprocessor" ]; then chmod 755 /pharmcat/pharmcat_vcf_preprocessor; fi && \

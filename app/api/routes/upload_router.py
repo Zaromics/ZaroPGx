@@ -12,11 +12,12 @@ import requests
 import json
 
 from app.api.db import get_db, create_patient, register_genetic_data
-from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis as PydanticFileAnalysis, VCFHeaderInfo
+from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis as PydanticFileAnalysis, VCFHeaderInfo, JobStage
 from app.pharmcat.pharmcat_client import call_pharmcat_service
 from app.api.utils.file_processor import FileProcessor
 from app.reports.generator import create_interactive_html_report
 from ..utils.security import get_current_user, get_optional_user
+from app.services.job_status_service import JobStatusService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,8 +38,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Initialize file processor
 file_processor = FileProcessor(temp_dir=UPLOAD_DIR)
 
-# Initialize job status dictionary
-job_status = {}
+# Job status is now managed by the JobStatusService
 
 # Environment variable helper function
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -55,7 +55,19 @@ INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
 # Log the configuration for debugging
 logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
 
-async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict):
+async def process_file_background_with_db(file_path: str, patient_id: str, data_id: str, workflow: dict):
+    """
+    Wrapper function to create database session for background processing.
+    """
+    from app.api.db import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        await process_file_background(file_path, patient_id, data_id, workflow, db)
+    finally:
+        db.close()
+
+async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session):
     """
     Process file based on determined workflow
     
@@ -68,37 +80,63 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
     3. Future: For FASTQ: Alignment → GATK → PyPGx → PharmCAT → Reports
     4. Future: For 23andMe: Conversion → PharmCAT → Reports
     """
+    job = None  # Initialize job variable in outer scope
     try:
         logger.info(f"Processing file for patient {patient_id}, file {data_id}")
         logger.info(f"Workflow: {workflow}")
 
-        # Initialize job status
-        job_status[data_id] = {
-            "status": "processing",
-            "percent": 0,
-            "message": "Starting analysis...",
-            "stage": "Upload",
-            "complete": False,
-            "data": {}
-        }
+        # Get the existing job that was created during upload
+        # We need to find the job by patient_id and file_id since we don't have the job_id
+        logger.info(f"Looking for existing job for patient_id: {patient_id}, file_id: {data_id}")
+        
+        job_service = JobStatusService(db)
+        try:
+            # Find the existing job by patient_id and file_id
+            existing_jobs = job_service.get_jobs_by_patient(patient_id, limit=10)
+            job = None
+            
+            for existing_job in existing_jobs:
+                if str(existing_job.file_id) == str(data_id):
+                    job = existing_job
+                    logger.info(f"Found existing job: {job.job_id}")
+                    break
+            
+            if not job:
+                logger.warning(f"No existing job found for patient_id: {patient_id}, file_id: {data_id}")
+                # Create a new job only if none exists (fallback)
+                job = job_service.create_job(
+                    patient_id=patient_id,
+                    file_id=data_id,
+                    initial_stage=JobStage.UPLOAD,
+                    metadata={"workflow": workflow, "file_path": file_path}
+                )
+                logger.info(f"Created fallback job: {job.job_id}")
+            else:
+                logger.info(f"Using existing job: {job.job_id}")
+                
+        except Exception as e:
+            logger.error(f"Failed to find/create job: {str(e)}")
+            logger.error(f"Exception type: {type(e)}")
+            raise
         
         # Check if file format is unsupported
         if workflow.get("unsupported", False):
             reason = workflow.get("unsupported_reason", "Unsupported file format")
             logger.warning(f"Unsupported file format for {data_id}: {reason}")
-            job_status[data_id].update({
-                "status": "error",
-                "message": reason,
-                "complete": True
-            })
+            
+            # Update new monitoring system
+            job_service.fail_job(job.job_id, reason, JobStage.UPLOAD.value)
             return
 
-        # Update initial status
-        job_status[data_id].update({
-            "percent": 5,
-            "stage": "Analysis",
-            "message": "Analyzing file..."
-        })
+        # Update initial status using new service
+        job_service.update_job_progress(
+            job.job_id, 
+            JobStage.ANALYSIS.value, 
+            5, 
+            "Analyzing file...",
+            {"workflow": workflow}
+        )
+        
         await asyncio.sleep(1)  # Give time for status update
         
         # File processing pipeline
@@ -107,33 +145,40 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # Check if we can go directly to PharmCAT (e.g., for VCF files)
         if workflow.get("go_directly_to_pharmcat", False) and not workflow.get("needs_gatk", False):
             logger.info(f"File can be processed directly by PharmCAT, skipping preprocessing steps")
-            job_status[data_id].update({
-                "percent": 30, 
-                "stage": "Direct Processing",
-                "message": "File ready for PharmCAT processing"
-            })
+            job_service.update_job_progress(
+                job.job_id,
+                JobStage.UPLOAD.value,
+                30,
+                "File ready for PharmCAT processing",
+                {"workflow": workflow}
+            )
             await asyncio.sleep(1)  # Short delay for UI update
         else:
             # Standard preprocessing pipeline
             
             # Step 1: Alignment (for FASTQ files) - not yet implemented
             if workflow.get("needs_alignment", False):
-                job_status[data_id].update({
-                    "percent": 10,
-                    "stage": "Alignment",
-                    "message": "Aligning reads to reference genome (not yet implemented)..."
-                })
+                job_service.update_job_progress(
+                    job.job_id,
+                    JobStage.UPLOAD.value,
+                    10,
+                    "Aligning reads to reference genome (not yet implemented)...",
+                    {"workflow": workflow}
+                )
                 # This would be implemented with a call to BWA or similar aligner
                 # For now, just sleep to simulate processing time
                 await asyncio.sleep(2)
             
             # Step 2: GATK Variant Calling (for BAM/CRAM/SAM)
             if workflow.get("needs_gatk", False):
-                job_status[data_id].update({
-                    "percent": 20,
-                    "stage": "GATK",
-                    "message": "Calling variants with GATK..."
-                })
+                # Update new monitoring system
+                job_service.update_job_progress(
+                    job.job_id, 
+                    JobStage.GATK.value, 
+                    20, 
+                    "Calling variants with GATK...",
+                    {"workflow": workflow}
+                )
                 
                 try:
                     # Call GATK service for processing
@@ -147,39 +192,44 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     await asyncio.sleep(5)  # Simulate GATK processing time
                     
                     # Update status after GATK
-                    job_status[data_id].update({
-                        "percent": 40,
-                        "stage": "GATK",
-                        "message": "Variant calling complete."
-                    })
+                    job_service.update_job_progress(
+                        job.job_id, 
+                        JobStage.GATK.value, 
+                        40, 
+                        "Variant calling complete.",
+                        {"workflow": workflow, "gatk_complete": True}
+                    )
                 except Exception as e:
                     error_msg = f"GATK processing failed: {str(e)}"
                     logger.error(error_msg)
-                    job_status[data_id].update({
-                        "status": "error",
-                        "message": error_msg,
-                        "complete": True
-                    })
+                    
+                    # Update new monitoring system
+                    job_service.fail_job(job.job_id, error_msg, JobStage.GATK.value)
                     return
             
             # Step 3: File conversion (for 23andMe files) - not yet implemented
             if workflow.get("needs_conversion", False):
-                job_status[data_id].update({
-                    "percent": 30,
-                    "stage": "Conversion",
-                    "message": "Converting to VCF format (not yet implemented)..."
-                })
+                job_service.update_job_progress(
+                    job.job_id,
+                    JobStage.UPLOAD.value,
+                    30,
+                    "Converting to VCF format (not yet implemented)...",
+                    {"workflow": workflow}
+                )
                 # This would be implemented with a conversion tool
                 # For now, just sleep to simulate processing time
                 await asyncio.sleep(2)
             
             # Step 4: PyPGx for CYP2D6 analysis
             if workflow.get("needs_pypgx", False):
-                job_status[data_id].update({
-                    "percent": 50,
-                    "stage": "PyPGx",
-                    "message": "Analyzing PyPGx supported star alleles..."
-                })
+                # Update new monitoring system
+                job_service.update_job_progress(
+                    job.job_id, 
+                    JobStage.PYPX.value, 
+                    50, 
+                    "Analyzing PyPGx supported star alleles...",
+                    {"workflow": workflow}
+                )
                 
                 try:
                     # Call PyPGx service
@@ -193,27 +243,30 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     await asyncio.sleep(3)  # Simulate PyPGx processing time
                     
                     # Update status after PyPGx
-                    job_status[data_id].update({
-                        "percent": 60,
-                        "stage": "PyPGx",
-                        "message": "PyPGx analysis complete."
-                    })
+                    job_service.update_job_progress(
+                        job.job_id, 
+                        JobStage.PYPX.value, 
+                        60, 
+                        "PyPGx analysis complete.",
+                        {"workflow": workflow, "pypgx_complete": True}
+                    )
                 except Exception as e:
                     error_msg = f"PyPGx processing failed: {str(e)}"
                     logger.error(error_msg)
-                    job_status[data_id].update({
-                        "status": "error",
-                        "message": error_msg,
-                        "complete": True
-                    })
+                    
+                    # Update new monitoring system
+                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX.value)
                     return
 
         # Step 5: PharmCAT Analysis
-        job_status[data_id].update({
-            "percent": 70,
-            "stage": "PharmCAT",
-            "message": "Running PharmCAT analysis..."
-        })
+        # Update new monitoring system
+        job_service.update_job_progress(
+            job.job_id, 
+            JobStage.PHARMCAT.value, 
+            70, 
+            "Running PharmCAT analysis...",
+            {"workflow": workflow}
+        )
 
         # Call PharmCAT service for final analysis
         logger.info(f"Calling PharmCAT service with file: {output_file}")
@@ -241,11 +294,13 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # Step 6: Generate Reports
         try:
             # Update status for Report stage
-            job_status[data_id].update({
-                "percent": 90,
-                "stage": "Report",
-                "message": "Generating reports..."
-            })
+            job_service.update_job_progress(
+                job.job_id, 
+                JobStage.REPORT.value, 
+                90, 
+                "Generating reports...",
+                {"workflow": workflow}
+            )
             
             # Ensure results has required structure even if the call failed
             if not isinstance(results, dict):
@@ -526,13 +581,13 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 
                 # Add PharmCAT report URLs if they exist and are enabled via environment variables
                 if pharmcat_html_exists and INCLUDE_PHARMCAT_HTML:
-                    response_data["pharmcat_html_report_url"] = f"/reports/{pharmcat_html_path.name}"
+                    response_data["pharmcat_html_report_url"] = f"/reports/{patient_id}/{pharmcat_html_path.name}"
                     logger.info(f"Added PharmCAT HTML report URL (enabled via INCLUDE_PHARMCAT_HTML)")
                 if pharmcat_json_exists and INCLUDE_PHARMCAT_JSON:
-                    response_data["pharmcat_json_report_url"] = f"/reports/{pharmcat_json_path.name}"
+                    response_data["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json_path.name}"
                     logger.info(f"Added PharmCAT JSON report URL (enabled via INCLUDE_PHARMCAT_JSON)")
                 if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
-                    response_data["pharmcat_tsv_report_url"] = f"/reports/{pharmcat_tsv_path.name}"
+                    response_data["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv_path.name}"
                     logger.info(f"Added PharmCAT TSV report URL (enabled via INCLUDE_PHARMCAT_TSV)")
                 
                 # Log which reports were skipped due to environment variable settings
@@ -543,7 +598,14 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 if pharmcat_tsv_exists and not INCLUDE_PHARMCAT_TSV:
                     logger.info("PharmCAT TSV report exists but skipped due to INCLUDE_PHARMCAT_TSV=false")
                 
-                job_status[data_id].update({"data": response_data})
+                # Store response data in job metadata
+                job_service.update_job_progress(
+                    job.job_id,
+                    JobStage.REPORT.value,
+                    95,
+                    "Reports generated successfully",
+                    {"workflow": workflow, "reports": response_data}
+                )
                 
                 # Add completion message with provisional status if applicable
                 completion_message = "Analysis completed successfully"
@@ -555,19 +617,21 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             except Exception as gen_err:
                 # If our custom generation failed, attempt to surface PharmCAT HTML if available
                 logger.error(f"Error during unified report generation: {str(gen_err)}")
-                job_status[data_id].update({
-                    "status": "error",
-                    "message": f"Report generation failed: {str(gen_err)}",
-                })
+                job_service.fail_job(
+                    job.job_id,
+                    f"Report generation failed: {str(gen_err)}",
+                    JobStage.REPORT.value
+                )
                 return
                 
         except Exception as report_error:
             # Handle report generation error
             logger.error(f"Error generating reports: {str(report_error)}")
-            job_status[data_id].update({
-                "status": "error",
-                "message": f"Error generating reports: {str(report_error)}"
-            })
+            job_service.fail_job(
+                job.job_id,
+                f"Error generating reports: {str(report_error)}",
+                JobStage.REPORT.value
+            )
             return
         
         # Mark job as completed
@@ -575,24 +639,29 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         if workflow.get("is_provisional", False):
             completion_message += " (PROVISIONAL RESULTS)"
         
-        job_status[data_id].update({
-            "status": "completed",
-            "percent": 100,
-            "stage": "Complete",
-            "message": completion_message,
-            "complete": True
-        })
+        # Update new monitoring system
+        job_service.complete_job(
+            job.job_id, 
+            success=True, 
+            final_message=completion_message,
+            metadata={"workflow": workflow, "final_status": "success"}
+        )
         
         logger.info(f"Job {data_id} completed successfully")
         
     except Exception as e:
         # Handle any other errors
+        error_msg = f"Error: {str(e)}"
         logger.error(f"Error processing file: {str(e)}")
-        job_status[data_id].update({
-            "status": "error",
-            "message": f"Error: {str(e)}",
-            "complete": True
-        })
+        
+        # Update new monitoring system
+        try:
+            if job and hasattr(job, 'job_id'):
+                job_service.fail_job(job.job_id, error_msg)
+            else:
+                logger.warning("Cannot update job status - job was not created successfully")
+        except Exception as service_error:
+            logger.error(f"Failed to update job status service: {str(service_error)}")
 
 @router.post("/genomic-data", response_model=UploadResponse)
 async def upload_genomic_data(
@@ -687,9 +756,19 @@ async def upload_genomic_data(
                 "Only hg38/GRCh38 is currently guaranteed for all analyses."
             )
         
-        # Schedule background processing
+        # Create a job for tracking this upload
+        from app.services.job_status_service import JobStatusService
+        job_service = JobStatusService(db)
+        job = job_service.create_job(
+            patient_id=str(patient_id),
+            file_id=str(data_id),
+            initial_stage=JobStage.UPLOAD,
+            metadata={"workflow": result["workflow"], "file_path": primary_file_path}
+        )
+        
+        # Schedule background processing with database session
         background_tasks.add_task(
-            process_file_background,
+            process_file_background_with_db,
             primary_file_path,
             str(patient_id),
             str(data_id),
@@ -738,6 +817,7 @@ async def upload_genomic_data(
             upload_message = "Files uploaded. Using original genomic file for processing."
         
         return UploadResponse(
+            job_id=str(job.job_id),
             file_id=str(data_id),
             file_type=file_analysis.file_type.value,
             status="queued",
@@ -750,206 +830,127 @@ async def upload_genomic_data(
         logger.error(f"Error during file upload: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing upload: {str(e)}")
 
-@router.get("/status/{file_id}")
-async def get_upload_status(file_id: str, db: Session = Depends(get_db)):
+@router.get("/status/{job_id}")
+async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
     """
-    Check the processing status of an uploaded file.
+    Check the processing status of a job using the new monitoring system.
+    This endpoint works with job_id (not file_id) for consistency with the frontend.
     """
     try:
-        # Get status from job_status dictionary
-        if file_id not in job_status:
-            logger.warning(f"Status request for unknown job ID: {file_id}")
-            
-            # Check if reports exist for this ID in patient directory
-            patient_dir = Path(f"{REPORTS_DIR}/{file_id}")
-            pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
-            html_path = patient_dir / f"{file_id}_pgx_report.html"
-            interactive_path = patient_dir / f"{file_id}_pgx_report_interactive.html"
-            pharmcat_html = patient_dir / f"{file_id}_pgx_pharmcat.html"
-            pharmcat_json = patient_dir / f"{file_id}_pgx_pharmcat.json"
-            pharmcat_tsv = patient_dir / f"{file_id}_pgx_pharmcat.tsv"
-            
-            pdf_exists = os.path.exists(pdf_path)
-            html_exists = os.path.exists(html_path) or os.path.exists(interactive_path)
-            
-            if pdf_exists or html_exists:
-                logger.info(f"Reports found for job {file_id}, returning completed status")
-                data = {
-                    "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                    # Prefer interactive HTML if present
-                    "html_report_url": f"/reports/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
-                        f"/reports/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
-                    )
-                }
-                if pharmcat_html.exists() and INCLUDE_PHARMCAT_HTML:
-                    data["pharmcat_html_report_url"] = f"/reports/{file_id}_pgx_pharmcat.html"
-                    logger.info(f"Added PharmCAT HTML report URL to status (enabled via INCLUDE_PHARMCAT_HTML)")
-                if pharmcat_json.exists() and INCLUDE_PHARMCAT_JSON:
-                    data["pharmcat_json_report_url"] = f"/reports/{file_id}_pgx_pharmcat.json"
-                    logger.info(f"Added PharmCAT JSON report URL to status (enabled via INCLUDE_PHARMCAT_JSON)")
-                if pharmcat_tsv.exists() and INCLUDE_PHARMCAT_TSV:
-                    data["pharmcat_tsv_report_url"] = f"/reports/{file_id}_pgx_pharmcat.tsv"
-                    logger.info(f"Added PharmCAT TSV report URL to status (enabled via INCLUDE_PHARMCAT_TSV)")
+        from app.services.job_status_service import JobStatusService
+        job_service = JobStatusService(db)
+        job = job_service.get_job_status(job_id)
+        
+        if not job:
+            logger.warning(f"Status request for unknown job ID: {job_id}")
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        
 
-                return {
-                    "file_id": file_id,
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Analysis completed successfully",
-                    "current_stage": "Complete",
-                    "data": data
-                }
-            
-            raise HTTPException(status_code=404, detail=f"Job {file_id} not found")
-            
-        status = job_status[file_id]
-        logger.info(f"Found status for job {file_id}: {status}")
         
-        # Check PharmCAT wrapper service status if still processing
-        if status.get("status") == "processing" and status.get("stage") == "PharmCAT":
-            try:
-                logger.info("Checking PharmCAT wrapper status")
-                wrapper_response = requests.get("http://pharmcat:5000/status", timeout=2)
-                if wrapper_response.ok:
-                    wrapper_status = wrapper_response.json()
-                    logger.info(f"PharmCAT wrapper status: {wrapper_status}")
-                    
-                    # Update status with wrapper information if available
-                    if wrapper_status.get("processing_status"):
-                        proc_status = wrapper_status.get("processing_status", {})
-                        # Only update if we have valid information
-                        if proc_status.get("message"):
-                            status["message"] = proc_status.get("message")
-                        if proc_status.get("progress"):
-                            status["percent"] = proc_status.get("progress")
-                        logger.info(f"Updated job status from wrapper: {status}")
-            except Exception as e:
-                logger.warning(f"Could not get PharmCAT wrapper status: {str(e)}")
+        # For completed jobs, extract report URLs from metadata
+        if job["status"] == "completed" and job.get("job_metadata"):
+            metadata = job["job_metadata"]
+            if "reports" in metadata:
+                # Extract report URLs from the stored metadata
+                response_data = metadata["reports"]
+                logger.info(f"Found report data in job metadata: {list(response_data.keys())}")
+            else:
+                response_data = {}
+        else:
+            response_data = job.get("job_metadata") or {}
         
-        # Check for completed reports even if job status doesn't show completion
-        if status.get("status") != "completed" and not status.get("complete", False):
-            # Check in patient directory
-            patient_dir = Path(f"{REPORTS_DIR}/{file_id}")
-            pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
-            html_path = patient_dir / f"{file_id}_pgx_report.html"
-            
-            pdf_exists = os.path.exists(pdf_path)
-            html_exists = os.path.exists(html_path) or os.path.exists(patient_dir / f"{file_id}_pgx_report_interactive.html")
-            
-            if pdf_exists or html_exists:
-                logger.info(f"Found reports for job {file_id} but status not marked as complete, updating status")
-                status.update({
-                    "status": "completed",
-                    "percent": 100,
-                    "stage": "Complete",
-                    "message": "Analysis completed successfully",
-                    "complete": True,
-                    "data": {
-                        "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                        "html_report_url": (
-                            f"/reports/{file_id}_pgx_report_interactive.html" if os.path.exists(patient_dir / f"{file_id}_pgx_report_interactive.html") else (
-                                f"/reports/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
-                            )
-                        )
-                    }
-                })
-        
-        # Normalize status for response
-        response_status = "completed" if status.get("complete", False) or status.get("status") == "completed" else "processing"
-        if status.get("status") == "error":
-            response_status = "error"
-            
-        # Map the status to the expected response format
+        # Convert new status format to expected response format
         response = {
-            "file_id": file_id,
-            "status": response_status,
-            "progress": status.get("percent", 0),
-            "message": status.get("message", ""),
-            "current_stage": status.get("stage", "Unknown"),
-            "data": status.get("data", {})
+            "job_id": job_id,
+            "status": job["status"],
+            "progress": job["progress"],
+            "message": job["message"] or "",
+            "current_stage": job["stage"],
+            "data": response_data
         }
         
-        logger.info(f"Returning status response for job {file_id}: {response}")
+        logger.info(f"Returning status response for job {job_id}: {response}")
         return response
         
     except Exception as e:
-        logger.error(f"Error getting status for job {file_id}: {str(e)}")
+        logger.error(f"Error getting status for job {job_id}: {str(e)}")
         raise HTTPException(status_code=404, detail=f"File not found or error retrieving status: {str(e)}")
 
-@router.get("/reports/job/{file_id}")
-async def get_report_urls(file_id: str):
+@router.get("/reports/job/{job_id}")
+async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
     """
-    Get the report URLs for a completed job
+    Get the report URLs for a completed job using the new monitoring system
     """
     try:
-        # Check if job exists and is complete
-        if file_id not in job_status:
-            # Check in patient directory
-            patient_dir = Path(f"{REPORTS_DIR}/{file_id}")
-            pdf_path = patient_dir / f"{file_id}_pgx_report.pdf"
-            html_path = patient_dir / f"{file_id}_pgx_report.html"
-            interactive_path = patient_dir / f"{file_id}_pgx_report_interactive.html"
-            pharmcat_html = patient_dir / f"{file_id}_pgx_pharmcat.html"
-            pharmcat_json = patient_dir / f"{file_id}_pgx_pharmcat.json"
-            pharmcat_tsv = patient_dir / f"{file_id}_pgx_pharmcat.tsv"
-            
-            pdf_exists = os.path.exists(pdf_path)
-            html_exists = os.path.exists(html_path) or os.path.exists(interactive_path)
-            
-            if pdf_exists or html_exists:
-                report_paths = {
-                    "pdf_report_url": f"/reports/{file_id}_pgx_report.pdf" if pdf_exists else None,
-                    "html_report_url": (
-                        f"/reports/{file_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
-                            f"/reports/{file_id}_pgx_report.html" if os.path.exists(html_path) else None
-                        )
+        from app.services.job_status_service import JobStatusService
+        job_service = JobStatusService(db)
+        job = job_service.get_job_status(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        
+        # Get the patient_id from the job metadata
+        patient_id = job.get("patient_id")
+        if not patient_id:
+            raise HTTPException(status_code=404, detail="Job has no associated patient ID")
+        
+        # Check in patient directory for reports
+        patient_dir = Path(f"{REPORTS_DIR}/{patient_id}")
+        pdf_path = patient_dir / f"{patient_id}_pgx_report.pdf"
+        html_path = patient_dir / f"{patient_id}_pgx_report.html"
+        interactive_path = patient_dir / f"{patient_id}_pgx_report_interactive.html"
+        pharmcat_html = patient_dir / f"{patient_id}_pgx_pharmcat.html"
+        pharmcat_json = patient_dir / f"{patient_id}_pgx_pharmcat.json"
+        pharmcat_tsv = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
+        
+        pdf_exists = os.path.exists(pdf_path)
+        html_exists = os.path.exists(html_path) or os.path.exists(interactive_path)
+        
+        # Check if job is still processing first
+        if job["status"] != "completed":
+            return {
+                "job_id": job_id,
+                "patient_id": patient_id,
+                "status": "processing",
+                "message": job.get("message", "Processing in progress")
+            }
+        
+        # Job is completed, check if reports exist
+        if pdf_exists or html_exists:
+            report_paths = {
+                "pdf_report_url": f"/reports/{patient_id}/{patient_id}_pgx_report.pdf" if pdf_exists else None,
+                "html_report_url": (
+                    f"/reports/{patient_id}/{patient_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
+                        f"/reports/{patient_id}/{patient_id}_pgx_report.html" if os.path.exists(html_path) else None
                     )
-                }
-                if pharmcat_html.exists() and INCLUDE_PHARMCAT_HTML:
-                    report_paths["pharmcat_html_report_url"] = f"/reports/{file_id}_pgx_pharmcat.html"
-                    logger.info(f"Added PharmCAT HTML report URL to report paths (enabled via INCLUDE_PHARMCAT_HTML)")
-                if pharmcat_json.exists() and INCLUDE_PHARMCAT_JSON:
-                    report_paths["pharmcat_json_report_url"] = f"/reports/{file_id}_pgx_pharmcat.json"
-                    logger.info(f"Added PharmCAT JSON report URL to report paths (enabled via INCLUDE_PHARMCAT_JSON)")
-                if pharmcat_tsv.exists() and INCLUDE_PHARMCAT_TSV:
-                    report_paths["pharmcat_tsv_report_url"] = f"/reports/{file_id}_pgx_pharmcat.tsv"
-                    logger.info(f"Added PharmCAT TSV report URL to report paths (enabled via INCLUDE_PHARMCAT_TSV)")
+                )
+            }
+            if pharmcat_html.exists() and INCLUDE_PHARMCAT_HTML:
+                report_paths["pharmcat_html_report_url"] = f"/reports/{patient_id}/{patient_id}_pgx_pharmcat.html"
+                logger.info(f"Added PharmCAT HTML report URL to report paths (enabled via INCLUDE_PHARMCAT_HTML)")
+            if pharmcat_json.exists() and INCLUDE_PHARMCAT_JSON:
+                report_paths["pharmcat_json_report_url"] = f"/reports/{patient_id}/{patient_id}_pgx_pharmcat.json"
+                logger.info(f"Added PharmCAT JSON report URL to report paths (enabled via INCLUDE_PHARMCAT_JSON)")
+            if pharmcat_tsv.exists() and INCLUDE_PHARMCAT_TSV:
+                report_paths["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{patient_id}_pgx_pharmcat.tsv"
+                logger.info(f"Added PharmCAT TSV report URL to report paths (enabled via INCLUDE_PHARMCAT_TSV)")
+            return {
+                "job_id": job_id,
+                "patient_id": patient_id,
+                "status": "completed",
+                **report_paths
+            }
+        else:
+            # Check if job is still processing
+            if job["status"] != "completed":
                 return {
-                    "file_id": file_id,
-                    "status": "completed",
-                    **report_paths
+                    "job_id": job_id,
+                    "patient_id": patient_id,
+                    "status": "processing",
+                    "message": job.get("message", "Processing in progress")
                 }
             else:
-                raise HTTPException(status_code=404, detail="Job not found")
-                
-        # Get data from job status
-        status = job_status[file_id]
-        data = status.get("data", {})
-        
-        if not status.get("complete", False):
-            return {
-                "file_id": file_id,
-                "status": "processing",
-                "message": status.get("message", "Processing in progress")
-            }
-            
-        response = {
-            "file_id": file_id,
-            "status": "completed" if status.get("success", False) else "failed",
-            "pdf_report_url": data.get("pdf_report_url"),
-            "html_report_url": data.get("html_report_url")
-        }
-        # Bubble up PharmCAT URLs if present and enabled via environment variables
-        if "pharmcat_html_report_url" in data and INCLUDE_PHARMCAT_HTML:
-            response["pharmcat_html_report_url"] = data["pharmcat_html_report_url"]
-            logger.info("Bubbled up PharmCAT HTML report URL (enabled via INCLUDE_PHARMCAT_HTML)")
-        if "pharmcat_json_report_url" in data and INCLUDE_PHARMCAT_JSON:
-            response["pharmcat_json_report_url"] = data["pharmcat_json_report_url"]
-            logger.info("Bubbled up PharmCAT JSON report URL (enabled via INCLUDE_PHARMCAT_JSON)")
-        if "pharmcat_tsv_report_url" in data and INCLUDE_PHARMCAT_TSV:
-            response["pharmcat_tsv_report_url"] = data["pharmcat_tsv_report_url"]
-            logger.info("Bubbled up PharmCAT TSV report URL (enabled via INCLUDE_PHARMCAT_TSV)")
-        return response
+                raise HTTPException(status_code=404, detail="Reports not found for completed job")
     
     except Exception as e:
         logger.error(f"Error retrieving report URLs: {str(e)}")

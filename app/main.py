@@ -35,6 +35,9 @@ from app.reports.generator import generate_pdf_report, create_interactive_html_r
 from app.api.db import get_db
 from app.api.utils.security import get_current_user, get_optional_user
 from app.api.routes import upload_router, report_router
+from app.api.routes.monitoring import router as monitoring_router
+from app.services.job_status_service import JobStatusService
+from app.api.models import JobStage
 
 # Configure more detailed logging
 log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
@@ -127,6 +130,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 # Set up static file serving for application static assets
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
+# Static file serving for reports is now handled by custom routes
+# app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -173,6 +179,7 @@ app.add_middleware(
 # Include routers
 app.include_router(upload_router.router)
 app.include_router(report_router.router)
+app.include_router(monitoring_router)
 
 # Override and disable authentication in development mode
 if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
@@ -226,116 +233,71 @@ async def get_status(file_id: str, db: Session = Depends(get_db), current_user: 
     """Forward to upload_router status endpoint"""
     return await upload_router.get_upload_status(file_id, db)
 
-@app.api_route("/reports/{path:path}", methods=["GET", "HEAD"])
-async def serve_report(path: str):
-    """
-    Serve report files from the reports directory, including nested paths.
-    """
+# Generic report file serving route removed - now handled by specific endpoints
+# This route was conflicting with the specific /reports/{job_id} endpoint
+# Individual report files are now served through the get_report_urls function
+
+# Add a route to serve individual report files FIRST (more specific)
+@app.api_route("/reports/{patient_id}/{filename:path}", methods=["GET", "HEAD"])
+async def serve_report_file(patient_id: str, filename: str, current_user: str = Depends(get_optional_user)):
+    """Serve individual report files from the reports directory"""
+    from pathlib import Path
+    import os
+    
+    # Construct the file path
+    file_path = REPORTS_DIR / patient_id / filename
+    
+    # Security check: ensure the path is within the reports directory
     try:
-        # Define reports directory
-        reports_dir = REPORTS_DIR
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Handle nested paths like "1/1_workflow.png"
-        report_path = reports_dir / path
-        
-        # If the file doesn't exist at the specified path, try to find it
-        if not report_path.exists():
-            # First, check if this is a request for a file in a patient directory
-            # like "1/1_workflow.png" -> look in /data/reports/1/1_workflow.png
-            if "/" in path:
-                # This is a nested path, check if it exists
-                if report_path.exists():
-                    logger.info(f"Found report at nested path: {report_path}")
-                else:
-                    # Try to find the file by searching through directories
-                    parts = path.split("/")
-                    if len(parts) == 2:
-                        patient_id, filename = parts
-                        # Search in the patient directory
-                        patient_dir = reports_dir / patient_id
-                        if patient_dir.exists() and patient_dir.is_dir():
-                            potential_path = patient_dir / filename
-                            if potential_path.exists():
-                                report_path = potential_path
-                                logger.info(f"Found report in patient directory: {report_path}")
-                            else:
-                                logger.warning(f"File not found in patient directory: {potential_path}")
-                                return JSONResponse(
-                                    status_code=404,
-                                    content={"detail": f"Report not found: {path}"}
-                                )
-                        else:
-                            logger.warning(f"Patient directory not found: {patient_dir}")
-                            return JSONResponse(
-                                status_code=404,
-                                content={"detail": f"Patient directory not found: {patient_id}"}
-                            )
-                    else:
-                        logger.warning(f"Invalid nested path format: {path}")
-                        return JSONResponse(
-                            status_code=400,
-                            content={"detail": f"Invalid path format: {path}"}
-                        )
-            else:
-                # This is a flat filename, search through all job directories for the file
-                for job_dir in reports_dir.iterdir():
-                    if job_dir.is_dir():
-                        potential_path = job_dir / path
-                        if potential_path.exists():
-                            report_path = potential_path
-                            logger.info(f"Found report in job directory: {report_path}")
-                            break
-                else:
-                    # File not found in any directory
-                    logger.warning(f"Requested report not found anywhere: {path}")
-                    return JSONResponse(
-                        status_code=404,
-                        content={"detail": f"Report not found: {path}"}
-                    )
-        
-        # Determine content type and disposition based on file extension
-        filename = path.split("/")[-1]  # Get the actual filename from the path
-        content_type = "application/octet-stream"  # Default
-        disposition = "attachment"  # Default to download
-        
-        if filename.endswith(".pdf"):
-            content_type = "application/pdf"
-            disposition = "inline"  # Open PDFs in new tab
-        elif filename.endswith(".html"):
-            content_type = "text/html"
-            disposition = "inline"  # Open HTML in new tab
-        elif filename.endswith(".json"):
-            content_type = "application/json"
-            disposition = "inline"  # Open JSON in new tab
-        elif filename.endswith(".tsv"):
-            content_type = "text/tab-separated-values"
-            disposition = "attachment"  # Download TSV files
-        elif filename.endswith(".png"):
-            content_type = "image/png"
-            disposition = "inline"  # Display PNG images inline
-        elif filename.endswith(".svg"):
-            content_type = "image/svg+xml"
-            disposition = "inline"  # Display SVG images inline
-        
-        # Serve the file with appropriate headers
-        logger.info(f"Serving report: {report_path} with disposition: {disposition}")
-        return FileResponse(
-            path=report_path,
-            media_type=content_type,
-            headers={"Content-Disposition": f"{disposition}; filename={filename}"}
-        )
+        file_path = file_path.resolve()
+        reports_dir = REPORTS_DIR.resolve()
+        if not str(file_path).startswith(str(reports_dir)):
+            raise HTTPException(status_code=403, detail="Access denied")
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid file path")
+    
+    # Check if file exists
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Determine content type based on file extension
+    content_type = "application/octet-stream"
+    if filename.endswith('.html'):
+        content_type = "text/html"
+    elif filename.endswith('.pdf'):
+        content_type = "application/pdf"
+    elif filename.endswith('.json'):
+        content_type = "application/json"
+    elif filename.endswith('.tsv'):
+        content_type = "text/tab-separated-values"
+    elif filename.endswith('.svg'):
+        content_type = "image/svg+xml"
+    elif filename.endswith('.png'):
+        content_type = "image/png"
+    
+    # Read and return the file
+    try:
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        return Response(content=content, media_type=content_type)
     except Exception as e:
-        logger.exception(f"Error serving report: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Error serving report: {str(e)}"}
-        )
+        logger.error(f"Error reading file {file_path}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error reading file")
 
 @app.get("/reports/job/{file_id}")
 async def get_reports(file_id: str, current_user: str = Depends(get_optional_user)):
     """Forward to upload_router reports endpoint"""
     return await upload_router.get_report_urls(file_id)
+
+@app.get("/reports/{job_id}")
+async def get_reports_direct(job_id: str, current_user: str = Depends(get_optional_user)):
+    """Direct reports endpoint for frontend compatibility"""
+    from app.api.db import SessionLocal
+    db = SessionLocal()
+    try:
+        return await upload_router.get_report_urls(job_id, db)
+    finally:
+        db.close()
 
 # JWT token functions
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -693,12 +655,13 @@ def extract_zip_file(zip_path):
     
     return None, extract_dir
 
-# Progress tracking for jobs
-job_status = {}
+# Progress tracking for jobs - Now handled by JobStatusService in the database
+# Legacy job_status dictionary kept for backward compatibility in some legacy endpoints
+job_status = {}  # DEPRECATED: Only for legacy endpoints, use JobStatusService instead
 
 def update_job_progress(job_id: str, stage: str, percent: int, message: str, 
                         complete: bool = False, success: bool = False, data: Dict = None):
-    """Update the status of a processing job"""
+    """Update the status of a processing job - Legacy function, now only logs"""
     # Map stage names to frontend-friendly names for display
     stage_map = {
         "initializing": "Upload",
@@ -714,7 +677,8 @@ def update_job_progress(job_id: str, stage: str, percent: int, message: str,
     # Ensure stage is mapped correctly for frontend
     display_stage = stage_map.get(stage, stage)
     
-    # Store the job status
+    # Store in legacy dictionary for backward compatibility
+    # Note: Primary job tracking is now handled by JobStatusService in the database
     job_status[job_id] = {
         "job_id": job_id,
         "stage": display_stage,
@@ -725,6 +689,7 @@ def update_job_progress(job_id: str, stage: str, percent: int, message: str,
         "timestamp": datetime.utcnow().isoformat(),
         "data": data or {}
     }
+    
     logger.info(f"Job {job_id} progress: {stage} - {percent}% - {message}")
     print(f"[PROGRESS] Job {job_id}: {stage} - {percent}% - {message}")
     
@@ -739,9 +704,15 @@ def update_job_progress(job_id: str, stage: str, percent: int, message: str,
         logger.error(f"Job {job_id} error: {message}")
         print(f"[ERROR] Job {job_id}: {message}")
 
-async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
+async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38", db: Session = None):
     """Call variants using the GATK API with retry, stream upload for large files, and better error handling"""
-    if job_id not in job_status:
+    # Initialize job status service if database session is provided
+    job_service = None
+    if db:
+        job_service = JobStatusService(db)
+    
+    # For backward compatibility, check if job exists in old system
+    if not db and job_id not in job_status:
         logger.warning(f"Job {job_id} not found in job_status dictionary - job might have been deleted")
         return None
     
@@ -752,11 +723,14 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
     # Check if file exists and is readable
     if not os.path.exists(bam_file_path):
         logger.error(f"BAM file not found: {bam_file_path}")
-        with job_status_lock:
-            job_status[job_id]["progress"] = 100
-            job_status[job_id]["success"] = False
-            job_status[job_id]["complete"] = True
-            job_status[job_id]["message"] = f"BAM file not found: {bam_file_path}"
+        if job_service:
+            job_service.fail_job(job_id, f"BAM file not found: {bam_file_path}", JobStage.GATK.value)
+        else:
+            with job_status_lock:
+                job_status[job_id]["progress"] = 100
+                job_status[job_id]["success"] = False
+                job_status[job_id]["complete"] = True
+                job_status[job_id]["message"] = f"BAM file not found: {bam_file_path}"
         return None
     
     # Maximum number of retries for GATK API health check
@@ -781,11 +755,14 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
                         retry_count += 1
                         if retry_count >= max_retries:
                             logger.error("Maximum retries reached for GATK API health check")
-                            with job_status_lock:
-                                job_status[job_id]["progress"] = 100
-                                job_status[job_id]["success"] = False
-                                job_status[job_id]["complete"] = True
-                                job_status[job_id]["message"] = "GATK API service is not available"
+                            if job_service:
+                                job_service.fail_job(job_id, "GATK API service is not available", JobStage.GATK.value)
+                            else:
+                                with job_status_lock:
+                                    job_status[job_id]["progress"] = 100
+                                    job_status[job_id]["success"] = False
+                                    job_status[job_id]["complete"] = True
+                                    job_status[job_id]["message"] = "GATK API service is not available"
                             return None
                         await asyncio.sleep(5)  # Wait before retry
         except Exception as e:
@@ -793,18 +770,24 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
             retry_count += 1
             if retry_count >= max_retries:
                 logger.error("Maximum retries reached for GATK API health check")
-                with job_status_lock:
-                    job_status[job_id]["progress"] = 100
-                    job_status[job_id]["success"] = False
-                    job_status[job_id]["complete"] = True
-                    job_status[job_id]["message"] = f"Cannot connect to GATK API: {str(e)}"
+                if job_service:
+                    job_service.fail_job(job_id, f"Cannot connect to GATK API: {str(e)}", JobStage.GATK.value)
+                else:
+                    with job_status_lock:
+                        job_status[job_id]["progress"] = 100
+                        job_status[job_id]["success"] = False
+                        job_status[job_id]["complete"] = True
+                        job_status[job_id]["message"] = f"Cannot connect to GATK API: {str(e)}"
                 return None
             await asyncio.sleep(5)  # Wait before retry
     
     # Update job progress to inform user about the upload process
-    with job_status_lock:
-        job_status[job_id]["progress"] = 30
-        job_status[job_id]["message"] = "Preparing to upload file to GATK service"
+    if job_service:
+        job_service.update_job_progress(job_id, JobStage.GATK.value, 30, "Preparing to upload file to GATK service")
+    else:
+        with job_status_lock:
+            job_status[job_id]["progress"] = 30
+            job_status[job_id]["message"] = "Preparing to upload file to GATK service"
     
     # Get file size
     file_size = os.path.getsize(bam_file_path)
@@ -815,8 +798,11 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
     
     if is_large_file:
         logger.info(f"Large file detected ({file_size_gb:.2f} GB), using streaming upload")
-        with job_status_lock:
-            job_status[job_id]["message"] = f"Preparing large BAM file ({file_size_gb:.2f} GB) for processing"
+        if job_service:
+            job_service.update_job_progress(job_id, JobStage.GATK.value, 30, f"Preparing large BAM file ({file_size_gb:.2f} GB) for processing")
+        else:
+            with job_status_lock:
+                job_status[job_id]["message"] = f"Preparing large BAM file ({file_size_gb:.2f} GB) for processing"
     
     # Prepare the file for upload
     try:
@@ -847,8 +833,11 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
                 upload_timeout = max(300, int(file_size_gb * 60))  # At least 5 minutes, or 1 min per GB
                 
                 logger.info(f"Starting large file upload with timeout {upload_timeout}s, chunk size {chunk_size/1024/1024}MB")
-                with job_status_lock:
-                    job_status[job_id]["message"] = f"Uploading {file_size_gb:.2f} GB file to GATK service"
+                if job_service:
+                    job_service.update_job_progress(job_id, JobStage.GATK.value, 40, f"Uploading {file_size_gb:.2f} GB file to GATK service")
+                else:
+                    with job_status_lock:
+                        job_status[job_id]["message"] = f"Uploading {file_size_gb:.2f} GB file to GATK service"
                 
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=upload_timeout)) as session:
                     try:
@@ -861,31 +850,40 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
                                     gatk_job_id = result.get('job_id')
                                     if not gatk_job_id:
                                         logger.error(f"No job_id in GATK API response for job {job_id}")
-                                        with job_status_lock:
-                                            job_status[job_id]["message"] = "GATK API did not return a job ID"
-                                            job_status[job_id]["success"] = False
-                                            job_status[job_id]["complete"] = True
-                                            job_status[job_id]["progress"] = 100
+                                        if job_service:
+                                            job_service.fail_job(job_id, "GATK API did not return a job ID", JobStage.GATK.value)
+                                        else:
+                                            with job_status_lock:
+                                                job_status[job_id]["message"] = "GATK API did not return a job ID"
+                                                job_status[job_id]["success"] = False
+                                                job_status[job_id]["complete"] = True
+                                                job_status[job_id]["progress"] = 100
                                         return None
                                     
                                     # Check if the output file is provided immediately
                                     output_file = result.get('output_file')
                                     if output_file and response.status == 200:
                                         # Job was completed immediately
-                                        with job_status_lock:
-                                            job_status[job_id]["progress"] = 100
-                                            job_status[job_id]["message"] = "GATK variant calling completed"
-                                            job_status[job_id]["output_file"] = output_file
-                                            job_status[job_id]["success"] = True
-                                            job_status[job_id]["complete"] = True
+                                        if job_service:
+                                            job_service.complete_job(job_id, True, "GATK variant calling completed", {"output_file": output_file})
+                                        else:
+                                            with job_status_lock:
+                                                job_status[job_id]["progress"] = 100
+                                                job_status[job_id]["message"] = "GATK variant calling completed"
+                                                job_status[job_id]["output_file"] = output_file
+                                                job_status[job_id]["success"] = True
+                                                job_status[job_id]["complete"] = True
                                         
                                         # Check if output file exists
                                         if not os.path.exists(output_file):
                                             logger.warning(f"GATK output file does not exist: {output_file}")
-                                            with job_status_lock:
-                                                job_status[job_id]["message"] = f"GATK output file not found: {output_file}"
-                                                job_status[job_id]["success"] = False
-                                                job_status[job_id]["complete"] = True
+                                            if job_service:
+                                                job_service.fail_job(job_id, f"GATK output file not found: {output_file}", JobStage.GATK.value)
+                                            else:
+                                                with job_status_lock:
+                                                    job_status[job_id]["message"] = f"GATK output file not found: {output_file}"
+                                                    job_status[job_id]["success"] = False
+                                                    job_status[job_id]["complete"] = True
                                             return None
                                         
                                         return output_file
@@ -894,9 +892,12 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
                                     gatk_status_url = f"{gateway_url}/job/{gatk_job_id}"
                                     
                                     # Update progress to 40% after upload completion
-                                    with job_status_lock:
-                                        job_status[job_id]["progress"] = 40
-                                        job_status[job_id]["message"] = "File uploaded, GATK processing started"
+                                    if job_service:
+                                        job_service.update_job_progress(job_id, JobStage.GATK.value, 40, "File uploaded, GATK processing started")
+                                    else:
+                                        with job_status_lock:
+                                            job_status[job_id]["progress"] = 40
+                                            job_status[job_id]["message"] = "File uploaded, GATK processing started"
                                     
                                     max_poll_retries = 300  # 5 hours (300 * 60 seconds)
                                     poll_retry = 0
@@ -926,47 +927,62 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
                                                     # Scale GATK progress to our 40-90% range
                                                     our_progress = 40 + int(gatk_progress * 0.5)  # 40-90%
                                                     
-                                                    with job_status_lock:
-                                                        job_status[job_id]["progress"] = our_progress
-                                                        job_status[job_id]["message"] = gatk_message
+                                                    if job_service:
+                                                        job_service.update_job_progress(job_id, JobStage.GATK.value, our_progress, gatk_message)
+                                                    else:
+                                                        with job_status_lock:
+                                                            job_status[job_id]["progress"] = our_progress
+                                                            job_status[job_id]["message"] = gatk_message
                                                     
                                                     # Check if the job completed or had an error
                                                     if gatk_status == 'completed':
                                                         output_file = status_data.get('output_file')
                                                         if output_file:
-                                                            with job_status_lock:
-                                                                job_status[job_id]["progress"] = 100
-                                                                job_status[job_id]["message"] = "GATK variant calling completed"
-                                                                job_status[job_id]["output_file"] = output_file
-                                                                job_status[job_id]["success"] = True
-                                                                job_status[job_id]["complete"] = True
+                                                            if job_service:
+                                                                job_service.complete_job(job_id, True, "GATK variant calling completed", {"output_file": output_file})
+                                                            else:
+                                                                with job_status_lock:
+                                                                    job_status[job_id]["progress"] = 100
+                                                                    job_status[job_id]["message"] = "GATK variant calling completed"
+                                                                    job_status[job_id]["output_file"] = output_file
+                                                                    job_status[job_id]["success"] = True
+                                                                    job_status[job_id]["complete"] = True
                                                             
                                                             # Check if output file exists
                                                             if not os.path.exists(output_file):
                                                                 logger.warning(f"GATK output file does not exist: {output_file}")
-                                                                with job_status_lock:
-                                                                    job_status[job_id]["message"] = f"GATK output file not found: {output_file}"
-                                                                    job_status[job_id]["success"] = False
-                                                                    job_status[job_id]["complete"] = True
+                                                                if job_service:
+                                                                    job_service.fail_job(job_id, f"GATK output file not found: {output_file}", JobStage.GATK.value)
+                                                                else:
+                                                                    with job_status_lock:
+                                                                        job_status[job_id]["message"] = f"GATK output file not found: {output_file}"
+                                                                        job_status[job_id]["success"] = False
+                                                                        job_status[job_id]["complete"] = True
                                                                 return None
                                                             
                                                             return output_file
                                                         else:
                                                             logger.error(f"GATK job completed but no output file provided for job {gatk_job_id}")
-                                                            with job_status_lock:
-                                                                job_status[job_id]["message"] = "GATK job completed but no output file was provided"
-                                                                job_status[job_id]["success"] = False
-                                                                job_status[job_id]["complete"] = True
-                                                                job_status[job_id]["progress"] = 100
+                                                            if job_service:
+                                                                job_service.fail_job(job_id, "GATK job completed but no output file was provided", JobStage.GATK.value)
+                                                            else:
+                                                                with job_status_lock:
+                                                                    job_status[job_id]["message"] = "GATK job completed but no output file was provided"
+                                                                    job_status[job_id]["success"] = False
+                                                                    job_status[job_id]["complete"] = True
+                                                                    job_status[job_id]["progress"] = 100
                                                             return None
                                                     elif gatk_status == 'error':
                                                         error_msg = status_data.get('error', gatk_message)
                                                         logger.error(f"GATK job error for {gatk_job_id}: {error_msg}")
-                                                        with job_status_lock:
-                                                            job_status[job_id]["message"] = f"GATK service error: {error_msg}"
-                                                            job_status[job_id]["success"] = False
-                                                            job_status[job_id]["complete"] = True
-                                                            job_status[job_id]["progress"] = 100
+                                                        if job_service:
+                                                            job_service.fail_job(job_id, f"GATK service error: {error_msg}", JobStage.GATK.value)
+                                                        else:
+                                                            with job_status_lock:
+                                                                job_status[job_id]["message"] = f"GATK service error: {error_msg}"
+                                                                job_status[job_id]["success"] = False
+                                                                job_status[job_id]["complete"] = True
+                                                                job_status[job_id]["progress"] = 100
                                                         return None
                                                 else:
                                                     logger.warning(f"Failed to get GATK job status for {gatk_job_id}: HTTP {status_response.status}")
@@ -977,49 +993,64 @@ async def call_gatk_variants(job_id, bam_file_path, reference_genome="hg38"):
                                     
                                     # If we get here, we've reached the maximum number of polling attempts
                                     logger.error(f"Maximum polling attempts reached for GATK job {gatk_job_id}")
-                                    with job_status_lock:
-                                        job_status[job_id]["message"] = "GATK job timed out - processing took too long"
-                                        job_status[job_id]["success"] = False
-                                        job_status[job_id]["complete"] = True
-                                        job_status[job_id]["progress"] = 100
+                                    if job_service:
+                                        job_service.fail_job(job_id, "GATK job timed out - processing took too long", JobStage.GATK.value)
+                                    else:
+                                        with job_status_lock:
+                                            job_status[job_id]["message"] = "GATK job timed out - processing took too long"
+                                            job_status[job_id]["success"] = False
+                                            job_status[job_id]["complete"] = True
+                                            job_status[job_id]["progress"] = 100
                                     
                                     return None
                                     
                                 except Exception as parse_err:
                                     logger.exception(f"Error parsing GATK API response for job {job_id}: {str(parse_err)}")
-                                    with job_status_lock:
-                                        job_status[job_id]["message"] = f"Error processing GATK response: {str(parse_err)}"
-                                        job_status[job_id]["success"] = False
-                                        job_status[job_id]["complete"] = True
-                                        job_status[job_id]["progress"] = 100
+                                    if job_service:
+                                        job_service.fail_job(job_id, f"Error processing GATK response: {str(parse_err)}", JobStage.GATK.value)
+                                    else:
+                                        with job_status_lock:
+                                            job_status[job_id]["message"] = f"Error processing GATK response: {str(parse_err)}"
+                                            job_status[job_id]["success"] = False
+                                            job_status[job_id]["complete"] = True
+                                            job_status[job_id]["progress"] = 100
                                     return None
                             else:
                                 error_text = await response.text()
                                 logger.error(f"GATK API request failed with status {response.status}: {error_text}")
-                                with job_status_lock:
-                                    job_status[job_id]["message"] = f"GATK API request failed: HTTP {response.status}"
-                                    job_status[job_id]["success"] = False
-                                    job_status[job_id]["complete"] = True
-                                    job_status[job_id]["progress"] = 100
+                                if job_service:
+                                    job_service.fail_job(job_id, f"GATK API request failed: HTTP {response.status}", JobStage.GATK.value)
+                                else:
+                                    with job_status_lock:
+                                        job_status[job_id]["message"] = f"GATK API request failed: HTTP {response.status}"
+                                        job_status[job_id]["success"] = False
+                                        job_status[job_id]["complete"] = True
+                                        job_status[job_id]["progress"] = 100
                                 return None
                     except Exception as upload_error:
                         logger.exception(f"Error uploading to GATK API for job {job_id}: {str(upload_error)}")
-                        with job_status_lock:
-                            job_status[job_id]["message"] = f"Error uploading to GATK API: {str(upload_error)}"
-                            job_status[job_id]["success"] = False
-                            job_status[job_id]["complete"] = True
-                            job_status[job_id]["progress"] = 100
+                        if job_service:
+                            job_service.fail_job(job_id, f"Error uploading to GATK API: {str(upload_error)}", JobStage.GATK.value)
+                        else:
+                            with job_status_lock:
+                                job_status[job_id]["message"] = f"Error uploading to GATK API: {str(upload_error)}"
+                                job_status[job_id]["success"] = False
+                                job_status[job_id]["complete"] = True
+                                job_status[job_id]["progress"] = 100
                         return None
     except Exception as e:
         logger.exception(f"Error in call_gatk_variants: {str(e)}")
-        with job_status_lock:
-            job_status[job_id]["message"] = f"Error in call_gatk_variants: {str(e)}"
-            job_status[job_id]["success"] = False
-            job_status[job_id]["complete"] = True
-            job_status[job_id]["progress"] = 100
+        if job_service:
+            job_service.fail_job(job_id, f"Error in call_gatk_variants: {str(e)}", JobStage.GATK.value)
+        else:
+            with job_status_lock:
+                job_status[job_id]["message"] = f"Error in call_gatk_variants: {str(e)}"
+                job_status[job_id]["success"] = False
+                job_status[job_id]["complete"] = True
+                job_status[job_id]["progress"] = 100
         return None
 
-async def process_file_in_background(job_id, file_path, file_type, sample_id, reference_genome, has_index=False):
+async def process_file_in_background(job_id, file_path, file_type, sample_id, reference_genome, has_index=False, db: Session = None):
     """
     Process the genomic file through the pipeline:
     1. Call variants with GATK (if not a VCF)
@@ -1031,11 +1062,56 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
         logger.info(f"Starting background processing for job {job_id}")
         print(f"[PROCESSING] Starting job {job_id} for file: {file_path}")
         
-        # Check if job status exists - create if missing
-        if job_id not in job_status:
-            logger.warning(f"Job {job_id} missing from job_status at start of background processing - recreating")
-            print(f"[PROCESSING WARNING] Job {job_id} status missing - creating new entry")
-            update_job_progress(job_id, "initializing", 0, "Starting analysis pipeline")
+        # Initialize job status service if database session is provided
+        job_service = None
+        if db:
+            job_service = JobStatusService(db)
+            # Create or update job status using new monitoring system
+            try:
+                job_service.update_job_progress(job_id, JobStage.UPLOAD.value, 0, "Starting analysis pipeline")
+            except:
+                # If job doesn't exist, it will be created by the upload router
+                logger.info(f"Job {job_id} not found in new monitoring system - will be created by upload router")
+        else:
+            # No database session provided - can only log progress
+            logger.info(f"Job {job_id}: No database session provided, progress updates will be limited")
+        
+        # Helper function to update progress in both systems
+        def update_progress(stage: str, percent: int, message: str):
+            if job_service:
+                # Map stage names to new monitoring system stages
+                stage_map = {
+                    "variant_calling": JobStage.GATK.value,
+                    "star_allele_calling": JobStage.PYPX.value,
+                    "pharmcat": JobStage.PHARMCAT.value,
+                    "report_generation": JobStage.REPORT.value,
+                    "complete": JobStage.COMPLETE.value
+                }
+                new_stage = stage_map.get(stage, stage)
+                job_service.update_job_progress(job_id, new_stage, percent, message)
+            else:
+                update_job_progress(job_id, stage, percent, message)
+        
+        # Helper function to complete job in both systems
+        def complete_job(success: bool, message: str, data: dict = None):
+            if job_service:
+                job_service.complete_job(job_id, success, message, data or {})
+            else:
+                update_job_progress(job_id, "complete", 100, message, complete=True, success=success, data=data)
+        
+        # Helper function to fail job in both systems  
+        def fail_job(error_message: str, stage: str = None):
+            if job_service:
+                stage_map = {
+                    "variant_calling": JobStage.GATK.value,
+                    "star_allele_calling": JobStage.PYPX.value,
+                    "pharmcat": JobStage.PHARMCAT.value,
+                    "report_generation": JobStage.REPORT.value
+                }
+                new_stage = stage_map.get(stage, stage) if stage else None
+                job_service.fail_job(job_id, error_message, new_stage)
+            else:
+                update_job_progress(job_id, "error", 100, error_message, complete=True, success=False)
         
         # Register job in a global tracking variable for debugging
         process_tracking = {}
@@ -1056,13 +1132,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
         
         # Step 1: Process with GATK if not already a VCF
         if file_type != 'vcf':
-            # Verify job is still tracked
-            if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing before GATK step - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing before GATK - recreating") 
-                update_job_progress(job_id, "variant_calling", 10, "Calling variants with GATK")
-                
-            update_job_progress(job_id, "variant_calling", 10, "Calling variants with GATK")
+            update_progress("variant_calling", 10, "Calling variants with GATK")
             logger.info(f"Job {job_id}: Calling variants with GATK for {file_type} file")
             print(f"[GATK] Job {job_id}: Calling variants for {file_type} file")
             
@@ -1080,13 +1150,13 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                     # If this is a retry, inform the user
                     if retry_count > 0:
                         retry_message = f"Retrying GATK variant calling (attempt {retry_count}/{max_retries})"
-                        update_job_progress(job_id, "variant_calling", 10, retry_message)
+                        update_progress("variant_calling", 10, retry_message)
                         logger.info(f"Job {job_id}: {retry_message}")
                         print(f"[GATK] Job {job_id}: {retry_message}")
                         await asyncio.sleep(2)  # Small delay before retry
                     
                     # Call the GATK variant calling function with await
-                    vcf_path = await call_gatk_variants(job_id, file_path, reference_genome)
+                    vcf_path = await call_gatk_variants(job_id, file_path, reference_genome, db)
                     
                     # If the GATK call returned None, it means there was an error
                     if vcf_path is None:
@@ -1101,12 +1171,9 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                         process_tracking[job_id]["vcf_path"] = vcf_path
                         process_tracking[job_id]["status"] = "gatk_complete"
                     
-                    # Verify job is still tracked after GATK
-                    if job_id not in job_status:
-                        logger.warning(f"Job {job_id} missing after GATK step - recreating status")
-                        print(f"[PROCESSING WARNING] Job {job_id} missing after GATK - recreating")
+                    # GATK processing completed successfully
                         
-                    update_job_progress(job_id, "variant_calling", 30, "Variant calling completed")
+                    update_progress("variant_calling", 30, "Variant calling completed")
                     
                     # If successful, break out of retry loop
                     break
@@ -1117,11 +1184,8 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                     logger.error(f"Job {job_id}: GATK service error (attempt {retry_count}/{max_retries}): {str(e)}")
                     print(f"[GATK ERROR] Job {job_id}: Error in attempt {retry_count}/{max_retries}: {str(e)}")
                     
-                    # Make sure job status is updated even during errors
-                    if job_id not in job_status:
-                        logger.warning(f"Job {job_id} missing during GATK error - recreating status")
-                        print(f"[PROCESSING WARNING] Job {job_id} missing during error - recreating")
-                        update_job_progress(job_id, "variant_calling", 10, f"GATK error: {str(e)}")
+                    # Update error progress
+                    update_progress("variant_calling", 10, f"GATK error: {str(e)}")
                     
                     # If we've reached max retries, fail the job
                     if retry_count > max_retries:
@@ -1133,33 +1197,24 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                             process_tracking[job_id]["status"] = "gatk_failed"
                             process_tracking[job_id]["error"] = str(last_error)
                         
-                        update_job_progress(
-                            job_id, "error", 100, f"GATK service error: {str(last_error) if last_error else 'Unknown error'}", 
-                            complete=True, success=False
-                        )
+                        fail_job(f"GATK service error: {str(last_error) if last_error else 'Unknown error'}", "variant_calling")
                         return
             
             # If we exited the loop without success
             if vcf_path is None:
                 # Ensure job status is maintained
-                update_job_progress(
-                    job_id, "error", 100, f"GATK service error: {str(last_error) if last_error else 'Unknown error'}", 
-                    complete=True, success=False
-                )
+                fail_job(f"GATK service error: {str(last_error) if last_error else 'Unknown error'}", "variant_calling")
                 return
         else:
             # Already a VCF, just update progress
             logger.info(f"Job {job_id}: Using provided VCF file at {vcf_path}")
             print(f"[PROCESSING] Job {job_id}: Using provided VCF file")
             
-            # Verify job is still tracked 
-            if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing for VCF processing - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing for VCF - recreating")
+            # Using provided VCF file, proceeding to star allele calling
                 
             # For VCF files, we skip variant calling and go directly to star allele calling
             # Update with special message to indicate we're skipping GATK step
-            update_job_progress(job_id, "star_allele_calling", 35, "Using provided VCF file, proceeding to star allele calling")
+            update_progress("star_allele_calling", 35, "Using provided VCF file, proceeding to star allele calling")
         
         # Verify VCF file exists and is not empty
         if not os.path.exists(vcf_path) or os.path.getsize(vcf_path) == 0:
@@ -1172,20 +1227,14 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 process_tracking[job_id]["status"] = "vcf_missing"
                 process_tracking[job_id]["error"] = error_msg
                 
-            update_job_progress(
-                job_id, "error", 100, error_msg,
-                complete=True, success=False
-            )
+            fail_job(error_msg, "variant_calling")
             return
             
-        # Verify job is still being tracked before PyPGx step
-        if job_id not in job_status:
-            logger.warning(f"Job {job_id} missing before PyPGx - recreating status")
-            print(f"[PROCESSING WARNING] Job {job_id} missing before PyPGx - recreating")
-            update_job_progress(job_id, "star_allele_calling", 35, "Preparing for star allele calling")
+        # Prepare for PyPGx step
+        update_progress("star_allele_calling", 35, "Preparing for star allele calling")
         
         # Step 2: Process CYP2D6 with PyPGx
-        update_job_progress(job_id, "star_allele_calling", 40, "Calling CYP2D6 star alleles with PyPGx")
+        update_progress("star_allele_calling", 40, "Calling CYP2D6 star alleles with PyPGx")
         logger.info(f"Job {job_id}: Calling CYP2D6 star alleles with PyPGx")
         print(f"[PYPGX] Job {job_id}: Calling CYP2D6 star alleles")
         
@@ -1249,24 +1298,15 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
             print(f"[PYPGX ERROR] Job {job_id}: {str(e)}")
             # Continue even if PyPGx fails
             
-            # Verify job still exists
-            if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing during PyPGx error - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing during PyPGx error - recreating")
+            # PyPGx service error occurred
                 
-            update_job_progress(
-                job_id, "star_allele_calling", 60, 
-                f"CYP2D6 calling error: {str(e)}"
-            )
+            update_progress("star_allele_calling", 60, f"CYP2D6 calling error: {str(e)}")
             
-        # Check job status before PharmCAT
-        if job_id not in job_status:
-            logger.warning(f"Job {job_id} missing before PharmCAT - recreating status")
-            print(f"[PROCESSING WARNING] Job {job_id} missing before PharmCAT - recreating")
-            update_job_progress(job_id, "pharmcat", 65, "Preparing for PharmCAT analysis")
+        # Prepare for PharmCAT analysis
+        update_progress("pharmcat", 65, "Preparing for PharmCAT analysis")
         
         # Step 3: Process with PharmCAT
-        update_job_progress(job_id, "pharmcat", 70, "Running PharmCAT analysis")
+        update_progress("pharmcat", 70, "Running PharmCAT analysis")
         logger.info(f"Job {job_id}: Running PharmCAT analysis")
         print(f"[PHARMCAT] Job {job_id}: Starting PharmCAT analysis")
         
@@ -1298,64 +1338,34 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                     logger.info(f"Job {job_id}: PharmCAT analysis completed with {rec_count} recommendations")
                     print(f"[PHARMCAT] Job {job_id}: Analysis completed with {rec_count} recommendations")
                     
-                    # Verify job tracking
-                    if job_id not in job_status:
-                        logger.warning(f"Job {job_id} missing after PharmCAT - recreating status")
-                        print(f"[PROCESSING WARNING] Job {job_id} missing after PharmCAT - recreating")
-                        
-                    update_job_progress(
-                        job_id, "pharmcat", 80, 
-                        f"PharmCAT analysis completed with {rec_count} recommendations"
-                    )
+                    update_progress("pharmcat", 80, f"PharmCAT analysis completed with {rec_count} recommendations")
                 else:
                     error_msg = f"PharmCAT results file not found at {pharmcat_result_path}"
                     logger.warning(f"Job {job_id}: {error_msg}")
                     print(f"[PHARMCAT WARNING] Job {job_id}: {error_msg}")
                     
-                    # Verify job tracking
-                    if job_id not in job_status:
-                        logger.warning(f"Job {job_id} missing - recreating status")
-                        print(f"[PROCESSING WARNING] Job {job_id} missing - recreating")
-                        
-                    update_job_progress(
-                        job_id, "pharmcat", 80, error_msg
-                    )
+                    update_progress("pharmcat", 80, error_msg)
             else:
                 error_msg = f"PharmCAT warning: {result.get('message', 'Unknown error')}"
                 logger.warning(f"Job {job_id}: {error_msg}")
                 print(f"[PHARMCAT WARNING] Job {job_id}: {error_msg}")
                 
-                # Verify job tracking
-                if job_id not in job_status:
-                    logger.warning(f"Job {job_id} missing - recreating status")
-                    print(f"[PROCESSING WARNING] Job {job_id} missing - recreating")
-                    
-                update_job_progress(
-                    job_id, "pharmcat", 80, error_msg
-                )
+                update_progress("pharmcat", 80, error_msg)
         
         except Exception as e:
             error_msg = f"PharmCAT error: {str(e)}"
             logger.error(f"Job {job_id}: {error_msg}")
             print(f"[PHARMCAT ERROR] Job {job_id}: {error_msg}")
             
-            # Verify job tracking
-            if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing during PharmCAT error - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing during error - recreating")
+            # PharmCAT error occurred
                 
-            update_job_progress(
-                job_id, "pharmcat", 80, error_msg
-            )
+            update_progress("pharmcat", 80, error_msg)
             
-        # Verify job tracking before report
-        if job_id not in job_status:
-            logger.warning(f"Job {job_id} missing before report generation - recreating status")
-            print(f"[PROCESSING WARNING] Job {job_id} missing before report - recreating")
-            update_job_progress(job_id, "report_generation", 85, "Preparing to generate report")
+        # Prepare for report generation
+        update_progress("report_generation", 85, "Preparing to generate report")
         
         # Step 4: Generate the report
-        update_job_progress(job_id, "report_generation", 90, "Generating report")
+        update_progress("report_generation", 90, "Generating report")
         
         # Merge results
         combined_results = {
@@ -1492,35 +1502,21 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 logger.error(f"✗ PDF generation failed: {str(e)}")
                 # Continue with HTML report only
             
-            # Final check for job tracking 
-            if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing before completion - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing before completion - recreating")
+            # Reports generated successfully, completing job
             
             # Update progress with report URLs
-            update_job_progress(
-                job_id, "complete", 100, "Analysis complete",
-                complete=True, success=True,
-                data={
-                    "pdf_report_url": f"/reports/{os.path.basename(report_path)}",
-                    "html_report_url": f"/reports/{os.path.basename(html_report_path)}",
-                    "results": combined_results
-                }
-            )
+            complete_job(True, "Analysis complete", {
+                "pdf_report_url": f"/reports/{os.path.basename(report_path)}",
+                "html_report_url": f"/reports/{os.path.basename(html_report_path)}",
+                "results": combined_results
+            })
             
         except Exception as e:
             logger.error(f"Report generation error: {str(e)}")
             
-            # Final check for job tracking
-            if job_id not in job_status:
-                logger.warning(f"Job {job_id} missing during report error - recreating status")
-                print(f"[PROCESSING WARNING] Job {job_id} missing during error - recreating")
+            # Report generation error occurred
                 
-            update_job_progress(
-                job_id, "report_generation", 95,
-                f"Report generation error: {str(e)}",
-                complete=True, success=False
-            )
+            fail_job(f"Report generation error: {str(e)}", "report_generation")
     
     except Exception as e:
         logger.exception(f"Error in background processing: {str(e)}")
@@ -1533,16 +1529,9 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
             if "start_time" in process_tracking[job_id]:
                 process_tracking[job_id]["duration"] = process_tracking[job_id]["end_time"] - process_tracking[job_id]["start_time"]
         
-        # Final check for job tracking
-        if job_id not in job_status:
-            logger.warning(f"Job {job_id} missing during final error - recreating status")
-            print(f"[PROCESSING WARNING] Job {job_id} missing during final error - recreating")
+        # Final error in background processing
             
-        update_job_progress(
-            job_id, "error", 100,
-            f"Processing error: {str(e)}",
-            complete=True, success=False
-        )
+        fail_job(f"Processing error: {str(e)}")
     finally:
         # Record processing completion
         if 'process_tracking' in locals() and job_id in process_tracking:
@@ -2015,7 +2004,7 @@ async def call_variants(
             # Special test job ID
             job_id = f"test_{uuid.uuid4()}"
             
-            result = await call_gatk_variants(job_id, file_path, reference_genome)
+            result = await call_gatk_variants(job_id, file_path, reference_genome, db)
             
             return {
                 "success": True,
@@ -2437,7 +2426,7 @@ async def log_requests(request: Request, call_next):
 # Additional endpoints would go here 
 
 @app.get("/gatk-test-file-upload")
-async def gatk_test(background_tasks: BackgroundTasks):
+async def gatk_test(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Test endpoint to verify GATK API integration with a sample file"""
     try:
         # Create a new unique job ID
@@ -2491,7 +2480,7 @@ async def gatk_test(background_tasks: BackgroundTasks):
                 job_status[job_id]["percent"] = 10
                 
                 # Call GATK variant calling
-                vcf_path = await call_gatk_variants(job_id, sample_file, reference_genome="hg38")
+                vcf_path = await call_gatk_variants(job_id, sample_file, reference_genome="hg38", db=db)
                 
                 if vcf_path and os.path.exists(vcf_path):
                     logger.info(f"GATK test completed successfully, VCF: {vcf_path}")

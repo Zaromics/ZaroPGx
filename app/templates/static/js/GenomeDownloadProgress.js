@@ -183,7 +183,7 @@ class GenomeDownloadProgress {
                         
                         // Start progress monitoring if the function exists
                         if (window.monitorProgress) {
-                            window.monitorProgress(response.file_id);
+                            window.monitorProgress(response.job_id);
                         }
                         
                         // Dispatch success event

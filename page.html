@@ -1141,13 +1141,13 @@
                 }
                 
                 // Start monitoring progress
-                if (window.monitorProgress && result.file_id) {
-                    window.monitorProgress(result.file_id);
+                if (window.monitorProgress && result.job_id) {
+                    window.monitorProgress(result.job_id);
                 }
                 
                 // Start VCF auto-polling
-                if (window.startVcfAutoPolling && result.file_id) {
-                    window.startVcfAutoPolling(result.file_id);
+                if (window.startVcfAutoPolling && result.job_id) {
+                    window.startVcfAutoPolling(result.job_id);
                 }
                 
             } catch (error) {

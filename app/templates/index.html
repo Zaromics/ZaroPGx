@@ -217,18 +217,7 @@
                                     <input type="text" class="form-control" id="patientIdentifier" name="patient_identifier" placeholder="Enter a sample identifier">
                                 </div>
 
-                                <!-- VCF Auto-polling notification - hidden by default -->
-                                <div id="vcfPollingNotification" class="alert alert-info d-none">
-                                    <div class="d-flex align-items-center">
-                                        <div class="spinner-border spinner-border-sm me-2" role="status">
-                                            <span class="visually-hidden">Loading...</span>
-                                        </div>
-                                        <div>       
-                                            <strong>Monitoring status...</strong> 
-                                            <span>Please wait for the reports to be generated. This should not take long.</span>
-                                        </div>
-                                    </div>
-                                </div>
+
                                 
                                 <!-- File Analysis Results (hidden by default) -->
                                 <div id="fileAnalysis" class="mb-3 d-none">
@@ -503,8 +492,8 @@
 
                 async function attemptConnection() {
                     try {
-                        // Make the request without the Authorization header
-                        const response = await fetch(`/progress/${jobId}`, {
+                        // Make the request to the new monitoring API
+                        const response = await fetch(`/monitoring/progress/${jobId}`, {
                             headers: {
                                 'Accept': 'text/event-stream'
                             }
@@ -550,9 +539,10 @@
                                                         return;
                                                     }
                                                     
-                                                    // Update progress bar
-                                                    progressBar.style.width = `${data.percent}%`;
-                                                    progressBar.textContent = `${data.percent}%`;
+                                                    // Update progress bar (use 'progress' field instead of 'percent')
+                                                    const progressValue = data.progress || data.percent || 0;
+                                                    progressBar.style.width = `${progressValue}%`;
+                                                    progressBar.textContent = `${progressValue}%`;
                                                     
                                                     // Update status message
                                                     progressStatus.textContent = data.message || '';
@@ -950,11 +940,7 @@
             }
         });
         
-        // Global variables for VCF auto-polling
-        let vcfPollingInterval = null;
-        let currentJobId = null;
-        let pollingAttempts = 0;
-        const MAX_POLLING_ATTEMPTS = 30; // Maximum number of polling attempts before giving up
+
 
         // Function to download and use PharmCAT example VCF for demo
         async function runPharmCatDemo() {
@@ -1032,14 +1018,11 @@
                 }
                 
                 // Start monitoring progress
-                if (window.monitorProgress && result.file_id) {
-                    window.monitorProgress(result.file_id);
+                if (window.monitorProgress && result.job_id) {
+                    window.monitorProgress(result.job_id);
                 }
                 
-                // Start VCF auto-polling
-                if (window.startVcfAutoPolling && result.file_id) {
-                    window.startVcfAutoPolling(result.file_id);
-                }
+
                 
             } catch (error) {
                 console.error("Error running PharmCAT demo:", error);
@@ -1052,160 +1035,6 @@
                 if (demoButton) demoButton.disabled = false;
             }
         }
-
-        // Function to start auto-polling for VCF files
-        function startVcfAutoPolling(jobId) {
-            // Clear any existing polling interval
-            if (vcfPollingInterval) {
-                clearInterval(vcfPollingInterval);
-            }
-            
-            // Reset polling attempts
-            pollingAttempts = 0;
-            currentJobId = jobId;
-            
-            // Show the notification
-            const vcfPollingNotification = document.getElementById('vcfPollingNotification');
-            if (vcfPollingNotification) {
-                vcfPollingNotification.classList.remove('d-none');
-            }
-            
-            // Log that we're starting auto-polling
-            window.addLogMessage("TEMPORARY WORKAROUND: Starting automatic report checking for VCF file...", "info");
-            
-            // Start the polling interval - check every 10 seconds
-            vcfPollingInterval = setInterval(pollReportStatus, 10000);
-        }
-
-        // Function to poll report status
-        async function pollReportStatus() {
-            if (!currentJobId) {
-                console.error("No job ID for polling");
-                stopVcfAutoPolling();
-                return;
-            }
-            
-            // Increment polling attempts
-            pollingAttempts++;
-            
-            // Log polling attempt
-            console.log(`VCF auto-polling attempt ${pollingAttempts}/${MAX_POLLING_ATTEMPTS} for job ${currentJobId}`);
-            
-            // If we've reached the maximum attempts, stop polling
-            if (pollingAttempts >= MAX_POLLING_ATTEMPTS) {
-                window.addLogMessage(`Automatic report checking stopped after ${MAX_POLLING_ATTEMPTS} attempts`, "warning");
-                stopVcfAutoPolling();
-                return;
-            }
-            
-            try {
-                // Try the regular status endpoint
-                const response = await fetch(`/status/${currentJobId}`);
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    console.log("Auto-polling status data:", data);
-                    
-                    // If analysis is complete, show results and stop polling
-                    if (data.status === "completed" && data.data) {
-                        window.addLogMessage("Auto-polling detected completed analysis", "success");
-                        window.showResults(data.data);
-                        stopVcfAutoPolling();
-                        return;
-                    }
-                }
-                
-                // If that doesn't work, try the dedicated reports endpoint
-                const reportResponse = await fetch(`/reports/${currentJobId}`);
-                
-                if (reportResponse.ok) {
-                    const reportData = await reportResponse.json();
-                    console.log("Auto-polling report data:", reportData);
-                    
-                    if (reportData.status === "completed") {
-                        // Build a data object compatible with showResults
-                        const resultsData = {
-                            pdf_report_url: reportData.pdf_report_url,
-                            html_report_url: reportData.html_report_url
-                        };
-                        
-                        window.addLogMessage("Auto-polling detected completed report", "success");
-                        window.showResults(resultsData);
-                        stopVcfAutoPolling();
-                        return;
-                    }
-                }
-                
-                // Log the polling
-                if (pollingAttempts % 3 === 0) { // Log every 3rd attempt to avoid spamming the log
-                    window.addLogMessage(`Auto-polling: Still waiting for report completion (attempt ${pollingAttempts})`, "info");
-                }
-                
-            } catch (error) {
-                console.error("Error in VCF auto-polling:", error);
-                window.addLogMessage(`Auto-polling error: ${error.message}`, "warning");
-            }
-        }
-
-        // Function to stop VCF auto-polling
-        function stopVcfAutoPolling() {
-            if (vcfPollingInterval) {
-                clearInterval(vcfPollingInterval);
-                vcfPollingInterval = null;
-            }
-            
-            // Hide the notification
-            const vcfPollingNotification = document.getElementById('vcfPollingNotification');
-            if (vcfPollingNotification) {
-                vcfPollingNotification.classList.add('d-none');
-            }
-            
-            // Log that we're stopping auto-polling
-            if (pollingAttempts > 0) {
-                window.addLogMessage("Automatic report checking stopped", "info");
-            }
-            
-            currentJobId = null;
-            pollingAttempts = 0;
-        }
-
-        // Modify the file input change handler to detect VCF files and set a flag
-        document.addEventListener('DOMContentLoaded', function() {
-            const fileInput = document.getElementById('genomicFile');
-            
-            if (fileInput) {
-                fileInput.addEventListener('change', function() {
-                    const file = this.files[0];
-                    if (file) {
-                        const isVcf = file.name.toLowerCase().endsWith('.vcf') || 
-                                     file.name.toLowerCase().endsWith('.vcf.gz');
-                        
-                        // Store this information for later use when the form is submitted
-                        window.isVcfFile = isVcf;
-                        console.log(`File selected: ${file.name}, Is VCF: ${isVcf}`);
-                    }
-                });
-            }
-            
-            // Modify the form submit handler to start auto-polling for VCF files
-            const form = document.getElementById('uploadForm');
-            if (form) {
-                const originalSubmitHandler = form.onsubmit;
-                
-                form.addEventListener('submit', async function(e) {
-                    // Preserve default behavior (which should be to prevent default)
-                    e.preventDefault();
-                    
-                    // If a VCF file is being uploaded, note this for auto-polling
-                    if (window.isVcfFile) {
-                        window.addLogMessage("VCF file detected - will automatically check for report completion", "info");
-                    }
-                    
-                    // Let the original GenomeDownloadProgress.js handler do its work
-                    return false;
-                });
-            }
-        });
     </script>
 </body>
 </html>

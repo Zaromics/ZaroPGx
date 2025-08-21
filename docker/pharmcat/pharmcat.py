@@ -1280,6 +1280,8 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         env = os.environ.copy()
         env["JAVA_TOOL_OPTIONS"] = "-Xmx4g -XX:+UseG1GC"
         env["PHARMCAT_LOG_LEVEL"] = "DEBUG"
+        # Fix the PYTHONPATH so pharmcat_pipeline can find the pcat module
+        env["PYTHONPATH"] = "/pharmcat"
         
         # Log important environment info for debugging
         logger.info(f"PHARMCAT_JAR location: {PHARMCAT_JAR}")
