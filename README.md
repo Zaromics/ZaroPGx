@@ -1,6 +1,7 @@
 # ZaroPGx — Pharmacogenomic Report Generator
 
-![Screenshot 2025-05-02 011020](https://github.com/user-attachments/assets/f352c10a-23ba-4583-a6b1-196ae32c06ae)
+<img width="1541" height="900" alt="Screenshot 2025-08-22 143144" src="https://github.com/user-attachments/assets/57450a14-d392-4d38-85f6-911a7e7b962f" />
+
 
 A containerized pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by CPIC resources. The system integrates GATK preprocessing, PyPGx allele calling, and PharmCAT with PyPGx outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes. Reports can be exported to Electronic Health Records or Personal Health Records via FHIR integration. Designed as a self-hostable docker stack to ensure data privacy and security.
 
