@@ -50,6 +50,8 @@ DATA_DIR = os.environ.get("DATA_DIR", "/data")
 PHARMCAT_JAR = os.environ.get("PHARMCAT_JAR", "/pharmcat/pharmcat.jar")
 # Path to the PharmCAT pipeline directory
 PHARMCAT_PIPELINE_DIR = os.environ.get("PHARMCAT_PIPELINE_DIR", "/pharmcat/pipeline")
+# Path to PharmCAT reference files (where PharmCAT expects them)
+PHARMCAT_REFERENCE_DIR = os.environ.get("PHARMCAT_REFERENCE_DIR", "/pharmcat")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -1295,7 +1297,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         except subprocess.CalledProcessError:
             logger.warning("pharmcat_pipeline command NOT found in PATH")
         
-        # Run PharmCAT pipeline
+        # Run PharmCAT pipeline from the /pharmcat directory where reference files are located
         logger.info(f"Executing PharmCAT command: {' '.join(cmd)}")
         process = subprocess.run(
             cmd,
@@ -1303,6 +1305,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             capture_output=True,
             text=True,
             env=env,
+            cwd="/pharmcat",  # Run from /pharmcat directory where reference files are located
             timeout=300  # 5 minute timeout
         )
         

@@ -22,25 +22,87 @@ echo "Checking required tools:"
 echo "bcftools: $(which bcftools)"
 echo "bgzip: $(which bgzip)"
 
-# Copy reference genome files to pipeline directory where PharmCAT expects them
+# Check if reference genome files are available in /pharmcat/ where PharmCAT expects them
 echo "Setting up reference genome files..."
 if [ -f "/pharmcat/reference.fna.bgz" ]; then
-    cp /pharmcat/reference.fna.bgz /pharmcat/pipeline/
-    echo "✓ Reference genome copied to pipeline directory"
+    echo "✓ Reference genome found in /pharmcat/"
 else
-    echo "⚠ Warning: reference.fna.bgz not found"
+    echo "⚠ Warning: reference.fna.bgz not found in /pharmcat/"
 fi
 
 if [ -f "/pharmcat/reference.fna.bgz.gzi" ]; then
-    cp /pharmcat/reference.fna.bgz.gzi /pharmcat/pipeline/
-    echo "✓ Reference genome index copied to pipeline directory"
+    echo "✓ Reference genome index found in /pharmcat/"
 else
-    echo "⚠ Warning: reference.fna.bgz.gzi not found"
+    echo "⚠ Warning: reference.fna.bgz.gzi not found in /pharmcat/"
 fi
 
 # Verify the files are in place
-echo "Verifying reference files in pipeline directory:"
-ls -la /pharmcat/pipeline/reference.fna.bgz* 2>/dev/null || echo "No reference files found in pipeline directory"
+echo "Verifying reference files in /pharmcat/:"
+ls -la /pharmcat/reference.fna.bgz* 2>/dev/null || echo "No reference files found in /pharmcat/"
+
+# If reference files are still missing, try to download them
+if [ ! -f "/pharmcat/reference.fna.bgz" ] || [ ! -f "/pharmcat/reference.fna.bgz.gzi" ]; then
+    echo "Reference files missing, attempting to download..."
+    cd /pharmcat
+    if command -v wget >/dev/null 2>&1; then
+        echo "Downloading reference files using wget..."
+        wget -O GRCh38_reference_fasta.tar "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar"
+        if [ -f "GRCh38_reference_fasta.tar" ]; then
+            echo "Extracting reference files..."
+            tar -xf GRCh38_reference_fasta.tar
+            rm GRCh38_reference_fasta.tar
+            # Validate the extracted files
+            if [ -f "reference.fna.bgz" ] && [ -f "reference.fna.bgz.gzi" ]; then
+                echo "✓ Reference files downloaded and extracted successfully"
+                # Test gzip integrity
+                if gzip -t reference.fna.bgz 2>/dev/null; then
+                    echo "✓ Reference file integrity verified"
+                else
+                    echo "⚠ Warning: Reference file appears corrupted, removing..."
+                    rm -f reference.fna.bgz reference.fna.bgz.gzi
+                fi
+            else
+                echo "⚠ Warning: Reference files not found after extraction"
+            fi
+        else
+            echo "⚠ Warning: Failed to download reference files"
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        echo "Downloading reference files using curl..."
+        curl -L -o GRCh38_reference_fasta.tar "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar"
+        if [ -f "GRCh38_reference_fasta.tar" ]; then
+            echo "Extracting reference files..."
+            tar -xf GRCh38_reference_fasta.tar
+            rm GRCh38_reference_fasta.tar
+            # Validate the extracted files
+            if [ -f "reference.fna.bgz" ] && [ -f "reference.fna.bgz.gzi" ]; then
+                echo "✓ Reference files downloaded and extracted successfully"
+                # Test gzip integrity
+                if gzip -t reference.fna.bgz 2>/dev/null; then
+                    echo "✓ Reference file integrity verified"
+                else
+                    echo "⚠ Warning: Reference file appears corrupted, removing..."
+                    rm -f reference.fna.bgz reference.fna.bgz.gzi
+                fi
+            else
+                echo "⚠ Warning: Reference files not found after extraction"
+            fi
+        else
+            echo "⚠ Warning: Failed to download reference files"
+        fi
+    else
+        echo "⚠ Warning: Neither wget nor curl available for downloading reference files"
+    fi
+fi
+
+# Final verification that reference files are in place
+echo "Final verification of reference files..."
+if [ -f "/pharmcat/reference.fna.bgz" ] && [ -f "/pharmcat/reference.fna.bgz.gzi" ]; then
+    echo "✓ Reference files are ready in /pharmcat/"
+    ls -la /pharmcat/reference.fna.bgz*
+else
+    echo "⚠ Warning: Reference files are still missing after all attempts"
+fi
 
 # Execute the command to verify it works
 echo "Testing PharmCAT pipeline command:"

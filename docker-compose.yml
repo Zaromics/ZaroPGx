@@ -53,15 +53,15 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data
-      - ./reference:/reference
-      - pharmcat-references:/pharmcat/pipeline
+      # Mount reference files where PharmCAT expects them (not in /pipeline subdirectory)
+      - pharmcat-references:/pharmcat
     ports:
       - "5001:5000"  # Flask API port
     environment:
       - DATA_DIR=/data
       - JAVA_OPTS=-Xmx4g
       - PHARMCAT_LOG_LEVEL=DEBUG
-      - REFERENCE_DIR=/reference
+      - PHARMCAT_REFERENCE_DIR=/pharmcat
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
@@ -234,6 +234,9 @@ services:
       - PYTHONPATH=/app
       - PYTHONDONTWRITEBYTECODE=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - INCLUDE_PHARMCAT_HTML=true
+      - INCLUDE_PHARMCAT_JSON=true
+      - INCLUDE_PHARMCAT_TSV=true
     volumes:
       - ./:/app
       - ./data:/data

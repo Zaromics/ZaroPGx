@@ -568,14 +568,45 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Add provisional flag if the workflow was marked as provisional
                 is_provisional = workflow.get("is_provisional", False)
                 
+                # Robust JSON sanitization using Python's built-in JSON handling
+                def sanitize_for_json(data):
+                    """Sanitize data to ensure it's JSON-safe using Python's built-in JSON handling"""
+                    import json
+                    try:
+                        # Test if the data can be serialized to JSON
+                        json.dumps(data, ensure_ascii=False, default=str)
+                        return data
+                    except (TypeError, ValueError) as e:
+                        logger.warning(f"JSON serialization failed, applying aggressive sanitization: {e}")
+                        # If JSON serialization fails, apply aggressive sanitization
+                        if isinstance(data, str):
+                            # Remove or replace problematic characters
+                            sanitized = data
+                            # Replace control characters
+                            sanitized = ''.join(char for char in sanitized if ord(char) >= 32 or char in '\n\r\t')
+                            # Escape quotes and backslashes
+                            sanitized = sanitized.replace('\\', '\\\\').replace('"', '\\"')
+                            return sanitized
+                        elif isinstance(data, list):
+                            return [sanitize_for_json(item) for item in data]
+                        elif isinstance(data, dict):
+                            return {str(key): sanitize_for_json(value) for key, value in data.items()}
+                        else:
+                            return str(data)
+                
+                # Sanitize the data before storing in job metadata
+                sanitized_diplotypes = sanitize_for_json(formatted_diplotypes)
+                sanitized_recommendations = sanitize_for_json(formatted_recommendations)
+                sanitized_warnings = sanitize_for_json(workflow.get("warnings", []))
+                
                 # Update job status with unified report URLs
                 response_data = {
-                    "pdf_report_url": f"/reports/{pdf_report_path.name}",
-                    "html_report_url": f"/reports/{interactive_html_path.name}",
-                    "diplotypes": formatted_diplotypes,
-                    "recommendations": formatted_recommendations,
+                    "pdf_report_url": f"/reports/{patient_id}/{pdf_report_path.name}",
+                    "html_report_url": f"/reports/{patient_id}/{interactive_html_path.name}",
+                    "diplotypes": sanitized_diplotypes,
+                    "recommendations": sanitized_recommendations,
                     "is_provisional": is_provisional,
-                    "warnings": workflow.get("warnings", []),
+                    "warnings": sanitized_warnings,
                     "job_directory": str(patient_dir)
                 }
                 
@@ -639,12 +670,21 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         if workflow.get("is_provisional", False):
             completion_message += " (PROVISIONAL RESULTS)"
         
+        # Get the current job metadata to preserve reports
+        current_job = job_service.get_job_status(job.job_id)
+        current_metadata = current_job.get("job_metadata", {}) if current_job else {}
+        
+        # Preserve reports data if it exists
+        final_metadata = {"workflow": workflow, "final_status": "success"}
+        if "reports" in current_metadata:
+            final_metadata["reports"] = current_metadata["reports"]
+        
         # Update new monitoring system
         job_service.complete_job(
             job.job_id, 
             success=True, 
             final_message=completion_message,
-            metadata={"workflow": workflow, "final_status": "success"}
+            metadata=final_metadata
         )
         
         logger.info(f"Job {data_id} completed successfully")
@@ -854,10 +894,29 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
                 # Extract report URLs from the stored metadata
                 response_data = metadata["reports"]
                 logger.info(f"Found report data in job metadata: {list(response_data.keys())}")
+                
+                # Extract PharmCAT report URLs to top level for frontend compatibility
+                pharmcat_urls = {}
+                if "pharmcat_html_report_url" in response_data:
+                    pharmcat_urls["pharmcat_html_report_url"] = response_data["pharmcat_html_report_url"]
+                if "pharmcat_json_report_url" in response_data:
+                    pharmcat_urls["pharmcat_json_report_url"] = response_data["pharmcat_json_report_url"]
+                if "pharmcat_tsv_report_url" in response_data:
+                    pharmcat_urls["pharmcat_tsv_report_url"] = response_data["pharmcat_tsv_report_url"]
+                
+                # Also extract other report URLs to top level
+                if "pdf_report_url" in response_data:
+                    pharmcat_urls["pdf_report_url"] = response_data["pdf_report_url"]
+                if "html_report_url" in response_data:
+                    pharmcat_urls["html_report_url"] = response_data["html_report_url"]
+                if "interactive_html_report_url" in response_data:
+                    pharmcat_urls["interactive_html_report_url"] = response_data["interactive_html_report_url"]
             else:
                 response_data = {}
+                pharmcat_urls = {}
         else:
             response_data = job.get("job_metadata") or {}
+            pharmcat_urls = {}
         
         # Convert new status format to expected response format
         response = {
@@ -866,11 +925,25 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
             "progress": job["progress"],
             "message": job["message"] or "",
             "current_stage": job["stage"],
-            "data": response_data
+            "data": response_data,
+            **pharmcat_urls  # Include PharmCAT URLs at top level
         }
         
-        logger.info(f"Returning status response for job {job_id}: {response}")
-        return response
+        # Test JSON serialization before returning to catch any issues
+        try:
+            import json
+            json.dumps(response, ensure_ascii=False, default=str)
+            logger.info(f"Returning status response for job {job_id}: {response}")
+            return response
+        except (TypeError, ValueError) as e:
+            logger.error(f"JSON serialization failed for job {job_id}: {e}")
+            # Return a minimal response to prevent frontend crashes
+            return {
+                "job_id": job_id,
+                "status": "error",
+                "message": f"Error serializing response: {str(e)}",
+                "data": {}
+            }
         
     except Exception as e:
         logger.error(f"Error getting status for job {job_id}: {str(e)}")

@@ -173,6 +173,21 @@ async def get_progress_stream(
                 current_job = job_service.get_job_status(actual_job_id)
                 
                 if current_job:
+                    # Sanitize job_metadata for SSE to prevent JSON parsing errors
+                    raw_metadata = current_job.get("job_metadata", {})
+                    sanitized_metadata = {}
+                    
+                    # Only include essential metadata for progress updates
+                    if "reports" in raw_metadata:
+                        # Include only the report URLs, not the full data
+                        sanitized_metadata["reports"] = {
+                            "pdf_report_url": raw_metadata["reports"].get("pdf_report_url"),
+                            "html_report_url": raw_metadata["reports"].get("html_report_url"),
+                            "pharmcat_html_report_url": raw_metadata["reports"].get("pharmcat_html_report_url"),
+                            "pharmcat_json_report_url": raw_metadata["reports"].get("pharmcat_json_report_url"),
+                            "pharmcat_tsv_report_url": raw_metadata["reports"].get("pharmcat_tsv_report_url")
+                        }
+                    
                     progress_data = {
                         "job_id": actual_job_id,
                         "status": current_job["status"],
@@ -180,7 +195,7 @@ async def get_progress_stream(
                         "progress": current_job["progress"],
                         "message": current_job["message"] or "Processing...",
                         "timestamp": current_job["updated_at"] if current_job.get("updated_at") else None,
-                        "job_metadata": current_job.get("job_metadata", {})
+                        "job_metadata": sanitized_metadata
                     }
                     
                     # Only send update if progress has changed
@@ -191,6 +206,9 @@ async def get_progress_stream(
                     # Check if job is complete
                     if current_job["status"] in ["completed", "failed", "cancelled"]:
                         # Send final update with success flag and report URLs
+                        # Get the actual report URLs from job_metadata if available
+                        reports = current_job.get("job_metadata", {}).get("reports", {})
+                        
                         final_data = {
                             **progress_data, 
                             "complete": True,
@@ -199,8 +217,11 @@ async def get_progress_stream(
                                 "job_id": actual_job_id,
                                 "file_id": current_job.get("file_id"),
                                 "patient_id": current_job.get("patient_id"),
-                                "pdf_report_url": f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report.pdf",
-                                "html_report_url": f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report_interactive.html"
+                                "pdf_report_url": reports.get("pdf_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report.pdf",
+                                "html_report_url": reports.get("html_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report_interactive.html",
+                                "pharmcat_html_report_url": reports.get("pharmcat_html_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.html",
+                                "pharmcat_json_report_url": reports.get("pharmcat_json_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.json",
+                                "pharmcat_tsv_report_url": reports.get("pharmcat_tsv_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.tsv"
                             }
                         }
                         yield f"data: {json.dumps(final_data)}\n\n"

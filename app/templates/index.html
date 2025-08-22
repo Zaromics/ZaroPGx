@@ -642,14 +642,29 @@
                                                         if (data.success) {
                                                             addLogMessage("✓ Analysis successful", "success");
                                                             console.log("Success data:", data.data);
+                                                            console.log("🔍 FULL SUCCESS DATA STRUCTURE:", JSON.stringify(data, null, 2));
+                                                            console.log("🔍 PHARMCAT URLS CHECK:");
+                                                            console.log("🔍 data.data.pharmcat_html_report_url:", data.data?.pharmcat_html_report_url);
+                                                            console.log("🔍 data.data.pharmcat_json_report_url:", data.data?.pharmcat_json_report_url);
+                                                            console.log("🔍 data.data.pharmcat_tsv_report_url:", data.data?.pharmcat_tsv_report_url);
                                                             
                                                             // Get report URLs
                                                             let pdfUrl, htmlUrl;
+                                                            let pharmcatHtmlUrl, pharmcatJsonUrl, pharmcatTsvUrl;
                                                             
                                                             if (data.data) {
                                                                 pdfUrl = data.data.pdf_report_url;
                                                                 htmlUrl = data.data.html_report_url;
-                                                                console.log("Found report URLs in data.data:", pdfUrl, htmlUrl);
+                                                                pharmcatHtmlUrl = data.data.pharmcat_html_report_url;
+                                                                pharmcatJsonUrl = data.data.pharmcat_json_report_url;
+                                                                pharmcatTsvUrl = data.data.pharmcat_tsv_report_url;
+                                                                console.log("Found report URLs in data.data:", {
+                                                                    pdf: pdfUrl,
+                                                                    html: htmlUrl,
+                                                                    pharmcatHtml: pharmcatHtmlUrl,
+                                                                    pharmcatJson: pharmcatJsonUrl,
+                                                                    pharmcatTsv: pharmcatTsvUrl
+                                                                });
                                                             }
                                                             
                                                             if (!pdfUrl && !htmlUrl) {
@@ -670,16 +685,43 @@
                                                                     <div class="alert alert-success">
                                                                         <h4>Analysis Complete!</h4>
                                                                         <p>Your pharmacogenomic analysis has been completed successfully.</p>
-                                                                        ${pdfUrl ? `<div class="mt-3">
-                                                                            <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
-                                                                                <i class="bi bi-file-pdf"></i> View PDF Report
-                                                                            </a>
-                                                                        </div>` : ''}
-                                                                        ${htmlUrl ? `<div class="mt-2">
-                                                                            <a href="${htmlUrl}" class="btn btn-info" target="_blank">
-                                                                                <i class="bi bi-file-code"></i> View Interactive Report
-                                                                            </a>
-                                                                        </div>` : ''}
+                                                                        
+                                                                        <!-- Main Reports -->
+                                                                        <div class="mt-3">
+                                                                            <h5>Main Reports</h5>
+                                                                            ${pdfUrl ? `<div class="mt-2">
+                                                                                <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
+                                                                                    <i class="bi bi-file-pdf"></i> View PDF Report
+                                                                                </a>
+                                                                            </div>` : ''}
+                                                                            ${htmlUrl ? `<div class="mt-2">
+                                                                                <a href="${htmlUrl}" class="btn btn-info" target="_blank">
+                                                                                    <i class="bi bi-file-code"></i> View Interactive Report
+                                                                                </a>
+                                                                            </div>` : ''}
+                                                                        </div>
+                                                                        
+                                                                        <!-- PharmCAT Reports -->
+                                                                        ${(pharmcatHtmlUrl || pharmcatJsonUrl || pharmcatTsvUrl) ? `
+                                                                            <div class="mt-3">
+                                                                                <h5>PharmCAT Reports</h5>
+                                                                                ${pharmcatHtmlUrl ? `<div class="mt-2">
+                                                                                    <a href="${pharmcatHtmlUrl}" class="btn btn-success" target="_blank">
+                                                                                        <i class="bi bi-file-medical"></i> View PharmCAT HTML Report
+                                                                                    </a>
+                                                                                </div>` : ''}
+                                                                                ${pharmcatJsonUrl ? `<div class="mt-2">
+                                                                                    <a href="${pharmcatJsonUrl}" class="btn btn-warning" target="_blank">
+                                                                                        <i class="bi bi-filetype-json"></i> View PharmCAT JSON Report
+                                                                                    </a>
+                                                                                </div>` : ''}
+                                                                                ${pharmcatTsvUrl ? `<div class="mt-2">
+                                                                                    <a href="${pharmcatTsvUrl}" class="btn btn-secondary" target="_blank">
+                                                                                        <i class="bi bi-filetype-csv"></i> View PharmCAT TSV Report
+                                                                                    </a>
+                                                                                </div>` : ''}
+                                                                            </div>
+                                                                        ` : ''}
                                                                     </div>
                                                                 `;
                                                                 resultsDiv.classList.remove('d-none');
@@ -795,35 +837,114 @@
                 // Extract URLs from all possible locations in the data object
                 const reportUrls = {};
                 
-                // Function to extract URLs from a data object (handles nesting)
-                function extractUrls(dataObj) {
-                    if (!dataObj) return;
-                    
-                    // URL keys to look for
-                    const urlKeys = [
-                        'pdf_report_url',
-                        'html_report_url',
-                        'interactive_html_report_url',
-                        'pharmcat_html_report_url',
-                        'pharmcat_json_report_url',
-                        'pharmcat_tsv_report_url'
-                    ];
-                    
-                    // Extract each URL type
+                // Simplified URL extraction - check both root and nested data
+                const urlKeys = [
+                    'pdf_report_url',
+                    'html_report_url',
+                    'interactive_html_report_url',
+                    'pharmcat_html_report_url',
+                    'pharmcat_json_report_url',
+                    'pharmcat_tsv_report_url'
+                ];
+                
+                // First, check root level data
+                urlKeys.forEach(key => {
+                    if (data[key]) {
+                        console.log(`Found ${key} at root level:`, data[key]);
+                        reportUrls[key] = data[key];
+                    }
+                });
+                
+                // Then, check nested data.data if it exists
+                if (data.data) {
+                    console.log("Checking nested data.data object");
                     urlKeys.forEach(key => {
-                        if (dataObj[key] && !reportUrls[key]) {
-                            reportUrls[key] = dataObj[key];
+                        if (data.data[key] && !reportUrls[key]) {
+                            console.log(`Found ${key} in nested data:`, data.data[key]);
+                            reportUrls[key] = data.data[key];
                         }
                     });
-                    
-                    // Check nested data objects
-                    if (dataObj.data) {
-                        extractUrls(dataObj.data);
-                    }
                 }
                 
-                // Extract URLs from all possible locations
-                extractUrls(data);
+                // SIMPLE DEBUGGING - THIS SHOULD DEFINITELY SHOW UP
+                console.log("🚨🚨🚨 DEBUGGING CODE IS RUNNING! 🚨🚨🚨");
+                console.log("🚨🚨🚨 PHARMCAT URLS CHECK 🚨🚨🚨");
+                console.log("🚨🚨🚨 Root level pharmcat_html_report_url:", data.pharmcat_html_report_url || "NOT FOUND");
+                console.log("🚨🚨🚨 Root level pharmcat_json_report_url:", data.pharmcat_json_report_url || "NOT FOUND");
+                console.log("🚨🚨🚨 Root level pharmcat_tsv_report_url:", data.pharmcat_tsv_report_url || "NOT FOUND");
+                
+                if (data.data) {
+                    console.log("🚨🚨🚨 NESTED DATA PHARMCAT URLS 🚨🚨🚨");
+                    console.log("🚨🚨🚨 Nested pharmcat_html_report_url:", data.data.pharmcat_html_report_url || "NOT FOUND");
+                    console.log("🚨🚨🚨 Nested pharmcat_json_report_url:", data.data.pharmcat_json_report_url || "NOT FOUND");
+                    console.log("🚨🚨🚨 Nested pharmcat_tsv_report_url:", data.data.pharmcat_tsv_report_url || "NOT FOUND");
+                }
+                
+                // Debug: Log the full data structure
+                console.log("Full data received:", data);
+                console.log("Data keys:", Object.keys(data));
+                if (data.data) {
+                    console.log("Nested data keys:", Object.keys(data.data));
+                }
+                
+                // URLs have been extracted above
+                
+                // Debug: Log what was found
+                console.log("After extraction, reportUrls contains:", reportUrls);
+                
+                // Additional debugging: Check if PharmCAT URLs exist in the data
+                console.log("🔍 DETAILED PHARMCAT URL CHECK:");
+                console.log("🔍 data.pharmcat_html_report_url:", data.pharmcat_html_report_url);
+                console.log("🔍 data.pharmcat_json_report_url:", data.pharmcat_json_report_url);
+                console.log("🔍 data.pharmcat_tsv_report_url:", data.pharmcat_tsv_report_url);
+                
+                if (data.data) {
+                    console.log("🔍 data.data.pharmcat_html_report_url:", data.data.pharmcat_html_report_url);
+                    console.log("🔍 data.data.pharmcat_json_report_url:", data.data.pharmcat_json_report_url);
+                    console.log("🔍 data.pharmcat_tsv_report_url:", data.data.pharmcat_tsv_report_url);
+                }
+                
+                // Test: Log the exact structure of the data
+                console.log("🔍 FULL DATA STRUCTURE:");
+                console.log(JSON.stringify(data, null, 2));
+                
+                // Test: Check if the issue is with the data structure
+                if (data.data && typeof data.data === 'object') {
+                    console.log("🔍 data.data is an object with keys:", Object.keys(data.data));
+                    console.log("🔍 data.data.pharmcat_html_report_url type:", typeof data.data.pharmcat_html_report_url);
+                    console.log("🔍 data.data.pharmcat_html_report_url value:", data.data.pharmcat_html_report_url);
+                }
+                
+                // Check if the issue is with the extractUrls function
+                console.log("🔍 Testing direct assignment:");
+                if (data.pharmcat_html_report_url) {
+                    reportUrls.pharmcat_html_report_url = data.pharmcat_html_report_url;
+                    console.log("🔍 Directly assigned pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
+                }
+                if (data.pharmcat_json_report_url) {
+                    reportUrls.pharmcat_json_report_url = data.pharmcat_json_report_url;
+                    console.log("🔍 Directly assigned pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
+                }
+                if (data.pharmcat_tsv_report_url) {
+                    reportUrls.pharmcat_tsv_report_url = data.pharmcat_tsv_report_url;
+                    console.log("🔍 Directly assigned pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
+                }
+                
+                // Also check nested data
+                if (data.data) {
+                    if (data.data.pharmcat_html_report_url) {
+                        reportUrls.pharmcat_html_report_url = data.data.pharmcat_html_report_url;
+                        console.log("🔍 Directly assigned nested pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
+                    }
+                    if (data.data.pharmcat_json_report_url) {
+                        reportUrls.pharmcat_json_report_url = data.data.pharmcat_json_report_url;
+                        console.log("🔍 Directly assigned nested pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
+                    }
+                    if (data.data.pharmcat_tsv_report_url) {
+                        reportUrls.pharmcat_tsv_report_url = data.data.pharmcat_tsv_report_url;
+                        console.log("🔍 Directly assigned nested pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
+                    }
+                }
                 
                 // If we have a job ID but are missing URLs, try to construct default URLs
                 if (jobId) {
@@ -869,14 +990,13 @@
                         title: "Main Reports",
                         reports: [
                             { key: 'pdf_report_url', label: 'View PDF Report', icon: 'bi-file-pdf' },
-                            { key: 'html_report_url', label: 'View HTML Report', icon: 'bi-file-earmark-text' },
-                            { key: 'pharmcat_html_report_url', label: 'View PharmCAT Report', icon: 'bi-file-medical' }
+                            { key: 'html_report_url', label: 'View Interactive HTML Report', icon: 'bi-file-code' }
                         ]
                     },
                     {
-                        title: "Additional Reports",
+                        title: "PharmCAT Reports",
                         reports: [
-                            { key: 'interactive_html_report_url', label: 'View Interactive Report', icon: 'bi-file-code' },
+                            { key: 'pharmcat_html_report_url', label: 'View PharmCAT HTML Report', icon: 'bi-file-medical' },
                             { key: 'pharmcat_json_report_url', label: 'View PharmCAT JSON Report', icon: 'bi-filetype-json' },
                             { key: 'pharmcat_tsv_report_url', label: 'View PharmCAT TSV Report', icon: 'bi-filetype-csv' }
                         ]
@@ -913,7 +1033,7 @@
                 resultsDiv.classList.remove('d-none');
                 
                 // Log the completion in the log panel
-                addLogMessage("Analysis complete! 3 main reports are available: PDF, HTML, and PharmCAT.", "success");
+                addLogMessage("Analysis complete! 5 reports are available: 2 main reports (PDF, Interactive HTML) and 3 PharmCAT reports (HTML, JSON, TSV).", "success");
             }
 
             // Function to show error
