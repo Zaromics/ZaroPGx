@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Database with CPIC data
   db:
-    image: postgres:16.10
+    image: postgres:17
     container_name: pgx_db
     restart: unless-stopped
     environment:
