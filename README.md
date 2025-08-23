@@ -41,11 +41,11 @@ The system is designed to:
 
 Containerized services orchestrated with Docker Compose to provide a complete pharmacogenomic analysis pipeline:
 
-- **PostgreSQL 16** (schemas: `cpic`, `user_data`, `reports`, `fhir`) - Stores CPIC guidelines, user data, and generated reports
+- **PostgreSQL** (schemas: `cpic`, `user_data`, `reports`, `fhir`) - Stores CPIC guidelines, user data, and generated reports
 - **FastAPI application** (web UI, API, report generation, SSE progress) - Main application orchestrating the analysis workflow
 - **GATK API service** (HTTP wrapper) - Handles preprocessing of BAM/CRAM files to VCF format
 - **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, including CYP2D6 and others
-- **PharmCAT wrapper service** (Flask) - Executes PharmCAT pipeline v3.0.1 with PyPGx outside calls to unlock full 23-gene coverage
+- **PharmCAT wrapper service** (Flask) - Executes PharmCAT pipeline with PyPGx outside calls to unlock full 23-gene coverage
 - **Reference genome downloader** - Manages reference genome data for accurate variant calling
 - **HAPI FHIR server** - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records
 
@@ -204,12 +204,12 @@ ZaroPGx/
 
 ## Service Details
 
-- **PostgreSQL 16** with initialization under `db/init` and `db/migrations` - Stores CPIC guidelines and user data
-- **PharmCAT pipeline v3.0.1** (Java 17) with a Flask wrapper API - Core pharmacogenomic analysis engine
+- **PostgreSQL** with initialization under `db/init` and `db/migrations` - Stores CPIC guidelines and user data
+- **PharmCAT** (Java 17) with a Flask wrapper API - Core pharmacogenomic analysis engine
 - **FastAPI app** (Python 3.12; dependencies in `pyproject.toml`/`uv.lock`) - Main application orchestrating the complete workflow
-- **GATK API service** - Handles preprocessing of BAM/CRAM files to VCF format for downstream analysis
-- **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, enabling PharmCAT to achieve full 23-gene coverage through outside calls
-- **HAPI FHIR server** - Enables export of pharmacogenomic results to healthcare systems and personal health records
+- **GATK** - Handles preprocessing of BAM/CRAM files to VCF format for downstream analysis
+- **PyPGx** - Provides comprehensive allele calling across multiple pharmacogenes, enabling PharmCAT to achieve full 23-gene coverage through outside calls
+- **HAPI FHIR** - Enables export of pharmacogenomic results to healthcare systems and personal health records
 
 **Note**: The app currently stubs GATK/PyPGx steps in the background workflow; full integration is being implemented to achieve the intended comprehensive pharmacogene coverage.
 
