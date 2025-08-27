@@ -118,26 +118,19 @@ class ReportLabGenerator(PDFGenerator):
                 spaceAfter=6
             )
             
-            # Title
-            if 'patient_id' in template_data:
-                title = f"Pharmacogenomic Report - Patient {template_data['patient_id']}"
-            elif 'sample_id' in template_data:
-                title = f"Pharmacogenomic Report - Sample {template_data['sample_id']}"
-            else:
-                title = "Pharmacogenomic Report"
+            # Title uses Sample ID consistently
+            display_sample = template_data.get('sample_identifier') or template_data.get('patient_id') or template_data.get('sample_id')
+            title = f"Pharmacogenomic Report - Sample {display_sample}" if display_sample else "Pharmacogenomic Report"
             story.append(Paragraph(title, title_style))
             story.append(Spacer(1, 12))
             
             # Sample Information
-            if 'patient_id' in template_data:
-                story.append(Paragraph("Patient Information", heading_style))
-                story.append(Paragraph(f"<b>Patient ID:</b> {template_data['patient_id']}", normal_style))
+            displayed_sample = template_data.get('sample_identifier') or template_data.get('patient_id') or template_data.get('sample_id')
+            if displayed_sample:
+                story.append(Paragraph("Sample Information", heading_style))
+                story.append(Paragraph(f"<b>Sample ID:</b> {displayed_sample}", normal_style))
                 if 'report_id' in template_data:
                     story.append(Paragraph(f"<b>Report ID:</b> {template_data['report_id']}", normal_style))
-                story.append(Spacer(1, 12))
-            elif 'sample_id' in template_data:
-                story.append(Paragraph("Sample Information", heading_style))
-                story.append(Paragraph(f"<b>Sample ID:</b> {template_data['sample_id']}", normal_style))
                 if 'file_type' in template_data:
                     story.append(Paragraph(f"<b>File Type:</b> {template_data['file_type']}", normal_style))
                 story.append(Spacer(1, 12))
@@ -436,6 +429,7 @@ class WeasyPrintGenerator(PDFGenerator):
                 report_data = {
                     "patient_id": template_data.get("patient_id", "Unknown"),
                     "report_id": template_data.get("report_id", "Unknown"),
+                    "sample_identifier": template_data.get("sample_identifier", template_data.get("patient_id", "Unknown")),
                     "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
                     "diplotypes": template_data.get("diplotypes", []),
                     "recommendations": template_data.get("recommendations", []),

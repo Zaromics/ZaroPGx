@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 PHARMCAT_API_URL = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
 PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/pharmcat/pharmcat.jar")
 
-def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None, patient_id: Optional[str] = None, patient_identifier: Optional[str] = None) -> Dict[str, Any]:
+def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None, patient_id: Optional[str] = None, sample_identifier: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT service to process a VCF file.
     
@@ -61,13 +61,18 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
                     data['reportId'] = report_id
                     logger.info(f"Using report_id: {report_id} for consistent directory naming")
                 
-                # Prioritize patient_identifier (user's original input) over patient_id (database UUID)
-                if patient_identifier:
-                    data['patientId'] = patient_identifier
-                    logger.info(f"Using user's patient identifier: {patient_identifier} for organizing reports")
-                elif patient_id:
+                # Always use patient_id (internal UUID) for directory naming
+                if patient_id:
                     data['patientId'] = patient_id
-                    logger.info(f"Using database patient ID: {patient_id} for organizing reports in patient directory")
+                    logger.info(f"Using database patient ID for organizing reports: {patient_id}")
+                elif sample_id:
+                    # Fallback to sample_id if patient_id is unavailable
+                    data['patientId'] = sample_id
+                    logger.info(f"Using sample_id for organizing reports: {sample_id}")
+                # Optionally pass a display identifier for UI/report embedding (service may ignore)
+                if sample_identifier:
+                    data['displayId'] = sample_identifier
+                    logger.info(f"Passing display sample identifier: {sample_identifier}")
                 
                 response = requests.post(
                     f"{pharmcat_api_url}/process",
@@ -704,15 +709,15 @@ def get_logger():
     """Get the module logger"""
     return logging.getLogger(__name__)
 
-async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = None, patient_id: Optional[str] = None, patient_identifier: Optional[str] = None) -> Dict[str, Any]:
+async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = None, patient_id: Optional[str] = None, sample_identifier: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT API asynchronously
     
     Args:
         input_file: Path to the VCF file to analyze
         report_id: Optional report ID to use for consistent directory naming
-        patient_id: Optional patient ID to use for organizing reports in patient directories
-        patient_identifier: Optional original patient identifier from user input (preferred over patient_id)
+        patient_id: Optional internal UUID to use for organizing reports in patient directories
+        sample_identifier: Optional user-entered Sample ID (preferred over patient_id for display)
         
     Returns:
         Dictionary containing PharmCAT results or error information
@@ -721,7 +726,7 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
         logger.info(f"Calling PharmCAT API asynchronously for file: {input_file}" + 
                     (f" with report_id: {report_id}" if report_id else "") +
                     (f" with patient_id: {patient_id}" if patient_id else "") +
-                    (f" with patient_identifier: {patient_identifier}" if patient_identifier else ""))
+                    (f" with sample_identifier: {sample_identifier}" if sample_identifier else ""))
         
         # Get the PharmCAT API URL from environment or use default
         pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
@@ -739,10 +744,10 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
             data["reportId"] = report_id
             logger.info(f"Added report_id to request: {report_id}")
         
-        # Prioritize patient_identifier (user's original input) over patient_id (database UUID)
-        if patient_identifier:
-            data["patientId"] = patient_identifier
-            logger.info(f"Added user's patient identifier to request: {patient_identifier}")
+        # Prefer sample_identifier (user input) over patient_id (internal UUID)
+        if sample_identifier:
+            data["patientId"] = sample_identifier
+            logger.info(f"Added user's sample identifier to request: {sample_identifier}")
         elif patient_id:
             data["patientId"] = patient_id
             logger.info(f"Added database patient ID to request: {patient_id}")
@@ -1111,22 +1116,31 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             except Exception as e:
                 logger.error(f"Error parsing phenotype file: {str(e)}")
         
-        # Prepare the result data with URLs to all report formats
+        # Prepare the result data with URLs to all report formats (normalize to copied patient directory paths)
+        # Determine directory and file base used for copied PharmCAT reports
+        patient_dir_name = str(patient_id) if patient_id else base_name
+        pharmcat_base = str(patient_id) if patient_id else base_name
+        pharmcat_html_name = f"{pharmcat_base}_pgx_pharmcat.html"
+        pharmcat_json_name = f"{pharmcat_base}_pgx_pharmcat.json"
+        pharmcat_tsv_name = f"{pharmcat_base}_pgx_pharmcat.tsv"
+
         return {
             "success": True,
             "message": "PharmCAT analysis completed successfully",
             "data": {
                 "job_id": base_name,
-                "pdf_report_url": f"/reports/pharmacogenomic_report_{base_name}.pdf",
-                "html_report_url": f"/reports/interactive_report_{base_name}.html",
-                "interactive_html_report_url": f"/reports/interactive_report_{base_name}.html",
-                "json_report_url": f"/reports/pharmcat_results_{base_name}.json",
-                "tsv_report_url": f"/reports/pharmcat_summary_{base_name}.tsv",
-                "match_json_url": f"/reports/pharmcat_match_{base_name}.json",
-                "phenotype_json_url": f"/reports/pharmcat_phenotype_{base_name}.json",
-                "pharmcat_html_report_url": f"/reports/pharmcat_analysis_{base_name}.html",
-                "pharmcat_json_report_url": f"/reports/pharmcat_results_{base_name}.json",
-                "pharmcat_tsv_report_url": f"/reports/pharmcat_summary_{base_name}.tsv",
+                # Keep legacy fields (not used for navigation here)
+                "pdf_report_url": f"/reports/{patient_dir_name}/{pharmcat_base}_pgx_report.pdf",
+                "html_report_url": f"/reports/{patient_dir_name}/{pharmcat_base}_pgx_report_interactive.html",
+                "interactive_html_report_url": f"/reports/{patient_dir_name}/{pharmcat_base}_pgx_report_interactive.html",
+                "json_report_url": f"/reports/{patient_dir_name}/{pharmcat_json_name}",
+                "tsv_report_url": f"/reports/{patient_dir_name}/{pharmcat_tsv_name}",
+                "match_json_url": f"/reports/{patient_dir_name}/{pharmcat_base}_pgx_match.json",
+                "phenotype_json_url": f"/reports/{patient_dir_name}/{pharmcat_base}_pgx_phenotype.json",
+                # Normalized PharmCAT original report URLs used by UI
+                "pharmcat_html_report_url": f"/reports/{patient_dir_name}/{pharmcat_html_name}",
+                "pharmcat_json_report_url": f"/reports/{patient_dir_name}/{pharmcat_json_name}",
+                "pharmcat_tsv_report_url": f"/reports/{patient_dir_name}/{pharmcat_tsv_name}",
                 "genes": genes_data,
                 "drugRecommendations": drug_recommendations,
                 "results": results

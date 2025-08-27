@@ -213,8 +213,8 @@
                             </div>
                                 
                             <div class="mb-3">
-                                    <label for="patientIdentifier" class="form-label">Sample Identifier (Optional)</label>
-                                    <input type="text" class="form-control" id="patientIdentifier" name="patient_identifier" placeholder="Enter a sample identifier">
+                                    <label for="sampleIdentifier" class="form-label">Sample Identifier (Optional)</label>
+                                    <input type="text" class="form-control" id="sampleIdentifier" name="sample_identifier" placeholder="Enter a sample identifier">
                                 </div>
 
 
@@ -1106,7 +1106,7 @@
                 // Create FormData object just like a regular file upload
                 const formData = new FormData();
                 formData.append('file', demoFile);
-                formData.append('patient_identifier', 'PharmCAT-Demo');
+                formData.append('sample_identifier', 'PharmCAT-Demo');
                 
                 // Mark this as a VCF file for consistent handling
                 window.isVcfFile = true;

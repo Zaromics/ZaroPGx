@@ -1456,6 +1456,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 recommendations=recommendations,
                 output_path=html_report_path,
                 workflow=per_sample_workflow,
+                sample_identifier=sample_id or job_id
             )
             
             # Generate unified PDF report using centralized PDF generation system
@@ -1469,6 +1470,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                 template_data = {
                     "patient_id": sample_id,
                     "report_id": job_id,
+                    "sample_identifier": sample_id,
                     "file_type": file_type,
                     "analysis_results": {
                         "GATK Processing": "Completed" if file_type in ["bam", "cram", "sam"] else "Not Required",

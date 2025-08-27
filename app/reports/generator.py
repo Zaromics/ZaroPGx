@@ -294,6 +294,7 @@ def generate_pdf_report(
     recommendations: List[Dict[str, Any]],
     report_path: str,
     workflow: Dict[str, Any] | None = None,
+    sample_identifier: str | None = None,
 ) -> str:
     """
     Generate a PDF pharmacogenomic report.
@@ -319,6 +320,7 @@ def generate_pdf_report(
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
+            "sample_identifier": sample_identifier if sample_identifier else patient_id,
             "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
             "diplotypes": diplotypes,
             "recommendations": recommendations,
@@ -547,7 +549,8 @@ def create_interactive_html_report(
     diplotypes: List[Dict[str, Any]],
     recommendations: List[Dict[str, Any]],
     output_path: str,
-    workflow: Dict[str, Any] | None = None
+    workflow: Dict[str, Any] | None = None,
+    sample_identifier: str | None = None
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -651,6 +654,7 @@ def create_interactive_html_report(
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
+            "sample_identifier": sample_identifier if sample_identifier else patient_id,
             "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
             "diplotypes": diplotypes,
             "recommendations": template_recommendations,

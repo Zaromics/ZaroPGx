@@ -140,7 +140,7 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 ```bash
 curl -X POST \
   -F "file=@test_data/sample_cpic.vcf" \
-  -F "patient_identifier=patient123" \
+  -F "sample_identifier=patient123" \
   http://localhost:8765/upload/genomic-data
 ```
 

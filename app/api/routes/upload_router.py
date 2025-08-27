@@ -55,7 +55,7 @@ INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
 # Log the configuration for debugging
 logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
 
-async def process_file_background_with_db(file_path: str, patient_id: str, data_id: str, workflow: dict):
+async def process_file_background_with_db(file_path: str, patient_id: str, data_id: str, workflow: dict, sample_identifier: Optional[str] = None):
     """
     Wrapper function to create database session for background processing.
     """
@@ -63,11 +63,11 @@ async def process_file_background_with_db(file_path: str, patient_id: str, data_
     
     db = SessionLocal()
     try:
-        await process_file_background(file_path, patient_id, data_id, workflow, db)
+        await process_file_background(file_path, patient_id, data_id, workflow, db, sample_identifier)
     finally:
         db.close()
 
-async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session):
+async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None):
     """
     Process file based on determined workflow
     
@@ -271,11 +271,12 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # Call PharmCAT service for final analysis
         logger.info(f"Calling PharmCAT service with file: {output_file}")
         try:
-            # Since we're already getting the patient_id from the function parameters,
-            # we can use that directly. The patient_identifier is the same as patient_id
-            # in this context since we're using the database ID for directory naming.
-            patient_identifier = str(patient_id)
-            logger.info(f"Using patient_id as patient_identifier: {patient_identifier}")
+            # Prefer the user's entered sample identifier when available; fall back to database UUID
+            effective_sample_identifier = sample_identifier or str(patient_id)
+            if sample_identifier:
+                logger.info(f"Using user's sample identifier: {effective_sample_identifier}")
+            else:
+                logger.info(f"No user-entered identifier provided; falling back to Sample ID (UUID): {effective_sample_identifier}")
             
             # Use the direct PharmCAT service call to avoid duplicate report generation
             # Pass both patient_id (for database consistency) and patient_identifier (for user experience)
@@ -283,7 +284,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 output_file, 
                 report_id=data_id, 
                 patient_id=patient_id,
-                patient_identifier=patient_identifier
+                sample_identifier=effective_sample_identifier
             )
         except Exception as e:
             logger.error(f"PharmCAT service call failed: {str(e)}")
@@ -519,6 +520,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     recommendations=formatted_recommendations,
                     output_path=str(interactive_html_path),
                     workflow=workflow.copy() if isinstance(workflow, dict) else {},
+                    sample_identifier=sample_identifier
                 )
                 
                 # Generate unified PDF report using centralized PDF generation system
@@ -532,6 +534,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     template_data = {
                         "patient_id": patient_id,
                         "report_id": data_id,
+                        "sample_identifier": sample_identifier,
                         "file_type": workflow.get("file_type", "unknown"),
                         "analysis_results": {
                             "GATK Processing": "Completed" if workflow.get("needs_gatk", False) else "Not Required",
@@ -707,7 +710,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
 async def upload_genomic_data(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    patient_identifier: Optional[str] = Form(None),
+    sample_identifier: Optional[str] = Form(None),
     original_file: Optional[UploadFile] = File(None),
     reference_genome: Optional[str] = Form("hg38"),
     db: Session = Depends(get_db),
@@ -726,11 +729,12 @@ async def upload_genomic_data(
     try:
         # Generate unique identifiers
         file_id = str(uuid.uuid4())
-        if not patient_identifier:
-            patient_identifier = f"patient_{uuid.uuid4()}"
+        # Generate a storage identifier for DB if user left the field blank
+        # Keep display identifier as None so reports fall back to generated Sample ID (UUID)
+        db_identifier = sample_identifier if (sample_identifier and sample_identifier.strip()) else f"sample_{uuid.uuid4()}"
         
         # Create patient record
-        patient_id = create_patient(db, patient_identifier)
+        patient_id = create_patient(db, db_identifier)
         
         # Create directory for patient if it doesn't exist
         patient_dir = os.path.join(UPLOAD_DIR, str(patient_id))
@@ -812,7 +816,8 @@ async def upload_genomic_data(
             primary_file_path,
             str(patient_id),
             str(data_id),
-            result["workflow"]
+            result["workflow"],
+            str(sample_identifier).strip() if (sample_identifier and sample_identifier.strip()) else None
         )
         
         # Convert dataclass to Pydantic model
