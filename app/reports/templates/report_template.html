@@ -103,6 +103,12 @@
         .rapid-metabolizer, .ultrarapid-metabolizer {
             background-color: #17a2b8;
         }
+        /* Possibly Wild Type: transparent background with black border */
+        .possibly-wild-type {
+            background-color: transparent;
+            color: #000;
+            border: 2px solid #000;
+        }
         .disclaimer {
             margin-top: 50px;
             padding: 15px;
@@ -317,7 +323,7 @@
                 {% for d in diplotypes %}
                 <li>
                     <strong>{{ d.gene }}:</strong> {{ d.diplotype }} - 
-                    <span class="gene-phenotype {% if 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
+                    <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
                         {{ d.phenotype }}
                     </span>
                 </li>

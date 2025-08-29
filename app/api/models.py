@@ -58,6 +58,7 @@ class WorkflowInfo(BaseModel):
     needs_gatk: bool = False
     needs_alignment: bool = False
     needs_pypgx: bool = False 
+    needs_pypgx_bam2vcf: bool = False
     needs_conversion: bool = False
     
     # File processing flags
@@ -276,7 +277,7 @@ class Allele(BaseModel):
     function: Optional[str] = Field(None, description="Functional classification of the allele")
     activity_score: Optional[float] = Field(None, ge=0, le=1, description="Activity score from 0 to 1")
 
-
+# This may need to be fixed, activity score does not range from 0 to 1.
 class Diplotype(BaseModel):
     """Model for diplotype information with confidence metrics"""
     gene: str = Field(..., description="Gene name (e.g., CYP2C19)")

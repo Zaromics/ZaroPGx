@@ -39,7 +39,18 @@ pypgx -h
 
 # Print supported genes
 echo "PyPGx supported genes:"
-pypgx list-genes 2>/dev/null || echo "Gene list not available, but proceeding with wrapper startup"
+python3 - <<'PY'
+try:
+    from pypgx.api import core
+    genes = core.list_genes()
+    if not genes:
+        print("No genes found")
+    else:
+        for gene in genes:
+            print(gene)
+except Exception as e:
+    print(f"Gene list not available, but proceeding with wrapper startup: {e}")
+PY
 
 # Write version manifest
 mkdir -p /data/versions

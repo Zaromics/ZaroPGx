@@ -1054,7 +1054,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
     """
     Process the genomic file through the pipeline:
     1. Call variants with GATK (if not a VCF)
-    2. Call CYP2D6 star alleles with PyPGx
+    2. Call star alleles with PyPGx
     3. Call PharmCAT for overall PGx annotation
     4. Generate a report
     """
@@ -1234,11 +1234,11 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
         update_progress("star_allele_calling", 35, "Preparing for star allele calling")
         
         # Step 2: Process CYP2D6 with PyPGx
-        update_progress("star_allele_calling", 40, "Calling CYP2D6 star alleles with PyPGx")
-        logger.info(f"Job {job_id}: Calling CYP2D6 star alleles with PyPGx")
-        print(f"[PYPGX] Job {job_id}: Calling CYP2D6 star alleles")
+        update_progress("star_allele_calling", 40, "Calling star alleles with PyPGx")
+        logger.info(f"Job {job_id}: Calling star alleles with PyPGx")
+        print(f"[PYPGX] Job {job_id}: Calling star alleles")
         
-        cyp2d6_results = {}
+        star_allele_results = {}
         try:
             # TEMPORARILY DISABLED: PyPGx integration is under development
             # The following code is commented out until PyPGx is properly set up
@@ -1442,7 +1442,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
             per_sample_workflow = {
                 "file_type": file_type,
                 "used_gatk": True if file_type in ["bam", "cram", "sam"] else False,
-                "used_pypgx": bool(cyp2d6_results),
+                "used_pypgx": bool(star_allele_results),
                 "used_pharmcat": True,
                 "exported_to_fhir": False,
             }
@@ -1474,7 +1474,7 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
                     "file_type": file_type,
                     "analysis_results": {
                         "GATK Processing": "Completed" if file_type in ["bam", "cram", "sam"] else "Not Required",
-                        "PyPGx CYP2D6 Analysis": "Completed" if cyp2d6_results else "Not Required",
+                        "PyPGx Analysis": "Completed" if star_allele_results else "Not Required",
                         "PharmCAT Analysis": "Completed",
                         "FHIR Export": "Not Implemented"
                     },
@@ -1698,9 +1698,9 @@ async def event_generator(job_id: str) -> AsyncGenerator[str, None]:
         if os.path.exists(pharmcat_report_path):
             return "report_generation", 90, "Generating final report"
             
-        # Check for CYP2D6 results (PyPGx output)
-        cyp2d6_path = os.path.join(TEMP_DIR, job_id, f"{job_id}_cyp2d6.json")
-        if os.path.exists(cyp2d6_path):
+        # Check for star allele results (PyPGx output)
+        star_allele_path = os.path.join(TEMP_DIR, job_id, f"{job_id}_star_allele.json")
+        if os.path.exists(star_allele_path):
             return "pharmcat", 60, "Running PharmCAT analysis" 
             
         # Try to determine if the job is using a VCF or BAM based on uploaded files

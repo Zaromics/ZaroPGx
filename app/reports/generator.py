@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 import base64
 from typing import List, Dict, Any
+import glob
 from weasyprint import HTML, CSS
 try:
     # WeasyPrint >= 53
@@ -322,7 +323,19 @@ def generate_pdf_report(
             "report_id": report_id,
             "sample_identifier": sample_identifier if sample_identifier else patient_id,
             "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "diplotypes": diplotypes,
+            "diplotypes": [
+                {
+                    **d,
+                    "phenotype": (
+                        "Possibly Wild Type"
+                        if str(d.get("diplotype") or "").strip() == "*1/*1" and (
+                            str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
+                        )
+                        else d.get("phenotype")
+                    )
+                }
+                if isinstance(d, dict) else d for d in diplotypes
+            ],
             "recommendations": recommendations,
             "disclaimer": get_disclaimer(),
             "platform_info": platform,
@@ -656,7 +669,19 @@ def create_interactive_html_report(
             "report_id": report_id,
             "sample_identifier": sample_identifier if sample_identifier else patient_id,
             "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "diplotypes": diplotypes,
+            "diplotypes": [
+                {
+                    **d,
+                    "phenotype": (
+                        "Possibly Wild Type"
+                        if str(d.get("diplotype") or "").strip() == "*1/*1" and (
+                            str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
+                        )
+                        else d.get("phenotype")
+                    )
+                }
+                if isinstance(d, dict) else d for d in diplotypes
+            ],
             "recommendations": template_recommendations,
             "organized_recommendations": json.dumps(organize_gene_drug_recommendations(template_recommendations)),
             "disclaimer": get_disclaimer(),
@@ -735,7 +760,10 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         Dict containing file paths for all enabled reports
     """
     logger.info("Generating report from PharmCAT results")
-    logger.info(f"Input pharmcat_results keys: {list(pharmcat_results.keys())}")
+    try:
+        logger.info(f"Input pharmcat_results keys: {list(pharmcat_results.keys())}")
+    except Exception:
+        logger.info("Input pharmcat_results has no keys()")
     logger.info(f"Input patient_info: {patient_info}")
     
     # The data coming from main.py is already normalized, so we don't need to normalize again
@@ -762,6 +790,15 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 "file_type": "unknown"
             }
     
+    # Enrich with PyPGx-only genes (not present in PharmCAT) if available
+    try:
+        # Determine report directory based on provided output_dir and patient id (if known later)
+        # We'll append later once we compute report_dir, but we can attempt a global pattern too
+        # Prefer per-patient directory lookup once we know patient_id (set below), so we postpone
+        pass
+    except Exception:
+        pass
+
     # Map recommendations to template-compatible format
     template_recommendations = map_recommendations_for_template(data.get("drugRecommendations", []))
     logger.info(f"Mapped {len(template_recommendations)} recommendations for template")
@@ -820,6 +857,63 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     report_dir = os.path.join(output_dir, patient_id)
     os.makedirs(report_dir, exist_ok=True)
     logger.info(f"Created report directory: {report_dir}")
+
+    # Now that we know the report directory, try to load PyPGx aggregated results and augment data['genes']
+    try:
+        # Prefer PyPGx results coming directly from workflow (if upstream provided it)
+        pypgx_results = None
+        if isinstance(data, dict) and 'pypgx_results' in data:
+            pypgx_results = data.get('pypgx_results')
+        # If not embedded, look for *_pypgx_results.json in the report directory; pick the newest by mtime
+        if not pypgx_results:
+            pypgx_json_candidates = glob.glob(os.path.join(report_dir, "*_pypgx_results.json"))
+            if pypgx_json_candidates:
+                latest_path = max(pypgx_json_candidates, key=lambda p: os.path.getmtime(p))
+                logger.info(f"Found PyPGx results JSON for enrichment: {latest_path}")
+                with open(latest_path, "r", encoding="utf-8") as f:
+                    pypgx_results = json.load(f)
+        if pypgx_results:
+            logger.info("Proceeding to merge PyPGx results into report data...")
+            results_obj = pypgx_results.get("results", {}) if isinstance(pypgx_results, dict) else {}
+            existing_genes = { (g.get("gene") or g.get("name") or "").strip().upper() for g in data.get("genes", []) if isinstance(g, dict) }
+            added_count = 0
+            for gene_key, gene_res in results_obj.items():
+                try:
+                    if not isinstance(gene_res, dict) or not gene_res.get("success"):
+                        continue
+                    gene_name = str(gene_key).strip()
+                    if gene_name.upper() in existing_genes:
+                        continue
+                    diplotype = gene_res.get("diplotype")
+                    details = gene_res.get("details") or {}
+                    phenotype = details.get("phenotype") or details.get("Phenotype")
+                    activity_score = details.get("activity_score") or details.get("activityScore")
+                    gene_entry = {
+                        "gene": gene_name,
+                        # Align with normalized PharmCAT structure minimally
+                        "diplotype": {"name": diplotype} if diplotype else {},
+                        "phenotype": {"info": phenotype} if phenotype else {},
+                        "source": "PyPGx",
+                        "pyPgxOnly": True
+                    }
+                    if activity_score is not None and str(activity_score).strip() != "":
+                        # Include as numeric/text under diplotype.activityScore if possible
+                        if isinstance(gene_entry.get("diplotype"), dict):
+                            gene_entry["diplotype"]["activityScore"] = activity_score
+                        else:
+                            gene_entry["activityScore"] = activity_score
+                    data.setdefault("genes", []).append(gene_entry)
+                    existing_genes.add(gene_name.upper())
+                    added_count += 1
+                except Exception as ie:
+                    logger.warning(f"Failed to map PyPGx gene {gene_key}: {ie}")
+            if added_count:
+                data["used_pypgx"] = True
+                logger.info(f"Augmented report with {added_count} PyPGx-only gene entries (total genes now={len(data.get('genes', []))})")
+        else:
+            logger.info("No PyPGx results available for enrichment (embedded or file)")
+    except Exception as e:
+        logger.warning(f"PyPGx enrichment step failed: {e}")
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference
     file_type = str(data.get("file_type", "vcf")).lower()
@@ -1143,7 +1237,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             logger.info(f"Workflow data: {per_sample_workflow}")
             
             # Simple workflow diagram generation for PDF
-            workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+            workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → PyPGx → VCF → PharmCAT → Reports</em>"
             pdf_png_data_uri = ""
             
             try:

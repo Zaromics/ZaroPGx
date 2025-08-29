@@ -202,8 +202,11 @@ services:
   mermaid:
     image: yuzutech/kroki-mermaid:latest
     container_name: pgx_kroki_mermaid
+    command: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-software-rasterizer", "--disable-gpu", "--disable-features=GlobalMediaControls"]
     expose:
       - "8002"
+    environment:
+      - CHROME_ARGS=--disable-dbus --no-sandbox --disable-dev-shm-usage --disable-gpu
     networks:
       - pgx-network
 

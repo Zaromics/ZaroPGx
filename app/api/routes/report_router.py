@@ -36,9 +36,9 @@ def generate_report_background(patient_id: str, file_id: str, report_type: str, 
         # This would be implemented with db queries
         # Mock data for now
         diplotypes = [
-            {"gene": "CYP2D6", "diplotype": "*1/*4", "phenotype": "Intermediate Metabolizer"},
-            {"gene": "CYP2C19", "diplotype": "*1/*1", "phenotype": "Normal Metabolizer"},
-            {"gene": "SLCO1B1", "diplotype": "rs4149056 TC", "phenotype": "Intermediate Function"}
+            {"gene": "CYP2D6", "diplotype": "*1/*4", "phenotype": "Mock Data"},
+            {"gene": "CYP2C19", "diplotype": "*1/*1", "phenotype": "Mock Data"},
+            {"gene": "SLCO1B1", "diplotype": "rs4149056 TC", "phenotype": "Mock Data"}
         ]
         
         # Get drug recommendations based on diplotypes

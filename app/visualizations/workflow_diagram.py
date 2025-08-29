@@ -190,7 +190,7 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
 
     if used_pypgx:
         m += [
-            "  VCF --> PYP[\"PyPGx (CYP2D6)\"]:::active",
+            "  VCF --> PYP[\"PyPGx\"]:::active",
             "  PYP --> VCF",
         ]
 
@@ -384,7 +384,7 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
         e("Detect", "VCF", active=True)
 
     if used_pypgx:
-        n("PYP", "PyPGx (CYP2D6)", active=True)
+        n("PYP", "PyPGx", active=True)
         e("VCF", "PYP", active=True)
         e("PYP", "VCF", active=True)
 

@@ -137,9 +137,9 @@ async def call_gatk_variants(job_id: str, vcf_file_path: str, reference_genome: 
             raise Exception(error_msg)
 
 async def call_pypgx(job_id: str, vcf_file: str):
-    """Call CYP2D6 star alleles using PyPGx."""
+    """Call star alleles using PyPGx."""
     try:
-        logging.info(f"Job {job_id} progress: star_allele_calling - 30% - Calling CYP2D6 star alleles with PyPGx")
+        logging.info(f"Job {job_id} progress: star_allele_calling - 30% - Calling star alleles with PyPGx")
         async with aiohttp.ClientSession() as session:
             data = aiohttp.FormData()
             data.add_field('file', open(vcf_file, 'rb'))
@@ -185,14 +185,14 @@ async def process_sample(job_id: str, file_path: str, sample_name: str):
         # Call variants with GATK
         try:
             vcf_file = await call_gatk_variants(job_id, file_path, "hg38")
-            update_job_progress(job_id, "star_allele_calling", 30, "Calling CYP2D6 star alleles with PyPGx")
+            update_job_progress(job_id, "star_allele_calling", 30, "Calling star alleles with PyPGx")
         except Exception as e:
             error_msg = f"GATK service error: {str(e)}"
             logging.error(error_msg)
             update_job_progress(job_id, "error", 100, error_msg)
             return
         
-        # Call CYP2D6 star alleles with PyPGx
+        # Call star alleles with PyPGx
         try:
             pypgx_output = await call_pypgx(job_id, vcf_file)
             update_job_progress(job_id, "pharmcat", 60, "Running PharmCAT analysis")

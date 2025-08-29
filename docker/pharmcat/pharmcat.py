@@ -702,6 +702,17 @@ def process_file():
             vcf_path = os.path.join(temp_dir, f"{base_name}.vcf")
             vcf_file.save(vcf_path)
             logger.info(f"Saved uploaded file to {vcf_path}")
+
+            # If an outside call TSV is provided, save it alongside the VCF using PharmCAT naming convention
+            # Per docs, placing <base>.outside.tsv in the same directory enables outside calls automatically
+            try:
+                outside_file = request.files.get('outside_tsv')
+                if outside_file:
+                    outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
+                    outside_file.save(outside_path)
+                    logger.info(f"Saved outside call TSV to {outside_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save outside TSV (continuing without it): {str(e)}")
             
             # Update processing status
             processing_status.update({

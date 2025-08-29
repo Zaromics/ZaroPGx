@@ -162,6 +162,8 @@ cython_debug/
 # Project specific ignores
 /data/uploads/
 /data/reports/
+/data/temp/
+
 # Exclude VCF files except test sample files
 *.vcf
 !test_data/*.vcf

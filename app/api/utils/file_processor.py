@@ -452,7 +452,7 @@ class FileProcessor:
                 "latest GATK pipeline."
             )
             
-            # For WGS data, use PyPGx for CYP2D6
+            # For WGS data, use PyPGx for star alleles
             if vcf_info.sequencing_profile == SequencingProfile.WGS:
                 workflow["needs_pypgx"] = True
                 workflow["recommendations"].append(
@@ -469,22 +469,30 @@ class FileProcessor:
                     "Creating index for VCF file for faster processing"
                 )
         
-        # BAM/CRAM/SAM files go through the GATK pipeline
+        # BAM uses PyPGx create-input-vcf (recommended by PyPGx docs). CRAM/SAM stay on GATK.
         elif analysis.file_type in [FileType.BAM, FileType.CRAM, FileType.SAM]:
-            workflow["needs_gatk"] = True
-            workflow["needs_pypgx"] = True  # Typically needed for these full files
-            
+            workflow["needs_pypgx"] = True  # We still run PyPGx later for star alleles
+
             if analysis.file_type == FileType.BAM:
+                # Use PyPGx to create input VCF from BAM
+                workflow["needs_gatk"] = False
+                workflow["needs_pypgx_bam2vcf"] = True
                 workflow["recommendations"].append(
-                    "BAM file will be processed through GATK for variant calling"
+                    "BAM file will be converted to VCF using PyPGx create-input-vcf (recommended)."
                 )
             elif analysis.file_type == FileType.CRAM:
+                # Keep CRAM on GATK path
+                workflow["needs_gatk"] = True
+                workflow["needs_pypgx_bam2vcf"] = False
                 workflow["recommendations"].append(
-                    "CRAM file will be processed through GATK for variant calling"
+                    "CRAM file will be processed through GATK for variant calling."
                 )
             elif analysis.file_type == FileType.SAM:
+                # Keep SAM on GATK path
+                workflow["needs_gatk"] = True
+                workflow["needs_pypgx_bam2vcf"] = False
                 workflow["recommendations"].append(
-                    "SAM file will be processed through GATK for variant calling"
+                    "SAM file will be processed through GATK for variant calling."
                 )
                 
             # Check if index exists, if not we'll need to create one
@@ -585,6 +593,7 @@ class FileProcessor:
             # Determine workflow
             logger.info("Determining workflow...")
             workflow = self.determine_workflow(analysis)
+            workflow["file_type"] = analysis.file_type.value
             logger.info(f"Workflow determined: {workflow}")
             
             # If original WGS file is provided, update workflow

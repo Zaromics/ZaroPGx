@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 PHARMCAT_API_URL = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
 PHARMCAT_JAR_PATH = os.environ.get("PHARMCAT_JAR_PATH", "/pharmcat/pharmcat.jar")
 
-def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None, patient_id: Optional[str] = None, sample_identifier: Optional[str] = None) -> Dict[str, Any]:
+def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, sample_id: Optional[str] = None, report_id: Optional[str] = None, patient_id: Optional[str] = None, sample_identifier: Optional[str] = None, outside_tsv_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Call the PharmCAT service to process a VCF file.
     
@@ -54,6 +54,13 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
             logger.info(f"Calling PharmCAT API at {pharmcat_api_url}/process")
             with open(vcf_path, 'rb') as f:
                 files = {'file': f}
+                # Attach outside call TSV if provided
+                if outside_tsv_path and os.path.exists(outside_tsv_path):
+                    try:
+                        files['outside_tsv'] = (os.path.basename(outside_tsv_path), open(outside_tsv_path, 'rb'), 'text/tab-separated-values')
+                        logger.info(f"Including outside TSV in request: {outside_tsv_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to attach outside TSV: {str(e)}")
                 data = {}
                 if sample_id:
                     data['sampleId'] = sample_id
@@ -531,109 +538,6 @@ def normalize_pharmcat_results(response):
                 logger.error(f"Gene reports structure: {type(json_data['geneReports'])}")
                 if isinstance(json_data["geneReports"], dict):
                     logger.error(f"Gene reports keys: {list(json_data['geneReports'].keys())}")
-            
-            # Check if this is the new PharmCAT 3.0+ format (geneReports, matcherMetadata)
-            # This block is now redundant as the 3.0+ format is handled above.
-            # Keeping it for now in case the original code had a different 3.0+ structure.
-            # elif "geneReports" in json_data or "matcherMetadata" in json_data:
-            #     logger.info("Using new PharmCAT 3.0+ format with geneReports")
-                
-            #     genes_data = []
-            #     drug_recommendations = []
-                
-            #     # Extract genes from geneReports if available
-            #     if "geneReports" in json_data and isinstance(json_data["geneReports"], dict):
-            #         logger.info(f"Processing {len(json_data['geneReports'])} gene reports")
-                    
-            #         for gene_id, gene_report in json_data["geneReports"].items():
-            #             if not isinstance(gene_report, dict):
-            #                 continue
-                            
-            #             logger.info(f"Processing gene report for {gene_id}")
-                        
-            #             # Extract basic gene information
-            #             diplotype = "Unknown/Unknown"
-            #             function = "Unknown"
-            #             activity_score = None
-                        
-            #             # Look for phenotype information
-            #             if "phenotype" in gene_report:
-            #                 phenotype_info = gene_report["phenotype"]
-            #                 if isinstance(phenotype_info, dict):
-            #                     if "function" in phenotype_info:
-            #                         function = phenotype_info["function"]
-            #                     if "activityScore" in phenotype_info:
-            #                         activity_score = phenotype_info["activityScore"]
-                        
-            #             # Look for diplotype information
-            #             if "diplotype" in gene_report:
-            #                 diplotype_info = gene_report["diplotype"]
-            #                 if isinstance(diplotype_info, dict):
-            #                     if "label" in diplotype_info:
-            #                         diplotype = diplotype_info["label"]
-            #                     elif "name" in diplotype_info:
-            #                         diplotype = diplotype_info["name"]
-                        
-            #             # Create gene entry
-            #             gene_entry = {
-            #                 "gene": gene_id,
-            #                 "diplotype": diplotype,
-            #                 "phenotype": function,
-            #                 "activity_score": activity_score
-            #             }
-                        
-            #             genes_data.append(gene_entry)
-            #             logger.info(f"Added gene from 3.0+ format: {gene_entry}")
-                
-            #     # Extract drug recommendations if available
-            #     if "drugRecommendations" in json_data and isinstance(json_data["drugRecommendations"], list):
-            #         logger.info(f"Processing {len(json_data['drugRecommendations'])} drug recommendations")
-                    
-            #         for drug_rec in json_data["drugRecommendations"]:
-            #             if not isinstance(drug_rec, dict):
-            #                 continue
-                        
-            #             # Extract drug information
-            #             drug_name = drug_rec.get("drug", "Unknown")
-            #             if isinstance(drug_name, dict):
-            #                 drug_name = drug_name.get("name", "Unknown")
-                        
-            #             recommendation = drug_rec.get("recommendation", "See report for details")
-            #             guideline = drug_rec.get("guideline", "")
-            #             classification = drug_rec.get("classification", "")
-                        
-            #             # Create drug recommendation entry
-            #             drug_recommendations.append({
-            #                 "gene": drug_rec.get("gene", "Multiple"),
-            #                 "drug": drug_name,
-            #                 "drugId": drug_rec.get("drugId", ""),
-            #                 "guideline": guideline,
-            #                 "recommendation": recommendation,
-            #                 "classification": classification
-            #             })
-                
-            #     # If we found either genes or drug recommendations, consider JSON processing successful
-            #     if genes_data or drug_recommendations:
-            #         json_processing_success = True
-            #         normalized_response.update({
-            #             "success": True,
-            #             "message": "PharmCAT 3.0+ results normalized successfully",
-            #             "data": {
-            #                 "genes": genes_data,
-            #                 "drugRecommendations": drug_recommendations
-            #             }
-            #         })
-                    
-            #         logger.info(f"Successfully parsed {len(genes_data)} genes and {len(drug_recommendations)} drug recommendations from 3.0+ format")
-            #         logger.info(f"Final normalized response: {json.dumps(normalized_response, indent=2)}")
-            #         logger.info(f"=== NORMALIZE PHARMCAT RESULTS END (SUCCESS) ===")
-            #         return normalized_response
-            #     else:
-            #         logger.warning("No genes or drug recommendations found in PharmCAT 3.0+ format")
-            #         logger.warning(f"Available keys: {list(json_data.keys())}")
-                
-            # If initial direct format processing failed, try alternative parsing approaches
-            # more parsing strategies would be implemented here
                 
         # If JSON processing failed or no suitable data found, try TSV as a backup
         if not json_processing_success:

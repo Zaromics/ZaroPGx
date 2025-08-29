@@ -169,42 +169,47 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # For now, just sleep to simulate processing time
                 await asyncio.sleep(2)
             
-            # Step 2: GATK Variant Calling (for BAM/CRAM/SAM)
-            if workflow.get("needs_gatk", False):
-                # Update new monitoring system
+            # Step 2: BAM/CRAM/SAM -> VCF using PyPGx create-input-vcf (GATK disabled)
+            if workflow.get("needs_pypgx_bam2vcf", False):
                 job_service.update_job_progress(
-                    job.job_id, 
-                    JobStage.GATK.value, 
-                    20, 
-                    "Calling variants with GATK...",
+                    job.job_id,
+                    JobStage.PYPX.value,
+                    20,
+                    "Converting alignment to VCF via PyPGx create-input-vcf...",
                     {"workflow": workflow}
                 )
-                
                 try:
-                    # Call GATK service for processing
-                    # This would be a real implementation to call the GATK service
-                    # For example:
-                    # gatk_output = await call_gatk_service(file_path)
-                    # output_file = gatk_output
-                    
-                    # For now, simulate processing
-                    logger.info(f"Would call GATK for {file_path}")
-                    await asyncio.sleep(5)  # Simulate GATK processing time
-                    
-                    # Update status after GATK
+                    import aiohttp
+                    pypgx_url = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
+                    form = aiohttp.FormData()
+                    ref = 'hg38'
+                    if isinstance(workflow, dict):
+                        ref = workflow.get('requested_reference', 'hg38') or 'hg38'
+                    form.add_field('reference_genome', ref)
+                    form.add_field('patient_id', str(patient_id))
+                    form.add_field('report_id', str(data_id))
+                    with open(file_path, 'rb') as f:
+                        form.add_field('file', f, filename=os.path.basename(file_path), content_type='application/octet-stream')
+                        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3600)) as session:
+                            async with session.post(f"{pypgx_url}/create-input-vcf", data=form) as resp:
+                                if resp.status != 200:
+                                    text = await resp.text()
+                                    raise RuntimeError(f"PyPGx create-input-vcf error {resp.status}: {text}")
+                                converted = await resp.json()
+                    output_file = converted.get('vcf_path') or converted.get('vcf') or output_file
+                    if not output_file or not os.path.exists(output_file):
+                        raise RuntimeError("PyPGx did not return a usable VCF path")
                     job_service.update_job_progress(
-                        job.job_id, 
-                        JobStage.GATK.value, 
-                        40, 
-                        "Variant calling complete.",
-                        {"workflow": workflow, "gatk_complete": True}
+                        job.job_id,
+                        JobStage.PYPX.value,
+                        40,
+                        "Alignment converted to VCF successfully.",
+                        {"workflow": workflow, "bam2vcf_complete": True, "vcf_path": output_file}
                     )
                 except Exception as e:
-                    error_msg = f"GATK processing failed: {str(e)}"
+                    error_msg = f"PyPGx create-input-vcf failed: {str(e)}"
                     logger.error(error_msg)
-                    
-                    # Update new monitoring system
-                    job_service.fail_job(job.job_id, error_msg, JobStage.GATK.value)
+                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX.value)
                     return
             
             # Step 3: File conversion (for 23andMe files) - not yet implemented
@@ -220,7 +225,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # For now, just sleep to simulate processing time
                 await asyncio.sleep(2)
             
-            # Step 4: PyPGx for CYP2D6 analysis
+            # Step 4: PyPGx analysis for all supported genes
             if workflow.get("needs_pypgx", False):
                 # Update new monitoring system
                 job_service.update_job_progress(
@@ -232,21 +237,58 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 )
                 
                 try:
-                    # Call PyPGx service
-                    # This would be a real implementation to call PyPGx
-                    # For example:
-                    # pypgx_output = await call_pypgx_service(output_file)
-                    # output_file = pypgx_output
-                    
-                    # For now, simulate processing
-                    logger.info(f"Would call PyPGx for {output_file}")
-                    await asyncio.sleep(3)  # Simulate PyPGx processing time
-                    
+                    # Real PyPGx call: request ALL supported genes to maximize outside-call coverage
+                    import aiohttp
+                    pypgx_url = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
+                    form = aiohttp.FormData()
+                    form.add_field('genes', 'ALL')
+                    form.add_field('reference_genome', workflow.get('reference', 'hg38') if isinstance(workflow, dict) else 'hg38')
+                    # Provide identifiers so PyPGx can place its JSON into the per-patient reports directory
+                    form.add_field('patient_id', str(patient_id))
+                    form.add_field('report_id', str(data_id))
+                    with open(output_file, 'rb') as f:
+                        form.add_field('file', f, filename=os.path.basename(output_file), content_type='application/octet-stream')
+                        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1200)) as session:
+                            async with session.post(f"{pypgx_url}/genotype", data=form) as resp:
+                                if resp.status != 200:
+                                    text = await resp.text()
+                                    raise RuntimeError(f"PyPGx error {resp.status}: {text}")
+                                pypgx_result = await resp.json()
+                    # Build combined PharmCAT Outside Call TSV with one line per gene
+                    outside_lines = []
+                    if isinstance(pypgx_result, dict):
+                        results = pypgx_result.get('results') or {}
+                        def _s(v):
+                            return str(v).strip() if v is not None else ''
+                        for gene_key, gene_res in results.items():
+                            if not isinstance(gene_res, dict) or not gene_res.get('success'):
+                                continue
+                            diplotype = gene_res.get('diplotype')
+                            details = gene_res.get('details') or {}
+                            phenotype = details.get('phenotype') or details.get('Phenotype') if isinstance(details, dict) else None
+                            activity_score = details.get('activity_score') or details.get('activityScore') if isinstance(details, dict) else None
+                            if diplotype or phenotype or activity_score:
+                                outside_lines.append("\t".join([gene_key, _s(diplotype), _s(phenotype), _s(activity_score)]))
+                    if outside_lines:
+                        base, _ = os.path.splitext(output_file)
+                        outside_path = f"{base}.outside.tsv"
+                        with open(outside_path, 'w', encoding='utf-8') as tsv:
+                            tsv.write("\n".join(outside_lines) + "\n")
+                        logger.info(f"Wrote PharmCAT outside TSV with {len(outside_lines)} lines: {outside_path}")
+                        workflow['used_pypgx'] = True
+                        workflow['outside_tsv'] = outside_path
+                        # Persist aggregated PyPGx results into workflow for report augmentation
+                        try:
+                            workflow['pypgx_results'] = pypgx_result
+                        except Exception:
+                            pass
+                    else:
+                        logger.warning("PyPGx returned no usable calls; proceeding without outside TSV")
                     # Update status after PyPGx
                     job_service.update_job_progress(
-                        job.job_id, 
-                        JobStage.PYPX.value, 
-                        60, 
+                        job.job_id,
+                        JobStage.PYPX.value,
+                        60,
                         "PyPGx analysis complete.",
                         {"workflow": workflow, "pypgx_complete": True}
                     )
@@ -257,6 +299,61 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     # Update new monitoring system
                     job_service.fail_job(job.job_id, error_msg, JobStage.PYPX.value)
                     return
+
+        # If we skipped preprocessing due to go_directly_to_pharmcat, still run PyPGx here (multi-gene)
+        if workflow.get("needs_pypgx", False) and not workflow.get("outside_tsv"):
+            try:
+                import aiohttp
+                pypgx_url = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
+                form = aiohttp.FormData()
+                form.add_field('genes', 'ALL')
+                ref = 'hg38'
+                if isinstance(workflow, dict):
+                    ref = workflow.get('requested_reference', 'hg38') or 'hg38'
+                form.add_field('reference_genome', ref)
+                # Provide identifiers so PyPGx can place its JSON into the per-patient reports directory
+                form.add_field('patient_id', str(patient_id))
+                form.add_field('report_id', str(data_id))
+                with open(output_file, 'rb') as f:
+                    form.add_field('file', f, filename=os.path.basename(output_file), content_type='application/octet-stream')
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1200)) as session:
+                        async with session.post(f"{pypgx_url}/genotype", data=form) as resp:
+                            if resp.status != 200:
+                                text = await resp.text()
+                                raise RuntimeError(f"PyPGx error {resp.status}: {text}")
+                            pypgx_result = await resp.json()
+                outside_lines = []
+                if isinstance(pypgx_result, dict):
+                    results = pypgx_result.get('results') or {}
+                    def _s(v):
+                        return str(v).strip() if v is not None else ''
+                    for gene_key, gene_res in results.items():
+                        if not isinstance(gene_res, dict) or not gene_res.get('success'):
+                            continue
+                        diplotype = gene_res.get('diplotype')
+                        details = gene_res.get('details') or {}
+                        phenotype = details.get('phenotype') or details.get('Phenotype') if isinstance(details, dict) else None
+                        activity_score = details.get('activity_score') or details.get('activityScore') if isinstance(details, dict) else None
+                        if diplotype or phenotype or activity_score:
+                            outside_lines.append("\t".join([gene_key, _s(diplotype), _s(phenotype), _s(activity_score)]))
+                if outside_lines:
+                    base, _ = os.path.splitext(output_file)
+                    outside_path = f"{base}.outside.tsv"
+                    with open(outside_path, 'w', encoding='utf-8') as tsv:
+                        tsv.write("\n".join(outside_lines) + "\n")
+                    logger.info(f"Wrote PharmCAT outside TSV with {len(outside_lines)} lines: {outside_path}")
+                    workflow['used_pypgx'] = True
+                    workflow['outside_tsv'] = outside_path
+                    # Persist aggregated PyPGx results into workflow for report augmentation
+                    try:
+                        workflow['pypgx_results'] = pypgx_result
+                    except Exception:
+                        pass
+                else:
+                    logger.warning("PyPGx returned no usable calls; proceeding without outside TSV")
+            except Exception as e:
+                error_msg = f"PyPGx processing failed (direct path): {str(e)}"
+                logger.error(error_msg)
 
         # Step 5: PharmCAT Analysis
         # Update new monitoring system
@@ -280,11 +377,16 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             
             # Use the direct PharmCAT service call to avoid duplicate report generation
             # Pass both patient_id (for database consistency) and patient_identifier (for user experience)
+            # Attach outside TSV if created in the PyPGx step
+            outside_tsv_path = None
+            if isinstance(workflow, dict):
+                outside_tsv_path = workflow.get('outside_tsv')
             results = call_pharmcat_service(
-                output_file, 
-                report_id=data_id, 
+                output_file,
+                report_id=data_id,
                 patient_id=patient_id,
-                sample_identifier=effective_sample_identifier
+                sample_identifier=effective_sample_identifier,
+                outside_tsv_path=outside_tsv_path
             )
         except Exception as e:
             logger.error(f"PharmCAT service call failed: {str(e)}")
@@ -360,6 +462,15 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                         phenotype_info = phenotype_obj
                         if isinstance(phenotype_obj, dict):
                             phenotype_info = phenotype_obj.get("info", "Unknown")
+
+                        # Apply 'Possibly Wild Type' fallback when phenotype is blank/N-A and diplotype is *1/*1
+                        try:
+                            dip_str = str(diplotype_name).strip() if diplotype_name is not None else ""
+                            ph_str = str(phenotype_info).strip() if phenotype_info is not None else ""
+                            if dip_str == "*1/*1" and (ph_str == "" or ph_str.lower() in {"n/a", "na"}):
+                                phenotype_info = "Possibly Wild Type"
+                        except Exception:
+                            pass
                         
                         formatted_diplotypes.append({
                             "gene": gene.get("gene", ""),
@@ -371,6 +482,47 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Log the number of diplotypes found
                 logger.info(f"Extracted {len(formatted_diplotypes)} formatted diplotypes")
                 
+                # Augment diplotypes with PyPGx-only genes (not in PharmCAT)
+                try:
+                    existing_genes = {str(item.get("gene", "")).strip().upper() for item in formatted_diplotypes if isinstance(item, dict)}
+                    pypgx_results = None
+                    if isinstance(workflow, dict):
+                        pypgx_results = workflow.get("pypgx_results")
+                    added_count = 0
+                    if isinstance(pypgx_results, dict):
+                        results_obj = pypgx_results.get("results") or {}
+                        for gene_key, gene_res in results_obj.items():
+                            if not isinstance(gene_res, dict) or not gene_res.get("success"):
+                                continue
+                            gene_name = str(gene_key).strip()
+                            if gene_name.upper() in existing_genes:
+                                continue
+                            diplotype_val = gene_res.get("diplotype")
+                            details = gene_res.get("details") or {}
+                            phenotype_val = details.get("phenotype") or details.get("Phenotype")
+                            activity_val = details.get("activity_score") or details.get("activityScore")
+                            formatted_diplotypes.append({
+                                "gene": gene_name,
+                                "diplotype": diplotype_val or "Unknown",
+                                "phenotype": phenotype_val or "Unknown",
+                                "activity_score": activity_val if (activity_val is not None and str(activity_val).strip() != "") else None
+                            })
+                            existing_genes.add(gene_name.upper())
+                            added_count += 1
+                    logger.info(f"PyPGx augmentation complete. Added {added_count} genes to diplotypes (PharmCAT base={len(diplotypes)} → final={len(formatted_diplotypes)})")
+                except Exception as aug_err:
+                    logger.warning(f"Failed to augment diplotypes with PyPGx results: {aug_err}")
+
+                # Harmonize 'Possibly Wild Type' phenotype across all diplotypes
+                try:
+                    for d in formatted_diplotypes:
+                        dip_str = str(d.get("diplotype") or "").strip()
+                        ph_str = str(d.get("phenotype") or "").strip()
+                        if dip_str == "*1/*1" and (ph_str == "" or ph_str.lower() in {"n/a", "na"}):
+                            d["phenotype"] = "Possibly Wild Type"
+                except Exception:
+                    pass
+
                 # Extract recommendations from PharmCAT results - should be normalized already
                 recommendations = pharmcat_data.get("drugRecommendations", [])
                 logger.info(f"PharmCAT returned {len(recommendations)} drug recommendations")
@@ -538,7 +690,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                         "file_type": workflow.get("file_type", "unknown"),
                         "analysis_results": {
                             "GATK Processing": "Completed" if workflow.get("needs_gatk", False) else "Not Required",
-                            "PyPGx CYP2D6 Analysis": "Completed" if workflow.get("used_pypgx", False) else "Not Required",
+                            "PyPGx Analysis": "Completed" if workflow.get("used_pypgx", False) else "Not Required",
                             "PharmCAT Analysis": "Completed",
                             "FHIR Export": "Not Implemented"
                         },
@@ -860,6 +1012,9 @@ async def upload_genomic_data(
             upload_message = "File uploaded. Results will be PROVISIONAL due to limitations in the input data."
         elif original_file_path and result["workflow"].get("using_original_file", False):
             upload_message = "Files uploaded. Using original genomic file for processing."
+        # Tailor message for BAM/CRAM/SAM path using PyPGx
+        if result["workflow"].get("needs_pypgx_bam2vcf", False):
+            upload_message += " Using PyPGx to convert alignment to VCF as recommended."
         
         return UploadResponse(
             job_id=str(job.job_id),
