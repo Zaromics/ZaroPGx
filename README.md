@@ -24,15 +24,15 @@ The system is designed to:
 
 - **VCF Processing**: Fully implemented
 - **BAM/CRAM → GATK Pipeline**: Scaffolded but not fully integrated in the application flow
-- **PyPGx Integration**: Service available, integration with main pipeline in progress
-- **PharmCAT with PyPGx Outside Calls**: Core PharmCAT service available, PyPGx integration for outside calls being implemented
-- **Comprehensive Reporting**: Basic PDF and interactive HTML generation implemented
-- **FHIR Export**: HAPI FHIR server integrated, export functionality in development
+- **PyPGx Integration**: Service is integrated with main pipeline, optimization in progress
+- **PharmCAT with PyPGx Outside Calls**: Core PharmCAT service available, PyPGx integration for outside calls is in testing
+- **Comprehensive Reporting**: Basic PDF and interactive HTML generation is being developed
+- **FHIR Export**: HAPI FHIR server integrated, export / query response functionality in development
 
 ## Features (Current State)
 
 - Process VCF files directly; BAM/CRAM → GATK path is scaffolded but not fully implemented in the app flow yet
-- Allele calling via PharmCAT (pipeline v3.0.1)
+- Allele calling via OptiType, PyPGx, and PharmCAT (pipeline v3.0.1)
 - Generate reports: PDF and interactive HTML; optionally include original PharmCAT HTML/JSON/TSV outputs
 - REST API and web UI for uploads and status; authentication is disabled by default in development mode
 - Optional export of reports to a bundled HAPI FHIR server
@@ -44,12 +44,13 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 - **PostgreSQL** (schemas: `cpic`, `user_data`, `reports`, `fhir`) - Stores CPIC guidelines, user data, and generated reports
 - **FastAPI application** (web UI, API, report generation, SSE progress) - Main application orchestrating the analysis workflow
 - **GATK API service** (HTTP wrapper) - Handles preprocessing of BAM/CRAM files to VCF format
-- **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, including CYP2D6 and others
-- **PharmCAT wrapper service** (Flask) - Executes PharmCAT pipeline with PyPGx outside calls to unlock full 23-gene coverage
+- **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, including difficult ones like CYP2D6
+- **PharmCAT wrapper service** (Flask) - Executes PharmCAT pipeline with PyPGx and OptiType outside calls to unlock full 23-gene coverage
 - **Reference genome downloader** - Manages reference genome data for accurate variant calling
 - **HAPI FHIR server** - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records
+- **Kroki** - Renders workflow diagrams which serve as a visual depiction of the pipeline the report has been built from
 
-**Workflow**: Genomic Data → GATK Preprocessing (if needed) → PyPGx Allele Calling → PharmCAT Analysis with PyPGx Outside Calls → Comprehensive Reporting → FHIR Export
+**Workflow**: Genomic Data → GATK Preprocessing (if needed) → OptiType Allele Calling → PyPGx Allele Calling → PharmCAT Analysis with PyPGx and OptiType Outside Calls → Comprehensive Reporting → optional EHR export via FHIR
 
 ### Service Ports (Host → Container)
 

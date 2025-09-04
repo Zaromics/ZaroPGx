@@ -1,7 +1,7 @@
 FROM python:3.12
 
 # Add labels for better maintainability and alignment with official PharmCAT
-LABEL maintainer="ZaroPGx Team"
+LABEL maintainer="ZaroPGx (wrapper only)"
 LABEL description="PharmCAT 3.0.1 Wrapper Service with Flask API"
 LABEL version="3.0.1"
 
