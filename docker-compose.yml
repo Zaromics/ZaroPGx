@@ -175,26 +175,49 @@ services:
     networks:
       - pgx-network
 
-  # OptiType Wrapper Service (HTTP API)
+  # OptiType Service (CLI container, no HTTP wrapper)
   optitype:
-    build:
-      context: ./docker/optitype
-      dockerfile: Dockerfile.optitype
-      args:
-        OPTITYPE_VERSION: ${OPTITYPE_VERSION:-1.3.5}
+    image: smithnickh/optitype:v2.0
     container_name: pgx_optitype
+    restart: unless-stopped
+    # Keep the container running so we can exec CLI commands into it from other services
+    command: ["tail", "-f", "/dev/null"]
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "command -v OptiTypePipeline.py >/dev/null 2>&1 || test -f /OptiTypePipeline.py || test -f /opt/OptiType/OptiTypePipeline.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - pgx-network
+
+  # nf-core/hlatyping Wrapper Service (HTTP API running Nextflow)
+  hlatyping:
+    build:
+      context: ./docker/hlatyping
+      dockerfile: Dockerfile.hlatyping
+    container_name: pgx_hlatyping
     restart: unless-stopped
     environment:
       - DATA_DIR=/data
+      - HLATYPING_PROFILE=docker
+      - HLATYPING_PIPELINE_VERSION=2.1.0
+      - NXF_OPTS=-Xms1g -Xmx4g
     volumes:
       - ./data:/data
+      # Mount host docker socket so Nextflow can launch docker tasks with -profile docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Optional Nextflow cache directory to persist between runs
+      - ./data/nextflow:/opt/nextflow
     ports:
-      - "5054:5000"
+      - "5060:5000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 40s
     networks:
       - pgx-network

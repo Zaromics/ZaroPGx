@@ -1,0 +1,41 @@
+FROM python:3.12
+
+# Install system dependencies: Java for Nextflow, curl, git, docker CLI
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-21-jre-headless \
+    curl \
+    git \
+    bash \
+    ca-certificates \
+    procps \
+    docker.io \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install Nextflow
+RUN curl -s https://get.nextflow.io | bash && \
+    mv nextflow /usr/local/bin/nextflow && \
+    chmod +x /usr/local/bin/nextflow
+
+# Environment
+ENV NXF_OPTS="-Xms1g -Xmx4g" \
+    NEXTFLOW_HOME=/opt/nextflow \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN mkdir -p /opt/nextflow
+
+# Python deps for API
+RUN pip install --no-cache-dir fastapi uvicorn python-multipart
+
+# Workdir and copy wrapper
+WORKDIR /app
+COPY hlatyping_wrapper.py /app/
+
+# Healthcheck: verify Java and Nextflow are available
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD bash -lc 'java -version >/dev/null 2>&1 && nextflow -version >/dev/null 2>&1 || exit 1'
+
+EXPOSE 5000
+CMD ["uvicorn", "hlatyping_wrapper:app", "--host", "0.0.0.0", "--port", "5000"]
+
+
