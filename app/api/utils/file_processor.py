@@ -9,6 +9,14 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+# Optional import: pysam for rich header parsing (VCF/BAM/CRAM). Fallbacks are provided.
+try:
+    import pysam  # type: ignore
+    _HAS_PYSAM = True
+except Exception:  # optional dependency at runtime
+    pysam = None  # type: ignore
+    _HAS_PYSAM = False
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -90,6 +98,13 @@ class FileProcessor:
                 
                 # Make sure the bgzipped status is correctly reflected
                 vcf_info.is_bgzipped = is_compressed or vcf_info.is_bgzipped or str(file_path).endswith('.gz')
+            elif file_type in [FileType.BAM, FileType.CRAM, FileType.SAM]:
+                # Optionally inspect alignment headers for additional context
+                try:
+                    self._analyze_alignment_header_with_pysam(file_path)
+                except Exception:
+                    # Non-fatal; continue
+                    pass
 
             # Create the file analysis object with all the gathered information
             analysis = FileAnalysis(
@@ -273,6 +288,11 @@ class FileProcessor:
                         if f.read(4) == b'BAM\1':
                             logger.info("Identified as BAM from content")
                             return FileType.BAM
+                        # CRAM magic bytes
+                        f.seek(0)
+                        if f.read(4) == b'CRAM':
+                            logger.info("Identified as CRAM from content")
+                            return FileType.CRAM
                     except UnicodeDecodeError:
                         # If we can't decode as text, it might be binary
                         pass
@@ -300,10 +320,22 @@ class FileProcessor:
     async def _analyze_vcf_header(self, file_path: Path) -> VCFHeaderInfo:
         """Analyze VCF header to extract important information"""
         try:
-            # Use bcftools to read header
-            cmd = ['bcftools', 'view', '-h', str(file_path)]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            header_lines = result.stdout.split('\n')
+            header_lines: List[str] = []
+
+            # Prefer pysam (VariantFile) if available; it can parse headers without shelling out
+            if _HAS_PYSAM:
+                try:
+                    vf = pysam.VariantFile(str(file_path))  # works for .vcf and .vcf.gz
+                    header_text = str(vf.header)
+                    header_lines = header_text.split('\n')
+                except Exception as e:
+                    logger.warning(f"pysam.VariantFile failed to read header, falling back to bcftools: {e}")
+
+            # Fallback to bcftools if we don't have pysam or it failed
+            if not header_lines:
+                cmd = ['bcftools', 'view', '-h', str(file_path)]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                header_lines = result.stdout.split('\n')
             
             logger.info(f"Analyzing VCF header for {file_path}")
             logger.info(f"Header contains {len(header_lines)} lines")
@@ -398,6 +430,36 @@ class FileProcessor:
         except Exception as e:
             logger.error(f"Error analyzing VCF header: {str(e)}")
             raise
+
+    def _analyze_alignment_header_with_pysam(self, file_path: Path) -> Optional[Dict[str, any]]:
+        """
+        Extract alignment header information for BAM/CRAM/SAM files using pysam when available.
+        Returns a dict with selected fields or None on failure/unavailability.
+        """
+        if not _HAS_PYSAM:
+            return None
+        try:
+            af = pysam.AlignmentFile(str(file_path), 'r')
+            header_dict = af.header.to_dict() if hasattr(af.header, 'to_dict') else {}
+            contigs = []
+            if isinstance(header_dict, dict) and 'SQ' in header_dict:
+                contigs = [sq.get('SN') for sq in header_dict.get('SQ', []) if isinstance(sq, dict) and sq.get('SN')]
+            read_groups = header_dict.get('RG', []) if isinstance(header_dict, dict) else []
+            platform = None
+            for rg in read_groups:
+                if isinstance(rg, dict) and rg.get('PL'):
+                    platform = rg.get('PL')
+                    break
+            info = {
+                'contigs': contigs,
+                'read_group_count': len(read_groups) if isinstance(read_groups, list) else 0,
+                'platform': platform or 'unknown',
+            }
+            logger.info(f"Alignment header (pysam): contigs={len(contigs)}, platform={info['platform']}, RGs={info['read_group_count']}")
+            return info
+        except Exception as e:
+            logger.debug(f"pysam.AlignmentFile failed to read header for {file_path}: {e}")
+            return None
 
     def determine_workflow(self, analysis: FileAnalysis) -> Dict:
         """

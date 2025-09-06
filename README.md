@@ -3,7 +3,7 @@
 <img width="1541" height="900" alt="Screenshot 2025-08-22 143144" src="https://github.com/user-attachments/assets/57450a14-d392-4d38-85f6-911a7e7b962f" />
 
 
-A containerized pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by CPIC resources. The system integrates GATK preprocessing, PyPGx allele calling, and PharmCAT with PyPGx outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes. Reports can be exported to Electronic Health Records or Personal Health Records via FHIR integration. Designed as a self-hostable docker stack to ensure data privacy and security.
+A containerized pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by CPIC and other institutional resources. Nextflow is used to orchestrate an intelligent workflow which integrates GATK preprocessing, OptiType and PyPGx allele calling, and PharmCAT with outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes with lower evidence clinical actionability. Report data can be exported to Electronic Health Records or Personal Health Records via HAPI FHIR integration. Designed as a self-hostable docker compose stack, ZaroPGx enables absolute data privacy and security when run locally. That said, environmental configurations are provided for both local and internet-facing deployment, which allows the software to be made accessible to others over the internet.
 
 ## Status
 
@@ -13,19 +13,20 @@ This project is in active development and not production-ready. Core functionali
 
 The system is designed to:
 
-1. **Accept genomic data files** (VCF, BAM, CRAM) and preprocess them using GATK when necessary
-2. **Perform allele calling** via PyPGx for comprehensive pharmacogene coverage
-3. **Execute PharmCAT analysis** with PyPGx providing outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes
+1. **Accept genomic data files** (VCF, BAM, FASTQ) and preprocess them using GATK when necessary
+2. **Perform allele calling** via PyPGx and OptiType for comprehensive pharmacogene coverage
+3. **Execute PharmCAT analysis** with PyPGx and OptiType providing outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes
 4. **Generate comprehensive reports** covering actionable results for 23 pharmacogenes and notable findings for approximately 64 additional pharmacogenes
-5. **Export data** to Electronic Health Records or Personal Health Records via the integrated HAPI FHIR service
+5. **Export data** to Electronic/Personal Health Record via the integrated HAPI FHIR service
 6. **Maintain privacy** through self-hosted deployment, ensuring no genomic data leaves the user's network
 
 ## Current Implementation Status
 
-- **VCF Processing**: Fully implemented
-- **BAM/CRAM → GATK Pipeline**: Scaffolded but not fully integrated in the application flow
-- **PyPGx Integration**: Service is integrated with main pipeline, optimization in progress
-- **PharmCAT with PyPGx Outside Calls**: Core PharmCAT service available, PyPGx integration for outside calls is in testing
+- **VCF Processing**: Fully implemented for hg38, needs more work to implement hg19 as well
+- **SAM/CRAM → GATK Pipeline**: Scaffolded but not fully integrated in the application flow
+- **OptiType Integration**: Scaffolded Nextflow hlatyping container which uses OptiType
+- **PyPGx Integration**: Service is integrated with main pipeline, optimization in progress to differentiate pipeline paths
+- **PharmCAT with Outside Calls**: Core PharmCAT service available, PyPGx and OptiType outside calls are in testing
 - **Comprehensive Reporting**: Basic PDF and interactive HTML generation is being developed
 - **FHIR Export**: HAPI FHIR server integrated, export / query response functionality in development
 
@@ -73,7 +74,7 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 - Docker and Docker Compose
 - Git
 - First run requires significant internet bandwidth to fetch images and reference genomes, if they are not already cached
-- Recommended Minimum: 8 GB RAM (≥16 GB recommended if using GATK), 30 GB disk (≫100 GB for WGS)
+- Recommended Minimum: 8 GB RAM (≥16 GB recommended if using GATK), 30 GB disk (≫500 GB for WGS)
 
 ## Quick Start
 
@@ -132,12 +133,12 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 ### Web UI
 
 1. Open `http://localhost:8765`
-2. Upload a VCF file
+2. Upload a VCF or BAM file
 3. Observe progress; on completion you'll see links to PDF and interactive HTML reports
 
 ### REST API
 
-**Upload a genomic file** (VCF; BAM/CRAM path is not fully wired end‑to‑end yet):
+**Upload a genomic file**
 ```bash
 curl -X POST \
   -F "file=@test_data/sample_cpic.vcf" \
@@ -220,7 +221,6 @@ ZaroPGx/
 - The app consistently generates its own reports (PDF + interactive HTML)
 - When available, original PharmCAT reports are copied with normalized names (`<file_id>_pgx_pharmcat.*`)
 
-
 ## FHIR Export (Optional)
 
 - HAPI FHIR server is bundled and exposed at `http://localhost:8090`
@@ -249,6 +249,7 @@ ZaroPGx/
 - **PharmCAT** (Pharmacogenomics Clinical Annotation Tool). See methods: Sangkuhl K, Whirl-Carrillo M, et al. Clinical Pharmacology & Therapeutics. 2020;107(1):203–210. Project: https://github.com/PharmGKB/PharmCAT
 - **GATK** (Genome Analysis Toolkit). Core papers: McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. Nature Genetics. 2011;43(5):491–498. Guidance: https://gatk.broadinstitute.org/
 - **PyPGx** for star‑allele calling. References: Lee S‑B, et al. PLOS ONE. 2022 (ClinPharmSeq); Lee S‑B, et al. Genetics in Medicine. 2018 (Stargazer); Lee S‑B, et al. Clinical Pharmacology & Therapeutics. 2019 (Stargazer, 28 genes). Docs: https://pypgx.readthedocs.io/en/latest/index.html
+- **OptiType (nf-core/hlatyping)** for HLA allele calling. (to add citation)
 
 ## License
 

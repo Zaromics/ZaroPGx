@@ -43,6 +43,7 @@ dependencies = [
   "aiohttp>=3.12.15,<4.0.0",
   # Bioinformatics
   "biopython>=1.85,<2.0.0",
+  "pysam>=0.22.0,<0.23.0",
   # Additional utilities
   "starlette",
   "sse-starlette",

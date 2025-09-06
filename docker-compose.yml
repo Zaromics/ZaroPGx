@@ -1,5 +1,5 @@
 services:
-  # PostgreSQL Database with CPIC data
+  # PostgreSQL Database
   db:
     image: postgres:17
     container_name: pgx_db
@@ -53,7 +53,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data
-      # Mount reference files where PharmCAT expects them (not in /pipeline subdirectory)
+      # Mount reference files where PharmCAT expects them
       - pharmcat-references:/pharmcat
     ports:
       - "5001:5000"  # Flask API port
@@ -86,7 +86,6 @@ services:
       - spring.datasource.username=cpic_user
       - spring.datasource.password=test123
       - spring.datasource.driverClassName=org.postgresql.Driver
-      # Use HAPI FHIR's PostgreSQL dialect for best compatibility
       - spring.jpa.properties.hibernate.dialect=ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
       - spring.jpa.hibernate.ddl-auto=update
       - spring.jpa.properties.hibernate.default_schema=fhir
@@ -114,7 +113,7 @@ services:
     networks:
       - pgx-network
 
-  # GATK API Service - provides HTTP endpoints for the app
+  # GATK API Service
   gatk-api:
     build:
       context: ./docker/gatk-api
@@ -148,7 +147,7 @@ services:
         limits:
           memory: 28G
 
-  # PyPGx Service for allele calling
+  # PyPGx Service
   pypgx:
     build:
       context: ./docker/pypgx
@@ -257,6 +256,29 @@ services:
     networks:
       - pgx-network
 
+  # Nextflow runner for orchestrating the ZaroPGx pharmacogenomic pipeline
+  nextflow:
+    build:
+      context: ./docker/nextflow
+      dockerfile: Dockerfile.nextflow
+    container_name: pgx_nextflow
+    restart: unless-stopped
+    environment:
+      - NXF_HOME=/opt/nextflow
+      - NXF_OPTS=-Xms1g -Xmx4g
+    volumes:
+      - ./:/workspace
+      - ./data:/data
+      - ./reference:/reference
+      - ./data/nextflow:/opt/nextflow
+      # Allow Nextflow to launch docker tasks when using -profile docker
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /workspace
+    ports:
+      - "5055:5055"
+    networks:
+      - pgx-network
+
   # Main FastAPI Application with Web UI and API
   app:
     build:
@@ -278,6 +300,8 @@ services:
       - GATK_API_URL=http://gatk-api:5000
       - PYPGX_API_URL=http://pypgx:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
+      - USE_NEXTFLOW=${USE_NEXTFLOW}
+      - NEXTFLOW_RUNNER_URL=${NEXTFLOW_RUNNER_URL}
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
       - KROKI_URL=http://kroki:8000
       - SOURCE_URL=${SOURCE_URL}

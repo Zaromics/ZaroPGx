@@ -51,6 +51,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
+USE_NEXTFLOW = _env_flag("USE_NEXTFLOW", False)
 
 # Log the configuration for debugging
 logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
@@ -66,6 +67,125 @@ async def process_file_background_with_db(file_path: str, patient_id: str, data_
         await process_file_background(file_path, patient_id, data_id, workflow, db, sample_identifier)
     finally:
         db.close()
+
+async def process_file_nextflow_background_with_db(file_path: str, patient_id: str, data_id: str, workflow: dict, sample_identifier: Optional[str] = None):
+    """
+    Wrapper to create DB session and run the Nextflow-backed pipeline.
+    """
+    from app.api.db import SessionLocal
+    db = SessionLocal()
+    try:
+        await process_file_nextflow_background(file_path, patient_id, data_id, workflow, db, sample_identifier)
+    finally:
+        db.close()
+
+async def process_file_nextflow_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None):
+    """
+    Execute the PGx pipeline via the Nextflow runner service and update job status.
+    """
+    job = None
+    try:
+        job_service = JobStatusService(db)
+        # Find existing job
+        existing_jobs = job_service.get_jobs_by_patient(patient_id, limit=10)
+        for j in existing_jobs:
+            if str(j.file_id) == str(data_id):
+                job = j
+                break
+        if not job:
+            job = job_service.create_job(
+                patient_id=patient_id,
+                file_id=data_id,
+                initial_stage=JobStage.UPLOAD,
+                metadata={"workflow": workflow, "file_path": file_path}
+            )
+
+        job_service.update_job_progress(
+            job.job_id,
+            JobStage.ANALYSIS.value,
+            10,
+            "Submitting job to Nextflow runner...",
+            {"workflow": workflow}
+        )
+
+        import aiohttp
+        nextflow_url = os.getenv("NEXTFLOW_RUNNER_URL", "http://nextflow:5055")
+        outdir = f"/data/reports/{patient_id}"
+        input_type = workflow.get("file_type") if isinstance(workflow, dict) else None
+        if not input_type:
+            input_type = "vcf"
+
+        payload = {
+            "input": file_path,
+            "input_type": input_type,
+            "patient_id": str(patient_id),
+            "report_id": str(data_id),
+            "reference": (workflow.get("requested_reference", "hg38") if isinstance(workflow, dict) else "hg38"),
+            "outdir": outdir,
+        }
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=7200)) as session:
+            try:
+                async with session.post(f"{nextflow_url}/run", data=payload) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        raise RuntimeError(f"Nextflow run failed ({resp.status}): {text[:500]}")
+                    try:
+                        result_json = await resp.json()
+                    except Exception:
+                        result_json = {"raw": text[-1000:]}
+            except Exception as e:
+                job_service.fail_job(job.job_id, f"Nextflow submission failed: {e}", JobStage.ANALYSIS.value)
+                return
+
+        job_service.update_job_progress(
+            job.job_id,
+            JobStage.PHARMCAT.value,
+            80,
+            "Collecting pipeline outputs...",
+            {"workflow": workflow}
+        )
+
+        # Collect outputs from patient directory
+        patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
+        patient_dir.mkdir(parents=True, exist_ok=True)
+        pharmcat_html_path = patient_dir / f"{patient_id}_pgx_pharmcat.html"
+        pharmcat_json_path = patient_dir / f"{patient_id}_pgx_pharmcat.json"
+        pharmcat_tsv_path = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
+
+        pharmcat_html_exists = pharmcat_html_path.exists()
+        pharmcat_json_exists = pharmcat_json_path.exists()
+        pharmcat_tsv_exists = pharmcat_tsv_path.exists()
+
+        # Build response metadata
+        response_data = {
+            "job_directory": str(patient_dir),
+        }
+        if pharmcat_html_exists and INCLUDE_PHARMCAT_HTML:
+            response_data["pharmcat_html_report_url"] = f"/reports/{patient_id}/{pharmcat_html_path.name}"
+        if pharmcat_json_exists and INCLUDE_PHARMCAT_JSON:
+            response_data["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json_path.name}"
+        if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
+            response_data["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv_path.name}"
+
+        # We keep unified report generation via app if desired later; for now, mark completed
+        job_service.update_job_progress(
+            job.job_id,
+            JobStage.REPORT.value,
+            95,
+            "Pipeline finished.",
+            {"workflow": workflow, "reports": response_data}
+        )
+
+        completion_message = "Analysis completed successfully"
+        job_service.complete_job(job.job_id, success=True, final_message=completion_message, metadata={"workflow": workflow, "reports": response_data})
+
+    except Exception as e:
+        try:
+            if job and hasattr(job, 'job_id'):
+                JobStatusService(db).fail_job(job.job_id, f"Error: {e}")
+        except Exception:
+            pass
 
 async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None):
     """
@@ -913,6 +1033,24 @@ async def upload_genomic_data(
         if result["status"] == "error":
             raise HTTPException(status_code=400, detail=result["error"])
 
+        # Enforce allowed genomic file types only (plus .txt for future 23andMe)
+        allowed_types = {
+            FileType.VCF,
+            FileType.BAM,
+            FileType.CRAM,
+            FileType.SAM,
+            FileType.FASTQ,
+            FileType.TWENTYTHREE_AND_ME,
+        }
+        detected_type = result["file_analysis"].file_type
+        if detected_type not in allowed_types:
+            # Clean error to user with allowed list
+            allowed_list = ", ".join(sorted([t.value for t in allowed_types]))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {detected_type.value if hasattr(detected_type, 'value') else str(detected_type)}. Allowed types: {allowed_list}"
+            )
+
         # Register genetic data in database - primary file
         data_id = register_genetic_data(
             db, 
@@ -962,15 +1100,25 @@ async def upload_genomic_data(
             metadata={"workflow": result["workflow"], "file_path": primary_file_path}
         )
         
-        # Schedule background processing with database session
-        background_tasks.add_task(
-            process_file_background_with_db,
-            primary_file_path,
-            str(patient_id),
-            str(data_id),
-            result["workflow"],
-            str(sample_identifier).strip() if (sample_identifier and sample_identifier.strip()) else None
-        )
+        # Schedule background processing: Nextflow or built-in pipeline
+        if USE_NEXTFLOW:
+            background_tasks.add_task(
+                process_file_nextflow_background_with_db,
+                primary_file_path,
+                str(patient_id),
+                str(data_id),
+                result["workflow"],
+                str(sample_identifier).strip() if (sample_identifier and sample_identifier.strip()) else None
+            )
+        else:
+            background_tasks.add_task(
+                process_file_background_with_db,
+                primary_file_path,
+                str(patient_id),
+                str(data_id),
+                result["workflow"],
+                str(sample_identifier).strip() if (sample_identifier and sample_identifier.strip()) else None
+            )
         
         # Convert dataclass to Pydantic model
         file_analysis = result["file_analysis"]

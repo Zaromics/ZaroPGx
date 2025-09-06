@@ -101,7 +101,7 @@ COPY optitype_wrapper.py /app/
 
 # Define default command
 ENTRYPOINT ["OptiTypePipeline.py"]
-CMD ["-h"]
+# CMD ["-h"]
 
 # Install FastAPI/uvicorn in base (Python 3) env for the wrapper
 RUN pip3 install --no-cache-dir fastapi uvicorn python-multipart
