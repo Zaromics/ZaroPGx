@@ -6,6 +6,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker,
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 import uuid
+import json
 
 # Load environment variables
 load_dotenv()
@@ -340,3 +341,25 @@ def register_report(db, patient_id, report_type, report_path):
     report_id = result.scalar()
     db.commit()
     return report_id 
+
+
+# Store parsed header JSON into public.genomic_file_headers
+def save_genomic_header(db, file_path: str, file_format: str, header_info: dict):
+    """Persist normalized header JSON to genomic_file_headers and return UUID id."""
+    result = db.execute(
+        text(
+            """
+            INSERT INTO genomic_file_headers (file_path, file_format, header_info)
+            VALUES (:file_path, :file_format, CAST(:header_info AS JSONB))
+            RETURNING id
+            """
+        ),
+        {
+            "file_path": file_path,
+            "file_format": file_format.upper(),
+            "header_info": json.dumps(header_info, ensure_ascii=False),
+        },
+    )
+    header_id = result.scalar()
+    db.commit()
+    return str(header_id) if header_id else None

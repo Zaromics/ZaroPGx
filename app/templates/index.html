@@ -130,6 +130,66 @@
             font-size: 1.2rem;
             margin-bottom: 0.25rem;
         }
+
+        /* Header display area styling */
+        #headerDisplay {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.125);
+        }
+
+        #headerContent {
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            hyphens: auto;
+        }
+
+        #headerContent .table {
+            margin-bottom: 0;
+            font-size: 0.875rem;
+        }
+
+        #headerContent .table td {
+            word-break: break-all;
+            max-width: 200px;
+        }
+
+        #headerContent .alert {
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        #headerContent .alert ul {
+            margin-bottom: 0;
+            padding-left: 1.5rem;
+        }
+
+        #headerContent .alert li {
+            word-break: break-word;
+            margin-bottom: 0.25rem;
+        }
+
+
+        /* Dark mode support for inner cards */
+        [data-bs-theme='dark'] #headerContent .card.bg-light {
+            background-color: #374151 !important;
+            border-color: rgba(255, 255, 255, 0.125);
+        }
+
+        [data-bs-theme='dark'] #headerContent .text-muted {
+            color: #9ca3af !important;
+        }
+
+        /* Responsive design for header display */
+        @media (max-width: 768px) {
+            #headerContent .table td {
+                max-width: 120px;
+                font-size: 0.8rem;
+            }
+
+            #headerContent .row > div {
+                margin-bottom: 1rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -286,15 +346,38 @@
                             
                             <div class="d-flex gap-2">
                                 <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
-                                
+
+                                <!-- View Header button -->
+                                <button type="button" class="btn btn-info" id="viewHeaderButton" onclick="viewHeader()">
+                                    <i class="bi bi-eye"></i> View Header
+                                </button>
+
                                 <!-- Demo button for PharmCAT example -->
-                                <button type="button" class="btn btn-secondary" id="demoButton" onclick="runPharmCatDemo()">
-                                    <i class="bi bi-play-fill"></i> Run Demo with PharmCAT VCF
+                                <button type="button" class="btn btn-secondary" id="demoButton" onclick="runPharmCatDemo()" title="Run Demo with PharmCAT VCF">
+                                    <i class="bi bi-play-fill"></i> Run Demo
                                 </button>
                             </div>
                         </form>
                     </div>
                 </div>
+
+                    <!-- Header Display Area -->
+                    <div id="headerDisplay" class="card mt-4 d-none">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">
+                                <i class="bi bi-file-earmark-text me-2"></i>
+                                File Header Information
+                            </h5>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="viewHeader()" title="Hide header information">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="headerContent" class="container-fluid">
+                                <!-- Header content will be displayed here -->
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- Analysis Results Container -->
                     <div id="analysisResults" class="card mt-4 d-none">
@@ -1153,6 +1236,276 @@
                 const demoButton = document.getElementById('demoButton');
                 if (uploadButton) uploadButton.disabled = false;
                 if (demoButton) demoButton.disabled = false;
+            }
+        }
+
+
+        // Function to view/hide file header information
+        async function viewHeader() {
+            const fileInput = document.getElementById('genomicFile');
+            const headerDisplay = document.getElementById('headerDisplay');
+            const headerContent = document.getElementById('headerContent');
+            const viewHeaderButton = document.getElementById('viewHeaderButton');
+
+            // Check if header is currently visible and has content
+            const isVisible = !headerDisplay.classList.contains('d-none');
+            const hasContent = headerContent.innerHTML.trim() !== '<!-- Header content will be displayed here -->';
+
+            // If visible and has content, hide it (toggle off)
+            if (isVisible && hasContent) {
+                headerDisplay.classList.add('d-none');
+                viewHeaderButton.innerHTML = '<i class="bi bi-eye"></i> View Header';
+                return;
+            }
+
+            // Otherwise, show header (either first time or was hidden)
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('Please select a genomic file first.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+
+            // Show loading state
+            viewHeaderButton.disabled = true;
+            viewHeaderButton.innerHTML = '<i class="bi bi-hourglass-split"></i> Inspecting...';
+            headerContent.innerHTML = '<div class="text-center"><div class="spinner-border text-info" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2">Analyzing file header...</p></div>';
+            headerDisplay.classList.remove('d-none');
+
+            try {
+                // Create FormData with the selected file
+                const formData = new FormData();
+                formData.append('file', file);
+
+                // Make the request to the header inspection endpoint
+                const response = await fetch('/upload/inspect-header', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    // Map new schema to expected format
+                    const rawData = result.header_info;
+                    const compat = result.compat || {};
+                    const headerInfo = {
+                        filename: result.original_filename || (rawData.file_info ? rawData.file_info.path.split('/').pop() : 'Unknown'),
+                        file_type: rawData.file_info ? rawData.file_info.format : 'Unknown',
+                        file_size: rawData.file_info ? rawData.file_info.size : undefined,
+                        is_compressed: rawData.file_info ? rawData.file_info.compressed : undefined,
+                        has_index: rawData.file_info ? rawData.file_info.has_index : undefined,
+                        // Use workflow recommendations from backend
+                        workflow: compat.workflow || {
+                            recommendations: [],
+                            warnings: [],
+                            unsupported: false,
+                            unsupported_reason: null
+                        },
+                        // Extract VCF info from metadata and sequences
+                        vcf_info: rawData.metadata ? {
+                            reference_genome: rawData.metadata.reference_genome || 'Unknown',
+                            reference_genome_file: rawData.metadata.reference_genome_path || null,
+                            sequencing_platform: rawData.metadata.created_by || 'Unknown',
+                            sequencing_profile: (function() {
+                                const seqCount = rawData.sequences ? rawData.sequences.length : 0;
+                                if (seqCount > 50) return 'whole_genome_sequencing';
+                                if (seqCount > 10) return 'whole_exome_sequencing';
+                                if (seqCount > 0) return 'targeted_sequencing';
+                                return 'unknown';
+                            })(),
+                            has_index: rawData.file_info ? rawData.file_info.has_index : false,
+                            is_bgzipped: rawData.file_info ? rawData.file_info.compressed : false,
+                            contigs: rawData.sequences ? rawData.sequences.map(seq => seq.name) : [],
+                            sample_count: (function() {
+                                if (Array.isArray(rawData.samples)) return rawData.samples.length;
+                                if (rawData.sample) return 1;
+                                return 0;
+                            })(),
+                            variant_count: null, // Not available in new schema
+                            sample_id: (function() {
+                                if (Array.isArray(rawData.samples) && rawData.samples.length > 0) {
+                                    return rawData.samples[0];
+                                }
+                                return rawData.sample || null;
+                            })(),
+                            version: rawData.metadata.version || null
+                        } : null
+                    };
+
+                    // Build the header display HTML with flattened vertical layout
+                    let html = `
+                        <!-- File Information Section -->
+                        <div class="mb-4">
+                            <h6 class="card-title d-flex align-items-center mb-3">
+                                <i class="bi bi-file-earmark-text me-2 text-primary"></i>
+                                File Information
+                            </h6>
+                            <div class="row g-2">
+                                <div class="col-sm-4"><strong class="text-muted">Filename:</strong></div>
+                                <div class="col-sm-8"><span class="badge bg-secondary">${headerInfo.filename || 'Unknown'}</span></div>
+
+                                <div class="col-sm-4"><strong class="text-muted">File Type:</strong></div>
+                                <div class="col-sm-8"><span class="badge bg-info">${headerInfo.file_type ? headerInfo.file_type.toUpperCase() : 'UNKNOWN'}</span></div>
+
+                                <div class="col-sm-4"><strong class="text-muted">File Size:</strong></div>
+                                <div class="col-sm-8">${headerInfo.file_size ? (headerInfo.file_size / 1024 / 1024).toFixed(2) + ' MB' : 'Unknown'}</div>
+
+                                <div class="col-sm-4"><strong class="text-muted">Compressed:</strong></div>
+                                <div class="col-sm-8">
+                                    <span class="badge ${headerInfo.is_compressed !== undefined ? (headerInfo.is_compressed ? 'bg-success' : 'bg-warning') : 'bg-secondary'}">
+                                        ${headerInfo.is_compressed !== undefined ? (headerInfo.is_compressed ? 'Yes' : 'No') : 'Unknown'}
+                                    </span>
+                                </div>
+
+                                <div class="col-sm-4"><strong class="text-muted">Has Index:</strong></div>
+                                <div class="col-sm-8">
+                                    <span class="badge ${headerInfo.has_index !== undefined ? (headerInfo.has_index ? 'bg-success' : 'bg-danger') : 'bg-secondary'}">
+                                        ${headerInfo.has_index !== undefined ? (headerInfo.has_index ? 'Yes' : 'No') : 'Unknown'}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- VCF Header Details Section (will be populated if VCF) -->
+                        <div id="vcfDetailsSection" class="mb-4" style="display: none;"></div>
+
+                        <!-- Analysis Recommendations Section -->
+                        <div class="mb-3">
+                            <h6 class="card-title d-flex align-items-center mb-3">
+                                <i class="bi bi-gear me-2 text-primary"></i>
+                                Analysis Recommendations
+                            </h6>
+                            <div class="mb-3">
+                    `;
+
+                    // Add workflow recommendations (with safety checks)
+                    if (headerInfo.workflow && headerInfo.workflow.recommendations && headerInfo.workflow.recommendations.length > 0) {
+                        html += '<div class="alert alert-info"><ul class="mb-0 mt-0">';
+                        headerInfo.workflow.recommendations.forEach(rec => {
+                            html += `<li>${rec}</li>`;
+                        });
+                        html += '</ul></div>';
+                    }
+
+                    if (headerInfo.workflow && headerInfo.workflow.warnings && headerInfo.workflow.warnings.length > 0) {
+                        html += '<div class="alert alert-warning"><strong>Warnings:</strong><ul class="mb-0 mt-2">';
+                        headerInfo.workflow.warnings.forEach(warn => {
+                            html += `<li>${warn}</li>`;
+                        });
+                        html += '</ul></div>';
+                    }
+
+                    if (headerInfo.workflow && headerInfo.workflow.unsupported) {
+                        html += `<div class="alert alert-danger"><strong>Unsupported:</strong> ${headerInfo.workflow.unsupported_reason || 'Unknown reason'}</div>`;
+                    }
+
+                    html += `
+                            </div>
+                        </div>
+                    `;
+
+                    // Add VCF-specific information if available (to dedicated section)
+                    let vcfDetailsHtml = '';
+                    if (headerInfo.vcf_info && typeof headerInfo.vcf_info === 'object') {
+                        const vcf = headerInfo.vcf_info;
+
+                        vcfDetailsHtml = `
+                                        <hr class="my-3">
+                                        <h6 class="d-flex align-items-center mb-3">
+                                            <i class="bi bi-dna me-2 text-primary"></i>
+                                            VCF Header Details
+                                        </h6>
+                                        <div class="row g-2">
+                                            <div class="col-12">
+                                                <div class="row g-2 mb-2">
+                                                    <div class="col-sm-3"><strong class="text-muted small">Reference Genome:</strong></div>
+                                                    <div class="col-sm-9"><span class="badge bg-primary">${vcf.reference_genome || 'Unknown'}</span></div>
+                                                </div>
+                                                <div class="row g-2 mb-3">
+                                                    <div class="col-12"><strong class="text-muted small">Reference Genome File:</strong></div>
+                                                    <div class="col-12"><small class="text-muted">${vcf.reference_genome_file || 'Not specified'}</small></div>
+                                                </div>
+                                                <div class="row g-2">
+                                                    <div class="col-sm-3"><strong class="text-muted small">Sequencing Platform:</strong></div>
+                                                    <div class="col-sm-2"><span class="badge bg-secondary">${vcf.sequencing_platform || 'Unknown'}</span></div>
+
+                                                    <div class="col-sm-2"><strong class="text-muted small">Sample Count:</strong></div>
+                                                    <div class="col-sm-2"><span class="badge bg-success">${vcf.sample_count !== undefined ? vcf.sample_count : 'Unknown'}</span></div>
+
+                                                    <div class="col-sm-2"><strong class="text-muted small">Sequencing Profile:</strong></div>
+                                                    <div class="col-sm-1"><span class="badge bg-info">${vcf.sequencing_profile ? vcf.sequencing_profile.replace('_', ' ').toUpperCase() : 'UNKNOWN'}</span></div>
+                                                </div>
+                                                <div class="row g-2 mt-2">
+                                                    <div class="col-sm-3"><strong class="text-muted small">Variant Count:</strong></div>
+                                                    <div class="col-sm-2">${vcf.variant_count !== undefined ? vcf.variant_count : 'Not counted'}</div>
+
+                                                    <div class="col-sm-2"><strong class="text-muted small">Sample ID:</strong></div>
+                                                    <div class="col-sm-5"><small class="text-muted">${vcf.sample_id || 'Not specified'}</small></div>
+                                                </div>
+                                                <div class="row g-2 mt-1">
+                                                    <div class="col-sm-3"><strong class="text-muted small">Version:</strong></div>
+                                                    <div class="col-sm-2"><span class="badge bg-info">${vcf.version || 'Unknown'}</span></div>
+
+                                                    <div class="col-sm-2"><strong class="text-muted small">Total Contigs:</strong></div>
+                                                    <div class="col-sm-5"><span class="badge bg-warning">${vcf.contigs ? vcf.contigs.length : 'Unknown'}</span></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                        `;
+
+                        if (vcf.contigs && vcf.contigs.length > 0) {
+                            // Get sequence information from raw data if available
+                            const sequences = rawData.sequences || [];
+                            const contigDisplay = sequences.slice(0, 5).map(seq =>
+                                `${seq.name} (${seq.length ? (seq.length / 1000000).toFixed(1) + 'Mb' : 'length unknown'})`
+                            ).join(', ');
+
+                            vcfDetailsHtml += `
+                                        <div class="mt-3">
+                                            <strong class="text-muted small">Sequence Details:</strong>
+                                            <div class="mt-2">
+                                                <small class="text-muted">
+                                                    ${contigDisplay}${sequences.length > 5 ? `<br>... and ${sequences.length - 5} more sequences` : ''}
+                                                </small>
+                                            </div>
+                                        </div>
+                            `;
+                        }
+                    }
+
+                    // Close the main content
+                    html += ``;
+
+                    headerContent.innerHTML = html;
+
+                    // Add VCF details to the dedicated section
+                    const vcfSection = document.getElementById('vcfDetailsSection');
+                    if (vcfSection && vcfDetailsHtml) {
+                        vcfSection.innerHTML = vcfDetailsHtml;
+                        vcfSection.style.display = 'block';
+                    }
+
+                } else {
+                    throw new Error(result.message || 'Failed to inspect header');
+                }
+
+            } catch (error) {
+                console.error('Error inspecting header:', error);
+                headerContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h6><i class="bi bi-exclamation-triangle me-2"></i>Error Inspecting Header</h6>
+                        <p class="mb-0">${error.message}</p>
+                    </div>
+                `;
+            } finally {
+                // Reset button state
+                viewHeaderButton.disabled = false;
+                viewHeaderButton.innerHTML = '<i class="bi bi-eye"></i> View Header';
             }
         }
     </script>

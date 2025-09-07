@@ -28,6 +28,7 @@ class FileType(Enum):
     FASTQ = "fastq"
     FASTA = "fasta"
     TWENTYTHREE_AND_ME = "23andme"
+    BED = "bed"
     UNKNOWN = "unknown"
 
 class SequencingProfile(Enum):
@@ -45,6 +46,7 @@ class VCFHeaderInfo:
     is_bgzipped: bool
     contigs: List[str]
     sample_count: int
+    reference_genome_file: Optional[str] = None
     variant_count: Optional[int] = None
 
 @dataclass
@@ -87,24 +89,42 @@ class FileProcessor:
             file_type = self._detect_file_type(file_path)
             logger.info(f"Detected file type: {file_type.value}")
             
-            # If it's a VCF, analyze the header
+            # If it's a VCF or alignment, use the independent header inspector
             vcf_info = None
-            if file_type == FileType.VCF:
-                logger.info("Analyzing VCF header...")
-                vcf_info = await self._analyze_vcf_header(file_path)
-                logger.info(f"VCF info - Reference genome: {vcf_info.reference_genome}, "
-                          f"Sequencing profile: {vcf_info.sequencing_profile.value}, "
-                          f"Sample count: {vcf_info.sample_count}")
-                
-                # Make sure the bgzipped status is correctly reflected
-                vcf_info.is_bgzipped = is_compressed or vcf_info.is_bgzipped or str(file_path).endswith('.gz')
-            elif file_type in [FileType.BAM, FileType.CRAM, FileType.SAM]:
-                # Optionally inspect alignment headers for additional context
-                try:
-                    self._analyze_alignment_header_with_pysam(file_path)
-                except Exception:
-                    # Non-fatal; continue
-                    pass
+            try:
+                from app.api.utils.header_inspector import inspect_header
+                normalized = inspect_header(str(file_path))
+                # Map normalized structure to VCFHeaderInfo when applicable
+                if file_type == FileType.VCF and isinstance(normalized, dict):
+                    # Reference genome inference
+                    reference_genome = (normalized.get('metadata') or {}).get('reference_genome') or "unknown"
+                    # Sequencing profile inference based on contigs count
+                    contigs_list = [c.get('name') for c in (normalized.get('sequences') or []) if isinstance(c, dict) and c.get('name')]
+                    seq_profile = SequencingProfile.UNKNOWN
+                    if len(contigs_list) > 20:
+                        seq_profile = SequencingProfile.WGS
+                    elif len(contigs_list) > 0:
+                        seq_profile = SequencingProfile.WES
+                    samples = normalized.get('samples') or []
+                    vcf_info = VCFHeaderInfo(
+                        reference_genome=reference_genome,
+                        sequencing_platform=(normalized.get('metadata') or {}).get('created_by') or 'unknown',
+                        sequencing_profile=seq_profile,
+                        has_index=has_index,
+                        is_bgzipped=is_compressed or str(file_path).endswith('.gz'),
+                        contigs=contigs_list,
+                        sample_count=len(samples),
+                        variant_count=None,
+                    )
+            except Exception as e:
+                logger.warning(f"Independent header inspector failed, falling back for type {file_type}: {e}")
+                # Fall back to prior behavior for VCF only
+                if file_type == FileType.VCF:
+                    try:
+                        vcf_info = await self._analyze_vcf_header(file_path)
+                        vcf_info.is_bgzipped = is_compressed or vcf_info.is_bgzipped or str(file_path).endswith('.gz')
+                    except Exception:
+                        pass
 
             # Create the file analysis object with all the gathered information
             analysis = FileAnalysis(
@@ -317,119 +337,7 @@ class FileProcessor:
         logger.warning(f"Could not determine file type for {file_path}")
         return FileType.UNKNOWN
 
-    async def _analyze_vcf_header(self, file_path: Path) -> VCFHeaderInfo:
-        """Analyze VCF header to extract important information"""
-        try:
-            header_lines: List[str] = []
-
-            # Prefer pysam (VariantFile) if available; it can parse headers without shelling out
-            if _HAS_PYSAM:
-                try:
-                    vf = pysam.VariantFile(str(file_path))  # works for .vcf and .vcf.gz
-                    header_text = str(vf.header)
-                    header_lines = header_text.split('\n')
-                except Exception as e:
-                    logger.warning(f"pysam.VariantFile failed to read header, falling back to bcftools: {e}")
-
-            # Fallback to bcftools if we don't have pysam or it failed
-            if not header_lines:
-                cmd = ['bcftools', 'view', '-h', str(file_path)]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                header_lines = result.stdout.split('\n')
-            
-            logger.info(f"Analyzing VCF header for {file_path}")
-            logger.info(f"Header contains {len(header_lines)} lines")
-
-            # Initialize default values
-            reference_genome = "unknown"
-            sequencing_platform = "unknown"
-            sequencing_profile = SequencingProfile.UNKNOWN
-            contigs = []
-            sample_count = 0
-            
-            # Track possible reference genome hints 
-            ref_hints = []
-
-            # Parse header lines
-            for line in header_lines:
-                # Look for explicit reference field
-                if line.startswith('##reference='):
-                    reference_path = line.split('=')[1].strip('"').strip("'")
-                    reference_genome = reference_path
-                    logger.info(f"Found reference in header: {reference_genome}")
-                    ref_hints.append(reference_path)
-                
-                # Extract reference from contig lines
-                elif line.startswith('##contig='):
-                    contig_match = re.search(r'ID=([^,]+)', line)
-                    if contig_match:
-                        contigs.append(contig_match.group(1))
-                    
-                    # Check for reference hints in contig lines
-                    for ref_pattern in ["hg38", "GRCh38", "grch38", "hg19", "GRCh37", "grch37"]:
-                        if ref_pattern.lower() in line.lower():
-                            ref_hints.append(ref_pattern)
-                
-                # Look for platform information
-                elif line.startswith('##platform='):
-                    sequencing_platform = line.split('=')[1].strip('"')
-                
-                # Count samples from header line
-                elif line.startswith('#CHROM'):
-                    sample_count = len(line.split('\t')) - 9  # VCF standard has 9 fixed columns
-                
-                # Look for other reference hints
-                elif "hg38" in line.lower() or "grch38" in line.lower():
-                    ref_hints.append("hg38")
-                elif "hg19" in line.lower() or "grch37" in line.lower():
-                    ref_hints.append("hg19")
-
-            # Try to detect reference genome if not explicitly stated
-            if reference_genome == "unknown" and ref_hints:
-                logger.info(f"Reference hints found: {ref_hints}")
-                
-                # Prioritize hg38/GRCh38 references
-                for hint in ref_hints:
-                    hint_lower = hint.lower()
-                    if "hg38" in hint_lower or "grch38" in hint_lower:
-                        reference_genome = "hg38"
-                        logger.info(f"Detected reference genome as hg38/GRCh38 from hints")
-                        break
-                    elif "hg19" in hint_lower or "grch37" in hint_lower:
-                        reference_genome = "hg19"
-                        logger.info(f"Detected reference genome as hg19/GRCh37 from hints")
-                        break
-            
-            # Final reference genome detection
-            if reference_genome == "unknown":
-                logger.warning(f"Could not determine reference genome for {file_path}")
-            else:
-                logger.info(f"Reference genome determined as: {reference_genome}")
-
-            # Determine sequencing profile based on contigs
-            if len(contigs) > 20:  # WGS typically has all chromosomes
-                sequencing_profile = SequencingProfile.WGS
-                logger.info(f"Detected as whole genome sequencing (WGS) based on {len(contigs)} contigs")
-            elif len(contigs) > 0 and any('chr' in c.lower() for c in contigs):
-                sequencing_profile = SequencingProfile.WES
-                logger.info(f"Detected as whole exome sequencing (WES) based on contig patterns")
-            else:
-                sequencing_profile = SequencingProfile.TARGETED
-                logger.info(f"Detected as targeted sequencing based on limited contigs")
-
-            return VCFHeaderInfo(
-                reference_genome=reference_genome,
-                sequencing_platform=sequencing_platform,
-                sequencing_profile=sequencing_profile,
-                has_index=self._has_index_file(file_path),
-                is_bgzipped=str(file_path).endswith('.gz'),
-                contigs=contigs,
-                sample_count=sample_count
-            )
-
-        except Exception as e:
-            logger.error(f"Error analyzing VCF header: {str(e)}")
-            raise
+    # Removed: VCF header analysis is handled by header_inspector.inspect_header
 
     def _analyze_alignment_header_with_pysam(self, file_path: Path) -> Optional[Dict[str, any]]:
         """
@@ -461,24 +369,88 @@ class FileProcessor:
             logger.debug(f"pysam.AlignmentFile failed to read header for {file_path}: {e}")
             return None
 
+    def _extract_genome_name_from_path(self, reference_path: str) -> str:
+        """
+        Extract genome name from a reference genome file path.
+
+        Examples:
+        - /path/to/hg38.fa -> GRCh38
+        - /path/to/GRCh38.p13.fa -> GRCh38
+        - /path/to/hg19.fasta.gz -> GRCh37
+        """
+        if not reference_path or reference_path == "unknown":
+            return "unknown"
+
+        try:
+            # Split path and get filename
+            path_parts = reference_path.split('/')
+            filename = path_parts[-1] if path_parts else reference_path
+
+            # Remove file extensions using regex
+            base_name = re.sub(r'\.(fa|fasta|fna|gz)$', '', filename, flags=re.IGNORECASE)
+
+            # Look for embedded genome patterns (most common case)
+            grch38_patterns = [r'GRCh38', r'grch38', r'hg38', r'HG38']
+            grch37_patterns = [r'GRCh37', r'grch37', r'hg19', r'HG19']
+
+            for pattern in grch38_patterns:
+                if re.search(pattern, base_name, re.IGNORECASE):
+                    return 'GRCh38'
+
+            for pattern in grch37_patterns:
+                if re.search(pattern, base_name, re.IGNORECASE):
+                    return 'GRCh37'
+
+            # Handle exact matches
+            if base_name.lower() == 'hg38':
+                return 'GRCh38'
+            elif base_name.lower() == 'hg19':
+                return 'GRCh37'
+
+            # Handle prefix matches
+            if base_name.lower().startswith('grch38'):
+                return 'GRCh38'
+            elif base_name.lower().startswith('grch37'):
+                return 'GRCh37'
+
+            # If it starts with GRCh, it's likely already properly formatted
+            if base_name.startswith('GRCh'):
+                return base_name
+
+            # Try to extract GRCh pattern from anywhere in the name
+            grch_match = re.search(r'(GRCh\d+)', base_name)
+            if grch_match:
+                return grch_match.group(1)
+
+            # Last resort: return a cleaned version
+            logger.warning(f"Could not extract genome name from {base_name}, returning as-is")
+            return base_name
+
+        except Exception as e:
+            logger.debug(f"Error extracting genome name from path {reference_path}: {e}")
+            return "unknown"
+
     def determine_workflow(self, analysis: FileAnalysis) -> Dict:
         """
         Determine the appropriate workflow based on file analysis.
-        
-        This method implements the following logic flow:
-        - Only hg38 reference genome is fully supported
-        - VCF files can go directly to PharmCAT, but users are advised to upload original files if available
-        - BAM/CRAM/SAM files go through the GATK pipeline
-        - FASTQ files need alignment (not yet implemented)
-        - 23andMe files need conversion to VCF (not yet implemented)
-        
+
+        This method implements the detailed workflow logic from workflow_logic.md:
+        - FASTQ files: alignment with specific tools based on read type and hardware
+        - CRAM files: conversion to BAM with specific tools and considerations
+        - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
+        - VCF files: direct PyPGx + PharmCAT with outside calls
+        - SAM files: conversion to BAM using GATK or samtools
+
         Returns a dictionary with workflow configuration and recommendations.
         """
         workflow = {
             "needs_gatk": False,
+            "needs_indexing": False,
             "needs_alignment": False,
+            "needs_hla": False,
             "needs_pypgx": False,
             "needs_conversion": False,
+            "needs_pypgx_bam2vcf": False,
             "is_provisional": False,
             "go_directly_to_pharmcat": False,
             "recommendations": [],
@@ -486,119 +458,255 @@ class FileProcessor:
             "unsupported": False,
             "unsupported_reason": None
         }
-        
-        # Check reference genome for VCF files
-        if analysis.file_type == FileType.VCF and analysis.vcf_info:
-            vcf_info = analysis.vcf_info
-            reference = vcf_info.reference_genome.lower()
-            
-            # Normalize reference genome string for comparison
-            is_hg38 = any(ref_id in reference for ref_id in ["hg38", "grch38", "38"])
-            if is_hg38:
-                logger.info(f"Detected compatible hg38/GRCh38 reference genome: {reference}")
-            
-            # Check if we have a non-hg38 reference
-            if reference != "unknown" and not is_hg38:
-                workflow["warnings"].append(
-                    f"File uses {vcf_info.reference_genome} reference genome. Currently, only hg38/GRCh38 is fully supported."
-                )
-                # Don't mark as unsupported yet, but flag it
-                workflow["is_provisional"] = True
-                logger.warning(f"Non-hg38 reference detected: {reference}")
-            
-            # VCF files can go directly to PharmCAT, but recommend original files if available
-            workflow["go_directly_to_pharmcat"] = True
-            workflow["recommendations"].append(
-                "Your VCF file can be processed directly, but if you have the original sequencing file "
-                "(BAM/CRAM), uploading that instead would provide more accurate variant calling with our "
-                "latest GATK pipeline."
-            )
-            
-            # For WGS data, use PyPGx for star alleles
-            if vcf_info.sequencing_profile == SequencingProfile.WGS:
-                workflow["needs_pypgx"] = True
-                workflow["recommendations"].append(
-                    "Using PyPGx for enhanced analysis thanks to whole genome sequencing data"
-                )
-            else:
-                workflow["warnings"].append(
-                    "Limited analysis may be available due to non-whole genome sequencing data for genes such as CYP2D6"
-                )
 
-            # Create index if needed
-            if not vcf_info.has_index:
-                workflow["recommendations"].append(
-                    "Creating index for VCF file for faster processing"
-                )
-        
-        # BAM uses PyPGx create-input-vcf (recommended by PyPGx docs). CRAM/SAM stay on GATK.
-        elif analysis.file_type in [FileType.BAM, FileType.CRAM, FileType.SAM]:
-            workflow["needs_pypgx"] = True  # We still run PyPGx later for star alleles
-
-            if analysis.file_type == FileType.BAM:
-                # Use PyPGx to create input VCF from BAM
-                workflow["needs_gatk"] = False
-                workflow["needs_pypgx_bam2vcf"] = True
-                workflow["recommendations"].append(
-                    "BAM file will be converted to VCF using PyPGx create-input-vcf (recommended)."
-                )
-            elif analysis.file_type == FileType.CRAM:
-                # Keep CRAM on GATK path
-                workflow["needs_gatk"] = True
-                workflow["needs_pypgx_bam2vcf"] = False
-                workflow["recommendations"].append(
-                    "CRAM file will be processed through GATK for variant calling."
-                )
-            elif analysis.file_type == FileType.SAM:
-                # Keep SAM on GATK path
-                workflow["needs_gatk"] = True
-                workflow["needs_pypgx_bam2vcf"] = False
-                workflow["recommendations"].append(
-                    "SAM file will be processed through GATK for variant calling."
-                )
-                
-            # Check if index exists, if not we'll need to create one
-            if not analysis.has_index:
-                workflow["recommendations"].append(
-                    f"Creating index for {analysis.file_type.value.upper()} file for faster processing"
-                )
-        
-        # FASTQ files need alignment first
-        elif analysis.file_type == FileType.FASTQ:
+        # FASTQ -> hg38 reference to be indexed and aligned
+        if analysis.file_type == FileType.FASTQ:
             workflow["needs_alignment"] = True
             workflow["needs_gatk"] = True
+            workflow["needs_hla"] = True
             workflow["needs_pypgx"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
                 "FASTQ files require alignment to a reference genome before variant calling. "
                 "This functionality is not yet implemented."
             )
+
+            # Detailed FASTQ alignment recommendations based on read type and hardware
             workflow["recommendations"].append(
-                "Consider aligning your FASTQ data to hg38 reference genome using an aligner like BWA-MEM "
-                "and uploading the resulting BAM file."
+                "FASTQ files need alignment to hg38 reference genome. Based on read type:"
             )
-        
+            workflow["recommendations"].append(
+                "• Step 1: HLA typing using OptiType (preserves FASTQ format)"
+            )
+            workflow["recommendations"].append(
+                "• Step 2: Alignment to hg38 reference genome:"
+            )
+            workflow["recommendations"].append(
+                "  - Long-read: Use minimap2 for alignment"
+            )
+            workflow["recommendations"].append(
+                "  - Short-read: Use bwa-mem2 (if ≥64GB RAM available) or BWA (Burrows-Wheeler Aligner)"
+            )
+            workflow["recommendations"].append(
+                "• Step 3: Convert aligned BAM to VCF using PyPGx create-input-vcf"
+            )
+            workflow["recommendations"].append(
+                "• Step 4: PyPGx star allele calling and PharmCAT analysis"
+            )
+            workflow["recommendations"].append(
+                "Consider using nf-core pipelines for comprehensive FASTQ processing."
+            )
+
+        # CRAM -> to be converted to BAM (lossy)
+        elif analysis.file_type == FileType.CRAM:
+            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
+            workflow["needs_gatk"] = True
+            workflow["needs_pypgx"] = True
+            workflow["recommendations"].append(
+                "CRAM files will be converted to BAM using samtools:"
+            )
+            workflow["recommendations"].append(
+                "• Command: samtools view -b -T <refgenome.fa> -o <output_file.bam> <input_file.cram>"
+            )
+            workflow["recommendations"].append(
+                "• Note: CRAM files are smaller but require original reference FASTA for conversion"
+            )
+            workflow["recommendations"].append(
+                "• Alternative: Use nf-core/bamtofastq pipeline for CRAM to FASTQ conversion"
+            )
+            workflow["recommendations"].append(
+                "• See: https://pharmcat.clinpgx.org/using/Calling-HLA/"
+            )
+
+            # Check if index exists
+            if not analysis.has_index:
+                workflow["recommendations"].append(
+                    "Creating index for CRAM file for faster processing"
+                )
+
+        # SAM -> to be converted to BAM
+        elif analysis.file_type == FileType.SAM:
+            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
+            workflow["needs_gatk"] = True
+            workflow["needs_pypgx"] = True
+            workflow["recommendations"].append(
+                "SAM file will be converted to BAM using GATK or samtools:"
+            )
+            workflow["recommendations"].append(
+                "• GATK: Picard SortSam and BuildBamIndex for quality control"
+            )
+            workflow["recommendations"].append(
+                "• Alternative: samtools view -b -o output.bam input.sam"
+            )
+
+            # Check if index exists
+            if not analysis.has_index:
+                workflow["recommendations"].append(
+                    "Creating index for SAM file for faster processing"
+                )
+
+        # BAM -> can enter pipeline directly, but OptiType will internally convert to FASTQ
+        elif analysis.file_type == FileType.BAM:
+            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
+            workflow["needs_hla"] = True
+            workflow["needs_pypgx"] = True
+            workflow["needs_pypgx_bam2vcf"] = True  # Use PyPGx create-input-vcf
+
+            workflow["recommendations"].append(
+                "BAM files will be processed with the complete pipeline:"
+            )
+            workflow["recommendations"].append(
+                "• Step 1: OptiType/HLA typing - extracts HLA alleles from BAM (~100GB intermediate FASTQ)"
+            )
+            workflow["recommendations"].append(
+                "• Step 2: PyPGx create-input-vcf - calls SNVs/indels for all target genes"
+            )
+            workflow["recommendations"].append(
+                "• Step 3: PyPGx star allele calling for enhanced pharmacogene analysis"
+            )
+            workflow["recommendations"].append(
+                "• Step 4: PharmCAT with outside calls including HLA data"
+            )
+            workflow["recommendations"].append(
+                "• Result: Complete 23/23 highest clinical evidence pharmacogenes"
+            )
+            workflow["recommendations"].append(
+                "• Reference: https://pharmcat.clinpgx.org/using/Calling-HLA/"
+            )
+            workflow["recommendations"].append(
+                "• PyPGx docs: https://pypgx.readthedocs.io/en/latest/cli.html#run-ngs-pipeline"
+            )
+
+            # Check if index exists
+            if not analysis.has_index:
+                workflow["recommendations"].append(
+                    "Creating index for BAM file for faster processing"
+                )
+
+        # VCF ("quick pipeline")
+        elif analysis.file_type == FileType.VCF:
+            workflow["go_directly_to_pharmcat"] = False
+            workflow["needs_pypgx"] = True
+
+            workflow["recommendations"].append(
+                "VCF files use the quick pipeline:"
+            )
+            workflow["recommendations"].append(
+                "• Skip OptiType (HLA) - no HLA outside calls available"
+            )
+            workflow["recommendations"].append(
+                "• Run PyPGx for star allele calling on pharmacogenes"
+            )
+            workflow["recommendations"].append(
+                "• Continue to PharmCAT with PyPGx outside calls"
+            )
+            workflow["recommendations"].append(
+                "• Note: Original sequencing files (FASTQ/BAM) provide more complete and accurate results"
+            )
+
+            # Check reference genome compatibility
+            if analysis.vcf_info:
+                vcf_info = analysis.vcf_info
+                reference = vcf_info.reference_genome.lower()
+
+                # Normalize reference genome string for comparison
+                is_hg38 = any(ref_id in reference for ref_id in ["hg38", "grch38", "38"])
+                if is_hg38:
+                    workflow["recommendations"].append(
+                        f"✓ Compatible hg38/GRCh38 reference genome detected: {vcf_info.reference_genome}"
+                    )
+                elif reference != "unknown":
+                    workflow["warnings"].append(
+                        f"⚠️ File uses {vcf_info.reference_genome} reference genome. Only hg38/GRCh38 is fully supported."
+                    )
+                    workflow["is_provisional"] = True
+
+                # Enhanced sequencing profile recommendations
+                if vcf_info.sequencing_profile == SequencingProfile.WGS:
+                    workflow["recommendations"].append(
+                        "✓ Whole Genome Sequencing detected - full pharmacogene coverage available"
+                    )
+                elif vcf_info.sequencing_profile == SequencingProfile.WES:
+                    workflow["recommendations"].append(
+                        "✓ Whole Exome Sequencing detected - good pharmacogene coverage"
+                    )
+                else:
+                    workflow["warnings"].append(
+                        "⚠️ Targeted sequencing may have limited pharmacogene coverage"
+                    )
+
+            # Check if index exists
+            if analysis.vcf_info and not analysis.vcf_info.has_index:
+                workflow["recommendations"].append(
+                    "Creating index for VCF file for faster processing"
+                )
+
         # 23andMe files need conversion
         elif analysis.file_type == FileType.TWENTYTHREE_AND_ME:
             workflow["needs_conversion"] = True
-            workflow["go_directly_to_pharmcat"] = True  # After conversion
+            workflow["go_directly_to_pharmcat"] = True  # After conversion (exception to the rule)
             workflow["is_provisional"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
                 "23andMe data format requires conversion to VCF before analysis. "
                 "This functionality is not yet implemented."
             )
+            workflow["recommendations"].append(
+                "23andMe format conversion needed - create schema reference and translation"
+            )
             workflow["warnings"].append(
                 "23andMe data has limited variant coverage compared to clinical sequencing. "
                 "Results will be provisional and may miss important variants."
             )
-        
+
+        # GVCF - treat as VCF for now
+        elif analysis.file_type == FileType.UNKNOWN and str(analysis.file_path).lower().endswith('.gvcf'):
+            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
+            workflow["needs_pypgx"] = True
+            workflow["recommendations"].append(
+                "GVCF files treated as VCF format:"
+            )
+            workflow["recommendations"].append(
+                "• Will be processed through PyPGx and PharmCAT pipeline"
+            )
+            workflow["recommendations"].append(
+                "• Note: GVCF handling may need refinement based on practical experience"
+            )
+
+        # BCF - zipped VCF
+        elif analysis.file_type == FileType.UNKNOWN and str(analysis.file_path).lower().endswith('.bcf'):
+            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
+            workflow["needs_pypgx"] = True
+            workflow["recommendations"].append(
+                "BCF files (binary VCF) will be processed as VCF:"
+            )
+            workflow["recommendations"].append(
+                "• Use bcftools for any necessary conversion"
+            )
+            workflow["recommendations"].append(
+                "• Standard PyPGx + PharmCAT pipeline will be applied"
+            )
+
+        # BED files
+        elif analysis.file_type == FileType.BED:
+            workflow["unsupported"] = True
+            workflow["unsupported_reason"] = "BED format is not currently supported."
+            workflow["recommendations"].append(
+                "BED files need schema reference and translation to supported formats"
+            )
+            workflow["recommendations"].append(
+                "Please upload VCF, BAM, CRAM, or SAM files for pharmacogenomic analysis."
+            )
+
         # Unknown file type
         else:
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = f"Unrecognized file format: {analysis.file_type.value}."
             workflow["recommendations"].append(
-                "Please upload a VCF, BAM, CRAM, or SAM file for pharmacogenomic analysis."
+                "Supported formats: VCF, BAM, CRAM, SAM, FASTQ"
+            )
+            workflow["recommendations"].append(
+                "Please upload a supported genomic file format for pharmacogenomic analysis."
             )
 
         return workflow
@@ -637,7 +745,7 @@ class FileProcessor:
                 }
             
             # Analyze the uploaded file
-            logger.info("Starting file analysis...")
+            logger.info("Analyzing uploaded file...")
             analysis = await self.analyze_file(file_path)
             
             if analysis.file_type == FileType.UNKNOWN:

@@ -1,6 +1,7 @@
 import os
 import uuid
 import shutil
+import tempfile
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -15,6 +16,7 @@ from app.api.db import get_db, create_patient, register_genetic_data
 from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis as PydanticFileAnalysis, VCFHeaderInfo, JobStage
 from app.pharmcat.pharmcat_client import call_pharmcat_service
 from app.api.utils.file_processor import FileProcessor
+from app.api.utils.header_inspector import inspect_header
 from app.reports.generator import create_interactive_html_report
 from ..utils.security import get_current_user, get_optional_user
 from app.services.job_status_service import JobStatusService
@@ -99,6 +101,28 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
                 initial_stage=JobStage.UPLOAD,
                 metadata={"workflow": workflow, "file_path": file_path}
             )
+
+        # Persist header JSON and attach to job metadata
+        try:
+            from app.api.utils.header_inspector import inspect_header
+            from app.api.db import save_genomic_header
+            header_json = inspect_header(file_path)
+            header_record_id = save_genomic_header(db, file_path, (workflow.get("file_type") or "UNKNOWN").upper(), header_json)
+            patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
+            patient_dir.mkdir(parents=True, exist_ok=True)
+            header_json_path = patient_dir / f"{data_id}.header.json"
+            with open(header_json_path, "w", encoding="utf-8") as f:
+                json.dump(header_json, f, ensure_ascii=False, indent=2)
+            header_json_url = f"/reports/{patient_id}/{header_json_path.name}"
+            job_service.update_job_progress(
+                job.job_id,
+                JobStage.UPLOAD.value,
+                5,
+                "Header inspected and recorded.",
+                {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
+            )
+        except Exception:
+            pass
 
         job_service.update_job_progress(
             job.job_id,
@@ -239,6 +263,28 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             logger.error(f"Exception type: {type(e)}")
             raise
         
+        # Persist header JSON and attach to job metadata at the start
+        try:
+            from app.api.utils.header_inspector import inspect_header
+            from app.api.db import save_genomic_header
+            header_json = inspect_header(file_path)
+            header_record_id = save_genomic_header(db, file_path, (workflow.get("file_type") or "UNKNOWN").upper(), header_json)
+            patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
+            patient_dir.mkdir(parents=True, exist_ok=True)
+            header_json_path = patient_dir / f"{data_id}.header.json"
+            with open(header_json_path, "w", encoding="utf-8") as f:
+                json.dump(header_json, f, ensure_ascii=False, indent=2)
+            header_json_url = f"/reports/{patient_id}/{header_json_path.name}"
+            job_service.update_job_progress(
+                job.job_id,
+                JobStage.UPLOAD.value,
+                5,
+                "Header inspected and recorded.",
+                {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
+            )
+        except Exception:
+            pass
+
         # Check if file format is unsupported
         if workflow.get("unsupported", False):
             reason = workflow.get("unsupported_reason", "Unsupported file format")
@@ -1257,6 +1303,65 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         logger.error(f"Error getting status for job {job_id}: {str(e)}")
         raise HTTPException(status_code=404, detail=f"File not found or error retrieving status: {str(e)}")
 
+@router.post("/inspect-header")
+async def inspect_file_header(
+    file: UploadFile = File(...),
+    current_user: str = Depends(get_optional_user)
+):
+    """
+    Inspect the header of a genomic file without processing the full upload.
+
+    This endpoint allows users to preview file header information before
+    committing to the full upload and analysis process.
+    """
+    try:
+        logger.info(f"Inspecting header for file: {file.filename}")
+
+        # Create a temporary file to store the uploaded content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as temp_file:
+            # Copy uploaded file content to temp file
+            shutil.copyfileobj(file.file, temp_file)
+            temp_path = temp_file.name
+
+        try:
+            # Use independent inspector for normalized header JSON
+            normalized = inspect_header(temp_path)
+
+            # Also analyze minimal info for compatibility/workflow suggestion
+            analysis = await file_processor.analyze_file(temp_path)
+            workflow = file_processor.determine_workflow(analysis)
+
+            logger.info(f"Header inspection completed for {file.filename}")
+            return {
+                "status": "success",
+                "header_info": normalized,
+                "original_filename": file.filename,
+                "compat": {
+                    "file_type": analysis.file_type.value if hasattr(analysis.file_type, 'value') else str(analysis.file_type),
+                    "file_size": analysis.file_size,
+                    "is_compressed": analysis.is_compressed,
+                    "has_index": analysis.has_index,
+                    "workflow": {
+                        "recommendations": workflow.get("recommendations", []),
+                        "warnings": workflow.get("warnings", []),
+                        "unsupported": workflow.get("unsupported", False),
+                        "unsupported_reason": workflow.get("unsupported_reason")
+                    }
+                }
+            }
+
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+                logger.debug(f"Cleaned up temporary file: {temp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file {temp_path}: {str(e)}")
+
+    except Exception as e:
+        logger.error(f"Error inspecting file header: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error inspecting file header: {str(e)}")
+
 @router.get("/reports/job/{job_id}")
 async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
     """
@@ -1266,15 +1371,15 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
         from app.services.job_status_service import JobStatusService
         job_service = JobStatusService(db)
         job = job_service.get_job_status(job_id)
-        
+
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-        
+
         # Get the patient_id from the job metadata
         patient_id = job.get("patient_id")
         if not patient_id:
             raise HTTPException(status_code=404, detail="Job has no associated patient ID")
-        
+
         # Check in patient directory for reports
         patient_dir = Path(f"{REPORTS_DIR}/{patient_id}")
         pdf_path = patient_dir / f"{patient_id}_pgx_report.pdf"
@@ -1283,10 +1388,10 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
         pharmcat_html = patient_dir / f"{patient_id}_pgx_pharmcat.html"
         pharmcat_json = patient_dir / f"{patient_id}_pgx_pharmcat.json"
         pharmcat_tsv = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
-        
+
         pdf_exists = os.path.exists(pdf_path)
         html_exists = os.path.exists(html_path) or os.path.exists(interactive_path)
-        
+
         # Check if job is still processing first
         if job["status"] != "completed":
             return {
@@ -1295,7 +1400,7 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
                 "status": "processing",
                 "message": job.get("message", "Processing in progress")
             }
-        
+
         # Job is completed, check if reports exist
         if pdf_exists or html_exists:
             report_paths = {
@@ -1332,7 +1437,7 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
                 }
             else:
                 raise HTTPException(status_code=404, detail="Reports not found for completed job")
-    
+
     except Exception as e:
         logger.error(f"Error retrieving report URLs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving report URLs: {str(e)}") 

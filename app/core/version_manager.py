@@ -161,7 +161,6 @@ class VersionManager:
         
         compose_files = [
             "docker-compose.yml",
-            "docker-compose-local-LAN.yml",
             "docker-compose.override.yml"
         ]
         
