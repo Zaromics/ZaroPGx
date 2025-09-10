@@ -17,7 +17,7 @@ from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis 
 from app.pharmcat.pharmcat_client import call_pharmcat_service
 from app.api.utils.file_processor import FileProcessor
 from app.api.utils.header_inspector import inspect_header
-from app.reports.generator import create_interactive_html_report
+from app.reports.generator import create_interactive_html_report, generate_report
 from ..utils.security import get_current_user, get_optional_user
 from app.services.job_status_service import JobStatusService
 
@@ -191,6 +191,36 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
             response_data["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json_path.name}"
         if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
             response_data["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv_path.name}"
+
+        # Generate unified HTML/PDF reports using the app's generator based on PharmCAT outputs
+        try:
+            pharmcat_results: dict = {}
+            if pharmcat_json_exists:
+                try:
+                    with open(pharmcat_json_path, "r", encoding="utf-8") as f_json:
+                        pharmcat_results = json.load(f_json)
+                except Exception:
+                    pharmcat_results = {}
+
+            # Create minimal patient info for generator
+            patient_info = {"id": str(patient_id), "report_id": str(data_id)}
+
+            # Run generator; it will write to /data/reports/{patient_id}
+            gen_paths = generate_report(pharmcat_results or {"data": {}}, str(Path(os.getenv("REPORT_DIR", "/data/reports"))), patient_info)
+
+            # Surface unified report URLs if created
+            if isinstance(gen_paths, dict):
+                if gen_paths.get("pdf_path"):
+                    response_data["pdf_report_url"] = gen_paths["pdf_path"]
+                # Prefer interactive HTML if available
+                if gen_paths.get("interactive_html_path"):
+                    response_data["html_report_url"] = gen_paths["interactive_html_path"]
+                    response_data["interactive_html_report_url"] = gen_paths["interactive_html_path"]
+                elif gen_paths.get("html_path"):
+                    response_data["html_report_url"] = gen_paths["html_path"]
+        except Exception:
+            # Do not fail the job if unified report generation encounters issues
+            pass
 
         # We keep unified report generation via app if desired later; for now, mark completed
         job_service.update_job_progress(

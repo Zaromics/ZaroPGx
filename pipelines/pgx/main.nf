@@ -272,7 +272,7 @@ if pypgx_success:
 
     if lines:
         with open('pharmcat.outside.tsv', 'w', encoding='utf-8') as f:
-            f.write('\n'.join(lines) + '\n')
+            f.write('\\n'.join(lines) + '\\n')
         print(f"Created outside.tsv with {len(lines)} gene results", file=sys.stderr)
     else:
         print("PyPGx succeeded but no valid gene results found", file=sys.stderr)
