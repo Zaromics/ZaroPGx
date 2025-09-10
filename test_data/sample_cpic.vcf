@@ -1,1 +1,14 @@
-404: Not Found
+##fileformat=VCFv4.2
+##INFO=<ID=star-allele,Number=0,Type=Flag,Description="Position is associated with a star allele definition">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	NA12878
+chr10	94942212	rs1244613	A	C	.	PASS	star-allele	GT	0/1
+chr10	94949276	rs28399504	A	G	.	PASS	star-allele	GT	0/0
+chr10	94949281	rs61198430	A	G	.	PASS	star-allele	GT	0/0
+chr10	94981224	rs7902257	G	A	.	PASS	star-allele	GT	0/0
+chr10	94981296	rs41291556	T	C	.	PASS	star-allele	GT	0/0
+chr22	42524947	rs80283559	G	A	.	PASS	star-allele	GT	0/0
+chr22	42525976	rs28399499	T	C	.	PASS	star-allele	GT	0/0
+chr22	42526580	rs4986893	G	A	.	PASS	star-allele	GT	0/0
+chr22	42526669	rs4244285	G	A	.	PASS	star-allele	GT	1/1
+chr22	42528382	rs6505162	C	A	.	PASS	star-allele	GT	0/1 

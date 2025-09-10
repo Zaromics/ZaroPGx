@@ -184,3 +184,12 @@ reference/*
 
 # Cursor rules
 .cursorrules
+
+# Nextflow
+.nextflow/
+data/nextflow/
+.nextflow.log.*
+# Nextflow execution reports (timestamped files in root)
+report-*.html
+timeline-*.html
+trace-*.txt

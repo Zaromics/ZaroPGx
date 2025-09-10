@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Union
 try:
     import pysam
 except ImportError:
-    print("Error: pysam not installed. Install with: pip install pysam")
+    print("Error: pysam not installed. Install with: pip install pysam, or build it from source.")
     sys.exit(1)
 
 try:

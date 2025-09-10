@@ -1,0 +1,189 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "description": "PyPGx supported pharmacogenes configuration",
+    "last_updated": "2024-12-09",
+    "source": "PyPGx v0.25.0",
+    "total_genes": 87
+  },
+  "categories": {
+    "cyp450": {
+      "name": "Cytochrome P450 Enzymes",
+      "description": "Major drug metabolizing enzymes",
+      "count": 27,
+      "genes": [
+        "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2B6",
+        "CYP2C8", "CYP2C9", "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1",
+        "CYP2J2", "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A4", "CYP3A5",
+        "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
+        "CYP17A1", "CYP19A1", "CYP26A1"
+      ]
+    },
+    "phase2": {
+      "name": "Phase II Enzymes",
+      "description": "Drug conjugation and detoxification enzymes",
+      "count": 8,
+      "genes": [
+        "GSTM1", "GSTP1", "GSTT1", "NAT1", "NAT2", "SULT1A1",
+        "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17"
+      ]
+    },
+    "transporters": {
+      "name": "Drug Transporters",
+      "description": "Membrane transporters affecting drug absorption and distribution",
+      "count": 10,
+      "genes": [
+        "ABCB1", "ABCG2", "SLCO1B1", "SLCO1B3", "SLCO2B1",
+        "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2"
+      ]
+    },
+    "other_enzymes": {
+      "name": "Other Enzymes",
+      "description": "Additional drug metabolizing and modifying enzymes",
+      "count": 12,
+      "genes": [
+        "BCHE", "DPYD", "G6PD", "ITPA", "MTHFR", "NUDT15",
+        "POR", "PTGIS", "RYR1", "TBXAS1", "TPMT", "VKORC1"
+      ]
+    },
+    "receptors": {
+      "name": "Receptors & Signaling",
+      "description": "Drug targets and signaling molecules",
+      "count": 11,
+      "genes": [
+        "ADRA2A", "ADRB2", "BDNF", "CACNA1S", "COMT", "DBH",
+        "DRD2", "GRIK1", "GRIK4", "GRIN2B", "HTR1A", "HTR2A",
+        "ITGB3", "OPRK1", "OPRM1", "RARG"
+      ]
+    },
+    "blood_clotting": {
+      "name": "Blood Clotting",
+      "description": "Coagulation and anticoagulation factors",
+      "count": 4,
+      "genes": [
+        "F2", "F5", "IFNL3", "IFNL4"
+      ]
+    },
+    "other": {
+      "name": "Other Genes",
+      "description": "Additional pharmacogenes with clinical significance",
+      "count": 15,
+      "genes": [
+        "ANKK1", "APOE", "ATM", "CACNA1S", "CFTR", "COMT",
+        "DBH", "GRIK1", "GRIK4", "GRIN2B", "HTR1A", "HTR2A",
+        "ITGB3", "OPRK1", "OPRM1", "RARG"
+      ]
+    }
+  },
+  "genes": [
+    {"name": "ABCB1", "category": "transporters", "description": "P-glycoprotein transporter", "status": "active"},
+    {"name": "ABCG2", "category": "transporters", "description": "Breast cancer resistance protein", "status": "active"},
+    {"name": "ACYP2", "category": "other_enzymes", "description": "Acylphosphatase 2", "status": "active"},
+    {"name": "ADRA2A", "category": "receptors", "description": "Alpha-2A adrenergic receptor", "status": "active"},
+    {"name": "ADRB2", "category": "receptors", "description": "Beta-2 adrenergic receptor", "status": "active"},
+    {"name": "ANKK1", "category": "other", "description": "Ankyrin repeat kinase domain containing 1", "status": "active"},
+    {"name": "APOE", "category": "other", "description": "Apolipoprotein E", "status": "active"},
+    {"name": "ATM", "category": "other", "description": "Ataxia telangiectasia mutated", "status": "active"},
+    {"name": "BCHE", "category": "other_enzymes", "description": "Butyrylcholinesterase", "status": "active"},
+    {"name": "BDNF", "category": "receptors", "description": "Brain-derived neurotrophic factor", "status": "active"},
+    {"name": "CACNA1S", "category": "receptors", "description": "Calcium voltage-gated channel subunit alpha1 S", "status": "active"},
+    {"name": "CFTR", "category": "other", "description": "Cystic fibrosis transmembrane conductance regulator", "status": "active"},
+    {"name": "COMT", "category": "receptors", "description": "Catechol-O-methyltransferase", "status": "active"},
+    {"name": "CYP1A1", "category": "cyp450", "description": "Cytochrome P450 1A1", "status": "active"},
+    {"name": "CYP1A2", "category": "cyp450", "description": "Cytochrome P450 1A2", "status": "active"},
+    {"name": "CYP1B1", "category": "cyp450", "description": "Cytochrome P450 1B1", "status": "active"},
+    {"name": "CYP2A6", "category": "cyp450", "description": "Cytochrome P450 2A6", "status": "active"},
+    {"name": "CYP2A13", "category": "cyp450", "description": "Cytochrome P450 2A13", "status": "active"},
+    {"name": "CYP2B6", "category": "cyp450", "description": "Cytochrome P450 2B6", "status": "active"},
+    {"name": "CYP2C8", "category": "cyp450", "description": "Cytochrome P450 2C8", "status": "active"},
+    {"name": "CYP2C9", "category": "cyp450", "description": "Cytochrome P450 2C9", "status": "active"},
+    {"name": "CYP2C19", "category": "cyp450", "description": "Cytochrome P450 2C19", "status": "active"},
+    {"name": "CYP2D6", "category": "cyp450", "description": "Cytochrome P450 2D6 (debrisoquine hydroxylase)", "status": "active"},
+    {"name": "CYP2E1", "category": "cyp450", "description": "Cytochrome P450 2E1", "status": "active"},
+    {"name": "CYP2F1", "category": "cyp450", "description": "Cytochrome P450 2F1", "status": "active"},
+    {"name": "CYP2J2", "category": "cyp450", "description": "Cytochrome P450 2J2", "status": "active"},
+    {"name": "CYP2R1", "category": "cyp450", "description": "Cytochrome P450 2R1", "status": "active"},
+    {"name": "CYP2S1", "category": "cyp450", "description": "Cytochrome P450 2S1", "status": "active"},
+    {"name": "CYP2W1", "category": "cyp450", "description": "Cytochrome P450 2W1", "status": "active"},
+    {"name": "CYP3A4", "category": "cyp450", "description": "Cytochrome P450 3A4", "status": "active"},
+    {"name": "CYP3A5", "category": "cyp450", "description": "Cytochrome P450 3A5", "status": "active"},
+    {"name": "CYP3A7", "category": "cyp450", "description": "Cytochrome P450 3A7", "status": "active"},
+    {"name": "CYP3A43", "category": "cyp450", "description": "Cytochrome P450 3A43", "status": "active"},
+    {"name": "CYP4A11", "category": "cyp450", "description": "Cytochrome P450 4A11", "status": "active"},
+    {"name": "CYP4A22", "category": "cyp450", "description": "Cytochrome P450 4A22", "status": "active"},
+    {"name": "CYP4B1", "category": "cyp450", "description": "Cytochrome P450 4B1", "status": "active"},
+    {"name": "CYP4F2", "category": "cyp450", "description": "Cytochrome P450 4F2", "status": "active"},
+    {"name": "CYP17A1", "category": "cyp450", "description": "Cytochrome P450 17A1", "status": "active"},
+    {"name": "CYP19A1", "category": "cyp450", "description": "Cytochrome P450 19A1", "status": "active"},
+    {"name": "CYP26A1", "category": "cyp450", "description": "Cytochrome P450 26A1", "status": "active"},
+    {"name": "DBH", "category": "receptors", "description": "Dopamine beta-hydroxylase", "status": "active"},
+    {"name": "DPYD", "category": "other_enzymes", "description": "Dihydropyrimidine dehydrogenase", "status": "active"},
+    {"name": "DRD2", "category": "receptors", "description": "Dopamine receptor D2", "status": "active"},
+    {"name": "F2", "category": "blood_clotting", "description": "Coagulation factor II", "status": "active"},
+    {"name": "F5", "category": "blood_clotting", "description": "Coagulation factor V", "status": "active"},
+    {"name": "G6PD", "category": "other_enzymes", "description": "Glucose-6-phosphate dehydrogenase", "status": "active"},
+    {"name": "GRIK1", "category": "receptors", "description": "Glutamate ionotropic receptor kainate type subunit 1", "status": "active"},
+    {"name": "GRIK4", "category": "receptors", "description": "Glutamate ionotropic receptor kainate type subunit 4", "status": "active"},
+    {"name": "GRIN2B", "category": "receptors", "description": "Glutamate ionotropic receptor NMDA type subunit 2B", "status": "active"},
+    {"name": "GSTM1", "category": "phase2", "description": "Glutathione S-transferase mu 1", "status": "active"},
+    {"name": "GSTP1", "category": "phase2", "description": "Glutathione S-transferase pi 1", "status": "active"},
+    {"name": "GSTT1", "category": "phase2", "description": "Glutathione S-transferase theta 1", "status": "active"},
+    {"name": "HTR1A", "category": "receptors", "description": "5-hydroxytryptamine receptor 1A", "status": "active"},
+    {"name": "HTR2A", "category": "receptors", "description": "5-hydroxytryptamine receptor 2A", "status": "active"},
+    {"name": "IFNL3", "category": "blood_clotting", "description": "Interferon lambda 3", "status": "active"},
+    {"name": "IFNL4", "category": "blood_clotting", "description": "Interferon lambda 4", "status": "active"},
+    {"name": "ITGB3", "category": "receptors", "description": "Integrin subunit beta 3", "status": "active"},
+    {"name": "ITPA", "category": "other_enzymes", "description": "Inosine triphosphatase", "status": "active"},
+    {"name": "MTHFR", "category": "other_enzymes", "description": "Methylenetetrahydrofolate reductase", "status": "active"},
+    {"name": "NAT1", "category": "phase2", "description": "N-acetyltransferase 1", "status": "active"},
+    {"name": "NAT2", "category": "phase2", "description": "N-acetyltransferase 2", "status": "active"},
+    {"name": "NUDT15", "category": "other_enzymes", "description": "Nudix hydrolase 15", "status": "active"},
+    {"name": "OPRK1", "category": "receptors", "description": "Opioid receptor kappa 1", "status": "active"},
+    {"name": "OPRM1", "category": "receptors", "description": "Opioid receptor mu 1", "status": "active"},
+    {"name": "POR", "category": "other_enzymes", "description": "Cytochrome P450 oxidoreductase", "status": "active"},
+    {"name": "PTGIS", "category": "other_enzymes", "description": "Prostaglandin I2 synthase", "status": "active"},
+    {"name": "RARG", "category": "receptors", "description": "Retinoic acid receptor gamma", "status": "active"},
+    {"name": "RYR1", "category": "other_enzymes", "description": "Ryanodine receptor 1", "status": "active"},
+    {"name": "SLC6A4", "category": "transporters", "description": "Serotonin transporter", "status": "active"},
+    {"name": "SLC15A2", "category": "transporters", "description": "Solute carrier family 15 member 2", "status": "active"},
+    {"name": "SLC22A2", "category": "transporters", "description": "Solute carrier family 22 member 2", "status": "active"},
+    {"name": "SLC28A3", "category": "transporters", "description": "Solute carrier family 28 member 3", "status": "active"},
+    {"name": "SLC47A2", "category": "transporters", "description": "Solute carrier family 47 member 2", "status": "active"},
+    {"name": "SLCO1B1", "category": "transporters", "description": "Solute carrier organic anion transporter family member 1B1", "status": "active"},
+    {"name": "SLCO1B3", "category": "transporters", "description": "Solute carrier organic anion transporter family member 1B3", "status": "active"},
+    {"name": "SLCO2B1", "category": "transporters", "description": "Solute carrier organic anion transporter family member 2B1", "status": "active"},
+    {"name": "SULT1A1", "category": "phase2", "description": "Sulfotransferase family 1A member 1", "status": "active"},
+    {"name": "TBXAS1", "category": "other_enzymes", "description": "Thromboxane A synthase 1", "status": "active"},
+    {"name": "TPMT", "category": "other_enzymes", "description": "Thiopurine S-methyltransferase", "status": "active"},
+    {"name": "UGT1A1", "category": "phase2", "description": "UDP glucuronosyltransferase family 1 member A1", "status": "active"},
+    {"name": "UGT1A4", "category": "phase2", "description": "UDP glucuronosyltransferase family 1 member A4", "status": "active"},
+    {"name": "UGT1A6", "category": "phase2", "description": "UDP glucuronosyltransferase family 1 member A6", "status": "active"},
+    {"name": "UGT2B7", "category": "phase2", "description": "UDP glucuronosyltransferase family 2 member B7", "status": "active"},
+    {"name": "UGT2B15", "category": "phase2", "description": "UDP glucuronosyltransferase family 2 member B15", "status": "active"},
+    {"name": "UGT2B17", "category": "phase2", "description": "UDP glucuronosyltransferase family 2 member B17", "status": "active"},
+    {"name": "VKORC1", "category": "other_enzymes", "description": "Vitamin K epoxide reductase complex subunit 1", "status": "active"}
+  ],
+  "sets": {
+    "all": [
+      "ABCB1", "ABCG2", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF",
+      "CACNA1S", "CFTR", "COMT", "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2B6",
+      "CYP2C8", "CYP2C9", "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2", "CYP2R1", "CYP2S1",
+      "CYP2W1", "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
+      "CYP17A1", "CYP19A1", "CYP26A1", "DBH", "DPYD", "DRD2", "F2", "F5", "G6PD", "GRIK1", "GRIK4",
+      "GRIN2B", "GSTM1", "GSTP1", "GSTT1", "HTR1A", "HTR2A", "IFNL3", "IFNL4", "ITGB3", "ITPA",
+      "MTHFR", "NAT1", "NAT2", "NUDT15", "OPRK1", "OPRM1", "POR", "PTGIS", "RARG", "RYR1", "SLC6A4",
+      "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B1", "SLCO1B3", "SLCO2B1", "SULT1A1",
+      "TBXAS1", "TPMT", "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "VKORC1", "XPC"
+    ],
+    "core": [
+      "CYP2D6", "CYP2C9", "CYP2C19", "CYP3A4", "CYP3A5", "CYP1A2", "CYP2B6", "CYP2C8",
+      "SLCO1B1", "VKORC1", "TPMT", "DPYD", "UGT1A1", "G6PD", "CFTR"
+    ],
+    "cyp450": [
+      "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2B6", "CYP2C8", "CYP2C9",
+      "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2", "CYP2R1", "CYP2S1", "CYP2W1",
+      "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
+      "CYP17A1", "CYP19A1", "CYP26A1"
+    ]
+  }
+}

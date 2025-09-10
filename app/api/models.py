@@ -19,6 +19,10 @@ class FileType(str, Enum):
     CRAM = "cram"
     SAM = "sam"
     FASTQ = "fastq"
+    FASTA = "fasta"
+    GVCF = "gvcf"
+    BCF = "bcf"
+    BED = "bed"
     TWENTYTHREE_AND_ME = "23andme"
     UNKNOWN = "unknown"
 
@@ -30,7 +34,50 @@ class SequencingProfile(str, Enum):
     UNKNOWN = "unknown"
 
 
+class SequenceInfo(BaseModel):
+    """Information about a sequence/contig in the file"""
+    name: str = Field(..., description="Sequence/contig name (e.g., chr1, chr2)")
+    length: Optional[int] = Field(None, description="Sequence length in base pairs")
+
+class ProgramInfo(BaseModel):
+    """Information about programs used in file creation/processing"""
+    id: str = Field(..., description="Program identifier")
+    name: Optional[str] = Field(None, description="Program name")
+    version: Optional[str] = Field(None, description="Program version")
+    command_line: Optional[str] = Field(None, description="Command line used")
+
+class FileInfo(BaseModel):
+    """Basic file information"""
+    path: str = Field(..., description="File path")
+    format: FileType = Field(..., description="File format")
+    size: int = Field(..., description="File size in bytes")
+    compressed: bool = Field(..., description="Whether file is compressed")
+    has_index: bool = Field(..., description="Whether file has an index")
+
+class MetadataInfo(BaseModel):
+    """Metadata extracted from file header"""
+    version: Optional[str] = Field(None, description="File format version")
+    created_by: Optional[str] = Field(None, description="Program that created the file")
+    reference_genome: Optional[str] = Field(None, description="Reference genome used")
+    reference_genome_path: Optional[str] = Field(None, description="Path to reference genome file")
+
+class FormatSpecificInfo(BaseModel):
+    """Format-specific header information"""
+    sam_header_lines: Optional[List[str]] = Field(None, description="SAM format header lines")
+    programs: Optional[List[ProgramInfo]] = Field(None, description="Programs used in processing")
+    vcf_info_fields: Optional[Dict[str, str]] = Field(None, description="VCF INFO field descriptions")
+    vcf_format_fields: Optional[Dict[str, str]] = Field(None, description="VCF FORMAT field descriptions")
+
+class GenomicFileHeader(BaseModel):
+    """Comprehensive header information for genomic files"""
+    file_info: FileInfo
+    metadata: MetadataInfo
+    sequences: List[SequenceInfo] = Field(default_factory=list)
+    sample: Optional[str] = Field(None, description="Sample identifier")
+    format_specific: FormatSpecificInfo = Field(default_factory=FormatSpecificInfo)
+
 class VCFHeaderInfo(BaseModel):
+    """Legacy VCF header info - kept for backward compatibility"""
     reference_genome: str
     sequencing_platform: str
     sequencing_profile: SequencingProfile

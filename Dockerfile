@@ -81,6 +81,10 @@ RUN uv export --frozen --format requirements-txt > requirements.lock \
     && uv pip install --system "pysam>=0.22,<0.24" \
     && rm -f requirements.lock
 
+# Install Sphinx docs requirements separately (kept lightweight)
+COPY docs/requirements.txt ./docs/requirements.txt
+RUN uv pip install --system -r docs/requirements.txt
+
 # Create directories for data and reports
 RUN mkdir -p /data/reports /data/uploads
 
@@ -88,6 +92,10 @@ RUN mkdir -p /data/reports /data/uploads
 # Note: Reference genome files are not included in the build context (see .dockerignore)
 # They are mounted as volumes at runtime
 COPY . /app/
+
+# Build Sphinx documentation to be served by the app at /documentation
+# Do not fail the image build if docs have warnings
+RUN [ -d docs ] && python -m sphinx -b html docs docs/_build/html || true
 
 # Expose the port for the application
 EXPOSE 8000

@@ -1,9 +1,9 @@
 FROM openjdk:17-jdk-slim
 
-ARG NXF_VERSION=23.10.0
+ARG NXF_VERSION=25.04.7
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git bash ca-certificates python3 python3-pip \
+    curl git bash ca-certificates python3 python3-pip procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Nextflow
@@ -12,7 +12,8 @@ RUN curl -sL https://get.nextflow.io | bash \
     && chmod +x /usr/local/bin/nextflow
 
 ENV NXF_HOME=/opt/nextflow \
-    NXF_OPTS="-Xms1g -Xmx4g"
+    NXF_OPTS="-Xms1g -Xmx4g" \
+    NXF_VERBOSITY="3"
 
 RUN mkdir -p ${NXF_HOME}
 

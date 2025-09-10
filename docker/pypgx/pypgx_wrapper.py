@@ -23,6 +23,122 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Gene Configuration Management
+class GeneConfig:
+    """Manages PyPGx supported genes configuration"""
+
+    def __init__(self, config_path: Optional[str] = None):
+        if config_path:
+            self.config_path = Path(config_path)
+        else:
+            # Try multiple possible locations for the config file
+            possible_paths = [
+                Path(__file__).parent.parent / "config" / "genes.json",  # docker/pypgx/../config/
+                Path(__file__).parent.parent.parent / "config" / "genes.json",  # docker/pypgx/../../config/
+                Path.cwd() / "config" / "genes.json",  # From current working directory
+            ]
+            self.config_path = None
+            for path in possible_paths:
+                if path.exists():
+                    self.config_path = path
+                    break
+            # If no path found, use the most likely one (will trigger fallback)
+            if self.config_path is None:
+                self.config_path = Path.cwd() / "config" / "genes.json"
+        self._config = None
+        self._supported_genes = None
+
+    def load_config(self) -> Dict[str, Any]:
+        """Load gene configuration from JSON file"""
+        if self._config is not None:
+            return self._config
+
+        try:
+            with open(self.config_path, 'r') as f:
+                self._config = json.load(f)
+            logger.info(f"Loaded gene configuration from {self.config_path}")
+            return self._config
+        except FileNotFoundError:
+            logger.warning(f"Gene configuration file not found at {self.config_path}, using fallback")
+            self._config = self._get_fallback_config()
+            return self._config
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in gene configuration: {e}")
+            self._config = self._get_fallback_config()
+            return self._config
+
+    def get_supported_genes(self) -> List[str]:
+        """Get list of all supported genes (maintains backward compatibility)"""
+        if self._supported_genes is not None:
+            return self._supported_genes
+
+        config = self.load_config()
+        if "sets" in config and "all" in config["sets"]:
+            self._supported_genes = config["sets"]["all"]
+        else:
+            # Fallback to extracting from genes list
+            self._supported_genes = [gene["name"] for gene in config.get("genes", [])]
+
+        return self._supported_genes
+
+    def get_gene_set(self, set_name: str = "all") -> List[str]:
+        """Get a specific gene set"""
+        config = self.load_config()
+        if "sets" in config and set_name in config["sets"]:
+            return config["sets"][set_name]
+        elif set_name == "all":
+            return self.get_supported_genes()
+        else:
+            logger.warning(f"Gene set '{set_name}' not found, returning all genes")
+            return self.get_supported_genes()
+
+    def get_gene_info(self, gene_name: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a specific gene"""
+        config = self.load_config()
+        for gene in config.get("genes", []):
+            if gene["name"].upper() == gene_name.upper():
+                return gene
+        return None
+
+    def get_categories(self) -> Dict[str, Any]:
+        """Get gene categories information"""
+        config = self.load_config()
+        return config.get("categories", {})
+
+    def _get_fallback_config(self) -> Dict[str, Any]:
+        """Fallback configuration if JSON file is not available"""
+        logger.warning("Using fallback gene configuration")
+        return {
+            "metadata": {
+                "version": "fallback",
+                "description": "Fallback PyPGx supported genes",
+                "total_genes": 87
+            },
+            "genes": [{"name": gene, "category": "unknown", "status": "active"}
+                     for gene in self._get_fallback_gene_list()],
+            "sets": {
+                "all": self._get_fallback_gene_list(),
+                "core": ["CYP2D6", "CYP2C9", "CYP2C19", "CYP3A4", "CYP3A5"]
+            }
+        }
+
+    def _get_fallback_gene_list(self) -> List[str]:
+        """Fallback list of supported genes"""
+        return [
+            "ABCB1", "ABCG2", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF",
+            "CACNA1S", "CFTR", "COMT", "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2B6",
+            "CYP2C8", "CYP2C9", "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2", "CYP2R1", "CYP2S1",
+            "CYP2W1", "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
+            "CYP17A1", "CYP19A1", "CYP26A1", "DBH", "DPYD", "DRD2", "F2", "F5", "G6PD", "GRIK1", "GRIK4",
+            "GRIN2B", "GSTM1", "GSTP1", "GSTT1", "HTR1A", "HTR2A", "IFNL3", "IFNL4", "ITGB3", "ITPA",
+            "MTHFR", "NAT1", "NAT2", "NUDT15", "OPRK1", "OPRM1", "POR", "PTGIS", "RARG", "RYR1", "SLC6A4",
+            "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B1", "SLCO1B3", "SLCO2B1", "SULT1A1",
+            "TBXAS1", "TPMT", "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "VKORC1", "XPC"
+        ]
+
+# Initialize gene configuration
+gene_config = GeneConfig()
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -39,35 +155,8 @@ REPORT_DIR = Path(os.getenv('REPORT_DIR', '/data/reports'))
 # Create necessary directories
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Supported genes for PyPGx (complete list of 87 pharmacogenes)
-SUPPORTED_GENES = [
-    # Core focus genes for initial implementation
-    'CYP2D6',
-    'CYP2C19',
-    'CYP2C9',
-    'CYP3A4',
-    'CYP3A5',
-    
-    # All other supported pharmacogenes
-    'ABCB1', 'ABCG2', 'ACYP2', 'ADRA2A', 'ADRB2',
-    'ANKK1', 'APOE', 'ATM', 'BCHE', 'BDNF',
-    'CACNA1S', 'CFTR', 'COMT', 'CYP1A1', 'CYP1A2',
-    'CYP1B1', 'CYP2A6', 'CYP2A7', 'CYP2A13', 'CYP2B6', 
-    'CYP2B7', 'CYP2C8', 'CYP2E1', 'CYP2F1',
-    'CYP2J2', 'CYP2R1', 'CYP2S1', 'CYP2W1',
-    'CYP3A7', 'CYP3A43', 'CYP4A11', 'CYP4A22',
-    'CYP4B1', 'CYP4F2', 'CYP17A1', 'CYP19A1', 'CYP26A1',
-    'DBH', 'DPYD', 'DRD2', 'F2', 'F5',
-    'G6PD', 'GRIK1', 'GRIK4', 'GRIN2B', 'GSTM1',
-    'GSTP1', 'GSTT1', 'HTR1A', 'HTR2A', 'IFNL3',
-    'ITGB3', 'ITPA', 'MTHFR', 'NAT1', 'NAT2',
-    'NUDT15', 'OPRK1', 'OPRM1', 'POR', 'PTGIS',
-    'RARG', 'RYR1', 'SLC6A4', 'SLC15A2', 'SLC22A2',
-    'SLC28A3', 'SLC47A2', 'SLCO1B1', 'SLCO1B3', 'SLCO2B1',
-    'SULT1A1', 'TBXAS1', 'TPMT', 'UGT1A1', 'UGT1A4',
-    'UGT1A6', 'UGT2B7', 'UGT2B15', 'UGT2B17', 'VKORC1',
-    'XPC'
-]
+# Load supported genes from configuration (replaces hardcoded SUPPORTED_GENES list)
+SUPPORTED_GENES = gene_config.get_supported_genes()
 
 app = FastAPI(
     title="PyPGx Wrapper API",
@@ -85,11 +174,14 @@ app.add_middleware(
 
 @app.get("/health")
 def health_check():
-    """Simple health check endpoint"""
+    """Health check endpoint with gene configuration info"""
+    config = gene_config.load_config()
     return {
         'status': 'healthy',
         'service': 'pypgx-wrapper',
-        'supported_genes': ["CYP2D6"],
+        'config_version': config.get('metadata', {}).get('version', 'unknown'),
+        'total_supported_genes': len(SUPPORTED_GENES),
+        'supported_genes_sample': SUPPORTED_GENES[:5],  # Show first 5 genes
         'timestamp': time.time()
     }
 
@@ -99,8 +191,49 @@ def root():
     return {
         "message": "PyPGx Wrapper API",
         "usage": "POST to /genotype with a VCF file to call alleles",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "endpoints": [
+            "GET /health - Health check with gene config info",
+            "GET /genes - Get supported genes information",
+            "GET /genes/{gene_name} - Get detailed gene information",
+            "GET /gene-sets - Get available gene sets",
+            "POST /genotype - Run genotyping analysis",
+            "POST /create-input-vcf - Create VCF from alignment file"
+        ]
     }
+
+@app.get("/genes")
+def get_supported_genes():
+    """Get list of all supported genes with metadata"""
+    config = gene_config.load_config()
+    return {
+        "total_count": len(SUPPORTED_GENES),
+        "genes": SUPPORTED_GENES,
+        "metadata": config.get("metadata", {})
+    }
+
+@app.get("/genes/{gene_name}")
+def get_gene_details(gene_name: str):
+    """Get detailed information about a specific gene"""
+    gene_info = gene_config.get_gene_info(gene_name.upper())
+    if gene_info:
+        return gene_info
+    else:
+        raise HTTPException(status_code=404, detail=f"Gene {gene_name} not found")
+
+@app.get("/gene-sets")
+def get_gene_sets():
+    """Get available gene sets"""
+    config = gene_config.load_config()
+    sets_info = {}
+    if "sets" in config:
+        for set_name, genes in config["sets"].items():
+            sets_info[set_name] = {
+                "count": len(genes),
+                "description": f"{set_name.title()} gene set",
+                "genes": genes[:10]  # Show first 10 genes as sample
+            }
+    return sets_info
 
 @app.post("/create-input-vcf")
 async def create_input_vcf(
@@ -208,29 +341,46 @@ async def genotype(
     file: UploadFile = File(...),
     gene: str = Form(None),
     genes: str = Form("ALL"),
+    gene_set: str = Form(None),
     reference_genome: str = Form("hg19"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
 ):
     """
     Run PyPGx on a VCF file to determine alleles
-    
+
     Args:
         file: The VCF file to analyze
-        gene: Gene to analyze (default: CYP2D6)
+        gene: Single gene to analyze (legacy)
+        genes: Comma-separated gene list or "ALL" or gene set name
+        gene_set: Predefined gene set (core, cyp450, etc.)
         reference_genome: Reference genome (hg19 or hg38)
-    
+
     Returns:
         Genotyping results
     """
-    # Normalize requested genes: support single gene, comma-separated list, or ALL
+    # Normalize requested genes: support single gene, comma-separated list, gene sets, or ALL
     requested_genes: List[str]
-    if genes and genes.strip().upper() == "ALL":
+
+    # Check if genes parameter refers to a predefined gene set
+    if genes and genes.strip().upper() != "ALL":
+        potential_set = genes.strip().lower()
+        available_sets = gene_config.get_categories().keys()
+        if potential_set in ["core", "cyp450", "all"] or potential_set in available_sets:
+            requested_genes = gene_config.get_gene_set(potential_set)
+        else:
+            # Parse as comma-separated list
+            gene_list = [g.strip().upper() for g in genes.split(',') if g.strip()]
+            requested_genes = sorted(set(g for g in gene_list))
+    elif gene_set:
+        # Use explicit gene set parameter
+        requested_genes = gene_config.get_gene_set(gene_set.lower())
+    elif genes and genes.strip().upper() == "ALL":
         requested_genes = SUPPORTED_GENES
     else:
         # Merge legacy single `gene` with `genes` list if provided
         gene_list = []
-        if genes:
+        if genes and genes.strip():
             gene_list.extend([g.strip().upper() for g in genes.split(',') if g.strip()])
         if gene:
             gene_list.append(gene.strip().upper())
@@ -273,10 +423,15 @@ async def genotype(
             try:
                 res = run_pypgx(input_filepath, job_dir, g, pypgx_assembly)
                 aggregated["results"][g] = res
+                # Only fail overall if it's a systemic issue, not gene-specific
+                if not res.get("success", False) and "No SNV/indel-based star alleles" not in str(res.get("error", "")):
+                    aggregated["success"] = False
             except Exception as e:
                 logger.exception(f"PyPGx failed for {g}")
                 aggregated["results"][g] = {"success": False, "error": str(e)}
-                aggregated["success"] = False
+                # Only fail overall for systemic exceptions, not gene-specific issues
+                if "does not have any star alleles defined by SNVs/indels" not in str(e):
+                    aggregated["success"] = False
         # Move per-gene pipeline folders into per-patient reports dir if patient_id provided
         try:
             if patient_id:
@@ -310,13 +465,16 @@ async def genotype(
         except Exception:
             logger.warning("Failed to persist aggregated PyPGx results file")
         return aggregated
-    
+
     except Exception as e:
         logger.exception("Error processing VCF with PyPGx")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing VCF with PyPGx: {str(e)}"
-        )
+        # Always return 200 status code - communicate errors through JSON response
+        return {
+            "success": False,
+            "error": f"Error processing VCF with PyPGx: {str(e)}",
+            "results": {},
+            "job_id": job_id
+        }
 
 def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19') -> Dict[str, Any]:
     """Run PyPGx for star allele calling on the input VCF"""
@@ -356,6 +514,18 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
         
         # Check if the command was successful
         if process.returncode != 0:
+            stderr_str = process.stderr or ""
+            # Handle case where gene doesn't have SNV/indel star allele definitions
+            if "does not have any star alleles defined by SNVs/indels" in stderr_str:
+                logger.info(f"Gene {gene} doesn't have SNV/indel-based star alleles - this is expected for some genes")
+                return {
+                    'success': True,  # Not an error, just no SNV/indel data available
+                    'gene': gene,
+                    'diplotype': None,
+                    'details': {'note': 'No SNV/indel-based star alleles available for this gene'},
+                    'job_id': os.path.basename(output_dir),
+                    'error': 'No SNV/indel-based star alleles available for this gene'  # For the main loop logic
+                }
             logger.error(f"PyPGx failed: {process.stderr}")
             return {
                 'success': False,

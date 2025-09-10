@@ -30,17 +30,18 @@ def run():
         '--reference', reference,
         '--outdir', outdir,
         '-with-report', f"{outdir}/nextflow_report.html",
-        '-with-trace', f"{outdir}/nextflow_trace.txt"
+        '-with-trace', f"{outdir}/nextflow_trace.txt",
+        '-with-timeline', f"{outdir}/nextflow_timeline.html",
+        '-ansi-log', 'false'
     ]
 
     try:
         os.makedirs(outdir, exist_ok=True)
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        # Stream output in real-time to docker compose logs
+        proc = subprocess.run(cmd, text=True)
         return jsonify({
             "success": proc.returncode == 0,
             "returncode": proc.returncode,
-            "stdout": proc.stdout[-4000:],
-            "stderr": proc.stderr[-4000:],
             "outdir": outdir
         }), (200 if proc.returncode == 0 else 500)
     except Exception as e:

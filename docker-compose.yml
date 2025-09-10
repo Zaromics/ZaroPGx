@@ -325,6 +325,26 @@ services:
       - pgx-network
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
+  # Sphinx Documentation service (live reload)
+  docs:
+    build:
+      context: .
+      dockerfile: docker/docs/Dockerfile.docs
+    container_name: pgx_docs
+    restart: unless-stopped
+    volumes:
+      - ./docs:/docs
+    ports:
+      - "5070:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - pgx-network
+
 volumes:
   pgdata:
     driver: local

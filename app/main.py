@@ -21,6 +21,7 @@ import aiohttp
 import tempfile
 import logging
 from pathlib import Path
+import subprocess
 import zipfile
 import time
 import requests
@@ -133,6 +134,39 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 # Static file serving for reports is now handled by custom routes
 # app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
+# Mount built Sphinx documentation (if present) at /documentation
+DOCS_BUILD_DIR = BASE_DIR.parent / "docs" / "_build" / "html"
+if DOCS_BUILD_DIR.exists():
+    app.mount("/documentation", StaticFiles(directory=str(DOCS_BUILD_DIR), html=True), name="sphinx-docs")
+
+
+def _build_docs_if_missing() -> None:
+    try:
+        docs_index = DOCS_BUILD_DIR / "index.html"
+        if not docs_index.exists():
+            DOCS_BUILD_DIR.mkdir(parents=True, exist_ok=True)
+            # Build docs using Sphinx if available
+            cmd = [
+                sys.executable,
+                "-m",
+                "sphinx",
+                "-b",
+                "html",
+                "docs",
+                str(DOCS_BUILD_DIR),
+            ]
+            subprocess.run(cmd, check=False)
+        # Mount after building if not already mounted
+        if "/documentation" not in {m.path for m in app.router.routes if hasattr(m, "path")} and DOCS_BUILD_DIR.exists():
+            app.mount("/documentation", StaticFiles(directory=str(DOCS_BUILD_DIR), html=True), name="sphinx-docs")
+    except Exception as e:
+        logger.warning(f"Docs build skipped or failed: {e}")
+
+
+@app.on_event("startup")
+async def ensure_docs_built_on_start() -> None:
+    _build_docs_if_missing()
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -226,6 +260,45 @@ if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
         for route in router.routes:
             if hasattr(route, "dependencies"):
                 route.dependencies = [d for d in route.dependencies if d.dependency != get_current_user]
+
+
+# Simple wrapper page for API reference with a Back button
+@app.get("/api-reference", include_in_schema=False)
+async def api_reference() -> HTMLResponse:
+    html = (
+        """
+<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>ZaroPGx API Reference</title>
+  <style>
+    body, html { margin: 0; padding: 0; height: 100%; }
+    .topbar { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid #e5e7eb; }
+    .topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    .btn { display: inline-block; padding: 8px 12px; border-radius: 8px; text-decoration: none; font-size: 14px; }
+    .btn-primary { background: #0d6efd; color: #fff; }
+    .btn-primary:hover { background: #0b5ed7; }
+    .frame { width: 100%; height: calc(100vh - 48px); border: 0; }
+  </style>
+  <link rel=\"icon\" href=\"data:;base64,iVBORw0KGgo=\" />
+  <meta http-equiv=\"Content-Security-Policy\" content=\"frame-ancestors 'self';\" />
+  <meta http-equiv=\"X-Frame-Options\" content=\"SAMEORIGIN\" />
+  <meta http-equiv=\"Referrer-Policy\" content=\"no-referrer\" />
+  <meta http-equiv=\"Permissions-Policy\" content=\"interest-cohort=()\" />
+</head>
+<body>
+  <div class=\"topbar\">
+    <a class=\"btn btn-primary\" href=\"/\">Back to ZaroPGx</a>
+    <h1>API Reference</h1>
+  </div>
+  <iframe class=\"frame\" src=\"/docs\" title=\"Swagger UI\" loading=\"lazy\"></iframe>
+</body>
+</html>
+        """
+    )
+    return HTMLResponse(content=html)
 
 # Add direct routes for status and reports
 @app.get("/status/{file_id}")

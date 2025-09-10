@@ -269,7 +269,7 @@
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File</label>
                                     <input class="form-control" type="file" id="genomicFile" name="file" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.fastq,.fastq.gz,.fq,.fq.gz,.txt,.csv,.zip" required>
-                                    <div class="form-text">Upload a VCF, BAM, SAM, or CRAM file for pharmacogenomic analysis. Support for FASTQ and 23andMe is coming soon.</div>
+                                    <div class="form-text">Upload FASTQ, BAM, SAM, CRAM, or VCF genomic datafile(s) for pharmacogenomic analysis. Support for 23andMe and BED is coming soon.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -312,6 +312,10 @@
                                     <div id="stageAnalysis" class="stage-indicator text-center text-muted">
                                         <div class="mb-1"><i class="bi bi-search"></i></div>
                                         <span>Analysis</span>
+                                    </div>
+                                    <div id="stageHLA" class="stage-indicator text-center text-muted">
+                                        <div class="mb-1"><i class="bi bi-virus2"></i></div>
+                                        <span>OptiType</span>
                                     </div>
                                     <div id="stageGATK" class="stage-indicator text-center text-muted">
                                         <div class="mb-1"><i class="bi bi-cpu"></i></div>
@@ -387,22 +391,35 @@
                         </div>
                     </div>
 
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">API Documentation</div>
-                            <div class="card-body">
-                                <p>View the API documentation to explore available endpoints and features.</p>
-                                <a href="/docs" class="btn btn-secondary">Open API Docs</a>
+                <div class="row align-items-stretch">
+                    <div class="col-md-6 d-flex">
+                        <div class="card h-100 w-100">
+                            <div class="card-header">ZaroPgx Documentation</div>
+                            <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+                                <p class="mb-0 flex-grow-1">ZaroPGx is a free and open, easily self-hostable pharmacogenomic
+                                    analysis system which attempts to create the most accurate and complete reports possible 
+                                    with a given genomic datafile.
+                                    
+                                    See the software documentation, and access the API reference.</p>
+                                <a href="/documentation/" class="btn btn-secondary">Documentation</a>
+                                <a href="/api-reference" class="btn btn-outline-secondary">API Reference</a>
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-6">
-                        <div class="card">
+                    <div class="col-md-6 mt-3 mt-md-0 d-flex">
+                        <div class="card h-100 w-100">
                             <div class="card-header">About PharmCAT</div>
                             <div class="card-body">
-                                <p>This platform uses PharmCAT for pharmacogenomic analysis and CPIC guidelines.</p>
-                                <a href="https://pharmcat.org/" target="_blank" class="btn btn-secondary">Learn More</a>
+                                <p>This platform uses PharmCAT to generate recommendations based on institutional guidelines.
+
+                                    PharmCAT is now a part of the ClinPGx project, which also includes CPIC and PharmGKB.
+
+                                    For a full list of software comprising ZaroPGx, please see the documentation.
+                                </p>
+                                <div class="d-flex gap-2">
+                                    <a href="https://pharmcat.org/" target="_blank" class="btn btn-secondary">Learn More</a>
+                                    <a href="https://www.clinpgx.org/" target="_blank" class="btn btn-outline-secondary">ClinPGx</a>
+                                </div>
                             </div>
                         </div>
                     </div>

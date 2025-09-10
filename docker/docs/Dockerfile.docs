@@ -1,0 +1,18 @@
+FROM python:3.12-bookworm
+
+WORKDIR /docs
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY docs/requirements.txt /tmp/requirements.txt
+RUN python -m pip install --upgrade pip && \
+    python -m pip install -r /tmp/requirements.txt
+
+# Copy only docs to keep image small; project source is mounted at runtime if needed
+COPY docs /docs
+
+EXPOSE 8000
+
+CMD ["bash", "-lc", "sphinx-autobuild -b html /docs /docs/_build/html --host 0.0.0.0 --port 8000"]
