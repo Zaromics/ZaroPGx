@@ -3,11 +3,15 @@
 <img width="1541" height="900" alt="Screenshot 2025-08-22 143144" src="https://github.com/user-attachments/assets/57450a14-d392-4d38-85f6-911a7e7b962f" />
 
 
-A containerized pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by CPIC and other institutional resources. Nextflow is used to orchestrate an intelligent workflow which integrates GATK preprocessing, OptiType and PyPGx allele calling, and PharmCAT with outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes with lower evidence clinical actionability. Report data can be exported to Electronic Health Records or Personal Health Records via HAPI FHIR integration. Designed as a self-hostable docker compose stack, ZaroPGx enables absolute data privacy and security when run locally. That said, environmental configurations are provided for both local and internet-facing deployment, which allows the software to be made accessible to others over the internet.
+ZaroPGx is a containerized bioinformatic pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by institutional resources. Nextflow is used to orchestrate an algorithmic workflow which integrates GATK preprocessing, OptiType/hlatyping and PyPGx allele calling, and PharmCAT with outside calls to unlock its full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx and 3 via hla-typing, albeit with less evidential clinical application. Report data will be made exportable to Personal and Electronic Health Records via the HAPI FHIR server integration. Designed as a self-hostable docker compose stack, ZaroPGx enables absolute data privacy and security when run locally. That said, environment configurations are provided for both local and web facing deployment, which allows the software to be made accessible to others over the internet.
 
 ## Status
 
 This project is in active development and not production-ready. Core functionality is being implemented incrementally.
+
+In terms of genomic file formats, operability currently stands as follows:
+- VCF: hg38 working, hg37 to be reviewed
+- all other formats: to be reviewed 
 
 ## Intended Function
 
@@ -16,7 +20,7 @@ The system is designed to:
 1. **Accept genomic data files** (VCF, BAM, FASTQ) and preprocess them using GATK when necessary
 2. **Perform allele calling** via PyPGx and OptiType for comprehensive pharmacogene coverage
 3. **Execute PharmCAT analysis** with PyPGx and OptiType providing outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes
-4. **Generate comprehensive reports** covering actionable results for 23 pharmacogenes and notable findings for approximately 64 additional pharmacogenes
+4. **Generate comprehensive reports** covering actionable results for 23 pharmacogenes and notable findings for approximately 90 genes in total, inclusive
 5. **Export data** to Electronic/Personal Health Record via the integrated HAPI FHIR service
 6. **Maintain privacy** through self-hosted deployment, ensuring no genomic data leaves the user's network
 
