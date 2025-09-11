@@ -971,6 +971,16 @@
                                                                                 </div>` : ''}
                                                                             </div>
                                                                         ` : ''}
+                                                                        
+                                                                        <!-- Download All Reports -->
+                                                                        <div class="mt-4">
+                                                                            <h5>Download All Reports</h5>
+                                                                            <div class="mt-2">
+                                                                                <button id="downloadAllBtn" class="btn btn-dark" onclick="downloadAllReports('${data.data?.patient_id || data.patient_id || jobId}')">
+                                                                                    <i class="bi bi-download"></i> Download All Reports as ZIP
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
                                                                     </div>
                                                                 `;
                                                                 resultsDiv.classList.remove('d-none');
@@ -1276,6 +1286,21 @@
                         resultsHtml += `</div>`;
                     }
                 });
+
+                // Add download all reports button
+                const patientId = data.data?.patient_id || data.patient_id || jobId;
+                if (patientId) {
+                    resultsHtml += `
+                        <div class="mt-4">
+                            <h5>Download All Reports</h5>
+                            <div class="mt-2">
+                                <button id="downloadAllBtn" class="btn btn-dark" onclick="downloadAllReports('${patientId}')">
+                                    <i class="bi bi-download"></i> Download All Reports as ZIP
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }
 
                 resultsHtml += `</div>`;
                 resultsDiv.innerHTML = resultsHtml;
@@ -1673,6 +1698,48 @@
                 viewHeaderButton.disabled = false;
                 viewHeaderButton.innerHTML = '<i class="bi bi-eye"></i> View Header';
             }
+        }
+
+        // Function to download all reports as a zip file
+        function downloadAllReports(patientId) {
+            if (!patientId) {
+                console.error('No patient ID provided for download');
+                addLogMessage('Error: No patient ID available for download', 'danger');
+                return;
+            }
+
+            console.log('Starting download for patient ID:', patientId);
+            
+            // Show loading state
+            const downloadBtn = document.getElementById('downloadAllBtn');
+            if (downloadBtn) {
+                downloadBtn.disabled = true;
+                downloadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Preparing Download...';
+            }
+
+            // Create download link
+            const downloadUrl = `/upload/reports/download/${patientId}`;
+            
+            // Create a temporary link element and trigger download
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = `pgx_reports_${patientId}.zip`;
+            link.style.display = 'none';
+            
+            // Add to DOM, click, and remove
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Reset button state after a short delay
+            setTimeout(() => {
+                if (downloadBtn) {
+                    downloadBtn.disabled = false;
+                    downloadBtn.innerHTML = '<i class="bi bi-download"></i> Download All Reports as ZIP';
+                }
+            }, 2000);
+            
+            addLogMessage('Download started for all reports', 'success');
         }
     </script>
 </body>

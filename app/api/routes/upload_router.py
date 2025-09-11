@@ -3,7 +3,8 @@ import uuid
 import shutil
 import tempfile
 import time
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
+import zipfile
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks, Response
 from sqlalchemy.orm import Session
 from typing import Optional
 import logging
@@ -1721,4 +1722,66 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Error retrieving report URLs: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving report URLs: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error retrieving report URLs: {str(e)}")
+
+@router.get("/reports/download/{patient_id}")
+async def download_all_reports(patient_id: str, current_user: str = Depends(get_optional_user)):
+    """
+    Download all report files for a patient as a zip file
+    """
+    try:
+        # Check if patient directory exists
+        patient_dir = Path(REPORTS_DIR) / str(patient_id)
+        if not patient_dir.exists() or not patient_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"Reports not found for patient {patient_id}")
+        
+        # Find all report files in the patient directory
+        report_files = []
+        for file_path in patient_dir.iterdir():
+            if file_path.is_file():
+                # Include all report files (PDF, HTML, JSON, TSV, SVG, PNG)
+                if file_path.suffix.lower() in ['.pdf', '.html', '.json', '.tsv', '.svg', '.png']:
+                    report_files.append(file_path)
+        
+        if not report_files:
+            raise HTTPException(status_code=404, detail="No report files found")
+        
+        # Create a temporary zip file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_zip:
+            temp_zip_path = temp_zip.name
+        
+        try:
+            # Create the zip file
+            with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_path in report_files:
+                    # Add file to zip with just the filename (not the full path)
+                    zipf.write(file_path, file_path.name)
+                    logger.info(f"Added {file_path.name} to zip file")
+            
+            # Read the zip file content
+            with open(temp_zip_path, 'rb') as f:
+                zip_content = f.read()
+            
+            # Clean up temporary file
+            os.unlink(temp_zip_path)
+            
+            # Return the zip file as a response
+            return Response(
+                content=zip_content,
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": f"attachment; filename=pgx_reports_{patient_id}.zip"
+                }
+            )
+            
+        except Exception as zip_error:
+            # Clean up temporary file on error
+            if os.path.exists(temp_zip_path):
+                os.unlink(temp_zip_path)
+            raise zip_error
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating zip file for patient {patient_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating zip file: {str(e)}") 
