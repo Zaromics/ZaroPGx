@@ -2424,6 +2424,17 @@ async def startup_event():
     print("=================== STARTING ZaroPGx ===================")
     logger.info("Starting ZaroPGx application")
     
+    # Ensure database is properly initialized
+    try:
+        from app.api.db import init_db
+        init_db()
+        logger.info("Database connection verified")
+        print("✅ Database connection verified")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        print(f"❌ Database initialization failed: {e}")
+        # Don't exit, let the app start and handle errors gracefully
+    
     # Services to check
     services = {
         "GATK API": f"{GATK_SERVICE_URL}/health",
