@@ -4,7 +4,8 @@
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "postgis" CASCADE;
+-- Note: PostGIS extension not available in standard PostgreSQL container
+-- CREATE EXTENSION IF NOT EXISTS "postgis" CASCADE;
 
 -- ============================================================================
 -- CPIC SCHEMA - Pharmacogenomic guidelines and reference data
