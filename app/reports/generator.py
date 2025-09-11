@@ -327,8 +327,8 @@ def generate_pdf_report(
                 {
                     **d,
                     "phenotype": (
-                        "Possibly Wild Type"
-                        if str(d.get("diplotype") or "").strip() == "*1/*1" and (
+                        "Likely Wild Type"
+                        if str(d.get("diplotype") or "").strip() in {"*1/*1", "Reference/Reference"} and (
                             str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
                         )
                         else d.get("phenotype")
@@ -673,8 +673,8 @@ def create_interactive_html_report(
                 {
                     **d,
                     "phenotype": (
-                        "Possibly Wild Type"
-                        if str(d.get("diplotype") or "").strip() == "*1/*1" and (
+                        "Likely Wild Type"
+                        if str(d.get("diplotype") or "").strip() in {"*1/*1", "Reference/Reference"} and (
                             str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
                         )
                         else d.get("phenotype")
@@ -891,17 +891,13 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     gene_entry = {
                         "gene": gene_name,
                         # Align with normalized PharmCAT structure minimally
-                        "diplotype": {"name": diplotype} if diplotype else {},
-                        "phenotype": {"info": phenotype} if phenotype else {},
+                        "diplotype": diplotype if diplotype else "Unknown",
+                        "phenotype": phenotype if phenotype else "Unknown",
+                        "activity_score": activity_score,
                         "source": "PyPGx",
                         "pyPgxOnly": True
                     }
-                    if activity_score is not None and str(activity_score).strip() != "":
-                        # Include as numeric/text under diplotype.activityScore if possible
-                        if isinstance(gene_entry.get("diplotype"), dict):
-                            gene_entry["diplotype"]["activityScore"] = activity_score
-                        else:
-                            gene_entry["activityScore"] = activity_score
+                    # activity_score is already included in the gene_entry above
                     data.setdefault("genes", []).append(gene_entry)
                     existing_genes.add(gene_name.upper())
                     added_count += 1

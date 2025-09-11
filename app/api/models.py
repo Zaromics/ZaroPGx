@@ -173,13 +173,31 @@ class JobStatus(str, Enum):
 
 class JobStage(str, Enum):
     """Job stage enumeration representing the pipeline stages"""
+    # Upload stages
+    UPLOAD_START = "upload_start"
+    HEADER_INSPECTION = "header_inspection"
+    UPLOAD_COMPLETE = "upload_complete"
+    
+    # Processing stages
+    GATK_CONVERSION = "gatk_conversion"
+    HLA_TYPING = "hla_typing"
+    FASTQ_CONVERSION = "fastq_conversion"
+    PYPX_ANALYSIS = "pypgx_analysis"
+    PYPX_BAM2VCF = "pypgx_bam2vcf"
+    PHARMCAT_ANALYSIS = "pharmcat_analysis"
+    
+    # Report stages
+    WORKFLOW_DIAGRAM = "workflow_diagram"
+    REPORT_GENERATION = "report_generation"
+    COMPLETE = "complete"
+    
+    # Legacy stages for backward compatibility
     UPLOAD = "upload"
     ANALYSIS = "analysis"
     GATK = "gatk"
     PYPX = "pypgx"
     PHARMCAT = "pharmcat"
     REPORT = "report"
-    COMPLETE = "complete"
 
 
 class JobStageStatus(str, Enum):

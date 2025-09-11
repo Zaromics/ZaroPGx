@@ -1002,13 +1002,9 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
                     for gene_id, gene_info in phenotype_data["phenotypes"].items():
                         gene_entry = {
                             "gene": gene_id,
-                            "diplotype": {
-                                "name": gene_info.get("diplotype", "Unknown"),
-                                "activityScore": gene_info.get("activityScore")
-                            },
-                            "phenotype": {
-                                "info": gene_info.get("phenotype", "Unknown")
-                            }
+                            "diplotype": gene_info.get("diplotype", "Unknown"),
+                            "phenotype": gene_info.get("phenotype", "Unknown"),
+                            "activity_score": gene_info.get("activityScore")
                         }
                         genes_data.append(gene_entry)
                         

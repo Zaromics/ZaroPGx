@@ -111,6 +111,13 @@ th {
     background-color: #17a2b8;
 }
 
+/* Likely Wild Type: transparent background with black border */
+.likely-wild-type {
+    background-color: transparent;
+    color: #000;
+    border: 2px solid #000;
+}
+
 .disclaimer {
     margin-top: 50px;
     padding: 15px;

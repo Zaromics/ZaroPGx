@@ -103,8 +103,8 @@
         .rapid-metabolizer, .ultrarapid-metabolizer {
             background-color: #17a2b8;
         }
-        /* Possibly Wild Type: transparent background with black border */
-        .possibly-wild-type {
+        /* Likely Wild Type: transparent background with black border */
+        .likely-wild-type {
             background-color: transparent;
             color: #000;
             border: 2px solid #000;
@@ -323,7 +323,7 @@
                 {% for d in diplotypes %}
                 <li>
                     <strong>{{ d.gene }}:</strong> {{ d.diplotype }} - 
-                    <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
+                    <span class="gene-phenotype {% if 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
                         {{ d.phenotype }}
                     </span>
                 </li>
@@ -350,7 +350,7 @@
                     <td>{{ d.gene }}</td>
                     <td>{{ d.diplotype }}</td>
                     <td>{{ d.phenotype }}</td>
-                    <td>{{ d.activity_score if d.activity_score else 'N/A' }}</td>
+                    <td>{{ d.activity_score if d.activity_score else '' }}</td>
                     <td>
                         {% if 'Normal' in d.phenotype %}
                             Standard drug metabolism expected

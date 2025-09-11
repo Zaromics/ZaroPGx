@@ -286,18 +286,22 @@ class ReportLabGenerator(PDFGenerator):
                                 diplotype_text = f"<b>{gene_name}:</b> {diplotype_value}"
                                 if phenotype != 'Unknown':
                                     diplotype_text += f" (Phenotype: {phenotype})"
-                                if activity_score != 'Unknown':
+                                if activity_score != 'Unknown' and activity_score and str(activity_score).strip():
                                     diplotype_text += f" (Activity Score: {activity_score})"
                                 
                                 story.append(Paragraph(diplotype_text, normal_style))
+                                story.append(Spacer(1, 3))
                             elif 'name' in diplotype:
-                                # Alternative format
+                                # Alternative format (legacy support)
                                 story.append(Paragraph(f"<b>{diplotype.get('name', 'Unknown')}:</b> {diplotype.get('value', 'Unknown')}", normal_style))
+                                story.append(Spacer(1, 3))
                             else:
                                 # Generic format
                                 story.append(Paragraph(f"• {str(diplotype)}", normal_style))
+                                story.append(Spacer(1, 3))
                         else:
                             story.append(Paragraph(f"• {str(diplotype)}", normal_style))
+                            story.append(Spacer(1, 3))
                 story.append(Spacer(1, 12))
             
             # Handle recommendations data specifically

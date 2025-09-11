@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "0003_genomic_file_headers"
-down_revision = "0002_enable_postbio_poststat_placeholders"
+down_revision = "0002_postbio_poststat"
 branch_labels = None
 depends_on = None
 

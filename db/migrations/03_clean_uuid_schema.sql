@@ -52,7 +52,13 @@ CREATE TABLE job_monitoring.jobs (
     patient_id UUID REFERENCES user_data.patients(patient_id),
     file_id UUID REFERENCES user_data.genetic_data(data_id),
     status VARCHAR(50) NOT NULL CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
-    stage VARCHAR(50) NOT NULL CHECK (stage IN ('upload', 'analysis', 'gatk', 'pypgx', 'pharmcat', 'report', 'complete')),
+    stage VARCHAR(50) NOT NULL CHECK (stage IN (
+        'upload_start', 'header_inspection', 'upload_complete',
+        'gatk_conversion', 'hla_typing', 'fastq_conversion',
+        'pypgx_analysis', 'pypgx_bam2vcf', 'pharmcat_analysis',
+        'workflow_diagram', 'report_generation', 'complete',
+        'upload', 'analysis', 'gatk', 'pypgx', 'pharmcat', 'report'
+    )),
     progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
     message TEXT,
     error_message TEXT,

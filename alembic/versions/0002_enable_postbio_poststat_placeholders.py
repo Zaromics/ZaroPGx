@@ -7,7 +7,7 @@ Create Date: 2025-08-27
 """
 from alembic import op
 
-revision = "0002_enable_postbio_poststat_placeholders"
+revision = "0002_postbio_poststat"
 down_revision = "0001_enable_builtin_extensions"
 branch_labels = None
 depends_on = None

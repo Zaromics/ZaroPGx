@@ -346,6 +346,25 @@
                                         </div>
                                     </div>
                                 </div>
+                                
+                                <!-- Nextflow Process Details (initially collapsed) -->
+                                <div id="nextflowProcessPanel" class="card d-none">
+                                    <div class="card-header bg-info text-white p-2" role="button" data-bs-toggle="collapse" data-bs-target="#nextflowProcessDetails">
+                                        <small class="text-white">
+                                            <i class="bi bi-diagram-3 me-1"></i>
+                                            Nextflow Process Details 
+                                            <span id="nextflowProcessCount" class="badge bg-light text-dark ms-2">0 processes</span>
+                                            <i class="bi bi-chevron-down float-end"></i>
+                                        </small>
+                                    </div>
+                                    <div id="nextflowProcessDetails" class="collapse">
+                                        <div class="card-body p-2">
+                                            <div id="nextflowProcessList" class="small">
+                                                <!-- Process details will appear here -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             
                             <div class="d-flex gap-2">
@@ -589,6 +608,103 @@
                     logMessages.scrollTop = logMessages.scrollHeight;
                 };
 
+                const updateNextflowProcessDetails = (processes) => {
+                    const nextflowPanel = document.getElementById('nextflowProcessPanel');
+                    const processCount = document.getElementById('nextflowProcessCount');
+                    const processList = document.getElementById('nextflowProcessList');
+                    
+                    if (!nextflowPanel || !processCount || !processList) return;
+                    
+                    // Show the panel if it's hidden
+                    nextflowPanel.classList.remove('d-none');
+                    
+                    // Update process count
+                    const totalProcesses = Object.keys(processes).length;
+                    processCount.textContent = `${totalProcesses} processes`;
+                    
+                    // Clear existing process list
+                    processList.innerHTML = '';
+                    
+                    // Add each process
+                    Object.entries(processes).forEach(([taskId, process]) => {
+                        const processDiv = document.createElement('div');
+                        processDiv.className = 'mb-2 p-2 border rounded';
+                        
+                        // Determine status color and icon
+                        let statusClass = 'text-muted';
+                        let statusIcon = 'bi-circle';
+                        let statusText = process.status || 'Unknown';
+                        
+                        switch (process.status) {
+                            case 'SUBMITTED':
+                                statusClass = 'text-info';
+                                statusIcon = 'bi-clock';
+                                break;
+                            case 'RUNNING':
+                                statusClass = 'text-primary';
+                                statusIcon = 'bi-play-circle';
+                                break;
+                            case 'COMPLETED':
+                                statusClass = 'text-success';
+                                statusIcon = 'bi-check-circle';
+                                break;
+                            case 'FAILED':
+                                statusClass = 'text-danger';
+                                statusIcon = 'bi-x-circle';
+                                break;
+                            case 'CANCELLED':
+                                statusClass = 'text-warning';
+                                statusIcon = 'bi-stop-circle';
+                                break;
+                        }
+                        
+                        // Format duration
+                        let durationText = '';
+                        if (process.duration && process.duration !== '-') {
+                            const duration = parseFloat(process.duration);
+                            if (duration > 60) {
+                                durationText = `${Math.round(duration / 60)}m ${Math.round(duration % 60)}s`;
+                            } else {
+                                durationText = `${Math.round(duration)}s`;
+                            }
+                        }
+                        
+                        // Format timestamps
+                        const formatTime = (timeStr) => {
+                            if (!timeStr || timeStr === '-') return 'N/A';
+                            try {
+                                return new Date(timeStr).toLocaleTimeString();
+                            } catch {
+                                return timeStr;
+                            }
+                        };
+                        
+                        processDiv.innerHTML = `
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <div class="d-flex align-items-center mb-1">
+                                        <i class="bi ${statusIcon} me-2 ${statusClass}"></i>
+                                        <strong class="me-2">${process.process_name || 'Unknown Process'}</strong>
+                                        <span class="badge bg-${statusClass.replace('text-', '')}">${statusText}</span>
+                                    </div>
+                                    <div class="small text-muted">
+                                        <div>Task ID: ${taskId}</div>
+                                        ${process.tag ? `<div>Tag: ${process.tag}</div>` : ''}
+                                        ${durationText ? `<div>Duration: ${durationText}</div>` : ''}
+                                        ${process.exit_code && process.exit_code !== '-' ? `<div>Exit Code: ${process.exit_code}</div>` : ''}
+                                    </div>
+                                </div>
+                                <div class="small text-muted text-end">
+                                    <div>Start: ${formatTime(process.start_time)}</div>
+                                    <div>End: ${formatTime(process.complete_time)}</div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        processList.appendChild(processDiv);
+                    });
+                };
+
                 let reconnectAttempt = 0;
                 const maxReconnects = 3;
 
@@ -652,6 +768,11 @@
                                                     // Add log message
                                                     addLogMessage(data.message || 'Processing...');
                                                     
+                                                    // Update Nextflow process details if available
+                                                    if (data.metadata && data.metadata.nextflow_processes) {
+                                                        updateNextflowProcessDetails(data.metadata.nextflow_processes);
+                                                    }
+                                                    
                                                     // Update stage indicators based on current stage
                                                     if (data.stage) {
                                                         // First, reset all stages to muted
@@ -664,16 +785,42 @@
                                                         let currentStage = data.stage;
                                                         // Handle backend stage naming variations
                                                         const stageNameMap = {
-                                                            'variant_calling': 'GATK',
-                                                            'gatk': 'GATK',
-                                                            'star_allele_calling': 'PyPGx',
-                                                            'pypgx': 'PyPGx',
-                                                            'pharmcat': 'PharmCAT',
-                                                            'report_generation': 'Report',
-                                                            'complete': 'Report',
+                                                            // Upload stages
+                                                            'upload_start': 'Upload',
+                                                            'upload_complete': 'Upload',
                                                             'initializing': 'Upload',
                                                             'uploaded': 'Upload',
+                                                            
+                                                            // GATK stages
+                                                            'gatk_conversion': 'GATK',
+                                                            'fastq_conversion': 'GATK',
+                                                            'variant_calling': 'GATK',
+                                                            'gatk': 'GATK',
+                                                            
+                                                            // HLA stages
+                                                            'hla_typing': 'HLA',
+                                                            'hlatyping': 'HLA',
+                                                            'hla': 'HLA',
+                                                            
+                                                            // PyPGx stages
+                                                            'pypgx_analysis': 'PyPGx',
+                                                            'pypgx_bam2vcf': 'PyPGx',
+                                                            'star_allele_calling': 'PyPGx',
+                                                            'pypgx': 'PyPGx',
+                                                            
+                                                            // PharmCAT stages
+                                                            'pharmcat_analysis': 'PharmCAT',
+                                                            'pharmcat': 'PharmCAT',
+                                                            
+                                                            // Report stages
+                                                            'workflow_diagram': 'Report',
+                                                            'report_generation': 'Report',
+                                                            'complete': 'Report',
+                                                            'report': 'Report',
+                                                            
+                                                            // Analysis stages
                                                             'processing': 'Analysis',
+                                                            'header_inspection': 'Analysis',
                                                             'analyzing': 'Analysis',
                                                             'analysis': 'Analysis'
                                                         };

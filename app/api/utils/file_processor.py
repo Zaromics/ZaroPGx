@@ -265,23 +265,7 @@ class FileProcessor:
             except Exception as e:
                 logger.debug(f"Error checking for 23andMe format: {str(e)}")
         
-        # If we have a .gz file but couldn't determine type from suffix, try filename patterns
-        if ext == '.gz':
-            filename = file_path.name.lower()
-            if 'vcf' in filename and 'gvcf' not in filename:
-                logger.info("Identified as gzipped VCF file (from filename pattern)")
-                return FileType.VCF
-            elif 'gvcf' in filename:
-                logger.info("Identified as gzipped GVCF file (from filename pattern)")
-                return FileType.GVCF
-            elif any(pattern in filename for pattern in ['fastq', 'fq']):
-                logger.info("Identified as gzipped FASTQ file (from filename pattern)")
-                return FileType.FASTQ
-            elif any(pattern in filename for pattern in ['fasta', 'fa', 'fna']):
-                logger.info("Identified as gzipped FASTA file (from filename pattern)")
-                return FileType.FASTA
-
-        # If extension doesn't match, try to determine from content
+        # If extension doesn't match, try to determine from content first
         try:
             # For possibly compressed files, use gzip to open
             if ext == '.gz':
@@ -344,6 +328,22 @@ class FileProcessor:
         
         except Exception as e:
             logger.debug(f"Error detecting file type from content: {str(e)}")
+
+        # If content-based detection failed, try filename patterns as fallback
+        if ext == '.gz':
+            filename = file_path.name.lower()
+            if 'vcf' in filename and 'gvcf' not in filename:
+                logger.info("Identified as gzipped VCF file (from filename pattern)")
+                return FileType.VCF
+            elif 'gvcf' in filename:
+                logger.info("Identified as gzipped GVCF file (from filename pattern)")
+                return FileType.GVCF
+            elif any(pattern in filename for pattern in ['fastq', 'fq']):
+                logger.info("Identified as gzipped FASTQ file (from filename pattern)")
+                return FileType.FASTQ
+            elif any(pattern in filename for pattern in ['fasta', 'fa', 'fna']):
+                logger.info("Identified as gzipped FASTA file (from filename pattern)")
+                return FileType.FASTA
 
         logger.warning(f"Could not determine file type for {file_path}")
         return FileType.UNKNOWN

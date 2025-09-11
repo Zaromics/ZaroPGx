@@ -2,11 +2,12 @@ import os
 import uuid
 import shutil
 import tempfile
+import time
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import asyncio
 import requests
@@ -41,6 +42,247 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 file_processor = FileProcessor(temp_dir=UPLOAD_DIR)
 
 # Job status is now managed by the JobStatusService
+
+def calculate_pipeline_progress(processes: dict, nextflow_progress: int, message: str, workflow_config: dict = None) -> tuple[str, int, str]:
+    """
+    Calculate progress based on workflow stages defined in workflow_logic.md.
+    
+    Uses the WorkflowStageManager to properly map Nextflow processes to workflow stages
+    and ensure progress percentages align with expected milestones.
+    
+    Args:
+        processes: Dictionary of Nextflow processes
+        nextflow_progress: Raw Nextflow progress (0-100)
+        message: Current message from Nextflow
+        workflow_config: Workflow configuration to determine which stages to skip
+        
+    Returns:
+        Tuple of (stage, progress_percentage, detailed_message)
+    """
+    from app.services.workflow_stage_manager import workflow_stage_manager, WorkflowStage
+    
+    # Debug logging
+    logger.info(f"Calculating progress: processes={len(processes) if processes else 0}, nextflow_progress={nextflow_progress}, message='{message}'")
+    logger.info(f"Workflow config: {workflow_config}")
+    if processes:
+        logger.info(f"Process details: {list(processes.keys())}")
+        for task_id, process in processes.items():
+            process_name = process.get('process_name', 'unknown')
+            status = process.get('status', 'unknown')
+            logger.info(f"  {task_id}: {process_name} - {status}")
+            
+            # Debug process mapping
+            stage = workflow_stage_manager.get_stage_for_nextflow_process(process_name.lower(), workflow_config)
+            if stage:
+                progress, desc = workflow_stage_manager.calculate_progress_for_stage(stage, workflow_config)
+                logger.info(f"    -> Mapped to stage: {stage.value} ({progress}%) - {desc}")
+            else:
+                logger.info(f"    -> No stage mapping found for: {process_name}")
+    else:
+        logger.info("No processes found, using time-based progress estimation")
+    
+    # Default workflow config if not provided
+    if workflow_config is None:
+        workflow_config = {}
+    
+    # If no processes, return initial stage
+    if not processes:
+        return WorkflowStage.PYPX_ANALYSIS.value, 10, "Initializing pipeline..."
+    
+    # Map all processes to their workflow stages and sort by priority
+    process_stages = []
+    for process in processes.values():
+        process_name = process.get("process_name", "").lower()
+        stage = workflow_stage_manager.get_stage_for_nextflow_process(process_name, workflow_config)
+        if stage:
+            progress, desc = workflow_stage_manager.calculate_progress_for_stage(stage, workflow_config)
+            process_stages.append((stage, progress, desc, process))
+    
+    # Sort by progress percentage to get stage priority
+    process_stages.sort(key=lambda x: x[1])
+    
+    # Find the current stage based on process status
+    current_stage = WorkflowStage.PYPX_ANALYSIS
+    current_progress = 10
+    current_message = "Pipeline starting..."
+    
+    # Check for running processes first (highest priority)
+    running_processes = [p for p in process_stages if p[3].get("status") == "RUNNING"]
+    if running_processes:
+        # Get the highest priority running process
+        stage, progress, desc, process = running_processes[-1]  # Last item has highest progress
+        current_stage = stage
+        current_progress = progress
+        current_message = f"Running {desc}"
+    else:
+        # Check completed processes
+        completed_processes = [p for p in process_stages if p[3].get("status") == "COMPLETED"]
+        if completed_processes:
+            # Get the highest priority completed process
+            stage, progress, desc, process = completed_processes[-1]  # Last item has highest progress
+            current_stage = stage
+            current_progress = progress
+            current_message = f"Completed {desc}"
+    
+    # Check for failures
+    failed_processes = [p for p in process_stages if p[3].get("status") == "FAILED"]
+    if failed_processes:
+        current_message = f"Error: {len(failed_processes)} process(es) failed"
+    
+    # Handle the transition to final stages more gradually
+    total_processes = len(processes)
+    completed_count = len([p for p in processes.values() if p.get("status") == "COMPLETED"])
+    
+    # Check if we have meaningful workflow processes completed (not just initialization)
+    meaningful_processes = [p for p in processes.values() 
+                          if p.get("status") == "COMPLETED" 
+                          and p.get("process_name", "").lower() not in ["createemptyfile", "emptyfile"]]
+    
+    # Only move to final stages if we have completed meaningful processes
+    if completed_count == total_processes and total_processes > 0 and len(meaningful_processes) > 0:
+        # Move through final stages gradually
+        if current_progress < 80:
+            current_stage = WorkflowStage.WORKFLOW_DIAGRAM
+            current_progress = 80
+            current_message = "Generating workflow diagram"
+        elif current_progress < 90:
+            current_stage = WorkflowStage.REPORT_GENERATION
+            current_progress = 90
+            current_message = "Generating PDF and HTML reports"
+        elif current_progress < 100:
+            current_stage = WorkflowStage.COMPLETE
+            current_progress = 100
+            current_message = "Processing complete!"
+    
+    return current_stage.value, current_progress, current_message
+
+async def monitor_nextflow_progress(job_service: JobStatusService, job_id: str, nextflow_url: str, job_key: str, outdir: str):
+    """
+    Monitor Nextflow progress and update job status in real-time.
+    
+    Args:
+        job_service: JobStatusService instance
+        job_id: Job ID to update
+        nextflow_url: Nextflow runner URL
+        job_key: Nextflow job key for status queries
+        outdir: Output directory for Nextflow
+    """
+    import aiohttp
+    import asyncio
+    
+    max_wait_time = 7200  # 2 hours max
+    check_interval = 5  # Check every 5 seconds
+    start_time = time.time()
+    
+    logger.info(f"Starting Nextflow progress monitoring for job {job_id}")
+    
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            while time.time() - start_time < max_wait_time:
+                try:
+                    # Get status from Nextflow runner
+                    async with session.get(f"{nextflow_url}/status/{job_key}") as resp:
+                        if resp.status == 200:
+                            status_data = await resp.json()
+                            
+                            # Map Nextflow status to job stages
+                            nextflow_status = status_data.get("status", "unknown")
+                            nextflow_progress = status_data.get("progress", 0)
+                            message = status_data.get("message", "Processing...")
+                            processes = status_data.get("processes", {})
+                            current_stage = status_data.get("current_stage", "pypgx_analysis")
+                            
+                            # Get workflow configuration from job metadata
+                            workflow_config = {}
+                            if job_service.get_job_status(job_id):
+                                job_metadata = job_service.get_job_status(job_id).get("job_metadata", {})
+                                workflow_config = job_metadata.get("workflow", {})
+                            
+                            # Use Nextflow's calculated stage and progress directly
+                            # This eliminates the "telephone game" by trusting Nextflow's stage calculation
+                            stage = status_data.get("stage", "pypgx_analysis")
+                            progress = status_data.get("progress", 10)
+                            detailed_message = status_data.get("message", "Processing...")
+                            
+                            # Debug logging to track stage information flow
+                            logger.info(f"Nextflow data: stage={stage}, progress={progress}, message='{detailed_message}'")
+                            
+                            # Don't override initial stages (0-10%) that are handled by the app
+                            # Only use Nextflow progress if we're past the initial stages
+                            if progress < 10:
+                                # Keep the app's initial progress, don't override with Nextflow
+                                current_job = job_service.get_job_status(job_id)
+                                if current_job and current_job.get("progress", 0) > 0:
+                                    progress = current_job.get("progress", 10)
+                                    stage = current_job.get("stage", "pypgx_analysis")
+                                    detailed_message = current_job.get("message", "Processing...")
+                                    logger.info(f"Preserved initial stage: stage={stage}, progress={progress}")
+                            
+                            # Update job progress
+                            job_service.update_job_progress(
+                                job_id=job_id,
+                                stage=stage,
+                                progress=progress,
+                                message=f"Nextflow: {detailed_message}",
+                                metadata={
+                                    "nextflow_status": nextflow_status,
+                                    "nextflow_progress": nextflow_progress,
+                                    "nextflow_processes": processes,
+                                    "monitoring_timestamp": datetime.now(timezone.utc).isoformat()
+                                }
+                            )
+                            
+                            # Check if job is complete
+                            if nextflow_status in ["completed", "failed"]:
+                                if nextflow_status == "completed":
+                                    job_service.update_job_progress(
+                                        job_id=job_id,
+                                        stage="pharmcat",
+                                        progress=90,
+                                        message="Nextflow pipeline completed, collecting outputs...",
+                                        metadata={"nextflow_status": "completed"}
+                                    )
+                                else:
+                                    error_msg = status_data.get("error", "Unknown error")
+                                    job_service.fail_job(
+                                        job_id=job_id,
+                                        error_message=f"Nextflow pipeline failed: {error_msg}",
+                                        stage=stage
+                                    )
+                                break
+                        
+                        elif resp.status == 404:
+                            logger.warning(f"Nextflow job {job_key} not found, stopping monitoring")
+                            break
+                        else:
+                            logger.warning(f"Failed to get Nextflow status: {resp.status}")
+                    
+                except Exception as e:
+                    logger.error(f"Error monitoring Nextflow progress: {e}")
+                
+                # Wait before next check
+                await asyncio.sleep(check_interval)
+            
+            # If we reach here, either job completed or timeout
+            if time.time() - start_time >= max_wait_time:
+                logger.warning(f"Nextflow monitoring timeout for job {job_id}")
+                job_service.update_job_progress(
+                    job_id=job_id,
+                    stage=JobStage.PYPX_ANALYSIS.value,
+                    progress=50,
+                    message="Nextflow monitoring timeout, checking for outputs...",
+                    metadata={"monitoring_timeout": True}
+                )
+    
+    except Exception as e:
+        logger.error(f"Error in Nextflow monitoring: {e}")
+        job_service.update_job_progress(
+            job_id=job_id,
+            stage=JobStage.PYPX_ANALYSIS.value,
+            progress=25,
+            message=f"Monitoring error: {str(e)}",
+            metadata={"monitoring_error": str(e)}
+        )
 
 # Environment variable helper function
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -83,7 +325,7 @@ async def process_file_nextflow_background_with_db(file_path: str, patient_id: s
 
 async def process_file_nextflow_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None):
     """
-    Execute the PGx pipeline via the Nextflow runner service and update job status.
+    Execute the PGx pipeline via the Nextflow runner service with real-time monitoring.
     """
     job = None
     try:
@@ -116,7 +358,7 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
             header_json_url = f"/reports/{patient_id}/{header_json_path.name}"
             job_service.update_job_progress(
                 job.job_id,
-                JobStage.UPLOAD.value,
+                JobStage.HEADER_INSPECTION.value,
                 5,
                 "Header inspected and recorded.",
                 {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
@@ -126,7 +368,7 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
 
         job_service.update_job_progress(
             job.job_id,
-            JobStage.ANALYSIS.value,
+            JobStage.UPLOAD_COMPLETE.value,
             10,
             "Submitting job to Nextflow runner...",
             {"workflow": workflow}
@@ -146,8 +388,11 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
             "report_id": str(data_id),
             "reference": (workflow.get("requested_reference", "hg38") if isinstance(workflow, dict) else "hg38"),
             "outdir": outdir,
+            "job_id": str(job.job_id)  # Pass job_id for tracking
         }
 
+        # Submit job to Nextflow runner
+        job_key = None
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=7200)) as session:
             try:
                 async with session.post(f"{nextflow_url}/run", data=payload) as resp:
@@ -156,19 +401,25 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
                         raise RuntimeError(f"Nextflow run failed ({resp.status}): {text[:500]}")
                     try:
                         result_json = await resp.json()
+                        job_key = result_json.get("job_key")
                     except Exception:
                         result_json = {"raw": text[-1000:]}
             except Exception as e:
-                job_service.fail_job(job.job_id, f"Nextflow submission failed: {e}", JobStage.ANALYSIS.value)
+                job_service.fail_job(job.job_id, f"Nextflow submission failed: {e}", JobStage.PYPX_ANALYSIS.value)
                 return
 
-        job_service.update_job_progress(
-            job.job_id,
-            JobStage.PHARMCAT.value,
-            80,
-            "Collecting pipeline outputs...",
-            {"workflow": workflow}
-        )
+        # Start monitoring Nextflow progress
+        if job_key:
+            await monitor_nextflow_progress(job_service, job.job_id, nextflow_url, job_key, outdir)
+        else:
+            # Fallback to old behavior if job_key not available
+                job_service.update_job_progress(
+                    job.job_id,
+                    JobStage.PHARMCAT_ANALYSIS.value,
+                    80,
+                    "Collecting pipeline outputs...",
+                    {"workflow": workflow}
+                )
 
         # Collect outputs from patient directory
         patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
@@ -225,7 +476,7 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
         # We keep unified report generation via app if desired later; for now, mark completed
         job_service.update_job_progress(
             job.job_id,
-            JobStage.REPORT.value,
+            JobStage.REPORT_GENERATION.value,
             95,
             "Pipeline finished.",
             {"workflow": workflow, "reports": response_data}
@@ -307,7 +558,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             header_json_url = f"/reports/{patient_id}/{header_json_path.name}"
             job_service.update_job_progress(
                 job.job_id,
-                JobStage.UPLOAD.value,
+                JobStage.HEADER_INSPECTION.value,
                 5,
                 "Header inspected and recorded.",
                 {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
@@ -321,13 +572,13 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             logger.warning(f"Unsupported file format for {data_id}: {reason}")
             
             # Update new monitoring system
-            job_service.fail_job(job.job_id, reason, JobStage.UPLOAD.value)
+            job_service.fail_job(job.job_id, reason, JobStage.UPLOAD_START.value)
             return
 
         # Update initial status using new service
         job_service.update_job_progress(
             job.job_id, 
-            JobStage.ANALYSIS.value, 
+            JobStage.HEADER_INSPECTION.value, 
             5, 
             "Analyzing file...",
             {"workflow": workflow}
@@ -338,13 +589,13 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # File processing pipeline
         output_file = file_path  # Start with the original file
         
-        # Check if we can go directly to PharmCAT (e.g., for VCF files)
+        # Check if we can go directly to PharmCAT (e.g., for VCF files) (should be deprecated now with PyPgx + PharmCAT)
         if workflow.get("go_directly_to_pharmcat", False) and not workflow.get("needs_gatk", False):
             logger.info(f"File can be processed directly by PharmCAT, skipping preprocessing steps")
             job_service.update_job_progress(
                 job.job_id,
-                JobStage.UPLOAD.value,
-                30,
+                JobStage.UPLOAD_COMPLETE.value,
+                10,
                 "File ready for PharmCAT processing",
                 {"workflow": workflow}
             )
@@ -356,7 +607,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             if workflow.get("needs_alignment", False):
                 job_service.update_job_progress(
                     job.job_id,
-                    JobStage.UPLOAD.value,
+                    JobStage.UPLOAD_START.value,
                     10,
                     "Aligning reads to reference genome (not yet implemented)...",
                     {"workflow": workflow}
@@ -369,8 +620,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             if workflow.get("needs_pypgx_bam2vcf", False):
                 job_service.update_job_progress(
                     job.job_id,
-                    JobStage.PYPX.value,
-                    20,
+                    JobStage.PYPX_BAM2VCF.value,
+                    60,
                     "Converting alignment to VCF via PyPGx create-input-vcf...",
                     {"workflow": workflow}
                 )
@@ -397,22 +648,22 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                         raise RuntimeError("PyPGx did not return a usable VCF path")
                     job_service.update_job_progress(
                         job.job_id,
-                        JobStage.PYPX.value,
-                        40,
+                        JobStage.PYPX_BAM2VCF.value,
+                        60,
                         "Alignment converted to VCF successfully.",
                         {"workflow": workflow, "bam2vcf_complete": True, "vcf_path": output_file}
                     )
                 except Exception as e:
                     error_msg = f"PyPGx create-input-vcf failed: {str(e)}"
                     logger.error(error_msg)
-                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX.value)
+                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX_ANALYSIS.value)
                     return
             
             # Step 3: File conversion (for 23andMe files) - not yet implemented
             if workflow.get("needs_conversion", False):
                 job_service.update_job_progress(
                     job.job_id,
-                    JobStage.UPLOAD.value,
+                    JobStage.UPLOAD_START.value,
                     30,
                     "Converting to VCF format (not yet implemented)...",
                     {"workflow": workflow}
@@ -426,7 +677,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Update new monitoring system
                 job_service.update_job_progress(
                     job.job_id, 
-                    JobStage.PYPX.value, 
+                    JobStage.PYPX_ANALYSIS.value, 
                     50, 
                     "Analyzing PyPGx supported star alleles...",
                     {"workflow": workflow}
@@ -483,8 +734,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     # Update status after PyPGx
                     job_service.update_job_progress(
                         job.job_id,
-                        JobStage.PYPX.value,
-                        60,
+                        JobStage.PYPX_ANALYSIS.value,
+                        50,
                         "PyPGx analysis complete.",
                         {"workflow": workflow, "pypgx_complete": True}
                     )
@@ -493,7 +744,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     logger.error(error_msg)
                     
                     # Update new monitoring system
-                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX.value)
+                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX_ANALYSIS.value)
                     return
 
         # If we skipped preprocessing due to go_directly_to_pharmcat, still run PyPGx here (multi-gene)
@@ -555,7 +806,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
         # Update new monitoring system
         job_service.update_job_progress(
             job.job_id, 
-            JobStage.PHARMCAT.value, 
+            JobStage.PHARMCAT_ANALYSIS.value, 
             70, 
             "Running PharmCAT analysis...",
             {"workflow": workflow}
@@ -595,7 +846,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             # Update status for Report stage
             job_service.update_job_progress(
                 job.job_id, 
-                JobStage.REPORT.value, 
+                JobStage.REPORT_GENERATION.value, 
                 90, 
                 "Generating reports...",
                 {"workflow": workflow}
@@ -983,7 +1234,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Store response data in job metadata
                 job_service.update_job_progress(
                     job.job_id,
-                    JobStage.REPORT.value,
+                    JobStage.REPORT_GENERATION.value,
                     95,
                     "Reports generated successfully",
                     {"workflow": workflow, "reports": response_data}
@@ -1002,7 +1253,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 job_service.fail_job(
                     job.job_id,
                     f"Report generation failed: {str(gen_err)}",
-                    JobStage.REPORT.value
+                    JobStage.REPORT_GENERATION.value
                 )
                 return
                 
@@ -1012,7 +1263,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             job_service.fail_job(
                 job.job_id,
                 f"Error generating reports: {str(report_error)}",
-                JobStage.REPORT.value
+                JobStage.REPORT_GENERATION.value
             )
             return
         
