@@ -185,6 +185,16 @@ CREATE TABLE job_monitoring.job_dependencies (
 -- ============================================================================
 CREATE SCHEMA IF NOT EXISTS fhir;
 
+-- Grant all necessary permissions for HAPI FHIR to create its own tables
+GRANT ALL PRIVILEGES ON SCHEMA fhir TO cpic_user;
+GRANT CREATE ON SCHEMA fhir TO cpic_user;
+GRANT USAGE ON SCHEMA fhir TO cpic_user;
+
+-- Set default privileges for future tables that HAPI will create
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON TABLES TO cpic_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON SEQUENCES TO cpic_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON FUNCTIONS TO cpic_user;
+
 -- ============================================================================
 -- GENE GROUPS SCHEMA - Gene categorization for UI
 -- ============================================================================

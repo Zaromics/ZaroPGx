@@ -100,8 +100,10 @@ services:
       - hapi.fhir.subscription.resthook_enabled=true
       - hapi.fhir.subscription.websocket_enabled=false
       - JAVA_OPTS=-Djava.io.tmpdir=/tmp -Xmx2g
+      - SPRING_DATASOURCE_INITIALIZATION_MODE=always
     depends_on:
-      - db
+      db:
+        condition: service_started
     volumes:
       - ./data/fhir-data:/data/hapi
     healthcheck:
