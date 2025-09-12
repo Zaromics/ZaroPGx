@@ -10,7 +10,7 @@ ZaroPGx is a containerized bioinformatic pipeline that processes genetic data an
 This project is in active development and not production-ready. Core functionality is being implemented incrementally.
 
 In terms of genomic file formats, operability currently stands as follows:
-- VCF: hg38 working, hg37 to be reviewed
+- VCF: hg38 mostly working, hg19 needs review
 - all other formats: to be reviewed 
 
 ## Intended Function
@@ -46,12 +46,13 @@ The system is designed to:
 
 Containerized services orchestrated with Docker Compose to provide a complete pharmacogenomic analysis pipeline:
 
-- **PostgreSQL** (schemas: `cpic`, `user_data`, `reports`, `fhir`) - Stores CPIC guidelines, user data, and generated reports
+- **PostgreSQL DB** (managed with alembic) - Stores guidelines, sample data, and generated reports
 - **FastAPI application** (web UI, API, report generation, SSE progress) - Main application orchestrating the analysis workflow
-- **GATK API service** (HTTP wrapper) - Handles preprocessing of BAM/CRAM files to VCF format
+- **Nextflow service** (Flask) - Handles execution of the pipeline
+- **GATK service** (HTTP wrapper) - Handles preprocessing of BAM/CRAM files to VCF format
 - **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, including difficult ones like CYP2D6
-- **PharmCAT wrapper service** (Flask) - Executes PharmCAT pipeline with PyPGx and OptiType outside calls to unlock full 23-gene coverage
-- **Reference genome downloader** - Manages reference genome data for accurate variant calling
+- **PharmCAT service** (Flask) - Executes PharmCAT pipeline with PyPGx and OptiType outside calls to unlock full 23-gene coverage
+- **Genome Reference downloader** - Manages reference genome data for accurate variant calling
 - **HAPI FHIR server** - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records
 - **Kroki** - Renders workflow diagrams which serve as a visual depiction of the pipeline the report has been built from
 
