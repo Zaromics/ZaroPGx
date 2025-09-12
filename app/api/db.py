@@ -191,7 +191,7 @@ def get_db():
 def init_db():
     # This is just to verify connection at startup
     with engine.connect() as conn:
-        conn.execute("SELECT 1")
+        conn.execute(text("SELECT 1"))
     print("Database connection established successfully")
 
 # Utility to check if a patient exists
@@ -294,11 +294,11 @@ def register_genetic_data(db, patient_id, file_type, file_path, is_supplementary
 # Function to get CPIC guidelines for a gene-drug pair
 def get_guidelines_for_gene_drug(db, gene, drug):
     result = db.execute(
-        """
+        text("""
         SELECT guideline_id, gene, drug, allele_combination, recommendation, activity_score
         FROM cpic.guidelines
         WHERE gene = :gene AND drug = :drug
-        """,
+        """),
         {"gene": gene, "drug": drug}
     )
     return result.fetchall()
