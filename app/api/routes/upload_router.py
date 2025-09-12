@@ -245,9 +245,14 @@ async def monitor_nextflow_progress(job_service: JobStatusService, job_id: str, 
                                     )
                                 else:
                                     error_msg = status_data.get("error", "Unknown error")
+                                    error_details = status_data.get("error_details", "")
+                                    full_error = f"{error_msg}"
+                                    if error_details:
+                                        full_error += f" - Details: {error_details}"
+                                    logger.error(f"Nextflow pipeline failed: {full_error}")
                                     job_service.fail_job(
                                         job_id=job_id,
-                                        error_message=f"Nextflow pipeline failed: {error_msg}",
+                                        error_message=f"Nextflow pipeline failed: {full_error}",
                                         stage=stage
                                     )
                                 break
@@ -364,6 +369,9 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
                 "Header inspected and recorded.",
                 {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
             )
+            
+            # Simulated pause at 5% for smoother user experience
+            await asyncio.sleep(1.5)
         except Exception:
             pass
 
@@ -564,6 +572,9 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 "Header inspected and recorded.",
                 {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
             )
+            
+            # Simulated pause at 5% for smoother user experience
+            await asyncio.sleep(1.5)
         except Exception:
             pass
 
@@ -585,7 +596,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             {"workflow": workflow}
         )
         
-        await asyncio.sleep(1)  # Give time for status update
+        # Simulated pause at 5% for smoother user experience
+        await asyncio.sleep(1.5)  # Give time for status update and smooth progress display
         
         # File processing pipeline
         output_file = file_path  # Start with the original file

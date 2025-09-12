@@ -95,6 +95,119 @@
             align-items: center;
             justify-content: center;
             transition: all 0.3s ease;
+            cursor: pointer;
+            border-radius: 8px;
+            border: 2px solid transparent;
+            z-index: 1;
+        }
+        
+        .stage-indicator:hover {
+            background-color: rgba(0, 123, 255, 0.1);
+            border-color: rgba(0, 123, 255, 0.3);
+            transform: translateY(-2px);
+        }
+        
+        .stage-indicator.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .stage-indicator.disabled:hover {
+            background-color: rgba(108, 117, 125, 0.1);
+            border-color: rgba(108, 117, 125, 0.3);
+            transform: none;
+        }
+        
+        /* Stage popup tooltip */
+        .stage-popup {
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            padding: 16px;
+            min-width: 280px;
+            max-width: 320px;
+            z-index: 9999;
+            margin-top: 8px;
+            display: none;
+        }
+        
+        .stage-popup::before {
+            content: '';
+            position: absolute;
+            top: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 8px solid white;
+        }
+        
+        .stage-popup::after {
+            content: '';
+            position: absolute;
+            top: -9px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 9px solid transparent;
+            border-right: 9px solid transparent;
+            border-bottom: 9px solid #dee2e6;
+        }
+        
+        .stage-popup h6 {
+            margin: 0 0 8px 0;
+            color: #495057;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .stage-popup p {
+            margin: 0 0 12px 0;
+            color: #6c757d;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        .stage-popup .toggle-section {
+            border-top: 1px solid #e9ecef;
+            padding-top: 12px;
+            margin-top: 12px;
+        }
+        
+        .stage-popup .toggle-button {
+            width: 100%;
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            background: #f8f9fa;
+            color: #495057;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .stage-popup .toggle-button:hover {
+            background: #e9ecef;
+        }
+        
+        .stage-popup .toggle-button.enabled {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+        
+        .stage-popup .toggle-button.disabled {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
         }
         /* Removing connector lines
         .stage-indicator:not(:last-child)::after {
@@ -292,6 +405,91 @@
                                     </div>
                             </div>
                             
+                            <!-- Stage indicators (always visible) -->
+                            <div class="d-flex justify-content-between small mb-3" style="overflow: visible;">
+                                <!-- Upload Stage -->
+                                <div id="stageUpload" class="stage-indicator text-center text-muted" data-stage="upload" data-toggleable="false">
+                                    <div class="mb-1"><i class="bi bi-cloud-upload"></i></div>
+                                    <span>Upload</span>
+                                    <div class="stage-popup">
+                                        <h6>File Upload</h6>
+                                        <p>Upload your genomic data file (VCF, BAM, etc.) for analysis. This stage is required and cannot be disabled.</p>
+                                    </div>
+                                </div>
+                                
+                                <!-- Analysis Stage -->
+                                <div id="stageAnalysis" class="stage-indicator text-center text-muted" data-stage="analysis" data-toggleable="false">
+                                    <div class="mb-1"><i class="bi bi-search"></i></div>
+                                    <span>Analysis</span>
+                                    <div class="stage-popup">
+                                        <h6>File Analysis</h6>
+                                        <p>Inspect and analyze the uploaded file format, quality, and content. This stage is required and cannot be disabled.</p>
+                                    </div>
+                                </div>
+                                
+                                <!-- OptiType Stage -->
+                                <div id="stageHLA" class="stage-indicator text-center text-muted" data-stage="hla" data-toggleable="true" data-enabled="true">
+                                    <div class="mb-1"><i class="bi bi-virus2"></i></div>
+                                    <span>OptiType</span>
+                                    <div class="stage-popup">
+                                        <h6>OptiType HLA Typing</h6>
+                                        <p>Perform HLA (Human Leukocyte Antigen) typing using OptiType. Computationally intensive but provides immune system insights.</p>
+                                        <div class="toggle-section">
+                                            <button class="toggle-button enabled" data-stage="hla">✓ Enabled</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- GATK Stage -->
+                                <div id="stageGATK" class="stage-indicator text-center text-muted" data-stage="gatk" data-toggleable="true" data-enabled="true">
+                                    <div class="mb-1"><i class="bi bi-cpu"></i></div>
+                                    <span>GATK</span>
+                                    <div class="stage-popup">
+                                        <h6>GATK Variant Calling</h6>
+                                        <p>Call genetic variants using GATK (Genome Analysis Toolkit). Computationally intensive but provides high-quality variant detection.</p>
+                                        <div class="toggle-section">
+                                            <button class="toggle-button enabled" data-stage="gatk">✓ Enabled</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- PyPGx Stage -->
+                                <div id="stagePyPGx" class="stage-indicator text-center text-muted" data-stage="pypgx" data-toggleable="true" data-enabled="true">
+                                    <div class="mb-1"><i class="bi bi-star"></i></div>
+                                    <span>PyPGx</span>
+                                    <div class="stage-popup">
+                                        <h6>PyPGx Star Allele Calling</h6>
+                                        <p>Call pharmacogenomic star alleles using PyPGx. Computationally intensive but provides detailed drug metabolism information.</p>
+                                        <div class="toggle-section">
+                                            <button class="toggle-button enabled" data-stage="pypgx">✓ Enabled</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- PharmCAT Stage -->
+                                <div id="stagePharmcat" class="stage-indicator text-center text-muted" data-stage="pharmcat" data-toggleable="false">
+                                    <div class="mb-1"><i class="bi bi-capsule"></i></div>
+                                    <span>PharmCAT</span>
+                                    <div class="stage-popup">
+                                        <h6>PharmCAT Analysis</h6>
+                                        <p>Generate pharmacogenomic reports using PharmCAT. This stage is required and provides the final analysis results.</p>
+                                    </div>
+                                </div>
+                                
+                                <!-- Report Stage -->
+                                <div id="stageReport" class="stage-indicator text-center text-muted" data-stage="report" data-toggleable="true" data-enabled="true">
+                                    <div class="mb-1"><i class="bi bi-file-earmark-text"></i></div>
+                                    <span>Report</span>
+                                    <div class="stage-popup">
+                                        <h6>Custom Reports</h6>
+                                        <p>Generate custom formatted reports with additional visualizations and analysis. When disabled, only PharmCAT's native report is provided.</p>
+                                        <div class="toggle-section">
+                                            <button class="toggle-button enabled" data-stage="report">✓ Enabled</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Multi-stage progress bar (hidden by default) -->
                             <div id="progressContainer" class="mb-3 d-none">
                                 <label class="form-label" id="progressLabel">Progress</label>
@@ -302,38 +500,6 @@
                                     </div>
                                 </div>
                                 <div id="progressStatus" class="form-text mb-2 fw-bold">Preparing...</div>
-                                
-                                <!-- Stage indicators -->
-                                <div class="d-flex justify-content-between small mb-3">
-                                    <div id="stageUpload" class="stage-indicator text-center">
-                                        <div class="mb-1"><i class="bi bi-cloud-upload"></i></div>
-                                        <span>Upload</span>
-                                    </div>
-                                    <div id="stageAnalysis" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-search"></i></div>
-                                        <span>Analysis</span>
-                                    </div>
-                                    <div id="stageHLA" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-virus2"></i></div>
-                                        <span>OptiType</span>
-                                    </div>
-                                    <div id="stageGATK" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-cpu"></i></div>
-                                        <span>GATK</span>
-                                    </div>
-                                    <div id="stagePyPGx" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-star"></i></div>
-                                        <span>PyPGx</span>
-                                    </div>
-                                    <div id="stagePharmcat" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-capsule"></i></div>
-                                        <span>PharmCAT</span>
-                                    </div>
-                                    <div id="stageReport" class="stage-indicator text-center text-muted">
-                                        <div class="mb-1"><i class="bi bi-file-earmark-text"></i></div>
-                                        <span>Report</span>
-                                    </div>
-                                </div>
                                 
                                 <!-- Detailed log panel (initially collapsed) -->
                                 <div class="card">
@@ -834,6 +1000,7 @@
                                                         const stageMap = {
                                                             'Upload': 'stageUpload',
                                                             'Analysis': 'stageAnalysis',
+                                                            'HLA': 'stageHLA',
                                                             'GATK': 'stageGATK', 
                                                             'PyPGx': 'stagePyPGx',
                                                             'PharmCAT': 'stagePharmcat',
@@ -841,7 +1008,7 @@
                                                         };
                                                         
                                                         // Get the ordered list of stages for sequencing
-                                                        const orderedStages = ['Upload', 'Analysis', 'GATK', 'PyPGx', 'PharmCAT', 'Report'];
+                                                        const orderedStages = ['Upload', 'Analysis', 'HLA', 'GATK', 'PyPGx', 'PharmCAT', 'Report'];
                                                         const currentStageIndex = orderedStages.indexOf(currentStage);
                                                         
                                                         console.log("Stage mapping: backend='"+data.stage+"', frontend='"+currentStage+"', index="+currentStageIndex);
@@ -1741,6 +1908,95 @@
             
             addLogMessage('Download started for all reports', 'success');
         }
+
+        // Stage Popup and Toggle Functionality
+        window.initializeStagePopups = function() {
+            console.log('Initializing stage popups...');
+            
+            // Handle stage indicator clicks
+            const stageIndicators = document.querySelectorAll('.stage-indicator');
+            stageIndicators.forEach(indicator => {
+                indicator.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Close any other open popups
+                    document.querySelectorAll('.stage-popup').forEach(popup => {
+                        if (popup !== this.querySelector('.stage-popup')) {
+                            popup.style.display = 'none';
+                        }
+                    });
+                    
+                    // Toggle current popup
+                    const popup = this.querySelector('.stage-popup');
+                    if (popup) {
+                        const isVisible = popup.style.display === 'block';
+                        popup.style.display = isVisible ? 'none' : 'block';
+                    }
+                });
+            });
+            
+            // Handle toggle button clicks
+            const toggleButtons = document.querySelectorAll('.toggle-button');
+            toggleButtons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const stage = this.getAttribute('data-stage');
+                    const indicator = document.querySelector(`[data-stage="${stage}"]`);
+                    const isEnabled = indicator.getAttribute('data-enabled') === 'true';
+                    
+                    // Toggle the state
+                    const newState = !isEnabled;
+                    indicator.setAttribute('data-enabled', newState.toString());
+                    
+                    // Update visual state
+                    if (newState) {
+                        indicator.classList.remove('disabled');
+                        this.classList.remove('disabled');
+                        this.classList.add('enabled');
+                        this.textContent = '✓ Enabled';
+                    } else {
+                        indicator.classList.add('disabled');
+                        this.classList.remove('enabled');
+                        this.classList.add('disabled');
+                        this.textContent = '✗ Disabled';
+                    }
+                    
+                    console.log(`Stage ${stage} ${newState ? 'enabled' : 'disabled'}`);
+                });
+            });
+            
+            // Close popups when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.stage-indicator')) {
+                    document.querySelectorAll('.stage-popup').forEach(popup => {
+                        popup.style.display = 'none';
+                    });
+                }
+            });
+        };
+
+        // Get current stage toggle states for backend submission
+        window.getStageToggleStates = function() {
+            const states = {};
+            const stageIndicators = document.querySelectorAll('.stage-indicator[data-toggleable="true"]');
+            
+            stageIndicators.forEach(indicator => {
+                const stage = indicator.getAttribute('data-stage');
+                const enabled = indicator.getAttribute('data-enabled') === 'true';
+                states[stage] = enabled;
+            });
+            
+            return states;
+        };
+
+        // Initialize stage popups when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing stage popups...');
+            window.initializeStagePopups();
+        });
     </script>
 </body>
 </html>

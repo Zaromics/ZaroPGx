@@ -137,7 +137,7 @@ async def call_gatk_variants(job_id: str, vcf_file_path: str, reference_genome: 
             raise Exception(error_msg)
 
 async def call_pypgx(job_id: str, vcf_file: str):
-    """Call star alleles using PyPGx."""
+    """Call pharmacogenes using PyPGx."""
     try:
         logging.info(f"Job {job_id} progress: star_allele_calling - 30% - Calling star alleles with PyPGx")
         async with aiohttp.ClientSession() as session:
