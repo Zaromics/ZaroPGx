@@ -1,0 +1,5 @@
+channels:
+  - conda-forge
+  - bioconda
+channel_priority: flexible
+ssl_verify: true

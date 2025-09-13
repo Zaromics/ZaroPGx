@@ -142,7 +142,7 @@ for gene,call in results.items():
     if call and gene.startswith('HLA-'):
         lines.append(f"{gene}\t{call}")
 if lines:
-    open('pharmcat.hla_calls.tsv','w',encoding='utf-8').write('\n'.join(lines)+'\n')
+    open('pharmcat.hla_calls.tsv','w',encoding='utf-8').write('\\n'.join(lines)+'\\n')
 PY
     '''
 }
@@ -177,7 +177,7 @@ for gene,call in results.items():
     if call and gene.startswith('HLA-'):
         lines.append(f"{gene}\t{call}")
 if lines:
-    open('pharmcat.hla_calls.tsv','w',encoding='utf-8').write('\n'.join(lines)+'\n')
+    open('pharmcat.hla_calls.tsv','w',encoding='utf-8').write('\\n'.join(lines)+'\\n')
 PY
     '''
 }
@@ -359,30 +359,37 @@ workflow {
         bam_ch = FastqToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
         vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
     }
-    // For CRAM: convert to BAM, then HLA + PyPGx
+    // For CRAM: convert to BAM, then HLA + PyPGx sequentially
     else if (params.input_type == 'cram') {
         bam_ch = CramToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
         
         hla_result = OptiTypeHLAFromBAM(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
         hla_ch = hla_result.hla
         
-        vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        // Create a dependency: PyPGx waits for HLA to complete
+        hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
+        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
     }
-    // For SAM: convert to BAM, then HLA + PyPGx  
+    // For SAM: convert to BAM, then HLA + PyPGx sequentially
     else if (params.input_type == 'sam') {
         bam_ch = SamToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
         
         hla_result = OptiTypeHLAFromBAM(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
         hla_ch = hla_result.hla
         
-        vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        // Create a dependency: PyPGx waits for HLA to complete
+        hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
+        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
     }
-    // For BAM: HLA + PyPGx directly
+    // For BAM: HLA first, then PyPGx sequentially
     else if (params.input_type == 'bam') {
         hla_result = OptiTypeHLAFromBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
         hla_ch = hla_result.hla
         
-        vcf_ch = PyPGxBam2Vcf(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        // Create a dependency: PyPGx waits for HLA to complete
+        // Use the hla_json output as a trigger to start PyPGx with the original BAM
+        hla_complete_ch = hla_result.hla_json.combine(input_ch).map { hla_json, bam_file -> bam_file }
+        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
     }
     // For VCF: quick pipeline, no HLA
     else if (params.input_type == 'vcf') {

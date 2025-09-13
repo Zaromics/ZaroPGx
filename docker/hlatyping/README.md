@@ -8,6 +8,7 @@ Image
 
 - Builds a container with Java + Nextflow + Docker CLI + FastAPI wrapper.
 - Requires mounting the host Docker socket for `-profile docker` execution.
+- Uses Docker containers for all pipeline dependencies (OptiType, etc.).
 
 API
 
@@ -25,6 +26,7 @@ Notes
 
 - Generates a per-run `samplesheet.csv` per nf-core/hlatyping documentation and invokes:
   `nextflow run nf-core/hlatyping -r 2.1.0 -profile docker --input samplesheet.csv --outdir <OUTDIR>`
+- All pipeline dependencies (OptiType, etc.) run in Docker containers for reproducibility.
 - Results are persisted under `/data/results/hlatyping_<uuid>`.
 
 References

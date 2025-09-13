@@ -1,6 +1,6 @@
 FROM python:3.12
 
-# Install system dependencies: Java for Nextflow, curl, git, Docker CLI
+# Install system dependencies: Java for Nextflow, curl, git, mamba
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jre-headless \
     curl \
@@ -9,18 +9,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     procps \
     wget \
-    apt-transport-https \
-    ca-certificates \
-    gnupg \
-    lsb-release \
+    bzip2 \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Docker CLI
-RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
-    && apt-get update \
-    && apt-get install -y docker-ce-cli \
-    && rm -rf /var/lib/apt/lists/*
+# Install Mambaforge (includes conda + mamba)
+RUN wget https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-Linux-x86_64.sh -O /tmp/mambaforge.sh && \
+    bash /tmp/mambaforge.sh -b -p /opt/mamba && \
+    rm /tmp/mambaforge.sh && \
+    /opt/mamba/bin/mamba clean -afy
+
+# Configure mamba channels for bioconda
+RUN /opt/mamba/bin/mamba config --add channels conda-forge && \
+    /opt/mamba/bin/mamba config --add channels bioconda && \
+    /opt/mamba/bin/mamba config --set channel_priority flexible
+
+# Add mamba to PATH
+ENV PATH="/opt/mamba/bin:${PATH}"
 
 # Install Nextflow
 RUN curl -s https://get.nextflow.io | bash && \

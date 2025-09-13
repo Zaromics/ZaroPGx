@@ -36,6 +36,7 @@ def run():
         "job_id": job_id,
         "patient_id": patient_id,
         "report_id": report_id,
+        "input_type": input_type,  # Store input type for stage determination
         "status": "starting",
         "start_time": datetime.now(timezone.utc).isoformat(),
         "progress": 0,
@@ -262,10 +263,27 @@ def update_job_progress(job_key: str):
         "pharmcat_analysis": 70
     }
     
-    # Find the highest completed stage
+    # Initialize with starting state based on input type
     max_progress = 10  # Starting progress
-    current_stage = "pypgx_analysis"
-    current_message = "Starting analysis ..."
+    input_type = job.get("input_type", "vcf")  # Default to vcf if not available
+    
+    # Determine the next logical stage based on input type
+    if input_type == "vcf":
+        # VCF goes directly to PyPGx analysis (no HLA, no conversion)
+        current_stage = "pypgx_analysis"
+        current_message = "Starting PyPGx analysis..."
+    elif input_type in ["cram", "sam"]:
+        # These need conversion first, then HLA, then PyPGx
+        current_stage = "gatk_conversion"
+        current_message = "Starting file conversion..."
+    elif input_type == ["bam", "fastq"]:
+        # FASTQ or BAMgoes to HLA first
+        current_stage = "hla_typing"
+        current_message = "Starting HLA typing..."
+    else:
+        # Fallback
+        current_stage = "upload_complete"
+        current_message = "Starting analysis ..."
     
     # Debug logging
     print(f"DEBUG: Processing {len(processes)} processes")
@@ -284,9 +302,11 @@ def update_job_progress(job_key: str):
             stage = "gatk_conversion"
         elif "optitype" in process_name or "hlafrom" in process_name:
             stage = "hla_typing"
-        elif "pypgxgenotypeall" in process_name or "pypgx" in process_name:
+        elif "pypgxgenotypeall" in process_name:
+            # This is the actual PyPGx analysis process
             stage = "pypgx_analysis"
-        elif "pypgxbam2vcf" in process_name or "bam2vcf" in process_name:
+        elif "pypgxbam2vcf" in process_name or ("bam2vcf" in process_name and "pypgx" in process_name):
+            # This is the PyPGx BAM to VCF conversion process
             stage = "pypgx_bam2vcf"
         elif "pharmcatrun" in process_name or "pharmcat" in process_name:
             stage = "pharmcat_analysis"
@@ -308,10 +328,11 @@ def update_job_progress(job_key: str):
             print(f"DEBUG: Updated to completed stage {stage} ({max_progress}%)")
         elif status == "RUNNING":
             # If a process is running, show that stage as current
-            if stage_progress[stage] >= max_progress:
-                current_stage = stage
-                current_message = f"Running {stage.replace('_', ' ').title()}"
-                print(f"DEBUG: Updated to running stage {stage} ({stage_progress[stage]}%)")
+            # This takes priority over completed stages for better user feedback
+            current_stage = stage
+            current_message = f"Running {stage.replace('_', ' ').title()}"
+            # Don't update max_progress here - let it be set by completion
+            print(f"DEBUG: Updated to running stage {stage} ({stage_progress[stage]}%)")
     
     # Check if all processes are completed
     total_processes = len(processes)
@@ -323,27 +344,20 @@ def update_job_progress(job_key: str):
     # The real work happens in the PyPGx service, not in Nextflow processes
     # So we need to track the PyPGx service work, not just Nextflow processes
     
-    # If we only have CreateEmptyFile completed, we're still in PyPGx analysis phase
-    # The PyPGx service is doing the real work
-    if completed_processes == total_processes and total_processes > 0:
+    # If no meaningful processes have been processed yet, maintain initial state
+    # This handles the case where only CreateEmptyFile has run but no actual workflow processes
+    if max_progress == 10 and completed_processes == total_processes and total_processes > 0:
         # Check if we have any meaningful processes (not just CreateEmptyFile)
         meaningful_processes = [p for p in processes.values() 
                               if p.get("process_name", "").lower() not in ["createemptyfile"]]
         
         if len(meaningful_processes) == 0:
-            # Only CreateEmptyFile completed, PyPGx service is still working
-            current_stage = "pypgx_analysis"
-            max_progress = 50
-            current_message = "PyPGx processing in progress"
-        else:
-            # We have meaningful processes completed, move to final stages
-            current_stage = "pharmcat_analysis"
-            max_progress = 70
-            current_message = "PharmCAT processing in progress"
-    
-    # Handle failures
-    if failed_processes > 0:
-        current_message = f"Error: {failed_processes} process failed"
+            # Only CreateEmptyFile completed, but no actual workflow processes have run yet
+            # This can happen for VCF input where the pipeline is very simple
+            # Keep the initial state until actual processes start
+            # Don't override the stage - use the input-type-based initial stage
+            max_progress = 10  # Stay at initial progress until processes actually run
+            current_message = "Starting analysis..."
     
     # Debug final values
     print(f"DEBUG: Final calculated values - stage: {current_stage}, progress: {max_progress}, message: {current_message}")
