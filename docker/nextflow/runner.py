@@ -12,6 +12,16 @@ app = Flask(__name__)
 # Global dictionary to track running jobs
 running_jobs: Dict[str, Dict] = {}
 
+def check_external_service_health(service_name: str) -> bool:
+    """Check if an external service is healthy."""
+    try:
+        import requests
+        response = requests.get(f"http://{service_name}:5000/health", timeout=2)
+        return response.status_code == 200
+    except:
+        return False
+
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"})
@@ -26,6 +36,8 @@ def run():
     reference = data.get('reference', 'hg38')
     outdir = data.get('outdir', f"/data/reports/{patient_id}")
     job_id = data.get('job_id', patient_id)  # Use job_id if provided
+    skip_hla = data.get('skip_hla', 'false')
+    skip_pypgx = data.get('skip_pypgx', 'false')
 
     if not input_path or not input_type or not patient_id:
         return jsonify({"success": False, "error": "Missing required params: input, input_type, patient_id"}), 400
@@ -37,6 +49,8 @@ def run():
         "patient_id": patient_id,
         "report_id": report_id,
         "input_type": input_type,  # Store input type for stage determination
+        "skip_hla": skip_hla,  # Store service toggle settings
+        "skip_pypgx": skip_pypgx,
         "status": "starting",
         "start_time": datetime.now(timezone.utc).isoformat(),
         "progress": 0,
@@ -47,7 +61,7 @@ def run():
     }
 
     # Start Nextflow in a separate thread
-    thread = threading.Thread(target=run_nextflow_job, args=(job_key, input_path, input_type, patient_id, report_id, reference, outdir))
+    thread = threading.Thread(target=run_nextflow_job, args=(job_key, input_path, input_type, patient_id, report_id, reference, outdir, skip_hla, skip_pypgx))
     thread.daemon = True
     thread.start()
 
@@ -59,7 +73,7 @@ def run():
         "message": "Nextflow job started"
     })
 
-def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str):
+def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false'):
     """Run Nextflow job in background thread."""
     try:
         # Update job status
@@ -74,6 +88,8 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
             '--report_id', str(report_id),
             '--reference', reference,
             '--outdir', outdir,
+            '--skip_hla', skip_hla,
+            '--skip_pypgx', skip_pypgx,
             '-with-report', f"{outdir}/nextflow_report.html",
             '-with-trace', f"{outdir}/nextflow_trace.txt",
             '-with-timeline', f"{outdir}/nextflow_timeline.html",
@@ -110,7 +126,10 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
                 if proc.returncode == 0:
                     running_jobs[job_key]["status"] = "completed"
                     running_jobs[job_key]["message"] = "Nextflow pipeline completed successfully"
-                    running_jobs[job_key]["progress"] = 100
+                    # Nextflow only handles up to 70% (PharmCAT), final stages are handled by app
+                    # Don't set progress to 100% here - let the app handle final stages
+                    if running_jobs[job_key]["progress"] < 70:
+                        running_jobs[job_key]["progress"] = 70
                 else:
                     running_jobs[job_key]["status"] = "failed"
                     running_jobs[job_key]["message"] = f"Nextflow pipeline failed with return code {proc.returncode}"
@@ -234,12 +253,10 @@ def parse_log_line(job_key: str, line: str):
     if not line or job_key not in running_jobs:
         return
         
-    # Look for specific log patterns
-    if "Process" in line and "started" in line:
-        running_jobs[job_key]["message"] = f"Process started: {line.split()[-1] if line.split() else 'Unknown'}"
-    elif "Process" in line and "completed" in line:
-        running_jobs[job_key]["message"] = f"Process completed: {line.split()[-1] if line.split() else 'Unknown'}"
-    elif "Workflow completed" in line:
+    # Look for specific log patterns - but don't override detailed progress messages
+    # Let update_job_progress() handle all messaging based on actual process status
+    if "Workflow completed" in line:
+        # Only set message for workflow completion, not individual process completions
         running_jobs[job_key]["message"] = "Workflow completed successfully"
 
 def update_job_progress(job_key: str):
@@ -263,23 +280,48 @@ def update_job_progress(job_key: str):
         "pharmcat_analysis": 70
     }
     
+    # Adjust progress based on disabled services
+    # If HLA is disabled, PyPGx starts earlier
+    # If PyPGx is disabled, PharmCAT starts earlier
+    if job.get("skip_hla", "false").lower() == "true":
+        stage_progress["pypgx_analysis"] = 30  # Move PyPGx earlier
+        stage_progress["pypgx_bam2vcf"] = 40
+        stage_progress["pharmcat_analysis"] = 50
+    elif job.get("skip_pypgx", "false").lower() == "true":
+        stage_progress["pharmcat_analysis"] = 40  # Move PharmCAT earlier
+    
     # Initialize with starting state based on input type
     max_progress = 10  # Starting progress
     input_type = job.get("input_type", "vcf")  # Default to vcf if not available
     
-    # Determine the next logical stage based on input type
+    # Determine the next logical stage based on input type and disabled services
+    skip_hla = job.get("skip_hla", "false").lower() == "true"
+    skip_pypgx = job.get("skip_pypgx", "false").lower() == "true"
+    
     if input_type == "vcf":
         # VCF goes directly to PyPGx analysis (no HLA, no conversion)
-        current_stage = "pypgx_analysis"
-        current_message = "Starting PyPGx analysis..."
+        if skip_pypgx:
+            current_stage = "pharmcat_analysis"
+            current_message = "Starting PharmCAT analysis..."
+        else:
+            current_stage = "pypgx_analysis"
+            current_message = "Starting PyPGx analysis..."
     elif input_type in ["cram", "sam"]:
         # These need conversion first, then HLA, then PyPGx
         current_stage = "gatk_conversion"
         current_message = "Starting file conversion..."
-    elif input_type == ["bam", "fastq"]:
-        # FASTQ or BAMgoes to HLA first
-        current_stage = "hla_typing"
-        current_message = "Starting HLA typing..."
+    elif input_type in ["bam", "fastq"]:
+        # FASTQ or BAM goes to HLA first (if enabled)
+        if skip_hla:
+            if skip_pypgx:
+                current_stage = "pharmcat_analysis"
+                current_message = "Starting PharmCAT analysis..."
+            else:
+                current_stage = "pypgx_analysis"
+                current_message = "Starting PyPGx analysis..."
+        else:
+            current_stage = "hla_typing"
+            current_message = "Starting HLA typing..."
     else:
         # Fallback
         current_stage = "upload_complete"
@@ -291,7 +333,15 @@ def update_job_progress(job_key: str):
         process_name = process.get("process_name", "").lower()
         status = process.get("status", "")
         print(f"DEBUG: Process {task_id}: {process_name} - {status}")
+        
+        # Additional debugging for PyPGx and PharmCAT processes
+        if "pypgx" in process_name:
+            print(f"DEBUG: Found PyPGx process: {process_name} with status: {status}")
+        if "pharmcat" in process_name:
+            print(f"DEBUG: Found PharmCAT process: {process_name} with status: {status}")
     
+    # Track process stages and their completion status
+    process_stages = {}
     for process in processes.values():
         process_name = process.get("process_name", "").lower()
         status = process.get("status", "")
@@ -301,14 +351,30 @@ def update_job_progress(job_key: str):
         if "fastqtobam" in process_name or "cramtobam" in process_name or "samtobam" in process_name:
             stage = "gatk_conversion"
         elif "optitype" in process_name or "hlafrom" in process_name:
+            # Skip HLA processes if disabled
+            if skip_hla:
+                print(f"DEBUG: Skipping HLA process (disabled): {process_name}")
+                continue
             stage = "hla_typing"
-        elif "pypgxgenotypeall" in process_name:
+        elif ("pypgxgenotypeall" in process_name or "pypgxgenotype" in process_name or 
+              "pypgx" in process_name and "genotype" in process_name):
+            # Skip PyPGx processes if disabled
+            if skip_pypgx:
+                print(f"DEBUG: Skipping PyPGx process (disabled): {process_name}")
+                continue
             # This is the actual PyPGx analysis process
             stage = "pypgx_analysis"
-        elif "pypgxbam2vcf" in process_name or ("bam2vcf" in process_name and "pypgx" in process_name):
+        elif ("pypgxbam2vcf" in process_name or 
+              ("bam2vcf" in process_name and "pypgx" in process_name) or
+              ("pypgx" in process_name and "bam2vcf" in process_name)):
+            # Skip PyPGx processes if disabled
+            if skip_pypgx:
+                print(f"DEBUG: Skipping PyPGx BAM2VCF process (disabled): {process_name}")
+                continue
             # This is the PyPGx BAM to VCF conversion process
             stage = "pypgx_bam2vcf"
-        elif "pharmcatrun" in process_name or "pharmcat" in process_name:
+        elif ("pharmcatrun" in process_name or "pharmcat" in process_name or
+              "pharmcat" in process_name and "run" in process_name):
             stage = "pharmcat_analysis"
         elif "createemptyfile" in process_name:
             # Skip empty file creation - it's not a meaningful workflow stage
@@ -316,23 +382,197 @@ def update_job_progress(job_key: str):
             continue
         else:
             print(f"DEBUG: No stage mapping for process: {process_name}")
+            # For debugging, show what we're looking for
+            if "pypgx" in process_name:
+                print(f"DEBUG: Process contains 'pypgx' but didn't match - name: '{process_name}'")
+            if "pharmcat" in process_name:
+                print(f"DEBUG: Process contains 'pharmcat' but didn't match - name: '{process_name}'")
             continue
         
         print(f"DEBUG: Mapped {process_name} ({status}) to stage {stage} ({stage_progress[stage]}%)")
         
-        # Update progress based on completed stages
-        if status == "COMPLETED" and stage_progress[stage] > max_progress:
-            max_progress = stage_progress[stage]
-            current_stage = stage
-            current_message = f"Completed {stage.replace('_', ' ').title()}"
-            print(f"DEBUG: Updated to completed stage {stage} ({max_progress}%)")
-        elif status == "RUNNING":
-            # If a process is running, show that stage as current
-            # This takes priority over completed stages for better user feedback
-            current_stage = stage
-            current_message = f"Running {stage.replace('_', ' ').title()}"
-            # Don't update max_progress here - let it be set by completion
-            print(f"DEBUG: Updated to running stage {stage} ({stage_progress[stage]}%)")
+        # Track this stage and its status
+        if stage not in process_stages:
+            process_stages[stage] = {"running": False, "completed": False, "failed": False}
+        
+        if status == "RUNNING":
+            process_stages[stage]["running"] = True
+        elif status == "COMPLETED":
+            process_stages[stage]["completed"] = True
+        elif status == "FAILED":
+            process_stages[stage]["failed"] = True
+    
+    # Determine current stage and progress based on sequential workflow logic
+    # For VCF input: PyPGx (50%) → PharmCAT (70%) - SEQUENTIAL, not parallel
+    if input_type == "vcf":
+        if not skip_pypgx:
+            # Check PyPGx status first (it runs first in the sequence)
+            if "pypgx_analysis" in process_stages:
+                if process_stages["pypgx_analysis"]["running"]:
+                    current_stage = "pypgx_analysis"
+                    current_message = "Running PyPGx analysis..."
+                    max_progress = 50
+                    print(f"DEBUG: VCF workflow - PyPGx is running (50%)")
+                elif process_stages["pypgx_analysis"]["completed"]:
+                    # PyPGx completed, now check PharmCAT (it runs after PyPGx)
+                    if "pharmcat_analysis" in process_stages:
+                        if process_stages["pharmcat_analysis"]["running"]:
+                            current_stage = "pharmcat_analysis"
+                            current_message = "PyPGx completed, running PharmCAT..."
+                            max_progress = 70
+                            print(f"DEBUG: VCF workflow - PyPGx completed, PharmCAT running (70%)")
+                        elif process_stages["pharmcat_analysis"]["completed"]:
+                            current_stage = "pharmcat_analysis"
+                            current_message = "PharmCAT completed"
+                            max_progress = 70
+                            print(f"DEBUG: VCF workflow - PharmCAT completed (70%)")
+                        else:
+                            # PharmCAT not started yet, but PyPGx is done
+                            current_stage = "pypgx_analysis"
+                            current_message = "PyPGx completed, starting PharmCAT..."
+                            max_progress = 50
+                            print(f"DEBUG: VCF workflow - PyPGx completed, waiting for PharmCAT")
+                    else:
+                        # PharmCAT process not created yet, but PyPGx is done
+                        current_stage = "pypgx_analysis"
+                        current_message = "PyPGx completed, starting PharmCAT..."
+                        max_progress = 50
+                        print(f"DEBUG: VCF workflow - PyPGx completed, waiting for PharmCAT")
+                elif process_stages["pypgx_analysis"]["failed"]:
+                    # PyPGx failed, skip to PharmCAT
+                    current_stage = "pypgx_analysis"
+                    current_message = "PyPGx failed, skipping to PharmCAT..."
+                    max_progress = 50
+                    print(f"DEBUG: VCF workflow - PyPGx failed, skipping to PharmCAT")
+            else:
+                # PyPGx not started yet
+                current_stage = "pypgx_analysis"
+                current_message = "Starting PyPGx analysis..."
+                max_progress = 10
+                print(f"DEBUG: VCF workflow - PyPGx not started yet (10%)")
+        else:
+            # PyPGx disabled, go directly to PharmCAT
+            if "pharmcat_analysis" in process_stages:
+                if process_stages["pharmcat_analysis"]["running"]:
+                    current_stage = "pharmcat_analysis"
+                    current_message = "Running PharmCAT analysis..."
+                    max_progress = 70
+                    print(f"DEBUG: VCF workflow - PharmCAT running (PyPGx disabled)")
+                elif process_stages["pharmcat_analysis"]["completed"]:
+                    current_stage = "pharmcat_analysis"
+                    current_message = "PharmCAT completed"
+                    max_progress = 70
+                    print(f"DEBUG: VCF workflow - PharmCAT completed (PyPGx disabled)")
+            else:
+                current_stage = "pharmcat_analysis"
+                current_message = "Starting PharmCAT analysis..."
+                max_progress = 10
+                print(f"DEBUG: VCF workflow - PharmCAT not started yet (PyPGx disabled)")
+    
+    elif input_type in ["fastq", "bam", "cram", "sam"]:
+        # Complex workflows: HLA → GATK → PyPGx → PharmCAT (varies by input type)
+        # These are also SEQUENTIAL - only one stage runs at a time
+        
+        # Determine the current stage based on what's running/completed in sequence
+        if not skip_hla and "hla_typing" in process_stages:
+            if process_stages["hla_typing"]["running"]:
+                current_stage = "hla_typing"
+                current_message = "Running HLA typing..."
+                max_progress = 30
+                print(f"DEBUG: {input_type.upper()} workflow - HLA running (30%)")
+            elif process_stages["hla_typing"]["completed"]:
+                # HLA completed, check next stage in sequence
+                if "gatk_conversion" in process_stages and process_stages["gatk_conversion"]["running"]:
+                    current_stage = "gatk_conversion"
+                    current_message = "HLA completed, running file conversion..."
+                    max_progress = 20
+                    print(f"DEBUG: {input_type.upper()} workflow - HLA completed, GATK running (20%)")
+                elif not skip_pypgx and "pypgx_analysis" in process_stages and process_stages["pypgx_analysis"]["running"]:
+                    current_stage = "pypgx_analysis"
+                    current_message = "HLA completed, running PyPGx analysis..."
+                    max_progress = 50
+                    print(f"DEBUG: {input_type.upper()} workflow - HLA completed, PyPGx running (50%)")
+                elif "pharmcat_analysis" in process_stages and process_stages["pharmcat_analysis"]["running"]:
+                    current_stage = "pharmcat_analysis"
+                    current_message = "HLA completed, running PharmCAT analysis..."
+                    max_progress = 70
+                    print(f"DEBUG: {input_type.upper()} workflow - HLA completed, PharmCAT running (70%)")
+                else:
+                    # HLA completed, waiting for next stage
+                    current_stage = "hla_typing"
+                    current_message = "HLA completed, starting next stage..."
+                    max_progress = 30
+                    print(f"DEBUG: {input_type.upper()} workflow - HLA completed, waiting for next stage")
+        elif "gatk_conversion" in process_stages:
+            if process_stages["gatk_conversion"]["running"]:
+                current_stage = "gatk_conversion"
+                current_message = "Running file conversion..."
+                max_progress = 20
+                print(f"DEBUG: {input_type.upper()} workflow - GATK conversion running (20%)")
+            elif process_stages["gatk_conversion"]["completed"]:
+                # GATK completed, check next stage
+                if not skip_pypgx and "pypgx_analysis" in process_stages and process_stages["pypgx_analysis"]["running"]:
+                    current_stage = "pypgx_analysis"
+                    current_message = "GATK completed, running PyPGx analysis..."
+                    max_progress = 50
+                    print(f"DEBUG: {input_type.upper()} workflow - GATK completed, PyPGx running (50%)")
+                elif "pharmcat_analysis" in process_stages and process_stages["pharmcat_analysis"]["running"]:
+                    current_stage = "pharmcat_analysis"
+                    current_message = "GATK completed, running PharmCAT analysis..."
+                    max_progress = 70
+                    print(f"DEBUG: {input_type.upper()} workflow - GATK completed, PharmCAT running (70%)")
+                else:
+                    current_stage = "gatk_conversion"
+                    current_message = "GATK completed, starting next stage..."
+                    max_progress = 20
+                    print(f"DEBUG: {input_type.upper()} workflow - GATK completed, waiting for next stage")
+        elif not skip_pypgx and "pypgx_analysis" in process_stages:
+            if process_stages["pypgx_analysis"]["running"]:
+                current_stage = "pypgx_analysis"
+                current_message = "Running PyPGx analysis..."
+                max_progress = 50
+                print(f"DEBUG: {input_type.upper()} workflow - PyPGx running (50%)")
+            elif process_stages["pypgx_analysis"]["completed"]:
+                # PyPGx completed, check PharmCAT
+                if "pharmcat_analysis" in process_stages and process_stages["pharmcat_analysis"]["running"]:
+                    current_stage = "pharmcat_analysis"
+                    current_message = "PyPGx completed, running PharmCAT analysis..."
+                    max_progress = 70
+                    print(f"DEBUG: {input_type.upper()} workflow - PyPGx completed, PharmCAT running (70%)")
+                else:
+                    current_stage = "pypgx_analysis"
+                    current_message = "PyPGx completed, starting PharmCAT..."
+                    max_progress = 50
+                    print(f"DEBUG: {input_type.upper()} workflow - PyPGx completed, waiting for PharmCAT")
+        elif "pharmcat_analysis" in process_stages:
+            if process_stages["pharmcat_analysis"]["running"]:
+                current_stage = "pharmcat_analysis"
+                current_message = "Running PharmCAT analysis..."
+                max_progress = 70
+                print(f"DEBUG: {input_type.upper()} workflow - PharmCAT running (70%)")
+            elif process_stages["pharmcat_analysis"]["completed"]:
+                current_stage = "pharmcat_analysis"
+                current_message = "PharmCAT completed"
+                max_progress = 70
+                print(f"DEBUG: {input_type.upper()} workflow - PharmCAT completed (70%)")
+        else:
+            # No meaningful processes started yet, determine what should be first
+            if input_type == "fastq" and not skip_hla:
+                current_stage = "hla_typing"
+                current_message = "Starting HLA typing..."
+                max_progress = 10
+            elif input_type in ["cram", "sam"]:
+                current_stage = "gatk_conversion"
+                current_message = "Starting file conversion..."
+                max_progress = 10
+            elif input_type == "bam" and not skip_hla:
+                current_stage = "hla_typing"
+                current_message = "Starting HLA typing..."
+                max_progress = 10
+            else:
+                current_stage = "pypgx_analysis"
+                current_message = "Starting PyPGx analysis..."
+                max_progress = 10
     
     # Check if all processes are completed
     total_processes = len(processes)
@@ -340,27 +580,30 @@ def update_job_progress(job_key: str):
     running_processes = sum(1 for p in processes.values() if p.get("status") == "RUNNING")
     failed_processes = sum(1 for p in processes.values() if p.get("status") == "FAILED")
     
-    # For VCF input, the Nextflow pipeline is very simple - it just calls PyPGx service
-    # The real work happens in the PyPGx service, not in Nextflow processes
-    # So we need to track the PyPGx service work, not just Nextflow processes
-    
     # If no meaningful processes have been processed yet, maintain initial state
     # This handles the case where only CreateEmptyFile has run but no actual workflow processes
     if max_progress == 10 and completed_processes == total_processes and total_processes > 0:
-        # Check if we have any meaningful processes (not just CreateEmptyFile)
-        meaningful_processes = [p for p in processes.values() 
-                              if p.get("process_name", "").lower() not in ["createemptyfile"]]
-        
-        if len(meaningful_processes) == 0:
-            # Only CreateEmptyFile completed, but no actual workflow processes have run yet
-            # This can happen for VCF input where the pipeline is very simple
-            # Keep the initial state until actual processes start
-            # Don't override the stage - use the input-type-based initial stage
-            max_progress = 10  # Stay at initial progress until processes actually run
-            current_message = "Starting analysis..."
+        # Only CreateEmptyFile completed, but no actual workflow processes have run yet
+        # This can happen when services are disabled or for simple workflows
+        # Keep the initial state until actual processes start
+        max_progress = 10  # Stay at initial progress until processes actually run
+        current_message = "Starting analysis..."
+    
+    # Handle case where all services are disabled - jump to PharmCAT
+    if skip_hla and skip_pypgx and max_progress == 10:
+        max_progress = 40  # Jump to PharmCAT stage
+        current_stage = "pharmcat_analysis"
+        current_message = "Starting PharmCAT analysis (services disabled)..."
     
     # Debug final values
     print(f"DEBUG: Final calculated values - stage: {current_stage}, progress: {max_progress}, message: {current_message}")
+    print(f"DEBUG: Total processes: {total_processes}, completed: {completed_processes}, running: {running_processes}, failed: {failed_processes}")
+    print(f"DEBUG: Process stages: {process_stages}")
+    
+    # Additional debugging for VCF input
+    if input_type == "vcf":
+        print(f"DEBUG: VCF input - PyPGx should run first (50%), then PharmCAT (70%)")
+        print(f"DEBUG: Current stage mapping: {current_stage} = {max_progress}%")
     
     # Update job with calculated values
     job["progress"] = max_progress
@@ -379,7 +622,7 @@ def get_job_status(job_key: str):
         "patient_id": job["patient_id"],
         "report_id": job["report_id"],
         "status": job["status"],
-        "stage": job.get("stage", "pypgx_analysis"),
+        "stage": job.get("stage", "upload_complete"), # Use upload_complete as default, not pypgx_analysis
         "progress": job["progress"],
         "message": job["message"],
         "start_time": job["start_time"],

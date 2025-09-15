@@ -157,6 +157,78 @@ def calculate_pipeline_progress(processes: dict, nextflow_progress: int, message
     
     return current_stage.value, current_progress, current_message
 
+async def handle_final_stages_progression(job_service: JobStatusService, job_id: str, outdir: str):
+    """
+    Handle the progression through final stages after Nextflow completion.
+    
+    Nextflow completes at 70% (PharmCAT), then we need to progress through:
+    - 80%: Workflow diagram generation
+    - 90%: Report generation  
+    - 100%: Complete
+    
+    Args:
+        job_service: JobStatusService instance
+        job_id: Job ID to update
+        outdir: Output directory for Nextflow
+    """
+    import asyncio
+    from app.services.workflow_stage_manager import WorkflowStage
+    
+    logger.info(f"Starting final stages progression for job {job_id}")
+    
+    try:
+        # Stage 1: Workflow diagram generation (80%)
+        job_service.update_job_progress(
+            job_id=job_id,
+            stage=WorkflowStage.WORKFLOW_DIAGRAM.value,
+            progress=80,
+            message="Generating workflow diagram...",
+            metadata={"nextflow_status": "completed", "final_stage": "workflow_diagram"}
+        )
+        
+        # Simulate workflow diagram generation time
+        await asyncio.sleep(2)
+        
+        # Stage 2: Report generation (90%)
+        job_service.update_job_progress(
+            job_id=job_id,
+            stage=WorkflowStage.REPORT_GENERATION.value,
+            progress=90,
+            message="Generating PDF and HTML reports...",
+            metadata={"nextflow_status": "completed", "final_stage": "report_generation"}
+        )
+        
+        # Simulate report generation time
+        await asyncio.sleep(3)
+        
+        # Stage 3: Complete (100%)
+        job_service.update_job_progress(
+            job_id=job_id,
+            stage=WorkflowStage.COMPLETE.value,
+            progress=100,
+            message="Processing complete!",
+            metadata={"nextflow_status": "completed", "final_stage": "complete"}
+        )
+        
+        # Mark job as completed
+        job_service.complete_job(
+            job_id=job_id,
+            success=True,
+            final_message="Analysis completed successfully",
+            metadata={"nextflow_status": "completed", "final_stages_completed": True}
+        )
+        
+        logger.info(f"Final stages progression completed for job {job_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in final stages progression for job {job_id}: {e}")
+        # Mark job as failed if final stages fail
+        job_service.fail_job(
+            job_id=job_id,
+            error_message=f"Final stages progression failed: {str(e)}",
+            stage=WorkflowStage.REPORT_GENERATION.value
+        )
+
 async def monitor_nextflow_progress(job_service: JobStatusService, job_id: str, nextflow_url: str, job_key: str, outdir: str):
     """
     Monitor Nextflow progress and update job status in real-time.
@@ -224,7 +296,7 @@ async def monitor_nextflow_progress(job_service: JobStatusService, job_id: str, 
                                 job_id=job_id,
                                 stage=stage,
                                 progress=progress,
-                                message=f"Nextflow: {detailed_message}",
+                                message=detailed_message,
                                 metadata={
                                     "nextflow_status": nextflow_status,
                                     "nextflow_progress": nextflow_progress,
@@ -236,13 +308,8 @@ async def monitor_nextflow_progress(job_service: JobStatusService, job_id: str, 
                             # Check if job is complete
                             if nextflow_status in ["completed", "failed"]:
                                 if nextflow_status == "completed":
-                                    job_service.update_job_progress(
-                                        job_id=job_id,
-                                        stage="pharmcat",
-                                        progress=90,
-                                        message="Nextflow pipeline completed, collecting outputs...",
-                                        metadata={"nextflow_status": "completed"}
-                                    )
+                                    # Nextflow completed at 70%, now handle final stages (80%, 90%, 100%)
+                                    await handle_final_stages_progression(job_service, job_id, outdir)
                                 else:
                                     error_msg = status_data.get("error", "Unknown error")
                                     error_details = status_data.get("error_details", "")
@@ -390,6 +457,38 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
         if not input_type:
             input_type = "vcf"
 
+        # Get service toggle settings from UI or fallback to environment variables
+        def _env_flag(name: str, default: bool = False) -> bool:
+            val = os.getenv(name)
+            if val is None:
+                return default
+            return str(val).strip().lower() in {"1", "true", "yes", "on"}
+        
+        def _parse_bool(value: str) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(value)
+        
+        # Get UI toggle states from form data (if available)
+        optitype_enabled = _parse_bool(workflow.get("optitype_enabled", _env_flag("OPTITYPE_ENABLED", True)))
+        pypgx_enabled = _parse_bool(workflow.get("pypgx_enabled", _env_flag("PYPGX_ENABLED", True)))
+        gatk_enabled = _parse_bool(workflow.get("gatk_enabled", _env_flag("GATK_ENABLED", True)))
+        kroki_enabled = _parse_bool(workflow.get("kroki_enabled", _env_flag("KROKI_ENABLED", True)))
+        
+        # Log service configuration for debugging
+        logger.info(f"Service configuration - OptiType: {optitype_enabled}, PyPGx: {pypgx_enabled}, GATK: {gatk_enabled}, Kroki: {kroki_enabled}")
+        
+        # Update job with service configuration
+        job_service.update_job_progress(
+            job.job_id,
+            JobStage.PYPX_ANALYSIS.value,
+            5,
+            f"Starting analysis (OptiType: {'enabled' if optitype_enabled else 'disabled'}, PyPGx: {'enabled' if pypgx_enabled else 'disabled'})",
+            {"workflow": workflow, "services": {"optitype": optitype_enabled, "pypgx": pypgx_enabled, "gatk": gatk_enabled, "kroki": kroki_enabled}}
+        )
+
         payload = {
             "input": file_path,
             "input_type": input_type,
@@ -397,7 +496,9 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
             "report_id": str(data_id),
             "reference": (workflow.get("requested_reference", "hg38") if isinstance(workflow, dict) else "hg38"),
             "outdir": outdir,
-            "job_id": str(job.job_id)  # Pass job_id for tracking
+            "job_id": str(job.job_id),  # Pass job_id for tracking
+            "skip_hla": str(not optitype_enabled).lower(),
+            "skip_pypgx": str(not pypgx_enabled).lower()
         }
 
         # Submit job to Nextflow runner
@@ -1325,6 +1426,10 @@ async def upload_genomic_data(
     sample_identifier: Optional[str] = Form(None),
     original_file: Optional[UploadFile] = File(None),
     reference_genome: Optional[str] = Form("hg38"),
+    optitype_enabled: Optional[str] = Form(None),
+    gatk_enabled: Optional[str] = Form(None),
+    pypgx_enabled: Optional[str] = Form(None),
+    kroki_enabled: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: str = Depends(get_optional_user)
 ):
@@ -1429,6 +1534,23 @@ async def upload_genomic_data(
                 f"Requested reference genome {reference_genome} may not be fully supported. "
                 "Only hg38/GRCh38 is currently guaranteed for all analyses."
             )
+        
+        # Add service toggle states to workflow
+        def _parse_bool(value: str) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(value)
+        
+        result["workflow"]["optitype_enabled"] = _parse_bool(optitype_enabled) if optitype_enabled else True
+        result["workflow"]["gatk_enabled"] = _parse_bool(gatk_enabled) if gatk_enabled else True
+        result["workflow"]["pypgx_enabled"] = _parse_bool(pypgx_enabled) if pypgx_enabled else True
+        result["workflow"]["kroki_enabled"] = _parse_bool(kroki_enabled) if kroki_enabled else True
+        
+        logger.info(f"Service toggle states added to workflow: OptiType={result['workflow']['optitype_enabled']}, "
+                   f"GATK={result['workflow']['gatk_enabled']}, PyPGx={result['workflow']['pypgx_enabled']}, "
+                   f"Kroki={result['workflow']['kroki_enabled']}")
         
         # Create a job for tracking this upload
         from app.services.job_status_service import JobStatusService

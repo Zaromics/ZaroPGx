@@ -79,6 +79,11 @@ class GenomeDownloadProgress {
             console.log("File selection changed");
             this.resetProgress();
             
+            // Also reset smooth progress
+            if (window.resetProgress) {
+                window.resetProgress();
+            }
+            
             // Show file size info when a file is selected
             if (fileInput.files && fileInput.files[0]) {
                 const fileSize = fileInput.files[0].size;
@@ -115,6 +120,27 @@ class GenomeDownloadProgress {
             // Get form data
             const formData = new FormData(form);
             const uploadButton = document.getElementById('uploadButton');
+            
+            // Add service toggle states to form data
+            if (window.getStageToggleStates) {
+                const toggleStates = window.getStageToggleStates();
+                console.log('Service toggle states:', toggleStates);
+                
+                // Map UI stage names to backend service names
+                const serviceMapping = {
+                    'hla': 'optitype_enabled',
+                    'gatk': 'gatk_enabled', 
+                    'pypgx': 'pypgx_enabled',
+                    'report': 'kroki_enabled' // Needs to be changed, kroki is not synonymous with report
+                };
+                
+                // Add toggle states to form data
+                Object.entries(serviceMapping).forEach(([stageName, serviceName]) => {
+                    const enabled = toggleStates[stageName] || false;
+                    formData.append(serviceName, enabled.toString());
+                    console.log(`Added ${serviceName}: ${enabled}`);
+                });
+            }
             
             console.log("Form data prepared, starting upload");
             
@@ -278,6 +304,11 @@ class GenomeDownloadProgress {
         console.log("Starting upload progress tracking");
         this.uploadInProgress = true;
         this.uploadComplete = false;
+        
+        // Reset smooth progress for new upload
+        if (window.resetProgress) {
+            window.resetProgress();
+        }
         
         // Show the progress element
         const progressDiv = document.getElementById('file-upload-progress');

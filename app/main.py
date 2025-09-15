@@ -28,6 +28,7 @@ import requests
 from werkzeug.utils import secure_filename
 import traceback
 import httpx
+import sys
 from app.pharmcat import pharmcat_client
 
 from app.api.models import Token, TokenData
@@ -76,6 +77,22 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
 PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
 PHARMCAT_API_URL = os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000")
+
+# Service toggle configuration
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse environment variable as boolean flag."""
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+# Service enablement flags
+GATK_ENABLED = _env_flag("GATK_ENABLED", True)
+PYPGX_ENABLED = _env_flag("PYPGX_ENABLED", True)
+OPTITYPE_ENABLED = _env_flag("OPTITYPE_ENABLED", True)
+GENOME_DOWNLOADER_ENABLED = _env_flag("GENOME_DOWNLOADER_ENABLED", True)
+KROKI_ENABLED = _env_flag("KROKI_ENABLED", True)
+HAPI_FHIR_ENABLED = _env_flag("HAPI_FHIR_ENABLED", True)
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
@@ -92,13 +109,15 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
+Author_Name = "Iliya Yaroshevskiy"
+
 # ----- Legal/Attribution helpers for AGPL notices -----
 def _read_author_from_pyproject() -> str:
     try:
         project_root = os.path.dirname(os.path.dirname(__file__))
         pyproject_path = os.path.join(project_root, "pyproject.toml")
         if not os.path.exists(pyproject_path):
-            return "Unknown Author"
+            return Author_Name
         with open(pyproject_path, "r", encoding="utf-8") as f:
             content = f.read()
         # Extract authors array content
@@ -107,9 +126,9 @@ def _read_author_from_pyproject() -> str:
         name_match = re.search(r"name\s*=\s*\"([^\"]+)\"", block)
         if name_match:
             return name_match.group(1).strip()
-        return "Unknown Author"
+        return Author_Name
     except Exception:
-        return "Unknown Author"
+        return Author_Name
 
 
 def get_author_name() -> str:
@@ -121,7 +140,7 @@ def get_author_name() -> str:
 # Initialize FastAPI app
 app = FastAPI(
     title="ZaroPGx - Intelligent Pharmacogenomic Reporting Pipeline",
-    description="API for processing genetic data and generating pharmacogenomic reports",
+    description="An application with anAPI for processing genetic data and generating pharmacogenomic reports",
     version="0.2.0"
 )
 
@@ -171,7 +190,7 @@ async def ensure_docs_built_on_start() -> None:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        # Production domain
+        # Production domain -- needs to be switched to use env variable instead of hardcoded
         "https://pgx.zimerguz.net", 
         "http://pgx.zimerguz.net", # HTTP is disabled
         
@@ -195,7 +214,9 @@ app.add_middleware(
         "http://localhost:5002",  # gatk-api
         "http://localhost:5053",  # pypgx
         "http://localhost:5444",  # PostgreSQL
-        
+        "http://localhost:5060",  # hlatyping
+        "http://localhost:5055",  # nextflow
+
         # 127.0.0.1 equivalents
         "http://127.0.0.1:5050",
         "http://127.0.0.1:2323",
@@ -203,7 +224,9 @@ app.add_middleware(
         "http://127.0.0.1:5001",
         "http://127.0.0.1:5002",
         "http://127.0.0.1:5053",
-        "http://127.0.0.1:5444"
+        "http://127.0.0.1:5444",
+        "http://127.0.0.1:5060",
+        "http://127.0.0.1:5055",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -2246,6 +2269,20 @@ async def api_status():
             "traceback": traceback.format_exc()
         }
 
+@app.get("/services-config", response_class=JSONResponse)
+async def services_config():
+    """Get current service configuration and toggle status"""
+    return {
+        "services": {
+            "gatk": {"enabled": GATK_ENABLED},
+            "pypgx": {"enabled": PYPGX_ENABLED},
+            "optitype": {"enabled": OPTITYPE_ENABLED},
+            "genome_downloader": {"enabled": GENOME_DOWNLOADER_ENABLED},
+            "kroki": {"enabled": KROKI_ENABLED},
+            "hapi_fhir": {"enabled": HAPI_FHIR_ENABLED}
+        }
+    }
+
 @app.get("/services-status", response_class=JSONResponse)
 async def services_status(request: Request, current_user: str = Depends(get_optional_user)):
     """Check the status of all services and return a comprehensive health check"""
@@ -2254,27 +2291,40 @@ async def services_status(request: Request, current_user: str = Depends(get_opti
     logger.info(f"Client IP: {request.client.host}, Method: {request.method}, Path: {request.url.path}")
     logger.info(f"Headers: {request.headers}")
     
+    # Only check services that are enabled
     services_to_check = {
         "app": {
             "url": "http://localhost:8000/health",  # Using internal port 8000 instead of request.base_url
-            "timeout": 5
-        },
-        "gatk": {
-            "url": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
-            "timeout": 10
-        },
-        "pharmcat": {
-            "url": os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000") + "/health",
-            "timeout": 10 
-        },
-        "pypgx": {
-            "url": os.getenv("PYPGX_API_URL", "http://pypgx:5000") + "/health",
-            "timeout": 10
+            "timeout": 5,
+            "enabled": True  # App is always enabled
         },
         "database": {
             "url": os.getenv("DATABASE_URL", "postgresql://cpic_user:cpic_password@db:5432/cpic_db"),
-            "timeout": 5
+            "timeout": 5,
+            "enabled": True  # Database is always enabled
         }
+    }
+    
+    # Add enabled services only
+    if GATK_ENABLED:
+        services_to_check["gatk"] = {
+            "url": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
+            "timeout": 10,
+            "enabled": True
+        }
+    
+    if PYPGX_ENABLED:
+        services_to_check["pypgx"] = {
+            "url": os.getenv("PYPGX_API_URL", "http://pypgx:5000") + "/health",
+            "timeout": 10,
+            "enabled": True
+        }
+    
+    # PharmCAT is always enabled (core service)
+    services_to_check["pharmcat"] = {
+        "url": os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000") + "/health",
+        "timeout": 10,
+        "enabled": True
     }
     
     # For debugging - log the URLs we're trying to check

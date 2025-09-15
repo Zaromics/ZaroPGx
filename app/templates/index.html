@@ -499,7 +499,8 @@
                                 <label class="form-label" id="progressLabel">Progress</label>
                                 <div class="progress mb-2" style="height: 25px;">
                                     <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
-                                         role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
+                                         role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" 
+                                         style="width: 0%; transition: none;">
                                         0%
                                     </div>
                                 </div>
@@ -755,6 +756,142 @@
                 progressContainer.classList.remove('d-none');
             };
 
+            // Smooth Progress Bar Manager
+            class SmoothProgressManager {
+                constructor(progressBar, progressStatus) {
+                    this.progressBar = progressBar;
+                    this.progressStatus = progressStatus;
+                    this.currentProgress = 0;
+                    this.targetProgress = 0;
+                    this.currentStage = null;
+                    this.stageStartTime = null;
+                    this.minStageDuration = 1000; // 1 second minimum per stage
+                    this.animationDuration = 1000; // 1 second for progress bar animation
+                    this.animationId = null;
+                    this.isAnimating = false;
+                    this.lastUpdateTime = 0;
+                    this.updateThrottle = 50; // Minimum 50ms between updates
+                }
+
+                updateProgress(targetProgress, stage, message) {
+                    const now = Date.now();
+                    
+                    // Validate input parameters
+                    if (targetProgress === undefined || targetProgress === null || isNaN(targetProgress)) {
+                        console.warn(`Invalid progress value: ${targetProgress}, skipping update`);
+                        return;
+                    }
+                    
+                    // Throttle updates to prevent too frequent calls
+                    if (now - this.lastUpdateTime < this.updateThrottle) {
+                        return;
+                    }
+                    this.lastUpdateTime = now;
+
+                    // Check if we need to enforce minimum stage duration
+                    if (this.currentStage && this.currentStage !== stage) {
+                        const timeInCurrentStage = now - this.stageStartTime;
+                        if (timeInCurrentStage < this.minStageDuration) {
+                            // Still in minimum duration for current stage, delay the update
+                            const remainingTime = this.minStageDuration - timeInCurrentStage;
+                            console.log(`Enforcing minimum stage duration: ${remainingTime}ms remaining`);
+                            setTimeout(() => {
+                                this.updateProgress(targetProgress, stage, message);
+                            }, remainingTime);
+                            return;
+                        }
+                    }
+
+                    // Update stage if changed
+                    if (this.currentStage !== stage) {
+                        this.currentStage = stage;
+                        this.stageStartTime = now;
+                        console.log(`Stage changed to: ${stage}`);
+                    }
+
+                    // Update target progress
+                    this.targetProgress = Math.max(0, Math.min(100, targetProgress));
+                    
+                    // Update status message immediately
+                    if (this.progressStatus && message) {
+                        this.progressStatus.textContent = message;
+                    }
+
+                    // Start smooth animation if not already animating
+                    if (!this.isAnimating) {
+                        this.animateProgress();
+                    }
+                }
+
+                animateProgress() {
+                    if (this.isAnimating) return;
+                    
+                    this.isAnimating = true;
+                    const startProgress = this.currentProgress;
+                    const progressDiff = this.targetProgress - startProgress;
+                    const startTime = Date.now();
+
+                    const animate = () => {
+                        const elapsed = Date.now() - startTime;
+                        const progress = Math.min(elapsed / this.animationDuration, 1);
+                        
+                        // Use easing function for smooth animation
+                        const easedProgress = this.easeInOutCubic(progress);
+                        const currentValue = startProgress + (progressDiff * easedProgress);
+                        
+                        // Update progress bar
+                        this.currentProgress = Math.round(currentValue);
+                        this.progressBar.style.width = `${this.currentProgress}%`;
+                        this.progressBar.textContent = `${this.currentProgress}%`;
+                        this.progressBar.setAttribute('aria-valuenow', this.currentProgress);
+
+                        if (progress < 1) {
+                            this.animationId = requestAnimationFrame(animate);
+                        } else {
+                            // Animation complete
+                            this.currentProgress = this.targetProgress;
+                            this.isAnimating = false;
+                            this.animationId = null;
+                        }
+                    };
+
+                    this.animationId = requestAnimationFrame(animate);
+                }
+
+                easeInOutCubic(t) {
+                    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+                }
+
+                reset() {
+                    if (this.animationId) {
+                        cancelAnimationFrame(this.animationId);
+                        this.animationId = null;
+                    }
+                    this.isAnimating = false;
+                    this.currentProgress = 0;
+                    this.targetProgress = 0;
+                    this.currentStage = null;
+                    this.stageStartTime = null;
+                    this.lastUpdateTime = 0;
+                    this.progressBar.style.width = '0%';
+                    this.progressBar.textContent = '0%';
+                    this.progressBar.setAttribute('aria-valuenow', 0);
+                    if (this.progressStatus) {
+                        this.progressStatus.textContent = 'Preparing...';
+                    }
+                }
+            }
+
+            // Global smooth progress manager instance
+            let globalSmoothProgress = null;
+
+            // Function to reset progress for new uploads
+            window.resetProgress = function() {
+                if (globalSmoothProgress) {
+                    globalSmoothProgress.reset();
+                }
+            };
+
             // Make monitorProgress globally available
             window.monitorProgress = async function(jobId) {
                 const progressBar = document.getElementById('progressBar');
@@ -767,6 +904,16 @@
                     console.error("Progress monitoring elements not found");
                     return;
                 }
+
+                // Initialize or reuse smooth progress manager
+                if (!globalSmoothProgress) {
+                    globalSmoothProgress = new SmoothProgressManager(progressBar, progressStatus);
+                } else {
+                    // Update references in case elements changed
+                    globalSmoothProgress.progressBar = progressBar;
+                    globalSmoothProgress.progressStatus = progressStatus;
+                }
+                const smoothProgress = globalSmoothProgress;
 
                 const addLogMessage = (message, type = 'info') => {
                     if (!logMessages) return;
@@ -927,16 +1074,27 @@
                                                         return;
                                                     }
                                                     
-                                                    // Update progress bar (use 'progress' field instead of 'percent')
-                                                    const progressValue = data.progress || data.percent || 0;
-                                                    progressBar.style.width = `${progressValue}%`;
-                                                    progressBar.textContent = `${progressValue}%`;
+                                                    // Update progress bar using smooth progress manager
+                                                    const progressValue = data.progress || data.percent;
+                                                    const stage = data.stage || 'unknown';
+                                                    const message = data.message || '';
                                                     
-                                                    // Update status message
-                                                    progressStatus.textContent = data.message || '';
+                                                    // Only update progress if we have a valid progress value
+                                                    // This prevents the progress bar from resetting to 0 when progress is undefined
+                                                    if (progressValue !== undefined && progressValue !== null) {
+                                                        console.log(`Progress update: ${progressValue}% (stage: ${stage}, message: "${message}")`);
+                                                        smoothProgress.updateProgress(progressValue, stage, message);
+                                                    } else {
+                                                        console.log(`Skipping progress update - progressValue: ${progressValue}, stage: ${stage}, message: "${message}"`);
+                                                    }
                                                     
-                                                    // Add log message
-                                                    addLogMessage(data.message || 'Processing...');
+                                                    // Add log message - only if we have a meaningful message
+                                                    if (data.message && data.message.trim()) {
+                                                        addLogMessage(data.message);
+                                                    } else if (progressValue !== undefined && progressValue !== null) {
+                                                        // Only show "Processing..." if we have a valid progress update
+                                                        addLogMessage('Processing...');
+                                                    }
                                                     
                                                     // Update Nextflow process details if available
                                                     if (data.metadata && data.metadata.nextflow_processes) {
@@ -1049,9 +1207,8 @@
                                                     if (data.complete) {
                                                         console.log("Processing complete:", data);
                                                         
-                                                        // Set progress to 100%
-                                                        progressBar.style.width = '100%';
-                                                        progressBar.textContent = '100%';
+                                                        // Set progress to 100% using smooth progress manager
+                                                        smoothProgress.updateProgress(100, 'complete', 'Processing complete!');
                                                         
                                                         // Show completion message
                                                         addLogMessage("✓ Processing complete!", "success");
@@ -1062,11 +1219,11 @@
                                                         if (data.success) {
                                                             addLogMessage("✓ Analysis successful", "success");
                                                             console.log("Success data:", data.data);
-                                                            console.log("🔍 FULL SUCCESS DATA STRUCTURE:", JSON.stringify(data, null, 2));
-                                                            console.log("🔍 PHARMCAT URLS CHECK:");
-                                                            console.log("🔍 data.data.pharmcat_html_report_url:", data.data?.pharmcat_html_report_url);
-                                                            console.log("🔍 data.data.pharmcat_json_report_url:", data.data?.pharmcat_json_report_url);
-                                                            console.log("🔍 data.data.pharmcat_tsv_report_url:", data.data?.pharmcat_tsv_report_url);
+                                                            console.log("FULL SUCCESS DATA STRUCTURE:", JSON.stringify(data, null, 2));
+                                                            console.log("PHARMCAT URLS CHECK:");
+                                                            console.log("data.data.pharmcat_html_report_url:", data.data?.pharmcat_html_report_url);
+                                                            console.log("data.data.pharmcat_json_report_url:", data.data?.pharmcat_json_report_url);
+                                                            console.log("data.data.pharmcat_tsv_report_url:", data.data?.pharmcat_tsv_report_url);
                                                             
                                                             // Get report URLs
                                                             let pdfUrl, htmlUrl;
@@ -1296,20 +1453,6 @@
                     });
                 }
                 
-                // SIMPLE DEBUGGING - THIS SHOULD DEFINITELY SHOW UP
-                console.log("🚨🚨🚨 DEBUGGING CODE IS RUNNING! 🚨🚨🚨");
-                console.log("🚨🚨🚨 PHARMCAT URLS CHECK 🚨🚨🚨");
-                console.log("🚨🚨🚨 Root level pharmcat_html_report_url:", data.pharmcat_html_report_url || "NOT FOUND");
-                console.log("🚨🚨🚨 Root level pharmcat_json_report_url:", data.pharmcat_json_report_url || "NOT FOUND");
-                console.log("🚨🚨🚨 Root level pharmcat_tsv_report_url:", data.pharmcat_tsv_report_url || "NOT FOUND");
-                
-                if (data.data) {
-                    console.log("🚨🚨🚨 NESTED DATA PHARMCAT URLS 🚨🚨🚨");
-                    console.log("🚨🚨🚨 Nested pharmcat_html_report_url:", data.data.pharmcat_html_report_url || "NOT FOUND");
-                    console.log("🚨🚨🚨 Nested pharmcat_json_report_url:", data.data.pharmcat_json_report_url || "NOT FOUND");
-                    console.log("🚨🚨🚨 Nested pharmcat_tsv_report_url:", data.data.pharmcat_tsv_report_url || "NOT FOUND");
-                }
-                
                 // Debug: Log the full data structure
                 console.log("Full data received:", data);
                 console.log("Data keys:", Object.keys(data));
@@ -1321,58 +1464,46 @@
                 
                 // Debug: Log what was found
                 console.log("After extraction, reportUrls contains:", reportUrls);
-                
-                // Additional debugging: Check if PharmCAT URLs exist in the data
-                console.log("🔍 DETAILED PHARMCAT URL CHECK:");
-                console.log("🔍 data.pharmcat_html_report_url:", data.pharmcat_html_report_url);
-                console.log("🔍 data.pharmcat_json_report_url:", data.pharmcat_json_report_url);
-                console.log("🔍 data.pharmcat_tsv_report_url:", data.pharmcat_tsv_report_url);
-                
-                if (data.data) {
-                    console.log("🔍 data.data.pharmcat_html_report_url:", data.data.pharmcat_html_report_url);
-                    console.log("🔍 data.data.pharmcat_json_report_url:", data.data.pharmcat_json_report_url);
-                    console.log("🔍 data.pharmcat_tsv_report_url:", data.data.pharmcat_tsv_report_url);
-                }
-                
+
                 // Test: Log the exact structure of the data
-                console.log("🔍 FULL DATA STRUCTURE:");
+                console.log("FULL DATA STRUCTURE:");
                 console.log(JSON.stringify(data, null, 2));
                 
                 // Test: Check if the issue is with the data structure
                 if (data.data && typeof data.data === 'object') {
-                    console.log("🔍 data.data is an object with keys:", Object.keys(data.data));
-                    console.log("🔍 data.data.pharmcat_html_report_url type:", typeof data.data.pharmcat_html_report_url);
-                    console.log("🔍 data.data.pharmcat_html_report_url value:", data.data.pharmcat_html_report_url);
+                    console.log("data.data is an object with keys:", Object.keys(data.data));
+                    console.log("data.data.pharmcat_html_report_url type:", typeof data.data.pharmcat_html_report_url);
+                    console.log("data.data.pharmcat_html_report_url value:", data.data.pharmcat_html_report_url);
                 }
                 
                 // Check if the issue is with the extractUrls function
-                console.log("🔍 Testing direct assignment:");
+                console.log("Testing direct assignment:");
                 if (data.pharmcat_html_report_url) {
                     reportUrls.pharmcat_html_report_url = data.pharmcat_html_report_url;
-                    console.log("🔍 Directly assigned pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
+                    console.log("Directly assigned pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
                 }
                 if (data.pharmcat_json_report_url) {
                     reportUrls.pharmcat_json_report_url = data.pharmcat_json_report_url;
-                    console.log("🔍 Directly assigned pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
+                    console.log("Directly assigned pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
                 }
                 if (data.pharmcat_tsv_report_url) {
                     reportUrls.pharmcat_tsv_report_url = data.pharmcat_tsv_report_url;
-                    console.log("🔍 Directly assigned pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
+                    console.log("Directly assigned pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
                 }
                 
                 // Also check nested data
                 if (data.data) {
                     if (data.data.pharmcat_html_report_url) {
                         reportUrls.pharmcat_html_report_url = data.data.pharmcat_html_report_url;
-                        console.log("🔍 Directly assigned nested pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
+                        console.log("Directly assigned nested pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
                     }
                     if (data.data.pharmcat_json_report_url) {
                         reportUrls.pharmcat_json_report_url = data.data.pharmcat_json_report_url;
-                        console.log("🔍 Directly assigned nested pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
+                        console.log("Directly assigned nested pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
                     }
                     if (data.data.pharmcat_tsv_report_url) {
                         reportUrls.pharmcat_tsv_report_url = data.data.pharmcat_tsv_report_url;
-                        console.log("🔍 Directly assigned nested pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
+                        console.log("Directly assigned nested pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
                     }
                 }
                 
@@ -1401,7 +1532,7 @@
                 let resultsHtml = `
                     <div class="alert alert-success">
                         <h4>Analysis Complete!</h4>
-                        <p>Your pharmacogenomic analysis has been completed successfully.</p>
+                        <p>The pharmacogenomic analysis has been completed successfully.</p>
                 `;
 
                 // Check if we found any report URLs
@@ -1552,6 +1683,22 @@
                 const formData = new FormData();
                 formData.append('file', demoFile);
                 formData.append('sample_identifier', 'PharmCAT-Demo');
+                
+                // Add service toggle states to demo upload
+                if (window.getStageToggleStates) {
+                    const toggleStates = window.getStageToggleStates();
+                    const serviceMapping = {
+                        'hla': 'optitype_enabled',
+                        'gatk': 'gatk_enabled', 
+                        'pypgx': 'pypgx_enabled',
+                        'report': 'kroki_enabled' // Needs to be changed, kroki is not synonymous with report
+                    };
+                    
+                    Object.entries(serviceMapping).forEach(([stageName, serviceName]) => {
+                        const enabled = toggleStates[stageName] || false;
+                        formData.append(serviceName, enabled.toString());
+                    });
+                }
                 
                 // Mark this as a VCF file for consistent handling
                 window.isVcfFile = true;
@@ -1982,6 +2129,64 @@
             });
         };
 
+        // Initialize service toggles from backend configuration
+        window.initializeServiceToggles = async function() {
+            console.log('Initializing service toggles from backend configuration...');
+            
+            try {
+                // Fetch service configuration from backend
+                const response = await fetch('/services-config');
+                if (!response.ok) {
+                    console.warn('Failed to fetch service configuration, using defaults');
+                    return;
+                }
+                
+                const config = await response.json();
+                console.log('Service configuration:', config);
+                
+                // Map backend service names to UI stage names
+                const serviceMapping = {
+                    'optitype': 'hla',
+                    'gatk': 'gatk',
+                    'pypgx': 'pypgx',
+                    'kroki': 'report'  // Needs to be changed, kroki is not synonymous with report
+                };
+                
+                // Update UI toggles based on backend configuration
+                Object.entries(serviceMapping).forEach(([serviceName, stageName]) => {
+                    const serviceConfig = config.services[serviceName];
+                    if (serviceConfig) {
+                        const enabled = serviceConfig.enabled;
+                        const indicator = document.querySelector(`[data-stage="${stageName}"]`);
+                        const button = indicator?.querySelector('.toggle-button');
+                        
+                        if (indicator && button) {
+                            // Update data attribute
+                            indicator.setAttribute('data-enabled', enabled.toString());
+                            
+                            // Update visual state
+                            if (enabled) {
+                                indicator.classList.remove('disabled');
+                                button.classList.remove('disabled');
+                                button.classList.add('enabled');
+                                button.textContent = '✓ Enabled';
+                            } else {
+                                indicator.classList.add('disabled');
+                                button.classList.remove('enabled');
+                                button.classList.add('disabled');
+                                button.textContent = '✗ Disabled';
+                            }
+                            
+                            console.log(`Initialized ${stageName} (${serviceName}): ${enabled ? 'enabled' : 'disabled'}`);
+                        }
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error initializing service toggles:', error);
+            }
+        };
+
         // Get current stage toggle states for backend submission
         window.getStageToggleStates = function() {
             const states = {};
@@ -2000,6 +2205,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             console.log('DOM loaded, initializing stage popups...');
             window.initializeStagePopups();
+            window.initializeServiceToggles();
         });
     </script>
 </body>

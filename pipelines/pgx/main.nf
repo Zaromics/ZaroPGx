@@ -4,7 +4,7 @@ nextflow.enable.dsl=2
   Comprehensive PGx Nextflow pipeline
   
   Optimal workflow (FASTQ input - per workflow_logic.md):
-    FASTQ -> OptiType/HLA calling -> GATK alignment -> BAM -> PyPGx -> PharmCAT
+    FASTQ -> OptiType/HLA calling (parallel) + GATK alignment -> BAM -> PyPGx -> PharmCAT
   
   Alternative workflows:
     CRAM/SAM -> GATK conversion -> BAM -> OptiType/HLA + PyPGx -> PharmCAT
@@ -21,6 +21,7 @@ params.report_id      = params.report_id ?: ''
 params.reference      = params.reference ?: 'hg38'
 params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
+params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 
 // FASTQ alignment process (OPTIMAL STARTING FORMAT per workflow_logic.md)
 process FastqToBAM {
@@ -351,13 +352,18 @@ workflow {
 
     // Handle different input types with optimal HLA calling strategy
     
-    // For FASTQ: HLA first (optimal), then alignment
+    // For FASTQ: HLA first (if enabled), then BAM conversion, then PyPGx sequentially
     if (params.input_type == 'fastq') {
+        // Step 1: HLA typing on FASTQ (optimal - no conversion needed)
         hla_result = OptiTypeHLAFromFastq(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
         hla_ch = hla_result.hla
         
+        // Step 2: Convert FASTQ to BAM
         bam_ch = FastqToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
-        vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        
+        // Step 3: PyPGx waits for HLA to complete
+        hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
+        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
     }
     // For CRAM: convert to BAM, then HLA + PyPGx sequentially
     else if (params.input_type == 'cram') {
@@ -400,26 +406,44 @@ workflow {
         error "Unsupported input type: ${params.input_type}. Supported: vcf, bam, cram, sam, fastq"
     }
 
-    // Run PyPGx genotyping on VCF
-    pypgx_result = PyPGxGenotypeAll(vcf_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
-
-    // Handle PyPGx results: if PyPGx completely failed (service unavailable),
-    // it won't emit an outside.tsv file, so Nextflow uses empty_file_ch.
-    // If PyPGx succeeded but produced no valid results, it may emit an empty file.
-    // In both cases, PharmCAT will skip outside calls if the file is empty.
-    pypgx_outside = pypgx_result.outside.ifEmpty(empty_file_ch)
+    // Run PyPGx genotyping on VCF (if enabled)
+    if (params.skip_pypgx) {
+        pypgx_outside = empty_file_ch
+    } else {
+        pypgx_result = PyPGxGenotypeAll(vcf_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+        // Handle PyPGx results: if PyPGx completely failed (service unavailable),
+        // it won't emit an outside.tsv file, so Nextflow uses empty_file_ch.
+        // If PyPGx succeeded but produced no valid results, it may emit an empty file.
+        // In both cases, PharmCAT will skip outside calls if the file is empty.
+        pypgx_outside = pypgx_result.outside.ifEmpty(empty_file_ch)
+    }
 
     hla_outside = (params.skip_hla || params.input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
 
     // Run PharmCAT - will automatically skip outside calls if files are empty
-    PharmCATRun(
-        vcf_ch,
-        pypgx_outside,
-        hla_outside,
-        patient_id_ch,
-        report_id_ch,
-        outdir_ch
-    )
+    // Make PharmCAT wait for PyPGx to complete for all input types (except when PyPGx is skipped)
+    if (!params.skip_pypgx) {
+        // Create dependency: PharmCAT waits for PyPGx to complete
+        pypgx_complete_ch = pypgx_result.pypgx_json.combine(vcf_ch).map { pypgx_json, vcf_file -> vcf_file }
+        PharmCATRun(
+            pypgx_complete_ch,
+            pypgx_outside,
+            hla_outside,
+            patient_id_ch,
+            report_id_ch,
+            outdir_ch
+        )
+    } else {
+        // When PyPGx is skipped, use original VCF
+        PharmCATRun(
+            vcf_ch,
+            pypgx_outside,
+            hla_outside,
+            patient_id_ch,
+            report_id_ch,
+            outdir_ch
+        )
+    }
 }
 
 
