@@ -30,7 +30,7 @@ RUN mkdir -p /app /data /reference /tmp/pypgx
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 # Install PyPGx and dependencies (ensure compatibility with Python 3.12)
-RUN uv pip install --system setuptools==80.9.0 fuc pypgx scikit-learn autodocsumm
+RUN uv pip install --system setuptools==80.9.0 fuc pypgx scikit-learn autodocsumm psutil
 
 # Clone the matching PyPGx bundle repository
 # NB: pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81

@@ -17,6 +17,9 @@ import zipfile
 import io
 import csv
 import time
+import asyncio
+import psutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -139,6 +142,87 @@ class GeneConfig:
 # Initialize gene configuration
 gene_config = GeneConfig()
 
+# Memory and parallel processing configuration
+PYPGX_MEMORY_LIMIT = os.getenv('PYPGX_MEMORY_LIMIT', '12G')
+PYPGX_MAX_PARALLEL_GENES = int(os.getenv('PYPGX_MAX_PARALLEL_GENES', '8'))
+PYPGX_BATCH_SIZE = int(os.getenv('PYPGX_BATCH_SIZE', '4'))
+
+def get_memory_usage() -> Dict[str, float]:
+    """Get current memory usage statistics"""
+    try:
+        memory = psutil.virtual_memory()
+        return {
+            'total_gb': memory.total / (1024**3),
+            'available_gb': memory.available / (1024**3),
+            'used_gb': memory.used / (1024**3),
+            'percent_used': memory.percent
+        }
+    except Exception as e:
+        logger.warning(f"Failed to get memory usage: {e}")
+        return {'total_gb': 0, 'available_gb': 0, 'used_gb': 0, 'percent_used': 0}
+
+def calculate_optimal_batch_size(file_size_gb: float, available_memory_gb: float) -> int:
+    """Calculate optimal batch size based on file size and available memory"""
+    # Base batch size from environment
+    base_batch_size = PYPGX_BATCH_SIZE
+    
+    # Adjust based on file size and available memory
+    if file_size_gb > 1.0:  # Large VCF file
+        # For large files, use smaller batches to conserve memory
+        memory_factor = min(available_memory_gb / 8.0, 1.0)  # Scale based on available memory
+        optimal_size = max(2, int(base_batch_size * memory_factor))
+    else:
+        # For smaller files, can use larger batches
+        optimal_size = min(base_batch_size * 2, PYPGX_MAX_PARALLEL_GENES)
+    
+    return min(optimal_size, PYPGX_MAX_PARALLEL_GENES)
+
+def chunk_list(lst: List[str], chunk_size: int) -> List[List[str]]:
+    """Split a list into chunks of specified size"""
+    return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
+
+async def process_gene_batch_parallel(
+    genes: List[str], 
+    vcf_path: str, 
+    job_dir: str, 
+    reference_genome: str,
+    max_workers: int = None
+) -> Dict[str, Any]:
+    """Process a batch of genes in parallel using ThreadPoolExecutor"""
+    if max_workers is None:
+        max_workers = min(len(genes), PYPGX_MAX_PARALLEL_GENES)
+    
+    results = {}
+    logger.info(f"Processing {len(genes)} genes in parallel with {max_workers} workers")
+    
+    # Log memory usage before processing
+    memory_before = get_memory_usage()
+    logger.info(f"Memory before batch processing: {memory_before['used_gb']:.2f}GB used, {memory_before['available_gb']:.2f}GB available")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all gene processing tasks
+        future_to_gene = {
+            executor.submit(run_pypgx, vcf_path, job_dir, gene, reference_genome): gene 
+            for gene in genes
+        }
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_gene):
+            gene = future_to_gene[future]
+            try:
+                result = future.result()
+                results[gene] = result
+                logger.info(f"Completed processing gene {gene}")
+            except Exception as e:
+                logger.exception(f"Error processing gene {gene}")
+                results[gene] = {"success": False, "error": str(e)}
+    
+    # Log memory usage after processing
+    memory_after = get_memory_usage()
+    logger.info(f"Memory after batch processing: {memory_after['used_gb']:.2f}GB used, {memory_after['available_gb']:.2f}GB available")
+    
+    return results
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -174,14 +258,22 @@ app.add_middleware(
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint with gene configuration info"""
+    """Health check endpoint with gene configuration info and memory status"""
     config = gene_config.load_config()
+    memory_info = get_memory_usage()
+    
     return {
         'status': 'healthy',
         'service': 'pypgx-wrapper',
         'config_version': config.get('metadata', {}).get('version', 'unknown'),
         'total_supported_genes': len(SUPPORTED_GENES),
         'supported_genes_sample': SUPPORTED_GENES[:5],  # Show first 5 genes
+        'memory_usage': memory_info,
+        'parallel_config': {
+            'max_parallel_genes': PYPGX_MAX_PARALLEL_GENES,
+            'batch_size': PYPGX_BATCH_SIZE,
+            'memory_limit': PYPGX_MEMORY_LIMIT
+        },
         'timestamp': time.time()
     }
 
@@ -413,24 +505,54 @@ async def genotype(
             content = await file.read()
             f.write(content)
         
-        logger.info(f"Processing PyPGx genotyping for genes: {requested_genes}")
+        # Get file size for memory optimization
+        file_size_gb = os.path.getsize(input_filepath) / (1024**3)
+        memory_info = get_memory_usage()
+        
+        logger.info(f"Processing PyPGx genotyping for {len(requested_genes)} genes")
+        logger.info(f"File size: {file_size_gb:.2f}GB, Available memory: {memory_info['available_gb']:.2f}GB")
+        
+        # Calculate optimal batch size based on file size and available memory
+        optimal_batch_size = calculate_optimal_batch_size(file_size_gb, memory_info['available_gb'])
+        logger.info(f"Using batch size: {optimal_batch_size} genes per batch")
+        
+        # Split genes into batches for parallel processing
+        gene_batches = chunk_list(requested_genes, optimal_batch_size)
+        
         aggregated: Dict[str, Any] = {"success": True, "results": {}, "job_id": job_id}
         if patient_id:
             aggregated["patient_id"] = patient_id
         if report_id:
             aggregated["report_id"] = report_id
-        for g in requested_genes:
+        
+        # Process each batch in parallel
+        for batch_idx, gene_batch in enumerate(gene_batches):
+            logger.info(f"Processing batch {batch_idx + 1}/{len(gene_batches)} with {len(gene_batch)} genes: {gene_batch}")
+            
             try:
-                res = run_pypgx(input_filepath, job_dir, g, pypgx_assembly)
-                aggregated["results"][g] = res
-                # Only fail overall if it's a systemic issue, not gene-specific
-                if not res.get("success", False) and "No SNV/indel-based star alleles" not in str(res.get("error", "")):
-                    aggregated["success"] = False
+                # Process the batch in parallel
+                batch_results = await process_gene_batch_parallel(
+                    gene_batch, 
+                    str(input_filepath), 
+                    str(job_dir), 
+                    pypgx_assembly,
+                    max_workers=min(len(gene_batch), PYPGX_MAX_PARALLEL_GENES)
+                )
+                
+                # Add batch results to aggregated results
+                for gene, result in batch_results.items():
+                    aggregated["results"][gene] = result
+                    # Only fail overall if it's a systemic issue, not gene-specific
+                    if not result.get("success", False) and "No SNV/indel-based star alleles" not in str(result.get("error", "")):
+                        aggregated["success"] = False
+                
+                logger.info(f"Completed batch {batch_idx + 1}/{len(gene_batches)}")
+                
             except Exception as e:
-                logger.exception(f"PyPGx failed for {g}")
-                aggregated["results"][g] = {"success": False, "error": str(e)}
-                # Only fail overall for systemic exceptions, not gene-specific issues
-                if "does not have any star alleles defined by SNVs/indels" not in str(e):
+                logger.exception(f"Error processing batch {batch_idx + 1}")
+                # Mark all genes in this batch as failed
+                for gene in gene_batch:
+                    aggregated["results"][gene] = {"success": False, "error": f"Batch processing error: {str(e)}"}
                     aggregated["success"] = False
         # Move per-gene pipeline folders into per-patient reports dir if patient_id provided
         try:

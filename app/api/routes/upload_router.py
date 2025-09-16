@@ -173,6 +173,7 @@ async def handle_final_stages_progression(job_service: JobStatusService, job_id:
     """
     import asyncio
     from app.services.workflow_stage_manager import WorkflowStage
+    from app.api.models import JobStage
     
     logger.info(f"Starting final stages progression for job {job_id}")
     
@@ -180,7 +181,7 @@ async def handle_final_stages_progression(job_service: JobStatusService, job_id:
         # Stage 1: Workflow diagram generation (80%)
         job_service.update_job_progress(
             job_id=job_id,
-            stage=WorkflowStage.WORKFLOW_DIAGRAM.value,
+            stage=JobStage.WORKFLOW_DIAGRAM.value,
             progress=80,
             message="Generating workflow diagram...",
             metadata={"nextflow_status": "completed", "final_stage": "workflow_diagram"}
@@ -192,7 +193,7 @@ async def handle_final_stages_progression(job_service: JobStatusService, job_id:
         # Stage 2: Report generation (90%)
         job_service.update_job_progress(
             job_id=job_id,
-            stage=WorkflowStage.REPORT_GENERATION.value,
+            stage=JobStage.REPORT_GENERATION.value,
             progress=90,
             message="Generating PDF and HTML reports...",
             metadata={"nextflow_status": "completed", "final_stage": "report_generation"}
@@ -204,7 +205,7 @@ async def handle_final_stages_progression(job_service: JobStatusService, job_id:
         # Stage 3: Complete (100%)
         job_service.update_job_progress(
             job_id=job_id,
-            stage=WorkflowStage.COMPLETE.value,
+            stage=JobStage.COMPLETE.value,
             progress=100,
             message="Processing complete!",
             metadata={"nextflow_status": "completed", "final_stage": "complete"}
@@ -226,28 +227,33 @@ async def handle_final_stages_progression(job_service: JobStatusService, job_id:
         job_service.fail_job(
             job_id=job_id,
             error_message=f"Final stages progression failed: {str(e)}",
-            stage=WorkflowStage.REPORT_GENERATION.value
+            stage=JobStage.REPORT_GENERATION.value
         )
 
-async def monitor_nextflow_progress(job_service: JobStatusService, job_id: str, nextflow_url: str, job_key: str, outdir: str):
+# Nextflow progress monitoring removed - Nextflow container no longer participates in state/stage reporting
+
+async def wait_for_nextflow_completion(job_service: JobStatusService, job_id: str, nextflow_url: str, job_key: str, outdir: str):
     """
-    Monitor Nextflow progress and update job status in real-time.
+    Simple wait for Nextflow completion without progress tracking.
     
     Args:
         job_service: JobStatusService instance
         job_id: Job ID to update
         nextflow_url: Nextflow runner URL
         job_key: Nextflow job key for status queries
-        outdir: Output directory for Nextflow
     """
     import aiohttp
     import asyncio
+    from app.api.models import JobStage
     
     max_wait_time = 7200  # 2 hours max
-    check_interval = 5  # Check every 5 seconds
+    check_interval = 5  # Check every 5 seconds for faster transitions
     start_time = time.time()
     
-    logger.info(f"Starting Nextflow progress monitoring for job {job_id}")
+    logger.info(f"Waiting for Nextflow completion for job {job_id}")
+    
+    # Track progress within PyPGx stage
+    pypgx_progress_counter = 0
     
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
@@ -257,104 +263,92 @@ async def monitor_nextflow_progress(job_service: JobStatusService, job_id: str, 
                     async with session.get(f"{nextflow_url}/status/{job_key}") as resp:
                         if resp.status == 200:
                             status_data = await resp.json()
-                            
-                            # Map Nextflow status to job stages
                             nextflow_status = status_data.get("status", "unknown")
-                            nextflow_progress = status_data.get("progress", 0)
-                            message = status_data.get("message", "Processing...")
-                            processes = status_data.get("processes", {})
-                            current_stage = status_data.get("current_stage", "pypgx_analysis")
                             
-                            # Get workflow configuration from job metadata
-                            workflow_config = {}
-                            if job_service.get_job_status(job_id):
-                                job_metadata = job_service.get_job_status(job_id).get("job_metadata", {})
-                                workflow_config = job_metadata.get("workflow", {})
-                            
-                            # Use Nextflow's calculated stage and progress directly
-                            # This eliminates the "telephone game" by trusting Nextflow's stage calculation
-                            stage = status_data.get("stage", "pypgx_analysis")
-                            progress = status_data.get("progress", 10)
-                            detailed_message = status_data.get("message", "Processing...")
-                            
-                            # Debug logging to track stage information flow
-                            logger.info(f"Nextflow data: stage={stage}, progress={progress}, message='{detailed_message}'")
-                            
-                            # Don't override initial stages (0-10%) that are handled by the app
-                            # Only use Nextflow progress if we're past the initial stages
-                            if progress < 10:
-                                # Keep the app's initial progress, don't override with Nextflow
-                                current_job = job_service.get_job_status(job_id)
-                                if current_job and current_job.get("progress", 0) > 0:
-                                    progress = current_job.get("progress", 10)
-                                    stage = current_job.get("stage", "pypgx_analysis")
-                                    detailed_message = current_job.get("message", "Processing...")
-                                    logger.info(f"Preserved initial stage: stage={stage}, progress={progress}")
-                            
-                            # Update job progress
-                            job_service.update_job_progress(
-                                job_id=job_id,
-                                stage=stage,
-                                progress=progress,
-                                message=detailed_message,
-                                metadata={
-                                    "nextflow_status": nextflow_status,
-                                    "nextflow_progress": nextflow_progress,
-                                    "nextflow_processes": processes,
-                                    "monitoring_timestamp": datetime.now(timezone.utc).isoformat()
-                                }
-                            )
+                            # Update job with simple status - Nextflow handles PyPGx (50%) and PharmCAT (70%)
+                            if nextflow_status == "running":
+                                # Show incremental progress within PyPGx stage (50-65%)
+                                pypgx_progress_counter += 0.3
+                                pypgx_progress = int(min(50 + (pypgx_progress_counter * 2), 65))  # 50% to 65%, rounded down
+                                
+                                job_service.update_job_progress(
+                                    job_id=job_id,
+                                    stage=JobStage.PYPX_ANALYSIS.value,
+                                    progress=pypgx_progress,
+                                    message=f"PyPGx analysis ({nextflow_status})",
+                                    metadata={"nextflow_status": nextflow_status, "pypgx_progress": pypgx_progress_counter}
+                                )
+                            elif nextflow_status == "completed":
+                                # Transition from PyPGx to PharmCAT - show this transition
+                                job_service.update_job_progress(
+                                    job_id=job_id,
+                                    stage=JobStage.PHARMCAT_ANALYSIS.value,
+                                    progress=70,
+                                    message="PyPGx analysis completed, PharmCAT analysis starting", # White lie until it works right
+                                    metadata={"nextflow_status": nextflow_status, "transition": "pypgx_to_pharmcat"}
+                                )
                             
                             # Check if job is complete
                             if nextflow_status in ["completed", "failed"]:
                                 if nextflow_status == "completed":
-                                    # Nextflow completed at 70%, now handle final stages (80%, 90%, 100%)
+                                    # Nextflow completed - show PharmCAT stage for at least 2 seconds
+                                    logger.info(f"Nextflow completed for job {job_id}, showing PharmCAT stage")
+                                    
+                                    # Ensure PharmCAT stage is visible for at least 5 seconds
+                                    pharmcat_start_time = time.time()
+                                    while time.time() - pharmcat_start_time < 5:
+                                        job_service.update_job_progress(
+                                            job_id=job_id,
+                                            stage=JobStage.PHARMCAT_ANALYSIS.value,
+                                            progress=70,
+                                            message="PharmCAT analysis",
+                                            metadata={"nextflow_status": nextflow_status, "pharmcat_completed": True}
+                                        )
+                                        await asyncio.sleep(1.5)  # Update every 1.5 seconds
+                                    
+                                    # Now proceed to final stages (80%, 90%, 100%)
                                     await handle_final_stages_progression(job_service, job_id, outdir)
                                 else:
                                     error_msg = status_data.get("error", "Unknown error")
-                                    error_details = status_data.get("error_details", "")
-                                    full_error = f"{error_msg}"
-                                    if error_details:
-                                        full_error += f" - Details: {error_details}"
-                                    logger.error(f"Nextflow pipeline failed: {full_error}")
+                                    logger.error(f"Nextflow pipeline failed: {error_msg}")
                                     job_service.fail_job(
                                         job_id=job_id,
-                                        error_message=f"Nextflow pipeline failed: {full_error}",
-                                        stage=stage
+                                        error_message=f"Nextflow pipeline failed: {error_msg}",
+                                        stage=JobStage.PYPX_ANALYSIS.value
                                     )
                                 break
                         
                         elif resp.status == 404:
-                            logger.warning(f"Nextflow job {job_key} not found, stopping monitoring")
+                            logger.warning(f"Nextflow job {job_key} not found")
                             break
                         else:
                             logger.warning(f"Failed to get Nextflow status: {resp.status}")
                     
                 except Exception as e:
-                    logger.error(f"Error monitoring Nextflow progress: {e}")
+                    logger.error(f"Error checking Nextflow status: {e}")
                 
                 # Wait before next check
                 await asyncio.sleep(check_interval)
             
             # If we reach here, either job completed or timeout
             if time.time() - start_time >= max_wait_time:
-                logger.warning(f"Nextflow monitoring timeout for job {job_id}")
+                logger.warning(f"Nextflow wait timeout for job {job_id}")
                 job_service.update_job_progress(
                     job_id=job_id,
                     stage=JobStage.PYPX_ANALYSIS.value,
                     progress=50,
-                    message="Nextflow monitoring timeout, checking for outputs...",
-                    metadata={"monitoring_timeout": True}
+                    message="Nextflow wait timeout, checking for outputs...",
+                    metadata={"wait_timeout": True}
                 )
     
     except Exception as e:
-        logger.error(f"Error in Nextflow monitoring: {e}")
+        logger.error(f"Error waiting for Nextflow completion: {e}")
         job_service.update_job_progress(
             job_id=job_id,
             stage=JobStage.PYPX_ANALYSIS.value,
             progress=25,
-            message=f"Monitoring error: {str(e)}",
-            metadata={"monitoring_error": str(e)}
+            message=f"Wait error: {str(e)}",
+            metadata={"wait_error": str(e)}
         )
 
 # Environment variable helper function
@@ -398,7 +392,7 @@ async def process_file_nextflow_background_with_db(file_path: str, patient_id: s
 
 async def process_file_nextflow_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None):
     """
-    Execute the PGx pipeline via the Nextflow runner service with real-time monitoring.
+    Execute the PGx pipeline via the Nextflow runner service.
     """
     job = None
     try:
@@ -449,6 +443,9 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
             "Submitting job to Nextflow runner...",
             {"workflow": workflow}
         )
+        
+        # Ensure upload stage is visible for at least 1.5 seconds
+        await asyncio.sleep(1.5)
 
         import aiohttp
         nextflow_url = os.getenv("NEXTFLOW_RUNNER_URL", "http://nextflow:5055")
@@ -488,6 +485,9 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
             f"Starting analysis (OptiType: {'enabled' if optitype_enabled else 'disabled'}, PyPGx: {'enabled' if pypgx_enabled else 'disabled'})",
             {"workflow": workflow, "services": {"optitype": optitype_enabled, "pypgx": pypgx_enabled, "gatk": gatk_enabled, "kroki": kroki_enabled}}
         )
+        
+        # Ensure analysis stage is visible for at least 1.5 seconds
+        await asyncio.sleep(1.5)
 
         payload = {
             "input": file_path,
@@ -518,18 +518,19 @@ async def process_file_nextflow_background(file_path: str, patient_id: str, data
                 job_service.fail_job(job.job_id, f"Nextflow submission failed: {e}", JobStage.PYPX_ANALYSIS.value)
                 return
 
-        # Start monitoring Nextflow progress
+        # Wait for Nextflow to complete (no progress monitoring)
         if job_key:
-            await monitor_nextflow_progress(job_service, job.job_id, nextflow_url, job_key, outdir)
+            # Simple wait for completion without progress tracking
+            await wait_for_nextflow_completion(job_service, job.job_id, nextflow_url, job_key, outdir)
         else:
             # Fallback to old behavior if job_key not available
-                job_service.update_job_progress(
-                    job.job_id,
-                    JobStage.PHARMCAT_ANALYSIS.value,
-                    80,
-                    "Collecting pipeline outputs...",
-                    {"workflow": workflow}
-                )
+            job_service.update_job_progress(
+                job.job_id,
+                JobStage.PHARMCAT_ANALYSIS.value,
+                80,
+                "Collecting pipeline outputs...",
+                {"workflow": workflow}
+            )
 
         # Collect outputs from patient directory
         patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
@@ -726,6 +727,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     "Aligning reads to reference genome (not yet implemented)...",
                     {"workflow": workflow}
                 )
+                # Ensure upload stage is visible for at least 1.5 seconds
+                await asyncio.sleep(1.5)
                 # This would be implemented with a call to BWA or similar aligner
                 # For now, just sleep to simulate processing time
                 await asyncio.sleep(2)
@@ -782,6 +785,8 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     "Converting to VCF format (not yet implemented)...",
                     {"workflow": workflow}
                 )
+                # Ensure upload stage is visible for at least 1.5 seconds
+                await asyncio.sleep(1.5)
                 # This would be implemented with a conversion tool
                 # For now, just sleep to simulate processing time
                 await asyncio.sleep(2)

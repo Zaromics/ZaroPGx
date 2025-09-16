@@ -1749,10 +1749,114 @@ async def process_file_in_background(job_id, file_path, file_type, sample_id, re
 
 @app.get("/progress/{job_id}")
 async def get_progress(job_id: str, current_user: str = Depends(get_optional_user)):
-    """Stream job progress as Server-Sent Events"""
+    """Stream job progress as Server-Sent Events - DEPRECATED: Use /monitoring/progress/{job_id} instead"""
     # Initialize response headers for SSE
     return StreamingResponse(
         event_generator(job_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+        }
+    )
+
+@app.get("/progress-new/{job_id}")
+async def get_progress_new(job_id: str, current_user: str = Depends(get_optional_user)):
+    """Stream job progress as Server-Sent Events using JobStatusService"""
+    from app.api.db import SessionLocal
+    from app.services.job_status_service import JobStatusService
+    from fastapi.responses import StreamingResponse
+    import asyncio
+    import json
+    import time
+    
+    async def progress_event_generator():
+        """Generate progress events for the job using JobStatusService"""
+        db = SessionLocal()
+        try:
+            job_service = JobStatusService(db)
+            last_progress = None
+            keepalive_count = 0
+            
+            while True:
+                try:
+                    # Get current job status
+                    current_job = job_service.get_job_status(job_id)
+                    
+                    if current_job:
+                        # Convert JobStatusService format to legacy format for compatibility
+                        progress_data = {
+                            "job_id": job_id,
+                            "stage": current_job["stage"],
+                            "percent": current_job["progress"],
+                            "message": current_job["message"] or "Processing...",
+                            "complete": current_job["status"] == "completed",
+                            "success": current_job["status"] == "completed",
+                            "timestamp": current_job["updated_at"] if current_job.get("updated_at") else None,
+                            "data": current_job.get("job_metadata", {})
+                        }
+                        
+                        # Only send update if progress has changed
+                        if progress_data != last_progress:
+                            yield f"data: {json.dumps(progress_data)}\n\n"
+                            last_progress = progress_data
+                        
+                        # Check if job is complete
+                        if current_job["status"] in ["completed", "failed", "cancelled"]:
+                            # Send final update with success flag and report URLs
+                            reports = current_job.get("job_metadata", {}).get("reports", {})
+                            
+                            final_data = {
+                                **progress_data, 
+                                "complete": True,
+                                "success": current_job["status"] == "completed",
+                                "data": {
+                                    "job_id": job_id,
+                                    "file_id": current_job.get("file_id"),
+                                    "patient_id": current_job.get("patient_id"),
+                                    "pdf_report_url": reports.get("pdf_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report.pdf",
+                                    "html_report_url": reports.get("html_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report_interactive.html",
+                                    "pharmcat_html_report_url": reports.get("pharmcat_html_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.html",
+                                    "pharmcat_json_report_url": reports.get("pharmcat_json_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.json",
+                                    "pharmcat_tsv_report_url": reports.get("pharmcat_tsv_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.tsv"
+                                }
+                            }
+                            yield f"data: {json.dumps(final_data)}\n\n"
+                            break
+                            
+                    else:
+                        # Job not found - send error and break
+                        error_data = {
+                            "error": f"Job {job_id} not found",
+                            "reconnect": False
+                        }
+                        yield f"data: {json.dumps(error_data)}\n\n"
+                        break
+                    
+                    # Send keepalive every 30 seconds
+                    keepalive_count += 1
+                    if keepalive_count % 30 == 0:
+                        keepalive_data = {"keepalive": True, "timestamp": time.time()}
+                        yield f"data: {json.dumps(keepalive_data)}\n\n"
+                    
+                    # Wait before next check
+                    await asyncio.sleep(1)
+                    
+                except Exception as e:
+                    logger.error(f"Error in progress stream for {job_id}: {str(e)}")
+                    error_data = {
+                        "error": f"Stream error: {str(e)}",
+                        "reconnect": True
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n"
+                    break
+        
+        finally:
+            db.close()
+    
+    return StreamingResponse(
+        progress_event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2541,7 +2645,19 @@ async def startup_event():
             logger.warning(f"Environment variable {var} is not set!")
             print(f"⚠️ Environment variable {var} is not set!")
     
-    print("=================== STARTUP COMPLETE ===================")
+    print("""
+    Welcome to ZaroPGx, an
+ _____                    ____  ______    
+/__  /  ____ __________  / __ \/ ____/  __
+  / /  / __ `/ ___/ __ \/ /_/ / / __| |/_/
+ / /__/ /_/ / /  / /_/ / ____/ /_/ />  <  
+/____/\__,_/_/   \____/_/    \____/_/|_|  
+
+intelligent individual pharmacogenomics analysis pipeline
+                      
+=================== STARTUP COMPLETE ===================
+ZaroPGx is ready and listening for requests!
+""")
     logger.info("ZaroPGx startup complete")
 
 # Add middleware to log all requests
@@ -2799,57 +2915,6 @@ async def trigger_completion(job_id: str):
     """
     
     return HTMLResponse(content=html_content)
-
-# LEGACY WORKFLOW - DISABLED TO PREVENT CONFLICTS WITH NEW PATIENT-BASED WORKFLOW
-# @app.post("/analyze")
-# async def analyze_genome(
-#     request: Request,
-#     background_tasks: BackgroundTasks,
-#     genome_file: UploadFile = File(...),
-#     patient_id: Optional[str] = Form(None),
-#     patient_name: Optional[str] = Form(None),
-#     patient_mrn: Optional[str] = Form(None)
-# ):
-    # """
-    # Analyze a genome file using PharmCAT and return the results
-    # 
-    # This endpoint accepts a genome file upload and patient information,
-    # then processes the file using PharmCAT in the background and
-    # returns Server-Sent Events with progress updates
-    # """
-    # try:
-    #     # Generate a unique ID for this analysis
-    #     analysis_id = str(uuid.uuid4())
-    #     logger.info(f"Starting genome analysis {analysis_id} for patient {patient_id or 'unknown'}")
-    #     
-    #     # Create a queue for SSE messages
-    #     client_queue = Queue()
-    #     
-    #     # Define a function to send SSE updates to client
-    #     async def send_update(message: Dict[str, Any]):
-    #         await client_queue.put(message)
-    #     
-    #     # Start the analysis in the background
-    #     background_tasks.add_task(
-    #         process_genome_analysis,
-    #         upload_file=genome_file,
-    #         genome_id=analysis_id,
-    #         patient_id=patient_id,
-    #         patient_name=patient_name,
-    #         patient_mrn=patient_mrn,
-    #         notify_client=send_update
-    #     )
-    #     
-    #     # Return SSE response
-    #     return StreamingResponse(
-    #         sse_results(client_queue, analysis_id),
-    #         media_type="text/event-stream"
-    #     )
-    #     
-    # except Exception as e:
-    #     logger.error(f"Error starting genome analysis: {str(e)}")
-    #     logger.error(traceback.format_exc())
-    #     raise HTTPException(status_code=500, detail=f"Error starting analysis: {str(e)}")
 
 
 async def sse_results(queue: Queue, task_id: str):

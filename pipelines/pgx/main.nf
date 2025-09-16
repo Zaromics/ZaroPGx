@@ -409,24 +409,10 @@ workflow {
     // Run PyPGx genotyping on VCF (if enabled)
     if (params.skip_pypgx) {
         pypgx_outside = empty_file_ch
-    } else {
-        pypgx_result = PyPGxGenotypeAll(vcf_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
-        // Handle PyPGx results: if PyPGx completely failed (service unavailable),
-        // it won't emit an outside.tsv file, so Nextflow uses empty_file_ch.
-        // If PyPGx succeeded but produced no valid results, it may emit an empty file.
-        // In both cases, PharmCAT will skip outside calls if the file is empty.
-        pypgx_outside = pypgx_result.outside.ifEmpty(empty_file_ch)
-    }
-
-    hla_outside = (params.skip_hla || params.input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
-
-    // Run PharmCAT - will automatically skip outside calls if files are empty
-    // Make PharmCAT wait for PyPGx to complete for all input types (except when PyPGx is skipped)
-    if (!params.skip_pypgx) {
-        // Create dependency: PharmCAT waits for PyPGx to complete
-        pypgx_complete_ch = pypgx_result.pypgx_json.combine(vcf_ch).map { pypgx_json, vcf_file -> vcf_file }
+        // When PyPGx is skipped, run PharmCAT directly on VCF
+        hla_outside = (params.skip_hla || params.input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
         PharmCATRun(
-            pypgx_complete_ch,
+            vcf_ch,
             pypgx_outside,
             hla_outside,
             patient_id_ch,
@@ -434,9 +420,22 @@ workflow {
             outdir_ch
         )
     } else {
-        // When PyPGx is skipped, use original VCF
+        // PyPGx is enabled - run it first, then PharmCAT
+        pypgx_result = PyPGxGenotypeAll(vcf_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+        // Handle PyPGx results: if PyPGx completely failed (service unavailable),
+        // it won't emit an outside.tsv file, so Nextflow uses empty_file_ch.
+        // If PyPGx succeeded but produced no valid results, it may emit an empty file.
+        // In both cases, PharmCAT will skip outside calls if the file is empty.
+        pypgx_outside = pypgx_result.outside.ifEmpty(empty_file_ch)
+        
+        hla_outside = (params.skip_hla || params.input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
+        
+        // Create dependency: PharmCAT waits for PyPGx to complete
+        // This ensures sequential execution: PyPGx -> PharmCAT
+        pypgx_complete_ch = pypgx_result.pypgx_json.combine(vcf_ch).map { pypgx_json, vcf_file -> vcf_file }
+        
         PharmCATRun(
-            vcf_ch,
+            pypgx_complete_ch,
             pypgx_outside,
             hla_outside,
             patient_id_ch,

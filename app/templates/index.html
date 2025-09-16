@@ -417,7 +417,7 @@
                                     <span>Upload</span>
                                     <div class="stage-popup">
                                         <h6>File Upload</h6>
-                                        <p>Upload your genomic data file (VCF, BAM, etc.) for analysis. This stage is required and cannot be disabled.</p>
+                                        <p>Routes the uploaded genomic data file (currently only GrCh38 VCF) for analysis.</p>
                                     </div>
                                 </div>
                                 
@@ -427,7 +427,7 @@
                                     <span>Analysis</span>
                                     <div class="stage-popup">
                                         <h6>File Analysis</h6>
-                                        <p>Inspect and analyze the uploaded file format, quality, and content. This stage is required and cannot be disabled.</p>
+                                        <p>Inspects and analyzes the uploaded file format, sequencing type, quality, and content. Determines workflow for given file.</p>
                                     </div>
                                 </div>
                                 
@@ -437,7 +437,7 @@
                                     <span>OptiType</span>
                                     <div class="stage-popup">
                                         <h6>OptiType HLA Typing</h6>
-                                        <p>Perform HLA (Human Leukocyte Antigen) typing using OptiType. Computationally intensive but provides immune system insights.</p>
+                                        <p>Performs HLA (Human Leukocyte Antigen) typing with hlatyping, using OptiType. NB: Can be computationally intensive.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="hla">✓ Enabled</button>
                                         </div>
@@ -449,8 +449,8 @@
                                     <div class="mb-1"><i class="bi bi-cpu"></i></div>
                                     <span>GATK</span>
                                     <div class="stage-popup">
-                                        <h6>GATK Variant Calling</h6>
-                                        <p>Call genetic variants using GATK (Genome Analysis Toolkit). Computationally intensive but provides high-quality variant detection.</p>
+                                        <h6>GATK Processing</h6>
+                                        <p>Runs filetype conversions and any other required tool with GATK (Genome Analysis Toolkit). NB: Can be computationally intensive.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="gatk">✓ Enabled</button>
                                         </div>
@@ -463,7 +463,7 @@
                                     <span>PyPGx</span>
                                     <div class="stage-popup">
                                         <h6>PyPGx Star Allele Calling</h6>
-                                        <p>Call pharmacogenomic star alleles using PyPGx. Computationally intensive but provides detailed drug metabolism information.</p>
+                                        <p>Calls pharmacogenomic star alleles using PyPGx. Additionally, performs filetype conversions and provides more tools.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="pypgx">✓ Enabled</button>
                                         </div>
@@ -476,7 +476,7 @@
                                     <span>PharmCAT</span>
                                     <div class="stage-popup">
                                         <h6>PharmCAT Analysis</h6>
-                                        <p>Generate pharmacogenomic reports using PharmCAT. This stage is required and provides the final analysis results.</p>
+                                        <p>Calls variants and matches phenotypes with recommendations. Generates a pharmacogenomic report.</p>
                                     </div>
                                 </div>
                                 
@@ -586,7 +586,7 @@
                         <div class="card h-100 w-100">
                             <div class="card-header">ZaroPgx Documentation</div>
                             <div class="card-body d-flex flex-column h-100">
-                                <p class="mb-0">ZaroPGx is a free and open, easily self-hostable pharmacogenomic
+                                <p class="mb-0">ZaroPGx is a free and open, easily self-hostable individualpharmacogenomic
                                     analysis system which attempts to create the most accurate and complete reports possible 
                                     with a given genomic datafile.
                                     
@@ -605,7 +605,7 @@
                                 <p>This platform uses PharmCAT to generate recommendations based on institutional guidelines.
 
                                     PharmCAT is now a part of the ClinPGx project, which also includes CPIC and PharmGKB.
-
+                                    PharmCAT includes outside calls from hlatyping(OptiType) and PyPGx when available.
                                     For a full list of software comprising ZaroPGx, please see the documentation.
                                 </p>
                                 <div class="mt-auto d-flex gap-2">

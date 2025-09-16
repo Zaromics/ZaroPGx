@@ -164,6 +164,9 @@ cython_debug/
 /data/reports/
 /data/temp/
 
+# PostgreSQL database files
+/db/data/
+
 # Exclude VCF files except test sample files
 *.vcf
 !test_data/*.vcf

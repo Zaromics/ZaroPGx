@@ -165,6 +165,9 @@ services:
     environment:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
+      - PYPGX_MEMORY_LIMIT=12G
+      - PYPGX_MAX_PARALLEL_GENES=8
+      - PYPGX_BATCH_SIZE=4
     ports:
       - "5053:5000"
     healthcheck:
@@ -175,6 +178,12 @@ services:
       start_period: 40s
     networks:
       - pgx-network
+    deploy:
+      resources:
+        limits:
+          memory: 20G
+        reservations:
+          memory: 8G
 
   # OptiType Service (CLI container, no HTTP wrapper)
   optitype:
