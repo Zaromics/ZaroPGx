@@ -117,5 +117,5 @@ if [ -z "$PC_VER" ]; then
 fi
 echo "{\"name\":\"PharmCAT\",\"version\":\"${PC_VER:-unknown}\"}" > /data/versions/pharmcat.json
 
-echo "Starting Flask app..."
+echo "Starting FastAPI app..."
 python3 /app/pharmcat.py 

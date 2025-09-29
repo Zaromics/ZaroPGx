@@ -1,0 +1,1 @@
+Note: in the future, expand each container's JSON to include versions of relevant constituent packages 

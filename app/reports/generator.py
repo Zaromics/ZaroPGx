@@ -24,6 +24,7 @@ from app.visualizations.workflow_diagram import (
     build_simple_html_from_workflow,
     render_simple_png_from_workflow,
     render_kroki_mermaid_svg,
+    render_with_graphviz,
 )
 from app.core.version_manager import get_all_versions, get_versions_dict
 
@@ -62,7 +63,7 @@ def _read_author_from_pyproject() -> str:
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         pyproject_path = os.path.join(project_root, "pyproject.toml")
         if not os.path.exists(pyproject_path):
-            return "Unknown Author"
+            return "Zaromics Initiative"
         with open(pyproject_path, "r", encoding="utf-8") as f:
             content = f.read()
         authors_block_match = re.search(r"^\s*authors\s*=\s*\[(.*?)\]", content, flags=re.DOTALL | re.MULTILINE)
@@ -70,9 +71,9 @@ def _read_author_from_pyproject() -> str:
         name_match = re.search(r"name\s*=\s*\"([^\"]+)\"", block)
         if name_match:
             return name_match.group(1).strip()
-        return "Unknown Author"
+        return "Zaromics Initiative"
     except Exception:
-        return "Unknown Author"
+        return "Zaromics Initiative"
 
 
 def get_author_name() -> str:
@@ -127,17 +128,17 @@ def _sanitize_graphviz_svg(svg_str: str) -> str:
         if "preserveAspectRatio" not in svg_str[:200]:
             svg_str = svg_str.replace("<svg", "<svg preserveAspectRatio=\"xMidYMid meet\"", 1)
         
-        # Ensure text elements have proper styling for visibility
-        # Add font-family and font-size to text elements if missing
-        svg_str = re.sub(r'<text([^>]*?)>', r'<text\1 style="font-family: Arial, sans-serif; font-size: 12px;">', svg_str)
-        svg_str = re.sub(r'<tspan([^>]*?)>', r'<tspan\1 style="font-family: Arial, sans-serif; font-size: 12px;">', svg_str)
+        # Ensure text elements have proper styling and presentation attributes
+        # Fix any style fill:none on text/tspan
+        svg_str = re.sub(r'(<text[^>]*style=["\"][^"\"]*)fill\s*:\s*none\s*;?', r'\1fill:#000000;', svg_str)
+        svg_str = re.sub(r'(<tspan[^>]*style=["\"][^"\"]*)fill\s*:\s*none\s*;?', r'\1fill:#000000;', svg_str)
+        # Add presentation attributes to text/tspan for WeasyPrint
+        svg_str = re.sub(r'<text([^>]*?)>', r'<text\1 fill="#000000" font-family="Arial, sans-serif" font-size="12px">', svg_str)
+        svg_str = re.sub(r'<tspan([^>]*?)>', r'<tspan\1 fill="#000000" font-family="Arial, sans-serif" font-size="12px">', svg_str)
         
         return svg_str
     except Exception:
         return svg_str
-
-
-
 
 
 def build_platform_info() -> List[Dict[str, str]]:
@@ -245,9 +246,11 @@ def _env_flag(name: str, default: bool = False) -> bool:
 INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
+EXECSUM_USE_TSV = _env_flag("EXECSUM_USE_TSV", False)
 
 # Log the configuration for debugging
 logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
+logger.info(f"Executive Summary Configuration - Use TSV: {EXECSUM_USE_TSV}")
 
 # Report configuration dictionary
 REPORT_CONFIG = {
@@ -315,19 +318,73 @@ def generate_pdf_report(
         
         # Ensure the directory exists
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
-        
+
         # Prepare the report data
         platform = build_platform_info()
+        # Optionally prepare TSV exec summary rows when enabled
+        execsum_rows_from_tsv: list[dict] = []
+        try:
+            from app.reports.generator import EXECSUM_USE_TSV  # type: ignore
+        except Exception:
+            EXECSUM_USE_TSV = False  # type: ignore
+        if EXECSUM_USE_TSV:
+            try:
+                report_dir_probe = os.path.dirname(report_path)
+                tsv_candidates = []
+                # Local report directory
+                tsv_candidates.append(os.path.join(report_dir_probe, f"{patient_id}_pgx_pharmcat.tsv"))
+                tsv_candidates.append(os.path.join(report_dir_probe, f"{patient_id}.report.tsv"))
+                try:
+                    import glob as _g
+                    tsv_candidates.extend(_g.glob(os.path.join(report_dir_probe, "*_pgx_pharmcat.tsv")))
+                    any_pharmcat = _g.glob(os.path.join(report_dir_probe, "*.pharmcat.tsv"))
+                    if any_pharmcat:
+                        any_pharmcat.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                        tsv_candidates.extend(any_pharmcat)
+                except Exception:
+                    pass
+                # Also probe parent directory of the report directory (the patient-level dir)
+                try:
+                    parent_dir = os.path.dirname(report_dir_probe)
+                    tsv_candidates.append(os.path.join(parent_dir, f"{patient_id}_pgx_pharmcat.tsv"))
+                    tsv_candidates.append(os.path.join(parent_dir, f"{patient_id}.report.tsv"))
+                    tsv_candidates.extend(_g.glob(os.path.join(parent_dir, "*_pgx_pharmcat.tsv")))
+                    any_pharmcat_parent = _g.glob(os.path.join(parent_dir, "*.pharmcat.tsv"))
+                    if any_pharmcat_parent:
+                        any_pharmcat_parent.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                        tsv_candidates.extend(any_pharmcat_parent)
+                except Exception:
+                    pass
+                tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
+                if tsv_path:
+                    from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
+                    _diplos, _ = parse_pharmcat_tsv(tsv_path)
+                    try:
+                        logger.info(f"Executive Summary TSV selected (PDF path): {tsv_path}")
+                    except Exception:
+                        pass
+                    for row in _diplos:
+                        execsum_rows_from_tsv.append({
+                            "gene": row.get("gene", ""),
+                            "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
+                            "rec_lookup_phenotype": row.get("rec_lookup_phenotype", row.get("phenotype", "")),
+                            "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
+                        })
+            except Exception:
+                execsum_rows_from_tsv = []
+
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
             "sample_identifier": sample_identifier if sample_identifier else patient_id,
+            # New: explicit display sample id for templates that prefer it
+            "display_sample_id": sample_identifier if sample_identifier else patient_id,
             "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
             "diplotypes": [
                 {
                     **d,
                     "phenotype": (
-                        "Likely Wild Type"
+                        "Possibly Wild Type"
                         if str(d.get("diplotype") or "").strip() in {"*1/*1", "Reference/Reference"} and (
                             str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
                         )
@@ -344,6 +401,9 @@ def generate_pdf_report(
             "license_name": get_license_name(),
             "license_url": get_license_url(),
             "source_url": get_source_url(),
+            "header_text": "",
+            # Pass TSV-driven Executive Summary rows if enabled and available
+            "execsum_from_tsv": execsum_rows_from_tsv if (EXECSUM_USE_TSV and execsum_rows_from_tsv) else None,
         }
         
         # Load and render the HTML template
@@ -446,7 +506,15 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
         # Enhanced print-safe defaults via inline CSS for better workflow diagram handling
         # Focus on PNG image rendering which works reliably in WeasyPrint
         pdf_css = '''
-            @page { size: A4; margin: 18mm; }
+            @page {
+                size: A4;
+                margin: 16mm;
+                @bottom-right {
+                    content: "Page " counter(page) " of " counter(pages);
+                    font-size: 10px;
+                    color: #888;
+                }
+            }
             img, svg { max-width: 100%; height: auto; }
             .workflow-figure { 
                 page-break-inside: avoid; 
@@ -515,14 +583,34 @@ def get_disclaimer() -> str:
     Return the legal disclaimer for pharmacogenomic reports.
     """
     return """
-    DISCLAIMER: This pharmacogenomic report is for informational purposes only. It is not intended
-    to be used as a substitute for professional medical advice, diagnosis, or treatment. The content
-    is based on guidelines from the Clinical Pharmacogenetics Implementation Consortium (CPIC) and
-    may change as new research becomes available.
+    DISCLAIMER: This pharmacogenomic report is for informational purposes only. ZaroPGx is an independently 
+    developed hobby software. It is not intended to be used as a substitute for professional medical advice, 
+    diagnosis, or treatment. The content herein is based on guidelines from the Clinical Pharmacogenetics 
+    Implementation Consortium (CPIC), the Pharmacogenomics Knowledgebase (PharmGKB), the Food and Drug 
+    Administration (FDA), and the Dutch Pharmacogenetics Working Group (DPWG). The content may change as new 
+    research becomes available. The content may vary depending on the sequencing or genotyping method used, 
+    the quality and composition of the genomic data submitted, and the revision of the constituent software.
 
-    Results pertain to the submitted sample and should be interpreted by qualified professionals in
-    the appropriate clinical or research context. Decisions should not be made solely on the basis of
-    this report without consultation with a qualified professional.
+
+    Results should be considered in an educational context only. 
+    Should the need for clinical or research interpretation arise, the nature of this report is such that it may serve 
+    only as a prompt for professional investigation by a qualified physician or medical genetics practitioner.
+    Responsible use of this report in such a context entails verification and validation of the findings by an  
+    appropriately accredited sequencing or genotyping laboratory followed by interpretation and consultation 
+    with an appropriately credentialed professional. 
+    
+
+    Please do not make any changes to your lifestyle or treatment regimen solely on the basis of this report.
+    First, consult your trusted physician and verify the findings in the appropriate clinical manner.
+    
+
+    ZaroPGx is provided with absolutely no warranty, and the author(s) are not liable for any consequences of its use.
+    If you choose to ignore the guidance herein, please be aware that you do so at your own risk.
+
+
+    ZaroPGx is made with care, standing on the shoulders of the myriad underlying free software, in the hope that 
+    it is useful to you. Thank you for using it, and thank you for supporting free and open source software.
+
     """
 
 def organize_gene_drug_recommendations(recommendations: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -596,6 +684,30 @@ def create_interactive_html_report(
         workflow_kroki_svg_inline = ""
         workflow_html_fallback = ""
         report_dir = os.path.dirname(output_path)
+        # Patient directory is the directory containing the report files
+        patient_dir = report_dir
+
+        # Attempt to load genomic header text saved earlier in the pipeline
+        header_text: str = ""
+        try:
+            header_txt_candidates = []
+            # Prefer explicit names
+            header_txt_candidates.append(os.path.join(patient_dir, f"{report_id}.header.txt"))
+            header_txt_candidates.append(os.path.join(patient_dir, f"{patient_id}.header.txt"))
+            # Add all *.header.txt
+            try:
+                header_txt_candidates.extend(glob.glob(os.path.join(patient_dir, "*.header.txt")))
+            except Exception:
+                pass
+            # Filter to existing and pick newest by mtime
+            existing = [p for p in header_txt_candidates if os.path.exists(p)]
+            if existing:
+                selected = max(existing, key=lambda p: os.path.getmtime(p))
+                with open(selected, "r", encoding="utf-8", errors="ignore") as hf:
+                    header_text = hf.read()
+                logger.info(f"Loaded genomic header text for interactive report from {selected} ({len(header_text)} chars)")
+        except Exception as _e:
+            logger.debug(f"Interactive header text load skipped: {_e}")
         
         # Generate Kroki Mermaid SVG for comparison
         try:
@@ -673,7 +785,7 @@ def create_interactive_html_report(
                 {
                     **d,
                     "phenotype": (
-                        "Likely Wild Type"
+                        "Possibly Wild Type"
                         if str(d.get("diplotype") or "").strip() in {"*1/*1", "Reference/Reference"} and (
                             str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
                         )
@@ -697,8 +809,33 @@ def create_interactive_html_report(
             "license_url": get_license_url(),
             "source_url": get_source_url(),
             "current_year": datetime.now().year,
+            "header_text": header_text,
         }
         
+        # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
+        def _is_uuid_like(s: str) -> bool:
+            try:
+                import uuid as _uuid
+                _uuid.UUID(str(s))
+                return True
+            except Exception:
+                return False
+
+        display_sample = report_data.get("sample_identifier") or report_data.get("patient_id")
+        if (not display_sample) or _is_uuid_like(display_sample):
+            try:
+                candidates = []
+                for name in os.listdir(patient_dir):
+                    if name.endswith("_pgx_pharmcat.html") or name.endswith("_pgx_pharmcat.json") or name.endswith("_pgx_pharmcat.tsv"):
+                        base = name.split("_pgx_pharmcat")[0]
+                        if base and base != report_data.get("patient_id") and base not in candidates:
+                            candidates.append(base)
+                if candidates:
+                    display_sample = candidates[0]
+            except Exception:
+                pass
+        report_data["display_sample_id"] = display_sample
+
         # Load and render the HTML template
         template = env.get_template("interactive_report.html")
         html_content = template.render(**report_data)
@@ -712,6 +849,241 @@ def create_interactive_html_report(
     except Exception as e:
         logger.error(f"Error generating interactive HTML report: {str(e)}")
         raise
+
+def determine_tool_source(gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None) -> str:
+    """
+    Determine which tool was used to call a specific gene based on the logic:
+    - HLA genes (HLA-A, HLA-B, HLA-C) → O (OptiType)
+    - MT-RNR1 → M (MitoZ)
+    - PyPGx-only genes → P (PyPGx)
+    - Overlapping genes: VCF input → C (PharmCAT), others → P (PyPGx)
+    - Environment variable overrides can force PyPGx preference
+    
+    Args:
+        gene_name: Name of the gene
+        file_type: Type of input file (vcf, bam, cram, sam)
+        workflow_config: Workflow configuration dict
+        
+    Returns:
+        Single letter code: C (PharmCAT), P (PyPGx), O (OptiType), M (MitoZ)
+    """
+    gene_name = gene_name.upper().strip()
+    
+    # HLA genes → OptiType
+    if gene_name in ["HLA-A", "HLA-B", "HLA-C"]:
+        return "O"
+    
+    # MT-RNR1 → MitoZ
+    if gene_name == "MT-RNR1":
+        return "M"
+    
+    # Load gene categories from config
+    try:
+        import json
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "genes.json")
+        with open(config_path, 'r') as f:
+            genes_config = json.load(f)
+        
+        # Get gene sets
+        pharmcat_can_call = set(genes_config.get("sets", {}).get("pharmcat_can_call", []))
+        pypgx_minus_pharmcat = set(genes_config.get("sets", {}).get("pypgx_minus_pharmcat", []))
+        pharmcat_outside_callers = set(genes_config.get("sets", {}).get("pharmcat_outside_callers", []))
+        
+    except Exception as e:
+        # If config can't be loaded, log the error and use empty sets
+        logger.warning(f"Failed to load genes.json config: {e}. Tool source determination may be limited.")
+        pharmcat_can_call = set()
+        pypgx_minus_pharmcat = set()
+        pharmcat_outside_callers = set()
+    
+    # PyPGx-only genes → PyPGx
+    if gene_name in pypgx_minus_pharmcat:
+        return "P"
+    
+    # PharmCAT outside callers (handled by PyPGx/OptiType/MitoZ, not PharmCAT directly)
+    if gene_name in pharmcat_outside_callers:
+        # These are handled by outside tools, not PharmCAT directly
+        # CYP2D6 is handled by PyPGx, HLA genes by OptiType, MT-RNR1 by MitoZ
+        if gene_name == "CYP2D6":
+            return "P"  # CYP2D6 is handled by PyPGx
+        # HLA genes and MT-RNR1 are already handled above
+    
+    # Overlapping genes (both PharmCAT and PyPGx can call)
+    if gene_name in pharmcat_can_call:
+        # Check for environment variable override
+        pypgx_preferred = os.environ.get("PYPGX_PREFERRED", "false").lower() in {"true", "1", "yes"}
+        pharmcat_preferred = os.environ.get("PHARMCAT_PREFERRED", "false").lower() in {"true", "1", "yes"}
+        
+        if pypgx_preferred:
+            return "P"
+        elif pharmcat_preferred:
+            return "C"
+        else:
+            # Default logic: VCF input → PharmCAT, others → PyPGx
+            if file_type.lower() in ["vcf"]:
+                return "C"
+            else:
+                return "P"
+    
+    # Default fallback to PyPGx for unknown genes
+    return "P"
+
+
+def _load_all_gene_names() -> List[str]:
+    """Load the full, canonical list of supported genes from config/genes.json.
+
+    Preference order:
+    1) sets.all (explicit curated list)
+    2) top-level genes array objects' names
+    Returns alphabetical unique list.
+    """
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        config_path = os.path.join(project_root, "config", "genes.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        names: List[str] = []
+        sets_all = (cfg.get("sets", {}) or {}).get("all")
+        if isinstance(sets_all, list) and sets_all:
+            names = [str(x).strip() for x in sets_all if str(x).strip()]
+        if not names:
+            # Fallback to top-level genes array
+            top_genes = cfg.get("genes", []) or []
+            if isinstance(top_genes, list):
+                for g in top_genes:
+                    if isinstance(g, dict) and g.get("name"):
+                        names.append(str(g.get("name")).strip())
+        # Ensure unique and sorted
+        uniq = sorted({n for n in names if n})
+        return uniq
+    except Exception as e:
+        logger.warning(f"Failed to load canonical gene list from genes.json: {e}")
+        return []
+
+
+def _is_unknown_phenotype(text: Any) -> bool:
+    t = str(text or "").strip().lower()
+    return t in {"", "unknown", "n/a", "na"}
+
+
+def _choose_better_gene_entry(existing: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
+    """Heuristic to pick a better gene entry when duplicates are present.
+
+    Priority:
+    - Prefer entries with tool_source == 'C' (PharmCAT)
+    - Else prefer non-unknown phenotype over unknown
+    - Otherwise keep existing
+    """
+    try:
+        # Normalize sources
+        existing_source = (existing.get("tool_source") or existing.get("source") or "").strip().upper()
+        candidate_source = (candidate.get("tool_source") or candidate.get("source") or "").strip().upper()
+        if candidate_source == "PHARMCAT":
+            candidate_source = "C"
+        if existing_source == "PHARMCAT":
+            existing_source = "C"
+        if candidate_source == "PYPgx".upper():
+            candidate_source = "P"
+        if existing_source == "PYPgx".upper():
+            existing_source = "P"
+        if candidate_source == "OPTITYPE":
+            candidate_source = "O"
+        if existing_source == "OPTITYPE":
+            existing_source = "O"
+
+        # Identify gene name for special precedence cases
+        gene_name = (candidate.get("gene") or existing.get("gene") or candidate.get("name") or existing.get("name") or "").strip().upper()
+
+        # Special precedence:
+        # - HLA-A/B/C → prefer O (OptiType)
+        # - MT-RNR1   → prefer M (MitoZ)
+        # - CYP2D6    → prefer P (PyPGx)
+        if gene_name in {"HLA-A", "HLA-B", "HLA-C"}:
+            if candidate_source == "O" and existing_source != "O":
+                return candidate
+            if existing_source == "O" and candidate_source != "O":
+                return existing
+        if gene_name == "MT-RNR1":
+            if candidate_source == "M" and existing_source != "M":
+                return candidate
+            if existing_source == "M" and candidate_source != "M":
+                return existing
+        if gene_name == "CYP2D6":
+            if candidate_source == "P" and existing_source != "P":
+                return candidate
+            if existing_source == "P" and candidate_source != "P":
+                return existing
+
+        # Prefer PharmCAT
+        if candidate_source == "C" and existing_source != "C":
+            return candidate
+        if existing_source == "C" and candidate_source != "C":
+            return existing
+
+        # Prefer non-unknown phenotype
+        if _is_unknown_phenotype(existing.get("phenotype")) and not _is_unknown_phenotype(candidate.get("phenotype")):
+            return candidate
+
+        return existing
+    except Exception:
+        return existing
+
+
+def _build_canonical_diplotypes(
+    raw_gene_entries: List[Dict[str, Any]],
+    file_type: str,
+    workflow_config: Dict[str, Any] | None,
+) -> List[Dict[str, Any]]:
+    """Build an alphabetical, canonical list of gene entries for all supported genes.
+
+    - Deduplicates incoming entries by gene name with sane precedence
+    - Ensures every supported gene appears exactly once
+    - Fills placeholders for genes with no data
+    """
+    # Index best entry per gene
+    best_by_gene: Dict[str, Dict[str, Any]] = {}
+    for entry in raw_gene_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        gene_name = (entry.get("gene") or entry.get("name") or "").strip()
+        if not gene_name:
+            continue
+        key = gene_name.upper()
+        if key in best_by_gene:
+            best_by_gene[key] = _choose_better_gene_entry(best_by_gene[key], entry)
+        else:
+            best_by_gene[key] = entry
+
+    # Load canonical list and assemble rows
+    canonical_names = _load_all_gene_names()
+    if not canonical_names:
+        # Fallback to whatever we have, alphabetized and deduplicated
+        canonical_names = sorted(best_by_gene.keys())
+
+    canonical_rows: List[Dict[str, Any]] = []
+    for name in sorted(canonical_names, key=lambda s: s.upper()):
+        key = name.upper()
+        if key in best_by_gene:
+            # Normalize fields and ensure tool_source exists
+            row = dict(best_by_gene[key])
+            row["gene"] = name
+            try:
+                if not row.get("tool_source"):
+                    row["tool_source"] = determine_tool_source(name, file_type, workflow_config)
+            except Exception:
+                pass
+            canonical_rows.append(row)
+        else:
+            # Placeholder row for genes without results
+            canonical_rows.append({
+                "gene": name,
+                "diplotype": "",
+                "phenotype": "",
+                "activity_score": None,
+                "tool_source": determine_tool_source(name, file_type, workflow_config or {}),
+            })
+
+    return canonical_rows
 
 def map_recommendations_for_template(drug_recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -803,6 +1175,85 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     template_recommendations = map_recommendations_for_template(data.get("drugRecommendations", []))
     logger.info(f"Mapped {len(template_recommendations)} recommendations for template")
     
+    # Add tool source information to diplotypes
+    file_type = str(data.get("file_type", "vcf")).lower()
+    workflow_config = data.get("workflow", {})
+    
+    # Process diplotypes to add tool source
+    enhanced_diplotypes = []
+    for diplotype in data.get("genes", []):
+        if isinstance(diplotype, dict):
+            gene_name = diplotype.get("gene", "")
+            if gene_name:
+                tool_source = determine_tool_source(gene_name, file_type, workflow_config)
+                diplotype["tool_source"] = tool_source
+                enhanced_diplotypes.append(diplotype)
+            else:
+                enhanced_diplotypes.append(diplotype)
+        else:
+            enhanced_diplotypes.append(diplotype)
+    
+    # Update the data with enhanced diplotypes
+    data["genes"] = enhanced_diplotypes
+    logger.info(f"Enhanced {len(enhanced_diplotypes)} diplotypes with tool source information")
+    
+    # Optionally prepare Executive Summary rows from TSV
+    execsum_rows_from_tsv = []
+    try:
+        if EXECSUM_USE_TSV:
+            # Determine report directory for patient
+            pid_for_dir = (patient_info.get("id", "unknown") if patient_info else "unknown")
+            report_dir_probe = os.path.join(output_dir, pid_for_dir)
+            # Candidate TSV names:
+            # 1) Standardized copy: {patient_id}_pgx_pharmcat.tsv
+            # 2) Original PharmCAT: {patient_id}.report.tsv
+            # 3) Any *_pgx_pharmcat.tsv
+            # Also probe the base output_dir (some workflows place TSVs at the first level)
+            tsv_candidates = []
+            tsv_candidates.append(os.path.join(report_dir_probe, f"{pid_for_dir}_pgx_pharmcat.tsv"))
+            tsv_candidates.append(os.path.join(report_dir_probe, f"{pid_for_dir}.report.tsv"))
+            try:
+                tsv_candidates.extend(glob.glob(os.path.join(report_dir_probe, "*_pgx_pharmcat.tsv")))
+            except Exception:
+                pass
+            try:
+                any_report_tsv = glob.glob(os.path.join(report_dir_probe, "*.pharmcat.tsv"))
+                # Prefer newest pharmcat.tsv if multiple
+                if any_report_tsv:
+                    any_report_tsv.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                    tsv_candidates.extend(any_report_tsv)
+            except Exception:
+                pass
+            # Base directory candidates (where reports often land before subdir creation)
+            try:
+                tsv_candidates.append(os.path.join(output_dir, f"{pid_for_dir}_pgx_pharmcat.tsv"))
+                tsv_candidates.append(os.path.join(output_dir, f"{pid_for_dir}.report.tsv"))
+                tsv_candidates.extend(glob.glob(os.path.join(output_dir, "*_pgx_pharmcat.tsv")))
+                any_report_tsv_base = glob.glob(os.path.join(output_dir, "*.pharmcat.tsv"))
+                if any_report_tsv_base:
+                    any_report_tsv_base.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                    tsv_candidates.extend(any_report_tsv_base)
+            except Exception:
+                pass
+            # Pick first existing in order
+            tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
+            if tsv_path:
+                from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
+                diplos, _recs = parse_pharmcat_tsv(tsv_path)
+                try:
+                    logger.info(f"Executive Summary TSV selected: {tsv_path}")
+                except Exception:
+                    pass
+                for row in diplos:
+                    execsum_rows_from_tsv.append({
+                        "gene": row.get("gene", ""),
+                        "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
+                        "rec_lookup_phenotype": row.get("rec_lookup_phenotype", row.get("phenotype", "")),
+                        "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
+                    })
+    except Exception as _e_exec:
+        logger.warning(f"Executive Summary TSV parse skipped: {_e_exec}")
+
     # Prepare the template data
     # Build platform info once and include in both outputs
     platform = build_platform_info()
@@ -839,8 +1290,25 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             "used_gatk": data.get("used_gatk", False),
             "used_pypgx": data.get("used_pypgx", False),
             "used_pharmcat": True
-        }
+        },
+        # Inject optional TSV-driven Executive Summary rows for template use
+        "execsum_from_tsv": execsum_rows_from_tsv if (EXECSUM_USE_TSV and execsum_rows_from_tsv) else None,
     }
+    # Inject unified display sample id sourced from workflow metadata or persisted field
+    try:
+        workflow_meta = data.get("workflow") if isinstance(data.get("workflow"), dict) else {}
+        display_sample = (
+            data.get("sample_identifier")
+            or workflow_meta.get("display_sample_id")
+            or data.get("displayId")
+            or (patient_info.get("display_sample_id") if patient_info else None)
+            or (patient_info.get("id") if patient_info else None)
+        )
+        if display_sample:
+            template_data["sample_identifier"] = display_sample
+            template_data["display_sample_id"] = display_sample
+    except Exception:
+        pass
     
     logger.info(f"Template data prepared with {len(template_data)} fields")
     logger.info(f"Template data keys: {list(template_data.keys())}")
@@ -858,7 +1326,47 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     os.makedirs(report_dir, exist_ok=True)
     logger.info(f"Created report directory: {report_dir}")
 
-    # Now that we know the report directory, try to load PyPGx aggregated results and augment data['genes']
+    # Attempt to load genomic header text saved earlier in the pipeline
+    header_text: str = ""
+    try:
+        # We expect a file named {data_id}.header.txt written in the patient report directory
+        if patient_info and patient_info.get("report_id"):
+            data_id_for_header = str(patient_info.get("report_id"))
+        else:
+            # Fallback: try patient_id as report_id
+            data_id_for_header = patient_id
+        header_txt_candidates = []
+        # Primary expected file
+        header_txt_candidates.append(os.path.join(report_dir, f"{data_id_for_header}.header.txt"))
+        # Also consider any *.header.txt in the directory if the exact data_id is not known
+        try:
+            for p in glob.glob(os.path.join(report_dir, "*.header.txt")):
+                if p not in header_txt_candidates:
+                    header_txt_candidates.append(p)
+        except Exception:
+            pass
+        # Pick the first existing candidate (prefer exact match if present)
+        selected = None
+        for cand in header_txt_candidates:
+            if os.path.exists(cand):
+                selected = cand
+                # Prefer exact match; break on first existing when in listed order
+                break
+        if not selected:
+            # As a final fallback, try to locate any header txt in parent output_dir/patient_id
+            alt = os.path.join(output_dir, patient_id, f"{patient_id}.header.txt")
+            if os.path.exists(alt):
+                selected = alt
+        if selected:
+            with open(selected, "r", encoding="utf-8", errors="ignore") as hf:
+                header_text = hf.read()
+            logger.info(f"Loaded genomic header text from {selected} ({len(header_text)} chars)")
+        else:
+            logger.info("No genomic header text file found for this report")
+    except Exception as _e:
+        logger.warning(f"Failed to load genomic header text: {_e}")
+
+    # Now that we know the report directory, try to load PyPGx results and augment data['genes']
     try:
         # Prefer PyPGx results coming directly from workflow (if upstream provided it)
         pypgx_results = None
@@ -908,8 +1416,100 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 logger.info(f"Augmented report with {added_count} PyPGx-only gene entries (total genes now={len(data.get('genes', []))})")
         else:
             logger.info("No PyPGx results available for enrichment (embedded or file)")
+
+        # Deep enrichment from per-gene pipeline artifacts if available
+        try:
+            # Locate any per-gene pipelines under a pypgx_* directory in this report_dir
+            import glob as _glob
+            from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
+
+            pipelines_root_candidates = _glob.glob(os.path.join(report_dir, "pypgx_*"))
+            if pipelines_root_candidates:
+                pipelines_root = pipelines_root_candidates[0]
+                pipeline_dirs = [os.path.join(pipelines_root, d) for d in os.listdir(pipelines_root) if d.endswith("-pipeline") and os.path.isdir(os.path.join(pipelines_root, d))]
+                if pipeline_dirs:
+                    logger.info(f"Found {len(pipeline_dirs)} PyPGx per-gene pipelines for enrichment")
+                # Build index for quick update
+                gene_index = {}
+                for idx, g in enumerate(data.get("genes", [])):
+                    if isinstance(g, dict):
+                        key = (g.get("gene") or g.get("name") or "").strip().upper()
+                        if key:
+                            gene_index[key] = idx
+                enriched_count = 0
+                for pdir in pipeline_dirs:
+                    gene_name = os.path.basename(pdir).replace("-pipeline", "")
+                    parsed = parse_gene_pipeline(pdir, gene_name)
+                    key = gene_name.strip().upper()
+                    # Merge into existing entry if present, else append as PyPGx-only
+                    if key in gene_index:
+                        target = data["genes"][gene_index[key]]
+                        if isinstance(target, dict):
+                            # Only fill fields that are missing; attach evidence regardless
+                            if not target.get("diplotype") and parsed.get("diplotype"):
+                                target["diplotype"] = parsed["diplotype"]
+                            if not target.get("phenotype") and parsed.get("phenotype"):
+                                target["phenotype"] = parsed["phenotype"]
+                            if not target.get("activity_score") and parsed.get("activity_score"):
+                                target["activity_score"] = parsed["activity_score"]
+                            if parsed.get("call_confidence") and not target.get("call_confidence"):
+                                target["call_confidence"] = parsed["call_confidence"]
+                            # Evidence
+                            if parsed.get("evidence"):
+                                target.setdefault("evidence", {})
+                                if parsed["evidence"].get("alleles"):
+                                    target["evidence"]["alleles"] = parsed["evidence"]["alleles"]
+                                if parsed["evidence"].get("variants"):
+                                    target["evidence"]["variants"] = parsed["evidence"]["variants"]
+                            if parsed.get("phased") is True:
+                                target["phased"] = True
+                            if parsed.get("copy_number") and not target.get("copy_number"):
+                                target["copy_number"] = parsed["copy_number"]
+                            # Always set tool source if not present
+                            if not target.get("tool_source"):
+                                target["tool_source"] = "PyPGx"
+                            enriched_count += 1
+                    else:
+                        # Append new PyPGx-only gene
+                        entry = {
+                            "gene": gene_name,
+                            "diplotype": parsed.get("diplotype") or "Unknown",
+                            "phenotype": parsed.get("phenotype") or "Unknown",
+                            "activity_score": parsed.get("activity_score"),
+                            "tool_source": "PyPGx",
+                            "pyPgxOnly": True
+                        }
+                        if parsed.get("call_confidence"):
+                            entry["call_confidence"] = parsed["call_confidence"]
+                        if parsed.get("evidence"):
+                            entry["evidence"] = parsed["evidence"]
+                        if parsed.get("phased") is True:
+                            entry["phased"] = True
+                        if parsed.get("copy_number"):
+                            entry["copy_number"] = parsed["copy_number"]
+                        data.setdefault("genes", []).append(entry)
+                        enriched_count += 1
+                if enriched_count:
+                    data["used_pypgx"] = True
+                    logger.info(f"Enriched PyPGx details for {enriched_count} genes from per-gene pipelines")
+        except Exception as enrich_e:
+            logger.warning(f"PyPGx per-gene enrichment skipped due to error: {enrich_e}")
     except Exception as e:
         logger.warning(f"PyPGx enrichment step failed: {e}")
+
+    # After all enrichment steps, build the canonical, alphabetical full gene list
+    try:
+        canonical_diplotypes = _build_canonical_diplotypes(
+            raw_gene_entries=data.get("genes", []),
+            file_type=file_type,
+            workflow_config=workflow_config,
+        )
+        data["genes"] = canonical_diplotypes
+        logger.info(
+            f"Canonical diplotypes prepared: total={len(canonical_diplotypes)} (alphabetical, deduplicated, full complement)"
+        )
+    except Exception as canon_e:
+        logger.warning(f"Failed to build canonical diplotypes: {canon_e}")
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference
     file_type = str(data.get("file_type", "vcf")).lower()
@@ -946,8 +1546,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     
     try:
         if REPORT_CONFIG.get("write_workflow_svg", True):
-            logger.info("Generating Graphviz SVG workflow diagram...")
-            svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
+            logger.info("Generating Graphviz SVG workflow diagram (true Graphviz renderer)...")
+            svg_bytes = render_with_graphviz(per_sample_workflow, fmt="svg")
             if svg_bytes:
                 svg_path = os.path.join(report_dir, workflow_svg_filename)
                 with open(svg_path, "wb") as f_out:
@@ -1118,7 +1718,50 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 "source_url": get_source_url(),
                 "workflow": per_sample_workflow,
                 "workflow_diagrams": True,
+                "header_text": header_text,
+                # Pass TSV-driven Executive Summary rows if enabled and available
+                "execsum_from_tsv": execsum_rows_from_tsv if (EXECSUM_USE_TSV and execsum_rows_from_tsv) else None,
             }
+            try:
+                logger.info(f"Executive Summary rows (TSV): {len(execsum_rows_from_tsv) if execsum_rows_from_tsv else 0}; Using TSV: {EXECSUM_USE_TSV}")
+            except Exception:
+                pass
+            # Inject display sample id for WeasyPrint HTML template
+            try:
+                display_sample = (
+                    data.get("sample_identifier")
+                    or data.get("displayId")
+                    or patient_id
+                )
+                if display_sample:
+                    template_data["sample_identifier"] = display_sample
+                    template_data["display_sample_id"] = display_sample
+                # If still UUID-like, try to derive from PharmCAT files in report_dir
+                def _is_uuid_like(s: str) -> bool:
+                    try:
+                        import uuid as _uuid
+                        _uuid.UUID(str(s))
+                        return True
+                    except Exception:
+                        return False
+                if (not display_sample) or _is_uuid_like(display_sample):
+                    try:
+                        # Look for any *_pgx_pharmcat.* files and extract base
+                        candidates = []
+                        for name in os.listdir(report_dir):
+                            if name.endswith("_pgx_pharmcat.html") or name.endswith("_pgx_pharmcat.json") or name.endswith("_pgx_pharmcat.tsv"):
+                                base = name.split("_pgx_pharmcat")[0]
+                                if base and base != patient_id and base not in candidates:
+                                    candidates.append(base)
+                        if candidates:
+                            derived = candidates[0]
+                            template_data["sample_identifier"] = derived
+                            template_data["display_sample_id"] = derived
+                            logger.info(f"Derived display_sample_id from PharmCAT files: {derived}")
+                    except Exception as e:
+                        logger.debug(f"Display sample derivation from files failed: {e}")
+            except Exception:
+                pass
 
             # Add debug information for troubleshooting
             try:
@@ -1232,23 +1875,61 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             logger.info(f"=== PDF GENERATION START (Engine: {PDF_ENGINE}) ===")
             logger.info(f"Workflow data: {per_sample_workflow}")
             
-            # Simple workflow diagram generation for PDF
-            workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → PyPGx → VCF → PharmCAT → Reports</em>"
+            # Prefer embedding pre-rendered SVG (Kroki Mermaid first, then Graphviz), fallback to PNG
+            workflow_svg_for_pdf = ""
             pdf_png_data_uri = ""
             
             try:
-                from app.visualizations.workflow_diagram import render_workflow
-                # Try to generate a simple workflow diagram
-                png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
-                if png_bytes:
-                    import base64
-                    pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
-                    workflow_svg_for_pdf = f'<div class="workflow-figure"><img src="{pdf_png_data_uri}" alt="Workflow Diagram" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" /></div>'
-                    logger.info(f"✓ Generated PNG workflow for PDF: {len(png_bytes)} bytes")
+                # Prefer Graphviz SVG for PDFs (WeasyPrint-friendly), then Kroki, then PNG
+                svg_graphviz_path = os.path.join(report_dir, f"{patient_id}_workflow.svg")
+                svg_kroki_path = os.path.join(report_dir, f"{patient_id}_workflow_kroki_mermaid.svg")
+                chosen_svg_content = ""
+                if os.path.exists(svg_graphviz_path):
+                    try:
+                        with open(svg_graphviz_path, "r", encoding="utf-8") as f_svg:
+                            chosen_svg_content = f_svg.read()
+                        logger.info(f"✓ Using pre-rendered Graphviz SVG for PDF: {len(chosen_svg_content)} chars")
+                    except Exception as e:
+                        logger.warning(f"Failed reading Graphviz SVG for PDF: {e}")
+                if not chosen_svg_content and os.path.exists(svg_kroki_path):
+                    try:
+                        with open(svg_kroki_path, "r", encoding="utf-8") as f_svg:
+                            chosen_svg_content = f_svg.read()
+                        logger.info(f"✓ Using pre-rendered Kroki Mermaid SVG for PDF: {len(chosen_svg_content)} chars")
+                    except Exception as e:
+                        logger.warning(f"Failed reading Kroki SVG for PDF: {e}")
+                if not chosen_svg_content:
+                    try:
+                        # Try generating a fresh SVG via Mermaid first for better text
+                        svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
+                        if svg_bytes:
+                            chosen_svg_content = svg_bytes.decode("utf-8", errors="ignore")
+                            # Save for future use
+                            with open(svg_graphviz_path, "w", encoding="utf-8") as f_out:
+                                f_out.write(chosen_svg_content)
+                            logger.info(f"✓ Generated SVG for PDF dynamically: {len(chosen_svg_content)} chars")
+                    except Exception as e:
+                        logger.warning(f"Dynamic SVG generation failed for PDF: {e}")
+                if chosen_svg_content:
+                    workflow_svg_for_pdf = f'<div class="workflow-figure">{chosen_svg_content}</div>'
                 else:
-                    logger.info("ℹ Using text-based workflow description for PDF")
+                    # Fallback to PNG as a last resort
+                    try:
+                        png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                        if png_bytes:
+                            import base64
+                            pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
+                            workflow_svg_for_pdf = f'<div class="workflow-figure"><img src="{pdf_png_data_uri}" alt="Workflow Diagram" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" /></div>'
+                            logger.info(f"✓ Generated PNG workflow for PDF (fallback): {len(png_bytes)} bytes")
+                        else:
+                            workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+                            logger.info("ℹ Using text-based workflow description for PDF")
+                    except Exception as e:
+                        workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+                        logger.warning(f"⚠ Workflow diagram PNG fallback failed, using text fallback: {e}")
             except Exception as e:
-                logger.warning(f"⚠ Workflow diagram generation failed, using text fallback: {str(e)}")
+                workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
+                logger.warning(f"⚠ PDF workflow rendering block failed, using text fallback: {e}")
             
             # Render the HTML template with workflow diagram
             pdf_html_content = template.render(

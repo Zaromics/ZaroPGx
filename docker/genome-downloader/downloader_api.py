@@ -4,7 +4,7 @@ Reference Genome Downloader Service for ZaroPGx
 Downloads and indexes reference genomes in the background with progress tracking
 """
 
-from flask import Flask, jsonify, request
+from fastapi import FastAPI, HTTPException
 import threading
 import os
 import time
@@ -12,8 +12,9 @@ import json
 import subprocess
 import requests
 from tqdm import tqdm
+import uvicorn
 
-app = Flask(__name__)
+app = FastAPI(title="Genome Downloader API", version="1.0.0")
 
 # Global variable to track download progress
 download_status = {
@@ -285,32 +286,32 @@ def schedule_download(delay_seconds=5):
     threading.Thread(target=delayed_start).start()
     print(f"Scheduled genome downloads to start in {delay_seconds} seconds.")
 
-@app.route('/health')
+@app.get('/health')
 def health():
     """Health check endpoint"""
-    return jsonify({"status": "healthy"})
+    return {"status": "healthy"}
 
-@app.route('/status')
+@app.get('/status')
 def status():
     """Return current download status"""
     # Load from file if exists
     if os.path.exists('/reference/download_status.json'):
         try:
             with open('/reference/download_status.json', 'r') as f:
-                return jsonify(json.load(f))
+                return json.load(f)
         except Exception as e:
             print(f"Error reading status file: {str(e)}")
     
     # Otherwise return current status
-    return jsonify(download_status)
+    return download_status
 
-@app.route('/start-download', methods=['POST'])
+@app.post('/start-download')
 def start_download():
     """Start the download process"""
     if not download_status["in_progress"] and not download_status["completed"]:
         threading.Thread(target=download_genomes).start()
-        return jsonify({"status": "started"})
-    return jsonify({"status": "already_running" if download_status["in_progress"] else "already_completed"})
+        return {"status": "started"}
+    return {"status": "already_running" if download_status["in_progress"] else "already_completed"}
 
 if __name__ == "__main__":
     # Load existing status if available
@@ -327,5 +328,5 @@ if __name__ == "__main__":
         print("Scheduling reference genome downloads to start shortly after server startup")
         threading.Thread(target=lambda: schedule_download(10)).start()
     
-    # Start the Flask server
-    app.run(host='0.0.0.0', port=5050) 
+    # Start the FastAPI server
+    uvicorn.run(app, host='0.0.0.0', port=5050) 

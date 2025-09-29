@@ -10,7 +10,10 @@ import os
 import json
 import logging
 import requests
-from typing import Dict, List, Optional, Tuple
+import subprocess
+import shlex
+import re
+from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -19,9 +22,12 @@ logger = logging.getLogger(__name__)
 class VersionManager:
     """Centralized version management for ZaroPGx services."""
     
-    def __init__(self, versions_dir: str = "/data/versions", project_root: Optional[str] = None):
+    def __init__(self, versions_dir: str = "/data/versions", project_root: Optional[str] = None, include_all_compose_services: Optional[bool] = None):
         self.versions_dir = Path(versions_dir)
         self.project_root = Path(project_root) if project_root else Path(__file__).parent.parent.parent
+        # When True, include all services from compose even if a manifest exists
+        env_include_all = os.getenv("VERSION_MANAGER_INCLUDE_ALL_COMPOSE", "false").lower() in {"1", "true", "yes"}
+        self.include_all_compose_services = include_all_compose_services if include_all_compose_services is not None else env_include_all
         
     def get_all_versions(self) -> List[Dict[str, str]]:
         """Get versions from all available sources."""
@@ -156,22 +162,203 @@ class VersionManager:
         return "N/A"
     
     def _get_compose_fallbacks(self, manifest_names: set) -> List[Dict[str, str]]:
-        """Get versions from docker-compose.yml as fallback ONLY for services without manifests."""
-        versions = []
+        """Get versions from docker compose as fallback. Optionally include all services."""
+        versions: List[Dict[str, str]] = []
         
         compose_files = [
             "docker-compose.yml",
-            "docker-compose.override.yml"
+            "docker-compose.override.yml",
+            "compose.yml",
+            "compose.override.yml",
         ]
+        existing_files = [str(self.project_root / f) for f in compose_files if (self.project_root / f).exists()]
+        if not existing_files:
+            return versions
         
-        for compose_file in compose_files:
-            compose_path = self.project_root / compose_file
-            if compose_path.exists():
-                compose_versions = self._parse_compose_versions(compose_path, manifest_names)
-                versions.extend(compose_versions)
-                break  # Use first found compose file
+        # Prefer docker compose CLI to render merged, env-substituted config
+        config = self._load_compose_config(existing_files)
+        if config is None:
+            # Fallback: try the legacy line parser on the first compose file for minimal coverage
+            first_path = self.project_root / compose_files[0]
+            if first_path.exists():
+                versions.extend(self._parse_compose_versions(first_path, manifest_names))
+            return versions
+        
+        services = config.get("services", {}) if isinstance(config, dict) else {}
+        if not isinstance(services, dict):
+            return versions
+        
+        for service_name, service_def in services.items():
+            try:
+                if not isinstance(service_def, dict):
+                    continue
+                info = self._extract_service_version_info(service_name, service_def)
+                if not info:
+                    continue
+                display_name_lower = info["name"].lower()
+                if self.include_all_compose_services or display_name_lower not in manifest_names:
+                    versions.append(info)
+            except Exception as e:
+                logger.debug(f"Failed to extract version for compose service {service_name}: {e}")
         
         return versions
+
+    def _load_compose_config(self, compose_files: List[str]) -> Optional[Dict[str, Any]]:
+        """Load merged docker compose config using CLI; fallback to YAML merge if CLI is unavailable."""
+        try:
+            # Try docker compose v2
+            cmd = ["docker", "compose"]
+            if self._is_executable_available(cmd[0]):
+                args = cmd + sum((['-f', f] for f in compose_files), []) + ["config"]
+                result = subprocess.run(args, cwd=str(self.project_root), check=False, capture_output=True, text=True, timeout=8)
+                if result.returncode == 0 and result.stdout.strip():
+                    try:
+                        import yaml  # type: ignore
+                        return yaml.safe_load(result.stdout)  # type: ignore
+                    except Exception as e:  # noqa: F841
+                        logger.debug("PyYAML not available or failed to parse docker compose CLI output")
+                else:
+                    logger.debug(f"docker compose config failed: rc={result.returncode}, err={result.stderr[:200]}")
+        except Exception as e:
+            logger.debug(f"docker compose config invocation failed: {e}")
+        
+        # Try legacy docker-compose
+        try:
+            cmd = ["docker-compose"]
+            if self._is_executable_available(cmd[0]):
+                args = cmd + sum((['-f', f] for f in compose_files), []) + ["config"]
+                result = subprocess.run(args, cwd=str(self.project_root), check=False, capture_output=True, text=True, timeout=8)
+                if result.returncode == 0 and result.stdout.strip():
+                    try:
+                        import yaml  # type: ignore
+                        return yaml.safe_load(result.stdout)  # type: ignore
+                    except Exception as e:  # noqa: F841
+                        logger.debug("PyYAML not available or failed to parse docker-compose CLI output")
+                else:
+                    logger.debug(f"docker-compose config failed: rc={result.returncode}, err={result.stderr[:200]}")
+        except Exception as e:
+            logger.debug(f"docker-compose config invocation failed: {e}")
+        
+        # Final fallback: attempt to read and merge via PyYAML directly
+        try:
+            import yaml  # type: ignore
+            merged: Dict[str, Any] = {}
+            for f in compose_files:
+                try:
+                    with open(f, "r", encoding="utf-8") as fh:
+                        content = fh.read()
+                    # Basic env substitution for ${VAR} or ${VAR:-default}
+                    content = self._basic_env_substitution(content)
+                    data = yaml.safe_load(content)  # type: ignore
+                    if isinstance(data, dict):
+                        merged = self._deep_merge_dicts(merged, data)
+                except FileNotFoundError:
+                    continue
+            return merged if merged else None
+        except Exception as e:
+            logger.debug(f"Failed to parse compose YAML directly: {e}")
+            return None
+
+    def _is_executable_available(self, executable: str) -> bool:
+        from shutil import which
+        return which(executable) is not None
+
+    def _deep_merge_dicts(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        result = dict(base)
+        for k, v in override.items():
+            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+                result[k] = self._deep_merge_dicts(result[k], v)
+            else:
+                result[k] = v
+        return result
+
+    def _basic_env_substitution(self, content: str) -> str:
+        """Very basic ${VAR} and ${VAR:-default} substitution to make YAML parseable off-Docker."""
+        pattern = re.compile(r"\$\{([^}:]+)(?::-([^}]*))?\}")
+
+        def repl(match: re.Match[str]) -> str:
+            var = match.group(1)
+            default = match.group(2) if match.lastindex and match.lastindex >= 2 else None
+            return os.getenv(var, default or "")
+
+        return pattern.sub(repl, content)
+
+    def _extract_service_version_info(self, service_name: str, service_def: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        image = service_def.get("image")
+        labels = service_def.get("labels") or {}
+        if isinstance(labels, list):
+            # Convert ["key=value", ...] to dict if needed
+            label_dict: Dict[str, str] = {}
+            for item in labels:
+                if isinstance(item, str) and "=" in item:
+                    k, v = item.split("=", 1)
+                    label_dict[k.strip()] = v.strip()
+            labels = label_dict
+        if not isinstance(labels, dict):
+            labels = {}
+        
+        # Prefer OCI image labels for version/name when available
+        oci_title = labels.get("org.opencontainers.image.title") or labels.get("org.label-schema.name")
+        oci_version = labels.get("org.opencontainers.image.version") or labels.get("org.label-schema.version")
+        
+        image_repo = None
+        image_tag = None
+        image_digest = None
+        if isinstance(image, str):
+            image_repo, image_tag, image_digest = self._extract_image_info(image)
+        
+        display_name = self._derive_display_name(service_name, image_repo, oci_title)
+        version = (
+            (oci_version or "").strip()
+            or (image_tag or "").strip()
+            or (image_digest or "").strip()
+        )
+        if not version:
+            # No version data; skip returning version for this service
+            return None
+        
+        return {
+            "name": display_name,
+            "version": version,
+            "source": "compose",
+        }
+
+    def _extract_image_info(self, image: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Split image into (repo, tag, digest). Handles registry ports and digests."""
+        digest = None
+        repo_and_tag = image
+        if "@" in image:
+            repo_and_tag, digest = image.split("@", 1)
+        tag = None
+        # rsplit only on last ':' to preserve registry:port
+        if ":" in repo_and_tag and not repo_and_tag.endswith(":"):
+            repo, maybe_tag = repo_and_tag.rsplit(":", 1)
+            # If maybe_tag looks like a sha256 or path (unlikely), keep as tag regardless
+            tag = maybe_tag
+        else:
+            repo = repo_and_tag
+        return repo, tag, digest
+
+    def _derive_display_name(self, service_name: str, image_repo: Optional[str], oci_title: Optional[str]) -> str:
+        if oci_title:
+            return str(oci_title).strip()
+        if image_repo:
+            normalized = image_repo.lower()
+            # Friendly mappings
+            known_map = {
+                "postgres": "PostgreSQL",
+                "postgresql": "PostgreSQL",
+                "hapiproject/hapi": "HAPI FHIR Server",
+                "hapiproject/hapi-vnext": "HAPI FHIR Server",
+            }
+            for key, friendly in known_map.items():
+                if key in normalized:
+                    return friendly
+            # Otherwise, use repo name part
+            repo_part = normalized.split("/")[-1]
+            return repo_part.replace("-", " ").replace("_", " ").title()
+        # Fallback to service key
+        return service_name.replace("-", " ").replace("_", " ").title()
     
     def _parse_compose_versions(self, compose_path: Path, manifest_names: set) -> List[Dict[str, str]]:
         """Parse docker-compose.yml for service versions."""

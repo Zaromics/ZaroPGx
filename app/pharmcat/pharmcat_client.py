@@ -351,9 +351,9 @@ def normalize_pharmcat_results(response):
             genes_data = []
             drug_recommendations = []
             
-            # Process PharmCAT 3.0+ format (genes, drugs structure)
+            # Process PharmCAT v3format (genes, drugs structure)
             if "genes" in json_data or "drugs" in json_data:
-                logger.info("Processing PharmCAT 3.0+ format with genes/drugs structure")
+                logger.info("Processing PharmCAT v3format with genes/drugs structure")
                 
                 # Extract genes from genes section if available
                 if "genes" in json_data and isinstance(json_data["genes"], dict):
@@ -399,22 +399,7 @@ def normalize_pharmcat_results(response):
                                 if "activityScore" in rec_diplotype:
                                     activity_score = rec_diplotype["activityScore"]
                             
-                            # Fallback to sourceDiplotypes if recommendationDiplotypes not available
-                            elif "sourceDiplotypes" in gene_report and isinstance(gene_report["sourceDiplotypes"], list) and gene_report["sourceDiplotypes"]:
-                                source_diplotype = gene_report["sourceDiplotypes"][0]
-                                
-                                if "label" in source_diplotype:
-                                    diplotype = source_diplotype["label"]
-                                
-                                if "phenotypes" in source_diplotype:
-                                    phenotypes = source_diplotype["phenotypes"]
-                                    if isinstance(phenotypes, list):
-                                        function = ", ".join(phenotypes)
-                                    else:
-                                        function = str(phenotypes)
-                                
-                                if "activityScore" in source_diplotype:
-                                    activity_score = source_diplotype["activityScore"]
+                            # DO NOT DO NOT DO NOT Fall back to sourceDiplotypes if recommendationDiplotypes not available
                             
                             # Create gene entry
                             gene_entry = {
@@ -426,7 +411,7 @@ def normalize_pharmcat_results(response):
                             }
                             
                             genes_data.append(gene_entry)
-                            logger.info(f"Added gene from 3.0+ format: {gene_entry}")
+                            logger.info(f"Added gene from v3format: {gene_entry}")
                             
                             # Extract drug information from relatedDrugs array
                             if "relatedDrugs" in gene_report and isinstance(gene_report["relatedDrugs"], list) and gene_report["relatedDrugs"]:
@@ -511,19 +496,19 @@ def normalize_pharmcat_results(response):
                     json_processing_success = True
                     normalized_response.update({
                         "success": True,
-                        "message": "PharmCAT 3.0+ results normalized successfully",
+                        "message": "PharmCAT v3results normalized successfully",
                         "data": {
                             "genes": genes_data,
                             "drugRecommendations": drug_recommendations
                         }
                     })
                     
-                    logger.info(f"Successfully parsed {len(genes_data)} genes and {len(drug_recommendations)} drug recommendations from 3.0+ format")
+                    logger.info(f"Successfully parsed {len(genes_data)} genes and {len(drug_recommendations)} drug recommendations from v3format")
                     logger.info(f"Final normalized response: {json.dumps(normalized_response, indent=2)}")
                     logger.info(f"=== NORMALIZE PHARMCAT RESULTS END (SUCCESS) ===")
                     return normalized_response
                 else:
-                    logger.warning("No genes or drug recommendations found in PharmCAT 3.0+ format")
+                    logger.warning("No genes or drug recommendations found in PharmCAT v3format")
                     logger.warning(f"Available keys: {list(json_data.keys())}")
                     if "genes" in json_data:
                         for guideline, genes in json_data["genes"].items():
@@ -531,8 +516,8 @@ def normalize_pharmcat_results(response):
                     logger.warning(f"Drug recommendations count: {len(json_data.get('drugRecommendations', []))}")
                     logger.warning(f"Drugs section: {list(json_data.get('drugs', {}).keys()) if 'drugs' in json_data else 'Not found'}")
             
-            # If we get here, the 3.0+ format processing failed
-            logger.error("Failed to process PharmCAT 3.0+ format data")
+            # If we get here, the v3format processing failed
+            logger.error("Failed to process PharmCAT v3format data")
             logger.error(f"JSON data keys: {list(json_data.keys())}")
             if "geneReports" in json_data:
                 logger.error(f"Gene reports structure: {type(json_data['geneReports'])}")
@@ -853,7 +838,7 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
         # Prepare command
         cmd = [
             "pharmcat_pipeline",
-            "-G",  # Bypass gVCF check
+            # "-G",  # Bypass gVCF check -- may need to use GATK to convert gVCF to VCF in the future. TO DO
             "-o", output_dir,  # Output directory
             "-v",  # Verbose output
             input_file  # Input file should be the last argument

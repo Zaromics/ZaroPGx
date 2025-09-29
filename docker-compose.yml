@@ -11,7 +11,6 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
-    #  - ./db/migrations:/docker-entrypoint-initdb.d/migrations
     ports:
       - "5444:5432"
     healthcheck:
@@ -45,8 +44,8 @@ services:
   # PharmCAT Service - combines JAR and API wrapper
   pharmcat:
     build:
-      context: ./docker/pharmcat
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/pharmcat/Dockerfile
       args:
         PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.0.1}
     container_name: pgx_pharmcat
@@ -56,12 +55,13 @@ services:
       # Mount reference files where PharmCAT expects them
       - pharmcat-references:/pharmcat
     ports:
-      - "5001:5000"  # Flask API port
+      - "5001:5000"  # FastAPI port
     environment:
       - DATA_DIR=/data
       - JAVA_OPTS=-Xmx4g
       - PHARMCAT_LOG_LEVEL=DEBUG
       - PHARMCAT_REFERENCE_DIR=/pharmcat
+      - PHARMCAT_TEE=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
@@ -118,8 +118,8 @@ services:
   # GATK API Service
   gatk-api:
     build:
-      context: ./docker/gatk-api
-      dockerfile: Dockerfile.gatk-api
+      context: .
+      dockerfile: docker/gatk-api/Dockerfile.gatk-api
     container_name: pgx_gatk_api
     restart: unless-stopped
     depends_on:
@@ -152,8 +152,8 @@ services:
   # PyPGx Service
   pypgx:
     build:
-      context: ./docker/pypgx
-      dockerfile: Dockerfile.pypgx
+      context: .
+      dockerfile: docker/pypgx/Dockerfile.pypgx
     container_name: pgx_pypgx
     restart: unless-stopped
     depends_on:
@@ -162,12 +162,14 @@ services:
     volumes:
       - ./data:/data
       - ./reference:/reference
+      - ./config:/app/config
     environment:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
       - PYPGX_MEMORY_LIMIT=12G
       - PYPGX_MAX_PARALLEL_GENES=8
       - PYPGX_BATCH_SIZE=4
+      - PYPGX_PHARMCAT_PREFERENCE=${PYPGX_PHARMCAT_PREFERENCE:-auto}  # auto|pypgx|pharmcat
     ports:
       - "5053:5000"
     healthcheck:
@@ -185,29 +187,31 @@ services:
         reservations:
           memory: 8G
 
-  # OptiType Service (CLI container, no HTTP wrapper)
-  optitype:
-    image: smithnickh/optitype:v2.0
-    container_name: pgx_optitype
-    restart: unless-stopped
-    # Keep the container running so we can exec CLI commands into it from other services
-    command: ["tail", "-f", "/dev/null"]
-    volumes:
-      - ./data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "command -v OptiTypePipeline.py >/dev/null 2>&1 || test -f /OptiTypePipeline.py || test -f /opt/OptiType/OptiTypePipeline.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - pgx-network
+  # OptiType Service (CLI container, no HTTP wrapper) 
+  # CURRENTLY UNUSED, USING HLATYPING INSTEAD
+  # optitype:
+  #   image: smithnickh/optitype:v2.0
+  #   container_name: pgx_optitype
+  #   restart: unless-stopped
+  #   # Keep the container running so we can exec CLI commands into it from other services
+  #   command: ["tail", "-f", "/dev/null"]
+  #   volumes:
+  #     - ./data:/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "command -v OptiTypePipeline.py >/dev/null 2>&1 || test -f /OptiTypePipeline.py || test -f /opt/OptiType/OptiTypePipeline.py"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 40s
+  #   networks:
+  #     - pgx-network
+
 
   # nf-core/hlatyping Wrapper Service (HTTP API running Nextflow)
   hlatyping:
     build:
-      context: ./docker/hlatyping
-      dockerfile: Dockerfile.hlatyping
+      context: .
+      dockerfile: docker/hlatyping/Dockerfile.hlatyping
     container_name: pgx_hlatyping
     restart: unless-stopped
     environment:
@@ -270,8 +274,8 @@ services:
   # Nextflow runner for orchestrating the ZaroPGx pharmacogenomic pipeline
   nextflow:
     build:
-      context: ./docker/nextflow
-      dockerfile: Dockerfile.nextflow
+      context: .
+      dockerfile: docker/nextflow/Dockerfile.nextflow
     container_name: pgx_nextflow
     restart: unless-stopped
     environment:
@@ -290,7 +294,9 @@ services:
     networks:
       - pgx-network
 
-  # Main FastAPI Application with Web UI and API
+  # ~~~~~~~~~~MAIN APP~~~~~~~~~~
+  # Main FastAPI Application with Web UI, API, and supporting services
+  # ~~~~~~~~~~MAIN APP~~~~~~~~~~
   app:
     build:
       context: .
@@ -317,14 +323,17 @@ services:
       - KROKI_URL=http://kroki:8000
       - SOURCE_URL=${SOURCE_URL}
       - PYTHONPATH=/app
+      - WORKFLOW_API_BASE=http://app:8000/api/v1
       - PYTHONDONTWRITEBYTECODE=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - INCLUDE_PHARMCAT_HTML=true
       - INCLUDE_PHARMCAT_JSON=true
       - INCLUDE_PHARMCAT_TSV=true
+      - EXECSUM_USE_TSV=true
     volumes:
       - ./:/app
       - ./data:/data
+      - ./scripts:/scripts:ro
     ports:
       - "${BIND_ADDRESS:-8765}:8000"
     healthcheck:

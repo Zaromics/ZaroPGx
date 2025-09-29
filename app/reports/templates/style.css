@@ -94,6 +94,38 @@ th {
     font-weight: bold;
 }
 
+.tool-source {
+    text-align: center;
+    font-weight: bold;
+    font-size: 0.9em;
+    color: #495057;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 3px;
+    padding: 2px 4px;
+    min-width: 20px;
+}
+
+.tool-key {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 5px;
+    font-size: 0.9em;
+}
+
+.tool-key h4 {
+    margin: 0 0 8px 0;
+    color: #495057;
+    font-size: 1em;
+}
+
+.tool-key p {
+    margin: 0;
+    line-height: 1.4;
+}
+
 .normal-metabolizer {
     background-color: #28a745;
 }
@@ -111,7 +143,7 @@ th {
     background-color: #17a2b8;
 }
 
-/* Likely Wild Type: transparent background with black border */
+/* Possibly Wild Type: transparent background with black border */
 .likely-wild-type {
     background-color: transparent;
     color: #000;

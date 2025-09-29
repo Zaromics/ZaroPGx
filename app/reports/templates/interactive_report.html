@@ -135,7 +135,7 @@
             background-color: var(--info-color);
         }
         
-        /* Likely Wild Type: transparent background with black border */
+        /* Possibly Wild Type: transparent background with black border */
         .likely-wild-type {
             background-color: transparent;
             color: #000;
@@ -484,13 +484,32 @@
             background-color: #d1ecf1;
             border-color: #bee5eb;
         }
+        /* Monospaced file header styling */
+        .file-header {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre;
+            background-color: #fdfdfd;
+            border: 1px solid #ddd;
+            padding: 12px;
+            border-radius: 4px;
+            line-height: 1.35;
+            tab-size: 4;
+            overflow: auto;
+            word-break: normal;
+        }
+        .header-note {
+            font-size: 0.95em;
+            color: #555;
+            margin: 0 0 10px 0;
+        }
     </style>
 </head>
 <body>
     <header>
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
-        <h1>ZaroPGx Pharmacogenomic Report</h1>
-        <p>Precision Medicine through Genetic Analysis</p>
+        <h1>Individual Pharmacogenomic Report</h1>
+        <p>Powered by ZaroPGx, a Zaromics Software Product</p>
     </header>
     
     <div class="container">
@@ -516,22 +535,29 @@
                 <div class="tab" onclick="showTab('visualizations')">Visualizations</div>
                 <div class="tab" onclick="showTab('method')">Method</div>
                 <div class="tab" onclick="showTab('export')">Export</div>
+                <div class="tab" onclick="showTab('header')">Header</div>
                 <div class="tab" onclick="showTab('acknowledgements')">Acknowledgements</div>
             </div>
             
             <div id="summary" class="tab-content active">
                 <h3>Executive Summary</h3>
                 <p>This interactive report provides comprehensive pharmacogenomic information based on the sample's genetic analysis.</p>
+
+                <!-- Disclaimer card moved to the top of Summary tab -->
+                <div class="card">
+                    <h4>Disclaimer</h4>
+                    <p style="margin:0;">{{ disclaimer }}</p>
+                </div>
                 
                 <h4>Key Findings</h4>
                 <div class="grid">
-                    {% for d in diplotypes %}
+                    {% for d in diplotypes|sort(attribute='gene') %}
                     <div class="card">
                         <h3>{{ d.gene }}</h3>
                         <p><strong>Diplotype:</strong> {{ d.diplotype }}</p>
                         <p>
                             <strong>Phenotype:</strong> 
-                            <span class="gene-phenotype {% if 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
+                            <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
                                 {{ d.phenotype }}
                             </span>
                         </p>
@@ -553,9 +579,13 @@
                     {% endfor %}
                 </div>
                 
+                <!-- Gene Phenotypes chart (restored) -->
                 <div class="chart-container">
+                    <h4>Gene Phenotypes</h4>
                     <canvas id="genePhenotypeChart"></canvas>
                 </div>
+
+                
             </div>
             
             <div id="genes" class="tab-content">
@@ -568,15 +598,16 @@
                             <th>Phenotype</th>
                             <th>Activity Score</th>
                             <th>Implications</th>
+                            <th>Tool*</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for d in diplotypes %}
+                        {% for d in diplotypes|sort(attribute='gene') %}
                         <tr>
                             <td>{{ d.gene }}</td>
                             <td>{{ d.diplotype }}</td>
                             <td>
-                                <span class="gene-phenotype {% if 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
+                                <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
                                     {{ d.phenotype }}
                                 </span>
                             </td>
@@ -594,10 +625,19 @@
                                     Consult clinical guidelines
                                 {% endif %}
                             </td>
+                            <td class="tool-source">{{ d.tool_source if d.tool_source else 'P' }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
+                
+                <div class="tool-key">
+                    <h4>Tool Key:</h4>
+                    <p><strong>C</strong> = PharmCAT | 
+                       <strong>P</strong> = PyPGx | 
+                       <strong>O</strong> = OptiType | 
+                       <strong>M</strong> = MitoZ</p>
+                </div>
                 
                 <div id="geneInfoSection"></div>
             </div>
@@ -676,7 +716,6 @@
                     
                     <!-- Primary Workflow Diagram (Mermaid preferred, Graphviz fallback) -->
                     <div class="workflow-figure">
-                        <h5>Workflow Overview</h5>
                         {% if workflow_kroki_svg %}
                           <!-- Prefer Mermaid diagram -->
                           {{ workflow_kroki_svg | safe }}
@@ -745,6 +784,18 @@
                     </form>
                     <div id="exportResult" style="margin-top: 1rem; display: none;"></div>
                 </div>
+            </div>
+
+            <div id="header" class="tab-content">
+                <h3>Genomic Datafile Header</h3>
+                <p class="header-note">The submitted genomic datafile's header matter is reproduced below. Please note that if any conversion or re-alignment operations were performed, the header information below does not reflect that; the header from the original uploaded file is what is shown.</p>
+                {% if header_text %}
+                <pre class="file-header">{{ header_text }}</pre>
+                {% else %}
+                <div class="card">
+                    <p>No header text was found for this submission.</p>
+                </div>
+                {% endif %}
             </div>
 
             <div id="acknowledgements" class="tab-content">

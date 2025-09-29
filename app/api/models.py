@@ -95,6 +95,8 @@ class FileAnalysis(BaseModel):
     vcf_info: Optional[VCFHeaderInfo] = None
     file_size: Optional[int] = None
     error: Optional[str] = None
+    is_valid: bool = True
+    validation_errors: Optional[List[str]] = None
 
 
 class WorkflowInfo(BaseModel):
@@ -110,7 +112,6 @@ class WorkflowInfo(BaseModel):
     
     # File processing flags
     is_provisional: bool = False
-    go_directly_to_pharmcat: bool = False
     
     # Original file info
     original_file_type: Optional[str] = None
@@ -182,8 +183,8 @@ class JobStage(str, Enum):
     GATK_CONVERSION = "gatk_conversion"
     HLA_TYPING = "hla_typing"
     FASTQ_CONVERSION = "fastq_conversion"
-    PYPX_ANALYSIS = "pypgx_analysis"
-    PYPX_BAM2VCF = "pypgx_bam2vcf"
+    PYPGX_ANALYSIS = "pypgx_analysis"
+    PYPGX_BAM2VCF = "pypgx_bam2vcf"
     PHARMCAT_ANALYSIS = "pharmcat_analysis"
     
     # Report stages
@@ -195,7 +196,7 @@ class JobStage(str, Enum):
     UPLOAD = "upload"
     ANALYSIS = "analysis"
     GATK = "gatk"
-    PYPX = "pypgx"
+    PYPGX = "pypgx"
     PHARMCAT = "pharmcat"
     REPORT = "report"
 
@@ -387,4 +388,178 @@ class ReportResponse(BaseModel):
     patient_id: str = Field(..., description="Patient identifier")
     created_at: datetime = Field(..., description="When the report was created")
     report_url: str = Field(..., description="URL to access the generated report")
-    report_type: str = Field(..., description="Type of report generated") 
+    report_type: str = Field(..., description="Type of report generated")
+
+
+# ============================================================================
+# NEW WORKFLOW MONITORING MODELS - Enhanced workflow tracking system
+# ============================================================================
+
+class WorkflowStatus(str, Enum):
+    """Workflow status enumeration"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class StepStatus(str, Enum):
+    """Step status enumeration"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class LogLevel(str, Enum):
+    """Log level enumeration"""
+    DEBUG = "debug"
+    INFO = "info"
+    WARN = "warn"
+    ERROR = "error"
+
+
+class WorkflowCreate(BaseModel):
+    """Model for creating a new workflow"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    name: str = Field(..., description="Workflow name")
+    description: Optional[str] = Field(None, description="Workflow description")
+    total_steps: Optional[int] = Field(None, description="Total number of steps in the workflow")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Workflow metadata")
+    created_by: Optional[str] = Field(None, description="User who created the workflow")
+
+
+class WorkflowUpdate(BaseModel):
+    """Model for updating a workflow"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    name: Optional[str] = Field(None, description="Workflow name")
+    description: Optional[str] = Field(None, description="Workflow description")
+    status: Optional[WorkflowStatus] = Field(None, description="Workflow status")
+    total_steps: Optional[int] = Field(None, description="Total number of steps")
+    completed_steps: Optional[int] = Field(None, description="Number of completed steps")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Workflow metadata")
+
+
+class WorkflowResponse(BaseModel):
+    """Model for workflow responses"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    id: str = Field(..., description="Workflow ID")
+    name: str = Field(..., description="Workflow name")
+    description: Optional[str] = Field(None, description="Workflow description")
+    status: WorkflowStatus = Field(..., description="Workflow status")
+    created_at: datetime = Field(..., description="When the workflow was created")
+    started_at: Optional[datetime] = Field(None, description="When the workflow started")
+    completed_at: Optional[datetime] = Field(None, description="When the workflow completed")
+    total_steps: Optional[int] = Field(None, description="Total number of steps")
+    completed_steps: Optional[int] = Field(None, description="Number of completed steps")
+    metadata: Dict[str, Any] = Field(..., description="Workflow metadata")
+    created_by: Optional[str] = Field(None, description="User who created the workflow")
+
+
+class WorkflowStepCreate(BaseModel):
+    """Model for creating a workflow step"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    step_name: str = Field(..., description="Step name")
+    step_order: int = Field(..., description="Step order in the workflow")
+    container_name: Optional[str] = Field(None, description="Container that will execute this step")
+    output_data: Dict[str, Any] = Field(default_factory=dict, description="Step output data")
+
+
+class WorkflowStepUpdate(BaseModel):
+    """Model for updating a workflow step"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    status: Optional[StepStatus] = Field(None, description="Step status")
+    message: Optional[str] = Field(None, description="Status message")
+    container_name: Optional[str] = Field(None, description="Container name")
+    output_data: Optional[Dict[str, Any]] = Field(None, description="Step output data")
+    error_details: Optional[Dict[str, Any]] = Field(None, description="Error details if step failed")
+    retry_count: Optional[int] = Field(None, description="Number of retries")
+
+
+class WorkflowStepResponse(BaseModel):
+    """Model for workflow step responses"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    id: str = Field(..., description="Step ID")
+    workflow_id: str = Field(..., description="Workflow ID")
+    step_name: str = Field(..., description="Step name")
+    step_order: int = Field(..., description="Step order")
+    status: StepStatus = Field(..., description="Step status")
+    container_name: Optional[str] = Field(None, description="Container name")
+    started_at: Optional[datetime] = Field(None, description="When the step started")
+    completed_at: Optional[datetime] = Field(None, description="When the step completed")
+    duration_seconds: Optional[int] = Field(None, description="Step duration in seconds")
+    output_data: Dict[str, Any] = Field(..., description="Step output data")
+    error_details: Dict[str, Any] = Field(..., description="Error details")
+    retry_count: int = Field(..., description="Number of retries")
+
+
+class WorkflowLogCreate(BaseModel):
+    """Model for creating a workflow log entry"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    step_name: Optional[str] = Field(None, description="Step name")
+    log_level: LogLevel = Field(LogLevel.INFO, description="Log level")
+    message: str = Field(..., description="Log message")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Log metadata")
+
+
+class WorkflowLogResponse(BaseModel):
+    """Model for workflow log responses"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    id: int = Field(..., description="Log ID")
+    workflow_id: str = Field(..., description="Workflow ID")
+    step_name: Optional[str] = Field(None, description="Step name")
+    log_level: LogLevel = Field(..., description="Log level")
+    message: str = Field(..., description="Log message")
+    metadata: Dict[str, Any] = Field(..., description="Log metadata")
+    timestamp: datetime = Field(..., description="When the log was created")
+
+
+class WorkflowProgressResponse(BaseModel):
+    """Model for workflow progress responses"""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid"
+    )
+    
+    workflow_id: str = Field(..., description="Workflow ID")
+    status: WorkflowStatus = Field(..., description="Workflow status")
+    total_steps: int = Field(..., description="Total number of steps")
+    completed_steps: int = Field(..., description="Number of completed steps")
+    progress_percentage: float = Field(..., ge=0, le=100, description="Progress percentage")
+    current_step: Optional[str] = Field(None, description="Current step name")
+    estimated_completion: Optional[datetime] = Field(None, description="Estimated completion time")
+    message: Optional[str] = Field(None, description="Current status message") 

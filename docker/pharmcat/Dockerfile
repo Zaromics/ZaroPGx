@@ -144,8 +144,12 @@ RUN if [ -d "/pharmcat/pipeline/pcat" ]; then \
         cp -r /pharmcat/pipeline/pcat/* /pharmcat/pcat/; \
     fi
 
-# Install PharmCAT Python dependencies (using pip3 on Python base image)
-RUN pip3 install -r /pharmcat/pipeline/requirements.txt
+# Install uv for modern Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Install PharmCAT Python dependencies using uv (inside the container, NOT the wrapper)
+RUN uv pip install --system -r /pharmcat/pipeline/requirements.txt
 
 # Add PharmCAT pipeline scripts to path and verify installation
 RUN chmod +x /pharmcat/pipeline/pharmcat_pipeline && \
@@ -160,31 +164,43 @@ RUN chmod +x /pharmcat/pipeline/pharmcat_pipeline && \
     echo "Testing pharmcat_pipeline help..." && \
     pharmcat_pipeline --help | head -5
 
-# Install Flask wrapper API dependencies
-COPY requirements.txt /tmp/
-RUN pip3 install -r /tmp/requirements.txt
+# Install wrapper API dependencies using uv
+RUN uv pip install --system \
+    requests \
+    psutil \
+    fastapi \
+    uvicorn \
+    httpx \
+    python-multipart
 
-# Copy the wrapper script and start script
-COPY pharmcat.py /app/
-COPY start.sh /start.sh
+# Copy the wrapper script, start script, and workflow client
+COPY docker/pharmcat/pharmcat.py /app/
+COPY docker/pharmcat/start.sh /start.sh
+COPY app/utils/workflow_client.py /workflow-client/
 RUN chmod +x /start.sh
 
 # Create data directory and set up volume
-RUN mkdir -p /data
+RUN mkdir -p /data /tmp/pharmcat && \
+    chmod -R 777 /tmp/pharmcat
 VOLUME /data
 
 # Set up environment variables (aligned with official PharmCAT)
 ENV DATA_DIR=/data
+ENV TEMP_DIR=/tmp/pharmcat
 ENV PHARMCAT_PIPELINE_DIR=/pharmcat/pipeline
 ENV PHARMCAT_JAR=/pharmcat/pharmcat.jar
 ENV PHARMCAT_HOME=/pharmcat
 ENV CLASSPATH=/pharmcat/pharmcat.jar
 
-# Expose port for the Flask API
+# Expose port for the FastAPI
 EXPOSE 5000
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
 
 # Set working directory for the API
 WORKDIR /app
 
-# Start the Flask API using the start script
+# Start the FastAPI using the start script
 CMD ["/start.sh"]

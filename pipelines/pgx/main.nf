@@ -22,6 +22,7 @@ params.reference      = params.reference ?: 'hg38'
 params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
+params.sample_identifier = params.sample_identifier ?: ''
 
 // FASTQ alignment process (OPTIMAL STARTING FORMAT per workflow_logic.md)
 process FastqToBAM {
@@ -41,8 +42,11 @@ process FastqToBAM {
     shell:
     '''
     set -euo pipefail
-    curl -s -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} \
-         -F file=@!{fastq} http://gatk-api:5000/align-fastq > align_response.json
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=gatk_alignment )
+    fi
+    curl "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json 2>gatk.log
     BAM_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('align_response.json'))
@@ -71,8 +75,11 @@ process CramToBAM {
     shell:
     '''
     set -euo pipefail
-    curl -s -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} \
-         -F file=@!{cram} http://gatk-api:5000/cram-to-bam > cram_response.json
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{cram} )
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=gatk_cram_to_bam )
+    fi
+    curl "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam > cram_response.json 2>gatk.log
     BAM_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('cram_response.json'))
@@ -101,8 +108,11 @@ process SamToBAM {
     shell:
     '''
     set -euo pipefail
-    curl -s -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} \
-         -F file=@!{sam} http://gatk-api:5000/sam-to-bam > sam_response.json
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{sam} )
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=gatk_sam_to_bam )
+    fi
+    curl "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam > sam_response.json 2>gatk.log
     BAM_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('sam_response.json'))
@@ -132,8 +142,11 @@ process OptiTypeHLAFromFastq {
     shell:
     '''
     set -euo pipefail
-    curl -s -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} \
-         -F file=@!{fastq} http://hlatyping:5000/call-hla > hla_result.json
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=hlatyping_fastq )
+    fi
+    curl "${CURL_ARGS[@]}" http://hlatyping:5000/call-hla > hla_result.json 2>hla.log
     python3 - <<'PY'
 import json,sys
 data=json.load(open('hla_result.json'))
@@ -167,8 +180,11 @@ process OptiTypeHLAFromBAM {
     shell:
     '''
     set -euo pipefail
-    curl -s -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} \
-         -F file=@!{bam} http://hlatyping:5000/call-hla > hla_result.json
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=hlatyping_bam )
+    fi
+    curl "${CURL_ARGS[@]}" http://hlatyping:5000/call-hla > hla_result.json 2>hla.log
     python3 - <<'PY'
 import json,sys
 data=json.load(open('hla_result.json'))
@@ -200,8 +216,11 @@ process PyPGxBam2Vcf {
     shell:
     '''
     set -euo pipefail
-    curl -s -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} \
-         -F file=@!{bam} http://pypgx:5000/create-input-vcf > response.json
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=pypgx_bam2vcf )
+    fi
+    curl "${CURL_ARGS[@]}" http://pypgx:5000/create-input-vcf > response.json 2>pypgx_bam2vcf.log
     VCF_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('response.json'))
@@ -232,19 +251,23 @@ process PyPGxGenotypeAll {
     # Don't use set -e here to allow graceful error handling
     set -uo pipefail
     # Try curl, but don't fail if it returns HTTP errors
-    if curl -s -f -X POST -F genes=ALL -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} \
-         -F file=@!{vcf} http://pypgx:5000/genotype > pypgx_result.json 2>/dev/null; then
+    # Capture both stdout and stderr from PyPGx container
+    CURL_ARGS=( -f -X POST -F genes=ALL -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} -F input_type=!{params.input_type} )
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=pypgx_analysis )
+    fi
+    if curl "${CURL_ARGS[@]}" http://pypgx:5000/genotype > pypgx_result.json 2>pypgx_stderr.log; then
       echo "PyPGx API call succeeded" >&2
-      export PYPX_SUCCESS=true
+      export PYPGX_SUCCESS=true
     else
       echo "PyPGx API completely failed - bypassing PyPGx and going direct to PharmCAT" >&2
       # Create error JSON but don't create outside.tsv file
       echo '{"success": false, "error": "PyPGx service unavailable", "results": {}}' > pypgx_result.json
-      export PYPX_SUCCESS=false
+      export PYPGX_SUCCESS=false
     fi
     python3 - <<PY
 import json,sys,os
-pypgx_success = os.environ.get('PYPX_SUCCESS', 'false').lower() == 'true'
+pypgx_success = os.environ.get('PYPGX_SUCCESS', 'false').lower() == 'true'
 
 try:
     if os.path.exists('pypgx_result.json'):
@@ -309,11 +332,18 @@ process PharmCATRun {
     [ -f "pypgx_outside.tsv" ] && cat pypgx_outside.tsv >> combined_outside.tsv
     [ -f "hla_outside.tsv" ] && cat hla_outside.tsv >> combined_outside.tsv
     
-    CURL_ARGS=( -s -X POST -F patientId=!{patient_id} -F reportId=!{report_id} -F file=@!{vcf} )
+    CURL_ARGS=( -s -X POST -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} )
+    if [ -n "!{params.sample_identifier}" ]; then
+      CURL_ARGS+=( -F sample_identifier=!{params.sample_identifier} )
+    fi
     if [ -s combined_outside.tsv ]; then
       CURL_ARGS+=( -F outside_tsv=@combined_outside.tsv )
     fi
-    curl "${CURL_ARGS[@]}" http://pharmcat:5000/process > pharmcat_result.json || true
+    # Add workflow_id if available
+    if [ -n "${WORKFLOW_ID:-}" ]; then
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=pharmcat_analysis )
+    fi
+    curl "${CURL_ARGS[@]}" http://pharmcat:5000/genotype > pharmcat_result.json 2>pharmcat.log || true
     
     # Copy outputs from mounted volume
     for f in /data/reports/!{patient_id}/!{patient_id}_pgx_pharmcat.*; do

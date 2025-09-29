@@ -213,39 +213,89 @@
             border-color: #f5c6cb;
             color: #721c24;
         }
-        /* Removing connector lines
-        .stage-indicator:not(:last-child)::after {
-            content: '';
-            position: absolute;
-            top: 25%;
-            right: -12px;
-            width: 24px;
-            height: 2px;
-            background-color: #dee2e6;
-            transition: background-color 0.3s ease;
+
+        /* Simplified Stage Indicator System - Uses Bootstrap classes with minimal custom additions */
+        
+        /* Running state - add pulsing animation to Bootstrap success color */
+        .stage-indicator.text-success i {
+            animation: pulse-running 2s infinite;
         }
-        */
-        /* Apply color styling to both icons and text */
-        .stage-indicator.text-primary i,
-        .stage-indicator.text-primary span {
-            color: var(--bs-primary) !important;
+        
+        /* Failed state - add pulsing animation to Bootstrap danger color */
+        .stage-indicator.text-danger i {
+            animation: pulse-error 1s infinite;
         }
-        .stage-indicator.text-success i,
-        .stage-indicator.text-success span {
-            color: var(--bs-success) !important;
+        
+        /* Disabled state - more faded than default muted */
+        .stage-indicator.disabled i,
+        .stage-indicator.disabled span {
+            opacity: 0.3;
         }
-        /* Removing connector line coloring
-        .stage-indicator.text-success::after {
-            background-color: #198754;
+        
+        /* Connection lost state - dimmed and pulsing red */
+        .stage-indicator.connection-lost {
+            opacity: 0.5;
+            animation: connection-lost-pulse 2s infinite;
         }
-        .stage-indicator.text-primary::after {
-            background-color: #0066cc;
+        
+        @keyframes connection-lost-pulse {
+            0% { 
+                opacity: 0.5; 
+                filter: hue-rotate(0deg);
+            }
+            50% { 
+                opacity: 0.3; 
+                filter: hue-rotate(180deg);
+            }
+            100% { 
+                opacity: 0.5; 
+                filter: hue-rotate(0deg);
+            }
         }
-        */
+
         /* Ensure all stage icons have consistent size */
         .stage-indicator i {
             font-size: 1.2rem;
             margin-bottom: 0.25rem;
+        }
+        
+        /* Enhanced pulsing animations */
+        @keyframes pulse-running {
+            0% { 
+                opacity: 1; 
+                transform: scale(1);
+            }
+            50% { 
+                opacity: 0.7; 
+                transform: scale(1.05);
+            }
+            100% { 
+                opacity: 1; 
+                transform: scale(1);
+            }
+        }
+        
+        @keyframes pulse-error {
+            0% { 
+                opacity: 1; 
+                transform: scale(1);
+            }
+            50% { 
+                opacity: 0.6; 
+                transform: scale(1.1);
+            }
+            100% { 
+                opacity: 1; 
+                transform: scale(1);
+            }
+        }
+        
+        /* Legacy support - these classes are now handled by JavaScript state management */
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
         }
 
         /* Header display area styling */
@@ -295,6 +345,21 @@
         [data-bs-theme='dark'] #headerContent .text-muted {
             color: #9ca3af !important;
         }
+        
+        /* Dark mode support for log panel body */
+        [data-bs-theme='dark'] #logPanel .card-body {
+            background-color: #374151 !important;
+            color: #e5e7eb !important;
+        }
+        
+        /* Dark theme support - Bootstrap handles this automatically, just need custom animations */
+        [data-bs-theme='dark'] .stage-indicator.text-success i {
+            animation: pulse-running 2s infinite;
+        }
+        
+        [data-bs-theme='dark'] .stage-indicator.text-danger i {
+            animation: pulse-error 1s infinite;
+        }
 
         /* Responsive design for header display */
         @media (max-width: 768px) {
@@ -307,6 +372,50 @@
                 margin-bottom: 1rem;
             }
         }
+        
+        /* Custom progress bar animation to ensure stripes are always visible */
+        #progressBar, #upload-progress-bar {
+            background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.15) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.15) 75%, transparent 75%, transparent);
+            background-size: 1rem 1rem;
+            transition: width 0.1s ease-out;
+        }
+        
+        /* Only animate when Bootstrap animation classes are present */
+        #progressBar.progress-bar-animated, #upload-progress-bar.progress-bar-animated {
+            animation: progress-bar-stripes 1s linear infinite;
+        }
+        
+        @keyframes progress-bar-stripes {
+            0% {
+                background-position: 1rem 0;
+            }
+            100% {
+                background-position: 0 0;
+            }
+        }
+        
+        /* Cancellation visual feedback styles */
+        .progress-bar-cancelling {
+            animation: none !important; /* Stop the stripe animation */
+            background-color: #dc3545 !important; /* Red color for cancellation */
+            transition: width 2s ease-in-out !important; /* Smooth reverse animation */
+        }
+        
+        .stage-indicator-cancelling-active {
+            color: #dc3545 !important; /* Red color for active stage during cancellation */
+            animation: none !important; /* Stop pulsing */
+        }
+        
+        .stage-indicator-cancelling-analyze {
+            color: #198754 !important; /* Green color for analyze stage during cancellation */
+            animation: pulse 1s infinite !important; /* Keep pulsing green */
+        }
+        
+        .progress-container-cancelling {
+            opacity: 1;
+            transition: opacity 0.5s ease-out 2s; /* Fade out after progress bar reaches 0 */
+        }
+        
     </style>
 </head>
 <body>
@@ -320,7 +429,7 @@
                 </div>
                 <div class="header-center text-center">
                     <h1 class="mb-0">ZaroPGx</h1>
-                    <p class="lead mb-0">Pharmacogenomics Analysis Platform</p>
+                    <p class="lead mb-0">Pharmacogenomic Analysis Platform</p>
                 </div>
                 <div class="header-right d-flex justify-content-end">
                     <button id="themeToggle" class="btn btn-outline-light header-icon-btn" aria-label="Toggle theme" title="Toggle theme">
@@ -384,9 +493,9 @@
                     <div class="card-body">
                             <form action="/upload/genomic-data" method="post" enctype="multipart/form-data" id="uploadForm">
                             <div class="mb-3">
-                                <label for="genomicFile" class="form-label">Genomic File</label>
-                                    <input class="form-control" type="file" id="genomicFile" name="file" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.fastq,.fastq.gz,.fq,.fq.gz,.txt,.csv,.zip" required>
-                                    <div class="form-text">Upload FASTQ, BAM, SAM, CRAM, or VCF genomic datafile(s) for pharmacogenomic analysis. Support for 23andMe and BED is coming soon.</div>
+                                <label for="genomicFile" class="form-label">Genomic File(s)</label>
+                                    <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.fastq,.fastq.gz,.fq,.fq.gz,.txt,.csv,.zip,.bai,.crai,.csi,.tbi,.idx" multiple required>
+                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (currently only GRCh38/hg38 supported.) An index file may be included. Formats FASTQ, BAM, SAM, CRAM, and GRCh37/hg19 VCFs are in testing. Support for BED, 23andMe, and other TXT formats is in development.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -396,18 +505,7 @@
 
 
                                 
-                                <!-- File Analysis Results (hidden by default) -->
-                                <div id="fileAnalysis" class="mb-3 d-none">
-                                    <h5>File Analysis</h5>
-                                    <div class="card">
-                                        <div class="card-body">
-                                            <div id="fileTypeInfo" class="mb-2"></div>
-                                            <div id="vcfInfo" class="mb-2 d-none"></div>
-                                            <div id="workflowInfo" class="mb-2"></div>
-                                            <div id="warnings" class="alert alert-warning d-none"></div>
-                                        </div>
-                                    </div>
-                            </div>
+                                
                             
                             <!-- Stage indicators (always visible) -->
                             <div class="d-flex justify-content-between small mb-3" style="overflow: visible;">
@@ -417,7 +515,7 @@
                                     <span>Upload</span>
                                     <div class="stage-popup">
                                         <h6>File Upload</h6>
-                                        <p>Routes the uploaded genomic data file (currently only GrCh38 VCF) for analysis.</p>
+                                        <p>Receive and route the uploaded genomic data file(s) for analysis.</p>
                                     </div>
                                 </div>
                                 
@@ -427,7 +525,7 @@
                                     <span>Analysis</span>
                                     <div class="stage-popup">
                                         <h6>File Analysis</h6>
-                                        <p>Inspects and analyzes the uploaded file format, sequencing type, quality, and content. Determines workflow for given file.</p>
+                                        <p>Inspect and analyze the uploaded file(s), to determine reference, sequencing type, quality, and content. Prepare workflow for the job.</p>
                                     </div>
                                 </div>
                                 
@@ -437,7 +535,7 @@
                                     <span>OptiType</span>
                                     <div class="stage-popup">
                                         <h6>OptiType HLA Typing</h6>
-                                        <p>Performs HLA (Human Leukocyte Antigen) typing with hlatyping, using OptiType. NB: Can be computationally intensive.</p>
+                                        <p>Perform Human Leukocyte Antigen (HLA) typing with hlatyping, using OptiType. Can be computationally intensive.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="hla">✓ Enabled</button>
                                         </div>
@@ -450,7 +548,7 @@
                                     <span>GATK</span>
                                     <div class="stage-popup">
                                         <h6>GATK Processing</h6>
-                                        <p>Runs filetype conversions and any other required tool with GATK (Genome Analysis Toolkit). NB: Can be computationally intensive.</p>
+                                        <p>Genome Analysis Toolkit (GATK) includes functions for filetype conversion and other manipulations. Can be computationally intensive.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="gatk">✓ Enabled</button>
                                         </div>
@@ -463,7 +561,7 @@
                                     <span>PyPGx</span>
                                     <div class="stage-popup">
                                         <h6>PyPGx Star Allele Calling</h6>
-                                        <p>Calls pharmacogenomic star alleles using PyPGx. Additionally, performs filetype conversions and provides more tools.</p>
+                                        <p>Call pharmacogenomic star alleles using PyPGx. Additional functions include certain filetype conversions and more.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="pypgx">✓ Enabled</button>
                                         </div>
@@ -476,7 +574,7 @@
                                     <span>PharmCAT</span>
                                     <div class="stage-popup">
                                         <h6>PharmCAT Analysis</h6>
-                                        <p>Calls variants and matches phenotypes with recommendations. Generates a pharmacogenomic report.</p>
+                                        <p>Call variants and match phenotypes with recommendations. Generate a pharmacogenomic report.</p>
                                     </div>
                                 </div>
                                 
@@ -486,7 +584,7 @@
                                     <span>Report</span>
                                     <div class="stage-popup">
                                         <h6>Custom Reports</h6>
-                                        <p>Generate custom formatted reports with additional visualizations and analysis. When disabled, only PharmCAT's native report is provided.</p>
+                                        <p>Generate custom formatted reports with visualizations. When disabled, only PharmCAT's native report is provided.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="report">✓ Enabled</button>
                                         </div>
@@ -496,11 +594,13 @@
 
                             <!-- Multi-stage progress bar (hidden by default) -->
                             <div id="progressContainer" class="mb-3 d-none">
-                                <label class="form-label" id="progressLabel">Progress</label>
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label mb-0" id="progressLabel">Progress</label>
+                                </div>
                                 <div class="progress mb-2" style="height: 25px;">
                                     <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
                                          role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" 
-                                         style="width: 0%; transition: none;">
+                                         style="width: 0%;">
                                         0%
                                     </div>
                                 </div>
@@ -508,8 +608,8 @@
                                 
                                 <!-- Detailed log panel (initially collapsed) -->
                                 <div class="card">
-                                    <div class="card-header bg-light p-2" role="button" data-bs-toggle="collapse" data-bs-target="#logPanel">
-                                        <small class="text-black">Processing Log <i class="bi bi-chevron-down float-end"></i></small>
+                                    <div class="card-header p-2" role="button" data-bs-toggle="collapse" data-bs-target="#logPanel">
+                                        <small>Processing Log <i class="bi bi-chevron-down float-end"></i></small>
                                     </div>
                                     <div id="logPanel" class="collapse">
                                         <div id="logMessages" class="card-body p-2 small" style="max-height: 150px; overflow-y: auto; font-family: monospace;">
@@ -538,20 +638,83 @@
                                 </div>
                             </div>
                             
-                            <div class="d-flex gap-2">
-                                <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
+                            <div class="d-flex gap-2 justify-content-between">
+                                <div class="d-flex gap-2">
+                                    <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
 
-                                <!-- View Header button -->
-                                <button type="button" class="btn btn-info" id="viewHeaderButton" onclick="viewHeader()">
-                                    <i class="bi bi-eye"></i> View Header
-                                </button>
+                                    <!-- View Header button -->
+                                    <button type="button" class="btn btn-info" id="viewHeaderButton" onclick="viewHeader()">
+                                        <i class="bi bi-eye"></i> View Header
+                                    </button>
 
-                                <!-- Demo button for PharmCAT example -->
-                                <button type="button" class="btn btn-secondary" id="demoButton" onclick="runPharmCatDemo()" title="Run Demo with PharmCAT VCF">
-                                    <i class="bi bi-play-fill"></i> Run Demo
+                                    <!-- Demo button for PharmCAT example -->
+                                    <button type="button" class="btn btn-secondary" id="demoButton" onclick="runPharmCatDemo()" title="Run Demo with PharmCAT VCF">
+                                        <i class="bi bi-play-fill"></i> Run Demo
+                                    </button>
+                                </div>
+
+                                <!-- Cancel button (hidden by default, shown during progress) -->
+                                <button type="button" class="btn btn-danger d-none" id="cancelButton" onclick="cancelJobMonitoring()" title="Cancel job monitoring">
+                                    <i class="bi bi-x-circle"></i> Cancel
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+
+                <!-- Analysis Results Container (placed above Workflow Details) -->
+                <div id="analysisResults" class="card mt-4 d-none">
+                    <div class="card-header">Analysis Results</div>
+                    <div class="card-body">
+                        <!-- Results will be displayed here -->
+                    </div>
+                </div>
+
+                <!-- Workflow Details Panel (moved below progress/logs & buttons) -->
+                <div id="workflowAnalysisPanel" class="card mt-3 d-none">
+                    <div class="card-header p-2" role="button" data-bs-toggle="collapse" data-bs-target="#workflowAnalysisCollapse">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <span>
+                                <i class="bi bi-clipboard-data me-2"></i>
+                                Workflow Details
+                            </span>
+                            <i class="bi bi-chevron-down"></i>
+                        </div>
+                    </div>
+                    <div id="workflowAnalysisCollapse" class="collapse show">
+                        <div class="card-body">
+                            <!-- File & Workflow Details (hidden until populated) -->
+                            <div id="fileAnalysis" class="mb-2">
+                                <div class="row g-3">
+                                    <!-- Left column: File details (top) + Info alerts (bottom) -->
+                                    <div class="col-12 col-lg-6 d-flex flex-column">
+                                        <div class="card flex-grow-1">
+                                            <div class="card-body">
+                                                <div id="fileTypeInfo" class="mb-2"></div>
+                                                <div id="vcfInfo" class="mb-2 d-none"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Right column: Planned workflow (top) + Warnings (bottom) -->
+                                    <div class="col-12 col-lg-6 d-flex flex-column">
+                                        <div class="card flex-grow-1">
+                                            <div class="card-body">
+                                                <div id="plannedWorkflowInfo" class="mb-2"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Alerts Row: ensure info and warning boxes start at the same vertical position -->
+                                    <div class="col-12 col-lg-6">
+                                        <div id="infoAlertsLeft" class="mt-1"></div>
+                                    </div>
+                                    <div class="col-12 col-lg-6">
+                                        <div id="warnings" class="alert alert-warning d-none mt-1"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -573,24 +736,15 @@
                         </div>
                     </div>
 
-                    <!-- Analysis Results Container -->
-                    <div id="analysisResults" class="card mt-4 d-none">
-                        <div class="card-header">Analysis Results</div>
-                        <div class="card-body">
-                            <!-- Results will be displayed here -->
-                        </div>
-                    </div>
-
                 <div class="row align-items-stretch">
                     <div class="col-md-6 d-flex">
                         <div class="card h-100 w-100">
                             <div class="card-header">ZaroPgx Documentation</div>
                             <div class="card-body d-flex flex-column h-100">
-                                <p class="mb-0">ZaroPGx is a free and open, easily self-hostable individualpharmacogenomic
+                                <p class="mb-0">ZaroPGx is a free and open source, easily self-hostable individual pharmacogenomic
                                     analysis system which attempts to create the most accurate and complete reports possible 
-                                    with a given genomic datafile.
-                                    
-                                    See the software documentation, and access the API reference.</p>
+                                    with a given genomic datafile.<br><br>                         
+                                    For detailed information, see the software documentation and access the API reference.</p>
                                 <div class="mt-auto d-flex gap-2">
                                     <a href="/documentation/" class="btn btn-secondary">Documentation</a>
                                     <a href="/api-reference" class="btn btn-outline-secondary">API Reference</a>
@@ -602,10 +756,9 @@
                         <div class="card h-100 w-100">
                             <div class="card-header">About PharmCAT</div>
                             <div class="card-body d-flex flex-column h-100">
-                                <p>This platform uses PharmCAT to generate recommendations based on institutional guidelines.
-
-                                    PharmCAT is now a part of the ClinPGx project, which also includes CPIC and PharmGKB.
-                                    PharmCAT includes outside calls from hlatyping(OptiType) and PyPGx when available.
+                                <p>This platform uses PharmCAT to generate recommendations based on institutional guidelines.<br>
+                                    PharmCAT is now part of the ClinPGx project, which includes CPIC and PharmGKB.
+                                    PharmCAT includes outside calls from <a href="https://nf-co.re/hlatyping/">hlatyping(OptiType)</a> and <a href="https://pypgx.readthedocs.io/en/latest/readme.html">PyPGx</a> when available.
                                     For a full list of software comprising ZaroPGx, please see the documentation.
                                 </p>
                                 <div class="mt-auto d-flex gap-2">
@@ -620,7 +773,7 @@
         </div>
 
         <div class="footer small">
-            <p class="mb-1">&copy; 2024-{{ current_year }} {{ author_name or 'Unknown Author' }}</p>
+            <p class="mb-1">&copy; 2024-{{ current_year }} {{ author_name or 'Zaromics Initiative' }}</p>
             <p class="mb-1">This program is licensed under the <a href="{{ license_url }}" target="_blank" rel="noopener">{{ license_name }}</a>.</p>
             <p class="mb-0">Source code: <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>. Provided without warranty; see license for details.</p>
         </div>
@@ -631,7 +784,10 @@
     <!-- Add JavaScript file for upload progress tracking -->
     <script src="/static/js/GenomeDownloadProgress.js"></script>
     
-    <!-- Add JavaScript for real progress tracking using Server-Sent Events -->
+    <!-- Workflow Monitoring Scripts -->
+    <script src="/static/js/workflow-monitor.js"></script>
+    
+    <!-- Add JavaScript for real progress tracking using WebSocket -->
     <script>
         // Theme toggle
         document.addEventListener('DOMContentLoaded', function() {
@@ -718,42 +874,173 @@
                 logMessages.scrollTop = logMessages.scrollHeight;
             };
 
+            // Build a consistent, aesthetically rendered planned workflow section
+            window.buildPlannedWorkflowHTML = function(options) {
+                const opts = options || {};
+                const wf = opts.workflow || {};
+                const fileType = (opts.fileType || '').toString().toLowerCase();
+
+                const steps = [];
+                // Always begin with analysis (header inspection)
+                steps.push({ name: 'Analysis (Header Inspection)', icon: 'bi-search' });
+
+                // GATK needed for certain formats or explicit flag
+                const needsGatk = !!wf.needs_gatk || !!wf.needs_alignment || !!wf.needs_conversion || ['sam', 'cram', 'fastq'].includes(fileType);
+                if (needsGatk) {
+                    steps.push({ name: 'GATK Processing', icon: 'bi-cpu' });
+                }
+
+                // PyPGx is generally part of the pipeline unless explicitly disabled
+                const needsPyPgx = (typeof wf.needs_pypgx === 'boolean') ? wf.needs_pypgx : true;
+                if (needsPyPgx) {
+                    steps.push({ name: 'PyPGx Star Allele Calling', icon: 'bi-star' });
+                }
+
+                // Include bam2vcf conversion for alignment-based inputs or explicit flag
+                const needsBam2Vcf = !!wf.needs_pypgx_bam2vcf || ['bam', 'cram', 'sam'].includes(fileType);
+                if (needsBam2Vcf) {
+                    steps.push({ name: 'PyPGx BAM→VCF Conversion', icon: 'bi-shuffle' });
+                }
+
+                // PharmCAT and Report are core terminal steps
+                steps.push({ name: 'PharmCAT Analysis', icon: 'bi-capsule' });
+                steps.push({ name: 'Report Generation', icon: 'bi-file-earmark-text' });
+
+                let html = `
+                    <h6 class="card-title d-flex align-items-center mb-2">
+                        <i class="bi bi-diagram-3 me-2 text-primary"></i>
+                        Planned Workflow
+                    </h6>
+                    <ul class="list-group">
+                `;
+                steps.forEach(step => {
+                    html += `
+                        <li class="list-group-item d-flex align-items-center">
+                            <i class="bi ${step.icon} me-2"></i>
+                            <span>${step.name}</span>
+                        </li>
+                    `;
+                });
+                html += `</ul>`;
+                return html;
+            };
+
             // Function to update file analysis display - make it globally available
             window.updateFileAnalysis = function(analysis) {
+                // Ensure the panel is visible and expanded
+                const workflowPanel = document.getElementById('workflowAnalysisPanel');
+                const workflowCollapse = document.getElementById('workflowAnalysisCollapse');
+                if (workflowPanel) {
+                    workflowPanel.classList.remove('d-none');
+                }
+                if (workflowCollapse && !workflowCollapse.classList.contains('show')) {
+                    const collapseInstance = bootstrap.Collapse.getOrCreateInstance(workflowCollapse, { toggle: false });
+                    collapseInstance.show();
+                }
+
                 fileAnalysis.classList.remove('d-none');
                 
+                // Normalize incoming shapes: prefer analysis.analysis_info (backend UploadResponse)
+                const afi = analysis.analysis_info || {};
+                const wf = analysis.workflow || {};
+
                 // Update file type info
                 fileTypeInfo.innerHTML = `
-                    <strong>File Type:</strong> ${analysis.file_type}<br>
-                    <strong>Compressed:</strong> ${analysis.is_compressed ? 'Yes' : 'No'}<br>
-                    <strong>Has Index:</strong> ${analysis.has_index ? 'Yes' : 'No'}
+                    <strong>File Type:</strong> ${(analysis.file_type || afi.file_type) || 'Unknown'}<br>
+                    <strong>Compressed:</strong> ${afi.is_compressed ? 'Yes' : 'No'}<br>
+                    <strong>Has Index:</strong> ${afi.has_index ? 'Yes' : 'No'}
                 `;
 
                 // Update VCF info if available
-                if (analysis.vcf_info) {
+                if (afi.vcf_info) {
                     vcfInfo.classList.remove('d-none');
                     vcfInfo.innerHTML = `
-                        <strong>Reference Genome:</strong> ${analysis.vcf_info.reference_genome}<br>
-                        <strong>Sequencing Platform:</strong> ${analysis.vcf_info.sequencing_platform}<br>
-                        <strong>Sequencing Profile:</strong> ${analysis.vcf_info.sequencing_profile}<br>
-                        <strong>Sample Count:</strong> ${analysis.vcf_info.sample_count}
+                        <strong>Reference Genome:</strong> ${afi.vcf_info.reference_genome}<br>
+                        <strong>Sequencing Platform:</strong> ${afi.vcf_info.sequencing_platform}<br>
+                        <strong>Sequencing Profile:</strong> ${afi.vcf_info.sequencing_profile}<br>
+                        <strong>Sample Count:</strong> ${afi.vcf_info.sample_count}
                     `;
                 }
 
-                // Update workflow info
-                workflowInfo.innerHTML = `
-                    <strong>Analysis Workflow:</strong><br>
-                    ${analysis.workflow.recommendations.map(rec => `• ${rec}`).join('<br>')}
-                `;
+                // Planned workflow (right column, top)
+                const plannedContainer = document.getElementById('plannedWorkflowInfo');
+                if (plannedContainer) {
+                    plannedContainer.innerHTML = window.buildPlannedWorkflowHTML({ workflow: wf, fileType: (analysis.file_type || afi.file_type || '').toString() });
+                }
 
-                // Show warnings if any
-                if (analysis.workflow.warnings.length > 0) {
-                    warnings.classList.remove('d-none');
-                    warnings.innerHTML = analysis.workflow.warnings.map(warn => `• ${warn}`).join('<br>');
+                // Info alerts (left column, bottom)
+                const infoContainer = document.getElementById('infoAlertsLeft');
+                if (infoContainer) {
+                    let infoHtml = '';
+                    const recs = wf.recommendations || [];
+                    if (recs.length > 0) {
+                        infoHtml += `
+                            <div class="alert alert-info">
+                                <strong>Information:</strong>
+                                <ul class="mb-0 mt-1">
+                                    ${recs.map(r => `<li>${r}</li>`).join('')}
+                                </ul>
+                            </div>`;
+                    }
+                    // Validation errors appear as danger under info
+                    if (afi.validation_errors && Array.isArray(afi.validation_errors) && afi.validation_errors.length > 0) {
+                        infoHtml += `
+                            <div class="alert alert-danger mt-2">
+                                <strong>Validation Errors:</strong>
+                                <ul class="mb-0 mt-1">
+                                    ${afi.validation_errors.map(e => `<li>${e}</li>`).join('')}
+                                </ul>
+                            </div>`;
+                    }
+                    infoContainer.innerHTML = infoHtml;
+                }
+
+                // Warnings (right column, bottom) and unsupported as danger
+                const warns = wf.warnings || [];
+                if (warnings) {
+                    let warnHtml = '';
+                    if (warns.length > 0) {
+                        warnHtml += `
+                            <strong>Warnings:</strong>
+                            <ul class="mb-0 mt-1">
+                                ${warns.map(w => `<li>${w}</li>`).join('')}
+                            </ul>`;
+                    }
+                    if (wf.unsupported) {
+                        warnHtml += `
+                            <div class="alert alert-danger mt-2 mb-0">
+                                <strong>Unsupported:</strong> ${wf.unsupported_reason || 'Unknown reason'}
+                            </div>`;
+                    }
+                    if (warnHtml) {
+                        warnings.classList.remove('d-none');
+                        warnings.classList.add('alert');
+                        warnings.classList.add('alert-warning');
+                        warnings.innerHTML = warnHtml;
+                    } else {
+                        warnings.classList.add('d-none');
+                        warnings.innerHTML = '';
+                    }
+                }
+
+                // Hide upload progress bar when workflow monitoring starts
+                if (window.uploadProgressManager && typeof window.uploadProgressManager.hideUploadProgress === 'function') {
+                    window.uploadProgressManager.hideUploadProgress();
                 }
 
                 // Show progress container
                 progressContainer.classList.remove('d-none');
+                
+                // Show cancel button
+                const cancelButton = document.getElementById('cancelButton');
+                if (cancelButton) {
+                    cancelButton.classList.remove('d-none');
+                }
+                
+                // Set analysis stage to blue (completed) when header data is received and displayed
+                if (window.GlyphManager) {
+                    window.GlyphManager.setStageState(document.getElementById('stageAnalysis'), 'completed');
+                }
             };
 
             // Smooth Progress Bar Manager
@@ -765,12 +1052,31 @@
                     this.targetProgress = 0;
                     this.currentStage = null;
                     this.stageStartTime = null;
-                    this.minStageDuration = 1000; // 1 second minimum per stage
+                    this.minStageDuration = 1500; // 1.5 second minimum per stage
                     this.animationDuration = 1000; // 1 second for progress bar animation
                     this.animationId = null;
                     this.isAnimating = false;
-                    this.lastUpdateTime = 0;
-                    this.updateThrottle = 50; // Minimum 50ms between updates
+                    // No throttling needed - progress only increases and animation is already frame-rate limited
+                    this.pendingStageUpdate = null; // Queue for pending stage updates
+                    
+                    // Stage simulation properties
+                    this.isSimulating = false;
+                    this.simulationId = null;
+                    this.simulationStartTime = null;
+                    this.simulationStartProgress = 0;
+                    this.simulationTargetProgress = 0;
+                    this.simulationStage = null;
+                    this.simulationIsSkipped = false;
+                    
+                    // Stage definitions with progress ranges and simulation settings
+                    this.stageDefinitions = {
+                        'analysis': { min: 1, max: 9, quickStage: true, simulationRatio: 0.5 }, // 1 sec : 2%
+                        'gatk': { min: 10, max: 49, quickStage: false, simulationRatio: 0.2 }, // 1 sec : 5%
+                        'hla': { min: 20, max: 34, quickStage: false, simulationRatio: 0.2 },
+                        'pypgx': { min: 50, max: 74, quickStage: false, simulationRatio: 0.2 },
+                        'pharmcat': { min: 75, max: 89, quickStage: false, simulationRatio: 0.2 },
+                        'report': { min: 90, max: 100, quickStage: true, simulationRatio: 0.5 } // 1 sec : 2%
+                    };
                 }
 
                 updateProgress(targetProgress, stage, message) {
@@ -782,21 +1088,32 @@
                         return;
                     }
                     
-                    // Throttle updates to prevent too frequent calls
-                    if (now - this.lastUpdateTime < this.updateThrottle) {
-                        return;
-                    }
-                    this.lastUpdateTime = now;
-
+                    // Stop any ongoing simulation
+                    this.stopSimulation();
+                    
                     // Check if we need to enforce minimum stage duration
                     if (this.currentStage && this.currentStage !== stage) {
                         const timeInCurrentStage = now - this.stageStartTime;
                         if (timeInCurrentStage < this.minStageDuration) {
-                            // Still in minimum duration for current stage, delay the update
+                            // Still in minimum duration for current stage, queue the new stage update
                             const remainingTime = this.minStageDuration - timeInCurrentStage;
-                            console.log(`Enforcing minimum stage duration: ${remainingTime}ms remaining`);
+                            console.log(`Enforcing minimum stage duration: ${remainingTime}ms remaining for ${this.currentStage}, queuing ${stage}`);
+                            
+                            // Store the pending stage update
+                            this.pendingStageUpdate = {
+                                targetProgress,
+                                stage,
+                                message,
+                                timestamp: now
+                            };
+                            
+                            // Schedule the update after the remaining time
                             setTimeout(() => {
-                                this.updateProgress(targetProgress, stage, message);
+                                if (this.pendingStageUpdate) {
+                                    const pending = this.pendingStageUpdate;
+                                    this.pendingStageUpdate = null;
+                                    this.updateProgress(pending.targetProgress, pending.stage, pending.message);
+                                }
                             }, remainingTime);
                             return;
                         }
@@ -817,9 +1134,14 @@
                         this.progressStatus.textContent = message;
                     }
 
-                    // Start smooth animation if not already animating
-                    if (!this.isAnimating) {
-                        this.animateProgress();
+                    // Check if we should start stage simulation
+                    if (this.shouldSimulateStage(stage, targetProgress)) {
+                        this.startStageSimulation(stage, targetProgress, message);
+                    } else {
+                        // Start smooth animation if not already animating
+                        if (!this.isAnimating) {
+                            this.animateProgress();
+                        }
                     }
                 }
 
@@ -862,6 +1184,169 @@
                     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
                 }
 
+                // Stage simulation methods
+                shouldSimulateStage(stage, targetProgress) {
+                    const stageDef = this.stageDefinitions[stage];
+                    if (!stageDef) return false;
+                    
+                    // Only simulate quick stages (analysis and report)
+                    if (!stageDef.quickStage) return false;
+                    
+                    // Check if we're jumping to the stage's maximum progress
+                    const progressJump = targetProgress - this.currentProgress;
+                    const stageRange = stageDef.max - stageDef.min;
+                    
+                    // If we're jumping more than 50% of the stage range, simulate
+                    return progressJump > (stageRange * 0.5);
+                }
+
+                startStageSimulation(stage, targetProgress, message) {
+                    const stageDef = this.stageDefinitions[stage];
+                    if (!stageDef) return;
+                    
+                    console.log(`Starting stage simulation for ${stage}: ${this.currentProgress}% -> ${targetProgress}%`);
+                    
+                    this.isSimulating = true;
+                    this.simulationStartTime = Date.now();
+                    this.simulationStartProgress = this.currentProgress;
+                    this.simulationTargetProgress = targetProgress;
+                    this.simulationStage = stage;
+                    this.simulationIsSkipped = false;
+                    
+                    // Calculate simulation duration based on progress range and ratio
+                    const progressRange = targetProgress - this.currentProgress;
+                    const simulationDuration = Math.max(1000, progressRange / stageDef.simulationRatio * 1000); // Convert to milliseconds
+                    
+                    console.log(`Simulation duration: ${simulationDuration}ms for ${progressRange}% progress`);
+                    
+                    this.animateStageSimulation(simulationDuration, message);
+                }
+
+                animateStageSimulation(duration, message) {
+                    if (!this.isSimulating) return;
+                    
+                    const startTime = Date.now();
+                    const startProgress = this.simulationStartProgress;
+                    const progressDiff = this.simulationTargetProgress - startProgress;
+                    
+                    const animate = () => {
+                        if (!this.isSimulating) return;
+                        
+                        const elapsed = Date.now() - startTime;
+                        const progress = Math.min(elapsed / duration, 1);
+                        
+                        // Use cubic easing for smooth simulation
+                        const easedProgress = this.easeInOutCubic(progress);
+                        const currentValue = startProgress + (progressDiff * easedProgress);
+                        
+                        // Update progress bar
+                        this.currentProgress = Math.round(currentValue);
+                        this.progressBar.style.width = `${this.currentProgress}%`;
+                        this.progressBar.textContent = `${this.currentProgress}%`;
+                        this.progressBar.setAttribute('aria-valuenow', this.currentProgress);
+                        
+                        // Update status message
+                        if (this.progressStatus && message) {
+                            this.progressStatus.textContent = message;
+                        }
+                        
+                        if (progress < 1) {
+                            this.simulationId = requestAnimationFrame(animate);
+                        } else {
+                            // Simulation complete
+                            this.currentProgress = this.simulationTargetProgress;
+                            this.isSimulating = false;
+                            this.simulationId = null;
+                            console.log(`Stage simulation complete for ${this.simulationStage}`);
+                        }
+                    };
+                    
+                    this.simulationId = requestAnimationFrame(animate);
+                }
+
+                stopSimulation() {
+                    if (this.isSimulating) {
+                        console.log(`Stopping stage simulation for ${this.simulationStage}`);
+                        this.isSimulating = false;
+                        if (this.simulationId) {
+                            cancelAnimationFrame(this.simulationId);
+                            this.simulationId = null;
+                        }
+                    }
+                }
+
+                // Method to handle skipped stages
+                simulateSkippedStage(skippedStage, fromProgress, toProgress) {
+                    const stageDef = this.stageDefinitions[skippedStage];
+                    if (!stageDef) return;
+                    
+                    console.log(`Simulating skipped stage ${skippedStage}: ${fromProgress}% -> ${toProgress}%`);
+                    
+                    this.isSimulating = true;
+                    this.simulationStartTime = Date.now();
+                    this.simulationStartProgress = fromProgress;
+                    this.simulationTargetProgress = toProgress;
+                    this.simulationStage = skippedStage;
+                    this.simulationIsSkipped = true;
+                    
+                    // Calculate simulation duration for skipped stages (1 sec : 5%)
+                    const progressRange = toProgress - fromProgress;
+                    const simulationDuration = Math.max(500, progressRange / 0.2 * 1000); // 1 sec : 5%
+                    
+                    console.log(`Skipped stage simulation duration: ${simulationDuration}ms for ${progressRange}% progress`);
+                    
+                    this.animateStageSimulation(simulationDuration, `Skipping ${skippedStage} stage`);
+                }
+
+                // Helper method to detect and handle skipped stages
+                detectAndSimulateSkippedStages(currentStage, currentProgress) {
+                    const stageOrder = ['analysis', 'gatk', 'hla', 'pypgx', 'pharmcat', 'report'];
+                    const currentStageIndex = stageOrder.indexOf(currentStage);
+                    
+                    if (currentStageIndex === -1) return;
+                    
+                    // Check for gaps in progress that might indicate skipped stages
+                    for (let i = 0; i < currentStageIndex; i++) {
+                        const stage = stageOrder[i];
+                        const stageDef = this.stageDefinitions[stage];
+                        if (!stageDef) continue;
+                        
+                        // Check if we've jumped over this stage's range
+                        if (currentProgress > stageDef.max && this.currentProgress <= stageDef.min) {
+                            console.log(`Detected potential skipped stage: ${stage}`);
+                            // Don't simulate here - let the workflow system handle this
+                            // This is just for detection and logging
+                        }
+                    }
+                }
+
+                // Public method to manually trigger skipped stage simulation
+                simulateSkippedStages(skippedStages, fromProgress, toProgress) {
+                    if (!Array.isArray(skippedStages) || skippedStages.length === 0) return;
+                    
+                    console.log(`Manually simulating skipped stages: ${skippedStages.join(', ')}`);
+                    
+                    // Calculate progress per stage
+                    const totalProgressRange = toProgress - fromProgress;
+                    const progressPerStage = totalProgressRange / skippedStages.length;
+                    
+                    let currentFromProgress = fromProgress;
+                    
+                    skippedStages.forEach((stage, index) => {
+                        const stageToProgress = Math.min(
+                            currentFromProgress + progressPerStage,
+                            toProgress
+                        );
+                        
+                        // Add a small delay between stages for visual effect
+                        setTimeout(() => {
+                            this.simulateSkippedStage(stage, currentFromProgress, stageToProgress);
+                        }, index * 200); // 200ms delay between stages
+                        
+                        currentFromProgress = stageToProgress;
+                    });
+                }
+
                 reset() {
                     if (this.animationId) {
                         cancelAnimationFrame(this.animationId);
@@ -872,7 +1357,17 @@
                     this.targetProgress = 0;
                     this.currentStage = null;
                     this.stageStartTime = null;
-                    this.lastUpdateTime = 0;
+                    
+                    // Reset simulation state
+                    this.stopSimulation();
+                    this.isSimulating = false;
+                    this.simulationId = null;
+                    this.simulationStartTime = null;
+                    this.simulationStartProgress = 0;
+                    this.simulationTargetProgress = 0;
+                    this.simulationStage = null;
+                    this.simulationIsSkipped = false;
+                    
                     this.progressBar.style.width = '0%';
                     this.progressBar.textContent = '0%';
                     this.progressBar.setAttribute('aria-valuenow', 0);
@@ -880,509 +1375,41 @@
                         this.progressStatus.textContent = 'Preparing...';
                     }
                 }
+
+                // Method to stop progress bar animation (useful for completion)
+                stopAnimation() {
+                    if (this.animationId) {
+                        cancelAnimationFrame(this.animationId);
+                        this.animationId = null;
+                    }
+                    this.isAnimating = false;
+                    this.stopSimulation();
+                    
+                    // Remove animation classes from progress bar
+                    this.progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+                }
             }
 
             // Global smooth progress manager instance
-            let globalSmoothProgress = null;
+            window.globalSmoothProgress = null;
+            
+            // Initialize smooth progress manager
+            window.initializeSmoothProgress = function() {
+                if (!window.globalSmoothProgress) {
+                    const progressBar = document.getElementById('progressBar');
+                    const progressStatus = document.getElementById('progressStatus');
+                    if (progressBar && progressStatus) {
+                        window.globalSmoothProgress = new SmoothProgressManager(progressBar, progressStatus);
+                    }
+                }
+                return window.globalSmoothProgress;
+            }
 
             // Function to reset progress for new uploads
             window.resetProgress = function() {
-                if (globalSmoothProgress) {
-                    globalSmoothProgress.reset();
+                if (window.globalSmoothProgress) {
+                    window.globalSmoothProgress.reset();
                 }
-            };
-
-            // Make monitorProgress globally available
-            window.monitorProgress = async function(jobId) {
-                const progressBar = document.getElementById('progressBar');
-                const progressStatus = document.getElementById('progressStatus');
-                const uploadButton = document.getElementById('uploadButton');
-                const logMessages = document.getElementById('logMessages');
-                
-                // Check if elements exist before proceeding
-                if (!progressBar || !progressStatus || !logMessages) {
-                    console.error("Progress monitoring elements not found");
-                    return;
-                }
-
-                // Initialize or reuse smooth progress manager
-                if (!globalSmoothProgress) {
-                    globalSmoothProgress = new SmoothProgressManager(progressBar, progressStatus);
-                } else {
-                    // Update references in case elements changed
-                    globalSmoothProgress.progressBar = progressBar;
-                    globalSmoothProgress.progressStatus = progressStatus;
-                }
-                const smoothProgress = globalSmoothProgress;
-
-                const addLogMessage = (message, type = 'info') => {
-                    if (!logMessages) return;
-                    const timestamp = new Date().toLocaleTimeString();
-                    const logEntry = document.createElement('div');
-                    logEntry.className = `text-${type}`;
-                    logEntry.textContent = `[${timestamp}] ${message}`;
-                    logMessages.appendChild(logEntry);
-                    logMessages.scrollTop = logMessages.scrollHeight;
-                };
-
-                const updateNextflowProcessDetails = (processes) => {
-                    const nextflowPanel = document.getElementById('nextflowProcessPanel');
-                    const processCount = document.getElementById('nextflowProcessCount');
-                    const processList = document.getElementById('nextflowProcessList');
-                    
-                    if (!nextflowPanel || !processCount || !processList) return;
-                    
-                    // Show the panel if it's hidden
-                    nextflowPanel.classList.remove('d-none');
-                    
-                    // Update process count
-                    const totalProcesses = Object.keys(processes).length;
-                    processCount.textContent = `${totalProcesses} processes`;
-                    
-                    // Clear existing process list
-                    processList.innerHTML = '';
-                    
-                    // Add each process
-                    Object.entries(processes).forEach(([taskId, process]) => {
-                        const processDiv = document.createElement('div');
-                        processDiv.className = 'mb-2 p-2 border rounded';
-                        
-                        // Determine status color and icon
-                        let statusClass = 'text-muted';
-                        let statusIcon = 'bi-circle';
-                        let statusText = process.status || 'Unknown';
-                        
-                        switch (process.status) {
-                            case 'SUBMITTED':
-                                statusClass = 'text-info';
-                                statusIcon = 'bi-clock';
-                                break;
-                            case 'RUNNING':
-                                statusClass = 'text-primary';
-                                statusIcon = 'bi-play-circle';
-                                break;
-                            case 'COMPLETED':
-                                statusClass = 'text-success';
-                                statusIcon = 'bi-check-circle';
-                                break;
-                            case 'FAILED':
-                                statusClass = 'text-danger';
-                                statusIcon = 'bi-x-circle';
-                                break;
-                            case 'CANCELLED':
-                                statusClass = 'text-warning';
-                                statusIcon = 'bi-stop-circle';
-                                break;
-                        }
-                        
-                        // Format duration
-                        let durationText = '';
-                        if (process.duration && process.duration !== '-') {
-                            const duration = parseFloat(process.duration);
-                            if (duration > 60) {
-                                durationText = `${Math.round(duration / 60)}m ${Math.round(duration % 60)}s`;
-                            } else {
-                                durationText = `${Math.round(duration)}s`;
-                            }
-                        }
-                        
-                        // Format timestamps
-                        const formatTime = (timeStr) => {
-                            if (!timeStr || timeStr === '-') return 'N/A';
-                            try {
-                                return new Date(timeStr).toLocaleTimeString();
-                            } catch {
-                                return timeStr;
-                            }
-                        };
-                        
-                        processDiv.innerHTML = `
-                            <div class="d-flex justify-content-between align-items-start">
-                                <div class="flex-grow-1">
-                                    <div class="d-flex align-items-center mb-1">
-                                        <i class="bi ${statusIcon} me-2 ${statusClass}"></i>
-                                        <strong class="me-2">${process.process_name || 'Unknown Process'}</strong>
-                                        <span class="badge bg-${statusClass.replace('text-', '')}">${statusText}</span>
-                                    </div>
-                                    <div class="small text-muted">
-                                        <div>Task ID: ${taskId}</div>
-                                        ${process.tag ? `<div>Tag: ${process.tag}</div>` : ''}
-                                        ${durationText ? `<div>Duration: ${durationText}</div>` : ''}
-                                        ${process.exit_code && process.exit_code !== '-' ? `<div>Exit Code: ${process.exit_code}</div>` : ''}
-                                    </div>
-                                </div>
-                                <div class="small text-muted text-end">
-                                    <div>Start: ${formatTime(process.start_time)}</div>
-                                    <div>End: ${formatTime(process.complete_time)}</div>
-                                </div>
-                            </div>
-                        `;
-                        
-                        processList.appendChild(processDiv);
-                    });
-                };
-
-                let reconnectAttempt = 0;
-                const maxReconnects = 3;
-
-                async function attemptConnection() {
-                    try {
-                        // Make the request to the new monitoring API
-                        const response = await fetch(`/monitoring/progress/${jobId}`, {
-                            headers: {
-                                'Accept': 'text/event-stream'
-                            }
-                        });
-                        
-                        if (!response.ok) {
-                            throw new Error(`HTTP error! status: ${response.status}`);
-                        }
-
-                        const reader = response.body.getReader();
-                        const decoder = new TextDecoder();
-
-                        addLogMessage(`Connected to progress stream for job ${jobId}`);
-                        reconnectAttempt = 0; // Reset reconnect attempts on successful connection
-
-                        while (true) {
-                            try {
-                                const {value, done} = await reader.read();
-                                
-                                if (done) {
-                                    console.log("Stream closed normally");
-                                    addLogMessage("Progress stream closed normally");
-                                    break;
-                                }
-                                
-                                const chunk = decoder.decode(value);
-                                const lines = chunk.split('\n');
-                                
-                                for (const line of lines) {
-                                    if (line.trim().length > 0) {
-                                        try {
-                                            if (line.startsWith('data: ')) {
-                                                try {
-                                                    const data = JSON.parse(line.slice(6));
-                                                    
-                                                    // DEBUG: Log all progress data
-                                                    console.log("Progress update received:", data);
-                                                    
-                                                    if (data.reconnect) {
-                                                        console.log("Connection timed out, reconnecting...");
-                                                        await new Promise(resolve => setTimeout(resolve, 1000));
-                                                        attemptConnection();
-                                                        return;
-                                                    }
-                                                    
-                                                    // Update progress bar using smooth progress manager
-                                                    const progressValue = data.progress || data.percent;
-                                                    const stage = data.stage || 'unknown';
-                                                    const message = data.message || '';
-                                                    
-                                                    // Only update progress if we have a valid progress value
-                                                    // This prevents the progress bar from resetting to 0 when progress is undefined
-                                                    if (progressValue !== undefined && progressValue !== null) {
-                                                        console.log(`Progress update: ${progressValue}% (stage: ${stage}, message: "${message}")`);
-                                                        smoothProgress.updateProgress(progressValue, stage, message);
-                                                    } else {
-                                                        console.log(`Skipping progress update - progressValue: ${progressValue}, stage: ${stage}, message: "${message}"`);
-                                                    }
-                                                    
-                                                    // Add log message - only if we have a meaningful message
-                                                    if (data.message && data.message.trim()) {
-                                                        addLogMessage(data.message);
-                                                    } else if (progressValue !== undefined && progressValue !== null) {
-                                                        // Only show "Processing..." if we have a valid progress update
-                                                        addLogMessage('Processing...');
-                                                    }
-                                                    
-                                                    // Update Nextflow process details if available
-                                                    if (data.metadata && data.metadata.nextflow_processes) {
-                                                        updateNextflowProcessDetails(data.metadata.nextflow_processes);
-                                                    }
-                                                    
-                                                    // Update stage indicators based on current stage
-                                                    if (data.stage) {
-                                                        // First, reset all stages to muted
-                                                        document.querySelectorAll('.stage-indicator').forEach(el => {
-                                                            el.classList.add('text-muted');
-                                                            el.classList.remove('text-primary', 'text-success');
-                                                        });
-                                                        
-                                                        // Map backend stage name to frontend stage name
-                                                        let currentStage = data.stage;
-                                                        // Handle backend stage naming variations
-                                                        const stageNameMap = {
-                                                            // Upload stages
-                                                            'upload_start': 'Upload',
-                                                            'upload_complete': 'Upload',
-                                                            'initializing': 'Upload',
-                                                            'uploaded': 'Upload',
-                                                            
-                                                            // GATK stages
-                                                            'gatk_conversion': 'GATK',
-                                                            'fastq_conversion': 'GATK',
-                                                            'variant_calling': 'GATK',
-                                                            'gatk': 'GATK',
-                                                            
-                                                            // HLA stages
-                                                            'hla_typing': 'HLA',
-                                                            'hlatyping': 'HLA',
-                                                            'hla': 'HLA',
-                                                            
-                                                            // PyPGx stages
-                                                            'pypgx_analysis': 'PyPGx',
-                                                            'pypgx_bam2vcf': 'PyPGx',
-                                                            'star_allele_calling': 'PyPGx',
-                                                            'pypgx': 'PyPGx',
-                                                            
-                                                            // PharmCAT stages
-                                                            'pharmcat_analysis': 'PharmCAT',
-                                                            'pharmcat': 'PharmCAT',
-                                                            
-                                                            // Report stages
-                                                            'workflow_diagram': 'Report',
-                                                            'report_generation': 'Report',
-                                                            'complete': 'Report',
-                                                            'report': 'Report',
-                                                            
-                                                            // Analysis stages
-                                                            'processing': 'Analysis',
-                                                            'header_inspection': 'Analysis',
-                                                            'analyzing': 'Analysis',
-                                                            'analysis': 'Analysis'
-                                                        };
-                                                        
-                                                        // Convert backend stage name to frontend stage name
-                                                        if (stageNameMap[currentStage.toLowerCase()]) {
-                                                            currentStage = stageNameMap[currentStage.toLowerCase()];
-                                                        }
-                                                        
-                                                        // Map stage to element ID
-                                                        const stageMap = {
-                                                            'Upload': 'stageUpload',
-                                                            'Analysis': 'stageAnalysis',
-                                                            'HLA': 'stageHLA',
-                                                            'GATK': 'stageGATK', 
-                                                            'PyPGx': 'stagePyPGx',
-                                                            'PharmCAT': 'stagePharmcat',
-                                                            'Report': 'stageReport'
-                                                        };
-                                                        
-                                                        // Get the ordered list of stages for sequencing
-                                                        const orderedStages = ['Upload', 'Analysis', 'HLA', 'GATK', 'PyPGx', 'PharmCAT', 'Report'];
-                                                        const currentStageIndex = orderedStages.indexOf(currentStage);
-                                                        
-                                                        console.log("Stage mapping: backend='"+data.stage+"', frontend='"+currentStage+"', index="+currentStageIndex);
-                                                        
-                                                        if (currentStageIndex !== -1) {
-                                                            // Process each stage
-                                                            orderedStages.forEach((stageName, index) => {
-                                                                const el = document.getElementById(stageMap[stageName]);
-                                                                if (el) {
-                                                                    // Remove muted styling
-                                                                    el.classList.remove('text-muted');
-                                                                    
-                                                                    if (index < currentStageIndex) {
-                                                                        // Completed stages
-                                                                        el.classList.add('text-success');
-                                                                        el.classList.remove('text-primary');
-                                                                    } else if (index === currentStageIndex) {
-                                                                        // Current stage
-                                                                        el.classList.add('text-primary');
-                                                                        el.classList.remove('text-success');
-                                                                    } else {
-                                                                        // Future stages
-                                                                        el.classList.add('text-muted');
-                                                                        el.classList.remove('text-success', 'text-primary');
-                                                                    }
-                                                                }
-                                                            });
-                                                            
-                                                            console.log("Updated stage indicators for stage:", data.stage);
-                                                        }
-                                                    }
-                                                    
-                                                    // CRITICAL FIX: If complete, show results
-                                                    if (data.complete) {
-                                                        console.log("Processing complete:", data);
-                                                        
-                                                        // Set progress to 100% using smooth progress manager
-                                                        smoothProgress.updateProgress(100, 'complete', 'Processing complete!');
-                                                        
-                                                        // Show completion message
-                                                        addLogMessage("✓ Processing complete!", "success");
-                                                        
-                                                        // Add debug info
-                                                        console.log("Complete data:", data);
-                                                        
-                                                        if (data.success) {
-                                                            addLogMessage("✓ Analysis successful", "success");
-                                                            console.log("Success data:", data.data);
-                                                            console.log("FULL SUCCESS DATA STRUCTURE:", JSON.stringify(data, null, 2));
-                                                            console.log("PHARMCAT URLS CHECK:");
-                                                            console.log("data.data.pharmcat_html_report_url:", data.data?.pharmcat_html_report_url);
-                                                            console.log("data.data.pharmcat_json_report_url:", data.data?.pharmcat_json_report_url);
-                                                            console.log("data.data.pharmcat_tsv_report_url:", data.data?.pharmcat_tsv_report_url);
-                                                            
-                                                            // Get report URLs
-                                                            let pdfUrl, htmlUrl;
-                                                            let pharmcatHtmlUrl, pharmcatJsonUrl, pharmcatTsvUrl;
-                                                            
-                                                            if (data.data) {
-                                                                pdfUrl = data.data.pdf_report_url;
-                                                                htmlUrl = data.data.html_report_url;
-                                                                pharmcatHtmlUrl = data.data.pharmcat_html_report_url;
-                                                                pharmcatJsonUrl = data.data.pharmcat_json_report_url;
-                                                                pharmcatTsvUrl = data.data.pharmcat_tsv_report_url;
-                                                                console.log("Found report URLs in data.data:", {
-                                                                    pdf: pdfUrl,
-                                                                    html: htmlUrl,
-                                                                    pharmcatHtml: pharmcatHtmlUrl,
-                                                                    pharmcatJson: pharmcatJsonUrl,
-                                                                    pharmcatTsv: pharmcatTsvUrl
-                                                                });
-                                                            }
-                                                            
-                                                            if (!pdfUrl && !htmlUrl) {
-                                                                const jobId = data.job_id || (data.data && data.data.job_id);
-                                                                console.log("Constructing URLs with job ID:", jobId);
-                                                                
-                                                                if (jobId) {
-                                                                    pdfUrl = `/reports/${jobId}_pgx_report.pdf`;
-                                                                    htmlUrl = `/reports/${jobId}_pgx_report.html`;
-                                                                    console.log("Constructed URLs:", pdfUrl, htmlUrl);
-                                                                }
-                                                            }
-                                                            
-                                                            // Create results display
-                                                            const resultsDiv = document.getElementById('analysisResults');
-                                                            if (resultsDiv) {
-                                                                resultsDiv.innerHTML = `
-                                                                    <div class="alert alert-success">
-                                                                        <h4>Analysis Complete!</h4>
-                                                                        <p>Your pharmacogenomic analysis has been completed successfully.</p>
-                                                                        
-                                                                        <!-- Main Reports -->
-                                                                        <div class="mt-3">
-                                                                            <h5>Main Reports</h5>
-                                                                            ${pdfUrl ? `<div class="mt-2">
-                                                                                <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
-                                                                                    <i class="bi bi-file-pdf"></i> View PDF Report
-                                                                                </a>
-                                                                            </div>` : ''}
-                                                                            ${htmlUrl ? `<div class="mt-2">
-                                                                                <a href="${htmlUrl}" class="btn btn-info" target="_blank">
-                                                                                    <i class="bi bi-file-code"></i> View Interactive Report
-                                                                                </a>
-                                                                            </div>` : ''}
-                                                                        </div>
-                                                                        
-                                                                        <!-- PharmCAT Reports -->
-                                                                        ${(pharmcatHtmlUrl || pharmcatJsonUrl || pharmcatTsvUrl) ? `
-                                                                            <div class="mt-3">
-                                                                                <h5>PharmCAT Reports</h5>
-                                                                                ${pharmcatHtmlUrl ? `<div class="mt-2">
-                                                                                    <a href="${pharmcatHtmlUrl}" class="btn btn-success" target="_blank">
-                                                                                        <i class="bi bi-file-medical"></i> View PharmCAT HTML Report
-                                                                                    </a>
-                                                                                </div>` : ''}
-                                                                                ${pharmcatJsonUrl ? `<div class="mt-2">
-                                                                                    <a href="${pharmcatJsonUrl}" class="btn btn-warning" target="_blank">
-                                                                                        <i class="bi bi-filetype-json"></i> View PharmCAT JSON Report
-                                                                                    </a>
-                                                                                </div>` : ''}
-                                                                                ${pharmcatTsvUrl ? `<div class="mt-2">
-                                                                                    <a href="${pharmcatTsvUrl}" class="btn btn-secondary" target="_blank">
-                                                                                        <i class="bi bi-filetype-csv"></i> View PharmCAT TSV Report
-                                                                                    </a>
-                                                                                </div>` : ''}
-                                                                            </div>
-                                                                        ` : ''}
-                                                                        
-                                                                        <!-- Download All Reports -->
-                                                                        <div class="mt-4">
-                                                                            <h5>Download All Reports</h5>
-                                                                            <div class="mt-2">
-                                                                                <button id="downloadAllBtn" class="btn btn-dark" onclick="downloadAllReports('${data.data?.patient_id || data.patient_id || jobId}')">
-                                                                                    <i class="bi bi-download"></i> Download All Reports as ZIP
-                                                                                </button>
-                                                                            </div>
-                                                                        </div>
-                                                                    </div>
-                                                                `;
-                                                                resultsDiv.classList.remove('d-none');
-                                                                addLogMessage("Report links are now available", "success");
-                                                            } else {
-                                                                console.error("Results container not found");
-                                                                addLogMessage("Error: Results container not found", "danger");
-                                                            }
-                                                        } else {
-                                                            console.error("Processing failed:", data.message);
-                                                            addLogMessage(`Error: ${data.message}`, "danger");
-                                                            showError(data.message);
-                                                        }
-                                                        
-                                                        // Re-enable the upload button
-                                                        uploadButton.disabled = false;
-                                                        uploadButton.textContent = 'Upload';
-                                                        return;
-                                                    }
-                                                } catch (parseError) {
-                                                    console.error("Error parsing progress data:", parseError, "Raw data:", line);
-                                                    addLogMessage(`Error parsing progress update: ${parseError.message}`, 'danger');
-                                                }
-                                            } else {
-                                                // Log any non-data lines for debugging
-                                                console.log("Non-data SSE line received:", line);
-                                            }
-                                        } catch (lineError) {
-                                            console.error("Error processing SSE line:", lineError);
-                                        }
-                                    }
-                                }
-                            } catch (readError) {
-                                console.error("Error reading from stream:", readError);
-                                addLogMessage(`Stream error: ${readError.message}`, 'warning');
-                                
-                                // Try to reconnect
-                                if (reconnectAttempt < maxReconnects) {
-                                    reconnectAttempt++;
-                                    addLogMessage(`Attempting to reconnect (${reconnectAttempt}/${maxReconnects})...`, 'warning');
-                                    await new Promise(resolve => setTimeout(resolve, 2000));
-                                    attemptConnection();
-                                    return;
-                                } else {
-                                    addLogMessage("Failed to reconnect after multiple attempts", 'danger');
-                                    showError("Error in input stream. Please check reports manually.");
-                                    // Re-enable the upload button
-                                    uploadButton.disabled = false;
-                                    uploadButton.textContent = 'Upload';
-                                }
-                                break;
-                            }
-                        }
-                    } catch (error) {
-                        console.error("Error monitoring progress:", error);
-                        addLogMessage(`Error monitoring progress: ${error.message}`, 'danger');
-                        
-                        // Try to reconnect
-                        if (reconnectAttempt < maxReconnects) {
-                            reconnectAttempt++;
-                            addLogMessage(`Attempting to reconnect (${reconnectAttempt}/${maxReconnects})...`, 'warning');
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            attemptConnection();
-                            return;
-                        } else {
-                            showError("Error monitoring progress: " + error.message);
-                            addLogMessage("Failed to reconnect after multiple attempts", 'danger');
-                            uploadButton.disabled = false;
-                            uploadButton.textContent = 'Upload';
-                        }
-                    }
-                }
-
-                attemptConnection();
             };
 
             // Update the file upload handler to work without auth token
@@ -1409,125 +1436,24 @@
                     data = {};
                 }
                 
-                // Try to get the job ID - could be in various places
-                let jobId = data.job_id;
-                if (!jobId && data.data && data.data.job_id) {
-                    console.log("Found job_id in nested data.data:", data.data.job_id);
-                    jobId = data.data.job_id;
-                }
-                if (jobId) {
-                    console.log("Using job_id:", jobId);
-                } else {
-                    console.warn("No job_id found in data");
+                // Get job ID from upload response
+                const jobId = data.job_id;
+                if (!jobId) {
+                    console.error("No job_id found in upload response");
+                    return;
                 }
                 
-                // Extract URLs from all possible locations in the data object
-                const reportUrls = {};
+                // Extract report URLs from upload response
+                const reportUrls = {
+                    'pdf_report_url': data.pdf_report_url,
+                    'html_report_url': data.html_report_url,
+                    'interactive_html_report_url': data.interactive_html_report_url,
+                    'pharmcat_html_report_url': data.pharmcat_html_report_url,
+                    'pharmcat_json_report_url': data.pharmcat_json_report_url,
+                    'pharmcat_tsv_report_url': data.pharmcat_tsv_report_url
+                };
                 
-                // Simplified URL extraction - check both root and nested data
-                const urlKeys = [
-                    'pdf_report_url',
-                    'html_report_url',
-                    'interactive_html_report_url',
-                    'pharmcat_html_report_url',
-                    'pharmcat_json_report_url',
-                    'pharmcat_tsv_report_url'
-                ];
-                
-                // First, check root level data
-                urlKeys.forEach(key => {
-                    if (data[key]) {
-                        console.log(`Found ${key} at root level:`, data[key]);
-                        reportUrls[key] = data[key];
-                    }
-                });
-                
-                // Then, check nested data.data if it exists
-                if (data.data) {
-                    console.log("Checking nested data.data object");
-                    urlKeys.forEach(key => {
-                        if (data.data[key] && !reportUrls[key]) {
-                            console.log(`Found ${key} in nested data:`, data.data[key]);
-                            reportUrls[key] = data.data[key];
-                        }
-                    });
-                }
-                
-                // Debug: Log the full data structure
-                console.log("Full data received:", data);
-                console.log("Data keys:", Object.keys(data));
-                if (data.data) {
-                    console.log("Nested data keys:", Object.keys(data.data));
-                }
-                
-                // URLs have been extracted above
-                
-                // Debug: Log what was found
-                console.log("After extraction, reportUrls contains:", reportUrls);
-
-                // Test: Log the exact structure of the data
-                console.log("FULL DATA STRUCTURE:");
-                console.log(JSON.stringify(data, null, 2));
-                
-                // Test: Check if the issue is with the data structure
-                if (data.data && typeof data.data === 'object') {
-                    console.log("data.data is an object with keys:", Object.keys(data.data));
-                    console.log("data.data.pharmcat_html_report_url type:", typeof data.data.pharmcat_html_report_url);
-                    console.log("data.data.pharmcat_html_report_url value:", data.data.pharmcat_html_report_url);
-                }
-                
-                // Check if the issue is with the extractUrls function
-                console.log("Testing direct assignment:");
-                if (data.pharmcat_html_report_url) {
-                    reportUrls.pharmcat_html_report_url = data.pharmcat_html_report_url;
-                    console.log("Directly assigned pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
-                }
-                if (data.pharmcat_json_report_url) {
-                    reportUrls.pharmcat_json_report_url = data.pharmcat_json_report_url;
-                    console.log("Directly assigned pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
-                }
-                if (data.pharmcat_tsv_report_url) {
-                    reportUrls.pharmcat_tsv_report_url = data.pharmcat_tsv_report_url;
-                    console.log("Directly assigned pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
-                }
-                
-                // Also check nested data
-                if (data.data) {
-                    if (data.data.pharmcat_html_report_url) {
-                        reportUrls.pharmcat_html_report_url = data.data.pharmcat_html_report_url;
-                        console.log("Directly assigned nested pharmcat_html_report_url:", reportUrls.pharmcat_html_report_url);
-                    }
-                    if (data.data.pharmcat_json_report_url) {
-                        reportUrls.pharmcat_json_report_url = data.data.pharmcat_json_report_url;
-                        console.log("Directly assigned nested pharmcat_json_report_url:", reportUrls.pharmcat_json_report_url);
-                    }
-                    if (data.data.pharmcat_tsv_report_url) {
-                        reportUrls.pharmcat_tsv_report_url = data.data.pharmcat_tsv_report_url;
-                        console.log("Directly assigned nested pharmcat_tsv_report_url:", reportUrls.pharmcat_tsv_report_url);
-                    }
-                }
-                
-                // If we have a job ID but are missing URLs, try to construct default URLs
-                if (jobId) {
-                    // Default URL templates for each report type
-                    const defaultUrls = {
-                        'pdf_report_url': `/reports/${jobId}/${jobId}_pgx_report.pdf`,
-                        'html_report_url': `/reports/${jobId}/${jobId}_pgx_report.html`,
-                        'interactive_html_report_url': `/reports/${jobId}/${jobId}_pgx_report_interactive.html`,
-                        'pharmcat_html_report_url': `/reports/${jobId}/${jobId}_pgx_pharmcat.html`,
-                        'pharmcat_json_report_url': `/reports/${jobId}/${jobId}_pgx_pharmcat.json`,
-                        'pharmcat_tsv_report_url': `/reports/${jobId}/${jobId}_pgx_pharmcat.tsv`
-                    };
-                    
-                    // Fill in any missing URLs with defaults
-                    Object.keys(defaultUrls).forEach(key => {
-                        if (!reportUrls[key]) {
-                            reportUrls[key] = defaultUrls[key];
-                        }
-                    });
-                }
-                
-                console.log("Extracted report URLs:", reportUrls);
+                console.log("Report URLs:", reportUrls);
 
                 let resultsHtml = `
                     <div class="alert alert-success">
@@ -1545,24 +1471,24 @@
                     `;
                 }
 
-                // Group the reports by type for better organization
-                const reportGroups = [
-                    {
-                        title: "Main Reports",
-                        reports: [
-                            { key: 'pdf_report_url', label: 'View PDF Report', icon: 'bi-file-pdf' },
-                            { key: 'html_report_url', label: 'View Interactive HTML Report', icon: 'bi-file-code' }
-                        ]
-                    },
-                    {
-                        title: "PharmCAT Reports",
-                        reports: [
-                            { key: 'pharmcat_html_report_url', label: 'View PharmCAT HTML Report', icon: 'bi-file-medical' },
-                            { key: 'pharmcat_json_report_url', label: 'View PharmCAT JSON Report', icon: 'bi-filetype-json' },
-                            { key: 'pharmcat_tsv_report_url', label: 'View PharmCAT TSV Report', icon: 'bi-filetype-csv' }
-                        ]
-                    }
-                ];
+                        // Group the reports by type for better organization
+                        const reportGroups = [
+                            {
+                                title: "Custom Reports",
+                                reports: [
+                                    { key: 'pdf_report_url', label: 'View PDF Report', icon: 'bi-file-pdf', color: 'btn-primary' },
+                                    { key: 'html_report_url', label: 'View Interactive HTML Report', icon: 'bi-file-code', color: 'btn-info' }
+                                ]
+                            },
+                            {
+                                title: "PharmCAT Reports",
+                                reports: [
+                                    { key: 'pharmcat_html_report_url', label: 'View PharmCAT HTML Report', icon: 'bi-file-medical', color: 'btn-success' },
+                                    { key: 'pharmcat_json_report_url', label: 'View PharmCAT JSON Report', icon: 'bi-filetype-json', color: 'btn-warning' },
+                                    { key: 'pharmcat_tsv_report_url', label: 'View PharmCAT TSV Report', icon: 'bi-filetype-csv', color: 'btn-secondary' }
+                                ]
+                            }
+                        ];
                 
                 // Add report links by group
                 reportGroups.forEach(group => {
@@ -1578,7 +1504,7 @@
                         availableReports.forEach(report => {
                             resultsHtml += `
                                 <div class="mt-2">
-                                    <a href="${reportUrls[report.key]}" class="btn btn-primary" target="_blank">
+                                    <a href="${reportUrls[report.key]}" class="btn ${report.color}" target="_blank">
                                         <i class="bi ${report.icon}"></i> ${report.label}
                                     </a>
                                 </div>
@@ -1609,7 +1535,7 @@
                 resultsDiv.classList.remove('d-none');
                 
                 // Log the completion in the log panel
-                addLogMessage("Analysis complete! 5 reports are available: 2 main reports (PDF, Interactive HTML) and 3 PharmCAT reports (HTML, JSON, TSV).", "success");
+                addLogMessage("Analysis complete! 5 reports are available: 2 custom Reports (PDF, Interactive HTML) and 3 PharmCAT reports (HTML, JSON, TSV).", "success");
             }
 
             // Function to show error
@@ -1653,8 +1579,19 @@
                 // Add to log
                 window.addLogMessage("Loading PharmCAT example VCF file...", "info");
 
+                // Hide upload progress bar when workflow monitoring starts
+                if (window.uploadProgressManager && typeof window.uploadProgressManager.hideUploadProgress === 'function') {
+                    window.uploadProgressManager.hideUploadProgress();
+                }
+
                 // Show progress container
                 progressContainer.classList.remove('d-none');
+                
+                // Show cancel button
+                const cancelButton = document.getElementById('cancelButton');
+                if (cancelButton) {
+                    cancelButton.classList.remove('d-none');
+                }
                 
                 // Update progress status
                 const progressStatus = document.getElementById('progressStatus');
@@ -1681,7 +1618,7 @@
                 
                 // Create FormData object just like a regular file upload
                 const formData = new FormData();
-                formData.append('file', demoFile);
+                formData.append('files', demoFile);
                 formData.append('sample_identifier', 'PharmCAT-Demo');
                 
                 // Add service toggle states to demo upload
@@ -1691,7 +1628,7 @@
                         'hla': 'optitype_enabled',
                         'gatk': 'gatk_enabled', 
                         'pypgx': 'pypgx_enabled',
-                        'report': 'kroki_enabled' // Needs to be changed, kroki is not synonymous with report
+                        'report': 'report_enabled' // Custom report generation toggle
                     };
                     
                     Object.entries(serviceMapping).forEach(([stageName, serviceName]) => {
@@ -1729,9 +1666,12 @@
                     window.updateFileAnalysis(result);
                 }
                 
-                // Start monitoring progress
+                // Start monitoring progress with a small delay to ensure workflow is created
                 if (window.monitorProgress && result.job_id) {
-                    window.monitorProgress(result.job_id);
+                    console.log('Starting workflow monitoring in 1 second for job:', result.job_id);
+                    setTimeout(() => {
+                        window.monitorProgress(result.job_id);
+                    }, 1000);
                 }
                 
 
@@ -1745,6 +1685,12 @@
                 const demoButton = document.getElementById('demoButton');
                 if (uploadButton) uploadButton.disabled = false;
                 if (demoButton) demoButton.disabled = false;
+                
+                // Hide cancel button on error
+                const cancelButton = document.getElementById('cancelButton');
+                if (cancelButton) {
+                    cancelButton.classList.add('d-none');
+                }
             }
         }
 
@@ -1755,6 +1701,7 @@
             const headerDisplay = document.getElementById('headerDisplay');
             const headerContent = document.getElementById('headerContent');
             const viewHeaderButton = document.getElementById('viewHeaderButton');
+            const stageAnalysis = document.getElementById('stageAnalysis');
 
             // Check if header is currently visible and has content
             const isVisible = !headerDisplay.classList.contains('d-none');
@@ -1764,6 +1711,12 @@
             if (isVisible && hasContent) {
                 headerDisplay.classList.add('d-none');
                 viewHeaderButton.innerHTML = '<i class="bi bi-eye"></i> View Header';
+                
+                // Deactivate analysis stage when header is closed
+                if (stageAnalysis) {
+                    stageAnalysis.classList.remove('text-primary');
+                    stageAnalysis.classList.add('text-muted');
+                }
                 return;
             }
 
@@ -1821,6 +1774,7 @@
                             reference_genome_file: rawData.metadata.reference_genome_path || null,
                             sequencing_platform: rawData.metadata.created_by || 'Unknown',
                             sequencing_profile: (function() {
+                                // Prefer explicit platform/profile if present later; fallback to contig count
                                 const seqCount = rawData.sequences ? rawData.sequences.length : 0;
                                 if (seqCount > 50) return 'whole_genome_sequencing';
                                 if (seqCount > 10) return 'whole_exome_sequencing';
@@ -1830,12 +1784,13 @@
                             has_index: rawData.file_info ? rawData.file_info.has_index : false,
                             is_bgzipped: rawData.file_info ? rawData.file_info.compressed : false,
                             contigs: rawData.sequences ? rawData.sequences.map(seq => seq.name) : [],
+                            contig_lengths: (rawData.sequences || []).reduce((acc, seq) => { if (seq && seq.name) acc[seq.name] = seq.length || null; return acc; }, {}),
                             sample_count: (function() {
                                 if (Array.isArray(rawData.samples)) return rawData.samples.length;
                                 if (rawData.sample) return 1;
                                 return 0;
                             })(),
-                            variant_count: null, // Not available in new schema
+                            variant_count: (rawData.format_specific && typeof rawData.format_specific.variant_count === 'number') ? rawData.format_specific.variant_count : null,
                             sample_id: (function() {
                                 if (Array.isArray(rawData.samples) && rawData.samples.length > 0) {
                                     return rawData.samples[0];
@@ -1918,6 +1873,9 @@
                         </div>
                     `;
 
+                    // Add planned workflow section to align with analysis panel
+                    html += window.buildPlannedWorkflowHTML({ workflow: headerInfo.workflow || {}, fileType: (headerInfo.file_type || '').toString() });
+
                     // Add VCF-specific information if available (to dedicated section)
                     let vcfDetailsHtml = '';
                     if (headerInfo.vcf_info && typeof headerInfo.vcf_info === 'object') {
@@ -1940,18 +1898,18 @@
                                                     <div class="col-12"><small class="text-muted">${vcf.reference_genome_file || 'Not specified'}</small></div>
                                                 </div>
                                                 <div class="row g-2">
-                                                    <div class="col-sm-3"><strong class="text-muted small">Sequencing Platform:</strong></div>
-                                                    <div class="col-sm-2"><span class="badge bg-secondary">${vcf.sequencing_platform || 'Unknown'}</span></div>
-
-                                                    <div class="col-sm-2"><strong class="text-muted small">Sample Count:</strong></div>
+                                                    <div class="col-12"><strong class="text-muted small">Sequencing Platform:</strong></div>
+                                                    <div class="col-12"><span class="badge bg-secondary">${vcf.sequencing_platform || 'Unknown'}</span></div>
+                                                </div>
+                                                <div class="row g-2 mt-1">
+                                                    <div class="col-sm-3"><strong class="text-muted small">Sample Count:</strong></div>
                                                     <div class="col-sm-2"><span class="badge bg-success">${vcf.sample_count !== undefined ? vcf.sample_count : 'Unknown'}</span></div>
-
-                                                    <div class="col-sm-2"><strong class="text-muted small">Sequencing Profile:</strong></div>
-                                                    <div class="col-sm-1"><span class="badge bg-info">${vcf.sequencing_profile ? vcf.sequencing_profile.replace('_', ' ').toUpperCase() : 'UNKNOWN'}</span></div>
+                                                    <div class="col-sm-3"><strong class="text-muted small">Sequencing Profile:</strong></div>
+                                                    <div class="col-sm-4"><span class="badge bg-info">${vcf.sequencing_profile ? vcf.sequencing_profile.replace('_', ' ').toUpperCase() : 'UNKNOWN'}</span></div>
                                                 </div>
                                                 <div class="row g-2 mt-2">
                                                     <div class="col-sm-3"><strong class="text-muted small">Variant Count:</strong></div>
-                                                    <div class="col-sm-2">${vcf.variant_count !== undefined ? vcf.variant_count : 'Not counted'}</div>
+                                                    <div class="col-sm-2">${vcf.variant_count !== null && vcf.variant_count !== undefined ? vcf.variant_count : 'Not counted'}</div>
 
                                                     <div class="col-sm-2"><strong class="text-muted small">Sample ID:</strong></div>
                                                     <div class="col-sm-5"><small class="text-muted">${vcf.sample_id || 'Not specified'}</small></div>
@@ -1968,21 +1926,23 @@
                         `;
 
                         if (vcf.contigs && vcf.contigs.length > 0) {
-                            // Get sequence information from raw data if available
                             const sequences = rawData.sequences || [];
-                            const contigDisplay = sequences.slice(0, 5).map(seq =>
-                                `${seq.name} (${seq.length ? (seq.length / 1000000).toFixed(1) + 'Mb' : 'length unknown'})`
-                            ).join(', ');
-
+                            const canonicalOrder = [
+                                'chr1','chr2','chr3','chr4','chr5','chr6','chr7','chr8','chr9','chr10','chr11','chr12',
+                                'chr13','chr14','chr15','chr16','chr17','chr18','chr19','chr20','chr21','chr22','chrX','chrY','chrM'
+                            ];
+                            const orderMap = new Map(canonicalOrder.map((n, i) => [n, i]));
+                            const canonicalSeqs = sequences
+                                .filter(seq => seq && orderMap.has(seq.name))
+                                .sort((a, b) => orderMap.get(a.name) - orderMap.get(b.name));
+                            const items = canonicalSeqs.map(seq => `${seq.name}${seq.length ? ` (${(seq.length/1000000).toFixed(1)}Mb)` : ''}`);
                             vcfDetailsHtml += `
-                                        <div class="mt-3">
-                                            <strong class="text-muted small">Sequence Details:</strong>
-                                            <div class="mt-2">
-                                                <small class="text-muted">
-                                                    ${contigDisplay}${sequences.length > 5 ? `<br>... and ${sequences.length - 5} more sequences` : ''}
-                                                </small>
-                                            </div>
-                                        </div>
+                                <div class="mt-3">
+                                    <strong class="text-muted small">Sequence Details (canonical only):</strong>
+                                    <div class="mt-2">
+                                        <small class="text-muted">${items.join(', ')}</small>
+                                    </div>
+                                </div>
                             `;
                         }
                     }
@@ -1991,6 +1951,11 @@
                     html += ``;
 
                     headerContent.innerHTML = html;
+
+                    // Set analysis stage to green (running) when header analysis begins
+                    if (window.GlyphManager) {
+                        window.GlyphManager.setStageState(document.getElementById('stageAnalysis'), 'running');
+                    }
 
                     // Add VCF details to the dedicated section
                     const vcfSection = document.getElementById('vcfDetailsSection');
@@ -2201,6 +2166,564 @@
             return states;
         };
 
+        // Workflow Monitoring Integration
+        let workflowMonitor = null;
+        
+        // Simplified Stage Management System - Uses Bootstrap classes
+        window.GlyphManager = {
+            // Track completed stages to preserve their state
+            completedStages: new Set(),
+            
+            // Map workflow stages to stage indicators
+            stepMapping: {
+                'file_upload': 'stageUpload',
+                'header_analysis': 'stageAnalysis',
+                'hla_typing': 'stageHLA',
+                'gatk': 'stageGATK',
+                'gatk_processing': 'stageGATK',
+                'gatk_cram_sam_to_bam': 'stageGATK',  // GATK CRAM/SAM→BAM conversion
+                'gatk_alignment': 'stageGATK',        // GATK FASTQ→BAM alignment
+                'pypgx_analysis': 'stagePyPGx',
+                'pypgx_bam2vcf': 'stagePyPGx',       // Both PyPGx steps map to the same stage
+                'pharmcat_analysis': 'stagePharmcat',
+                'diagram_generation': 'stageReport',  // Report diagram generation
+                'report_generation': 'stageReport',
+                'completed': 'stageReport'
+            },
+            
+            // Bootstrap classes for different states
+            stateClasses: {
+                'default': 'text-muted',
+                'pending': 'text-info', 
+                'running': 'text-success',
+                'failed': 'text-danger',
+                'completed': 'text-primary',
+                'disabled': 'text-muted disabled'
+            },
+            
+            /**
+             * Set a stage indicator to a specific state using Bootstrap classes
+             */
+            setStageState: function(stageElement, state) {
+                if (!stageElement) {
+                    console.warn('Invalid stage element:', stageElement);
+                    return;
+                }
+                
+                // Track completed stages
+                if (state === 'completed') {
+                    this.completedStages.add(stageElement.id);
+                } else if (state === 'default' || state === 'pending' || state === 'failed' || state === 'disabled') {
+                    // Remove from completed set only for non-running states
+                    this.completedStages.delete(stageElement.id);
+                }
+                
+                // Remove all state classes
+                Object.values(this.stateClasses).forEach(className => {
+                    const classes = className.split(' ');
+                    classes.forEach(cls => stageElement.classList.remove(cls));
+                });
+                
+                // Special handling for Report stage - use green for completed state
+                let newClasses;
+                if (state === 'completed' && stageElement.id === 'stageReport') {
+                    newClasses = 'text-success'; // Green for Report completion
+                } else {
+                    newClasses = this.stateClasses[state] || 'text-muted';
+                }
+                
+                const classes = newClasses.split(' ');
+                classes.forEach(cls => stageElement.classList.add(cls));
+                
+                console.log('Set stage state:', stageElement.id, '->', state, '(classes:', newClasses, ')');
+            },
+            
+            /**
+             * Reset all stages to default state, but preserve completed stages
+             */
+            resetAllStages: function() {
+                console.log('Resetting all stages, preserving completed:', Array.from(this.completedStages));
+                Object.values(this.stepMapping).forEach(stageId => {
+                    const stage = document.getElementById(stageId);
+                    if (stage) {
+                        // Check if this stage is completed
+                        const isCompleted = this.completedStages.has(stageId);
+                        
+                        if (isCompleted) {
+                            console.log(`Preserving completed state for ${stageId}`);
+                            this.setStageState(stage, 'completed');
+                        } else {
+                            this.setStageState(stage, 'default');
+                        }
+                    }
+                });
+            },
+            
+            /**
+             * Update stage indicators based on workflow progress
+             */
+            updateStageIndicators: function(currentStep, status) {
+                console.log('updateStageIndicators called with:', currentStep, status);
+                console.log('Current completed stages before update:', Array.from(this.completedStages));
+                
+                // Reset all stages to default (but preserve completed stages)
+                this.resetAllStages();
+                
+                // Highlight current step
+                if (currentStep) {
+                    const currentStepLower = currentStep.toLowerCase();
+                    console.log('Looking for step:', currentStepLower, 'in mapping:', Object.keys(this.stepMapping));
+                    
+                    // Try exact match first
+                    let found = false;
+                    for (const [stepName, stageId] of Object.entries(this.stepMapping)) {
+                        if (currentStepLower === stepName) {
+                            console.log('Found exact match:', stepName, '->', stageId);
+                            const stage = document.getElementById(stageId);
+                            if (stage) {
+                                this.setStageState(stage, this.mapStatusToState(status));
+                                console.log('Updated stage element:', stageId, 'with status:', status);
+                                
+                                // Special logging for PyPGx stages
+                                if (stageId === 'stagePyPGx') {
+                                    console.log('PyPGx stage updated - completed stages:', Array.from(this.completedStages));
+                                }
+                                
+                                found = true;
+                            } else {
+                                console.warn('Stage element not found:', stageId);
+                            }
+                            break;
+                        }
+                    }
+                    
+                    // If no exact match, try partial match
+                    if (!found) {
+                        for (const [stepName, stageId] of Object.entries(this.stepMapping)) {
+                            if (currentStepLower.includes(stepName)) {
+                                console.log('Found partial match:', stepName, '->', stageId);
+                                const stage = document.getElementById(stageId);
+                                if (stage) {
+                                    this.setStageState(stage, this.mapStatusToState(status));
+                                    console.log('Updated stage element:', stageId, 'with status:', status);
+                                    found = true;
+                                } else {
+                                    console.warn('Stage element not found:', stageId);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!found) {
+                        console.warn('No matching step found for:', currentStepLower);
+                    }
+                }
+            },
+            
+            /**
+             * Map workflow status to Bootstrap state
+             */
+            mapStatusToState: function(status) {
+                switch (status) {
+                    case 'pending':
+                        return 'pending';
+                    case 'running':
+                        return 'running';
+                    case 'completed':
+                        return 'completed';
+                    case 'failed':
+                    case 'error':
+                        return 'failed';
+                    case 'skipped':
+                        return 'disabled';
+                    case 'disabled':
+                        return 'disabled';
+                    default:
+                        return 'default';
+                }
+            },
+            
+            /**
+             * Special handling for PyPGx completion
+             * CHECK: IS THIS REALLY NECESSARY?
+             */
+            handlePyPGxCompletion: function() {
+                console.log('Handling PyPGx completion - setting stage to completed');
+                const pypgxStage = document.getElementById('stagePyPGx');
+                if (pypgxStage) {
+                    this.setStageState(pypgxStage, 'completed');
+                    console.log('PyPGx stage set to completed');
+                }
+            },
+            
+            /**
+             * Clear all completed stages (for new workflow)
+             */
+            clearCompletedStages: function() {
+                this.completedStages.clear();
+                console.log('Cleared completed stages for new workflow');
+            },
+            
+            /**
+             * Set connection state for visual feedback
+             */
+            setConnectionState: function(connected) {
+                console.log('Setting connection state:', connected);
+                
+                // Add or remove a connection indicator class to all stage indicators
+                const stageIndicators = document.querySelectorAll('.stage-indicator');
+                stageIndicators.forEach(indicator => {
+                    if (connected) {
+                        indicator.classList.remove('connection-lost');
+                    } else {
+                        indicator.classList.add('connection-lost');
+                    }
+                });
+            }
+        };
+
+        // Enhanced progress monitoring that integrates with new workflow system
+        window.monitorProgress = function(jobId) {
+            console.log('Starting workflow monitoring for job:', jobId);
+            
+            // Don't clear completed stages - we want to preserve upload/analysis completion
+            // window.GlyphManager.clearCompletedStages();
+            
+            // Validate jobId
+            if (!jobId) {
+                console.error('No job ID provided for monitoring');
+                window.addLogMessage('Error: No job ID provided for monitoring', 'danger');
+                return;
+            }
+            
+            // Stop any existing workflow monitoring
+            if (workflowMonitor) {
+                console.log('Disconnecting existing workflow monitor');
+                workflowMonitor.disconnect();
+            }
+            
+            // Hide upload progress bar when workflow monitoring starts
+            if (window.uploadProgressManager && typeof window.uploadProgressManager.hideUploadProgress === 'function') {
+                window.uploadProgressManager.hideUploadProgress();
+            }
+            
+            // Show progress container
+            const progressContainer = document.getElementById('progressContainer');
+            if (progressContainer) {
+                progressContainer.classList.remove('d-none');
+            }
+            
+            // Show cancel button
+            const cancelButton = document.getElementById('cancelButton');
+            if (cancelButton) {
+                cancelButton.classList.remove('d-none');
+            }
+            
+            // Initialize smooth progress manager
+            const smoothProgress = window.initializeSmoothProgress();
+            
+            // Start workflow monitoring using the new system
+            console.log('WorkflowMonitor available:', typeof WorkflowMonitor !== 'undefined');
+            console.log('WorkflowMonitor class:', WorkflowMonitor);
+            
+            if (typeof WorkflowMonitor !== 'undefined') {
+                console.log('Creating new WorkflowMonitor instance for jobId:', jobId);
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/api/v1/workflows/${jobId}/ws`;
+                console.log('WebSocket URL will be:', wsUrl);
+                
+                try {
+                    workflowMonitor = new WorkflowMonitor(jobId, {
+                        baseUrl: window.location.origin,
+                    onProgress: (progress, data) => {
+                        console.log('Workflow progress received:', progress, data);
+                        console.log('Progress data:', {
+                            progress_percentage: data.progress_percentage,
+                            current_step: data.current_step,
+                            message: data.message,
+                            status: data.status
+                        });
+                        
+                        
+                        // Use progress data directly from the API (no local calculation)
+                        if (smoothProgress) {
+                            const progressValue = data.progress_percentage || data.progress || progress;
+                            const currentStep = data.current_step || 'Processing';
+                            const message = data.message || data.status_message || 'Processing...';
+                            
+                            console.log(`Updating progress: ${progressValue}% - ${currentStep} - ${message}`);
+                            smoothProgress.updateProgress(progressValue, currentStep, message);
+                        }
+                        
+                        // Update stage indicators using simple glyph system
+                        window.GlyphManager.updateStageIndicators(data.current_step || 'Processing', data.status || 'running');
+                        
+                    },
+                    onComplete: (data) => {
+                        console.log('Workflow completed:', data);
+                        
+                        
+                        // Use completion data directly from the API
+                        if (smoothProgress) {
+                            smoothProgress.updateProgress(100, 'completed', 'Analysis complete!');
+                            // Stop progress bar animation at 100%
+                            smoothProgress.stopAnimation();
+                        }
+                        
+                        // Update stage indicators using simple glyph system
+                        window.GlyphManager.updateStageIndicators('completed', 'completed');
+                        window.addLogMessage('Workflow completed successfully', 'success');
+                        
+                        // Hide cancel button on completion
+                        const cancelButton = document.getElementById('cancelButton');
+                        if (cancelButton) {
+                            cancelButton.classList.add('d-none');
+                        }
+                        
+                        // Show results window with completion data (now includes report URLs)
+                        if (data && data.workflow_id) {
+                            console.log('Showing results for completed workflow:', data.workflow_id);
+                            console.log('Report URLs in completion data:', {
+                                pdf: data.pdf_report_url,
+                                html: data.html_report_url,
+                                pharmcat_html: data.pharmcat_html_report_url,
+                                pharmcat_json: data.pharmcat_json_report_url,
+                                pharmcat_tsv: data.pharmcat_tsv_report_url
+                            });
+                            
+                            // Create a data object that matches what showResults expects
+                            const resultsData = {
+                                job_id: data.workflow_id,
+                                pdf_report_url: data.pdf_report_url,
+                                html_report_url: data.html_report_url,
+                                interactive_html_report_url: data.interactive_html_report_url,
+                                pharmcat_html_report_url: data.pharmcat_html_report_url,
+                                pharmcat_json_report_url: data.pharmcat_json_report_url,
+                                pharmcat_tsv_report_url: data.pharmcat_tsv_report_url
+                            };
+                            
+                            // Call the existing showResults function
+                            window.showResults(resultsData);
+                        } else {
+                            console.warn('No workflow data available for showing results');
+                        }
+                    },
+                    onError: (error) => {
+                        console.error('Workflow error:', error);
+                        
+                        
+                        // Update stage indicators using simple glyph system
+                        window.GlyphManager.updateStageIndicators('Error', 'failed');
+                        window.addLogMessage(`Workflow error: ${error.message}`, 'danger');
+                        
+                        // Hide cancel button on error
+                        const cancelButton = document.getElementById('cancelButton');
+                        if (cancelButton) {
+                            cancelButton.classList.add('d-none');
+                        }
+                    },
+                    onStepUpdate: (data) => {
+                        console.log('Step update received:', data);
+                        console.log('Step name:', data.step_name, 'Status:', data.status);
+                        
+                        
+                        // Update stage indicators using simple glyph system
+                        window.GlyphManager.updateStageIndicators(data.step_name, data.status);
+                        window.addLogMessage(`Step ${data.step_name}: ${data.status}`, 'info');
+                        
+                        // Also add more detailed step information to the log
+                        if (data.container_name) {
+                            window.addLogMessage(`  Container: ${data.container_name}`, 'info');
+                        }
+                        if (data.duration_seconds) {
+                            window.addLogMessage(`  Duration: ${data.duration_seconds}s`, 'info');
+                        }
+                    },
+                    onLogUpdate: (data) => {
+                        console.log('Log update:', data);
+                        
+                        
+                        // Map log levels to Bootstrap alert classes
+                        const levelMap = {
+                            'debug': 'info',
+                            'info': 'info', 
+                            'warning': 'warning',
+                            'warn': 'warning',
+                            'error': 'danger',
+                            'critical': 'danger'
+                        };
+                        const alertClass = levelMap[data.log_level] || 'info';
+                        window.addLogMessage(data.message, alertClass);
+                    },
+                    onReconnect: (attempts) => {
+                        console.log(`Reconnection attempt ${attempts}`);
+                        window.addLogMessage(`Reconnecting to workflow... (attempt ${attempts})`, 'warning');
+                        
+                        // Update glyph state manager - we're disconnected
+                        window.GlyphManager.setConnectionState(false);
+                    }
+                });
+                console.log('WorkflowMonitor created successfully');
+                
+                // Set up connection state management
+                workflowMonitor.websocket.addEventListener('open', () => {
+                    console.log('WebSocket connected, updating glyph state manager');
+                    window.GlyphManager.setConnectionState(true);
+                });
+                
+                workflowMonitor.websocket.addEventListener('close', () => {
+                    console.log('WebSocket disconnected, updating glyph state manager');
+                    window.GlyphManager.setConnectionState(false);
+                });
+                
+                workflowMonitor.websocket.addEventListener('error', () => {
+                    console.log('WebSocket error, updating glyph state manager');
+                    window.GlyphManager.setConnectionState(false);
+                });
+            } catch (error) {
+                console.error('Error creating WorkflowMonitor:', error);
+                window.addLogMessage(`Error starting workflow monitoring: ${error.message}`, 'danger');
+                return;
+            }
+            } else {
+                console.error('WorkflowMonitor class not available, falling back to basic progress tracking');
+                window.addLogMessage('Warning: Advanced monitoring not available, using basic tracking', 'warning');
+                // Fallback to basic progress tracking
+                if (smoothProgress) {
+                    smoothProgress.updateProgress(0, 'Starting', 'Initializing analysis...');
+                }
+            }
+            
+            // Add log message
+            window.addLogMessage('Workflow monitoring started', 'info');
+        };
+        
+        // Function to animate progress bar reverse during cancellation
+        window.animateProgressBarReverse = function(progressBar, progressContainer) {
+            return new Promise((resolve) => {
+                // Add cancellation class to stop stripe animation and change color
+                progressBar.classList.add('progress-bar-cancelling');
+                
+                // Animate progress bar to 0% over 2 seconds
+                progressBar.style.width = '0%';
+                progressBar.textContent = '0%';
+                progressBar.setAttribute('aria-valuenow', 0);
+                
+                // After 2 seconds, hide the progress container
+                setTimeout(() => {
+                    progressContainer.classList.add('progress-container-cancelling');
+                    // Wait for fade transition to complete, then hide completely
+                    setTimeout(() => {
+                        progressContainer.classList.add('d-none');
+                        progressContainer.classList.remove('progress-container-cancelling');
+                        progressBar.classList.remove('progress-bar-cancelling');
+                        resolve();
+                    }, 500); // 0.5s fade duration
+                }, 2000); // 2s reverse animation duration
+            });
+        };
+        
+        // Function to update stage indicators during cancellation
+        window.updateStageIndicatorsForCancellation = function() {
+            // Find the currently active stage (the one with text-primary class)
+            const activeStage = document.querySelector('.stage-indicator.text-primary');
+            
+            // Make active stage red and stop pulsing
+            if (activeStage) {
+                activeStage.classList.remove('text-primary');
+                activeStage.classList.add('stage-indicator-cancelling-active');
+            }
+            
+            // Make analyze stage green and keep pulsing
+            const analyzeStage = document.getElementById('stageAnalysis');
+            if (analyzeStage) {
+                analyzeStage.classList.remove('text-muted');
+                analyzeStage.classList.add('stage-indicator-cancelling-analyze');
+            }
+            
+            // After 3 seconds, reset all stages to muted
+            setTimeout(() => {
+                if (activeStage) {
+                    activeStage.classList.remove('stage-indicator-cancelling-active');
+                    activeStage.classList.add('text-muted');
+                }
+                if (analyzeStage) {
+                    analyzeStage.classList.remove('stage-indicator-cancelling-analyze');
+                    analyzeStage.classList.add('text-muted');
+                }
+            }, 3000);
+        };
+        
+        // Function to cancel job monitoring
+        window.cancelJobMonitoring = async function() {
+            console.log('Cancelling job monitoring...');
+            
+            // Get current workflow ID
+            const currentWorkflowId = workflowMonitor ? workflowMonitor.workflowId : null;
+            
+            // Start visual feedback immediately
+            const progressBar = document.getElementById('progressBar');
+            const progressContainer = document.getElementById('progressContainer');
+            
+            if (progressBar && progressContainer) {
+                // Update stage indicators for cancellation visual feedback
+                window.updateStageIndicatorsForCancellation();
+                
+                // Start progress bar reverse animation
+                await window.animateProgressBarReverse(progressBar, progressContainer);
+            }
+            
+            // Disconnect workflow monitor
+            if (workflowMonitor) {
+                workflowMonitor.disconnect();
+                workflowMonitor = null;
+            }
+            
+            // Cancel workflow on backend if we have a workflow ID
+            if (currentWorkflowId) {
+                try {
+                    const response = await fetch(`/api/v1/workflows/${currentWorkflowId}/cancel`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        window.addLogMessage('Workflow cancelled on server', 'warning');
+                    } else {
+                        window.addLogMessage('Failed to cancel workflow on server', 'danger');
+                    }
+                } catch (error) {
+                    console.error('Error cancelling workflow:', error);
+                    window.addLogMessage('Error cancelling workflow: ' + error.message, 'danger');
+                }
+            }
+            
+            // Hide cancel button
+            const cancelButton = document.getElementById('cancelButton');
+            if (cancelButton) {
+                cancelButton.classList.add('d-none');
+            }
+            
+            // Reset stage glyphs (this will be handled by the visual feedback timeout)
+            // The visual feedback function already handles resetting stages after 3 seconds
+            
+            // Reset progress
+            if (window.globalSmoothProgress) {
+                window.globalSmoothProgress.reset();
+            }
+            
+            // Re-enable upload button
+            const uploadButton = document.getElementById('uploadButton');
+            if (uploadButton) {
+                uploadButton.disabled = false;
+            }
+            
+            window.addLogMessage('Job monitoring cancelled', 'warning');
+        };
+        
         // Initialize stage popups when page loads
         document.addEventListener('DOMContentLoaded', function() {
             console.log('DOM loaded, initializing stage popups...');

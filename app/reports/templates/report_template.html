@@ -67,6 +67,83 @@
             margin-bottom: 10px;
             border-radius: 5px;
         }
+        /* Executive summary invisible columns */
+        .exec-summary-table {
+            width: 100%;
+            border-collapse: collapse; /* tightly packed, no extra gaps */
+            table-layout: auto; /* let content determine widths dynamically */
+            margin-top: 10px;
+        }
+        .exec-summary-table td {
+            padding: 4px 6px; /* compact but readable */
+            border: none; /* invisible columns */
+            vertical-align: top;
+        }
+        .exec-summary-number {
+            text-align: left;
+            white-space: nowrap;
+            width: 3ch; /* minimal width for numbers like '10.' */
+        }
+        .exec-summary-gene {
+            text-align: left;
+            font-weight: bold;
+            overflow-wrap: anywhere; /* allow wrapping if needed */
+        }
+        .exec-summary-diplotype {
+            text-align: center;
+            white-space: nowrap; /* diplotypes are short; keep compact */
+        }
+        .exec-summary-phenotype {
+            text-align: left;
+            white-space: nowrap;
+            overflow: visible;
+        }
+        .exec-summary-phenotype .gene-phenotype,
+        .exec-summary-phenotype .as-badge {
+            vertical-align: middle;
+        }
+        .activity-score {
+            margin-left: 8px;
+            color: #555;
+            font-size: 0.95em;
+        }
+        /* Activity Score badge (oval, like phenotype badges) */
+        .as-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 4px;
+            border-radius: 9999px;
+            font-weight: bold;
+            color: #ffffff;
+            line-height: 1;
+            margin-left: 4px;
+            white-space: nowrap;
+            width: 42px;
+            flex-shrink: 0;
+            overflow-wrap: normal;
+            word-break: normal;
+            justify-content: center;
+        }
+        .as-badge .as-text { font-weight: bold; }
+        .as-badge .as-gauge { display: inline-block; vertical-align: middle; }
+        .as-badge .as-gauge path:first-child { fill: currentColor; opacity: 0.18; }
+        .as-tier-0 { background-color: #000000; color: #ffffff; } /* 0 - black with white text */
+        .as-tier-1 { background-color: #dc3545; }          /* 0.25 - red */
+        .as-tier-2 { background-color: #fd7e14; }          /* 0.5 - orange */
+        .as-tier-3 { background-color: #ffc107; color: #333; } /* 0.75 - yellow */
+        .as-tier-4 { background-color: #90EE90; }          /* 1.0-1.5 - light green */
+        .as-tier-5 { background-color: #28a745; }          /* 1.75-2.25 - green */
+        .as-tier-6 { 
+            background-color: #20c997; 
+            background-image: repeating-linear-gradient(
+                45deg,
+                transparent,
+                transparent 2px,
+                rgba(255,255,255,0.1) 2px,
+                rgba(255,255,255,0.1) 4px
+            );
+        } /* ≥2.5 - turquoise with racing stripes */
         .normal {
             background-color: #d4edda;
             border-left: 4px solid #28a745;
@@ -89,6 +166,8 @@
             border-radius: 15px;
             color: white;
             font-weight: bold;
+            white-space: nowrap;
+            max-width: max-content;
         }
         .normal-metabolizer {
             background-color: #28a745;
@@ -103,7 +182,7 @@
         .rapid-metabolizer, .ultrarapid-metabolizer {
             background-color: #17a2b8;
         }
-        /* Likely Wild Type: transparent background with black border */
+        /* Possibly Wild Type: transparent background with black border */
         .likely-wild-type {
             background-color: transparent;
             color: #000;
@@ -119,6 +198,30 @@
             position: relative;
             z-index: 0;
         }
+        /* Monospaced file header styling (normal flow, full width) */
+        .file-header {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre;
+            background-color: transparent;
+            border: none;
+            padding: 0;
+            border-radius: 0;
+            line-height: 1.35;
+            tab-size: 4;
+            overflow: visible;
+            word-break: normal;
+        }
+        .header-note {
+            font-size: 0.95em;
+            color: #555;
+            margin: 0 0 10px 0;
+        }
+        /* Header section */
+        .header-section {
+            margin-top: 24px;
+        }
+        
         .footer {
             margin-top: 50px;
             text-align: center;
@@ -189,6 +292,16 @@
             position: relative;
             z-index: 1;
         }
+        /* Force visible text in embedded SVGs */
+        .workflow-figure svg text,
+        .workflow-figure svg tspan {
+            fill: #000000 !important;
+            color: #000000 !important;
+            font-family: Arial, sans-serif !important;
+            font-size: 12px !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
         .workflow-figure img {
             max-width: 100%;
             height: auto;
@@ -215,27 +328,68 @@
         }
         /* Enhanced PDF-specific styles for HTML workflow */
         @media print {
+            /* Ensure Disclaimer ends first page */
+            .disclaimer { 
+                page-break-after: always !important; 
+                break-after: page !important; 
+            }
+            /* Genomic header: new page, normal document flow */
+            .header-section { page-break-before: always !important; }
+            .header-section .file-header { white-space: pre !important; }
+            /* Ensure Executive Summary ends with a page break so Genetic Results starts on next page */
+            #exec-summary { 
+                page-break-after: always !important; 
+                break-after: page !important; 
+            }
+            /* Full-page workflow */
+            .workflow-section {
+                page-break-before: always !important;
+                page-break-after: always !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                position: relative !important; /* enable absolute positioning for title */
+            }
             .workflow-figure {
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
-                margin: 20px 0 !important;
-                padding: 15px !important;
-                background: #f8f9fa !important;
-                border: 1px solid #dee2e6 !important;
-                border-radius: 8px !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #ffffff !important;
+                border: none !important;
+                border-radius: 0 !important;
+                width: 178mm !important;
+                height: 265mm !important;
+            }
+            /* Overlay the title on top-left of the workflow page */
+            .workflow-section > h2 {
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                border: none !important;
+                z-index: 2 !important;
+                background: transparent !important;
             }
             .workflow-figure img {
-                max-width: 100% !important;
-                height: auto !important;
+                width: 178mm !important;
+                height: 265mm !important;
                 display: block !important;
                 margin: 0 auto !important;
-                border-radius: 4px !important;
+                border-radius: 0 !important;
             }
             .workflow-figure svg {
-                max-width: 100% !important;
-                height: auto !important;
+                width: 178mm !important;
+                height: 265mm !important;
                 background: white !important;
-                border-radius: 4px !important;
+                border-radius: 0 !important;
+            }
+            .workflow-figure svg text,
+            .workflow-figure svg tspan {
+                fill: #000000 !important;
+                color: #000000 !important;
+                font-family: Arial, sans-serif !important;
+                font-size: 12px !important;
+                visibility: visible !important;
+                opacity: 1 !important;
             }
                     /* Ensure SVG text is visible in PDF */
         .workflow-figure svg text {
@@ -246,6 +400,10 @@
             opacity: 1 !important;
             position: relative !important;
             z-index: 1 !important;
+            /* For PDFs ensure header preserves exact spacing; WeasyPrint prints with this */
+            .file-header {
+                white-space: pre;
+            }
         }
         .workflow-figure svg tspan {
             font-family: Arial, sans-serif !important;
@@ -298,8 +456,8 @@
 <body>
     <div class="header">
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
-        <h1>ZaroPGx Pharmacogenomic Report</h1>
-        <p>Precision Medicine through Genetic Analysis</p>
+        <h1>Individual Pharmacogenomic Report</h1>
+        <p>Powered by ZaroPGx, a Zaromics Software Product</p>
     </div>
     
     <div class="report-info">
@@ -313,22 +471,97 @@
         <p>The sample's genetic data were analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), which references CPIC (Clinical Pharmacogenetics Implementation Consortium) guidelines. Genetic variants were processed to identify star alleles and diplotypes, which were then mapped to phenotypes and matched with relevant recommendations.</p>
     </div>
 
-    <div class="section">
+    <!-- Disclaimer moved here (below Methodology) for both HTML and PDF -->
+    <div class="disclaimer">
+        {{ disclaimer }}
+    </div>
+
+    <div id="exec-summary" class="section">
         <h2>Executive Summary</h2>
         <p>This report provides pharmacogenomic information based on the sample's genetic analysis. The information can be used to inform interpretation of genetic profiles in context.</p>
         
         <div class="summary-highlights">
             <p>This sample's genetic profile indicates:</p>
-            <ul>
-                {% for d in diplotypes %}
-                <li>
-                    <strong>{{ d.gene }}:</strong> {{ d.diplotype }} - 
-                    <span class="gene-phenotype {% if 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
-                        {{ d.phenotype }}
-                    </span>
-                </li>
-                {% endfor %}
-            </ul>
+            <table class="exec-summary-table">
+                <tbody>
+                    {# Prefer TSV-driven Executive Summary rows when provided #}
+                    {% if execsum_from_tsv %}
+                        {% for r in execsum_from_tsv|sort(attribute='gene') %}
+                        <tr>
+                            <td class="exec-summary-number">{{ loop.index }}.</td>
+                            <td class="exec-summary-gene">{{ r.gene }}</td>
+                            <td class="exec-summary-diplotype">{{ r.rec_lookup_diplotype or '' }}</td>
+                            <td class="exec-summary-phenotype">
+                                {% set ph = r.rec_lookup_phenotype or '' %}
+                                {% set asv = r.rec_lookup_activity_score %}
+                                <span class="gene-phenotype {% if 'Possibly Wild Type' in ph %}likely-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>
+                                {% if asv is not none %}
+                                    {% set s = asv if asv >= 0 else 0 %}
+                                    {% if s == 0 %}
+                                        {% set tier = 0 %}
+                                    {% elif s <= 0.25 %}
+                                        {% set tier = 1 %}
+                                    {% elif s <= 0.5 %}
+                                        {% set tier = 2 %}
+                                    {% elif s <= 0.75 %}
+                                        {% set tier = 3 %}
+                                    {% elif s <= 1.5 %}
+                                        {% set tier = 4 %}
+                                    {% elif s <= 2.25 %}
+                                        {% set tier = 5 %}
+                                    {% else %}
+                                        {% set tier = 6 %}
+                                    {% endif %}
+                                    <span class="as-badge as-tier-{{ tier }}" title="Activity Score">
+                                        <svg class="as-gauge" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                                            <path d="M12 20a8 8 0 1 1 8-8h-2a6 6 0 1 0-6 6v2z"></path>
+                                            <path d="M12 12l5-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"></path>
+                                        </svg>
+                                        <span class="as-text">{{ s }}</span>
+                                    </span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        {% for d in diplotypes|sort(attribute='gene') %}
+                        <tr>
+                            <td class="exec-summary-number">{{ loop.index }}.</td>
+                            <td class="exec-summary-gene">{{ d.gene }}</td>
+                            <td class="exec-summary-diplotype">{{ d.diplotype }}</td>
+                            <td class="exec-summary-phenotype">
+                                <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">{{ d.phenotype }}</span>
+                                {% if d.activity_score is not none %}
+                                    {% set s = d.activity_score if d.activity_score >= 0 else 0 %}
+                                    {% if s == 0 %}
+                                        {% set tier = 0 %}
+                                    {% elif s <= 0.25 %}
+                                        {% set tier = 1 %}
+                                    {% elif s <= 0.5 %}
+                                        {% set tier = 2 %}
+                                    {% elif s <= 0.75 %}
+                                        {% set tier = 3 %}
+                                    {% elif s <= 1.5 %}
+                                        {% set tier = 4 %}
+                                    {% elif s <= 2.25 %}
+                                        {% set tier = 5 %}
+                                    {% else %}
+                                        {% set tier = 6 %}
+                                    {% endif %}
+                                    <span class="as-badge as-tier-{{ tier }}" title="Activity Score">
+                                        <svg class="as-gauge" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                                            <path d="M12 20a8 8 0 1 1 8-8h-2a6 6 0 1 0-6 6v2z"></path>
+                                            <path d="M12 12l5-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"></path>
+                                        </svg>
+                                        <span class="as-text">{{ s }}</span>
+                                    </span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% endif %}
+                </tbody>
+            </table>
         </div>
     </div>
     
@@ -342,10 +575,11 @@
                     <th>Phenotype</th>
                     <th>Activity Score</th>
                     <th>Implications</th>
+                    <th>T*</th>
                 </tr>
             </thead>
             <tbody>
-                {% for d in diplotypes %}
+                {% for d in diplotypes|sort(attribute='gene') %}
                 <tr>
                     <td>{{ d.gene }}</td>
                     <td>{{ d.diplotype }}</td>
@@ -364,10 +598,19 @@
                             Consult clinical guidelines
                         {% endif %}
                     </td>
+                    <td class="tool-source">{{ d.tool_source if d.tool_source else 'P' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        
+        <div class="tool-key">
+            <h4>Tool Key:</h4>
+            <p><strong>C</strong> = PharmCAT | 
+               <strong>P</strong> = PyPGx | 
+               <strong>O</strong> = OptiType | 
+               <strong>M</strong> = MitoZ</p>
+        </div>
     </div>
     
     <div class="section">
@@ -418,6 +661,15 @@
             </tbody>
         </table>
 
+        <!-- Genomic Header placed after Software Platform, on a new PDF page -->
+        {% if header_text %}
+        <div class="header-section">
+            <h3>Genomic Datafile Header</h3>
+            <p class="header-note">The submitted genomic datafile's header matter is reproduced below. Please note that if any conversion or re-alignment operations were performed, the header information below does not reflect that; the header from the original uploaded file is what is shown.</p>
+            <pre class="file-header">{{ header_text }}</pre>
+        </div>
+        {% endif %}
+
         <h3>Citations</h3>
         <ul>
             {% if citations and citations|length > 0 %}
@@ -450,16 +702,13 @@
         <!-- Removed duplicated instructional PyPGx block -->
     </div>
 
-    <div class="disclaimer">
-        {{ disclaimer }}
-    </div>
+    
 
     <div class="section workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
-        <h2>Workflow Overview</h2>
+        <h2>Workflow Diagram</h2>
         
         <!-- Primary Workflow Diagram (Mermaid preferred, Graphviz fallback) -->
         <div class="workflow-figure">
-            <h3>Workflow Overview</h3>
             {% if workflow_kroki_svg %}
               <!-- Prefer Mermaid diagram -->
               {{ workflow_kroki_svg | safe }}

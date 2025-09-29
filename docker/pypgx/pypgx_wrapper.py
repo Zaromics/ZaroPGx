@@ -26,6 +26,11 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Import shared workflow client for integration
+import sys
+sys.path.append('/workflow-client')
+from workflow_client import WorkflowClient, create_workflow_client  # pyright: ignore[reportMissingImports]
+
 # Gene Configuration Management
 class GeneConfig:
     """Manages PyPGx supported genes configuration"""
@@ -147,6 +152,9 @@ PYPGX_MEMORY_LIMIT = os.getenv('PYPGX_MEMORY_LIMIT', '12G')
 PYPGX_MAX_PARALLEL_GENES = int(os.getenv('PYPGX_MAX_PARALLEL_GENES', '8'))
 PYPGX_BATCH_SIZE = int(os.getenv('PYPGX_BATCH_SIZE', '4'))
 
+# PyPGx/PharmCAT preference configuration
+PYPGX_PHARMCAT_PREFERENCE = os.getenv('PYPGX_PHARMCAT_PREFERENCE', 'auto').lower()
+
 def get_memory_usage() -> Dict[str, float]:
     """Get current memory usage statistics"""
     try:
@@ -181,12 +189,45 @@ def chunk_list(lst: List[str], chunk_size: int) -> List[List[str]]:
     """Split a list into chunks of specified size"""
     return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
 
+def determine_pypgx_gene_set(preference: str, input_type: str) -> str:
+    """
+    Determine which gene set PyPGx should use based on preference and input type.
+    
+    Args:
+        preference: Environment variable value ('auto', 'pypgx', 'pharmcat')
+        input_type: Input file type from workflow data ('vcf', 'bam', 'fastq', 'unknown')
+    
+    Returns:
+        Gene set name to use
+    """
+    if preference == 'pypgx':
+        # Always prefer PyPGx calls
+        return 'pypgx'
+    elif preference == 'pharmcat':
+        # Always prefer PharmCAT calls for overlapping genes
+        return 'pypgx_minus_pharmcat'
+    elif preference == 'auto':
+        # Auto mode: VCF -> prefer PharmCAT, BAM/FASTQ -> prefer PyPGx
+        if input_type == 'vcf':
+            return 'pypgx_minus_pharmcat'
+        else:  # bam, fastq, unknown
+            return 'pypgx'
+    else:
+        # Invalid preference, default to auto behavior
+        logger.warning(f"Invalid PYPGX_PHARMCAT_PREFERENCE value: {preference}, using auto")
+        if input_type == 'vcf':
+            return 'pypgx_minus_pharmcat'
+        else:
+            return 'pypgx'
+
 async def process_gene_batch_parallel(
     genes: List[str], 
     vcf_path: str, 
     job_dir: str, 
     reference_genome: str,
-    max_workers: int = None
+    max_workers: int = None,
+    workflow_id: str = None,
+    workflow_client = None
 ) -> Dict[str, Any]:
     """Process a batch of genes in parallel using ThreadPoolExecutor"""
     if max_workers is None:
@@ -195,6 +236,28 @@ async def process_gene_batch_parallel(
     results = {}
     logger.info(f"Processing {len(genes)} genes in parallel with {max_workers} workers")
     
+    # Check for cancellation before starting batch processing
+    if workflow_client:
+        try:
+            if await workflow_client.is_workflow_cancelled():
+                logger.info(f"Workflow {workflow_id} is cancelled, aborting batch processing")
+                return {"cancelled": True, "message": "Workflow has been cancelled"}
+        except Exception as e:
+            logger.warning(f"Failed to check workflow cancellation status: {e}")
+    
+    # Ensure VCF is compressed and indexed BEFORE parallel processing
+    vcf_path = str(vcf_path)
+    vcf_gz = vcf_path if vcf_path.endswith('.gz') else f"{vcf_path}.gz"
+    tbi_path = f"{vcf_gz}.tbi"
+    
+    if not os.path.exists(vcf_gz):
+        logger.info(f"bgzip compressing VCF for tabix: {vcf_path} -> {vcf_gz}")
+        subprocess.run(f"bgzip -c {vcf_path} > {vcf_gz}", shell=True, check=True)
+    
+    if not os.path.exists(tbi_path):
+        logger.info(f"Indexing VCF with tabix: {vcf_gz}")
+        subprocess.run(f"tabix -p vcf {vcf_gz}", shell=True, check=True)
+    
     # Log memory usage before processing
     memory_before = get_memory_usage()
     logger.info(f"Memory before batch processing: {memory_before['used_gb']:.2f}GB used, {memory_before['available_gb']:.2f}GB available")
@@ -202,12 +265,25 @@ async def process_gene_batch_parallel(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all gene processing tasks
         future_to_gene = {
-            executor.submit(run_pypgx, vcf_path, job_dir, gene, reference_genome): gene 
+            executor.submit(run_pypgx, vcf_gz, job_dir, gene, reference_genome, workflow_id): gene 
             for gene in genes
         }
         
         # Collect results as they complete
         for future in as_completed(future_to_gene):
+            # Check for cancellation before processing each result
+            if workflow_client:
+                try:
+                    if await workflow_client.is_workflow_cancelled():
+                        logger.info(f"Workflow {workflow_id} is cancelled, stopping batch processing")
+                        # Cancel remaining futures
+                        for f in future_to_gene:
+                            if not f.done():
+                                f.cancel()
+                        return {"cancelled": True, "message": "Workflow has been cancelled", "partial_results": results}
+                except Exception as e:
+                    logger.warning(f"Failed to check workflow cancellation status: {e}")
+            
             gene = future_to_gene[future]
             try:
                 result = future.result()
@@ -226,7 +302,11 @@ async def process_gene_batch_parallel(
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler('/data/pypgx_progress.log')  # File output for progress tracking
+    ]
 )
 logger = logging.getLogger("pypgx_wrapper")
 
@@ -241,6 +321,29 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Load supported genes from configuration (replaces hardcoded SUPPORTED_GENES list)
 SUPPORTED_GENES = gene_config.get_supported_genes()
+
+# Store running processes by workflow_id for cancellation
+running_processes: Dict[str, Dict[str, Any]] = {}
+
+class CancelRequest(BaseModel):
+    workflow_id: str
+    patient_id: str
+    action: str
+
+def register_process(process_key: str, pid: int, process_info: Dict[str, Any] = None):
+    """Register a running process for a workflow."""
+    running_processes[process_key] = {
+        "pid": pid,
+        "start_time": time.time(),
+        **(process_info or {})
+    }
+    logger.info(f"Registered process {pid} for {process_key}")
+
+def unregister_process(process_key: str):
+    """Unregister a process when it completes normally."""
+    if process_key in running_processes:
+        del running_processes[process_key]
+        logger.info(f"Unregistered process for {process_key}")
 
 app = FastAPI(
     title="PyPGx Wrapper API",
@@ -273,6 +376,14 @@ def health_check():
             'max_parallel_genes': PYPGX_MAX_PARALLEL_GENES,
             'batch_size': PYPGX_BATCH_SIZE,
             'memory_limit': PYPGX_MEMORY_LIMIT
+        },
+        'preference_config': {
+            'pypgx_pharmcat_preference': PYPGX_PHARMCAT_PREFERENCE,
+            'available_gene_sets': {
+                'pypgx': len(gene_config.get_gene_set('pypgx')),
+                'pypgx_minus_pharmcat': len(gene_config.get_gene_set('pypgx_minus_pharmcat')),
+                'pharmcat_can_call': len(gene_config.get_gene_set('pharmcat_can_call'))
+            }
         },
         'timestamp': time.time()
     }
@@ -333,6 +444,8 @@ async def create_input_vcf(
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
+    workflow_id: Optional[str] = Form(None),
+    step_name: Optional[str] = Form("pypgx_bam2vcf")
 ):
     """
     Create an input VCF (SNVs/indels) from a BAM/CRAM/SAM using PyPGx's recommended method.
@@ -341,6 +454,20 @@ async def create_input_vcf(
     """
     if reference_genome not in ["hg19", "hg38", "GRCh37", "GRCh38"]:
         raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} is not supported. Use hg19/GRCh37 or hg38/GRCh38.")
+
+    # Initialize workflow client if workflow_id is provided
+    workflow_client = None
+    if workflow_id:
+        try:
+            workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+            await workflow_client.start_step(f"Starting BAM to VCF conversion for {file.filename}")
+            await workflow_client.log_progress(f"Converting {file.filename} to VCF", {
+                "filename": file.filename,
+                "reference_genome": reference_genome
+            })
+        except Exception as e:
+            logger.warning(f"Failed to initialize workflow client: {e}")
+            workflow_client = None
 
     # Normalize to GRCh37/GRCh38 wording for PyPGx
     pypgx_assembly = "GRCh37" if reference_genome in ("hg19", "GRCh37") else "GRCh38"
@@ -361,7 +488,18 @@ async def create_input_vcf(
 
         res = run_pypgx_create_input_vcf(str(input_path), str(output_vcf_gz), pypgx_assembly)
         if not res.get("success"):
+            if workflow_client:
+                await workflow_client.log_progress(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}", {"error": res.get("error")})
+                await workflow_client.complete_step(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}")
             raise HTTPException(status_code=500, detail=res.get("error", "PyPGx create-input-vcf failed"))
+
+        # Update workflow with success
+        if workflow_client:
+            await workflow_client.log_progress(f"BAM to VCF conversion completed successfully", {
+                "vcf_path": str(output_vcf_gz),
+                "assembly": pypgx_assembly
+            })
+            await workflow_client.complete_step("BAM to VCF conversion completed successfully")
 
         payload: Dict[str, Any] = {
             "success": True,
@@ -381,6 +519,9 @@ async def create_input_vcf(
         raise
     except Exception as e:
         logger.exception("Error creating VCF from alignment with PyPGx")
+        if workflow_client:
+            await workflow_client.log_progress(f"BAM to VCF conversion failed: {str(e)}", {"error": str(e)})
+            await workflow_client.complete_step(f"BAM to VCF conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating VCF from alignment with PyPGx: {str(e)}")
 
 def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly: str) -> Dict[str, Any]:
@@ -418,7 +559,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         tbi_path = output_vcf_gz + ".tbi"
         if not os.path.exists(tbi_path):
             logger.info(f"Indexing VCF with tabix: {output_vcf_gz}")
-            subprocess.run(f"tabix -p vcf {output_vcf_gz}", shell=True, check=True)
+            subprocess.run(f"tabix -f -p vcf {output_vcf_gz}", shell=True, check=True)
 
         return {"success": True, "vcf": output_vcf_gz, "tbi": tbi_path}
     except subprocess.CalledProcessError as cpe:
@@ -437,6 +578,9 @@ async def genotype(
     reference_genome: str = Form("hg19"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
+    workflow_id: Optional[str] = Form(None),
+    step_name: Optional[str] = Form("pypgx_analysis"),
+    input_type: Optional[str] = Form(None),
 ):
     """
     Run PyPGx on a VCF file to determine alleles
@@ -468,7 +612,28 @@ async def genotype(
         # Use explicit gene set parameter
         requested_genes = gene_config.get_gene_set(gene_set.lower())
     elif genes and genes.strip().upper() == "ALL":
-        requested_genes = SUPPORTED_GENES
+        # For "ALL", apply preference logic based on input file type
+        # Use input_type from workflow data if available, otherwise fallback to detection
+        detected_input_type = input_type
+        if not detected_input_type:
+            # Fallback: detect from filename if input_type not provided
+            filename = file.filename.lower() if file.filename else ""
+            if filename.endswith(('.vcf', '.vcf.gz')):
+                detected_input_type = 'vcf'
+            elif filename.endswith(('.bam', '.cram', '.sam')):
+                detected_input_type = 'bam'
+            elif filename.endswith(('.fastq', '.fq', '.fastq.gz', '.fq.gz')):
+                detected_input_type = 'fastq'
+            else:
+                detected_input_type = 'unknown'
+        
+        logger.info(f"Using input type: {detected_input_type} (from workflow: {input_type is not None})")
+        
+        # Determine appropriate gene set based on preference
+        preferred_gene_set = determine_pypgx_gene_set(PYPGX_PHARMCAT_PREFERENCE, detected_input_type)
+        logger.info(f"Using gene set: {preferred_gene_set} (preference: {PYPGX_PHARMCAT_PREFERENCE}, input_type: {detected_input_type})")
+        
+        requested_genes = gene_config.get_gene_set(preferred_gene_set)
     else:
         # Merge legacy single `gene` with `genes` list if provided
         gene_list = []
@@ -498,6 +663,28 @@ async def genotype(
     job_dir = TEMP_DIR / job_id
     os.makedirs(job_dir, exist_ok=True)
     
+    
+    # Initialize workflow client if workflow_id is provided
+    workflow_client = None
+    if workflow_id:
+        try:
+            workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+            
+            # Check if workflow has been cancelled before starting
+            if await workflow_client.is_workflow_cancelled():
+                logger.info(f"Workflow {workflow_id} is cancelled, aborting PyPGx processing")
+                return {"success": False, "error": "Workflow has been cancelled"}
+            
+            await workflow_client.start_step(f"Starting PyPGx analysis for {len(requested_genes)} genes")
+            await workflow_client.log_progress(f"Processing {file.filename} with PyPGx", {
+                "genes": requested_genes,
+                "reference_genome": reference_genome,
+                "file_size_gb": 0  # Will be updated after file is saved
+            })
+        except Exception as e:
+            logger.warning(f"Failed to initialize workflow client: {e}")
+            workflow_client = None
+    
     try:
         # Save the uploaded VCF file
         input_filepath = job_dir / file.filename
@@ -511,6 +698,14 @@ async def genotype(
         
         logger.info(f"Processing PyPGx genotyping for {len(requested_genes)} genes")
         logger.info(f"File size: {file_size_gb:.2f}GB, Available memory: {memory_info['available_gb']:.2f}GB")
+        
+        # Update workflow with file information
+        if workflow_client:
+            await workflow_client.log_progress(f"File uploaded: {file_size_gb:.2f}GB", {
+                "file_size_gb": file_size_gb,
+                "available_memory_gb": memory_info['available_gb'],
+                "total_genes": len(requested_genes)
+            })
         
         # Calculate optimal batch size based on file size and available memory
         optimal_batch_size = calculate_optimal_batch_size(file_size_gb, memory_info['available_gb'])
@@ -529,6 +724,19 @@ async def genotype(
         for batch_idx, gene_batch in enumerate(gene_batches):
             logger.info(f"Processing batch {batch_idx + 1}/{len(gene_batches)} with {len(gene_batch)} genes: {gene_batch}")
             
+            # Log batch start for progress tracking
+            batch_start_time = time.time()
+            total_genes = len(requested_genes)
+            logger.info(f"BATCH_START: batch={batch_idx + 1}, total_batches={len(gene_batches)}, genes_in_batch={len(gene_batch)}, total_genes={total_genes}")
+            
+            # Log batch start for progress tracking
+            if workflow_client:
+                await workflow_client.log_progress(f"Processing batch {batch_idx + 1}/{len(gene_batches)}: {', '.join(gene_batch)}", {
+                    "batch_index": batch_idx + 1,
+                    "total_batches": len(gene_batches),
+                    "genes_in_batch": gene_batch
+                })
+            
             try:
                 # Process the batch in parallel
                 batch_results = await process_gene_batch_parallel(
@@ -536,8 +744,21 @@ async def genotype(
                     str(input_filepath), 
                     str(job_dir), 
                     pypgx_assembly,
-                    max_workers=min(len(gene_batch), PYPGX_MAX_PARALLEL_GENES)
+                    max_workers=min(len(gene_batch), PYPGX_MAX_PARALLEL_GENES),
+                    workflow_id=workflow_id,
+                    workflow_client=workflow_client
                 )
+                
+                # Check if batch processing was cancelled
+                if batch_results.get("cancelled"):
+                    logger.info(f"Batch processing cancelled for workflow {workflow_id}")
+                    aggregated["success"] = False
+                    aggregated["cancelled"] = True
+                    aggregated["message"] = batch_results.get("message", "Workflow cancelled")
+                    # Include any partial results
+                    if "partial_results" in batch_results:
+                        aggregated["results"].update(batch_results["partial_results"])
+                    break
                 
                 # Add batch results to aggregated results
                 for gene, result in batch_results.items():
@@ -546,7 +767,28 @@ async def genotype(
                     if not result.get("success", False) and "No SNV/indel-based star alleles" not in str(result.get("error", "")):
                         aggregated["success"] = False
                 
-                logger.info(f"Completed batch {batch_idx + 1}/{len(gene_batches)}")
+                batch_duration = time.time() - batch_start_time
+                genes_completed = (batch_idx + 1) * len(gene_batch)
+                progress_percent = int((genes_completed / total_genes) * 100)
+                
+                logger.info(f"BATCH_COMPLETE: batch={batch_idx + 1}, duration={batch_duration:.2f}s, genes_completed={genes_completed}/{total_genes}, progress={progress_percent}%")
+                
+                # Update workflow with batch completion
+                if workflow_client:
+                    await workflow_client.log_progress(f"Completed batch {batch_idx + 1}/{len(gene_batches)} in {batch_duration:.2f}s", {
+                        "batch_index": batch_idx + 1,
+                        "duration_seconds": batch_duration,
+                        "genes_completed": genes_completed,
+                        "total_genes": total_genes,
+                        "progress_percent": progress_percent
+                    })
+                    
+                    # Update the step with progress information for proper mapping
+                    await workflow_client.update_step_status(
+                        "running",
+                        f"Completed batch {batch_idx + 1}/{len(gene_batches)} in {batch_duration:.2f}s",
+                        output_data={"progress_percent": progress_percent}
+                    )
                 
             except Exception as e:
                 logger.exception(f"Error processing batch {batch_idx + 1}")
@@ -554,6 +796,14 @@ async def genotype(
                 for gene in gene_batch:
                     aggregated["results"][gene] = {"success": False, "error": f"Batch processing error: {str(e)}"}
                     aggregated["success"] = False
+                
+                # Log error to workflow
+                if workflow_client:
+                    await workflow_client.log_error(f"Error processing batch {batch_idx + 1}: {str(e)}", {
+                        "batch_index": batch_idx + 1,
+                        "genes_in_batch": gene_batch,
+                        "error": str(e)
+                    })
         # Move per-gene pipeline folders into per-patient reports dir if patient_id provided
         try:
             if patient_id:
@@ -586,10 +836,33 @@ async def genotype(
             aggregated["output_file"] = output_file
         except Exception:
             logger.warning("Failed to persist aggregated PyPGx results file")
+        # Complete workflow step
+        if workflow_client:
+            if aggregated["success"]:
+                await workflow_client.complete_step(f"PyPGx analysis completed successfully for {len(requested_genes)} genes", {
+                    "total_genes": len(requested_genes),
+                    "successful_genes": len([r for r in aggregated["results"].values() if r.get("success", False)]),
+                    "failed_genes": len([r for r in aggregated["results"].values() if not r.get("success", False)]),
+                    "output_file": aggregated.get("output_file", "")
+                })
+            else:
+                await workflow_client.fail_step(f"PyPGx analysis failed: {aggregated.get('error', 'Unknown error')}", {
+                    "error": aggregated.get("error", "Unknown error"),
+                    "total_genes": len(requested_genes)
+                })
+        
         return aggregated
 
     except Exception as e:
         logger.exception("Error processing VCF with PyPGx")
+        
+        # Log error to workflow
+        if workflow_client:
+            await workflow_client.fail_step(f"PyPGx analysis failed: {str(e)}", {
+                "error": str(e),
+                "total_genes": len(requested_genes)
+            })
+        
         # Always return 200 status code - communicate errors through JSON response
         return {
             "success": False,
@@ -598,19 +871,12 @@ async def genotype(
             "job_id": job_id
         }
 
-def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19') -> Dict[str, Any]:
+def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19', workflow_id: str = None) -> Dict[str, Any]:
     """Run PyPGx for star allele calling on the input VCF"""
     try:
-        # Ensure the VCF is bgzipped and indexed; if not, create temporary gz + tbi
+        # VCF should already be compressed and indexed by the batch processing function
         vcf_path = str(vcf_path)
         vcf_gz = vcf_path if vcf_path.endswith('.gz') else f"{vcf_path}.gz"
-        tbi_path = f"{vcf_gz}.tbi"
-        if not os.path.exists(vcf_gz):
-            logger.info(f"bgzip compressing VCF for tabix: {vcf_path} -> {vcf_gz}")
-            subprocess.run(f"bgzip -c {vcf_path} > {vcf_gz}", shell=True, check=True)
-        if not os.path.exists(tbi_path):
-            logger.info(f"Indexing VCF with tabix: {vcf_gz}")
-            subprocess.run(f"tabix -p vcf {vcf_gz}", shell=True, check=True)
 
         # Determine a pipeline output directory that does NOT pre-exist
         # PyPGx creates the output directory itself; avoid FileExistsError if already present
@@ -625,18 +891,47 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
         
         logger.info(f"Running PyPGx command: {pypgx_cmd}")
         
-        # Execute PyPGx
-        process = subprocess.run(
+        # Execute PyPGx with process tracking for cancellation
+        process = subprocess.Popen(
             pypgx_cmd,
             shell=True,
             text=True,
-            capture_output=True,
-            check=False
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
         
+        # Register process for cancellation if workflow_id is provided
+        if workflow_id:
+            # Create a unique process key for this gene
+            process_key = f"{workflow_id}_{gene}"
+            register_process(process_key, process.pid, {
+                "gene": gene,
+                "pipeline_dir": str(pipeline_dir),
+                "vcf_path": vcf_gz,
+                "cleanup_paths": [str(pipeline_dir), vcf_gz]
+            })
+        
+        # Wait for completion and capture output
+        # Use a timeout to make the process more responsive to cancellation
+        try:
+            stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+            return_code = process.returncode
+        except subprocess.TimeoutExpired:
+            # If timeout occurs, the process is still running
+            # This shouldn't happen in normal operation, but provides a safety net
+            logger.warning(f"PyPGx process for gene {gene} timed out after 5 minutes")
+            process.kill()
+            stdout, stderr = process.communicate()
+            return_code = process.returncode
+        
+        # Unregister process when done
+        if workflow_id:
+            process_key = f"{workflow_id}_{gene}"
+            unregister_process(process_key)
+        
         # Check if the command was successful
-        if process.returncode != 0:
-            stderr_str = process.stderr or ""
+        if return_code != 0:
+            stderr_str = stderr or ""
             # Handle case where gene doesn't have SNV/indel star allele definitions
             if "does not have any star alleles defined by SNVs/indels" in stderr_str:
                 logger.info(f"Gene {gene} doesn't have SNV/indel-based star alleles - this is expected for some genes")
@@ -733,6 +1028,101 @@ def parse_pypgx_results(pipeline_dir: Path, gene: str) -> tuple:
     except Exception as e:
         logger.exception(f"Error parsing PyPGx results for {gene}: {str(e)}")
         return None, {}
+
+@app.post("/cancel")
+async def cancel_workflow_job(request: CancelRequest):
+    """
+    Cancel a running workflow job.
+    
+    This is the standardized cancel endpoint that all containers should implement.
+    It should:
+    1. Find running processes for the given workflow_id/patient_id
+    2. Terminate those processes gracefully
+    3. Clean up any temporary files
+    4. Return success/failure status
+    """
+    try:
+        workflow_id = request.workflow_id
+        patient_id = request.patient_id
+        
+        logger.info(f"Cancelling workflow {workflow_id} for patient {patient_id}")
+        logger.info(f"Current running processes: {len(running_processes)}")
+        logger.info(f"Process keys: {list(running_processes.keys())}")
+        
+        # Find and terminate processes
+        terminated_count = 0
+        
+        # Check our stored process registry for all processes with this workflow_id
+        processes_to_terminate = []
+        for process_key, process_info in running_processes.items():
+            if process_key.startswith(workflow_id):
+                processes_to_terminate.append((process_key, process_info))
+        
+        logger.info(f"Found {len(processes_to_terminate)} processes to terminate for workflow {workflow_id}")
+        
+        if processes_to_terminate:
+            for process_key, process_info in processes_to_terminate:
+                pid = process_info.get("pid")
+                logger.info(f"Processing {process_key} with PID {pid}")
+                
+                if pid and psutil.pid_exists(pid):
+                    try:
+                        process = psutil.Process(pid)
+                        
+                        # First try graceful termination
+                        process.terminate()
+                        logger.info(f"Sent terminate signal to process {pid} for {process_key}")
+                        
+                        # Wait a short time for graceful shutdown
+                        try:
+                            process.wait(timeout=5)
+                            logger.info(f"Process {pid} terminated gracefully")
+                        except psutil.TimeoutExpired:
+                            # Force kill if graceful termination fails
+                            logger.warning(f"Process {pid} did not terminate gracefully, force killing")
+                            process.kill()
+                            process.wait(timeout=2)
+                            logger.info(f"Force killed process {pid}")
+                        
+                        terminated_count += 1
+                    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                        logger.warning(f"Could not terminate process {pid}: {e}")
+                    except Exception as e:
+                        logger.error(f"Unexpected error terminating process {pid}: {e}")
+                else:
+                    logger.info(f"Process {pid} for {process_key} no longer exists")
+                
+                # Clean up specific tracked file paths
+                cleanup_paths = process_info.get("cleanup_paths", [])
+                logger.info(f"Cleaning up {len(cleanup_paths)} paths for {process_key}")
+                for path in cleanup_paths:
+                    try:
+                        if os.path.exists(path):
+                            if os.path.isdir(path):
+                                shutil.rmtree(path, ignore_errors=True)
+                                logger.info(f"Cleaned up directory: {path}")
+                            else:
+                                os.remove(path)
+                                logger.info(f"Cleaned up file: {path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup {path}: {e}")
+                
+                # Remove from registry
+                del running_processes[process_key]
+        else:
+            logger.warning(f"No running processes found for workflow {workflow_id}")
+        
+        return {
+            "success": True,
+            "message": f"Cancelled workflow {workflow_id}",
+            "terminated_processes": terminated_count,
+            "workflow_id": workflow_id,
+            "patient_id": patient_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cancelling workflow {request.workflow_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel workflow: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("pypgx_wrapper:app", host="0.0.0.0", port=5000, reload=True) 

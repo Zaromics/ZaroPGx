@@ -179,6 +179,13 @@ class JobStatusService:
             if not job:
                 raise ValueError(f"Job {job_id} not found")
             
+            # FORWARD-ONLY PROGRESS RULE: Progress can never go backward
+            # Only allow progress to increase or stay the same
+            if progress < job.progress:
+                logger.warning(f"Progress update rejected for job {job_id}: attempted to decrease from {job.progress}% to {progress}%. Progress can only increase or remain the same.")
+                # Return the job without updating progress
+                return job
+            
             # Update job status
             job.stage = stage
             job.progress = progress

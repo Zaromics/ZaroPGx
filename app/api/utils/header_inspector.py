@@ -19,6 +19,8 @@ import subprocess
 import shlex
 import os
 from typing import Dict, List, Optional, Union
+import re
+from app.api.utils.file_utils import is_compressed_file, has_index_file
 
 try:
     import pysam
@@ -37,7 +39,7 @@ except ImportError:
 DEFAULT_MAX_BYTES = int(os.getenv("MAX_HEADER_READ_BYTES", str(1_000_000_000)))
 DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 
-
+# TODO: refactor duplicate code -- see file_utils.py
 def _has_index_file(path: Path) -> bool:
     index_extensions = ['.tbi', '.csi', '.bai', '.fai', '.crai']
     for ext in index_extensions:
@@ -71,8 +73,8 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
     except Exception:
         size_bytes = None
 
-    compressed = any(str(path).lower().endswith(ext) for ext in [".gz", ".bgz", ".bz2"])
-    has_index = _has_index_file(path)
+    compressed = is_compressed_file(path)
+    has_index = has_index_file(path)
 
     inspector = GenomicHeaderInspector()
 
@@ -86,7 +88,7 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
     _ensure_time()
 
     # Dispatch to specific inspectors with minimal I/O
-    if file_format in ('.vcf', '.bcf'):
+    if file_format in ('.vcf', '.bcf', 'vcf.gz', 'bcf.gz', 'vcf.bz2', 'bcf.bz2', 'vcf.bgz', 'bcf.bgz'):
         # Try pysam first
         try:
             res = inspector._inspect_vcf_bcf(filepath)
@@ -102,18 +104,40 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
                 # Minimal parse from header lines
                 samples = []
                 contigs: List[str] = []
+                contig_lengths: Dict[str, Optional[int]] = {}
                 version = None
                 ref_path = None
+                created_by = None
                 for ln in header_lines:
                     if ln.startswith('##fileformat=') and not version:
                         version = ln.split('=', 1)[1]
                     elif ln.startswith('##reference=') and not ref_path:
                         ref_path = ln.split('=', 1)[1].strip('"')
+                    elif ln.startswith('##GATKCommandLine.') and not created_by:
+                        # Example: ##GATKCommandLine.HaplotypeCaller=<ID=HaplotypeCaller,Version=3.8-1_..., ...>
+                        try:
+                            import re as _re
+                            m_id = _re.search(r"GATKCommandLine\.([^=]+)=<", ln)
+                            m_ver = _re.search(r"Version=([^,>]+)", ln)
+                            tool = m_id.group(1) if m_id else "GATK"
+                            ver = m_ver.group(1) if m_ver else None
+                            created_by = f"GATK {tool}{(' ' + ver) if ver else ''}"
+                        except Exception:
+                            pass
+                    elif ln.startswith('##bcftools_viewVersion=') and not created_by:
+                        # Example: ##bcftools_viewVersion=1.22-..., record bcftools version
+                        created_by = ln.split('=', 1)[1]
                     elif ln.startswith('##contig='):
                         import re as _re
-                        m = _re.search(r'ID=([^,>]+)', ln)
-                        if m:
-                            contigs.append(m.group(1))
+                        m_id = _re.search(r'ID=([^,>]+)', ln)
+                        m_len = _re.search(r'length=([0-9]+)', ln)
+                        if m_id:
+                            cid = m_id.group(1)
+                            contigs.append(cid)
+                            try:
+                                contig_lengths[cid] = int(m_len.group(1)) if m_len else None
+                            except Exception:
+                                contig_lengths[cid] = None
                     elif ln.startswith('#CHROM'):
                         parts = ln.split('\t')
                         if len(parts) > 9:
@@ -129,6 +153,9 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
                     'format_fields': [],
                     'filter_fields': [],
                     'header_records': header_lines,
+                    'contig_lengths': contig_lengths,
+                    'version': version,
+                    'created_by': created_by,
                 }
             except Exception as e:
                 res = {'error': f"bcftools fallback failed: {e}"}
@@ -136,12 +163,26 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
         # Normalize
         md_ref = None
         md_ref_path = None
+        md_version = None
+        md_created_by = None
         try:
             # Try to infer ref from header_records
             for rec in res.get('header_records', []):
                 if isinstance(rec, str):
                     if rec.startswith('##reference=') and not md_ref_path:
                         md_ref_path = rec.split('=', 1)[1].strip('"')
+                    if rec.startswith('##fileformat=') and not md_version:
+                        md_version = rec.split('=', 1)[1]
+                    if rec.startswith('##GATKCommandLine.') and not md_created_by:
+                        try:
+                            import re as _re
+                            m_id = _re.search(r"GATKCommandLine\.([^=]+)=<", rec)
+                            m_ver = _re.search(r"Version=([^,>]+)", rec)
+                            tool = m_id.group(1) if m_id else "GATK"
+                            ver = m_ver.group(1) if m_ver else None
+                            md_created_by = f"GATK {tool}{(' ' + ver) if ver else ''}"
+                        except Exception:
+                            pass
         except Exception:
             pass
         if md_ref_path:
@@ -152,6 +193,33 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
             elif 'grch37' in base or 'hg19' in base:
                 md_ref = 'GRCh37'
 
+        # Prefer parsed values from res if available
+        if not md_version:
+            md_version = res.get('version')
+        if not md_created_by:
+            md_created_by = res.get('created_by')
+
+        # Build sequences with lengths if available
+        sequences_norm: List[Dict[str, Optional[Union[str, int]]]] = []
+        contig_lengths_map = res.get('contig_lengths') or {}
+        if res.get('contigs'):
+            for c in res.get('contigs'):
+                sequences_norm.append({'name': c, 'length': contig_lengths_map.get(c)})
+        else:
+            sequences_norm = [{'name': c, 'length': None} for c in (res.get('contigs') or [])]
+
+        # Attempt fast variant count via bcftools index -n (if available)
+        variant_count: Optional[int] = None
+        try:
+            count_cmd = f"bcftools index -n {shlex.quote(filepath)}"
+            cp_cnt = subprocess.run(count_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if cp_cnt.returncode == 0:
+                txt = (cp_cnt.stdout or cp_cnt.stderr or '').strip()
+                # bcftools may print a single integer
+                variant_count = int(txt) if txt.isdigit() else None
+        except Exception:
+            variant_count = None
+
         normalized = {
             'file_info': {
                 'path': str(path),
@@ -161,16 +229,18 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
                 'has_index': bool(has_index),
             },
             'metadata': {
-                'version': None,
-                'created_by': None,
+                'version': md_version,
+                'created_by': md_created_by,
                 'reference_genome': md_ref or None,
                 'reference_genome_path': md_ref_path,
             },
-            'sequences': [{'name': c, 'length': None} for c in (res.get('contigs') or [])],
-            'sample': (res.get('samples') or [None])[0],
+            'sequences': sequences_norm,
+            'samples': res.get('samples') or [],        # <-- all samples
+            'sample': (res.get('samples')[0] if (res.get('samples') and len(res.get('samples')) > 0) else None),
             'format_specific': {
                 'vcf_info_fields': {k: '' for k in (res.get('info_fields') or [])},
                 'vcf_format_fields': {k: '' for k in (res.get('format_fields') or [])},
+                'variant_count': variant_count,
             },
         }
         return normalized
@@ -514,6 +584,94 @@ class GenomicHeaderInspector:
             return {'error': f"Failed to read FASTA file: {str(e)}"}
     
     # Removed legacy inspect_file/print_results; normalized API is inspect_header()
+
+
+def extract_raw_header_text(filepath: str) -> Optional[str]:
+    """Return the raw textual header for supported formats.
+
+    - VCF/BCF: returns the full header text (## records and #CHROM line)
+    - SAM/BAM/CRAM: returns @-prefixed header lines
+    - Others: returns None
+    """
+    try:
+        # Try VCF/BCF first
+        if filepath.endswith(('.vcf', '.vcf.gz', '.gvcf', '.gvcf.gz', '.bcf')):
+            try:
+                with pysam.VariantFile(filepath) as vcf:
+                    header_text = str(vcf.header)
+                    return header_text
+            except Exception:
+                pass
+
+        # Try SAM/BAM/CRAM
+        if filepath.endswith(('.sam', '.bam', '.cram')):
+            try:
+                with pysam.AlignmentFile(filepath, 'r') as samfile:
+                    return samfile.text or ''
+            except Exception:
+                pass
+    except Exception:
+        return None
+    return None
+
+
+def _is_canonical_contig(contig_id: str) -> bool:
+    """Return True if contig_id is canonical (1-22, X, Y, M/MT with or without 'chr' prefix)."""
+    if not contig_id:
+        return False
+    cid = contig_id.strip()
+    if cid.lower().startswith('chr'):
+        cid = cid[3:]
+    cid_upper = cid.upper()
+
+    if cid_upper in {str(i) for i in range(1, 23)} | {'X', 'Y', 'M', 'MT'}:
+        return True
+    return False
+
+
+def filter_header_to_canonical_contigs(header_text: str) -> str:
+    """Filter header text to keep only canonical contigs.
+
+    - For VCF: retains all header lines, but filters lines that match
+      '##contig=<ID=...>' to only canonical contigs.
+    - For SAM/BAM: retains all header lines, but filters '@SQ' lines to
+      only canonical SN values.
+    Other header lines are preserved as-is.
+    """
+    if not header_text:
+        return header_text
+
+    vcf_contig_re = re.compile(r'^##contig=<ID=([^,>]+)')
+    sam_sq_re = re.compile(r'^@SQ\s+.*?SN:([^\s\t]+)')
+
+    filtered_lines: List[str] = []
+    for line in header_text.splitlines():
+        try:
+            # VCF contig line
+            m = vcf_contig_re.match(line)
+            if m:
+                contig = m.group(1)
+                if _is_canonical_contig(contig):
+                    filtered_lines.append(line)
+                # Skip non-canonical contigs
+                continue
+
+            # SAM/BAM SQ line
+            m2 = sam_sq_re.match(line)
+            if m2:
+                contig = m2.group(1)
+                if _is_canonical_contig(contig):
+                    filtered_lines.append(line)
+                # Skip non-canonical contigs
+                continue
+
+            # All other header lines
+            filtered_lines.append(line)
+        except Exception:
+            # On any parsing error, keep the original line
+            filtered_lines.append(line)
+
+    return "\n".join(filtered_lines) + ("\n" if not header_text.endswith('\n') else '')
 
 
 def main():

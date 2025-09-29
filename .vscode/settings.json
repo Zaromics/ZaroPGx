@@ -1,3 +1,24 @@
 {
-    "nextflow.telemetry.enabled": false
+    "nextflow.telemetry.enabled": false,
+    "sqltools.connections": [
+        {
+            "pgOptions": {
+                "statement_timeout": 30000,
+                "query_timeout": 30000,
+                "connectionTimeoutMillis": 10000,
+                "idleTimeoutMillis": 300000
+            },
+            "ssh": "Disabled",
+            "previewLimit": 100,
+            "server": "localhost",
+            "port": 5444,
+            "driver": "PostgreSQL",
+            "name": "ZaroPGx PostgreSQL",
+            "group": "ZaroPGx",
+            "database": "cpic_db",
+            "username": "cpic_user",
+            "password": "test123",
+            "connectionTimeout": 10
+        }
+    ]
 }

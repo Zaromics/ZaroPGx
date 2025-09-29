@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.api.db import get_db
 from app.services.job_status_service import JobStatusService
+from app.services.workflow_service import WorkflowService
 from app.api.models import (
-    JobCreate, JobUpdate, JobResponse, JobStageResponse, JobEventResponse
+    JobCreate, JobUpdate, JobResponse, JobStageResponse, JobEventResponse,
+    WorkflowProgressResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -126,144 +128,6 @@ async def update_job(
         )
 
 
-@router.get("/progress/{identifier}")
-async def get_progress_stream(
-    identifier: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Stream job progress as Server-Sent Events
-    
-    The identifier can be either a job_id or file_id.
-    If it's a file_id, we'll lookup the corresponding job_id.
-    """
-    from fastapi.responses import StreamingResponse
-    from app.services.job_status_service import JobStatusService
-    import asyncio
-    import json
-    import time
-    
-    # Try to get job by identifier (could be job_id or file_id)
-    job_service = JobStatusService(db)
-    job = job_service.get_job_status(identifier)
-    
-    actual_job_id = identifier
-    
-    # If not found by identifier, try to find by file_id
-    if not job:
-        # Query the database to find job by file_id
-        from sqlalchemy import text
-        result = db.execute(
-            text("SELECT job_id FROM job_monitoring.jobs WHERE file_id = :file_id"),
-            {"file_id": identifier}
-        ).scalar()
-        
-        if result:
-            actual_job_id = str(result)
-            job = job_service.get_job_status(actual_job_id)
-    
-    async def progress_event_generator():
-        """Generate progress events for the job"""
-        last_progress = None
-        keepalive_count = 0
-        
-        while True:
-            try:
-                # Get current job status
-                current_job = job_service.get_job_status(actual_job_id)
-                
-                if current_job:
-                    # Sanitize job_metadata for SSE to prevent JSON parsing errors
-                    raw_metadata = current_job.get("job_metadata", {})
-                    sanitized_metadata = {}
-                    
-                    # Only include essential metadata for progress updates
-                    if "reports" in raw_metadata:
-                        # Include only the report URLs, not the full data
-                        sanitized_metadata["reports"] = {
-                            "pdf_report_url": raw_metadata["reports"].get("pdf_report_url"),
-                            "html_report_url": raw_metadata["reports"].get("html_report_url"),
-                            "pharmcat_html_report_url": raw_metadata["reports"].get("pharmcat_html_report_url"),
-                            "pharmcat_json_report_url": raw_metadata["reports"].get("pharmcat_json_report_url"),
-                            "pharmcat_tsv_report_url": raw_metadata["reports"].get("pharmcat_tsv_report_url")
-                        }
-                    
-                    progress_data = {
-                        "job_id": actual_job_id,
-                        "status": current_job["status"],
-                        "stage": current_job["stage"],
-                        "progress": current_job["progress"],
-                        "message": current_job["message"] or "Processing...",
-                        "timestamp": current_job["updated_at"] if current_job.get("updated_at") else None,
-                        "job_metadata": sanitized_metadata
-                    }
-                    
-                    # Only send update if progress has changed
-                    if progress_data != last_progress:
-                        yield f"data: {json.dumps(progress_data)}\n\n"
-                        last_progress = progress_data
-                    
-                    # Check if job is complete
-                    if current_job["status"] in ["completed", "failed", "cancelled"]:
-                        # Send final update with success flag and report URLs
-                        # Get the actual report URLs from job_metadata if available
-                        reports = current_job.get("job_metadata", {}).get("reports", {})
-                        
-                        final_data = {
-                            **progress_data, 
-                            "complete": True,
-                            "success": current_job["status"] == "completed",
-                            "data": {
-                                "job_id": actual_job_id,
-                                "file_id": current_job.get("file_id"),
-                                "patient_id": current_job.get("patient_id"),
-                                "pdf_report_url": reports.get("pdf_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report.pdf",
-                                "html_report_url": reports.get("html_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_report_interactive.html",
-                                "pharmcat_html_report_url": reports.get("pharmcat_html_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.html",
-                                "pharmcat_json_report_url": reports.get("pharmcat_json_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.json",
-                                "pharmcat_tsv_report_url": reports.get("pharmcat_tsv_report_url") or f"/reports/{current_job.get('patient_id')}/{current_job.get('patient_id')}_pgx_pharmcat.tsv"
-                            }
-                        }
-                        yield f"data: {json.dumps(final_data)}\n\n"
-                        break
-                        
-                else:
-                    # Job not found - send error and break
-                    error_data = {
-                        "error": f"Job {identifier} not found",
-                        "reconnect": False
-                    }
-                    yield f"data: {json.dumps(error_data)}\n\n"
-                    break
-                
-                # Send keepalive every 30 seconds
-                keepalive_count += 1
-                if keepalive_count % 30 == 0:
-                    keepalive_data = {"keepalive": True, "timestamp": time.time()}
-                    yield f"data: {json.dumps(keepalive_data)}\n\n"
-                
-                # Wait before next check
-                await asyncio.sleep(1)
-                
-            except Exception as e:
-                logger.error(f"Error in progress stream for {identifier}: {str(e)}")
-                error_data = {
-                    "error": f"Stream error: {str(e)}",
-                    "reconnect": True
-                }
-                yield f"data: {json.dumps(error_data)}\n\n"
-                break
-    
-    return StreamingResponse(
-        progress_event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
-        }
-    )
-
 
 @router.get("/jobs", response_model=List[JobResponse])
 async def list_jobs(
@@ -332,4 +196,31 @@ async def delete_job(
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
+        )
+
+
+@router.get("/progress/{workflow_id}", response_model=WorkflowProgressResponse)
+async def get_workflow_progress(
+    workflow_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get workflow progress information"""
+    try:
+        workflow_service = WorkflowService(db)
+        progress = workflow_service.get_workflow_progress(workflow_id)
+        
+        if not progress:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow {workflow_id} not found"
+            )
+        
+        return progress
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error getting workflow progress {workflow_id}: {str(e)}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get workflow progress: {str(e)}"
         )

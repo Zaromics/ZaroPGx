@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional
-from sqlalchemy import create_engine, MetaData, text, String, Integer, DateTime, Text, JSON, ForeignKey, CheckConstraint, Boolean
+from sqlalchemy import create_engine, MetaData, text, String, Integer, DateTime, Text, JSON, ForeignKey, CheckConstraint, Boolean, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, relationship
 from dotenv import load_dotenv
@@ -176,6 +176,98 @@ class JobDependency(Base):
 
     def __repr__(self) -> str:
         return f"JobDependency(id={self.dependency_id}, job={self.job_id}, depends_on={self.depends_on_job_id})"
+
+
+# ============================================================================
+# NEW WORKFLOW MONITORING MODELS - Enhanced workflow tracking system
+# ============================================================================
+
+class Workflow(Base):
+    """SQLAlchemy model for workflows table - Primary workflow orchestration"""
+    __tablename__ = "workflows"
+    
+    # Primary key
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Basic workflow information
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Timing fields
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # Progress tracking
+    total_steps: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    completed_steps: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
+    
+    # Metadata and relationships
+    workflow_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    steps: Mapped[List["WorkflowStep"]] = relationship("WorkflowStep", back_populates="workflow", cascade="all, delete-orphan")
+    logs: Mapped[List["WorkflowLog"]] = relationship("WorkflowLog", back_populates="workflow", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"Workflow(id={self.id}, name={self.name}, status={self.status})"
+
+
+class WorkflowStep(Base):
+    """SQLAlchemy model for workflow_steps table - Individual step tracking"""
+    __tablename__ = "workflow_steps"
+    
+    # Primary key
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Foreign key to workflow
+    workflow_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+    
+    # Step information
+    step_name: Mapped[str] = mapped_column(String, nullable=False)
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    container_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Timing fields
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    
+    # Data and error tracking
+    output_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_details: Mapped[dict] = mapped_column(JSON, default=dict)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Relationships
+    workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="steps")
+
+    def __repr__(self) -> str:
+        return f"WorkflowStep(id={self.id}, step_name={self.step_name}, status={self.status})"
+
+
+class WorkflowLog(Base):
+    """SQLAlchemy model for workflow_logs table - Execution logs for debugging"""
+    __tablename__ = "workflow_logs"
+    
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    
+    # Foreign key to workflow
+    workflow_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+    
+    # Log information
+    step_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    log_level: Mapped[str] = mapped_column(String, nullable=False, default="info")
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    log_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="logs")
+
+    def __repr__(self) -> str:
+        return f"WorkflowLog(id={self.id}, level={self.log_level}, message={self.message[:50]}...)"
 
 
 # Dependency to get DB session using modern FastAPI pattern

@@ -84,15 +84,23 @@ class GenomeDownloadProgress {
                 window.resetProgress();
             }
             
-            // Show file size info when a file is selected
-            if (fileInput.files && fileInput.files[0]) {
-                const fileSize = fileInput.files[0].size;
-                const formattedSize = this.formatBytes(fileSize);
+            // Show file size info when files are selected
+            if (fileInput.files && fileInput.files.length > 0) {
+                let totalSize = 0;
+                for (let i = 0; i < fileInput.files.length; i++) {
+                    totalSize += fileInput.files[i].size;
+                }
+                const formattedSize = this.formatBytes(totalSize);
                 document.getElementById('upload-size-info').textContent = `0 KB / ${formattedSize}`;
-                this.showStatus('File selected, ready to upload');
+                
+                if (fileInput.files.length === 1) {
+                    this.showStatus('File selected, ready to upload');
+                } else {
+                    this.showStatus(`${fileInput.files.length} files selected, ready to upload`);
+                }
             } else {
                 document.getElementById('upload-size-info').textContent = '0 KB / 0 KB';
-                this.showStatus('No file selected');
+                this.showStatus('No files selected');
             }
         });
         
@@ -107,12 +115,18 @@ class GenomeDownloadProgress {
             e.preventDefault();
             e.stopPropagation();
             
-            // Check if a file is selected
+            // Check if files are selected
             if (!fileInput.files || fileInput.files.length === 0) {
-                console.warn("No file selected");
+                console.warn("No files selected");
                 const addLogMessage = window.addLogMessage || console.log;
-                addLogMessage('Please select a file to upload', 'warning');
+                addLogMessage('Please select files to upload', 'warning');
                 return false;
+            }
+            
+            // Log file selection details
+            console.log(`${fileInput.files.length} files selected:`);
+            for (let i = 0; i < fileInput.files.length; i++) {
+                console.log(`  ${i + 1}. ${fileInput.files[i].name} (${this.formatBytes(fileInput.files[i].size)})`);
             }
             
             console.log("Default form submission prevented");
@@ -131,7 +145,7 @@ class GenomeDownloadProgress {
                     'hla': 'optitype_enabled',
                     'gatk': 'gatk_enabled', 
                     'pypgx': 'pypgx_enabled',
-                    'report': 'kroki_enabled' // Needs to be changed, kroki is not synonymous with report
+                    'report': 'report_enabled' // Custom report generation toggle
                 };
                 
                 // Add toggle states to form data
@@ -147,6 +161,11 @@ class GenomeDownloadProgress {
             // Disable the upload button
             uploadButton.disabled = true;
             uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Uploading...';
+            
+            // Set upload stage to green (running) when upload starts
+            if (window.GlyphManager) {
+                window.GlyphManager.setStageState(document.getElementById('stageUpload'), 'running');
+            }
             
             // Start progress tracking
             this.startProgressTracking();
@@ -166,17 +185,6 @@ class GenomeDownloadProgress {
                     const percentComplete = Math.round((event.loaded / event.total) * 100);
                     console.log(`Upload progress: ${percentComplete}%`);
                     this.updateProgress(percentComplete, event.loaded, event.total);
-                    
-                    // Update status message based on percentage
-                    if (percentComplete < 25) {
-                        this.showStatus('Starting upload...');
-                    } else if (percentComplete < 50) {
-                        this.showStatus('Uploading file data...');
-                    } else if (percentComplete < 75) {
-                        this.showStatus('Processing data chunks...');
-                    } else if (percentComplete < 100) {
-                        this.showStatus('Finalizing upload...');
-                    }
                 }
             });
             
@@ -187,6 +195,11 @@ class GenomeDownloadProgress {
                 if (xhr.status >= 200 && xhr.status < 300) {
                     // Upload successful
                     this.completeUpload();
+                    
+                    // Set upload stage to blue (completed) when upload completes
+                    if (window.GlyphManager) {
+                        window.GlyphManager.setStageState(document.getElementById('stageUpload'), 'completed');
+                    }
                     
                     // Process the response
                     try {
@@ -205,7 +218,7 @@ class GenomeDownloadProgress {
                             console.warn("updateFileAnalysis function not found");
                         }
                         
-                        // Start progress monitoring if the function exists
+                        // Start progress monitoring AFTER setting upload stage to completed
                         if (window.monitorProgress) {
                             console.log("Starting pipeline progress monitoring with job_id:", response.job_id);
                             window.monitorProgress(response.job_id);
@@ -229,6 +242,13 @@ class GenomeDownloadProgress {
                     // Upload failed with HTTP error
                     console.error("Upload failed with status:", xhr.status);
                     this.uploadError();
+                    
+                    // Turn upload stage red when upload fails
+                    const stageUpload = document.getElementById('stageUpload');
+                    if (stageUpload) {
+                        stageUpload.classList.remove('text-primary');
+                        stageUpload.classList.add('text-danger');
+                    }
                     
                     let errorMessage = "Upload failed";
                     try {
@@ -258,6 +278,13 @@ class GenomeDownloadProgress {
                 console.error("XHR error event triggered");
                 this.uploadError();
                 
+                // Turn upload stage red when upload fails
+                const stageUpload = document.getElementById('stageUpload');
+                if (stageUpload) {
+                    stageUpload.classList.remove('text-primary');
+                    stageUpload.classList.add('text-danger');
+                }
+                
                 // Add log message
                 const addLogMessage = window.addLogMessage || console.log;
                 addLogMessage('Network error during upload', 'danger');
@@ -274,6 +301,13 @@ class GenomeDownloadProgress {
             xhr.addEventListener('abort', () => {
                 console.warn("XHR abort event triggered");
                 this.uploadError();
+                
+                // Turn upload stage red when upload is aborted
+                const stageUpload = document.getElementById('stageUpload');
+                if (stageUpload) {
+                    stageUpload.classList.remove('text-primary');
+                    stageUpload.classList.add('text-danger');
+                }
                 
                 // Add log message
                 const addLogMessage = window.addLogMessage || console.log;
@@ -398,12 +432,30 @@ class GenomeDownloadProgress {
             progressBar.classList.add('bg-primary');
         }
         
+        // Reset upload stage to muted when progress is reset
+        const stageUpload = document.getElementById('stageUpload');
+        if (stageUpload) {
+            stageUpload.classList.remove('text-primary', 'text-success', 'text-danger');
+            stageUpload.classList.add('text-muted');
+        }
+        
         this.showStatus('Ready to upload');
+    }
+    
+    /**
+     * Hide the upload progress bar (called when workflow monitoring starts)
+     */
+    hideUploadProgress() {
+        console.log("Hiding upload progress bar");
+        const progressDiv = document.getElementById('file-upload-progress');
+        if (progressDiv) {
+            progressDiv.classList.add('d-none');
+        }
     }
 }
 
 // Initialize the component when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     console.log("DOM loaded, initializing GenomeDownloadProgress");
-    new GenomeDownloadProgress();
+    window.uploadProgressManager = new GenomeDownloadProgress();
 }); 

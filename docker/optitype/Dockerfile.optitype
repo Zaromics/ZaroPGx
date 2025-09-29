@@ -46,12 +46,6 @@ RUN curl -O https://support.hdfgroup.org/ftp/HDF5/current18/bin/hdf5-1.8.21-Std-
 ENV LD_LIBRARY_PATH /usr/local/lib:$LD_LIBRARY_PATH
 ENV HDF5_DIR /usr/local/
 
-# Install uv
-#ENV PATH="/home/biodocker/.local/bin:${PATH}"
-
-# RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
-#  && ln -s /root/.local/bin/uv /usr/local/bin/uv
-
 RUN pip install --upgrade pip \
 && pip install --no-cache-dir \
     numpy \
@@ -97,14 +91,19 @@ USER biodocker
 # Combined typical "data" dir with our "app" directory for wrapper
 # Change workdir to /app/
 WORKDIR /app/
-COPY optitype_wrapper.py /app/
+COPY docker/optitype/optitype_wrapper.py /app/
+COPY app/utils/workflow_client.py /workflow-client/
 
 # Define default command
 ENTRYPOINT ["OptiTypePipeline.py"]
 # CMD ["-h"]
 
-# Install FastAPI/uvicorn in base (Python 3) env for the wrapper
-RUN pip3 install --no-cache-dir fastapi uvicorn python-multipart
+# Install uv for modern Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Install FastAPI/uvicorn in base (Python 3) env for the wrapper using uv
+RUN uv pip install --system fastapi uvicorn python-multipart httpx
 
 # Expose API port
 EXPOSE 5000

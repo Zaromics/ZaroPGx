@@ -1,6 +1,7 @@
 /**
  * PGx Report JavaScript
  * Provides interactive functionality for pharmacogenomic reports
+ * Status: NEEDS REVIEW. NOT WIRED IN.
  */
 
 // Wait for the document to be fully loaded
@@ -80,72 +81,71 @@ function showTab(tabId) {
  * Create gene-phenotype chart
  */
 function createGenePhenotypeChart() {
-    const ctx = document.getElementById('genePhenotypeChart').getContext('2d');
+    const canvas = document.getElementById('genePhenotypeChart');
+    if (!canvas || typeof Chart === 'undefined') {
+        return; // Guard: no canvas or Chart.js not loaded
+    }
+    const ctx = canvas.getContext('2d');
     const pgxData = getPgxData();
-    
+    if (!pgxData || !Array.isArray(pgxData.diplotypes) || pgxData.diplotypes.length === 0) {
+        return; // Guard: no data
+    }
+
     // Extract gene data
     const genes = [];
     const phenotypes = [];
     const colors = [];
-    
+
     // Process diplotypes
     pgxData.diplotypes.forEach(d => {
-        genes.push(d.gene);
-        phenotypes.push(d.phenotype);
-        
-        if (d.phenotype.includes('Normal')) {
+        const gene = d.gene || 'Unknown';
+        const phenotype = d.phenotype || 'Unknown';
+        genes.push(gene);
+        phenotypes.push(phenotype);
+
+        const p = String(phenotype);
+        if (p.includes('Normal')) {
             colors.push('#2ecc71'); // success-color
-        } else if (d.phenotype.includes('Poor')) {
+        } else if (p.includes('Poor')) {
             colors.push('#e74c3c'); // danger-color
-        } else if (d.phenotype.includes('Intermediate')) {
+        } else if (p.includes('Intermediate')) {
             colors.push('#f39c12'); // warning-color
-        } else if (d.phenotype.includes('Rapid') || d.phenotype.includes('Ultrarapid')) {
+        } else if (p.includes('Rapid') || p.includes('Ultrarapid')) {
             colors.push('#3498db'); // info-color
         } else {
             colors.push('#95a5a6'); // gray
         }
     });
-    
-    // Create the chart
+
+    // Create the chart (Chart.js v3+)
     new Chart(ctx, {
-        type: 'horizontalBar',
+        type: 'bar',
         data: {
             labels: genes,
             datasets: [{
                 label: 'Phenotype',
-                data: genes.map(() => 1), // Just to show the bars
+                data: genes.map(() => 1), // constant height; color conveys phenotype
                 backgroundColor: colors
             }]
         },
         options: {
+            indexAxis: 'y', // horizontal bars
             responsive: true,
             maintainAspectRatio: false,
-            legend: {
-                display: false
-            },
-            title: {
-                display: true,
-                text: 'Gene Phenotypes'
-            },
-            scales: {
-                xAxes: [{
-                    display: false,
-                    ticks: {
-                        beginAtZero: true
-                    }
-                }],
-                yAxes: [{
-                    gridLines: {
-                        display: false
-                    }
-                }]
-            },
-            tooltips: {
-                callbacks: {
-                    label: function(tooltipItem, data) {
-                        return phenotypes[tooltipItem.index];
+            plugins: {
+                legend: { display: false },
+                title: { display: true, text: 'Gene Phenotypes' },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return phenotypes[context.dataIndex];
+                        }
                     }
                 }
+            },
+            scales: {
+                x: { display: false, beginAtZero: true },
+                y: { grid: { display: false } }
             }
         }
     });

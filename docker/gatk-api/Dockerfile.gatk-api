@@ -31,7 +31,7 @@ RUN wget -q https://github.com/broadinstitute/gatk/releases/download/4.6.1.0/gat
 WORKDIR /app
 
 # Install Python dependencies with uv into system site-packages
-RUN uv pip install --system flask requests psutil
+RUN uv pip install --system fastapi uvicorn httpx requests psutil python-multipart
 
 # Create and set proper permissions for data directories
 RUN mkdir -p /data/uploads /data/reports /data/results /tmp/gatk_temp && \
@@ -41,8 +41,9 @@ RUN mkdir -p /data/uploads /data/reports /data/results /tmp/gatk_temp && \
 ENV TMPDIR=/tmp/gatk_temp
 ENV PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
 
-# Copy the API script
-COPY gatk_api.py /app/
+# Copy the API script and workflow client
+COPY docker/gatk-api/gatk_api.py /app/
+COPY app/utils/workflow_client.py /workflow-client/
 
 # Expose the API port
 EXPOSE 5000

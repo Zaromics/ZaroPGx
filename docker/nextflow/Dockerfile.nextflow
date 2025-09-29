@@ -21,8 +21,14 @@ WORKDIR /workspace
 
 # Lightweight HTTP runner to trigger pipelines from the app
 # Place it outside the bind-mounted /workspace to avoid being hidden
-COPY runner.py /opt/runner.py
-RUN pip3 install --no-cache-dir flask python-dotenv
+COPY docker/nextflow/runner.py /opt/runner.py
+COPY app/utils/workflow_client.py /workflow-client/
+# Install uv for modern Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Python deps for API using uv
+RUN uv pip install --system fastapi uvicorn httpx python-dotenv psutil sqlalchemy psycopg2-binary
 EXPOSE 5055
 
 ENTRYPOINT ["python3", "/opt/runner.py"]

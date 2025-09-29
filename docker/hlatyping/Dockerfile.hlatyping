@@ -28,19 +28,26 @@ RUN curl -s https://get.nextflow.io | bash && \
     chmod +x /usr/local/bin/nextflow
 
 # Environment
-ENV NXF_OPTS="-Xms1g -Xmx8g" \
+ENV NXF_OPTS="-Xms1g -Xmx4g" \
     NEXTFLOW_HOME=/opt/nextflow \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DATA_DIR=/data \
+    TEMP_DIR=/tmp/hlatyping
 
-RUN mkdir -p /opt/nextflow
+RUN mkdir -p /opt/nextflow /tmp/hlatyping
 
-# Python deps for API
-RUN pip install --no-cache-dir fastapi uvicorn python-multipart
+# Install uv for modern Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
 
-# Workdir and copy wrapper
+# Python deps for API using uv
+RUN uv pip install --system fastapi uvicorn python-multipart httpx psutil
+
+# Workdir, copy wrapper and workflow client
 WORKDIR /app
-COPY hlatyping_wrapper.py /app/
+COPY docker/hlatyping/hlatyping_wrapper.py /app/
+COPY app/utils/workflow_client.py /workflow-client/
 
 # Healthcheck: verify Java and Nextflow are available
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

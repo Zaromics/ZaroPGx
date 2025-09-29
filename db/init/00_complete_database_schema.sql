@@ -182,6 +182,10 @@ CREATE TABLE job_monitoring.job_dependencies (
 );
 
 -- ============================================================================
+-- WORKFLOW MONITORING SCHEMA - Enhanced workflow tracking system
+-- ============================================================================
+
+-- ============================================================================
 -- FHIR SCHEMA - HAPI FHIR server tables
 -- ============================================================================
 CREATE SCHEMA IF NOT EXISTS fhir;
@@ -255,6 +259,7 @@ CREATE INDEX idx_jobs_created_at ON job_monitoring.jobs(created_at);
 CREATE INDEX idx_job_stages_job_id ON job_monitoring.job_stages(job_id);
 CREATE INDEX idx_job_events_job_id ON job_monitoring.job_events(job_id);
 CREATE INDEX idx_job_dependencies_job_id ON job_monitoring.job_dependencies(job_id);
+
 
 -- Genomic file headers indexes
 CREATE INDEX idx_gfh_file_format ON genomic_file_headers(file_format);
@@ -413,3 +418,76 @@ COMMENT ON SCHEMA job_monitoring IS 'Workflow and job tracking system';
 COMMENT ON SCHEMA fhir IS 'HAPI FHIR server tables';
 COMMENT ON TABLE genomic_file_headers IS 'Stores parsed header information from genomic files (BAM, VCF, etc.)';
 COMMENT ON COLUMN genomic_file_headers.header_info IS 'Normalized JSON structure containing file format-specific header metadata';
+
+-- ============================================================================
+-- WORKFLOW MONITORING TABLES
+-- ============================================================================
+
+-- Create enums for workflow monitoring system
+CREATE TYPE workflow_status_enum AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
+CREATE TYPE step_status_enum AS ENUM ('pending', 'running', 'completed', 'failed', 'skipped');
+CREATE TYPE log_level_enum AS ENUM ('debug', 'info', 'warn', 'error');
+
+-- Primary workflow orchestration
+CREATE TABLE workflows (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR NOT NULL,
+    description TEXT,
+    status workflow_status_enum DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    total_steps INTEGER,
+    completed_steps INTEGER,
+    workflow_metadata JSONB,
+    created_by VARCHAR,
+    CONSTRAINT workflows_status_check CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled'))
+);
+
+-- Individual step tracking
+CREATE TABLE workflow_steps (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workflow_id UUID REFERENCES workflows(id) ON DELETE CASCADE,
+    step_name VARCHAR NOT NULL,
+    step_order INTEGER NOT NULL,
+    status step_status_enum DEFAULT 'pending',
+    container_name VARCHAR,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    duration_seconds INTEGER,
+    output_data JSONB,
+    error_details JSONB,
+    retry_count INTEGER DEFAULT 0,
+    UNIQUE(workflow_id, step_name),
+    CONSTRAINT workflow_steps_status_check CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped'))
+);
+
+-- Execution logs for debugging
+CREATE TABLE workflow_logs (
+    id BIGSERIAL PRIMARY KEY,
+    workflow_id UUID REFERENCES workflows(id) ON DELETE CASCADE,
+    step_name VARCHAR,
+    log_level log_level_enum DEFAULT 'info',
+    message TEXT NOT NULL,
+    log_metadata JSONB,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT workflow_logs_level_check CHECK (log_level IN ('debug', 'info', 'warn', 'error'))
+);
+
+-- Create indexes for performance
+CREATE INDEX idx_workflows_status ON workflows(status);
+CREATE INDEX idx_workflows_created_at ON workflows(created_at);
+CREATE INDEX idx_workflow_steps_workflow_id ON workflow_steps(workflow_id);
+CREATE INDEX idx_workflow_steps_step_order ON workflow_steps(workflow_id, step_order);
+CREATE INDEX idx_workflow_logs_workflow_id ON workflow_logs(workflow_id);
+CREATE INDEX idx_workflow_logs_timestamp ON workflow_logs(timestamp);
+
+-- Grant permissions
+GRANT ALL PRIVILEGES ON TABLE workflows TO cpic_user;
+GRANT ALL PRIVILEGES ON TABLE workflow_steps TO cpic_user;
+GRANT ALL PRIVILEGES ON TABLE workflow_logs TO cpic_user;
+
+-- Comments for documentation
+COMMENT ON TABLE workflows IS 'Primary workflow orchestration table for enhanced monitoring system';
+COMMENT ON TABLE workflow_steps IS 'Individual step tracking within workflows';
+COMMENT ON TABLE workflow_logs IS 'Execution logs for debugging and monitoring workflows';

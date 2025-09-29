@@ -12,7 +12,7 @@ RUN apt-get update && \
 # Install uv and Python deps
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
-RUN uv pip install --system flask requests tqdm
+RUN uv pip install --system fastapi uvicorn requests tqdm
 
 WORKDIR /app
 

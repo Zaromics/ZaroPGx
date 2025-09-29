@@ -24,6 +24,9 @@ from app.api.models import (
     SequenceInfo, ProgramInfo, FormatSpecificInfo
 )
 
+from app.api.utils.header_inspector import inspect_header
+from app.api.utils.file_utils import is_compressed_file, has_index_file
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -32,9 +35,12 @@ class FileAnalysis:
     file_type: FileType
     is_compressed: bool
     has_index: bool
-    vcf_info: Optional[VCFHeaderInfo] = None
+    read_type: Optional[str] = None # WGS / WES / Short-read / Long-read / NGS / Sanger / Chip , etc.
+    vcf_info: Optional[VCFHeaderInfo] = None # ONLY for VCF files
     file_size: Optional[int] = None
     error: Optional[str] = None
+    is_valid: bool = True
+    validation_errors: Optional[List[str]] = None
 
 class FileProcessor:
     def __init__(self, temp_dir: str = "/tmp"):
@@ -56,11 +62,11 @@ class FileProcessor:
             file_size = file_path.stat().st_size
             logger.info(f"File size: {file_size} bytes")
             
-            # Detect compression status BEFORE detecting file type
-            is_compressed = self._is_compressed(file_path)
+            # Detect compression status BEFORE detecting file type (shared util)
+            is_compressed = is_compressed_file(file_path)
             logger.info(f"Is compressed: {is_compressed}")
             
-            has_index = self._has_index_file(file_path)
+            has_index = has_index_file(file_path)
             logger.info(f"Has index: {has_index}")
 
             # Determine file type
@@ -70,7 +76,6 @@ class FileProcessor:
             # If it's a VCF or alignment, use the independent header inspector
             vcf_info = None
             try:
-                from app.api.utils.header_inspector import inspect_header
                 normalized = inspect_header(str(file_path))
                 # Map normalized structure to VCFHeaderInfo when applicable
                 if file_type == FileType.VCF and isinstance(normalized, dict):
@@ -125,52 +130,7 @@ class FileProcessor:
                 error=str(e)
             )
 
-    def _is_compressed(self, file_path: Path) -> bool:
-        """
-        Check if file is compressed (zip, gzip, etc.)
-        
-        Detects compression based on:
-        1. File extension (.gz, .zip, .bgz)
-        2. Magic bytes at beginning of file
-        """
-        # First check extension
-        if any(str(file_path).lower().endswith(ext) for ext in ['.gz', '.bgz', '.zip', '.bz2']):
-            logger.debug(f"File {file_path} detected as compressed based on extension")
-            return True
-            
-        # Then check magic bytes
-        try:
-            with open(file_path, 'rb') as f:
-                magic_bytes = f.read(4)
-                
-                # Gzip: 1F 8B
-                if magic_bytes.startswith(b'\x1f\x8b'):
-                    logger.debug(f"File {file_path} detected as gzip based on magic bytes")
-                    return True
-                    
-                # Zip: PK
-                if magic_bytes.startswith(b'PK'):
-                    logger.debug(f"File {file_path} detected as zip based on magic bytes") 
-                    return True
-                    
-                # Bzip2: BZ
-                if magic_bytes.startswith(b'BZ'):
-                    logger.debug(f"File {file_path} detected as bzip2 based on magic bytes")
-                    return True
-                    
-            return False
-        except Exception as e:
-            logger.warning(f"Error checking if file {file_path} is compressed: {str(e)}")
-            # If we can't check, assume it's not compressed
-            return False
-
-    def _has_index_file(self, file_path: Path) -> bool:
-        """Check if file has an associated index file"""
-        index_extensions = ['.tbi', '.csi', '.bai', '.fai', '.crai']
-        for ext in index_extensions:
-            if (file_path.parent / f"{file_path.stem}{ext}").exists():
-                return True
-        return False
+    # Compression and index helpers now shared via app.api.utils.file_utils
 
     def _detect_file_type(self, file_path: Path) -> FileType:
         """
@@ -462,163 +422,172 @@ class FileProcessor:
             "needs_gatk": False,
             "needs_indexing": False,
             "needs_alignment": False,
+            "needs_liftover": False, # If VCF, if GRCh37 (hg19) reference, bcftools liftover to GRCh38 (hg38)
+            "needs_conversion": False,
             "needs_hla": False,
             "needs_pypgx": False,
-            "needs_conversion": False,
             "needs_pypgx_bam2vcf": False,
             "is_provisional": False,
-            "go_directly_to_pharmcat": False,
             "recommendations": [],
             "warnings": [],
             "unsupported": False,
             "unsupported_reason": None
         }
 
-        # FASTQ -> hg38 reference to be indexed and aligned
+        # FASTQ (curated on 2025-09-27)
         if analysis.file_type == FileType.FASTQ:
+            workflow["needs_hla"] = True
             workflow["needs_alignment"] = True
             workflow["needs_gatk"] = True
-            workflow["needs_hla"] = True
             workflow["needs_pypgx"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
-                "FASTQ files require alignment to a reference genome before variant calling. "
-                "This functionality is not yet implemented."
+                "FASTQ datafiles are an ideal starting point, however, ZaroPGx does not support this workflow yet."
+                "Once support reaches completion, paired-read FASTQ datafiles can be uploaded as inputs."
+                "Support for single FASTQ datafile as input is being reviewed.")
+            # Detailed FASTQ alignment recommendations based on read type and hardware resources
+            workflow["recommendations"].append(
+                "<p>Step 1: HLA typing using OptiType. nf-core/hlatyping is the tool which provides OptiType.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Step 2: Alignment to GRCh38 (hg38) reference genome, based on read type: "
+                "If Long-read: Use minimap2 for alignment. "
+                "If Short-read: Use bwa-mem2 (requires copious memory, please ensure ≥64GB RAM available), or BWA (Burrows-Wheeler Aligner). "
+                "These tools are not yet implemented. (TO DO)</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Step 3: PyPGx star allele calling</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Step 3: Convert aligned BAM to VCF using PyPGx create-input-vcf</p>"
             )
 
-            # Detailed FASTQ alignment recommendations based on read type and hardware
             workflow["recommendations"].append(
-                "FASTQ files need alignment to hg38 reference genome. Based on read type:"
-            )
-            workflow["recommendations"].append(
-                "• Step 1: HLA typing using OptiType (preserves FASTQ format)"
-            )
-            workflow["recommendations"].append(
-                "• Step 2: Alignment to hg38 reference genome:"
-            )
-            workflow["recommendations"].append(
-                "  - Long-read: Use minimap2 for alignment"
-            )
-            workflow["recommendations"].append(
-                "  - Short-read: Use bwa-mem2 (if ≥64GB RAM available) or BWA (Burrows-Wheeler Aligner)"
-            )
-            workflow["recommendations"].append(
-                "• Step 3: Convert aligned BAM to VCF using PyPGx create-input-vcf"
-            )
-            workflow["recommendations"].append(
-                "• Step 4: PyPGx star allele calling and PharmCAT analysis"
-            )
-            workflow["recommendations"].append(
-                "Consider using nf-core pipelines for comprehensive FASTQ processing."
+                "<p>Consider using nf-core pipelines for comprehensive FASTQ processing.</p>"
             )
 
         # CRAM -> to be converted to BAM (lossy)
         elif analysis.file_type == FileType.CRAM:
-            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
             workflow["needs_gatk"] = True
             workflow["needs_pypgx"] = True
             workflow["recommendations"].append(
-                "CRAM files will be converted to BAM using samtools:"
+                "<p>CRAM files will be converted to BAM using samtools:</p>"
             )
             workflow["recommendations"].append(
-                "• Command: samtools view -b -T <refgenome.fa> -o <output_file.bam> <input_file.cram>"
+                "<p>Command: samtools view -b -T <refgenome.fa> -o <output_file.bam> <input_file.cram></p>"
             )
             workflow["recommendations"].append(
-                "• Note: CRAM files are smaller but require original reference FASTA for conversion"
+                "<p>Note: CRAM files are smaller but require original reference FASTA for conversion</p>"
             )
             workflow["recommendations"].append(
-                "• Alternative: Use nf-core/bamtofastq pipeline for CRAM to FASTQ conversion"
+                "<p>Alternative: Use nf-core/bamtofastq pipeline for CRAM to FASTQ conversion</p>"
             )
             workflow["recommendations"].append(
-                "• See: https://pharmcat.clinpgx.org/using/Calling-HLA/"
+                "<p>See: https://pharmcat.clinpgx.org/using/Calling-HLA/</p>"
             )
 
             # Check if index exists
             if not analysis.has_index:
                 workflow["recommendations"].append(
-                    "Creating index for CRAM file for faster processing"
+                    "<p>Creating index for CRAM file for faster processing</p>"
                 )
 
         # SAM -> to be converted to BAM
         elif analysis.file_type == FileType.SAM:
-            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
             workflow["needs_gatk"] = True
             workflow["needs_pypgx"] = True
             workflow["recommendations"].append(
-                "SAM file will be converted to BAM using GATK or samtools:"
+                "<p>SAM file will be converted to BAM using GATK or samtools:</p>"
             )
             workflow["recommendations"].append(
-                "• GATK: Picard SortSam and BuildBamIndex for quality control"
+                "<p>GATK: Picard SortSam and BuildBamIndex for quality control</p>"
             )
             workflow["recommendations"].append(
-                "• Alternative: samtools view -b -o output.bam input.sam"
+                "<p>Alternative: samtools view -b -o output.bam input.sam</p>"
             )
 
             # Check if index exists
             if not analysis.has_index:
                 workflow["recommendations"].append(
-                    "Creating index for SAM file for faster processing"
+                    "<p>Creating index for SAM file for faster processing</p>"
                 )
 
         # BAM -> can enter pipeline directly, but OptiType will internally convert to FASTQ
         elif analysis.file_type == FileType.BAM:
-            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
             workflow["needs_hla"] = True
             workflow["needs_pypgx"] = True
             workflow["needs_pypgx_bam2vcf"] = True  # Use PyPGx create-input-vcf
 
             workflow["recommendations"].append(
-                "BAM files will be processed with the complete pipeline:"
+                "<p>BAM files will be processed with the complete pipeline:</p>"
             )
             workflow["recommendations"].append(
-                "• Step 1: OptiType/HLA typing - extracts HLA alleles from BAM (~100GB intermediate FASTQ)"
+                "<p>Step 1: OptiType/HLA typing - extracts HLA alleles from BAM (~100GB intermediate FASTQ)</p>"
             )
             workflow["recommendations"].append(
-                "• Step 2: PyPGx create-input-vcf - calls SNVs/indels for all target genes"
+                "<p>Step 2: PyPGx create-input-vcf - calls SNVs/indels for all target genes</p>"
             )
             workflow["recommendations"].append(
-                "• Step 3: PyPGx star allele calling for enhanced pharmacogene analysis"
+                "<p>Step 3: PyPGx star allele calling for enhanced pharmacogene analysis</p>"
             )
             workflow["recommendations"].append(
-                "• Step 4: PharmCAT with outside calls including HLA data"
+                "<p>Step 4: PharmCAT with outside calls including HLA data</p>"
             )
             workflow["recommendations"].append(
-                "• Result: Complete 23/23 highest clinical evidence pharmacogenes"
+                "<p>Result: Complete 23/23 highest clinical evidence pharmacogenes</p>"
             )
             workflow["recommendations"].append(
-                "• Reference: https://pharmcat.clinpgx.org/using/Calling-HLA/"
+                "<p>Reference: https://pharmcat.clinpgx.org/using/Calling-HLA/</p>"
             )
             workflow["recommendations"].append(
-                "• PyPGx docs: https://pypgx.readthedocs.io/en/latest/cli.html#run-ngs-pipeline"
+                "<p>PyPGx docs: https://pypgx.readthedocs.io/en/latest/cli.html#run-ngs-pipeline</p>"
             )
 
             # Check if index exists
             if not analysis.has_index:
                 workflow["recommendations"].append(
-                    "Creating index for BAM file for faster processing"
+                    "<p>Creating index for BAM file for faster processing</p>"
                 )
 
-        # VCF ("quick pipeline")
+        # VCF | "quick pipeline" (curated on 2025-09-27)
         elif analysis.file_type == FileType.VCF:
-            workflow["go_directly_to_pharmcat"] = False
             workflow["needs_pypgx"] = True
-
-            workflow["recommendations"].append(
-                "VCF files use the quick pipeline:"
+            workflow["warnings"].append(
+                "<p>⚠️ VCF datafiles lack the necessary information to perform complete pharmacogenomic analysis.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>⚠️ HLA-A, HLA-B, and HLA-C typing can not be performed.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>⚠️ CYP2D6 typing will be performed, albeit with degraded accuracy.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>⚠️ All genes whose phenotypes are affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>If you have an upstream, or original, datafile, such as FASTQ/BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield results with optimal fidelity.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
             )
             workflow["recommendations"].append(
-                "• Skip OptiType (HLA) - no HLA outside calls available"
+                "<p>VCF files use the quick pipeline:</p>"
+            )
+            workflow["warnings"].append(
+                "<p>Skip HLA typing with nf-core/hlatyping (OptiType); VCF datafiles are unsuitable inputs for this operation.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>If you have an upstream/original datafile e.g. FASTQ or BAM, please upload that instead in order to have HLA typing performed.</p>"
             )
             workflow["recommendations"].append(
-                "• Run PyPGx for star allele calling on pharmacogenes"
+                "<p>Step 1: Run PyPGx for star allele calling on all available pharmacogenes.</p>"
             )
             workflow["recommendations"].append(
-                "• Continue to PharmCAT with PyPGx outside calls"
+                "<p>Step 2: Run PharmCAT with outside calls from PyPGx.</p>"
             )
-            workflow["recommendations"].append(
-                "• Note: Original sequencing files (FASTQ/BAM) provide more complete and accurate results"
-            )
-
             # Check reference genome compatibility
             if analysis.vcf_info:
                 vcf_info = analysis.vcf_info
@@ -628,38 +597,77 @@ class FileProcessor:
                 is_hg38 = any(ref_id in reference for ref_id in ["hg38", "grch38", "38"])
                 if is_hg38:
                     workflow["recommendations"].append(
-                        f"✓ Compatible hg38/GRCh38 reference genome detected: {vcf_info.reference_genome}"
+                        f"<p>✓ Compatible GRCh38 reference genome detected: {vcf_info.reference_genome}</p>"
                     )
                 elif reference != "unknown":
+                    workflow["unsupported"] = True
+                    workflow["unsupported_reason"] = (
+                        f"The uploaded VCF file is not aligned to the GRCh38/hg38 reference genome."
+                    )
                     workflow["warnings"].append(
-                        f"⚠️ File uses {vcf_info.reference_genome} reference genome. Only hg38/GRCh38 is fully supported."
+                        f"<p>⚠️ The uploaded VCF file is aligned to the {vcf_info.reference_genome} reference genome. Only GRCh38/hg38 is currently supported.</p>"
+                    )
+                    workflow["recommendations"].append(
+                        "<p>Step 0: Convert the VCF file to GRCh38/hg38 using bcftools. (TO DO)</p>"
+                    )
+                    workflow["recommendations"].append(
+                        "<p>Once the VCF file has been re-aligned to GRCh38/hg38, it will proceed to Step 1.</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>⚠️ Realigning the VCF file to the GRCh38 reference genome may result in a loss of fidelity.</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>While no realignment tool yields perfect fidelity, bcftools' liftover is used as it is perhaps the best tool for the job.</p>"
                     )
                     workflow["is_provisional"] = True
 
                 # Enhanced sequencing profile recommendations
                 if vcf_info.sequencing_profile == SequencingProfile.WGS:
                     workflow["recommendations"].append(
-                        "✓ Whole Genome Sequencing detected - full pharmacogene coverage available"
+                        "<p>✓ Uploaded VCF file is detected as: Whole Genome Sequencing. Full pharmacogene coverage is available (with VCF-related limitations).</p>"
+                    )
+                    workflow["recommendations"].append(
+                        "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results.</p>"
                     )
                 elif vcf_info.sequencing_profile == SequencingProfile.WES:
                     workflow["recommendations"].append(
-                        "✓ Whole Exome Sequencing detected - good pharmacogene coverage"
+                        "<p>Uploaded VCF file is detected as: Whole Exome Sequencing. Unknown pharmacogene coverage.</p>"
+                    )
+                    workflow["recommendations"].append(
+                        "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>⚠️ Whole Exome Sequencing can vary in coverage. The analysis may have degraded completeness, accuracy, and precision, compared to Whole Genome Sequencing.</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
                     )
                 else:
+                    workflow["recommendations"].append(
+                        "<p>Uploaded VCF file is detected as: Unknown, or, Targeted Sequencing. Unknown pharmacogene coverage.</p>"
+                    )
+                    workflow["recommendations"].append(
+                        "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
+                    )
                     workflow["warnings"].append(
-                        "⚠️ Targeted sequencing may have limited pharmacogene coverage"
+                        "<p>⚠️ Depending on the sequencing platform and methodology, the uploaded VCF datafile may have limited pharmacogene coverage.</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
                     )
 
             # Check if index exists
             if analysis.vcf_info and not analysis.vcf_info.has_index:
                 workflow["recommendations"].append(
-                    "Creating index for VCF file for faster processing"
+                    "<p>Create index for uploaded VCF file to speed up processing.</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Note: Although an existing index file can be uploaded along with the main VCF file, at the moment, its functionality is not yet supported. (TO DO)</p>"
                 )
 
         # 23andMe files need conversion
         elif analysis.file_type == FileType.TWENTYTHREE_AND_ME:
             workflow["needs_conversion"] = True
-            workflow["go_directly_to_pharmcat"] = True  # After conversion (exception to the rule)
             workflow["is_provisional"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
@@ -667,11 +675,10 @@ class FileProcessor:
                 "This functionality is not yet implemented."
             )
             workflow["recommendations"].append(
-                "23andMe format conversion needed - create schema reference and translation"
+                "<p>23andMe format conversion needed - create schema reference and translation</p>"
             )
             workflow["warnings"].append(
-                "23andMe data has limited variant coverage compared to clinical sequencing. "
-                "Results will be provisional and may miss important variants."
+                "<p>23andMe data has limited variant coverage compared to clinical sequencing. Results will be provisional and may miss important variants.</p>"
             )
 
         # FASTA - reference genome files
@@ -679,82 +686,220 @@ class FileProcessor:
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = "FASTA files are reference genome files and cannot be analyzed directly."
             workflow["recommendations"].append(
-                "FASTA files contain reference genome sequences:"
+                "<p>FASTA files contain reference genome sequences:</p>"
             )
             workflow["recommendations"].append(
-                "• Use FASTA files as reference for alignment (BWA, minimap2, etc.)"
+                "<p>• Use FASTA files as reference for alignment (BWA, minimap2, etc.)</p>"
             )
             workflow["recommendations"].append(
-                "• Convert FASTQ reads to BAM using this reference"
+                "<p>• Convert FASTQ reads to BAM using this reference</p>"
             )
             workflow["recommendations"].append(
-                "• Then use the resulting BAM for pharmacogenomic analysis"
+                "<p>• Then use the resulting BAM for pharmacogenomic analysis</p>"
             )
 
         # GVCF - genomic VCF with reference calls
         elif analysis.file_type == FileType.GVCF:
-            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
             workflow["needs_pypgx"] = True
             workflow["recommendations"].append(
-                "GVCF files (genomic VCF with reference calls):"
+                "<p>GVCF files (genomic VCF with reference calls):</p>"
             )
             workflow["recommendations"].append(
-                "• Will be processed through PyPGx and PharmCAT pipeline"
+                "<p>• Will be processed through PyPGx and PharmCAT pipeline</p>"
             )
             workflow["recommendations"].append(
-                "• GVCFs contain both variant and reference calls"
+                "<p>• GVCFs contain both variant and reference calls</p>"
             )
             workflow["recommendations"].append(
-                "• May require conversion to standard VCF for some tools"
+                "<p>• May require conversion to standard VCF for some tools</p>"
             )
 
         # BCF - binary VCF format
         elif analysis.file_type == FileType.BCF:
-            workflow["go_directly_to_pharmcat"] = False  # Production: always use full pipeline
             workflow["needs_pypgx"] = True
             workflow["recommendations"].append(
-                "BCF files (binary VCF format):"
+                "<p>BCF files (binary VCF format):</p>"
             )
             workflow["recommendations"].append(
-                "• Will be converted to VCF format if needed"
+                "<p>• Will be converted to VCF format if needed</p>"
             )
             workflow["recommendations"].append(
-                "• Use bcftools for conversion: bcftools view input.bcf > output.vcf"
+                "<p>• Use bcftools for conversion: bcftools view input.bcf > output.vcf</p>"
             )
             workflow["recommendations"].append(
-                "• Standard PyPGx + PharmCAT pipeline will be applied"
+                "<p>• Standard PyPGx + PharmCAT pipeline will be applied</p>"
             )
 
         # BED - genome interval/annotation files
         elif analysis.file_type == FileType.BED:
             workflow["unsupported"] = True
-            workflow["unsupported_reason"] = "BED files contain genomic intervals and cannot be analyzed for pharmacogenomics."
+            workflow["unsupported_reason"] = "BED files are typically downstream of sequencing / genotyping, and may contain genomic intervals or other information in an unusual format that cannot be directly analyzed."
             workflow["recommendations"].append(
-                "BED files contain genomic interval data:"
+                "<p>Not typically suitable for direct pharmacogenomic variant analysis.</p>"
             )
             workflow["recommendations"].append(
-                "• Used for defining target regions in sequencing"
+                "<p>Has this BED file been generated from an existing genomic datafile?</p>"
             )
             workflow["recommendations"].append(
-                "• Can be used with tools like bedtools for region-based analysis"
+                "<p>If so, please upload the original datafile(s) instead.</p>"
             )
             workflow["recommendations"].append(
-                "• Not suitable for direct pharmacogenomic variant analysis"
+                "<p>If the BED file contains data specifically for pharmacogenomic analysis, note that arbitrary BED files are not yet supported.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Tool(s) to look into: PyPGx: pypgx create-regions-bed, bedtools</p>"
             )
 
-
-        # Unknown file type
+        # Unknown file type (curated on 2025-09-27)
         else:
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = f"Unrecognized file format: {analysis.file_type.value}."
             workflow["recommendations"].append(
-                "Supported formats: VCF, BAM, CRAM, SAM, FASTQ"
+                "<p>The file(s) you have selected could not be recognized.</p>"
             )
             workflow["recommendations"].append(
-                "Please upload a supported genomic file format for pharmacogenomic analysis."
+                "<p>If this is a bug, please report it on GitHub, see bottom of the page. Apologies for the inconvenience.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Supported formats:</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Priority 0 (Supported): VCF, GRCh38/hg38, NGS-derived.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Priority 1 (Development): VCF, GRCh37/hg19, NGS-derived.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Priority 2 (Development): BAM, CRAM, SAM, FASTQ, BCF, all NGS-derived.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Priority 3 (Research): Other sequencing and genotyping formats.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Priority 4 (Research): BED, gVCF, 23andMe, AncestryDNA, various TXT formats.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Priority 5 (Early research): T2T format, and all else.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>If you happen to have a supported datafile, please try again and upload that file(s) instead.</p>"
             )
 
         return workflow
+
+    async def process_files(self, files: List, reference_genome: str = "hg38", 
+                          optitype_enabled: Optional[str] = None,
+                          gatk_enabled: Optional[str] = None,
+                          pypgx_enabled: Optional[str] = None,
+                          report_enabled: Optional[str] = None) -> Dict:
+        """
+        Process multiple uploaded files and determine the appropriate workflow.
+        
+        Args:
+            files: List of uploaded files
+            reference_genome: Reference genome to use (default: hg38)
+            optitype_enabled: Whether OptiType is enabled
+            gatk_enabled: Whether GATK processing is enabled
+            pypgx_enabled: Whether PyPGx analysis is enabled
+            report_enabled: Whether custom report generation is enabled
+            
+        Returns:
+            Dictionary with analysis results and workflow configuration
+        """
+        try:
+            logger.info(f"Processing {len(files)} files")
+            
+            if not files:
+                return {
+                    "success": False,
+                    "error": "No files provided"
+                }
+            
+            # For now, process only the first file (primary file)
+            # TODO: Support multiple files in the future
+            # 2 files can now be uploaded, but the use of the index file needs work.
+            primary_file = files[0]
+            
+            # Save the uploaded file to temporary location
+            temp_file_path = self.temp_dir / f"upload_{primary_file.filename}"
+            
+            try:
+                # Write file content
+                with open(temp_file_path, "wb") as f:
+                    content = await primary_file.read()
+                    f.write(content)
+                
+                logger.info(f"Saved uploaded file to: {temp_file_path}")
+                
+                # Process the file
+                result = await self.process_upload(str(temp_file_path))
+                
+                if result["status"] != "success":
+                    return {
+                        "success": False,
+                        "error": result["error"]
+                    }
+                
+                # Add file paths to result
+                result["file_paths"] = [str(temp_file_path)]
+                
+                # Update workflow with reference genome
+                workflow = result["workflow"]
+                workflow["reference"] = reference_genome
+                workflow["workflow_type"] = "genomic_analysis"
+                
+                # Add service configurations - explicitly set both enabled and disabled states
+                workflow["optitype_enabled"] = bool(optitype_enabled and optitype_enabled.lower() == "true")
+                workflow["gatk_enabled"] = bool(gatk_enabled and gatk_enabled.lower() == "true")
+                workflow["pypgx_enabled"] = bool(pypgx_enabled and pypgx_enabled.lower() == "true")
+                workflow["report_enabled"] = bool(report_enabled and report_enabled.lower() == "true")
+                
+                # Apply user toggle overrides to workflow flags
+                # User can only disable services, not enable what the workflow doesn't need
+                # Final state = workflow_needs_service AND user_hasnt_disabled_service
+                if optitype_enabled is not None and not workflow["optitype_enabled"]:
+                    # User disabled OptiType, so disable HLA even if workflow needs it
+                    workflow["needs_hla"] = False
+                if gatk_enabled is not None and not workflow["gatk_enabled"]:
+                    # User disabled GATK, so disable GATK even if workflow needs it
+                    workflow["needs_gatk"] = False
+                if pypgx_enabled is not None and not workflow["pypgx_enabled"]:
+                    # User disabled PyPGx, so disable PyPGx even if workflow needs it
+                    workflow["needs_pypgx"] = False
+                if report_enabled is not None and not workflow["report_enabled"]:
+                    # User disabled custom reports, so disable report generation
+                    workflow["needs_report"] = False
+                
+                # Debug logging for service states
+                logger.info(f"User toggle states received: optitype='{optitype_enabled}', "
+                           f"gatk='{gatk_enabled}', pypgx='{pypgx_enabled}', report='{report_enabled}'")
+                logger.info(f"User toggle states set: optitype={workflow['optitype_enabled']}, "
+                           f"gatk={workflow['gatk_enabled']}, pypgx={workflow['pypgx_enabled']}, "
+                           f"report={workflow['report_enabled']}")
+                logger.info(f"Final workflow needs (after user overrides): needs_hla={workflow.get('needs_hla')}, "
+                           f"needs_gatk={workflow.get('needs_gatk')}, needs_pypgx={workflow.get('needs_pypgx')}, "
+                           f"needs_report={workflow.get('needs_report')}")
+                
+                return {
+                    "success": True,
+                    "file_analysis": result["file_analysis"],
+                    "workflow": workflow,
+                    "file_paths": result["file_paths"]
+                }
+                
+            except Exception as e:
+                logger.error(f"Error processing uploaded file: {str(e)}")
+                return {
+                    "success": False,
+                    "error": f"Error processing file: {str(e)}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in process_files: {str(e)}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     async def process_upload(self, file_path: str, original_wgs: Optional[str] = None) -> Dict:
         """
@@ -793,6 +938,17 @@ class FileProcessor:
             logger.info("Analyzing uploaded file...")
             analysis = await self.analyze_file(file_path)
             
+            # Enforce exactly-one-sample policy for VCF
+            if analysis.file_type == FileType.VCF and analysis.vcf_info:
+                sc = analysis.vcf_info.sample_count
+                if sc is None or sc != 1:
+                    error_msg = f"VCF must contain exactly one sample; found {sc or 0}."
+                    logger.error(error_msg)
+                    return {
+                        "status": "error",
+                        "error": error_msg
+                    }
+
             if analysis.file_type == FileType.UNKNOWN:
                 logger.warning(f"Unknown file type for {file_path}")
                 # Try to provide more information about the file
@@ -822,7 +978,6 @@ class FileProcessor:
                     if (original_analysis.file_type in [FileType.BAM, FileType.CRAM, FileType.SAM] and 
                         analysis.file_type == FileType.VCF):
                         workflow["needs_gatk"] = True
-                        workflow["go_directly_to_pharmcat"] = False
                         workflow["using_original_file"] = True
                         workflow["recommendations"].append(
                             f"Using original {original_analysis.file_type.value.upper()} file for more accurate variant calling."

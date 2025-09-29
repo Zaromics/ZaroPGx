@@ -45,24 +45,22 @@ sleep 10
 echo "📊 Container Status:"
 docker compose ps
 
-# Test the progress endpoint
-echo "🧪 Testing progress endpoint..."
+# Test the app health endpoint
+echo "🧪 Testing app health endpoint..."
 sleep 5
 
 # Test with curl if available
 if command -v curl &> /dev/null; then
-    echo "Testing /api/nextflow-progress endpoint..."
-    curl -X POST http://localhost:8000/api/nextflow-progress \
-      -H "Content-Type: application/json" \
-      -d '{"job_id":"test-123","stage":"pypgx_analysis","progress":50,"message":"Test message"}' \
-      --connect-timeout 5 --max-time 10 || echo "❌ Endpoint test failed (this is expected if app is still starting)"
+    echo "Testing GET /health on http://localhost:8765..."
+    curl -f http://localhost:8765/health \
+      --connect-timeout 5 --max-time 10 || echo "❌ Health check failed (this is expected if app is still starting)"
 else
     echo "ℹ️  curl not available, skipping endpoint test"
 fi
 
 echo ""
 echo "✅ Docker environment started!"
-echo "🌐 Web interface: http://localhost:8000"
+echo "🌐 Web interface: http://localhost:8765"
 echo "📊 Container status: docker compose ps"
 echo "📝 Logs: docker compose logs -f"
 echo ""

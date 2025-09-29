@@ -116,9 +116,23 @@ def render_with_kroki(
         logger.error("Invalid Kroki URL format: %s (missing scheme)", url)
         raise ValueError(f"Invalid Kroki URL format: {url} (missing scheme)")
     
+    # Ensure Mermaid init sets a universally compatible font
+    def _ensure_font_init(src: str) -> str:
+        try:
+            init_present = "%%{init:" in src
+            if init_present:
+                return src
+            # Force universal font and disable HTML labels (avoid <foreignObject> which WeasyPrint can't render)
+            header = "%%{init: { 'themeVariables': { 'fontFamily': 'sans-serif' }, 'flowchart': { 'htmlLabels': false } }}%%"
+            return f"{header}\n{src}"
+        except Exception:
+            return src
+
+    prepared_source = _ensure_font_init(mermaid_source)
+
     headers = {"Content-Type": "text/plain; charset=utf-8"}
     logger.info("Rendering Mermaid via Kroki: %s", url)
-    resp = requests.post(url, data=mermaid_source.encode("utf-8"), headers=headers, timeout=30)
+    resp = requests.post(url, data=prepared_source.encode("utf-8"), headers=headers, timeout=30)
     resp.raise_for_status()
     return resp.content
 

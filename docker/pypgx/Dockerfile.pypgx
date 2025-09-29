@@ -30,7 +30,7 @@ RUN mkdir -p /app /data /reference /tmp/pypgx
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 # Install PyPGx and dependencies (ensure compatibility with Python 3.12)
-RUN uv pip install --system setuptools==80.9.0 fuc pypgx scikit-learn autodocsumm psutil
+RUN uv pip install --system setuptools==80.9.0 fuc pypgx scikit-learn autodocsumm psutil fastapi uvicorn httpx python-multipart
 
 # Clone the matching PyPGx bundle repository
 # NB: pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81
@@ -40,9 +40,10 @@ RUN cd /root && git clone --branch $(pip show pypgx | grep -oP 'Version: \K.*') 
 # Create a simple script to setup environment and run server
 WORKDIR /app
 
-# Copy the wrapper script
-COPY pypgx_wrapper.py /app/
-COPY setup_pypgx.sh /app/
+# Copy the wrapper script and workflow client
+COPY docker/pypgx/pypgx_wrapper.py /app/
+COPY docker/pypgx/setup_pypgx.sh /app/
+COPY app/utils/workflow_client.py /workflow-client/
 
 # Make the setup script executable
 RUN chmod +x /app/setup_pypgx.sh
@@ -53,6 +54,7 @@ EXPOSE 5000
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV DATA_DIR=/data
+ENV TEMP_DIR=/tmp/pypgx
 ENV REFERENCE_DIR=/reference
 
 # Health check to ensure the API is responsive

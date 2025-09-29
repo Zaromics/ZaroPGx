@@ -1,5 +1,0 @@
-Flask
-Werkzeug
-requests
-gunicorn
-psutil

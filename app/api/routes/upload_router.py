@@ -1,33 +1,60 @@
+"""
+Upload Router - Nextflow-Only Processing
+
+This module handles genomic data uploads and processes them exclusively through Nextflow.
+Legacy direct processing has been moved to legacy_processing.py as a backup.
+"""
+
+import asyncio
+import json
+import logging
 import os
-import uuid
+import re
 import shutil
 import tempfile
 import time
+import uuid
 import zipfile
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks, Response
-from sqlalchemy.orm import Session
-from typing import Optional
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
-import asyncio
-import requests
-import json
+from typing import Any, Dict, List, Optional
 
-from app.api.db import get_db, create_patient, register_genetic_data
-from app.api.models import UploadResponse, FileType, WorkflowInfo, FileAnalysis as PydanticFileAnalysis, VCFHeaderInfo, JobStage
-from app.pharmcat.pharmcat_client import call_pharmcat_service
+import requests
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
+from sqlalchemy.orm import Session
+
+from app.api.db import SessionLocal, create_patient, get_db, register_genetic_data, save_genomic_header
+from app.api.models import (
+    FileAnalysis as PydanticFileAnalysis,
+    FileType,
+    JobStage,
+    LogLevel,
+    StepStatus,
+    UploadResponse,
+    VCFHeaderInfo,
+    WorkflowCreate,
+    WorkflowInfo,
+    WorkflowLogCreate,
+    WorkflowStatus,
+    WorkflowStepCreate,
+    WorkflowStepUpdate,
+    WorkflowUpdate,
+)
 from app.api.utils.file_processor import FileProcessor
-from app.api.utils.header_inspector import inspect_header
+from app.api.utils.header_inspector import inspect_header, extract_raw_header_text, filter_header_to_canonical_contigs
+from app.pharmcat.pharmcat_client import call_pharmcat_service
 from app.reports.generator import create_interactive_html_report, generate_report
+from app.reports.pdf_generators import generate_pdf_report_dual_lane
+from app.services.workflow_progress_calculator import WorkflowProgressCalculator
+from app.services.workflow_service import WorkflowService
+from app.visualizations.workflow_diagram import render_kroki_mermaid_svg, render_simple_png_from_workflow, render_workflow, render_with_graphviz
 from ..utils.security import get_current_user, get_optional_user
-from app.services.job_status_service import JobStatusService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize router with no dependencies - will be set at the endpoint level
+# Initialize router
 router = APIRouter(
     prefix="/upload",
     tags=["upload"]
@@ -36,320 +63,12 @@ router = APIRouter(
 # Constants
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
 REPORTS_DIR = os.environ.get("REPORT_DIR", "/data/reports")
+
 # Ensure upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Initialize file processor
 file_processor = FileProcessor(temp_dir=UPLOAD_DIR)
-
-# Job status is now managed by the JobStatusService
-
-def calculate_pipeline_progress(processes: dict, nextflow_progress: int, message: str, workflow_config: dict = None) -> tuple[str, int, str]:
-    """
-    Calculate progress based on workflow stages defined in workflow_logic.md.
-    
-    Uses the WorkflowStageManager to properly map Nextflow processes to workflow stages
-    and ensure progress percentages align with expected milestones.
-    
-    Args:
-        processes: Dictionary of Nextflow processes
-        nextflow_progress: Raw Nextflow progress (0-100)
-        message: Current message from Nextflow
-        workflow_config: Workflow configuration to determine which stages to skip
-        
-    Returns:
-        Tuple of (stage, progress_percentage, detailed_message)
-    """
-    from app.services.workflow_stage_manager import workflow_stage_manager, WorkflowStage
-    
-    # Debug logging
-    logger.info(f"Calculating progress: processes={len(processes) if processes else 0}, nextflow_progress={nextflow_progress}, message='{message}'")
-    logger.info(f"Workflow config: {workflow_config}")
-    if processes:
-        logger.info(f"Process details: {list(processes.keys())}")
-        for task_id, process in processes.items():
-            process_name = process.get('process_name', 'unknown')
-            status = process.get('status', 'unknown')
-            logger.info(f"  {task_id}: {process_name} - {status}")
-            
-            # Debug process mapping
-            stage = workflow_stage_manager.get_stage_for_nextflow_process(process_name.lower(), workflow_config)
-            if stage:
-                progress, desc = workflow_stage_manager.calculate_progress_for_stage(stage, workflow_config)
-                logger.info(f"    -> Mapped to stage: {stage.value} ({progress}%) - {desc}")
-            else:
-                logger.info(f"    -> No stage mapping found for: {process_name}")
-    else:
-        logger.info("No processes found, using time-based progress estimation")
-    
-    # Default workflow config if not provided
-    if workflow_config is None:
-        workflow_config = {}
-    
-    # If no processes, return initial stage
-    if not processes:
-        return WorkflowStage.PYPX_ANALYSIS.value, 10, "Initializing pipeline..."
-    
-    # Map all processes to their workflow stages and sort by priority
-    process_stages = []
-    for process in processes.values():
-        process_name = process.get("process_name", "").lower()
-        stage = workflow_stage_manager.get_stage_for_nextflow_process(process_name, workflow_config)
-        if stage:
-            progress, desc = workflow_stage_manager.calculate_progress_for_stage(stage, workflow_config)
-            process_stages.append((stage, progress, desc, process))
-    
-    # Sort by progress percentage to get stage priority
-    process_stages.sort(key=lambda x: x[1])
-    
-    # Find the current stage based on process status
-    current_stage = WorkflowStage.PYPX_ANALYSIS
-    current_progress = 10
-    current_message = "Pipeline starting..."
-    
-    # Check for running processes first (highest priority)
-    running_processes = [p for p in process_stages if p[3].get("status") == "RUNNING"]
-    if running_processes:
-        # Get the highest priority running process
-        stage, progress, desc, process = running_processes[-1]  # Last item has highest progress
-        current_stage = stage
-        current_progress = progress
-        current_message = f"Running {desc}"
-    else:
-        # Check completed processes
-        completed_processes = [p for p in process_stages if p[3].get("status") == "COMPLETED"]
-        if completed_processes:
-            # Get the highest priority completed process
-            stage, progress, desc, process = completed_processes[-1]  # Last item has highest progress
-            current_stage = stage
-            current_progress = progress
-            current_message = f"Completed {desc}"
-    
-    # Check for failures
-    failed_processes = [p for p in process_stages if p[3].get("status") == "FAILED"]
-    if failed_processes:
-        current_message = f"Error: {len(failed_processes)} process(es) failed"
-    
-    # Handle the transition to final stages more gradually
-    total_processes = len(processes)
-    completed_count = len([p for p in processes.values() if p.get("status") == "COMPLETED"])
-    
-    # Check if we have meaningful workflow processes completed (not just initialization)
-    meaningful_processes = [p for p in processes.values() 
-                          if p.get("status") == "COMPLETED" 
-                          and p.get("process_name", "").lower() not in ["createemptyfile", "emptyfile"]]
-    
-    # Only move to final stages if we have completed meaningful processes
-    if completed_count == total_processes and total_processes > 0 and len(meaningful_processes) > 0:
-        # Move through final stages gradually
-        if current_progress < 80:
-            current_stage = WorkflowStage.WORKFLOW_DIAGRAM
-            current_progress = 80
-            current_message = "Generating workflow diagram"
-        elif current_progress < 90:
-            current_stage = WorkflowStage.REPORT_GENERATION
-            current_progress = 90
-            current_message = "Generating PDF and HTML reports"
-        elif current_progress < 100:
-            current_stage = WorkflowStage.COMPLETE
-            current_progress = 100
-            current_message = "Processing complete!"
-    
-    return current_stage.value, current_progress, current_message
-
-async def handle_final_stages_progression(job_service: JobStatusService, job_id: str, outdir: str):
-    """
-    Handle the progression through final stages after Nextflow completion.
-    
-    Nextflow completes at 70% (PharmCAT), then we need to progress through:
-    - 80%: Workflow diagram generation
-    - 90%: Report generation  
-    - 100%: Complete
-    
-    Args:
-        job_service: JobStatusService instance
-        job_id: Job ID to update
-        outdir: Output directory for Nextflow
-    """
-    import asyncio
-    from app.services.workflow_stage_manager import WorkflowStage
-    from app.api.models import JobStage
-    
-    logger.info(f"Starting final stages progression for job {job_id}")
-    
-    try:
-        # Stage 1: Workflow diagram generation (80%)
-        job_service.update_job_progress(
-            job_id=job_id,
-            stage=JobStage.WORKFLOW_DIAGRAM.value,
-            progress=80,
-            message="Generating workflow diagram...",
-            metadata={"nextflow_status": "completed", "final_stage": "workflow_diagram"}
-        )
-        
-        # Simulate workflow diagram generation time
-        await asyncio.sleep(2)
-        
-        # Stage 2: Report generation (90%)
-        job_service.update_job_progress(
-            job_id=job_id,
-            stage=JobStage.REPORT_GENERATION.value,
-            progress=90,
-            message="Generating PDF and HTML reports...",
-            metadata={"nextflow_status": "completed", "final_stage": "report_generation"}
-        )
-        
-        # Simulate report generation time
-        await asyncio.sleep(3)
-        
-        # Stage 3: Complete (100%)
-        job_service.update_job_progress(
-            job_id=job_id,
-            stage=JobStage.COMPLETE.value,
-            progress=100,
-            message="Processing complete!",
-            metadata={"nextflow_status": "completed", "final_stage": "complete"}
-        )
-        
-        # Mark job as completed
-        job_service.complete_job(
-            job_id=job_id,
-            success=True,
-            final_message="Analysis completed successfully",
-            metadata={"nextflow_status": "completed", "final_stages_completed": True}
-        )
-        
-        logger.info(f"Final stages progression completed for job {job_id}")
-        
-    except Exception as e:
-        logger.error(f"Error in final stages progression for job {job_id}: {e}")
-        # Mark job as failed if final stages fail
-        job_service.fail_job(
-            job_id=job_id,
-            error_message=f"Final stages progression failed: {str(e)}",
-            stage=JobStage.REPORT_GENERATION.value
-        )
-
-# Nextflow progress monitoring removed - Nextflow container no longer participates in state/stage reporting
-
-async def wait_for_nextflow_completion(job_service: JobStatusService, job_id: str, nextflow_url: str, job_key: str, outdir: str):
-    """
-    Simple wait for Nextflow completion without progress tracking.
-    
-    Args:
-        job_service: JobStatusService instance
-        job_id: Job ID to update
-        nextflow_url: Nextflow runner URL
-        job_key: Nextflow job key for status queries
-    """
-    import aiohttp
-    import asyncio
-    from app.api.models import JobStage
-    
-    max_wait_time = 7200  # 2 hours max
-    check_interval = 5  # Check every 5 seconds for faster transitions
-    start_time = time.time()
-    
-    logger.info(f"Waiting for Nextflow completion for job {job_id}")
-    
-    # Track progress within PyPGx stage
-    pypgx_progress_counter = 0
-    
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            while time.time() - start_time < max_wait_time:
-                try:
-                    # Get status from Nextflow runner
-                    async with session.get(f"{nextflow_url}/status/{job_key}") as resp:
-                        if resp.status == 200:
-                            status_data = await resp.json()
-                            nextflow_status = status_data.get("status", "unknown")
-                            
-                            # Update job with simple status - Nextflow handles PyPGx (50%) and PharmCAT (70%)
-                            if nextflow_status == "running":
-                                # Show incremental progress within PyPGx stage (50-65%)
-                                pypgx_progress_counter += 0.3
-                                pypgx_progress = int(min(50 + (pypgx_progress_counter * 2), 65))  # 50% to 65%, rounded down
-                                
-                                job_service.update_job_progress(
-                                    job_id=job_id,
-                                    stage=JobStage.PYPX_ANALYSIS.value,
-                                    progress=pypgx_progress,
-                                    message=f"PyPGx analysis ({nextflow_status})",
-                                    metadata={"nextflow_status": nextflow_status, "pypgx_progress": pypgx_progress_counter}
-                                )
-                            elif nextflow_status == "completed":
-                                # Transition from PyPGx to PharmCAT - show this transition
-                                job_service.update_job_progress(
-                                    job_id=job_id,
-                                    stage=JobStage.PHARMCAT_ANALYSIS.value,
-                                    progress=70,
-                                    message="PyPGx analysis completed, PharmCAT analysis starting", # White lie until it works right
-                                    metadata={"nextflow_status": nextflow_status, "transition": "pypgx_to_pharmcat"}
-                                )
-                            
-                            # Check if job is complete
-                            if nextflow_status in ["completed", "failed"]:
-                                if nextflow_status == "completed":
-                                    # Nextflow completed - show PharmCAT stage for at least 2 seconds
-                                    logger.info(f"Nextflow completed for job {job_id}, showing PharmCAT stage")
-                                    
-                                    # Ensure PharmCAT stage is visible for at least 5 seconds
-                                    pharmcat_start_time = time.time()
-                                    while time.time() - pharmcat_start_time < 5:
-                                        job_service.update_job_progress(
-                                            job_id=job_id,
-                                            stage=JobStage.PHARMCAT_ANALYSIS.value,
-                                            progress=70,
-                                            message="PharmCAT analysis",
-                                            metadata={"nextflow_status": nextflow_status, "pharmcat_completed": True}
-                                        )
-                                        await asyncio.sleep(1.5)  # Update every 1.5 seconds
-                                    
-                                    # Now proceed to final stages (80%, 90%, 100%)
-                                    await handle_final_stages_progression(job_service, job_id, outdir)
-                                else:
-                                    error_msg = status_data.get("error", "Unknown error")
-                                    logger.error(f"Nextflow pipeline failed: {error_msg}")
-                                    job_service.fail_job(
-                                        job_id=job_id,
-                                        error_message=f"Nextflow pipeline failed: {error_msg}",
-                                        stage=JobStage.PYPX_ANALYSIS.value
-                                    )
-                                break
-                        
-                        elif resp.status == 404:
-                            logger.warning(f"Nextflow job {job_key} not found")
-                            break
-                        else:
-                            logger.warning(f"Failed to get Nextflow status: {resp.status}")
-                    
-                except Exception as e:
-                    logger.error(f"Error checking Nextflow status: {e}")
-                
-                # Wait before next check
-                await asyncio.sleep(check_interval)
-            
-            # If we reach here, either job completed or timeout
-            if time.time() - start_time >= max_wait_time:
-                logger.warning(f"Nextflow wait timeout for job {job_id}")
-                job_service.update_job_progress(
-                    job_id=job_id,
-                    stage=JobStage.PYPX_ANALYSIS.value,
-                    progress=50,
-                    message="Nextflow wait timeout, checking for outputs...",
-                    metadata={"wait_timeout": True}
-                )
-    
-    except Exception as e:
-        logger.error(f"Error waiting for Nextflow completion: {e}")
-        job_service.update_job_progress(
-            job_id=job_id,
-            stage=JobStage.PYPX_ANALYSIS.value,
-            progress=25,
-            message=f"Wait error: {str(e)}",
-            metadata={"wait_error": str(e)}
-        )
 
 # Environment variable helper function
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -359,1233 +78,1195 @@ def _env_flag(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
+# Report generation flags
 INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
-USE_NEXTFLOW = _env_flag("USE_NEXTFLOW", False)
+
+# Always use Nextflow for processing (legacy direct processing moved to legacy_processing.py)
+USE_NEXTFLOW = True
 
 # Log the configuration for debugging
 logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
 
-async def process_file_background_with_db(file_path: str, patient_id: str, data_id: str, workflow: dict, sample_identifier: Optional[str] = None):
+# Progress calculation is now handled by WorkflowProgressCalculator
+
+async def delayed_cleanup_on_cancellation(workflow_id: str, workflow_metadata: dict):
     """
-    Wrapper function to create database session for background processing.
-    """
-    from app.api.db import SessionLocal
+    Perform delayed cleanup when app container detects cancellation.
     
-    db = SessionLocal()
+    This function waits a short period to ensure any in-progress file operations
+    complete, then cleans up the reports directory and other files.
+    
+    Args:
+        workflow_id: The workflow ID that was cancelled
+        workflow_metadata: Workflow metadata containing file paths
+    """
+    
     try:
-        await process_file_background(file_path, patient_id, data_id, workflow, db, sample_identifier)
-    finally:
-        db.close()
-
-async def process_file_nextflow_background_with_db(file_path: str, patient_id: str, data_id: str, workflow: dict, sample_identifier: Optional[str] = None):
-    """
-    Wrapper to create DB session and run the Nextflow-backed pipeline.
-    """
-    from app.api.db import SessionLocal
-    db = SessionLocal()
-    try:
-        await process_file_nextflow_background(file_path, patient_id, data_id, workflow, db, sample_identifier)
-    finally:
-        db.close()
-
-async def process_file_nextflow_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None):
-    """
-    Execute the PGx pipeline via the Nextflow runner service.
-    """
-    job = None
-    try:
-        job_service = JobStatusService(db)
-        # Find existing job
-        existing_jobs = job_service.get_jobs_by_patient(patient_id, limit=10)
-        for j in existing_jobs:
-            if str(j.file_id) == str(data_id):
-                job = j
-                break
-        if not job:
-            job = job_service.create_job(
-                patient_id=patient_id,
-                file_id=data_id,
-                initial_stage=JobStage.UPLOAD,
-                metadata={"workflow": workflow, "file_path": file_path}
-            )
-
-        # Persist header JSON and attach to job metadata
-        try:
-            from app.api.utils.header_inspector import inspect_header
-            from app.api.db import save_genomic_header
-            header_json = inspect_header(file_path)
-            header_record_id = save_genomic_header(db, file_path, (workflow.get("file_type") or "UNKNOWN").upper(), header_json)
-            patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
-            patient_dir.mkdir(parents=True, exist_ok=True)
-            header_json_path = patient_dir / f"{data_id}.header.json"
-            with open(header_json_path, "w", encoding="utf-8") as f:
-                json.dump(header_json, f, ensure_ascii=False, indent=2)
-            header_json_url = f"/reports/{patient_id}/{header_json_path.name}"
-            job_service.update_job_progress(
-                job.job_id,
-                JobStage.HEADER_INSPECTION.value,
-                5,
-                "Header inspected and recorded.",
-                {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
-            )
-            
-            # Simulated pause at 5% for smoother user experience
-            await asyncio.sleep(1.5)
-        except Exception:
-            pass
-
-        job_service.update_job_progress(
-            job.job_id,
-            JobStage.UPLOAD_COMPLETE.value,
-            10,
-            "Submitting job to Nextflow runner...",
-            {"workflow": workflow}
-        )
+        # Wait a short period to ensure any in-progress operations complete
+        await asyncio.sleep(2.0)
         
-        # Ensure upload stage is visible for at least 1.5 seconds
-        await asyncio.sleep(1.5)
-
-        import aiohttp
-        nextflow_url = os.getenv("NEXTFLOW_RUNNER_URL", "http://nextflow:5055")
-        outdir = f"/data/reports/{patient_id}"
-        input_type = workflow.get("file_type") if isinstance(workflow, dict) else None
-        if not input_type:
-            input_type = "vcf"
-
-        # Get service toggle settings from UI or fallback to environment variables
-        def _env_flag(name: str, default: bool = False) -> bool:
-            val = os.getenv(name)
-            if val is None:
-                return default
-            return str(val).strip().lower() in {"1", "true", "yes", "on"}
+        patient_id = workflow_metadata.get("patient_id")
+        if not patient_id:
+            logger.warning(f"No patient_id found in workflow metadata for delayed cleanup of {workflow_id}")
+            return
         
-        def _parse_bool(value: str) -> bool:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "yes", "on"}
-            return bool(value)
+        # Define cleanup paths
+        cleanup_paths = [
+            f"/data/reports/{patient_id}",  # Main output directory
+            f"/data/temp/{patient_id}",     # Temporary files
+            f"/data/uploads/{patient_id}",  # Uploaded files
+            f"/data/results/{patient_id}",  # Results directory
+        ]
         
-        # Get UI toggle states from form data (if available)
-        optitype_enabled = _parse_bool(workflow.get("optitype_enabled", _env_flag("OPTITYPE_ENABLED", True)))
-        pypgx_enabled = _parse_bool(workflow.get("pypgx_enabled", _env_flag("PYPGX_ENABLED", True)))
-        gatk_enabled = _parse_bool(workflow.get("gatk_enabled", _env_flag("GATK_ENABLED", True)))
-        kroki_enabled = _parse_bool(workflow.get("kroki_enabled", _env_flag("KROKI_ENABLED", True)))
+        # Add any additional paths from metadata
+        if "output_directory" in workflow_metadata:
+            cleanup_paths.append(workflow_metadata["output_directory"])
+        if "temp_directory" in workflow_metadata:
+            cleanup_paths.append(workflow_metadata["temp_directory"])
         
-        # Log service configuration for debugging
-        logger.info(f"Service configuration - OptiType: {optitype_enabled}, PyPGx: {pypgx_enabled}, GATK: {gatk_enabled}, Kroki: {kroki_enabled}")
-        
-        # Update job with service configuration
-        job_service.update_job_progress(
-            job.job_id,
-            JobStage.PYPX_ANALYSIS.value,
-            5,
-            f"Starting analysis (OptiType: {'enabled' if optitype_enabled else 'disabled'}, PyPGx: {'enabled' if pypgx_enabled else 'disabled'})",
-            {"workflow": workflow, "services": {"optitype": optitype_enabled, "pypgx": pypgx_enabled, "gatk": gatk_enabled, "kroki": kroki_enabled}}
-        )
-        
-        # Ensure analysis stage is visible for at least 1.5 seconds
-        await asyncio.sleep(1.5)
-
-        payload = {
-            "input": file_path,
-            "input_type": input_type,
-            "patient_id": str(patient_id),
-            "report_id": str(data_id),
-            "reference": (workflow.get("requested_reference", "hg38") if isinstance(workflow, dict) else "hg38"),
-            "outdir": outdir,
-            "job_id": str(job.job_id),  # Pass job_id for tracking
-            "skip_hla": str(not optitype_enabled).lower(),
-            "skip_pypgx": str(not pypgx_enabled).lower()
-        }
-
-        # Submit job to Nextflow runner
-        job_key = None
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=7200)) as session:
+        # Clean up each path
+        for path_str in cleanup_paths:
             try:
-                async with session.post(f"{nextflow_url}/run", data=payload) as resp:
-                    text = await resp.text()
-                    if resp.status != 200:
-                        raise RuntimeError(f"Nextflow run failed ({resp.status}): {text[:500]}")
-                    try:
-                        result_json = await resp.json()
-                        job_key = result_json.get("job_key")
-                    except Exception:
-                        result_json = {"raw": text[-1000:]}
+                path = Path(path_str)
+                if path.exists():
+                    logger.info(f"Delayed cleanup: Removing directory {path}")
+                    shutil.rmtree(path, ignore_errors=True)
+                    logger.info(f"Delayed cleanup: Successfully removed {path}")
+                else:
+                    logger.debug(f"Delayed cleanup: Path does not exist, skipping {path}")
             except Exception as e:
-                job_service.fail_job(job.job_id, f"Nextflow submission failed: {e}", JobStage.PYPX_ANALYSIS.value)
-                return
+                logger.warning(f"Delayed cleanup: Failed to remove {path_str}: {e}")
+        
+        logger.info(f"Delayed cleanup completed for cancelled workflow {workflow_id}")
+        
+    except Exception as e:
+        logger.error(f"Error during delayed cleanup of workflow {workflow_id}: {e}")
 
-        # Wait for Nextflow to complete (no progress monitoring)
-        if job_key:
-            # Simple wait for completion without progress tracking
-            await wait_for_nextflow_completion(job_service, job.job_id, nextflow_url, job_key, outdir)
-        else:
-            # Fallback to old behavior if job_key not available
-            job_service.update_job_progress(
-                job.job_id,
-                JobStage.PHARMCAT_ANALYSIS.value,
-                80,
-                "Collecting pipeline outputs...",
-                {"workflow": workflow}
-            )
-
-        # Collect outputs from patient directory
-        patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
+async def handle_final_stages_progression(workflow_service: WorkflowService, workflow_id: str, outdir: str):
+    """
+    Handle the final stages of workflow progression after Nextflow completion.
+    
+    Args:
+        workflow_service: Workflow service instance
+        workflow_id: The workflow ID
+        outdir: Output directory path
+    """
+    try:
+        # Check for cancellation before starting
+        workflow = workflow_service.get_workflow(workflow_id)
+        if workflow and workflow.status == "cancelled":
+            logger.info(f"Workflow {workflow_id} was cancelled before report generation")
+            # Schedule delayed cleanup to ensure any partial files are removed
+            task = asyncio.create_task(delayed_cleanup_on_cancellation(workflow_id, workflow.workflow_metadata))
+            # Add a name for easier debugging
+            task.set_name(f"delayed_cleanup_{workflow_id}")
+            return     
+        
+        # Send initial progress update
+        step_update = WorkflowStepUpdate(
+            status=StepStatus.RUNNING,
+            output_data={"progress_percent": 0}
+        )
+        workflow_service.update_workflow_step(workflow_id, "report_generation", step_update)
+        
+        log_data = WorkflowLogCreate(
+            step_name="report_generation",
+            log_level=LogLevel.INFO,
+            message="Generating final reports from Nextflow output"
+        )
+        workflow_service.log_workflow_event(workflow_id, log_data)
+        
+        # Get workflow metadata to extract patient and data information
+        workflow = workflow_service.get_workflow(workflow_id)
+        if not workflow:
+            raise RuntimeError(f"Workflow {workflow_id} not found")
+        
+        metadata = workflow.workflow_metadata or {}
+        patient_id = metadata.get("patient_id")
+        data_id = metadata.get("data_id")
+        workflow_config = metadata.get("workflow", {})
+        file_analysis = metadata.get("file_analysis", {})
+        
+        if not patient_id or not data_id:
+            raise RuntimeError(f"Missing patient_id or data_id in workflow metadata")
+        
+        # Extract sample identifier from workflow metadata
+        sample_identifier = None
+        if "sample_identifier" in metadata:
+            sample_identifier = metadata["sample_identifier"]
+        
+        # Use the outdir directly as the patient directory (it's already /data/reports/{patient_id})
+        patient_dir = Path(outdir)
         patient_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Using patient directory: {patient_dir}")
+        
+        # Set up all output paths in the patient directory
+        pdf_report_path = patient_dir / f"{patient_id}_pgx_report.pdf"
+        interactive_html_path = patient_dir / f"{patient_id}_pgx_report_interactive.html"
         pharmcat_html_path = patient_dir / f"{patient_id}_pgx_pharmcat.html"
         pharmcat_json_path = patient_dir / f"{patient_id}_pgx_pharmcat.json"
         pharmcat_tsv_path = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
-
+        
+        # Check for existing PharmCAT outputs in the patient directory
+        logger.info(f"Looking for PharmCAT files in: {patient_dir}")
+        
         pharmcat_html_exists = pharmcat_html_path.exists()
         pharmcat_json_exists = pharmcat_json_path.exists()
         pharmcat_tsv_exists = pharmcat_tsv_path.exists()
-
-        # Build response metadata
-        response_data = {
-            "job_directory": str(patient_dir),
-        }
-        if pharmcat_html_exists and INCLUDE_PHARMCAT_HTML:
-            response_data["pharmcat_html_report_url"] = f"/reports/{patient_id}/{pharmcat_html_path.name}"
-        if pharmcat_json_exists and INCLUDE_PHARMCAT_JSON:
-            response_data["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json_path.name}"
-        if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
-            response_data["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv_path.name}"
-
-        # Generate unified HTML/PDF reports using the app's generator based on PharmCAT outputs
-        try:
-            pharmcat_results: dict = {}
-            if pharmcat_json_exists:
-                try:
-                    with open(pharmcat_json_path, "r", encoding="utf-8") as f_json:
-                        pharmcat_results = json.load(f_json)
-                except Exception:
-                    pharmcat_results = {}
-
-            # Create minimal patient info for generator
-            patient_info = {"id": str(patient_id), "report_id": str(data_id)}
-
-            # Run generator; it will write to /data/reports/{patient_id}
-            gen_paths = generate_report(pharmcat_results or {"data": {}}, str(Path(os.getenv("REPORT_DIR", "/data/reports"))), patient_info)
-
-            # Surface unified report URLs if created
-            if isinstance(gen_paths, dict):
-                if gen_paths.get("pdf_path"):
-                    response_data["pdf_report_url"] = gen_paths["pdf_path"]
-                # Prefer interactive HTML if available
-                if gen_paths.get("interactive_html_path"):
-                    response_data["html_report_url"] = gen_paths["interactive_html_path"]
-                    response_data["interactive_html_report_url"] = gen_paths["interactive_html_path"]
-                elif gen_paths.get("html_path"):
-                    response_data["html_report_url"] = gen_paths["html_path"]
-        except Exception:
-            # Do not fail the job if unified report generation encounters issues
-            pass
-
-        # We keep unified report generation via app if desired later; for now, mark completed
-        job_service.update_job_progress(
-            job.job_id,
-            JobStage.REPORT_GENERATION.value,
-            95,
-            "Pipeline finished.",
-            {"workflow": workflow, "reports": response_data}
-        )
-
-        completion_message = "Analysis completed successfully"
-        job_service.complete_job(job.job_id, success=True, final_message=completion_message, metadata={"workflow": workflow, "reports": response_data})
-
-    except Exception as e:
-        try:
-            if job and hasattr(job, 'job_id'):
-                JobStatusService(db).fail_job(job.job_id, f"Error: {e}")
-        except Exception:
-            pass
-
-async def process_file_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None):
-    """
-    Process file based on determined workflow
-    
-    This function handles the background processing of genomic files through
-    the appropriate pipeline based on the file type and workflow configuration.
-    
-    Pipeline flow:
-    1. For BAM/CRAM/SAM files: GATK → PyPGx → PharmCAT → Reports
-    2. For VCF files: Direct to PharmCAT → Reports (or GATK if needed)
-    3. Future: For FASTQ: Alignment → GATK → PyPGx → PharmCAT → Reports
-    4. Future: For 23andMe: Conversion → PharmCAT → Reports
-    """
-    job = None  # Initialize job variable in outer scope
-    try:
-        logger.info(f"Processing file for patient {patient_id}, file {data_id}")
-        logger.info(f"Workflow: {workflow}")
-
-        # Get the existing job that was created during upload
-        # We need to find the job by patient_id and file_id since we don't have the job_id
-        logger.info(f"Looking for existing job for patient_id: {patient_id}, file_id: {data_id}")
         
-        job_service = JobStatusService(db)
-        try:
-            # Find the existing job by patient_id and file_id
-            existing_jobs = job_service.get_jobs_by_patient(patient_id, limit=10)
-            job = None
+        if patient_dir.exists():
+            logger.info(f"Patient directory exists, contents: {list(patient_dir.glob('*'))}")
+            logger.info(f"PharmCAT files exist - HTML: {pharmcat_html_exists}, JSON: {pharmcat_json_exists}, TSV: {pharmcat_tsv_exists}")
             
-            for existing_job in existing_jobs:
-                if str(existing_job.file_id) == str(data_id):
-                    job = existing_job
-                    logger.info(f"Found existing job: {job.job_id}")
-                    break
-            
-            if not job:
-                logger.warning(f"No existing job found for patient_id: {patient_id}, file_id: {data_id}")
-                # Create a new job only if none exists (fallback)
-                job = job_service.create_job(
-                    patient_id=patient_id,
-                    file_id=data_id,
-                    initial_stage=JobStage.UPLOAD,
-                    metadata={"workflow": workflow, "file_path": file_path}
-                )
-                logger.info(f"Created fallback job: {job.job_id}")
-            else:
-                logger.info(f"Using existing job: {job.job_id}")
-                
-        except Exception as e:
-            logger.error(f"Failed to find/create job: {str(e)}")
-            logger.error(f"Exception type: {type(e)}")
-            raise
-        
-        # Persist header JSON and attach to job metadata at the start
-        try:
-            from app.api.utils.header_inspector import inspect_header
-            from app.api.db import save_genomic_header
-            header_json = inspect_header(file_path)
-            header_record_id = save_genomic_header(db, file_path, (workflow.get("file_type") or "UNKNOWN").upper(), header_json)
-            patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
-            patient_dir.mkdir(parents=True, exist_ok=True)
-            header_json_path = patient_dir / f"{data_id}.header.json"
-            with open(header_json_path, "w", encoding="utf-8") as f:
-                json.dump(header_json, f, ensure_ascii=False, indent=2)
-            header_json_url = f"/reports/{patient_id}/{header_json_path.name}"
-            job_service.update_job_progress(
-                job.job_id,
-                JobStage.HEADER_INSPECTION.value,
-                5,
-                "Header inspected and recorded.",
-                {"workflow": workflow, "header_json_url": header_json_url, "header_record_id": header_record_id}
-            )
-            
-            # Simulated pause at 5% for smoother user experience
-            await asyncio.sleep(1.5)
-        except Exception:
-            pass
+            # Log the actual files found for debugging
+            pharmcat_pattern = f"{patient_id}_pgx_pharmcat.*"
+            pharmcat_files = list(patient_dir.glob(pharmcat_pattern))
+            logger.info(f"Found PharmCAT files: {pharmcat_files}")
 
-        # Check if file format is unsupported
-        if workflow.get("unsupported", False):
-            reason = workflow.get("unsupported_reason", "Unsupported file format")
-            logger.warning(f"Unsupported file format for {data_id}: {reason}")
-            
-            # Update new monitoring system
-            job_service.fail_job(job.job_id, reason, JobStage.UPLOAD_START.value)
-            return
-
-        # Update initial status using new service
-        job_service.update_job_progress(
-            job.job_id, 
-            JobStage.HEADER_INSPECTION.value, 
-            5, 
-            "Analyzing file...",
-            {"workflow": workflow}
-        )
-        
-        # Simulated pause at 5% for smoother user experience
-        await asyncio.sleep(1.5)  # Give time for status update and smooth progress display
-        
-        # File processing pipeline
-        output_file = file_path  # Start with the original file
-        
-        # Check if we can go directly to PharmCAT (e.g., for VCF files) (should be deprecated now with PyPgx + PharmCAT)
-        if workflow.get("go_directly_to_pharmcat", False) and not workflow.get("needs_gatk", False):
-            logger.info(f"File can be processed directly by PharmCAT, skipping preprocessing steps")
-            job_service.update_job_progress(
-                job.job_id,
-                JobStage.UPLOAD_COMPLETE.value,
-                10,
-                "File ready for PharmCAT processing",
-                {"workflow": workflow}
-            )
-            await asyncio.sleep(1)  # Short delay for UI update
-        else:
-            # Standard preprocessing pipeline
-            
-            # Step 1: Alignment (for FASTQ files) - not yet implemented
-            if workflow.get("needs_alignment", False):
-                job_service.update_job_progress(
-                    job.job_id,
-                    JobStage.UPLOAD_START.value,
-                    10,
-                    "Aligning reads to reference genome (not yet implemented)...",
-                    {"workflow": workflow}
-                )
-                # Ensure upload stage is visible for at least 1.5 seconds
-                await asyncio.sleep(1.5)
-                # This would be implemented with a call to BWA or similar aligner
-                # For now, just sleep to simulate processing time
-                await asyncio.sleep(2)
-            
-            # Step 2: BAM/CRAM/SAM -> VCF using PyPGx create-input-vcf (GATK disabled)
-            if workflow.get("needs_pypgx_bam2vcf", False):
-                job_service.update_job_progress(
-                    job.job_id,
-                    JobStage.PYPX_BAM2VCF.value,
-                    60,
-                    "Converting alignment to VCF via PyPGx create-input-vcf...",
-                    {"workflow": workflow}
-                )
-                try:
-                    import aiohttp
-                    pypgx_url = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
-                    form = aiohttp.FormData()
-                    ref = 'hg38'
-                    if isinstance(workflow, dict):
-                        ref = workflow.get('requested_reference', 'hg38') or 'hg38'
-                    form.add_field('reference_genome', ref)
-                    form.add_field('patient_id', str(patient_id))
-                    form.add_field('report_id', str(data_id))
-                    with open(file_path, 'rb') as f:
-                        form.add_field('file', f, filename=os.path.basename(file_path), content_type='application/octet-stream')
-                        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3600)) as session:
-                            async with session.post(f"{pypgx_url}/create-input-vcf", data=form) as resp:
-                                if resp.status != 200:
-                                    text = await resp.text()
-                                    raise RuntimeError(f"PyPGx create-input-vcf error {resp.status}: {text}")
-                                converted = await resp.json()
-                    output_file = converted.get('vcf_path') or converted.get('vcf') or output_file
-                    if not output_file or not os.path.exists(output_file):
-                        raise RuntimeError("PyPGx did not return a usable VCF path")
-                    job_service.update_job_progress(
-                        job.job_id,
-                        JobStage.PYPX_BAM2VCF.value,
-                        60,
-                        "Alignment converted to VCF successfully.",
-                        {"workflow": workflow, "bam2vcf_complete": True, "vcf_path": output_file}
-                    )
-                except Exception as e:
-                    error_msg = f"PyPGx create-input-vcf failed: {str(e)}"
-                    logger.error(error_msg)
-                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX_ANALYSIS.value)
-                    return
-            
-            # Step 3: File conversion (for 23andMe files) - not yet implemented
-            if workflow.get("needs_conversion", False):
-                job_service.update_job_progress(
-                    job.job_id,
-                    JobStage.UPLOAD_START.value,
-                    30,
-                    "Converting to VCF format (not yet implemented)...",
-                    {"workflow": workflow}
-                )
-                # Ensure upload stage is visible for at least 1.5 seconds
-                await asyncio.sleep(1.5)
-                # This would be implemented with a conversion tool
-                # For now, just sleep to simulate processing time
-                await asyncio.sleep(2)
-            
-            # Step 4: PyPGx analysis for all supported genes
-            if workflow.get("needs_pypgx", False):
-                # Update new monitoring system
-                job_service.update_job_progress(
-                    job.job_id, 
-                    JobStage.PYPX_ANALYSIS.value, 
-                    50, 
-                    "Analyzing PyPGx supported star alleles...",
-                    {"workflow": workflow}
-                )
-                
-                try:
-                    # Real PyPGx call: request ALL supported genes to maximize outside-call coverage
-                    import aiohttp
-                    pypgx_url = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
-                    form = aiohttp.FormData()
-                    form.add_field('genes', 'ALL')
-                    form.add_field('reference_genome', workflow.get('reference', 'hg38') if isinstance(workflow, dict) else 'hg38')
-                    # Provide identifiers so PyPGx can place its JSON into the per-patient reports directory
-                    form.add_field('patient_id', str(patient_id))
-                    form.add_field('report_id', str(data_id))
-                    with open(output_file, 'rb') as f:
-                        form.add_field('file', f, filename=os.path.basename(output_file), content_type='application/octet-stream')
-                        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1200)) as session:
-                            async with session.post(f"{pypgx_url}/genotype", data=form) as resp:
-                                if resp.status != 200:
-                                    text = await resp.text()
-                                    raise RuntimeError(f"PyPGx error {resp.status}: {text}")
-                                pypgx_result = await resp.json()
-                    # Build combined PharmCAT Outside Call TSV with one line per gene
-                    outside_lines = []
-                    if isinstance(pypgx_result, dict):
-                        results = pypgx_result.get('results') or {}
-                        def _s(v):
-                            return str(v).strip() if v is not None else ''
-                        for gene_key, gene_res in results.items():
-                            if not isinstance(gene_res, dict) or not gene_res.get('success'):
-                                continue
-                            diplotype = gene_res.get('diplotype')
-                            details = gene_res.get('details') or {}
-                            phenotype = details.get('phenotype') or details.get('Phenotype') if isinstance(details, dict) else None
-                            activity_score = details.get('activity_score') or details.get('activityScore') if isinstance(details, dict) else None
-                            if diplotype or phenotype or activity_score:
-                                outside_lines.append("\t".join([gene_key, _s(diplotype), _s(phenotype), _s(activity_score)]))
-                    if outside_lines:
-                        base, _ = os.path.splitext(output_file)
-                        outside_path = f"{base}.outside.tsv"
-                        with open(outside_path, 'w', encoding='utf-8') as tsv:
-                            tsv.write("\n".join(outside_lines) + "\n")
-                        logger.info(f"Wrote PharmCAT outside TSV with {len(outside_lines)} lines: {outside_path}")
-                        workflow['used_pypgx'] = True
-                        workflow['outside_tsv'] = outside_path
-                        # Persist aggregated PyPGx results into workflow for report augmentation
-                        try:
-                            workflow['pypgx_results'] = pypgx_result
-                        except Exception:
-                            pass
-                    else:
-                        logger.warning("PyPGx returned no usable calls; proceeding without outside TSV")
-                    # Update status after PyPGx
-                    job_service.update_job_progress(
-                        job.job_id,
-                        JobStage.PYPX_ANALYSIS.value,
-                        50,
-                        "PyPGx analysis complete.",
-                        {"workflow": workflow, "pypgx_complete": True}
-                    )
-                except Exception as e:
-                    error_msg = f"PyPGx processing failed: {str(e)}"
-                    logger.error(error_msg)
-                    
-                    # Update new monitoring system
-                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX_ANALYSIS.value)
-                    return
-
-        # If we skipped preprocessing due to go_directly_to_pharmcat, still run PyPGx here (multi-gene)
-        if workflow.get("needs_pypgx", False) and not workflow.get("outside_tsv"):
+        # Attempt reconciliation if some PharmCAT outputs are missing
+        if not (pharmcat_html_exists and pharmcat_json_exists and pharmcat_tsv_exists):
             try:
-                import aiohttp
-                pypgx_url = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
-                form = aiohttp.FormData()
-                form.add_field('genes', 'ALL')
-                ref = 'hg38'
-                if isinstance(workflow, dict):
-                    ref = workflow.get('requested_reference', 'hg38') or 'hg38'
-                form.add_field('reference_genome', ref)
-                # Provide identifiers so PyPGx can place its JSON into the per-patient reports directory
-                form.add_field('patient_id', str(patient_id))
-                form.add_field('report_id', str(data_id))
-                with open(output_file, 'rb') as f:
-                    form.add_field('file', f, filename=os.path.basename(output_file), content_type='application/octet-stream')
-                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1200)) as session:
-                        async with session.post(f"{pypgx_url}/genotype", data=form) as resp:
-                            if resp.status != 200:
-                                text = await resp.text()
-                                raise RuntimeError(f"PyPGx error {resp.status}: {text}")
-                            pypgx_result = await resp.json()
-                outside_lines = []
-                if isinstance(pypgx_result, dict):
-                    results = pypgx_result.get('results') or {}
-                    def _s(v):
-                        return str(v).strip() if v is not None else ''
-                    for gene_key, gene_res in results.items():
-                        if not isinstance(gene_res, dict) or not gene_res.get('success'):
-                            continue
-                        diplotype = gene_res.get('diplotype')
-                        details = gene_res.get('details') or {}
-                        phenotype = details.get('phenotype') or details.get('Phenotype') if isinstance(details, dict) else None
-                        activity_score = details.get('activity_score') or details.get('activityScore') if isinstance(details, dict) else None
-                        if diplotype or phenotype or activity_score:
-                            outside_lines.append("\t".join([gene_key, _s(diplotype), _s(phenotype), _s(activity_score)]))
-                if outside_lines:
-                    base, _ = os.path.splitext(output_file)
-                    outside_path = f"{base}.outside.tsv"
-                    with open(outside_path, 'w', encoding='utf-8') as tsv:
-                        tsv.write("\n".join(outside_lines) + "\n")
-                    logger.info(f"Wrote PharmCAT outside TSV with {len(outside_lines)} lines: {outside_path}")
-                    workflow['used_pypgx'] = True
-                    workflow['outside_tsv'] = outside_path
-                    # Persist aggregated PyPGx results into workflow for report augmentation
-                    try:
-                        workflow['pypgx_results'] = pypgx_result
-                    except Exception:
-                        pass
-                else:
-                    logger.warning("PyPGx returned no usable calls; proceeding without outside TSV")
-            except Exception as e:
-                error_msg = f"PyPGx processing failed (direct path): {str(e)}"
-                logger.error(error_msg)
-
-        # Step 5: PharmCAT Analysis
-        # Update new monitoring system
-        job_service.update_job_progress(
-            job.job_id, 
-            JobStage.PHARMCAT_ANALYSIS.value, 
-            70, 
-            "Running PharmCAT analysis...",
-            {"workflow": workflow}
-        )
-
-        # Call PharmCAT service for final analysis
-        logger.info(f"Calling PharmCAT service with file: {output_file}")
-        try:
-            # Prefer the user's entered sample identifier when available; fall back to database UUID
-            effective_sample_identifier = sample_identifier or str(patient_id)
-            if sample_identifier:
-                logger.info(f"Using user's sample identifier: {effective_sample_identifier}")
-            else:
-                logger.info(f"No user-entered identifier provided; falling back to Sample ID (UUID): {effective_sample_identifier}")
-            
-            # Use the direct PharmCAT service call to avoid duplicate report generation
-            # Pass both patient_id (for database consistency) and patient_identifier (for user experience)
-            # Attach outside TSV if created in the PyPGx step
-            outside_tsv_path = None
-            if isinstance(workflow, dict):
-                outside_tsv_path = workflow.get('outside_tsv')
-            results = call_pharmcat_service(
-                output_file,
-                report_id=data_id,
-                patient_id=patient_id,
-                sample_identifier=effective_sample_identifier,
-                outside_tsv_path=outside_tsv_path
-            )
-        except Exception as e:
-            logger.error(f"PharmCAT service call failed: {str(e)}")
-            results = {"success": False, "message": f"PharmCAT service error: {str(e)}", "data": {}}
-            
-        logger.info(f"PharmCAT processing complete")
-        
-        # Step 6: Generate Reports
-        try:
-            # Update status for Report stage
-            job_service.update_job_progress(
-                job.job_id, 
-                JobStage.REPORT_GENERATION.value, 
-                90, 
-                "Generating reports...",
-                {"workflow": workflow}
-            )
-            
-            # Ensure results has required structure even if the call failed
-            if not isinstance(results, dict):
-                logger.error(f"PharmCAT results are not a dictionary: {type(results)}")
-                results = {"success": False, "message": "Invalid results format", "data": {}}
-                
-            if "data" not in results:
-                logger.warning("PharmCAT results missing 'data' key, adding empty data structure")
-                results["data"] = {}
-                
-            if "genes" not in results.get("data", {}):
-                logger.warning("Missing 'genes' in results data, adding empty list")
-                results.setdefault("data", {})["genes"] = []
-                
-            if "drugRecommendations" not in results.get("data", {}):
-                logger.warning("Missing 'drugRecommendations' in results data, adding empty list")
-                results.setdefault("data", {})["drugRecommendations"] = []
-            
-            # Generate reports (proceed even if normalization 'success' is False; use whatever data is available)
-            try:
-                # Create a single reports directory for this job
-                reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
-                reports_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Use the patient directory directly instead of creating a new job directory
-                # This ensures all reports (ours and PharmCAT's) are in the same place
-                patient_dir = reports_dir / str(patient_id)
-                patient_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Using patient directory: {patient_dir}")
-                
-                # Set up all output paths in the patient directory
-                pdf_report_path = patient_dir / f"{patient_id}_pgx_report.pdf"
-                interactive_html_path = patient_dir / f"{patient_id}_pgx_report_interactive.html"
-                pharmcat_html_path = patient_dir / f"{patient_id}_pgx_pharmcat.html"
-                pharmcat_json_path = patient_dir / f"{patient_id}_pgx_pharmcat.json"
-                pharmcat_tsv_path = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
-                
-                # Extract data needed for the reports
-                pharmcat_data = results.get("data", {}) if isinstance(results, dict) else {}
-                
-                # Extract diplotypes from PharmCAT results - should be normalized already
-                diplotypes = pharmcat_data.get("genes", [])
-                logger.info(f"PharmCAT returned {len(diplotypes)} genes")
-                
-                # Simple diplotype format conversion if needed
-                formatted_diplotypes = []
-                for gene in diplotypes:
-                    if isinstance(gene, dict):
-                        # Handle different possible data structures
-                        diplotype_obj = gene.get("diplotype", {})
-                        diplotype_name = diplotype_obj
-                        if isinstance(diplotype_obj, dict):
-                            diplotype_name = diplotype_obj.get("name", "Unknown")
-                        
-                        phenotype_obj = gene.get("phenotype", {})
-                        phenotype_info = phenotype_obj
-                        if isinstance(phenotype_obj, dict):
-                            phenotype_info = phenotype_obj.get("info", "Unknown")
-
-                        # Apply 'Possibly Wild Type' fallback when phenotype is blank/N-A and diplotype is *1/*1
-                        try:
-                            dip_str = str(diplotype_name).strip() if diplotype_name is not None else ""
-                            ph_str = str(phenotype_info).strip() if phenotype_info is not None else ""
-                            if dip_str == "*1/*1" and (ph_str == "" or ph_str.lower() in {"n/a", "na"}):
-                                phenotype_info = "Possibly Wild Type"
-                        except Exception:
-                            pass
-                        
-                        formatted_diplotypes.append({
-                            "gene": gene.get("gene", ""),
-                            "diplotype": diplotype_name,
-                            "phenotype": phenotype_info,
-                            "activity_score": diplotype_obj.get("activityScore") if isinstance(diplotype_obj, dict) else None
-                        })
-                
-                # Log the number of diplotypes found
-                logger.info(f"Extracted {len(formatted_diplotypes)} formatted diplotypes")
-                
-                # Augment diplotypes with PyPGx-only genes (not in PharmCAT)
+                reports_root = patient_dir.parent
+                # Try to derive sample base from any pharmcat pipeline log in this dir
+                sample_base = None
+                logs = list(patient_dir.glob("*_pharmcat_pipeline.log"))
+                if logs:
+                    sample_base = logs[0].name.replace("_pharmcat_pipeline.log", "")
+                    logger.info(f"Derived sample_base from pipeline log: {sample_base}")
+                # Candidate alternate directory names to search
+                alt_dir_names = []
+                if sample_identifier and str(sample_identifier).strip():
+                    alt_dir_names.append(str(sample_identifier).strip())
                 try:
-                    existing_genes = {str(item.get("gene", "")).strip().upper() for item in formatted_diplotypes if isinstance(item, dict)}
-                    pypgx_results = None
-                    if isinstance(workflow, dict):
-                        pypgx_results = workflow.get("pypgx_results")
-                    added_count = 0
-                    if isinstance(pypgx_results, dict):
-                        results_obj = pypgx_results.get("results") or {}
-                        for gene_key, gene_res in results_obj.items():
-                            if not isinstance(gene_res, dict) or not gene_res.get("success"):
-                                continue
-                            gene_name = str(gene_key).strip()
-                            if gene_name.upper() in existing_genes:
-                                continue
-                            diplotype_val = gene_res.get("diplotype")
-                            details = gene_res.get("details") or {}
-                            phenotype_val = details.get("phenotype") or details.get("Phenotype")
-                            activity_val = details.get("activity_score") or details.get("activityScore")
-                            formatted_diplotypes.append({
-                                "gene": gene_name,
-                                "diplotype": diplotype_val or "Unknown",
-                                "phenotype": phenotype_val or "Unknown",
-                                "activity_score": activity_val if (activity_val is not None and str(activity_val).strip() != "") else None
-                            })
-                            existing_genes.add(gene_name.upper())
-                            added_count += 1
-                    logger.info(f"PyPGx augmentation complete. Added {added_count} genes to diplotypes (PharmCAT base={len(diplotypes)} → final={len(formatted_diplotypes)})")
-                except Exception as aug_err:
-                    logger.warning(f"Failed to augment diplotypes with PyPGx results: {aug_err}")
-
-                # Harmonize 'Possibly Wild Type' phenotype across all diplotypes
-                try:
-                    for d in formatted_diplotypes:
-                        dip_str = str(d.get("diplotype") or "").strip()
-                        ph_str = str(d.get("phenotype") or "").strip()
-                        if dip_str == "*1/*1" and (ph_str == "" or ph_str.lower() in {"n/a", "na"}):
-                            d["phenotype"] = "Possibly Wild Type"
+                    if 'header_sample_identifier' in locals() and locals().get('header_sample_identifier'):
+                        alt_dir_names.append(str(locals().get('header_sample_identifier')))
                 except Exception:
                     pass
-
-                # Extract recommendations from PharmCAT results - should be normalized already
-                recommendations = pharmcat_data.get("drugRecommendations", [])
-                logger.info(f"PharmCAT returned {len(recommendations)} drug recommendations")
-                
-                # Simple recommendation format conversion if needed
-                formatted_recommendations = []
-                for drug in recommendations:
-                    if not isinstance(drug, dict):
+                if sample_base:
+                    alt_dir_names.append(sample_base)
+                # Deduplicate while preserving order
+                seen = set()
+                alt_dir_names = [x for x in alt_dir_names if not (x in seen or seen.add(x))]
+                for alt_name in alt_dir_names:
+                    alt_dir = reports_root / alt_name
+                    if not alt_dir.exists():
                         continue
-                        
-                    # Handle different possible structures for drug name
-                    drug_name = drug.get("drug", {})
-                    if isinstance(drug_name, dict):
-                        drug_name = drug_name.get("name", "Unknown")
-                    
-                    formatted_recommendations.append({
-                        "gene": drug.get("gene", ""),
-                        "drug": drug_name,
-                        "guideline": drug.get("guideline", ""),
-                        "recommendation": drug.get("recommendation", "Unknown"),
-                        "classification": drug.get("classification", "Unknown")
-                    })
-                
-                # Log the number of recommendations found
-                logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
-                
-                # Generate workflow diagrams for this sample
-                logger.info("=== WORKFLOW DIAGRAM GENERATION START ===")
-                try:
-                    from app.visualizations.workflow_diagram import render_workflow, render_simple_png_from_workflow
-                    
-                    # Determine workflow configuration based on the data
-                    workflow_config = {
-                        "file_type": "vcf",  # Default to VCF since we're processing VCF files
-                        "used_gatk": False,  # We're going directly to PharmCAT
-                        "used_pypgx": False,  # Not using PyPGx in this flow
-                        "used_pharmcat": True,  # Always using PharmCAT
-                        "exported_to_fhir": False  # FHIR export is optional
-                    }
-                    
-                    logger.info(f"Workflow configuration: {workflow_config}")
-                    
-                    # Generate SVG workflow diagram
-                    try:
-                        svg_bytes = render_workflow(fmt="svg", workflow=workflow_config)
-                        if svg_bytes:
-                            svg_path = patient_dir / f"{patient_id}_workflow.svg"
-                            with open(svg_path, "wb") as f_out:
-                                f_out.write(svg_bytes)
-                            logger.info(f"✓ Graphviz Workflow SVG generated successfully: {svg_path} ({len(svg_bytes)} bytes)")
-                        else:
-                            logger.warning("⚠ Graphviz Workflow SVG generation returned empty result")
-                    except Exception as e:
-                        logger.error(f"✗ Graphviz Workflow SVG generation failed: {str(e)}", exc_info=True)
-                    
-                    # Generate Kroki Mermaid SVG workflow diagram for comparison
-                    try:
-                        from app.visualizations.workflow_diagram import render_kroki_mermaid_svg
-                        kroki_svg_bytes = render_kroki_mermaid_svg(workflow=workflow_config)
-                        if kroki_svg_bytes:
-                            kroki_svg_path = patient_dir / f"{patient_id}_workflow_kroki_mermaid.svg"
-                            with open(kroki_svg_path, "wb") as f_out:
-                                f_out.write(kroki_svg_bytes)
-                            logger.info(f"✓ Kroki Mermaid Workflow SVG generated successfully: {kroki_svg_path} ({len(kroki_svg_bytes)} bytes)")
-                        else:
-                            logger.warning("⚠ Kroki Mermaid Workflow SVG generation returned empty result")
-                    except Exception as e:
-                        logger.error(f"✗ Kroki Mermaid Workflow SVG generation failed: {str(e)}", exc_info=True)
-                    
-                    # Generate PNG workflow diagram
-                    try:
-                        png_bytes = render_workflow(fmt="png", workflow=workflow_config)
-                        if not png_bytes:
-                            # Force pure-Python PNG fallback so a file is always present
-                            logger.info("PNG generation failed, trying Python fallback...")
-                            png_bytes = render_simple_png_from_workflow(workflow_config)
-                        if png_bytes:
-                            png_path = patient_dir / f"{patient_id}_workflow.png"
-                            with open(png_path, "wb") as f_out:
-                                f_out.write(png_bytes)
-                            logger.info(f"✓ Workflow PNG generated successfully: {png_path} ({len(png_bytes)} bytes)")
-                        else:
-                            logger.warning("⚠ Workflow PNG generation still failed after fallback")
-                    except Exception as e:
-                        logger.error(f"✗ Workflow PNG generation failed: {str(e)}", exc_info=True)
-                    
-                    logger.info(f"=== WORKFLOW DIAGRAM GENERATION END ===")
-                except Exception as e:
-                    logger.error(f"✗ Workflow diagram generation failed: {str(e)}", exc_info=True)
-                    logger.info("Continuing without workflow diagrams...")
-            
-            # Check for existing PharmCAT outputs in the patient directory
-                logger.info(f"Looking for PharmCAT files in: {patient_dir}")
-                
-                pharmcat_html_exists = False
-                pharmcat_json_exists = False
-                pharmcat_tsv_exists = False
-                
-                if patient_dir.exists():
-                    logger.info(f"Patient directory exists, contents: {list(patient_dir.glob('*'))}")
-                    
-                    # Check if PharmCAT files already exist (they should have been copied by the PharmCAT service)
+                    # Candidate source files (by patient_id and by alt_name)
+                    src_candidates = [
+                        (alt_dir / f"{patient_id}_pgx_pharmcat.html", pharmcat_html_path),
+                        (alt_dir / f"{patient_id}_pgx_pharmcat.json", pharmcat_json_path),
+                        (alt_dir / f"{patient_id}_pgx_pharmcat.tsv", pharmcat_tsv_path),
+                        (alt_dir / f"{alt_name}_pgx_pharmcat.html", pharmcat_html_path),
+                        (alt_dir / f"{alt_name}_pgx_pharmcat.json", pharmcat_json_path),
+                        (alt_dir / f"{alt_name}_pgx_pharmcat.tsv", pharmcat_tsv_path),
+                    ]
+                    for src, dest in src_candidates:
+                        try:
+                            if src.exists() and not dest.exists():
+                                shutil.copy2(src, dest)
+                                logger.info(f"Reconciled PharmCAT output: {src} -> {dest}")
+                        except Exception as e:
+                            logger.warning(f"Failed to reconcile {src} -> {dest}: {e}")
+                    # Refresh state
                     pharmcat_html_exists = pharmcat_html_path.exists()
                     pharmcat_json_exists = pharmcat_json_path.exists()
                     pharmcat_tsv_exists = pharmcat_tsv_path.exists()
-                    
-                    logger.info(f"PharmCAT files exist - HTML: {pharmcat_html_exists}, JSON: {pharmcat_json_exists}, TSV: {pharmcat_tsv_exists}")
-                    
-                    # Log the actual files found for debugging
-                    pharmcat_pattern = f"{patient_id}_pgx_pharmcat.*"
-                    pharmcat_files = list(patient_dir.glob(pharmcat_pattern))
-                    logger.info(f"Found PharmCAT files: {pharmcat_files}")
-                    
-                    # Additional debugging: check if destination paths already exist
-                    logger.info(f"Destination paths - HTML: {pharmcat_html_path}, JSON: {pharmcat_json_path}, TSV: {pharmcat_tsv_path}")
-                    logger.info(f"Source files found: {[f.name for f in pharmcat_files]}")
-                    
-                    # Verify that the files are actually accessible and have content
-                    if pharmcat_html_exists:
-                        try:
-                            html_size = pharmcat_html_path.stat().st_size
-                            logger.info(f"PharmCAT HTML file size: {html_size} bytes")
-                        except Exception as e:
-                            logger.warning(f"Could not get HTML file size: {e}")
-                    
-                    if pharmcat_json_exists:
-                        try:
-                            json_size = pharmcat_json_path.stat().st_size
-                            logger.info(f"PharmCAT JSON file size: {json_size} bytes")
-                        except Exception as e:
-                            logger.warning(f"Could not get JSON file size: {e}")
-                    
-                    if pharmcat_tsv_exists:
-                        try:
-                            tsv_size = pharmcat_tsv_path.stat().st_size
-                            logger.info(f"PharmCAT TSV file size: {tsv_size} bytes")
-                        except Exception as e:
-                            logger.warning(f"Could not get TSV file size: {e}")
-
-
-                # Generate interactive HTML report first (needed for PDF generation)
-                logger.info(f"Generating interactive HTML report to {interactive_html_path}")
-                create_interactive_html_report(
-                    patient_id=patient_id,
-                    report_id=data_id,
-                    diplotypes=formatted_diplotypes,
-                    recommendations=formatted_recommendations,
-                    output_path=str(interactive_html_path),
-                    workflow=workflow.copy() if isinstance(workflow, dict) else {},
-                    sample_identifier=sample_identifier
-                )
-                
-                # Generate unified PDF report using centralized PDF generation system
-                logger.info(f"Generating unified PDF report to {pdf_report_path}")
-                
-                try:
-                    from app.reports.pdf_generators import generate_pdf_report_dual_lane
-                    
-                    # Prepare template data for PDF generation using the PDF template structure
-                    # Note: We don't need template_html for the PDF template - it generates its own HTML
-                    template_data = {
-                        "patient_id": patient_id,
-                        "report_id": data_id,
-                        "sample_identifier": sample_identifier,
-                        "file_type": workflow.get("file_type", "unknown"),
-                        "analysis_results": {
-                            "GATK Processing": "Completed" if workflow.get("needs_gatk", False) else "Not Required",
-                            "PyPGx Analysis": "Completed" if workflow.get("used_pypgx", False) else "Not Required",
-                            "PharmCAT Analysis": "Completed",
-                            "FHIR Export": "Not Implemented"
-                        },
-                        "workflow_diagram": workflow,
-                        # PDF template will generate its own HTML content
-                        "diplotypes": formatted_diplotypes,
-                        "recommendations": formatted_recommendations,
-                        "workflow": workflow
-                    }
-                    
-                    # Generate PDF using centralized system (respects environment configuration)
-                    result = generate_pdf_report_dual_lane(
-                        template_data=template_data,
-                        output_path=str(pdf_report_path),
-                        workflow_diagram=workflow
-                    )
-                    
-                    if result["success"]:
-                        logger.info(f"✓ PDF report generated successfully using {result['generator_used']}: {pdf_report_path}")
-                        if result["fallback_used"]:
-                            logger.info("ℹ️ Used fallback generator due to primary failure")
+                    if pharmcat_html_exists and pharmcat_json_exists:
+                        break
+            except Exception as e:
+                logger.warning(f"PharmCAT output reconciliation encountered an error: {e}")
+        
+        # Try to load PharmCAT results from the Nextflow output
+        pharmcat_data = {"genes": [], "drugRecommendations": []}
+        diplotypes = []
+        recommendations = []
+        
+        # Look for PharmCAT JSON results
+        pharmcat_json_file = patient_dir / f"{patient_id}_pgx_pharmcat.json"
+        if pharmcat_json_file.exists():
+            try:
+                with open(pharmcat_json_file, 'r', encoding='utf-8') as f:
+                    pharmcat_results = json.load(f)
+                    if isinstance(pharmcat_results, dict):
+                        # PharmCAT JSON has genes directly, not in a "data" object
+                        pharmcat_data = pharmcat_results
+                        logger.info(f"Loaded PharmCAT results from {pharmcat_json_file}")
                     else:
-                        logger.error(f"✗ PDF generation failed: {result['error']}")
-                        # Continue with HTML report only
-                    
-                except Exception as e:
-                    logger.error(f"✗ PDF generation failed: {str(e)}")
-                    # Continue with HTML report only
-                
-                # Add provisional flag if the workflow was marked as provisional
-                is_provisional = workflow.get("is_provisional", False)
-                
-                # Robust JSON sanitization using Python's built-in JSON handling
-                def sanitize_for_json(data):
-                    """Sanitize data to ensure it's JSON-safe using Python's built-in JSON handling"""
-                    import json
-                    try:
-                        # Test if the data can be serialized to JSON
-                        json.dumps(data, ensure_ascii=False, default=str)
-                        return data
-                    except (TypeError, ValueError) as e:
-                        logger.warning(f"JSON serialization failed, applying aggressive sanitization: {e}")
-                        # If JSON serialization fails, apply aggressive sanitization
-                        if isinstance(data, str):
-                            # Remove or replace problematic characters
-                            sanitized = data
-                            # Replace control characters
-                            sanitized = ''.join(char for char in sanitized if ord(char) >= 32 or char in '\n\r\t')
-                            # Escape quotes and backslashes
-                            sanitized = sanitized.replace('\\', '\\\\').replace('"', '\\"')
-                            return sanitized
-                        elif isinstance(data, list):
-                            return [sanitize_for_json(item) for item in data]
-                        elif isinstance(data, dict):
-                            return {str(key): sanitize_for_json(value) for key, value in data.items()}
-                        else:
-                            return str(data)
-                
-                # Sanitize the data before storing in job metadata
-                sanitized_diplotypes = sanitize_for_json(formatted_diplotypes)
-                sanitized_recommendations = sanitize_for_json(formatted_recommendations)
-                sanitized_warnings = sanitize_for_json(workflow.get("warnings", []))
-                
-                # Update job status with unified report URLs
-                response_data = {
-                    "pdf_report_url": f"/reports/{patient_id}/{pdf_report_path.name}",
-                    "html_report_url": f"/reports/{patient_id}/{interactive_html_path.name}",
-                    "diplotypes": sanitized_diplotypes,
-                    "recommendations": sanitized_recommendations,
-                    "is_provisional": is_provisional,
-                    "warnings": sanitized_warnings,
-                    "job_directory": str(patient_dir)
-                }
-                
-                # Add PharmCAT report URLs if they exist and are enabled via environment variables
-                if pharmcat_html_exists and INCLUDE_PHARMCAT_HTML:
-                    response_data["pharmcat_html_report_url"] = f"/reports/{patient_id}/{pharmcat_html_path.name}"
-                    logger.info(f"Added PharmCAT HTML report URL (enabled via INCLUDE_PHARMCAT_HTML)")
-                if pharmcat_json_exists and INCLUDE_PHARMCAT_JSON:
-                    response_data["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json_path.name}"
-                    logger.info(f"Added PharmCAT JSON report URL (enabled via INCLUDE_PHARMCAT_JSON)")
-                if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
-                    response_data["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv_path.name}"
-                    logger.info(f"Added PharmCAT TSV report URL (enabled via INCLUDE_PHARMCAT_TSV)")
-                
-                # Log which reports were skipped due to environment variable settings
-                if pharmcat_html_exists and not INCLUDE_PHARMCAT_HTML:
-                    logger.info("PharmCAT HTML report exists but skipped due to INCLUDE_PHARMCAT_HTML=false")
-                if pharmcat_json_exists and not INCLUDE_PHARMCAT_JSON:
-                    logger.info("PharmCAT JSON report exists but skipped due to INCLUDE_PHARMCAT_JSON=false")
-                if pharmcat_tsv_exists and not INCLUDE_PHARMCAT_TSV:
-                    logger.info("PharmCAT TSV report exists but skipped due to INCLUDE_PHARMCAT_TSV=false")
-                
-                # Store response data in job metadata
-                job_service.update_job_progress(
-                    job.job_id,
-                    JobStage.REPORT_GENERATION.value,
-                    95,
-                    "Reports generated successfully",
-                    {"workflow": workflow, "reports": response_data}
-                )
-                
-                # Add completion message with provisional status if applicable
-                completion_message = "Analysis completed successfully"
-                if is_provisional:
-                    completion_message += " (PROVISIONAL RESULTS)"
-                
-                logger.info(f"Updated job status with unified report URLs. Job directory: {patient_dir}")
-                
-            except Exception as gen_err:
-                # If our custom generation failed, attempt to surface PharmCAT HTML if available
-                logger.error(f"Error during unified report generation: {str(gen_err)}")
-                job_service.fail_job(
-                    job.job_id,
-                    f"Report generation failed: {str(gen_err)}",
-                    JobStage.REPORT_GENERATION.value
-                )
-                return
-                
-        except Exception as report_error:
-            # Handle report generation error
-            logger.error(f"Error generating reports: {str(report_error)}")
-            job_service.fail_job(
-                job.job_id,
-                f"Error generating reports: {str(report_error)}",
-                JobStage.REPORT_GENERATION.value
-            )
-            return
+                        logger.warning(f"PharmCAT JSON file has unexpected structure: {pharmcat_results}")
+            except Exception as e:
+                logger.error(f"Failed to load PharmCAT JSON results: {e}")
         
-        # Mark job as completed
-        completion_message = "Analysis completed successfully"
-        if workflow.get("is_provisional", False):
-            completion_message += " (PROVISIONAL RESULTS)"
+        # If JSON is missing or empty, try TSV fallback for simpler extraction
+        if (not pharmcat_data.get("genes")):
+            try:
+                pharmcat_tsv_file = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
+                if pharmcat_tsv_file.exists():
+                    from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
+                    tsv_diplotypes, tsv_recs = parse_pharmcat_tsv(str(pharmcat_tsv_file))
+                    if tsv_diplotypes:
+                        # Build minimal pharmcat_data structure compatible with downstream formatting
+                        pharmcat_data = {"genes": {"CPIC": {}}, "drugRecommendations": []}
+                        for entry in tsv_diplotypes:
+                            gene = entry.get("gene")
+                            if not gene:
+                                continue
+                            gene_block = pharmcat_data["genes"]["CPIC"].setdefault(gene, {})
+                            # Represent TSV-derived diplotype as recommendationDiplotypes shape minimally
+                            gene_block.setdefault("recommendationDiplotypes", [])
+                            gene_block["recommendationDiplotypes"].append({
+                                "allele1": {"name": (entry.get("diplotype") or "").split("/")[0] or "Unknown"},
+                                "allele2": {"name": (entry.get("diplotype") or "").split("/")[-1] or "Unknown"},
+                                "phenotypes": [entry.get("phenotype") or "Unknown"],
+                                "activityScore": entry.get("activity_score")
+                            })
+                        # Map recommendations if any
+                        if tsv_recs:
+                            for rec in tsv_recs:
+                                pharmcat_data.setdefault("drugRecommendations", []).append({
+                                    "drug": rec.get("drug"),
+                                    "genes": rec.get("gene"),
+                                    "recommendation": rec.get("recommendation"),
+                                    "classification": rec.get("classification") or "Unknown"
+                                })
+                        logger.info(f"Loaded PharmCAT data via TSV fallback with {len(tsv_diplotypes)} diplotypes and {len(tsv_recs)} recommendations")
+            except Exception as e:
+                logger.warning(f"Failed TSV fallback for PharmCAT parsing: {e}")
+
+        # Extract diplotypes from PharmCAT results
+        # PharmCAT structure: genes -> {CPIC|DPWG} -> {gene_name} -> {sourceDiplotypes|recommendationDiplotypes}[]
+        diplotypes = []
+        if "genes" in pharmcat_data:
+            # Extract from both CPIC and DPWG guidelines
+            for guideline_source in ["CPIC", "DPWG"]:
+                if guideline_source in pharmcat_data["genes"]:
+                    guideline_genes = pharmcat_data["genes"][guideline_source]
+                    for gene_name, gene_data in guideline_genes.items():
+                        if isinstance(gene_data, dict):
+                            # Prioritize recommendationDiplotypes over sourceDiplotypes to avoid duplication
+                            # recommendationDiplotypes contains the final processed results
+                            diplotype_source = None
+                            if "recommendationDiplotypes" in gene_data and gene_data["recommendationDiplotypes"]:
+                                diplotype_source = "recommendationDiplotypes"
+                            elif "sourceDiplotypes" in gene_data and gene_data["sourceDiplotypes"]:
+                                diplotype_source = "sourceDiplotypes"
+                            
+                            if diplotype_source:
+                                for diplotype in gene_data[diplotype_source]:
+                                    if isinstance(diplotype, dict):
+                                        # Extract diplotype information
+                                        allele1 = diplotype.get("allele1", {}) or {}
+                                        allele2 = diplotype.get("allele2", {}) or {}
+                                        diplotype_name = f"{allele1.get('name', 'Unknown')}/{allele2.get('name', 'Unknown')}"
+                                        
+                                        # Handle phenotypes array
+                                        phenotypes = diplotype.get("phenotypes", [])
+                                        if phenotypes and len(phenotypes) > 0:
+                                            phenotype = phenotypes[0]  # Take the first phenotype
+                                        else:
+                                            phenotype = "Unknown"
+                                        
+                                        activity_score = diplotype.get("activityScore")
+                                        
+                                        diplotypes.append({
+                                            "gene": gene_name,
+                                            "diplotype": diplotype_name,
+                                            "phenotype": phenotype,
+                                            "activity_score": activity_score,
+                                            "guideline_source": guideline_source
+                                        })
         
-        # Get the current job metadata to preserve reports
-        current_job = job_service.get_job_status(job.job_id)
-        current_metadata = current_job.get("job_metadata", {}) if current_job else {}
+        logger.info(f"PharmCAT returned {len(diplotypes)} diplotypes")
         
-        # Preserve reports data if it exists
-        final_metadata = {"workflow": workflow, "final_status": "success"}
-        if "reports" in current_metadata:
-            final_metadata["reports"] = current_metadata["reports"]
+        # Simple diplotype format conversion if needed
+        formatted_diplotypes = []
+        for gene in diplotypes:
+            if isinstance(gene, dict):
+                # Handle different possible data structures
+                diplotype_obj = gene.get("diplotype", {})
+                diplotype_name = diplotype_obj
+                if isinstance(diplotype_obj, dict):
+                    diplotype_name = diplotype_obj.get("name", "Unknown")
+                
+                phenotype_obj = gene.get("phenotype", {})
+                phenotype_info = phenotype_obj
+                if isinstance(phenotype_obj, dict):
+                    phenotype_info = phenotype_obj.get("info", "Unknown")
+
+                # Apply 'Possibly Wild Type' fallback when phenotype is blank/N-A and diplotype is *1/*1
+                try:
+                    dip_str = str(diplotype_name).strip() if diplotype_name is not None else ""
+                    ph_str = str(phenotype_info).strip() if phenotype_info is not None else ""
+                    if dip_str == "*1/*1" and (ph_str == "" or ph_str.lower() in {"n/a", "na"}):
+                        phenotype_info = "Possibly Wild Type"
+                except Exception:
+                    pass
+                
+                # Determine tool source for this gene
+                gene_name = gene.get("gene", "")
+                file_type = workflow_config.get("file_type", "vcf")
+                from app.reports.generator import determine_tool_source
+                tool_source = determine_tool_source(gene_name, file_type, workflow_config)
+                
+                formatted_diplotypes.append({
+                    "gene": gene_name,
+                    "diplotype": diplotype_name,
+                    "phenotype": phenotype_info,
+                    "activity_score": diplotype_obj.get("activityScore") if isinstance(diplotype_obj, dict) else None,
+                    "tool_source": tool_source
+                })
         
-        # Update new monitoring system
-        job_service.complete_job(
-            job.job_id, 
-            success=True, 
-            final_message=completion_message,
-            metadata=final_metadata
+        # Log the number of diplotypes found
+        logger.info(f"Extracted {len(formatted_diplotypes)} formatted diplotypes")
+        
+        # Extract recommendations from PharmCAT results
+        # PharmCAT structure: genes -> {CPIC|DPWG} -> {gene_name} -> relatedDrugs and drugRecommendations
+        recommendations = []
+        if "genes" in pharmcat_data:
+            # Extract from both CPIC and DPWG guidelines
+            for guideline_source in ["CPIC", "DPWG"]:
+                if guideline_source in pharmcat_data["genes"]:
+                    guideline_genes = pharmcat_data["genes"][guideline_source]
+                    for gene_name, gene_data in guideline_genes.items():
+                        if isinstance(gene_data, dict):
+                            # Extract drug recommendations from this gene
+                            if "relatedDrugs" in gene_data:
+                                for drug in gene_data["relatedDrugs"]:
+                                    if isinstance(drug, dict):
+                                        recommendations.append({
+                                            "gene": gene_name,
+                                            "drug": drug.get("name", "Unknown"),
+                                            "guideline": f"{guideline_source} Guideline for {gene_name} and {drug.get('name', 'Unknown')}",
+                                            "recommendation": f"See {guideline_source} guidelines for specific recommendations",
+                                            "classification": guideline_source
+                                        })
+        
+        logger.info(f"PharmCAT returned {len(recommendations)} drug recommendations")
+        
+        # Simple recommendation format conversion if needed
+        formatted_recommendations = []
+        for drug in recommendations:
+            if not isinstance(drug, dict):
+                continue
+                
+            # Handle different possible structures for drug name
+            drug_name = drug.get("drug", {})
+            if isinstance(drug_name, dict):
+                drug_name = drug_name.get("name", "Unknown")
+            
+            formatted_recommendations.append({
+                "gene": drug.get("gene", ""),
+                "drug": drug_name,
+                "guideline": drug.get("guideline", ""),
+                "recommendation": drug.get("recommendation", "Unknown"),
+                "classification": drug.get("classification", "Unknown")
+            })
+        
+        # Log the number of recommendations found
+        logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
+        
+        # Update progress: Diagram generation (35% of report generation)
+        step_update = WorkflowStepUpdate(
+            status=StepStatus.RUNNING,
+            output_data={"progress_percent": 35}
+        )
+        workflow_service.update_workflow_step(workflow_id, "report_generation", step_update)
+
+        # Generate workflow diagrams for this sample
+        logger.info("=== WORKFLOW DIAGRAM GENERATION START ===")
+        try:
+            
+            # Determine workflow configuration based on the data
+            workflow_config_diagram = {
+                "file_type": workflow_config.get("file_type", "vcf"),
+                "used_gatk": workflow_config.get("needs_gatk", False),
+                "used_pypgx": workflow_config.get("needs_pypgx", False),
+                "used_pharmcat": True,
+                "exported_to_fhir": False
+            }
+            
+            logger.info(f"Workflow configuration: {workflow_config_diagram}")
+            
+            # Generate SVG workflow diagram (true Graphviz renderer for PDF-safe text)
+            try:
+                svg_bytes = render_with_graphviz(workflow_config_diagram, fmt="svg")
+                if svg_bytes:
+                    svg_path = patient_dir / f"{patient_id}_workflow.svg"
+                    with open(svg_path, "wb") as f_out:
+                        f_out.write(svg_bytes)
+                    logger.info(f"✓ Graphviz Workflow SVG generated successfully: {svg_path} ({len(svg_bytes)} bytes)")
+                else:
+                    logger.warning("⚠ Graphviz Workflow SVG generation returned empty result")
+            except Exception as e:
+                logger.error(f"✗ Graphviz Workflow SVG generation failed: {str(e)}", exc_info=True)
+            
+            # Generate Kroki Mermaid SVG workflow diagram for comparison
+            try:
+                kroki_svg_bytes = render_kroki_mermaid_svg(workflow=workflow_config_diagram)
+                if kroki_svg_bytes:
+                    kroki_svg_path = patient_dir / f"{patient_id}_workflow_kroki_mermaid.svg"
+                    with open(kroki_svg_path, "wb") as f_out:
+                        f_out.write(kroki_svg_bytes)
+                    logger.info(f"✓ Kroki Mermaid Workflow SVG generated successfully: {kroki_svg_path} ({len(kroki_svg_bytes)} bytes)")
+                else:
+                    logger.warning("⚠ Kroki Mermaid Workflow SVG generation returned empty result")
+            except Exception as e:
+                logger.error(f"✗ Kroki Mermaid Workflow SVG generation failed: {str(e)}", exc_info=True)
+            
+            # Generate PNG workflow diagram
+            try:
+                png_bytes = render_workflow(fmt="png", workflow=workflow_config_diagram)
+                if not png_bytes:
+                    # Force pure-Python PNG fallback so a file is always present
+                    logger.info("PNG generation failed, trying Python fallback...")
+                    png_bytes = render_simple_png_from_workflow(workflow_config_diagram)
+                if png_bytes:
+                    png_path = patient_dir / f"{patient_id}_workflow.png"
+                    with open(png_path, "wb") as f_out:
+                        f_out.write(png_bytes)
+                    logger.info(f"✓ Workflow PNG generated successfully: {png_path} ({len(png_bytes)} bytes)")
+                else:
+                    logger.warning("⚠ Workflow PNG generation still failed after fallback")
+            except Exception as e:
+                logger.error(f"✗ Workflow PNG generation failed: {str(e)}", exc_info=True)
+            
+            logger.info(f"=== WORKFLOW DIAGRAM GENERATION END ===")
+        except Exception as e:
+            logger.error(f"✗ Workflow diagram generation failed: {str(e)}", exc_info=True)
+            logger.info("Continuing without workflow diagrams...")
+        
+        # Determine effective Sample Identifier for reports
+        header_sample_identifier_for_reports = locals().get('header_sample_identifier') or None
+        effective_sample_identifier_reports = (
+            (str(sample_identifier).strip() if (sample_identifier and str(sample_identifier).strip()) else None)
+            or header_sample_identifier_for_reports
+            or patient_id
+        )
+
+        # Generate interactive HTML report first (needed for PDF generation)
+        logger.info(f"Generating interactive HTML report to {interactive_html_path}")
+        create_interactive_html_report(
+            patient_id=patient_id,
+            report_id=data_id,
+            diplotypes=formatted_diplotypes,
+            recommendations=formatted_recommendations,
+            output_path=str(interactive_html_path),
+            workflow=workflow_config.copy() if isinstance(workflow_config, dict) else {},
+            sample_identifier=effective_sample_identifier_reports
         )
         
-        logger.info(f"Job {data_id} completed successfully")
+        # Update progress: HTML report generated (65% of report generation)
+        step_update = WorkflowStepUpdate(
+            status=StepStatus.RUNNING,
+            output_data={"progress_percent": 65}
+        )
+        workflow_service.update_workflow_step(workflow_id, "report_generation", step_update)
+        
+        # Generate unified PDF report using centralized PDF generation system
+        logger.info(f"Generating unified PDF report to {pdf_report_path}")
+        
+        try:
+            
+            # Prepare template data for PDF generation using the PDF template structure
+            template_data = {
+                "patient_id": patient_id,
+                "report_id": data_id,
+                "sample_identifier": effective_sample_identifier_reports,
+                "display_sample_id": effective_sample_identifier_reports,
+                "file_type": workflow_config.get("file_type", "unknown"),
+                "analysis_results": {
+                    "GATK Processing": "Completed" if workflow_config.get("needs_gatk", False) else "Not Required",
+                    "PyPGx Analysis": "Completed" if workflow_config.get("needs_pypgx", False) else "Not Required",
+                    "PharmCAT Analysis": "Completed",
+                    "FHIR Export": "Not Implemented"
+                },
+                "workflow_diagram": workflow_config,
+                "diplotypes": formatted_diplotypes,
+                "recommendations": formatted_recommendations,
+                "workflow": workflow_config,
+                # Try to load header text synchronously for ReportLab fallback usage
+                # Load the newest *.header.txt in the patient's report dir
+                "header_text": (lambda _pd: (max([p for p in _pd.glob("*.header.txt") if p.is_file()], key=lambda p: p.stat().st_mtime).read_text(encoding='utf-8', errors='ignore') if any(_pd.glob("*.header.txt")) else ""))(Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id))
+            }
+
+            # Inject TSV-driven Executive Summary rows if enabled
+            try:
+                EXECSUM_USE_TSV = os.getenv("EXECSUM_USE_TSV", "false").strip().lower() in {"1", "true", "yes", "on"}
+                if EXECSUM_USE_TSV:
+                    # Look for TSV in the patient directory (same location as JSON)
+                    from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
+                    patient_dir_str = str(Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id))
+                    tsv_candidates = [
+                        os.path.join(patient_dir_str, f"{patient_id}_pgx_pharmcat.tsv"),
+                        os.path.join(patient_dir_str, f"{patient_id}.report.tsv"),
+                    ]
+                    try:
+                        import glob as _g
+                        tsv_candidates.extend(_g.glob(os.path.join(patient_dir_str, "*_pgx_pharmcat.tsv")))
+                        any_pharmcat = _g.glob(os.path.join(patient_dir_str, "*.pharmcat.tsv"))
+                        if any_pharmcat:
+                            any_pharmcat.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                            tsv_candidates.extend(any_pharmcat)
+                    except Exception:
+                        pass
+                    tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
+                    execsum_rows_from_tsv = []
+                    if tsv_path:
+                        diplos, _ = parse_pharmcat_tsv(tsv_path)
+                        for row in diplos:
+                            execsum_rows_from_tsv.append({
+                                "gene": row.get("gene", ""),
+                                "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
+                                "rec_lookup_phenotype": row.get("rec_lookup_phenotype", row.get("phenotype", "")),
+                                "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
+                            })
+                        logger.info(f"Executive Summary TSV selected (router): {tsv_path}")
+                    template_data["execsum_from_tsv"] = execsum_rows_from_tsv if execsum_rows_from_tsv else None
+                    logger.info(f"Executive Summary rows (TSV, router): {len(execsum_rows_from_tsv)}; Using TSV: {EXECSUM_USE_TSV}")
+            except Exception as _e_exec:
+                logger.warning(f"Executive Summary TSV parse skipped (router): {_e_exec}")
+            
+            # Generate PDF using centralized system (respects environment configuration)
+            result = generate_pdf_report_dual_lane(
+                template_data=template_data,
+                output_path=str(pdf_report_path),
+                workflow_diagram=workflow_config
+            )
+            
+            if result["success"]:
+                logger.info(f"✓ PDF report generated successfully using {result['generator_used']}: {pdf_report_path}")
+                if result["fallback_used"]:
+                    logger.info("ℹ️ Used fallback generator due to primary failure")
+            else:
+                logger.error(f"✗ PDF generation failed: {result['error']}")
+                # Continue with HTML report only
+            
+            # Update progress: PDF report generated (90% of report generation)
+            step_update = WorkflowStepUpdate(
+                status=StepStatus.RUNNING,
+                output_data={"progress_percent": 90}
+            )
+            workflow_service.update_workflow_step(workflow_id, "report_generation", step_update)
+            
+        except Exception as e:
+            logger.error(f"✗ PDF generation failed: {str(e)}")
+            # Continue with HTML report only
+        
+        # Add provisional flag if the workflow was marked as provisional
+        is_provisional = workflow_config.get("is_provisional", False)
+        
+        # Robust JSON sanitization using Python's built-in JSON handling
+        def sanitize_for_json(data):
+            """Sanitize data to ensure it's JSON-safe using Python's built-in JSON handling"""
+
+            try:
+                # Test if the data can be serialized to JSON
+                json.dumps(data, ensure_ascii=False, default=str)
+                return data
+            except (TypeError, ValueError) as e:
+                logger.warning(f"JSON serialization failed, applying aggressive sanitization: {e}")
+                # If JSON serialization fails, apply aggressive sanitization
+                if isinstance(data, str):
+                    # Remove or replace problematic characters
+                    sanitized = data
+                    # Replace control characters
+                    sanitized = ''.join(char for char in sanitized if ord(char) >= 32 or char in '\n\r\t')
+                    # Escape quotes and backslashes
+                    sanitized = sanitized.replace('\\', '\\\\').replace('"', '\\"')
+                    return sanitized
+                elif isinstance(data, list):
+                    return [sanitize_for_json(item) for item in data]
+                elif isinstance(data, dict):
+                    return {str(key): sanitize_for_json(value) for key, value in data.items()}
+                else:
+                    return str(data)
+        
+        # Sanitize the data before storing in workflow metadata
+        sanitized_diplotypes = sanitize_for_json(formatted_diplotypes)
+        sanitized_recommendations = sanitize_for_json(formatted_recommendations)
+        sanitized_warnings = sanitize_for_json(workflow_config.get("warnings", []))
+        
+        # Update workflow metadata with unified report URLs
+        response_data = {
+            "pdf_report_url": f"/reports/{patient_id}/{pdf_report_path.name}",
+            "html_report_url": f"/reports/{patient_id}/{interactive_html_path.name}",
+            "diplotypes": sanitized_diplotypes,
+            "recommendations": sanitized_recommendations,
+            "is_provisional": is_provisional,
+            "warnings": sanitized_warnings,
+            "job_directory": str(patient_dir)
+        }
+        
+        # Add PharmCAT report URLs if they exist and are enabled via environment variables
+        if pharmcat_html_exists and INCLUDE_PHARMCAT_HTML:
+            response_data["pharmcat_html_report_url"] = f"/reports/{patient_id}/{pharmcat_html_path.name}"
+            logger.info(f"Added PharmCAT HTML report URL (enabled via INCLUDE_PHARMCAT_HTML)")
+        if pharmcat_json_exists and INCLUDE_PHARMCAT_JSON:
+            response_data["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json_path.name}"
+            logger.info(f"Added PharmCAT JSON report URL (enabled via INCLUDE_PHARMCAT_JSON)")
+        if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
+            response_data["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv_path.name}"
+            logger.info(f"Added PharmCAT TSV report URL (enabled via INCLUDE_PHARMCAT_TSV)")
+        
+        # Log which reports were skipped due to environment variable settings
+        if pharmcat_html_exists and not INCLUDE_PHARMCAT_HTML:
+            logger.info("PharmCAT HTML report exists but skipped due to INCLUDE_PHARMCAT_HTML=false")
+        if pharmcat_json_exists and not INCLUDE_PHARMCAT_JSON:
+            logger.info("PharmCAT JSON report exists but skipped due to INCLUDE_PHARMCAT_JSON=false")
+        if pharmcat_tsv_exists and not INCLUDE_PHARMCAT_TSV:
+            logger.info("PharmCAT TSV report exists but skipped due to INCLUDE_PHARMCAT_TSV=false")
+        
+        # Update workflow metadata with reports
+        updated_metadata = metadata.copy()
+        updated_metadata["reports"] = response_data
+        
+        # Update the workflow with the new metadata
+        workflow_update = WorkflowUpdate(metadata=updated_metadata)
+        workflow_service.update_workflow(workflow_id, workflow_update)
+        
+        # Complete the report generation step
+        step_update = WorkflowStepUpdate(
+            status=StepStatus.COMPLETED,
+            output_data={"reports": response_data, "progress_percent": 100}
+        )
+        workflow_service.update_workflow_step(workflow_id, "report_generation", step_update)
+        
+        # Complete the workflow
+        workflow_update = WorkflowUpdate(status=WorkflowStatus.COMPLETED)
+        workflow_service.update_workflow(workflow_id, workflow_update)
+        
+        # Broadcast workflow completion with report URLs
+        try:
+            asyncio.create_task(workflow_service._broadcast_workflow_update(
+                str(workflow_id),
+                {
+                    "workflow_id": str(workflow_id),
+                    "status": "completed",
+                    "progress_percentage": 100,
+                    "current_step": "completed",
+                    "message": "Processing complete! - All processing finished",
+                    "pdf_report_url": response_data.get("pdf_report_url"),
+                    "html_report_url": response_data.get("html_report_url"),
+                    "interactive_html_report_url": response_data.get("html_report_url"),  # Use html_report_url as interactive
+                    "pharmcat_html_report_url": response_data.get("pharmcat_html_report_url"),
+                    "pharmcat_json_report_url": response_data.get("pharmcat_json_report_url"),
+                    "pharmcat_tsv_report_url": response_data.get("pharmcat_tsv_report_url")
+                }
+            ))
+        except Exception as e:
+            logger.error(f"Failed to broadcast workflow completion with reports: {e}")
+        
+        log_data = WorkflowLogCreate(
+            step_name="workflow_completion",
+            log_level=LogLevel.INFO,
+            message="Workflow completed successfully with reports generated"
+        )
+        workflow_service.log_workflow_event(workflow_id, log_data)
+        
+        logger.info(f"Workflow {workflow_id} completed successfully with reports generated")
+        logger.info(f"Generated reports: {list(response_data.keys())}")
         
     except Exception as e:
-        # Handle any other errors
-        error_msg = f"Error: {str(e)}"
-        logger.error(f"Error processing file: {str(e)}")
+        logger.error(f"Error in final stages progression for workflow {workflow_id}: {e}")
+        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
+        workflow_service.update_workflow(workflow_id, workflow_update)
         
-        # Update new monitoring system
+        log_data = WorkflowLogCreate(
+            step_name=None,
+            log_level=LogLevel.ERROR,
+            message=f"Error in final stages: {str(e)}"
+        )
+        workflow_service.log_workflow_event(workflow_id, log_data)
+
+async def wait_for_nextflow_completion(workflow_service: WorkflowService, workflow_id: str, nextflow_url: str, job_key: str, outdir: str):
+    """
+    Wait for Nextflow job completion and coordinate with WorkflowProgressCalculator.
+    
+    This function monitors Nextflow execution and lets individual containers report
+    their progress via WorkflowClient. The WorkflowProgressCalculator will handle
+    progress calculation based on step status updates from the containers.
+    
+    Args:
+        workflow_service: Workflow service instance
+        workflow_id: The workflow ID
+        nextflow_url: Nextflow runner URL
+        job_key: Nextflow job key
+        outdir: Output directory path
+    """
+    try:
+        logger.info(f"Waiting for Nextflow completion for workflow {workflow_id}")
+        
+        # Log that Nextflow execution has started
+        log_data = WorkflowLogCreate(
+            step_name="nextflow_executor",
+            log_level=LogLevel.INFO,
+            message="Nextflow pipeline started - individual containers will report progress"
+        )
+        workflow_service.log_workflow_event(workflow_id, log_data)
+        
+        while True:
+            try:
+                # Check if workflow has been cancelled
+                workflow = workflow_service.get_workflow(workflow_id)
+                if workflow and workflow.status == "cancelled":
+                    logger.info(f"Workflow {workflow_id} was cancelled, stopping Nextflow monitoring")
+                    break
+                
+                # Check Nextflow job status
+                response = requests.get(f"{nextflow_url}/status/{job_key}", timeout=30)
+                if response.status_code == 200:
+                    status_data = response.json()
+                    
+                    # Log Nextflow status for monitoring purposes
+                    status = status_data.get("status", "unknown")
+                    message = status_data.get("message", "Processing...")
+                    
+                    # Only log significant status changes to avoid spam
+                    # Only log when status changes or when it's a final status
+                    if status in ["completed", "failed", "cancelled"]:
+                        log_data = WorkflowLogCreate(
+                            step_name="nextflow_executor",
+                            log_level=LogLevel.INFO,
+                            message=f"Nextflow executor: {message}"
+                        )
+                        workflow_service.log_workflow_event(workflow_id, log_data)
+                    
+                    # Check if completed
+                    if status_data.get("status") == "completed":
+                        logger.info(f"Nextflow job {job_key} completed successfully")
+                        
+                        # Log that Nextflow execution completed
+                        log_data = WorkflowLogCreate(
+                            step_name="nextflow_executor",
+                            log_level=LogLevel.INFO,
+                            message="Nextflow pipeline completed - proceeding to report generation"
+                        )
+                        workflow_service.log_workflow_event(workflow_id, log_data)
+                        
+                        # Handle final stages (report generation)
+                        await handle_final_stages_progression(workflow_service, workflow_id, outdir)
+                        break
+                    elif status_data.get("status") == "failed":
+                        error_msg = status_data.get("error", "Nextflow job failed")
+                        logger.error(f"Nextflow job {job_key} failed: {error_msg}")
+                        
+                        # Update workflow status to failed
+                        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
+                        workflow_service.update_workflow(workflow_id, workflow_update)
+                        
+                        log_data = WorkflowLogCreate(
+                            step_name=None,
+                            log_level=LogLevel.ERROR,
+                            message=f"Nextflow job failed: {error_msg}"
+                        )
+                        workflow_service.log_workflow_event(workflow_id, log_data)
+                        break
+                    elif status_data.get("status") == "cancelled":
+                        logger.info(f"Nextflow job {job_key} was cancelled")
+                        break
+                
+                # Wait before next check
+                await asyncio.sleep(5)
+                
+            except requests.RequestException as e:
+                logger.warning(f"Error checking Nextflow status: {e}")
+                await asyncio.sleep(15)
+                
+    except Exception as e:
+        logger.error(f"Error waiting for Nextflow completion: {e}")
+        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
+        workflow_service.update_workflow(workflow_id, workflow_update)
+        
+        log_data = WorkflowLogCreate(
+            step_name=None,
+            log_level=LogLevel.ERROR,
+            message=f"Error waiting for completion: {str(e)}"
+        )
+        workflow_service.log_workflow_event(workflow_id, log_data)
+
+async def process_file_nextflow_background_with_db(file_path: str, patient_id: str, data_id: str, workflow: dict, sample_identifier: Optional[str] = None, workflow_id: Optional[str] = None):
+    """
+    WRAPPER FUNCTION: Creates database session and delegates to core implementation.
+    
+    This is the function that should be called from background tasks. It handles
+    database session lifecycle management and delegates to the core implementation below.
+    
+    Args:
+        file_path: Path to the uploaded file
+        patient_id: Patient identifier
+        data_id: Genetic data record ID
+        workflow: Workflow configuration dictionary
+        sample_identifier: Optional sample identifier
+        workflow_id: Optional workflow ID for tracking
+    """
+    db = SessionLocal()
+    try:
+        await process_file_nextflow_background(file_path, patient_id, data_id, workflow, db, sample_identifier, workflow_id)
+    finally:
+        db.close()
+
+async def process_file_nextflow_background(file_path: str, patient_id: str, data_id: str, workflow: dict, db: Session, sample_identifier: Optional[str] = None, workflow_id: Optional[str] = None):
+    """
+    CORE IMPLEMENTATION: Execute the PGx pipeline via the Nextflow runner service.
+    
+    This function contains the actual workflow logic and requires a database session
+    to be passed in. It should NOT be called directly from background tasks - use
+    process_file_nextflow_background_with_db() instead.
+    
+    Args:
+        file_path: Path to the uploaded file
+        patient_id: Patient identifier
+        data_id: Genetic data record ID
+        workflow: Workflow configuration dictionary
+        db: Database session (must be provided)
+        sample_identifier: Optional sample identifier
+        workflow_id: Optional workflow ID for tracking
+    """
+    workflow_service = WorkflowService(db)
+    
+    try:
+        # Get the workflow if workflow_id is provided
+        if workflow_id:
+            workflow_obj = workflow_service.get_workflow(workflow_id)
+            if not workflow_obj:
+                logger.error(f"Workflow {workflow_id} not found")
+                return
+            
+            # Check for cancellation before starting
+            if workflow_obj.status == "cancelled":
+                logger.info(f"Workflow {workflow_id} was cancelled before processing started")
+                # Schedule delayed cleanup to ensure any partial files are removed
+                task = asyncio.create_task(delayed_cleanup_on_cancellation(workflow_id, workflow_obj.workflow_metadata))
+                # Add a name for easier debugging
+                task.set_name(f"delayed_cleanup_{workflow_id}")
+                return
+        else:
+            logger.error("No workflow_id provided for background processing")
+            return
+        
+        # Update header analysis step
+        step_update = WorkflowStepUpdate(status=StepStatus.RUNNING)
+        workflow_service.update_workflow_step(workflow_id, "header_analysis", step_update)
+        
+        # Inspect file header
         try:
-            if job and hasattr(job, 'job_id'):
-                job_service.fail_job(job.job_id, error_msg)
-            else:
-                logger.warning("Cannot update job status - job was not created successfully")
-        except Exception as service_error:
-            logger.error(f"Failed to update job status service: {str(service_error)}")
+            header_json = inspect_header(file_path)
+            header_record_id = save_genomic_header(db, file_path, (workflow.get("file_type") or "UNKNOWN").upper(), header_json)
+
+            # Persist filtered header text (canonical contigs only) into patient reports dir
+            try:
+                raw_header = extract_raw_header_text(file_path)
+                if raw_header is not None:
+                    filtered_header = filter_header_to_canonical_contigs(raw_header)
+                    patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id)
+                    patient_dir.mkdir(parents=True, exist_ok=True)
+                    header_txt_path = patient_dir / f"{data_id}.header.txt"
+                    with open(header_txt_path, "w", encoding="utf-8") as hf:
+                        hf.write(filtered_header)
+            except Exception as _header_txt_err:
+                logger.debug(f"Header text write skipped due to error: {_header_txt_err}")
+
+            # Derive Sample ID from header if available
+            header_sample_identifier = None
+            try:
+                if isinstance(header_json, dict):
+                    samples_list = header_json.get('samples') or []
+                    if isinstance(samples_list, list) and samples_list:
+                        first_sample = samples_list[0]
+                        if isinstance(first_sample, str) and first_sample.strip():
+                            header_sample_identifier = first_sample.strip()
+            except Exception:
+                header_sample_identifier = None
+            
+            # Complete header analysis step
+            step_update = WorkflowStepUpdate(
+                status=StepStatus.COMPLETED,
+                output_data={"header_record_id": header_record_id}
+            )
+            workflow_service.update_workflow_step(workflow_id, "header_analysis", step_update)
+            
+            log_data = WorkflowLogCreate(
+                step_name="header_analysis",
+                log_level=LogLevel.INFO,
+                message="Header analysis completed successfully"
+            )
+            workflow_service.log_workflow_event(workflow_id, log_data)
+            
+        except Exception as e:
+            logger.error(f"Header analysis failed: {e}")
+            step_update = WorkflowStepUpdate(
+                status=StepStatus.FAILED,
+                error_details={"error": str(e)}
+            )
+            workflow_service.update_workflow_step(workflow_id, "header_analysis", step_update)
+            
+            workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
+            workflow_service.update_workflow(workflow_id, workflow_update)
+            
+            log_data = WorkflowLogCreate(
+                step_name="header_analysis",
+                log_level=LogLevel.ERROR,
+                message=f"Header analysis failed: {str(e)}"
+            )
+            workflow_service.log_workflow_event(workflow_id, log_data)
+            return
+        
+        # Submit to Nextflow
+        nextflow_url = os.getenv("NEXTFLOW_RUNNER_URL", "http://nextflow:5055")
+        
+        try:
+            # Determine input type and reference from workflow
+            input_type = workflow.get("file_type", "vcf")
+            
+            # Get reference genome from workflow metadata (already set by file_processor)
+            reference = workflow.get("reference", "hg38")
+            
+            # Determine skip flags based on workflow needs (after user overrides)
+            skip_hla = "true" if not workflow.get("needs_hla", False) else "false"
+            skip_pypgx = "true" if not workflow.get("needs_pypgx", False) else "false"
+            skip_gatk = "true" if not workflow.get("needs_gatk", False) else "false"
+            skip_report = "true" if not workflow.get("needs_report", True) else "false"
+            
+            # Debug logging for service states
+            logger.info(f"User toggle states: optitype={workflow.get('optitype_enabled')}, "
+                       f"gatk={workflow.get('gatk_enabled')}, pypgx={workflow.get('pypgx_enabled')}, "
+                       f"report={workflow.get('report_enabled')}")
+            logger.info(f"Workflow needs (after user overrides): needs_hla={workflow.get('needs_hla')}, "
+                       f"needs_gatk={workflow.get('needs_gatk')}, needs_pypgx={workflow.get('needs_pypgx')}, "
+                       f"needs_report={workflow.get('needs_report')}")
+            logger.info(f"Skip flags: skip_hla={skip_hla}, skip_pypgx={skip_pypgx}, "
+                       f"skip_gatk={skip_gatk}, skip_report={skip_report}")
+            
+            # Prepare Nextflow payload matching NextflowRunRequest
+            # Compute effective sample identifier precedence:
+            # 1) User-entered sample_identifier  2) Header-derived sample  3) None
+            effective_sample_identifier = (
+                (str(sample_identifier).strip() if (sample_identifier and str(sample_identifier).strip()) else None)
+                or header_sample_identifier
+            )
+
+            payload = {
+                "input": file_path,
+                "input_type": input_type,
+                "patient_id": patient_id,
+                "report_id": patient_id,  # Use patient_id as report_id
+                "reference": reference,
+                "outdir": f"/data/reports/{patient_id}",
+                "job_id": patient_id,
+                "skip_hla": skip_hla,
+                "skip_pypgx": skip_pypgx,
+                "skip_gatk": skip_gatk,
+                "skip_report": skip_report,
+                "workflow_id": workflow_id,
+                "sample_identifier": effective_sample_identifier
+            }
+            
+            # Submit job to Nextflow
+            response = requests.post(f"{nextflow_url}/run", json=payload, timeout=30)
+            if response.status_code != 200:
+                raise RuntimeError(f"Nextflow submission failed: {response.text}")
+            
+            job_data = response.json()
+            job_key = job_data.get("job_key")
+            
+            if not job_key:
+                raise RuntimeError("No job key returned from Nextflow")
+            
+            logger.info(f"Submitted Nextflow job {job_key} for workflow {workflow_id}")
+            
+            # Wait for completion
+            await wait_for_nextflow_completion(workflow_service, workflow_id, nextflow_url, job_key, job_data.get("outdir", f"/data/reports/{patient_id}"))
+            
+        except Exception as e:
+            logger.error(f"Nextflow execution failed: {e}")
+            workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
+            workflow_service.update_workflow(workflow_id, workflow_update)
+            
+            log_data = WorkflowLogCreate(
+                step_name=None,
+                log_level=LogLevel.ERROR,
+                message=f"Nextflow execution failed: {str(e)}"
+            )
+            workflow_service.log_workflow_event(workflow_id, log_data)
+            return
+            
+    except Exception as e:
+        logger.error(f"Error in Nextflow background processing: {e}")
+        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
+        workflow_service.update_workflow(workflow_id, workflow_update)
+        
+        log_data = WorkflowLogCreate(
+            step_name=None,
+            log_level=LogLevel.ERROR,
+            message=f"Background processing error: {str(e)}"
+        )
+        workflow_service.log_workflow_event(workflow_id, log_data)
 
 @router.post("/genomic-data", response_model=UploadResponse)
 async def upload_genomic_data(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     sample_identifier: Optional[str] = Form(None),
-    original_file: Optional[UploadFile] = File(None),
     reference_genome: Optional[str] = Form("hg38"),
     optitype_enabled: Optional[str] = Form(None),
     gatk_enabled: Optional[str] = Form(None),
     pypgx_enabled: Optional[str] = Form(None),
-    kroki_enabled: Optional[str] = Form(None),
-    db: Session = Depends(get_db),
-    current_user: str = Depends(get_optional_user)
+    report_enabled: Optional[str] = Form(None),
+    db: Session = Depends(get_db)
 ):
     """
-    Upload genomic data file for processing. Supports various file formats:
+    Upload genomic data files for pharmacogenomic analysis.
     
-    - VCF: Directly analyzed with PharmCAT (can be uploaded with original BAM/CRAM file for better variant calling)
-    - BAM/CRAM/SAM: Processed through GATK for variant calling
-    - FASTQ: Not yet supported, requires alignment (future implementation)
-    - 23andMe: Not yet supported, requires conversion to VCF (future implementation)
+    This endpoint handles the upload of genomic data files (VCF, BAM, CRAM, SAM, FASTQ)
+    and initiates the Nextflow-based processing pipeline.
     
+    Supported file types:
+    - VCF: Direct processing through PyPGx and PharmCAT. If GRCh37/hg19 reference genome is detected, bcftools liftover will be used to convert.
+    - BAM/CRAM/SAM: BAM is processed by hlatyping then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
+    - FASTQ: Processed by hlatyping, then GATK, then PyPGx and PharmCAT
+    - 23andMe/BED: Not yet supported, requires conversion to VCF (future implementation)
+    
+    The system automatically detects and uses index files (.bai, .crai, .csi, .tbi, .idx) when provided.
     Currently only hg38/GRCh38 reference genome is fully supported.
     """
     try:
         # Generate unique identifiers
         file_id = str(uuid.uuid4())
-        # Generate a storage identifier for DB if user left the field blank
-        # Keep display identifier as None so reports fall back to generated Sample ID (UUID)
-        db_identifier = sample_identifier if (sample_identifier and sample_identifier.strip()) else f"sample_{uuid.uuid4()}"
+        patient_id = str(uuid.uuid4())
+        
+        # Process uploaded files
+        result = await file_processor.process_files(
+            files, 
+            reference_genome, 
+            optitype_enabled=optitype_enabled,
+            gatk_enabled=gatk_enabled,
+            pypgx_enabled=pypgx_enabled,
+            report_enabled=report_enabled
+        )
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
         
         # Create patient record
-        patient_id = create_patient(db, db_identifier)
+        patient_identifier = sample_identifier if sample_identifier else patient_id
+        actual_patient_id = create_patient(db, patient_identifier)
         
-        # Create directory for patient if it doesn't exist
-        patient_dir = os.path.join(UPLOAD_DIR, str(patient_id))
-        os.makedirs(patient_dir, exist_ok=True)
-        
-        # Save primary uploaded file
-        primary_file_path = os.path.join(patient_dir, f"{file_id}{Path(file.filename).suffix}")
-        with open(primary_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # Save original file if provided
-        original_file_path = None
-        if original_file and original_file.filename:
-            original_file_id = str(uuid.uuid4())
-            original_file_path = os.path.join(patient_dir, f"{original_file_id}{Path(original_file.filename).suffix}")
-            with open(original_file_path, "wb") as buffer:
-                shutil.copyfileobj(original_file.file, buffer)
-            
-            logger.info(f"Uploaded original genomic file: {original_file_path}")
-        
-        # Analyze file and determine workflow
-        result = await file_processor.process_upload(primary_file_path, original_file_path)
-        
-        if result["status"] == "error":
-            raise HTTPException(status_code=400, detail=result["error"])
-
-        # Enforce allowed genomic file types only (plus .txt for future 23andMe)
-        allowed_types = {
-            FileType.VCF,
-            FileType.BAM,
-            FileType.CRAM,
-            FileType.SAM,
-            FileType.FASTQ,
-            FileType.TWENTYTHREE_AND_ME,
-        }
-        detected_type = result["file_analysis"].file_type
-        if detected_type not in allowed_types:
-            # Clean error to user with allowed list
-            allowed_list = ", ".join(sorted([t.value for t in allowed_types]))
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type: {detected_type.value if hasattr(detected_type, 'value') else str(detected_type)}. Allowed types: {allowed_list}"
-            )
-
-        # Register genetic data in database - primary file
+        # Register genetic data
+        primary_file_path = result["file_paths"][0]
+        file_analysis = result["file_analysis"]
         data_id = register_genetic_data(
             db, 
-            patient_id, 
-            result["file_analysis"].file_type.value,
-            primary_file_path
+            actual_patient_id,  # Use the actual patient ID returned from create_patient
+            file_analysis.file_type.value,  # file_type
+            primary_file_path,  # file_path
+            False  # is_supplementary (boolean)
         )
         
-        # Register original file in database if provided
-        if original_file_path:
-            # Determine file type for original file
-            if "original_file_type" in result["workflow"]:
-                original_type = result["workflow"]["original_file_type"]
-            else:
-                # Default to "unknown" if can't determine
-                original_type = "unknown"
-                
-            # Register as a secondary file linked to the same patient
-            original_data_id = register_genetic_data(
-                db,
-                patient_id,
-                original_type,
-                original_file_path,
-                is_supplementary=True,
-                parent_id=data_id
+        # Create workflow
+        workflow_service = WorkflowService(db)
+        workflow = workflow_service.create_workflow(
+            WorkflowCreate(
+                name=f"Genomic Analysis - {sample_identifier or 'Unknown Sample'}",
+                description=f"Pharmacogenomic analysis workflow for {file_analysis.file_type.value} file",
+                total_steps=5,  # header_analysis, hla_typing, pypgx_analysis, pharmcat_analysis, report_generation
+                metadata={
+                    "patient_id": actual_patient_id,
+                    "data_id": data_id,
+                    "workflow_type": "genomic_analysis",
+                    "file_paths": result["file_paths"],
+                    "workflow": result["workflow"],
+                    "file_analysis": {
+                        "file_type": file_analysis.file_type.value,
+                        "is_compressed": file_analysis.is_compressed,
+                        "has_index": file_analysis.has_index,
+                        "file_size": file_analysis.file_size,
+                        "error": file_analysis.error,
+                        "is_valid": file_analysis.is_valid,
+                        "validation_errors": file_analysis.validation_errors,
+                        "vcf_info": file_analysis.vcf_info.__dict__ if file_analysis.vcf_info else None
+                    }
+                }
             )
-            logger.info(f"Registered original file with ID: {original_data_id}")
-            
-            # Add to workflow information
-            result["workflow"]["original_file_id"] = str(original_data_id)
-        
-        # Add reference genome info to workflow
-        if reference_genome and reference_genome != "hg38":
-            result["workflow"]["requested_reference"] = reference_genome
-            result["workflow"]["warnings"].append(
-                f"Requested reference genome {reference_genome} may not be fully supported. "
-                "Only hg38/GRCh38 is currently guaranteed for all analyses."
-            )
-        
-        # Add service toggle states to workflow
-        def _parse_bool(value: str) -> bool:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "yes", "on"}
-            return bool(value)
-        
-        result["workflow"]["optitype_enabled"] = _parse_bool(optitype_enabled) if optitype_enabled else True
-        result["workflow"]["gatk_enabled"] = _parse_bool(gatk_enabled) if gatk_enabled else True
-        result["workflow"]["pypgx_enabled"] = _parse_bool(pypgx_enabled) if pypgx_enabled else True
-        result["workflow"]["kroki_enabled"] = _parse_bool(kroki_enabled) if kroki_enabled else True
-        
-        logger.info(f"Service toggle states added to workflow: OptiType={result['workflow']['optitype_enabled']}, "
-                   f"GATK={result['workflow']['gatk_enabled']}, PyPGx={result['workflow']['pypgx_enabled']}, "
-                   f"Kroki={result['workflow']['kroki_enabled']}")
-        
-        # Create a job for tracking this upload
-        from app.services.job_status_service import JobStatusService
-        job_service = JobStatusService(db)
-        job = job_service.create_job(
-            patient_id=str(patient_id),
-            file_id=str(data_id),
-            initial_stage=JobStage.UPLOAD,
-            metadata={"workflow": result["workflow"], "file_path": primary_file_path}
         )
         
-        # Schedule background processing: Nextflow or built-in pipeline
-        if USE_NEXTFLOW:
-            background_tasks.add_task(
-                process_file_nextflow_background_with_db,
-                primary_file_path,
-                str(patient_id),
-                str(data_id),
-                result["workflow"],
-                str(sample_identifier).strip() if (sample_identifier and sample_identifier.strip()) else None
+        # Create workflow steps based on service toggle states
+        step_order = 1
+        
+        # Add header analysis step (file upload progress is handled by frontend)
+        workflow_service.add_workflow_step(
+            workflow.id,
+            WorkflowStepCreate(
+                step_name="header_analysis",
+                step_order=step_order,
+                container_name="header_inspector"
             )
-        else:
-            background_tasks.add_task(
-                process_file_background_with_db,
-                primary_file_path,
-                str(patient_id),
-                str(data_id),
-                result["workflow"],
-                str(sample_identifier).strip() if (sample_identifier and sample_identifier.strip()) else None
+        )
+        step_order += 1
+        
+        # Add HLA typing step only if workflow needs it AND user hasn't disabled it
+        if result["workflow"].get("needs_hla", False):
+            workflow_service.add_workflow_step(
+                workflow.id,
+                WorkflowStepCreate(
+                    step_name="hla_typing",
+                    step_order=step_order,
+                    container_name="hlatyping"
+                )
             )
+            step_order += 1
+        
+        # Add PyPGx analysis step only if workflow needs it AND user hasn't disabled it
+        if result["workflow"].get("needs_pypgx", False):
+            workflow_service.add_workflow_step(
+                workflow.id,
+                WorkflowStepCreate(
+                    step_name="pypgx_analysis",
+                    step_order=step_order,
+                    container_name="pypgx"
+                )
+            )
+            step_order += 1
+        
+        # Always add PharmCAT analysis step (required for core functionality)
+        workflow_service.add_workflow_step(
+            workflow.id,
+            WorkflowStepCreate(
+                step_name="pharmcat_analysis",
+                step_order=step_order,
+                container_name="pharmcat"
+            )
+        )
+        step_order += 1
+        
+        # Add report generation step only if workflow needs it AND user hasn't disabled it
+        if result["workflow"].get("needs_report", True):  # Reports are available by default
+            workflow_service.add_workflow_step(
+                workflow.id,
+                WorkflowStepCreate(
+                    step_name="report_generation",
+                    step_order=step_order,
+                    container_name="report_generator"
+                )
+            )
+            step_order += 1
+        
+        # Start the workflow
+        workflow_service.update_workflow(
+            workflow.id,
+            WorkflowUpdate(status=WorkflowStatus.RUNNING)
+        )
+        
+        # Schedule background processing: Always use Nextflow
+        background_tasks.add_task(
+            process_file_nextflow_background_with_db,
+            primary_file_path,
+            str(actual_patient_id),
+            str(data_id),
+            result["workflow"],
+            str(sample_identifier).strip() if (sample_identifier and sample_identifier.strip()) else None,
+            str(workflow.id)  # Pass workflow ID
+        )
         
         # Convert dataclass to Pydantic model
         file_analysis = result["file_analysis"]
@@ -1594,11 +1275,7 @@ async def upload_genomic_data(
             vcf_info = VCFHeaderInfo(
                 reference_genome=file_analysis.vcf_info.reference_genome,
                 sequencing_platform=file_analysis.vcf_info.sequencing_platform,
-                sequencing_profile=(
-                    file_analysis.vcf_info.sequencing_profile.value
-                    if hasattr(file_analysis.vcf_info.sequencing_profile, "value")
-                    else file_analysis.vcf_info.sequencing_profile
-                ),
+                sequencing_profile=file_analysis.vcf_info.sequencing_profile,
                 has_index=file_analysis.vcf_info.has_index,
                 is_bgzipped=file_analysis.vcf_info.is_bgzipped,
                 contigs=file_analysis.vcf_info.contigs,
@@ -1606,321 +1283,308 @@ async def upload_genomic_data(
                 variant_count=file_analysis.vcf_info.variant_count
             )
         
-        analysis_info = PydanticFileAnalysis(
-            file_type=(
-                file_analysis.file_type.value
-                if hasattr(file_analysis.file_type, "value")
-                else file_analysis.file_type
+        # Create workflow info (include recommendations/warnings for UI display)
+        workflow_info = WorkflowInfo(
+            workflow_type=result["workflow"]["workflow_type"],
+            file_type=FileType(result["workflow"]["file_type"]),
+            needs_alignment=result["workflow"].get("needs_alignment", False),
+            needs_gatk=result["workflow"].get("needs_gatk", False),
+            needs_pypgx=result["workflow"].get("needs_pypgx", False),
+            needs_pharmcat=result["workflow"].get("needs_pharmcat", True),
+            reference_genome=result["workflow"].get("reference", "hg38"),
+            is_provisional=result["workflow"].get("is_provisional", False),
+            recommendations=result["workflow"].get("recommendations", []),
+            warnings=result["workflow"].get("warnings", [])
+        )
+        
+        # Create response
+        response = UploadResponse(
+            file_id=str(data_id),  # Use data_id as file_id for backward compatibility
+            job_id=str(workflow.id),  # Use workflow ID as job_id for backward compatibility
+            file_type=result["workflow"]["file_type"],
+            status="processing",
+            message="Files uploaded successfully. Processing started.",
+            analysis_info=PydanticFileAnalysis(
+                file_type=FileType(result["workflow"]["file_type"]),
+                is_compressed=file_analysis.is_compressed,
+                has_index=file_analysis.has_index,
+                file_size=file_analysis.file_size,
+                vcf_info=vcf_info,
+                is_valid=file_analysis.is_valid,
+                validation_errors=file_analysis.validation_errors
             ),
-            is_compressed=file_analysis.is_compressed,
-            has_index=file_analysis.has_index,
-            vcf_info=vcf_info,
-            file_size=file_analysis.file_size,
-            error=file_analysis.error
+            workflow=workflow_info
         )
         
-        # Prepare response with appropriate messages
-        upload_message = "File uploaded successfully. Processing started."
-        if result["workflow"].get("unsupported", False):
-            upload_message = f"File uploaded, but {result['workflow'].get('unsupported_reason', 'format is not fully supported')}."
-        elif result["workflow"].get("is_provisional", False):
-            upload_message = "File uploaded. Results will be PROVISIONAL due to limitations in the input data."
-        elif original_file_path and result["workflow"].get("using_original_file", False):
-            upload_message = "Files uploaded. Using original genomic file for processing."
-        # Tailor message for BAM/CRAM/SAM path using PyPGx
-        if result["workflow"].get("needs_pypgx_bam2vcf", False):
-            upload_message += " Using PyPGx to convert alignment to VCF as recommended."
-        
-        return UploadResponse(
-            job_id=str(job.job_id),
-            file_id=str(data_id),
-            file_type=file_analysis.file_type.value,
-            status="queued",
-            message=upload_message,
-            analysis_info=analysis_info,
-            workflow=result["workflow"]
-        )
+        logger.info(f"Upload successful for patient {patient_id}, workflow {workflow.id}")
+        return response
         
     except Exception as e:
-        logger.error(f"Error during file upload: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing upload: {str(e)}")
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.get("/status/{job_id}")
 async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
     """
-    Check the processing status of a job using the new monitoring system.
-    This endpoint works with job_id (not file_id) for consistency with the frontend.
+    Get the processing status of a job using the new monitoring system.
+    This endpoint works with both job_id and workflow_id for backward compatibility.
     """
     try:
-        from app.services.job_status_service import JobStatusService
-        job_service = JobStatusService(db)
-        job = job_service.get_job_status(job_id)
+        workflow_service = WorkflowService(db)
         
-        if not job:
-            logger.warning(f"Status request for unknown job ID: {job_id}")
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        # Try to get workflow by ID
+        workflow = workflow_service.get_workflow(job_id)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
         
-
+        # Get workflow steps
+        steps = workflow_service.get_workflow_steps(job_id)
         
-        # For completed jobs, extract report URLs from metadata
-        if job["status"] == "completed" and job.get("job_metadata"):
-            metadata = job["job_metadata"]
-            if "reports" in metadata:
-                # Extract report URLs from the stored metadata
-                response_data = metadata["reports"]
-                logger.info(f"Found report data in job metadata: {list(response_data.keys())}")
-                
-                # Extract PharmCAT report URLs to top level for frontend compatibility
-                pharmcat_urls = {}
-                if "pharmcat_html_report_url" in response_data:
-                    pharmcat_urls["pharmcat_html_report_url"] = response_data["pharmcat_html_report_url"]
-                if "pharmcat_json_report_url" in response_data:
-                    pharmcat_urls["pharmcat_json_report_url"] = response_data["pharmcat_json_report_url"]
-                if "pharmcat_tsv_report_url" in response_data:
-                    pharmcat_urls["pharmcat_tsv_report_url"] = response_data["pharmcat_tsv_report_url"]
-                
-                # Also extract other report URLs to top level
-                if "pdf_report_url" in response_data:
-                    pharmcat_urls["pdf_report_url"] = response_data["pdf_report_url"]
-                if "html_report_url" in response_data:
-                    pharmcat_urls["html_report_url"] = response_data["html_report_url"]
-                if "interactive_html_report_url" in response_data:
-                    pharmcat_urls["interactive_html_report_url"] = response_data["interactive_html_report_url"]
-            else:
-                response_data = {}
-                pharmcat_urls = {}
-        else:
-            response_data = job.get("job_metadata") or {}
-            pharmcat_urls = {}
+        # Convert steps to dictionary format for progress calculator
+        steps_dict = [
+            {
+                "step_name": step.step_name,
+                "status": step.status,  # status is already a string from database
+                "step_order": step.step_order,
+                "container_name": step.container_name,
+                "output_data": step.output_data,  # Include output_data for container progress
+                "metadata": step.metadata  # Include metadata for container progress
+            }
+            for step in steps
+        ]
         
-        # Convert new status format to expected response format
+        # Get workflow metadata for configuration
+        metadata = workflow.workflow_metadata or {}
+        workflow_config = metadata.get("workflow", {})
+        
+        # Calculate progress using centralized calculator
+        progress_calculator = WorkflowProgressCalculator()
+        progress_info = progress_calculator.calculate_progress_from_steps(steps_dict, workflow_config, job_id)
+        
+        progress = progress_info.progress_percentage
+        current_stage = progress_info.stage.value
+        
+        # Get workflow logs
+        logs = workflow_service.get_workflow_logs(job_id)
+        latest_message = progress_info.message
+        
+        # Extract report URLs from metadata for completed workflows
+        report_urls = {}
+        if workflow.status == "completed" and metadata.get("reports"):
+            reports = metadata["reports"]
+            logger.info(f"Found report data in workflow metadata: {list(reports.keys())}")
+            
+            # Extract all report URLs to top level for frontend compatibility
+            if "pdf_report_url" in reports:
+                report_urls["pdf_report_url"] = reports["pdf_report_url"]
+            if "html_report_url" in reports:
+                report_urls["html_report_url"] = reports["html_report_url"]
+            if "pharmcat_html_report_url" in reports:
+                report_urls["pharmcat_html_report_url"] = reports["pharmcat_html_report_url"]
+            if "pharmcat_json_report_url" in reports:
+                report_urls["pharmcat_json_report_url"] = reports["pharmcat_json_report_url"]
+            if "pharmcat_tsv_report_url" in reports:
+                report_urls["pharmcat_tsv_report_url"] = reports["pharmcat_tsv_report_url"]
+        
+        # Create response
         response = {
             "job_id": job_id,
-            "status": job["status"],
-            "progress": job["progress"],
-            "message": job["message"] or "",
-            "current_stage": job["stage"],
-            "data": response_data,
-            **pharmcat_urls  # Include PharmCAT URLs at top level
+            "status": workflow.status,  # status is already a string from database
+            "progress": progress,
+            "message": latest_message,
+            "current_stage": current_stage,
+            "data": {
+                "workflow_id": workflow.id,
+                "patient_id": workflow.patient_id,
+                "data_id": workflow.data_id,
+                "steps": [
+                    {
+                        "name": step.step_name,
+                        "status": step.status,  # status is already a string from database
+                        "order": step.step_order,
+                        "container": step.container_name
+                    }
+                    for step in steps
+                ]
+            },
+            **report_urls  # Include report URLs at top level
         }
         
-        # Test JSON serialization before returning to catch any issues
-        try:
-            import json
-            json.dumps(response, ensure_ascii=False, default=str)
-            logger.info(f"Returning status response for job {job_id}: {response}")
-            return response
-        except (TypeError, ValueError) as e:
-            logger.error(f"JSON serialization failed for job {job_id}: {e}")
-            # Return a minimal response to prevent frontend crashes
-            return {
-                "job_id": job_id,
-                "status": "error",
-                "message": f"Error serializing response: {str(e)}",
-                "data": {}
-            }
+        logger.info(f"Status response for job {job_id}: {response}")
+        return response
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting status for job {job_id}: {str(e)}")
-        raise HTTPException(status_code=404, detail=f"File not found or error retrieving status: {str(e)}")
+        logger.error(f"Error getting status for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting status: {str(e)}")
 
 @router.post("/inspect-header")
 async def inspect_file_header(
     file: UploadFile = File(...),
-    current_user: str = Depends(get_optional_user)
+    db: Session = Depends(get_db)
 ):
     """
-    Inspect the header of a genomic file without processing the full upload.
-
+    Inspect the header of a genomic file without processing the full analysis.
     This endpoint allows users to preview file header information before
     committing to the full upload and analysis process.
     """
     try:
-        logger.info(f"Inspecting header for file: {file.filename}")
-
-        # Create a temporary file to store the uploaded content
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as temp_file:
-            # Copy uploaded file content to temp file
-            shutil.copyfileobj(file.file, temp_file)
-            temp_path = temp_file.name
-
+        # Save uploaded file temporarily
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}")
         try:
-            # Use independent inspector for normalized header JSON
-            normalized = inspect_header(temp_path)
+            content = await file.read()
+            temp_file.write(content)
+            temp_file.close()
+            
+            # Inspect header
+            header_info = inspect_header(temp_file.name)
 
-            # Also analyze minimal info for compatibility/workflow suggestion
-            analysis = await file_processor.analyze_file(temp_path)
-            workflow = file_processor.determine_workflow(analysis)
+            # Derive workflow analysis using the same backend logic (no Nextflow)
+            compat_workflow = {
+                "recommendations": [],
+                "warnings": [],
+                "unsupported": False,
+                "unsupported_reason": None
+            }
+            try:
+                workflow_result = await file_processor.process_upload(str(temp_file.name))
+                if workflow_result.get("status") == "success":
+                    wf = workflow_result.get("workflow", {})
+                    compat_workflow = {
+                        "recommendations": wf.get("recommendations", []),
+                        "warnings": wf.get("warnings", []),
+                        "unsupported": wf.get("unsupported", False),
+                        "unsupported_reason": wf.get("unsupported_reason")
+                    }
+            except Exception as e:
+                logger.debug(f"Header inspect workflow derivation failed: {e}")
 
-            logger.info(f"Header inspection completed for {file.filename}")
             return {
                 "status": "success",
-                "header_info": normalized,
-                "original_filename": file.filename,
-                "compat": {
-                    "file_type": analysis.file_type.value if hasattr(analysis.file_type, 'value') else str(analysis.file_type),
-                    "file_size": analysis.file_size,
-                    "is_compressed": analysis.is_compressed,
-                    "has_index": analysis.has_index,
-                    "workflow": {
-                        "recommendations": workflow.get("recommendations", []),
-                        "warnings": workflow.get("warnings", []),
-                        "unsupported": workflow.get("unsupported", False),
-                        "unsupported_reason": workflow.get("unsupported_reason")
-                    }
-                }
+                "success": True,
+                "filename": file.filename,
+                "file_size": len(content),
+                "header_info": header_info,
+                "compat": {"workflow": compat_workflow}
             }
-
+            
         finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_path)
-                logger.debug(f"Cleaned up temporary file: {temp_path}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up temporary file {temp_path}: {str(e)}")
-
+            # Clean up temp file
+            if os.path.exists(temp_file.name):
+                os.unlink(temp_file.name)
+                
     except Exception as e:
-        logger.error(f"Error inspecting file header: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error inspecting file header: {str(e)}")
+        logger.error(f"Header inspection failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Header inspection failed: {str(e)}")
 
 @router.get("/reports/job/{job_id}")
 async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
     """
-    Get the report URLs for a completed job using the new monitoring system
+    Get the report URLs for a completed job.
     """
     try:
-        from app.services.job_status_service import JobStatusService
-        job_service = JobStatusService(db)
-        job = job_service.get_job_status(job_id)
-
-        if not job:
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-
-        # Get the patient_id from the job metadata
-        patient_id = job.get("patient_id")
-        if not patient_id:
-            raise HTTPException(status_code=404, detail="Job has no associated patient ID")
-
-        # Check in patient directory for reports
-        patient_dir = Path(f"{REPORTS_DIR}/{patient_id}")
-        pdf_path = patient_dir / f"{patient_id}_pgx_report.pdf"
-        html_path = patient_dir / f"{patient_id}_pgx_report.html"
-        interactive_path = patient_dir / f"{patient_id}_pgx_report_interactive.html"
-        pharmcat_html = patient_dir / f"{patient_id}_pgx_pharmcat.html"
-        pharmcat_json = patient_dir / f"{patient_id}_pgx_pharmcat.json"
-        pharmcat_tsv = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
-
-        pdf_exists = os.path.exists(pdf_path)
-        html_exists = os.path.exists(html_path) or os.path.exists(interactive_path)
-
-        # Check if job is still processing first
-        if job["status"] != "completed":
-            return {
-                "job_id": job_id,
-                "patient_id": patient_id,
-                "status": "processing",
-                "message": job.get("message", "Processing in progress")
-            }
-
-        # Job is completed, check if reports exist
-        if pdf_exists or html_exists:
-            report_paths = {
-                "pdf_report_url": f"/reports/{patient_id}/{patient_id}_pgx_report.pdf" if pdf_exists else None,
-                "html_report_url": (
-                    f"/reports/{patient_id}/{patient_id}_pgx_report_interactive.html" if os.path.exists(interactive_path) else (
-                        f"/reports/{patient_id}/{patient_id}_pgx_report.html" if os.path.exists(html_path) else None
-                    )
+        workflow_service = WorkflowService(db)
+        
+        # First try to get workflow by ID (in case job_id is actually a workflow_id)
+        workflow = workflow_service.get_workflow(job_id)
+        
+        # If not found by ID, try to find by name pattern
+        if not workflow:
+            # Look for workflow with name containing the job_id
+            from sqlalchemy import and_
+            from app.api.db import Workflow
+            workflow = db.query(Workflow).filter(
+                and_(
+                    Workflow.name.contains(job_id),
+                    Workflow.status == WorkflowStatus.COMPLETED
                 )
-            }
-            if pharmcat_html.exists() and INCLUDE_PHARMCAT_HTML:
-                report_paths["pharmcat_html_report_url"] = f"/reports/{patient_id}/{patient_id}_pgx_pharmcat.html"
-                logger.info(f"Added PharmCAT HTML report URL to report paths (enabled via INCLUDE_PHARMCAT_HTML)")
-            if pharmcat_json.exists() and INCLUDE_PHARMCAT_JSON:
-                report_paths["pharmcat_json_report_url"] = f"/reports/{patient_id}/{patient_id}_pgx_pharmcat.json"
-                logger.info(f"Added PharmCAT JSON report URL to report paths (enabled via INCLUDE_PHARMCAT_JSON)")
-            if pharmcat_tsv.exists() and INCLUDE_PHARMCAT_TSV:
-                report_paths["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{patient_id}_pgx_pharmcat.tsv"
-                logger.info(f"Added PharmCAT TSV report URL to report paths (enabled via INCLUDE_PHARMCAT_TSV)")
-            return {
-                "job_id": job_id,
-                "patient_id": patient_id,
-                "status": "completed",
-                **report_paths
-            }
-        else:
-            # Check if job is still processing
-            if job["status"] != "completed":
-                return {
-                    "job_id": job_id,
-                    "patient_id": patient_id,
-                    "status": "processing",
-                    "message": job.get("message", "Processing in progress")
+            ).first()
+        
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        
+        if workflow.status != WorkflowStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail="Workflow not completed")
+        
+        # Get report URLs from metadata
+        metadata = workflow.workflow_metadata or {}
+        reports = metadata.get("reports", {})
+        
+        # If no reports in metadata, try to construct URLs from patient_id
+        if not reports:
+            patient_id = metadata.get("patient_id")
+            if patient_id:
+                # Construct basic report URLs based on standard naming convention
+                reports = {
+                    "pdf_report_url": f"/reports/{patient_id}/{patient_id}_pgx_report.pdf",
+                    "html_report_url": f"/reports/{patient_id}/{patient_id}_pgx_report_interactive.html"
                 }
-            else:
-                raise HTTPException(status_code=404, detail="Reports not found for completed job")
-
+                
+                # Check if PharmCAT reports exist and add them
+                patient_dir = Path(REPORTS_DIR) / patient_id
+                if patient_dir.exists():
+                    pharmcat_html = patient_dir / f"{patient_id}_pgx_pharmcat.html"
+                    pharmcat_json = patient_dir / f"{patient_id}_pgx_pharmcat.json"
+                    pharmcat_tsv = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
+                    
+                    if pharmcat_html.exists():
+                        reports["pharmcat_html_report_url"] = f"/reports/{patient_id}/{pharmcat_html.name}"
+                    if pharmcat_json.exists():
+                        reports["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json.name}"
+                    if pharmcat_tsv.exists():
+                        reports["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv.name}"
+        
+        return {
+            "job_id": job_id,
+            "workflow_id": str(workflow.id),
+            "status": "completed",
+            "reports": reports
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error retrieving report URLs: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving report URLs: {str(e)}")
+        logger.error(f"Error getting report URLs for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting report URLs: {str(e)}")
 
 @router.get("/reports/download/{patient_id}")
 async def download_all_reports(patient_id: str, current_user: str = Depends(get_optional_user)):
     """
-    Download all report files for a patient as a zip file
+    Download all reports for a patient as a ZIP file.
     """
     try:
-        # Check if patient directory exists
-        patient_dir = Path(REPORTS_DIR) / str(patient_id)
-        if not patient_dir.exists() or not patient_dir.is_dir():
-            raise HTTPException(status_code=404, detail=f"Reports not found for patient {patient_id}")
+        # Create ZIP file
+        zip_buffer = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
         
-        # Find all report files in the patient directory
-        report_files = []
-        for file_path in patient_dir.iterdir():
-            if file_path.is_file():
-                # Include all report files (PDF, HTML, JSON, TSV, SVG, PNG)
-                if file_path.suffix.lower() in ['.pdf', '.html', '.json', '.tsv', '.svg', '.png']:
-                    report_files.append(file_path)
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            reports_dir = Path(REPORTS_DIR) / patient_id
+            
+            if reports_dir.exists():
+                for file_path in reports_dir.rglob("*"):
+                    if file_path.is_file():
+                        # Add file to ZIP with relative path
+                        arcname = file_path.relative_to(reports_dir)
+                        zip_file.write(file_path, arcname)
         
-        if not report_files:
-            raise HTTPException(status_code=404, detail="No report files found")
+        zip_buffer.close()
         
-        # Create a temporary zip file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_zip:
-            temp_zip_path = temp_zip.name
+        # Read ZIP file content
+        with open(zip_buffer.name, 'rb') as f:
+            zip_content = f.read()
         
-        try:
-            # Create the zip file
-            with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for file_path in report_files:
-                    # Add file to zip with just the filename (not the full path)
-                    zipf.write(file_path, file_path.name)
-                    logger.info(f"Added {file_path.name} to zip file")
-            
-            # Read the zip file content
-            with open(temp_zip_path, 'rb') as f:
-                zip_content = f.read()
-            
-            # Clean up temporary file
-            os.unlink(temp_zip_path)
-            
-            # Return the zip file as a response
-            return Response(
-                content=zip_content,
-                media_type="application/zip",
-                headers={
-                    "Content-Disposition": f"attachment; filename=pgx_reports_{patient_id}.zip"
-                }
-            )
-            
-        except Exception as zip_error:
-            # Clean up temporary file on error
-            if os.path.exists(temp_zip_path):
-                os.unlink(temp_zip_path)
-            raise zip_error
-            
-    except HTTPException:
-        raise
+        # Clean up
+        os.unlink(zip_buffer.name)
+        
+        # Return ZIP file
+        return Response(
+            content=zip_content,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=reports_{patient_id}.zip"
+            }
+        )
+        
     except Exception as e:
-        logger.error(f"Error creating zip file for patient {patient_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error creating zip file: {str(e)}") 
+        logger.error(f"Error creating ZIP file for patient {patient_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating ZIP file: {str(e)}")

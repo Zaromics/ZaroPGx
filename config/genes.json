@@ -1,10 +1,10 @@
 {
   "metadata": {
-    "version": "1.0.0",
-    "description": "PyPGx supported pharmacogenes configuration",
-    "last_updated": "2025-09-10",
-    "source": "PyPGx v0.25.0",
-    "total_genes": 90
+    "version": "1.2.0",
+    "description": "ZaroPGx supported pharmacogenes",
+    "last_updated": "2025-01-27",
+    "source": "PyPGx v0.25.0, PharmCAT v3.0.1, OptiType v1.3.5",
+    "total_genes": 91
   },
   "categories": {
     "hla": {
@@ -80,6 +80,64 @@
         "ANKK1", "APOE", "ATM", "CACNA1S", "CFTR", "COMT",
         "DBH", "GRIK1", "GRIK4", "GRIN2B", "HTR1A", "HTR2A",
         "ITGB3", "OPRK1", "OPRM1", "RARG"
+      ]
+    },
+    "pypgx": {
+      "name": "PyPGx Supported",
+      "description": "All pharmacogenes supported by PyPGx (87 genes)",
+      "count": 87,
+      "genes": [
+        "ABCB1", "ABCG2", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF",
+        "CACNA1S", "CFTR", "COMT", "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2B6",
+        "CYP2C8", "CYP2C9", "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2", "CYP2R1", "CYP2S1",
+        "CYP2W1", "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
+        "CYP17A1", "CYP19A1", "CYP26A1", "DBH", "DPYD", "DRD2", "F2", "F5", "G6PD", "GRIK1", "GRIK4",
+        "GRIN2B", "GSTM1", "GSTP1", "GSTT1", "HTR1A", "HTR2A", "IFNL3", "IFNL4", "ITGB3", "ITPA",
+        "MTHFR", "NAT1", "NAT2", "NUDT15", "OPRK1", "OPRM1", "POR", "PTGIS", "RARG", "RYR1",
+        "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B1", "SLCO1B3", "SLCO2B1",
+        "SULT1A1", "TBXAS1", "TPMT", "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17",
+        "VKORC1", "XPC"
+      ]
+    },
+    "pharmcat_can_call": {
+      "name": "PharmCAT Can Call",
+      "description": "Genes that PharmCAT can call by itself using Named Allele Matcher (19 genes)",
+      "count": 19,
+      "genes": [
+        "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
+        "DPYD", "G6PD", "IFNL3", "NAT2", "NUDT15", "RYR1", "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
+      ]
+    },
+    "pharmcat_outside_callers": {
+      "name": "PharmCAT Outside Callers",
+      "description": "Genes handled by outside callers (PyPGx, OptiType) (4 genes)",
+      "count": 4,
+      "genes": [
+        "CYP2D6", "HLA-A", "HLA-B", "MT-RNR1"
+      ]
+    },
+    "pharmcat_all": {
+      "name": "PharmCAT All Reports",
+      "description": "All genes PharmCAT can create reports for (23 genes total)",
+      "count": 23,
+      "genes": [
+        "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
+        "CYP2D6", "DPYD", "G6PD", "HLA-A", "HLA-B", "IFNL3", "MT-RNR1", "NAT2", "NUDT15", "RYR1",
+        "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
+      ]
+    },
+    "pypgx_minus_pharmcat": {
+      "name": "PyPGx Only",
+      "description": "Genes supported by PyPGx but not by PharmCAT (67 genes)",
+      "count": 68,
+      "genes": [
+        "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
+        "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2C8", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2",
+        "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP17A1",
+        "CYP19A1", "CYP26A1", "DBH", "DRD2", "F2", "F5", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
+        "GSTT1", "HTR1A", "HTR2A", "IFNL4", "ITGB3", "ITPA", "MTHFR", "NAT1", "OPRK1", "OPRM1", "POR",
+        "PTGIS", "RARG", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B3", "SLCO2B1",
+        "SULT1A1", "TBXAS1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "XPC"
       ]
     }
   },
@@ -172,7 +230,9 @@
     {"name": "UGT2B7", "category": "phase2", "description": "UDP glucuronosyltransferase family 2 member B7", "status": "active"},
     {"name": "UGT2B15", "category": "phase2", "description": "UDP glucuronosyltransferase family 2 member B15", "status": "active"},
     {"name": "UGT2B17", "category": "phase2", "description": "UDP glucuronosyltransferase family 2 member B17", "status": "active"},
-    {"name": "VKORC1", "category": "other_enzymes", "description": "Vitamin K epoxide reductase complex subunit 1", "status": "active"}
+    {"name": "VKORC1", "category": "other_enzymes", "description": "Vitamin K epoxide reductase complex subunit 1", "status": "active"},
+    {"name": "XPC", "category": "other", "description": "Xeroderma pigmentosum complementation group C", "status": "active"},
+    {"name": "MT-RNR1", "category": "other", "description": "Mitochondrially encoded 12S rRNA", "status": "active"}
   ],
   "sets": {
     "hla": [
@@ -195,7 +255,7 @@
       "CYP2W1", "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
       "CYP17A1", "CYP19A1", "CYP26A1", "DBH", "DPYD", "DRD2", "F2", "F5", "G6PD", "GRIK1", "GRIK4",
       "GRIN2B", "GSTM1", "GSTP1", "GSTT1", "HLA-A", "HLA-B", "HLA-C", "HTR1A", "HTR2A", "IFNL3",
-      "IFNL4", "ITGB3", "ITPA", "MTHFR", "NAT1", "NAT2", "NUDT15", "OPRK1", "OPRM1", "POR", "PTGIS",
+      "IFNL4", "ITGB3", "ITPA", "MTHFR", "MT-RNR1", "NAT1", "NAT2", "NUDT15", "OPRK1", "OPRM1", "POR", "PTGIS",
       "RARG", "RYR1", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B1", "SLCO1B3",
       "SLCO2B1", "SULT1A1", "TBXAS1", "TPMT", "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15",
       "UGT2B17", "VKORC1", "XPC"
@@ -209,6 +269,39 @@
       "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2", "CYP2R1", "CYP2S1", "CYP2W1",
       "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
       "CYP17A1", "CYP19A1", "CYP26A1"
+    ],
+    "pypgx": [
+      "ABCB1", "ABCG2", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF",
+      "CACNA1S", "CFTR", "COMT", "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2B6",
+      "CYP2C8", "CYP2C9", "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2", "CYP2R1", "CYP2S1",
+      "CYP2W1", "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP4F2",
+      "CYP17A1", "CYP19A1", "CYP26A1", "DBH", "DPYD", "DRD2", "F2", "F5", "G6PD", "GRIK1", "GRIK4",
+      "GRIN2B", "GSTM1", "GSTP1", "GSTT1", "HTR1A", "HTR2A", "IFNL3", "IFNL4", "ITGB3", "ITPA",
+      "MTHFR", "NAT1", "NAT2", "NUDT15", "OPRK1", "OPRM1", "POR", "PTGIS", "RARG", "RYR1",
+      "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B1", "SLCO1B3", "SLCO2B1",
+      "SULT1A1", "TBXAS1", "TPMT", "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17",
+      "VKORC1", "XPC"
+    ],
+    "pharmcat_can_call": [
+      "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
+      "DPYD", "G6PD", "IFNL3", "NAT2", "NUDT15", "RYR1", "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
+    ],
+    "pharmcat_outside_callers": [
+      "CYP2D6", "HLA-A", "HLA-B", "MT-RNR1"
+    ],
+    "pharmcat_all": [
+      "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
+      "CYP2D6", "DPYD", "G6PD", "HLA-A", "HLA-B", "IFNL3", "MT-RNR1", "NAT2", "NUDT15", "RYR1",
+      "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
+    ],
+    "pypgx_minus_pharmcat": [
+      "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
+      "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2C8", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2",
+      "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP17A1",
+      "CYP19A1", "CYP26A1", "DBH", "DRD2", "F2", "F5", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
+      "GSTT1", "HTR1A", "HTR2A", "IFNL4", "ITGB3", "ITPA", "MTHFR", "NAT1", "OPRK1", "OPRM1", "POR",
+      "PTGIS", "RARG", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B3", "SLCO2B1",
+      "SULT1A1", "TBXAS1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "XPC"
     ]
   }
 }

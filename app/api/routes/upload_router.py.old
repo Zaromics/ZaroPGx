@@ -1,3 +1,7 @@
+``` !!! DO NOT DELETE !!!
+```
+
+
 import os
 import uuid
 import shutil
@@ -294,7 +298,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
             if workflow.get("needs_pypgx_bam2vcf", False):
                 job_service.update_job_progress(
                     job.job_id,
-                    JobStage.PYPX.value,
+                    JobStage.PYPGX.value,
                     20,
                     "Converting alignment to VCF via PyPGx create-input-vcf...",
                     {"workflow": workflow}
@@ -322,7 +326,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                         raise RuntimeError("PyPGx did not return a usable VCF path")
                     job_service.update_job_progress(
                         job.job_id,
-                        JobStage.PYPX.value,
+                        JobStage.PYPGX.value,
                         40,
                         "Alignment converted to VCF successfully.",
                         {"workflow": workflow, "bam2vcf_complete": True, "vcf_path": output_file}
@@ -330,7 +334,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 except Exception as e:
                     error_msg = f"PyPGx create-input-vcf failed: {str(e)}"
                     logger.error(error_msg)
-                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX.value)
+                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPGX.value)
                     return
             
             # Step 3: File conversion (for 23andMe files) - not yet implemented
@@ -351,7 +355,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                 # Update new monitoring system
                 job_service.update_job_progress(
                     job.job_id, 
-                    JobStage.PYPX.value, 
+                    JobStage.PYPGX.value, 
                     50, 
                     "Analyzing PyPGx supported star alleles...",
                     {"workflow": workflow}
@@ -408,7 +412,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     # Update status after PyPGx
                     job_service.update_job_progress(
                         job.job_id,
-                        JobStage.PYPX.value,
+                        JobStage.PYPGX.value,
                         60,
                         "PyPGx analysis complete.",
                         {"workflow": workflow, "pypgx_complete": True}
@@ -418,7 +422,7 @@ async def process_file_background(file_path: str, patient_id: str, data_id: str,
                     logger.error(error_msg)
                     
                     # Update new monitoring system
-                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPX.value)
+                    job_service.fail_job(job.job_id, error_msg, JobStage.PYPGX.value)
                     return
 
         # If we skipped preprocessing due to go_directly_to_pharmcat, still run PyPGx here (multi-gene)
