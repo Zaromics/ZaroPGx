@@ -184,9 +184,18 @@ reference/*
 # Development files and notes
 /dev-notes/*
 /resources/*
+/tests/*
+
+# Developer documentation
+/dev-docs/*
+
+# Sphinx docs
+/docs/getting-started.md
+
 
 # Cursor rules
 .cursorrules
+.cursor/rules/*
 
 # Nextflow
 .nextflow/
@@ -196,3 +205,7 @@ data/nextflow/
 report-*.html
 timeline-*.html
 trace-*.txt
+
+ # Old versions kept for reference
+ *.old
+ *.old/*
