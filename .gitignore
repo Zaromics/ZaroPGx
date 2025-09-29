@@ -206,6 +206,6 @@ report-*.html
 timeline-*.html
 trace-*.txt
 
- # Old versions kept for reference
- *.old
- *.old/*
+# Old versions kept for reference
+*.old
+*.old/*
