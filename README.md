@@ -1,7 +1,6 @@
-# ZaroPGx — Pharmacogenomic Report Generator
+# ZaroPGx — Pharmacogenomic Analysis Platform
 
-<img width="1541" height="900" alt="Screenshot 2025-08-22 143144" src="https://github.com/user-attachments/assets/57450a14-d392-4d38-85f6-911a7e7b962f" />
-
+<img width="1920" height="1080" alt="brave_283lUShC8e" src="https://github.com/user-attachments/assets/b8fdac82-1305-46aa-b041-020b88c5a1df" />
 
 ZaroPGx is a containerized bioinformatic pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by institutional resources. Nextflow is used to orchestrate an algorithmic workflow which integrates GATK preprocessing, OptiType/hlatyping and PyPGx allele calling, and PharmCAT with outside calls to unlock its full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx and 3 via hla-typing, albeit with less evidential clinical application. Report data will be made exportable to Personal and Electronic Health Records via the HAPI FHIR server integration. Designed as a self-hostable docker compose stack, ZaroPGx enables absolute data privacy and security when run locally. That said, environment configurations are provided for both local and web facing deployment, which allows the software to be made accessible to others over the internet.
 
