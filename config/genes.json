@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "version": "1.2.0",
+    "version": "0.2.0",
     "description": "ZaroPGx supported pharmacogenes",
     "last_updated": "2025-01-27",
     "source": "PyPGx v0.25.0, PharmCAT v3.0.1, OptiType v1.3.5",

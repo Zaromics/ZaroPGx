@@ -62,7 +62,7 @@ logger = logging.getLogger("app")
 logger.info(f"Starting app with log level: {log_level}")
 
 # Add more aggressive console logging for debugging
-print(f"=========== ZaroPGx STARTUP AT {datetime.utcnow()} ===========")
+print(f"=========== ZaroPGx STARTING UP AT: {datetime.utcnow()} ===========")
 print(f"LOG LEVEL: {log_level}")
 print(f"GATK SERVICE URL: {os.getenv('GATK_API_URL', 'http://gatk-api:5000')}")
 print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_API_URL', 'http://pharmcat:5000')}")
@@ -142,8 +142,8 @@ def get_author_name() -> str:
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="ZaroPGx - Intelligent Pharmacogenomic Reporting Pipeline",
-    description="An application with anAPI for processing genetic data and generating pharmacogenomic reports",
+    title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
+    description="An application with an API for processing genetic data and generating pharmacogenomic reports",
     version="0.2.0"
 )
 

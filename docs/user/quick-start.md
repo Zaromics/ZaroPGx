@@ -37,7 +37,7 @@ cp .env.production .env
 **For custom configuration:**
 ```bash
 cp .env.example .env
-# Edit .env as needed (at minimum set SECRET_KEY)
+# Edit .env with your specific settings
 ```
 
 ### 3. Start the Services
@@ -102,7 +102,26 @@ Once complete, you'll see:
 
 ## Next Steps
 
-- **Learn about file formats**: {doc}`user/file-formats`
-- **Understand reports**: {doc}`user/reports`
-- **Configure advanced settings**: {doc}`advanced-configuration`
-- **Troubleshoot issues**: {doc}`user/troubleshooting`
+- **Learn about file formats**: {doc}`file-formats`
+- **Understand reports**: {doc}`reports`
+- **Configure advanced settings**: {doc}`../advanced-configuration`
+- **Troubleshoot issues**: {doc}`troubleshooting`
+
+## Common Issues
+
+**Services won't start?**
+- Check Docker is running
+- Ensure ports 8765, 5444, 5001, 5002, 5053, 8090 are available
+- Review logs: `docker compose logs`
+
+**Out of memory errors?**
+- Increase Docker memory allocation
+- Use smaller reference genome subsets
+- Disable GATK processing for VCF files
+
+**Slow processing?**
+- Ensure sufficient RAM allocation
+- Use SSD storage for better I/O performance
+- Consider disabling optional services
+
+For detailed troubleshooting, see {doc}`troubleshooting`.

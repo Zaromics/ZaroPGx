@@ -144,18 +144,17 @@ class VersionManager:
         
         # Try to connect and query version
         try:
-            import psycopg2
+            import psycopg
             db_url = os.environ.get("DATABASE_URL")
             if db_url:
-                conn = psycopg2.connect(db_url)
-                with conn.cursor() as cur:
-                    cur.execute("SELECT version();")
-                    version_str = cur.fetchone()[0]
-                    # Extract version number from "PostgreSQL 15.5 on x86_64..."
-                    if "PostgreSQL" in version_str:
-                        version_match = version_str.split("PostgreSQL ")[1].split(" ")[0]
-                        return version_match
-                conn.close()
+                with psycopg.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT version();")
+                        version_str = cur.fetchone()[0]
+                        # Extract version number from "PostgreSQL 15.5 on x86_64..."
+                        if "PostgreSQL" in version_str:
+                            version_match = version_str.split("PostgreSQL ")[1].split(" ")[0]
+                            return version_match
         except Exception as e:
             logger.debug(f"Failed to query PostgreSQL version: {e}")
         

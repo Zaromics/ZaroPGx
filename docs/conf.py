@@ -23,7 +23,11 @@ extensions = [
     'sphinx.ext.autosectionlabel',
     'sphinx.ext.viewcode',
     'sphinx.ext.intersphinx',
+    'sphinx.ext.todo',
+    'sphinx.ext.ifconfig',
+    'sphinx.ext.githubpages',
     'sphinx_copybutton',
+    'sphinx_design',
 ]
 
 myst_enable_extensions = [
@@ -33,6 +37,14 @@ myst_enable_extensions = [
     'html_image',
     'linkify',
     'substitution',
+    'attrs_inline',
+    'attrs_block',
+    'dollarmath',
+    'fieldlist',
+    'replacements',
+    'smartquotes',
+    'strikethrough',
+    'tasklist',
 ]
 
 templates_path = ['_templates']
@@ -42,8 +54,11 @@ autodoc_typehints = 'description'
 autodoc_member_order = 'bysource'
 
 intersphinx_mapping = {
-    'python': ('https://docs.python.org/3', {}),
-    'fastapi': ('https://fastapi.tiangolo.com', {}),
+    'python': ('https://docs.python.org/3', None),
+    'fastapi': ('https://fastapi.tiangolo.com', None),
+    'sqlalchemy': ('https://docs.sqlalchemy.org/en/20/', None),
+    'pydantic': ('https://docs.pydantic.dev/latest/', None),
+    'sphinx': ('https://www.sphinx-doc.org/en/master/', None),
 }
 
 # -- Options for HTML output -------------------------------------------------
@@ -54,7 +69,22 @@ html_theme_options = {
     'collapse_navigation': False,
     'navigation_depth': 4,
     'style_external_links': True,
+    'display_version': True,
+    'prev_next_buttons_location': 'bottom',
+    'style_nav_header_background': '#2980B9',
+    'logo_only': False,
+    'sticky_navigation': True,
+    'includehidden': True,
+    'titles_only': False,
 }
+
+# -- MyST configuration ------------------------------------------------------
+
+myst_heading_anchors = 3
+myst_footnote_transition = True
+myst_dmath_double_inline = True
+myst_enable_checkboxes = True
+myst_highlight_code_blocks = True
 
 # -- MyST substitutions ------------------------------------------------------
 
