@@ -39,6 +39,14 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Import pysam for VCF sample extraction
+try:
+    import pysam  # type: ignore
+    PYSAM_AVAILABLE = True
+except ImportError:
+    PYSAM_AVAILABLE = False
+    # Note: logger will be defined later in the file
+
 # Import shared workflow client for integration
 import sys
 sys.path.append('/workflow-client')
@@ -54,6 +62,10 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("pharmcat")
+
+# Log pysam availability after logger is defined
+if not PYSAM_AVAILABLE:
+    logger.warning("pysam not available - VCF sample extraction will use bcftools fallback")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -120,6 +132,68 @@ def unregister_process(workflow_id: str):
     if workflow_id in running_processes:
         del running_processes[workflow_id]
         logger.info(f"Unregistered process for workflow {workflow_id}")
+
+def extract_sample_id_from_vcf(vcf_path: str) -> Optional[str]:
+    """
+    Extract the sample ID from a VCF file.
+    
+    Args:
+        vcf_path: Path to the VCF file
+        
+    Returns:
+        Sample ID from the VCF file, or None if not found
+    """
+    try:
+        # Try using pysam first (more reliable)
+        if PYSAM_AVAILABLE:
+            try:
+                with pysam.VariantFile(vcf_path) as vcf:
+                    samples = list(vcf.header.samples)
+                    if samples:
+                        sample_id = samples[0]  # Use first sample
+                        logger.info(f"Extracted sample ID from VCF using pysam: {sample_id}")
+                        return sample_id
+            except Exception as e:
+                logger.warning(f"Failed to extract sample ID using pysam: {e}")
+        
+        # Fallback to bcftools
+        try:
+            # Use bcftools query to get sample names
+            cmd = ["bcftools", "query", "-l", vcf_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                samples = result.stdout.strip().split('\n')
+                if samples and samples[0]:
+                    sample_id = samples[0].strip()
+                    logger.info(f"Extracted sample ID from VCF using bcftools: {sample_id}")
+                    return sample_id
+            else:
+                logger.warning(f"bcftools query failed: {result.stderr}")
+        except Exception as e:
+            logger.warning(f"Failed to extract sample ID using bcftools: {e}")
+        
+        # Final fallback: try to parse VCF header manually
+        try:
+            with open(vcf_path, 'r') as f:
+                for line in f:
+                    if line.startswith('#CHROM'):
+                        # Parse the header line to get sample names
+                        parts = line.strip().split('\t')
+                        if len(parts) > 9:  # Should have at least CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, and sample(s)
+                            sample_id = parts[9]  # First sample is at index 9
+                            logger.info(f"Extracted sample ID from VCF header manually: {sample_id}")
+                            return sample_id
+                        break
+        except Exception as e:
+            logger.warning(f"Failed to extract sample ID manually: {e}")
+        
+        logger.warning(f"Could not extract sample ID from VCF file: {vcf_path}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error extracting sample ID from VCF: {e}")
+        return None
 
 # Simple home endpoint
 @app.get("/")
@@ -235,12 +309,9 @@ async def process_genotype(
         try:
             # Create a temporary directory for this job
             with tempfile.TemporaryDirectory() as temp_dir:
-                # Determine naming and Sample ID precedence
-                # 1) sample_identifier (user-entered) 2) patient_id 3) report_id 4) random
-                if sample_identifier and str(sample_identifier).strip():
-                    base_name = str(sample_identifier).strip()
-                    logger.info(f"Using user-entered sample_identifier for base name: {base_name}")
-                elif patient_id:
+                # Determine base name for file naming (existing precedence)
+                # 1) patient_id 2) report_id 3) random
+                if patient_id:
                     base_name = str(patient_id)
                     logger.info(f"Using provided patient ID for base name: {base_name}")
                 elif report_id:
@@ -250,6 +321,10 @@ async def process_genotype(
                     # Generate a random ID if none provided
                     base_name = str(uuid.uuid4())[:8]
                     logger.info(f"Generated random base name: {base_name}")
+                
+                # Log user sample identifier for display purposes only
+                if sample_identifier and str(sample_identifier).strip():
+                    logger.info(f"User sample identifier (display only): {sample_identifier}")
                 
                 # Save the uploaded file to temp directory with proper extension handling
                 if file.filename.endswith('.vcf.gz'):
@@ -275,6 +350,13 @@ async def process_genotype(
                         content = await outside_tsv.read()
                         f.write(content)
                     logger.info(f"Saved outside call TSV to {outside_path}")
+                
+                # Extract actual sample ID from VCF file for PharmCAT -s parameter
+                vcf_sample_id = extract_sample_id_from_vcf(vcf_path)
+                if vcf_sample_id:
+                    logger.info(f"Extracted VCF sample ID for PharmCAT: {vcf_sample_id}")
+                else:
+                    logger.warning("Could not extract sample ID from VCF file - PharmCAT may fail")
                 
                 # Update processing status
                 processing_status.update({
@@ -318,9 +400,17 @@ async def process_genotype(
                     "-reporterJson",  # Generate reporter JSON with drug recommendations
                     "-reporterHtml",  # Generate HTML report
                     "-reporterCallsOnlyTsv",   # Generate TSV report for easy parsing
-                    "-s", base_name,  # Pass Sample ID to PharmCAT
-                    vcf_path  # Input file should be the last argument
                 ]
+                
+                # Add sample ID parameter only if we successfully extracted it from VCF
+                if vcf_sample_id:
+                    pharmcat_cmd.extend(["-s", vcf_sample_id])
+                    logger.info(f"Using VCF sample ID for PharmCAT -s parameter: {vcf_sample_id}")
+                else:
+                    logger.warning("No VCF sample ID available - PharmCAT will use default behavior")
+                
+                # Add input file as the last argument
+                pharmcat_cmd.append(vcf_path)
                 
                 # Note: By default, pharmcat_pipeline runs the complete pipeline:
                 # 1. NamedAlleleMatcher (generates .match.json)
@@ -769,6 +859,8 @@ async def process_genotype(
                     "message": "PharmCAT analysis completed successfully",
                     "data": {
                         "job_id": base_name,
+                        "sample_identifier": sample_identifier,  # User-entered identifier for display
+                        "vcf_sample_id": vcf_sample_id,  # Actual sample ID from VCF file
                         "html_report_url": f"/reports/{base_name}/interactive_report_{base_name}.html" if report_html_file else None,
                         "json_report_url": f"/reports/{base_name}/{base_name}_pgx_report.json" if report_json_file else None,
                         "tsv_report_url": f"/reports/{base_name}/{base_name}_pgx_pharmcat.tsv" if report_tsv_file else None,
