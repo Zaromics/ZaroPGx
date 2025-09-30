@@ -77,7 +77,11 @@
         .exec-summary-table td {
             padding: 4px 6px; /* compact but readable */
             border: none; /* invisible columns */
+            border-bottom: 1px solid #e8e8e8; /* subtle row separator */
             vertical-align: top;
+        }
+        .exec-summary-table tr:last-child td {
+            border-bottom: none; /* remove border from last row */
         }
         .exec-summary-number {
             text-align: left;

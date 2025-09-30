@@ -1606,7 +1606,8 @@
                 if (demoButton) demoButton.disabled = true;
                 
                 // Instead of creating a VCF in memory, fetch the sample file
-                const response = await fetch('/static/demo/pharmcat.example.vcf');
+                // Add cache-busting parameter to ensure we get the latest version
+                const response = await fetch(`/static/demo/pharmcat.example.vcf?t=${Date.now()}`);
                 if (!response.ok) {
                     throw new Error(`Failed to fetch example VCF: ${response.status}`);
                 }
