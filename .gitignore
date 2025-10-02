@@ -164,6 +164,13 @@ cython_debug/
 /data/reports/
 /data/temp/
 
+/scripts/example-workflow-usage.sh
+/scripts/test_cancel_endpoints.py
+
+/data/sample_cpic.vcf.bgz
+
+/docker/pharmcat/header.txt
+
 # PostgreSQL database files
 /db/data/
 
@@ -192,7 +199,6 @@ reference/*
 # Sphinx docs
 /docs/getting-started.md
 /docs/developer/testing.md
-
 
 # Cursor rules
 .cursorrules
