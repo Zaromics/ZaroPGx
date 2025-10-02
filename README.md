@@ -1,17 +1,14 @@
 # ZaroPGx — Pharmacogenomic Analysis Platform
 
 <img width="1352" height="2575" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
+
 ---
 
 **ZaroPGx** is a containerized bioinformatic pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by institutional resources. Nextflow is used to orchestrate an algorithmic workflow which integrates GATK preprocessing, OptiType/hlatyping and PyPGx allele calling, and PharmCAT with outside calls to unlock its full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx and 3 via hla-typing, albeit with less evidential clinical application. Report data will be made exportable to Personal and Electronic Health Records via the HAPI FHIR server integration. Designed as a self-hostable docker compose stack, ZaroPGx enables absolute data privacy and security when run locally. That said, environment configurations are provided for both local and web facing deployment, which allows the software to be made accessible to others over the internet.
 
 ## Status
 
-This project is in active development and not production-ready. Core functionality is being implemented incrementally.
-
-In terms of genomic file formats, operability currently stands as follows:
-- VCF: hg38 mostly working, hg19 needs review
-- all other formats: to be reviewed 
+This project is in active development. Core functionality is being implemented incrementally.
 
 ## Intended Function
 
@@ -26,37 +23,39 @@ The system is designed to:
 
 ## Current Implementation Status
 
-- **VCF Processing**: Fully implemented for hg38, needs more work to implement hg19 as well
-- **SAM/CRAM → GATK Pipeline**: Scaffolded but not fully integrated in the application flow
-- **OptiType Integration**: Scaffolded Nextflow hlatyping container which uses OptiType
+- **VCF Processing**: Fully implemented for GRCh38/hg38, support for GRCh37/hg19 coming in 0.3 with bcftools liftover
+- **FASTQ/BAM/SAM/CRAM inputs**: Scaffolded but not fully implemented; needs testing
+- **OptiType Integration**: Scaffolded Nextflow hlatyping OptiType workflow
 - **PyPGx Integration**: Service is integrated with main pipeline, optimization in progress to differentiate pipeline paths
-- **PharmCAT with Outside Calls**: Core PharmCAT service available, PyPGx and OptiType outside calls are in testing
-- **Comprehensive Reporting**: Basic PDF and interactive HTML generation is being developed
-- **FHIR Export**: HAPI FHIR server integrated, export / query response functionality in development
+- **PharmCAT with Outside Calls**: Core PharmCAT service available, PyPGx and OptiType outside calls dictionary curation is in progress
+- **Comprehensive Reporting**: Basic PDF and interactive HTML generation is being revised
+- **FHIR Export**: HAPI FHIR server integrated, export / query response functionality in development (basic XML export coming in 0.3)
 
 ## Features (Current State)
 
-- Process VCF files directly; BAM/CRAM → GATK path is scaffolded but not fully implemented in the app flow yet
-- Allele calling via OptiType, PyPGx, and PharmCAT (pipeline v3.0.1)
+- Process VCF files directly
+- Allele calling via OptiType, PyPGx, and PharmCAT
 - Generate reports: PDF and interactive HTML; optionally include original PharmCAT HTML/JSON/TSV outputs
 - REST API and web UI for uploads and status; authentication is disabled by default in development mode
-- Optional export of reports to a bundled HAPI FHIR server
+- Optional export of reports to a bundled HAPI FHIR server (coming in 0.3)
 
 ## Architecture
 
 Containerized services orchestrated with Docker Compose to provide a complete pharmacogenomic analysis pipeline:
 
-- **PostgreSQL DB** (managed with alembic) - Stores guidelines, sample data, and generated reports
-- **FastAPI application** (web UI, API, report generation, SSE progress) - Main application orchestrating the analysis workflow
-- **Nextflow service** (Flask) - Handles execution of the pipeline
-- **GATK service** (HTTP wrapper) - Handles preprocessing of BAM/CRAM files to VCF format
-- **PyPGx service** - Provides comprehensive allele calling across multiple pharmacogenes, including difficult ones like CYP2D6
-- **PharmCAT service** (Flask) - Executes PharmCAT pipeline with PyPGx and OptiType outside calls to unlock full 23-gene coverage
+- **Core FastAPI Application** (Web UI, API, report generation, websocket progress tracking) - Main application orchestrating the analysis workflow
+- **Nextflow service** - Handles execution of the pipeline
 - **Genome Reference downloader** - Manages reference genome data for accurate variant calling
-- **HAPI FHIR server** - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records
+- **PostgreSQL DB** (managed with Alembic) - Stores guidelines, sample data, and generated reports
+- **GATK service** (FastAPI wrapper) - Handles various conversion and preprocessing operations
+- **nf-core/hlatyping** (nextflow OptiType container) - Performs HLA Calling with either FASTQ or BAM inputs
+- **PyPGx service** - (FastAPI wrapper) - Provides comprehensive allele calling across multiple pharmacogenes, including difficult ones like CYP2D6
+- **PharmCAT service** (FastAPI wrapper) - Executes PharmCAT pipeline with PyPGx and OptiType outside calls to unlock full 23-gene coverage
 - **Kroki** - Renders workflow diagrams which serve as a visual depiction of the pipeline the report has been built from
+- **HAPI FHIR server** - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records
 
-**Workflow**: Genomic Data → GATK Preprocessing (if needed) → OptiType Allele Calling → PyPGx Allele Calling → PharmCAT Analysis with PyPGx and OptiType Outside Calls → Comprehensive Reporting → optional EHR export via FHIR
+
+**Workflow**: Genomic data sample submission → Preprocessing (if needed) → OptiType HLA Allele Calling → PyPGx Star Allele Calling → PharmCAT Matching with PyPGx and OptiType Outside Calls → Report Creation → optional EHR export via FHIR
 
 ### Service Ports (Host → Container)
 
@@ -78,10 +77,16 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 
 - Docker and Docker Compose
 - Git
-- First run requires significant internet bandwidth to fetch images and reference genomes, if they are not already cached
-- Recommended Minimum: 8 GB RAM (≥16 GB recommended if using GATK), 30 GB disk (≫500 GB for WGS)
+
+- Internet connection: first run requires significant bandwidth to fetch images, build containers, and load reference genomes
+- Hardware, Minimum (limited functions): 4 CPU cores, 8 GB DDR3 RAM, 50 GB storage space
+- Hardware, Recommended (all pipeline functions): 8+ CPU cores, 64+ GB DDR4 RAM, 1+ TB NVMe SSD storage space 
+- Hardware, Preferred (all pipeline functions with speed): 16 CPU cores, 128 GB ECC DDR4+ RAM, 2+ TB NVMe SSD storage space; with configured parallelism
 
 ## Quick Start
+
+- At this time, reference pre-built docker images are not distributed.
+- You must clone the repository and build the compose stack locally.
 
 1. **Clone the repo**
    ```bash
@@ -91,7 +96,7 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 
 2. **Choose your environment configuration**
    
-   For personal and home use, a local deployment is strongly recommended.
+   For personal and home (LAN) use, a local deployment is recommended.
    
    **Local Development (default):**
    ```bash
@@ -113,16 +118,17 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 
 3. **Start services**
    
-   **Option A: Using startup scripts (recommended)**
+   **Option A: Using the simple startup script (recommended for non-technical users)**
    
-   Choose the script that matches your environment:
+   Choose the startup script that matches your environment:
+   - Ensure the shell script can be executed, if it does not appear to work.
    
-   - **PowerShell (Windows):**
+   - **PowerShell (Windows):** (If you are on Windows but cannot or may not use WSL)
      ```powershell
      .\start-docker.ps1
      ```
    
-   - **Bash/Linux/WSL/Mac:**
+   - **Bash/Linux/Mac/Windows with WSL:**
      ```bash
      ./start-docker.sh
      ```
@@ -134,7 +140,7 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
    docker compose up -d --build
    ```
    
-   **Using specific environment file:**
+   **Using specific environment file:** (Advanced, for multiple configurations)
    ```bash
    docker compose --env-file .env.local up -d --build
    docker compose --env-file .env.production up -d --build
@@ -142,22 +148,22 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 
 4. **Access the application**
    - Web UI: `http://localhost:8765`
-   - API docs: `http://localhost:8765/docs`
-   - HAPI FHIR (optional): `http://localhost:8090`
+   - Documentation: `http://localhost:8765/docs`
+   - HAPI FHIR dashboard (optional): `http://localhost:8090`
 
 **Environment Differences:**
 - **Local Development**: Binds to localhost only, uses development subnet
-- **Production/Web**: Binds to all interfaces (0.0.0.0), uses production subnet
+- **Production/Web**: Binds to all interfaces (0.0.0.0), uses production subnet (Bring your own proxy!)
 
 ## Usage
 
-### Web UI
+### Web UI (Recommended)
 
 1. Open `http://localhost:8765`
-2. Upload a VCF or BAM file
+2. Upload a sample VCF file
 3. Observe progress; on completion you'll see links to PDF and interactive HTML reports
 
-### REST API
+### REST API (Advanced and Debugging)
 
 **Upload a genomic file**
 ```bash
@@ -172,12 +178,12 @@ curl -X POST \
 curl http://localhost:8765/status/<file_id>
 ```
 
-**Get report URLs** (PDF/HTML/interactive and optional PharmCAT artifacts):
+**Get report URLs** (PDF/HTML interactive/PharmCAT original reports):
 ```bash
 curl http://localhost:8765/reports/<file_id>
 ```
 
-**Generate a report** (utility endpoint; separate from the upload pipeline):
+**Generate a report** (API-only utility endpoint):
 ```bash
 curl -X POST http://localhost:8765/reports/generate \
   -H "Content-Type: application/json" \
@@ -194,47 +200,45 @@ curl -X POST http://localhost:8765/reports/generate \
 
 ## Sample Data
 
-Sample VCFs available in the repo:
+For real-world sample data, try browsing the **Personal Genome Project**: https://my.pgp-hms.org/public_genetic_data
+
+Filtered sample VCFs available in the repo:
 - `app/static/demo/pharmcat.example.vcf`
 - `test_data/sample_cpic.vcf`
-- Additional examples under `test_data/`
 
-## Project Structure
+## Project Structure (Abridged)
 
 ```
 ZaroPGx/
-├── app/                    # FastAPI app, templates, static assets
-│   ├── api/                # API routers, DB helpers, models
-│   ├── pharmcat/           # PharmCAT client integration
-│   ├── reports/            # Report generation (PDF/HTML, FHIR export)
-│   ├── services/           # Background job processing
-│   ├── core/               # Core utilities and version management
-│   └── visualizations/     # Workflow diagrams and visual tools
-├── db/                     # Initialization and migrations
-│   ├── init/               # Database initialization scripts
-│   └── migrations/         # Schema migrations and CPIC data
-│       └── cpic/           # CPIC schema and sample data
-├── docker/                 # Service Dockerfiles and wrappers
-│   ├── pharmcat/           # PharmCAT service with PyPGx integration
-│   ├── pypgx/              # PyPGx allele calling service
-│   ├── gatk-api/           # GATK preprocessing service
-│   ├── genome-downloader/  # Reference genome management
-│   └── postgresql/         # Database service configuration
+├── app/                    # FastAPI core App, templates, static assets, etc.
+│   ├── api/                  # API routers, DB helpers, models
+│   ├── pharmcat/             # PharmCAT client integration
+│   ├── reports/              # Report generation (PDF/HTML, FHIR export)
+│   ├── services/             # Background job processing
+│   ├── core/                 # Core utils and version management
+│   └── visualizations/       # Workflow diagrams and visual tools using Kroki
+├── db/                     # Postgres DB initialization and migrations
+│   ├── init/                 # Database initialization scripts
+│   └── migrations/           # Schema migrations
+├── docker/                 # Service Dockerfiles and service wrappers
+│   ├── pharmcat/             # PharmCAT service with FastAPI
+│   ├── pypgx/                # PyPGx service with FastAPI
+│   ├── gatk-api/             # GATK service FastAPI
+│   ├── genome-downloader/    # Reference genome fetcher (typically needs to only run once)
+│   └── postgresql/           # Database service configuration
 ├── data/                   # Runtime data (reports, uploads, temp files)
 ├── reference/              # Reference genomes and annotation files
-└── docker-compose.yml      # Orchestration (environment-specific via .env files)
+└── docker-compose.yml      # Container orchestration, configured via inline flags or .env file(s)
 ```
 
-## Service Details
+## Service Details (Abridged)
 
-- **PostgreSQL** with initialization under `db/init` and `db/migrations` - Stores CPIC guidelines and user data
-- **PharmCAT** (Java 17) with a Flask wrapper API - Core pharmacogenomic analysis engine
-- **FastAPI app** (Python 3.12; dependencies in `pyproject.toml`/`uv.lock`) - Main application orchestrating the complete workflow
-- **GATK** - Handles preprocessing of BAM/CRAM files to VCF format for downstream analysis
-- **PyPGx** - Provides comprehensive allele calling across multiple pharmacogenes, enabling PharmCAT to achieve full 23-gene coverage through outside calls
-- **HAPI FHIR** - Enables export of pharmacogenomic results to healthcare systems and personal health records
-
-**Note**: The app currently stubs GATK/PyPGx steps in the background workflow; full integration is being implemented to achieve the intended comprehensive pharmacogene coverage.
+- **Core FastAPI App** (Python 3.12; dependencies in `pyproject.toml`/`uv.lock`) - Main application orchestrating the complete workflow and report creation
+- **PostgreSQL** DB with initialization under `db/init` and `db/migrations` - Stores guideline data and user data for persistent and offline analysis
+- **GATK** - Handles various preprocessing and conversions of input files for downstream analysis
+- **PharmCAT** (Java 17) with a FastAPI wrapper, the central pharmacogenomic analysis engine
+- **PyPGx** - Provides comprehensive allele calling across multiple pharmacogenes, enabling PharmCAT to achieve full 23-gene coverage through outside calls, plus reports calls for 87 total pharmacogenes of varying evidence level
+- **HAPI FHIR** - Enables export of pharmacogenomic results to healthcare systems and personal health records (coming in 0.3)
 
 ## Report Handling
 
@@ -242,7 +246,7 @@ ZaroPGx/
 - The app consistently generates its own reports (PDF + interactive HTML)
 - When available, original PharmCAT reports are copied with normalized names (`<file_id>_pgx_pharmcat.*`)
 
-## FHIR Export (Optional)
+## FHIR Export (Optional) (Coming in 0.3)
 
 - HAPI FHIR server is bundled and exposed at `http://localhost:8090`
 - Report export endpoint: `POST /reports/{report_id}/export-to-fhir`
@@ -255,8 +259,8 @@ ZaroPGx/
 ## Troubleshooting
 
 - **Service connectivity**: Confirm the `pgx-network` bridge exists and containers are healthy
-- **File processing**: Ensure input VCF is valid and non‑empty
-- **PDF generation**: WeasyPrint is used; if PDF fails, an HTML fallback may be written alongside
+- **File processing**: Ensure input VCF is valid and contains required information
+- **PDF generation**: WeasyPrint is used; if PDF creation fails, ReportLab fallback may be used instead.
 
 ## Contributing
 
@@ -267,10 +271,15 @@ ZaroPGx/
 
 ## Acknowledgements & Citations
 
-- **PharmCAT** (Pharmacogenomics Clinical Annotation Tool). See methods: Sangkuhl K, Whirl-Carrillo M, et al. Clinical Pharmacology & Therapeutics. 2020;107(1):203–210. Project: https://github.com/PharmGKB/PharmCAT
-- **GATK** (Genome Analysis Toolkit). Core papers: McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. Nature Genetics. 2011;43(5):491–498. Guidance: https://gatk.broadinstitute.org/
-- **PyPGx** for star‑allele calling. References: Lee S‑B, et al. PLOS ONE. 2022 (ClinPharmSeq); Lee S‑B, et al. Genetics in Medicine. 2018 (Stargazer); Lee S‑B, et al. Clinical Pharmacology & Therapeutics. 2019 (Stargazer, 28 genes). Docs: https://pypgx.readthedocs.io/en/latest/index.html
-- **OptiType (nf-core/hlatyping)** for HLA allele calling. (to add citation)
+- **GATK** (Genome Analysis Toolkit).
+  - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. Nature Genetics. 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
+- **OptiType (from nf-core/hlatyping)**
+  -  Sven F., Christopher Mohr, Alexander Peltzer, nf-core bot, Vikesh Ajith, Mark Polster, Gisela Gabernet, Jonas Scheid, VIJAY, Phil Ewels, Maxime U Garcia, Tobias Koch, Paolo Di Tommaso, & Kevin Menden. (2025). nf-core/hlatyping: 2.1.0 - Chewbacca (2.1.0). Zenodo. https://doi.org/10.5281/zenodo.15212533  Docs: https://nf-co.re/hlatyping/
+- **PharmCAT** (Pharmacogenomics Clinical Annotation Tool).
+  - Sangkuhl K, Whirl-Carrillo M, et al. Clinical Pharmacology & Therapeutics. 2020;107(1):203–210.  Docs: https://pharmcat.clinpgx.org/
+- **PyPGx**
+  - Lee S‑B, et al. PLOS ONE. 2022 (ClinPharmSeq); Lee S‑B, et al. Genetics in Medicine. 2018 (Stargazer); Lee S‑B, et al. Clinical Pharmacology & Therapeutics. 2019 (Stargazer, 28 genes).  Docs: https://pypgx.readthedocs.io/en/latest/index.html
+
 
 ## License
 
