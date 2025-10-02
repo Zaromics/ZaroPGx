@@ -209,3 +209,7 @@ trace-*.txt
 # Old versions kept for reference
 *.old
 *.old/*
+
+# Stargazer stub is still lingering, need to figure out how to remove the stale scaffold file
+stargazer.zip
+stargazer.zip/

@@ -171,7 +171,8 @@ RUN uv pip install --system \
     fastapi \
     uvicorn \
     httpx \
-    python-multipart
+    python-multipart \
+    dxpy
 
 # Copy the wrapper script, start script, and workflow client
 COPY docker/pharmcat/pharmcat.py /app/

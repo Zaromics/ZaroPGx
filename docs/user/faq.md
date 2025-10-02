@@ -4,21 +4,17 @@ title: Frequently Asked Questions
 
 # Frequently Asked Questions
 
-Common questions and answers about ZaroPGx.
+Expected questions and answers about ZaroPGx.
 
 ## General Questions
 
 ### What is ZaroPGx?
 
-ZaroPGx is a containerized pharmacogenomics platform that processes genomic data and generates clinical reports. It integrates multiple bioinformatics tools (PharmCAT, PyPGx, GATK, OptiType) to provide comprehensive pharmacogene analysis.
+ZaroPGx is a containerized pharmacogenomics platform with that processes genomic data and generates clinical reports. It integrates multiple bioinformatics tools (PharmCAT, PyPGx, GATK, OptiType) to provide comprehensive pharmacogene analysis.
 
 ### Who can use ZaroPGx?
 
-ZaroPGx is designed for:
-- **Researchers**: Academic and clinical researchers studying pharmacogenomics
-- **Healthcare Providers**: Clinicians implementing pharmacogenomic testing
-- **Laboratories**: Clinical laboratories offering PGx testing services
-- **Developers**: Bioinformaticians building PGx analysis pipelines
+ZaroPGx is designed for general use. The simple user interface is meant to minimize user friction, while under-the-hood subroutines intelligently guide the submitted sample through the pipeline.
 
 ### Is ZaroPGx free to use?
 
@@ -26,39 +22,39 @@ Yes, ZaroPGx is open-source software licensed under AGPLv3. You can use, modify,
 
 ### What makes ZaroPGx different from other PGx tools?
 
-- **Comprehensive Coverage**: Analyzes 23+ core pharmacogenes with additional coverage for 90+ genes
-- **Integrated Pipeline**: Combines multiple tools (PharmCAT, PyPGx, OptiType) in one platform
-- **Self-Hosted**: Complete data privacy with no external data transmission
-- **Clinical Focus**: Generates actionable clinical reports with CPIC guidelines
-- **Easy Deployment**: Docker-based setup with minimal configuration
+- **Comprehensive Coverage, Laser Focus**: Analyzes up to 23+ core pharmacogenes to identify clinically actionable guidelines, with total coverage for 90+ genes pharmacogenes. No additional information is provided that is tangential or not directly related to pharmacogenetic relationships. For expanded modules with nutrigenomics and more, see the Zaromics umbrella project.
+- **Exceptionally Easy to Use**: The super simple user interface and "click and forget" functionality belie the comprehensiveness of the pipeline. ZaroPGx makes individual pharmacogenomics accessible to an interdisciplinary and lay audience.
+- **Easy Self-Hosted Privacy**: The docker compose based containerized architecture enables anyone with a power enough computer to process pharmacogenomic analyses in the complete privacy of their LAN, after the required references have been fetched on first run. ZaroPGx does not transmit any data without your directive; this refers to usage via API and exporting via HAPI FHIR server. Of course, being open source, any function, can be added, modified, or removed, so long as it complies with the software license.
+- **Dual Clinical + Research Focus**: Unlike tools which focus on either clinical, consumer, and/or research reporting, ZaroPGx differentiates between certainty levels, so reports contain clearly delineated clinically actionable guidelines and investigational insights. 
+- **Just Works, Like a Swiss Army Knife**: Unlike tools with a specific requirement of input file type, sequencing/genotyping platform, or assembly reference alignment, ZaroPGx is designed with ease of use in mind. Although at this time only GRCh38 VCFs are working, most commonly encountered formats will be implemented over the coming months.
+- **Export Function and Robust Schemas**: Unlike plain PDFs, emails, faxes, and printouts, ZaroPGx will soon support structured FHIR exports, first as XML/JSON, and eventually directly to an EHR/PHR, with HAPI FHIR. Moreover, with Phenopackets schema implemented in the bundled Postgres DB, analysis data will be normalized to both of the industry standard formats (HL7 FHIR, and GA4GH Phenopackets).
 
 ## Technical Questions
 
 ### What file formats are supported?
 
 ZaroPGx supports:
-- **VCF**: Variant Call Format (direct processing)
-- **BAM**: Binary Alignment Map (HLA typing → analysis)
-- **CRAM**: Compressed BAM (GATK → HLA typing → analysis)
-- **SAM**: Sequence Alignment Map (GATK → HLA typing → analysis)
-- **FASTQ**: Raw sequencing data (HLA typing → GATK → analysis)
+- **VCF**: Variant Call Format
+- **BAM**: Binary Alignment Map 
+- **CRAM**: Compressed BAM
+- **SAM**: Sequence Alignment Map
+- **FASTQ**: Raw sequencing data. Paired reads preferred.
 
 ### What reference genomes are supported?
 
 - **GRCh38/hg38**: Fully supported (recommended)
-- **GRCh37/hg19**: Supported with automatic liftover
-- **Custom references**: Supported with proper configuration
+- **GRCh37/hg19**: Supported with bcftools liftover to GRCh38/hg38
 
 ### How much computing power do I need?
 
-**Minimum Requirements:**
+**Minimum Requirements (VCF input):**:
 - 4 CPU cores
 - 8 GB RAM
 - 30 GB storage
 
-**Recommended:**
+**Recommended (FASTQ/BAM/SAM/CRAM input):**
 - 8+ CPU cores
-- 32+ GB RAM
+- 32+ GB RAM, 64GB preferred
 - 1+ TB SSD storage
 
 ### How long does analysis take?
@@ -67,33 +63,39 @@ Analysis time depends on:
 - **File size**: Larger files take longer
 - **File type**: VCF is fastest, FASTQ is slowest
 - **System resources**: More CPU/RAM = faster processing
-- **Reference genome**: hg38 is faster than hg19
+- **Reference genome**: GRCh37/hg19 adds a liftover re-alignment delay
 
-**Typical times:**
+**Typical times (ballpark estimate):**
 - **VCF (exome)**: 5-15 minutes
 - **VCF (whole genome)**: 30-60 minutes
-- **BAM (exome)**: 15-30 minutes
-- **FASTQ (exome)**: 30-60 minutes
+- **BAM (exome)**: from 15-30 minutes, up to several hours or more
+- **FASTQ (exome)**: from 30-60 minutes, up to several hours or more
 
 ## Clinical Questions
 
 ### What pharmacogenes are analyzed?
 
 **Core 23 Pharmacogenes (PharmCAT):**
-- CYP2D6, CYP2C19, CYP2C9, CYP3A4, CYP3A5
-- TPMT, DPYD, UGT1A1, COMT
-- SLC6A4, SLC19A1, ABCB1, ABCC2
-- VKORC1, CYP4F2, CYP2C8, CYP2B6
-- And more...
+- ABCG2, CACNA1S, CFTR, CYP2B6, CYP2C19, CYP2C9,
+- CYP3A4, CYP3A5, CYP4F2, CYP2D6, DPYD, G6PD,
+- HLA-A, HLA-B, IFNL3, MT-RNR1, NAT2, NUDT15, RYR1,
+- SLCO1B1, TPMT, UGT1A1, VKORC1
 
-**Additional Genes (PyPGx):**
-- 60+ additional pharmacogenes
-- Including difficult-to-call genes like CYP2D6
-- Comprehensive star allele calling
+**Additional Genes (PyPGx only):**
+- "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
+- "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2C8", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2",
+- "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP17A1",
+- "CYP19A1", "CYP26A1", "DBH", "DRD2", "F2", "F5", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
+- "GSTT1", "HTR1A", "HTR2A", "IFNL4", "ITGB3", "ITPA", "MTHFR", "NAT1", "OPRK1", "OPRM1", "POR",
+- "PTGIS", "RARG", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B3", "SLCO2B1",
+- "SULT1A1", "TBXAS1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "XPC"
 
 ### What clinical guidelines are used?
 
-ZaroPGx uses **CPIC (Clinical Pharmacogenomics Implementation Consortium)** guidelines:
+ZaroPGx uses the following guidelines:
+**CPIC (Clinical Pharmacogenomics Implementation Consortium)**
+**DPWG (Dutch Pharmacogenetics Working Group)**
+**FDA (U.S. Food and Drugs Administration)**
 - Evidence-based recommendations
 - Regularly updated with new evidence
 - Graded by strength of evidence
@@ -107,36 +109,29 @@ Accuracy depends on:
 - **Tool limitations**: Each tool has specific strengths/weaknesses
 - **Reference genome**: hg38 generally more accurate than hg19
 
-**Typical accuracy:**
-- **High-confidence calls**: >95% accuracy
-- **Medium-confidence calls**: 80-95% accuracy
-- **Low-confidence calls**: <80% accuracy
-
 ### Can I use this for clinical decision-making?
 
-ZaroPGx is a research tool and should not be used directly for clinical decision-making without:
-- **Clinical validation**: Verify results with clinical testing
-- **Expert interpretation**: Review by qualified healthcare providers
-- **Regulatory approval**: Ensure compliance with local regulations
-- **Quality assurance**: Implement appropriate QA/QC procedures
+Please do not. ZaroPGx is a research tool and should not be used directly for clinical decision-making without:
+- **Laboratory validation**: Verify results with clinical grade lab testing
+- **Expert interpretation**: Review by a qualified practitioner
 
 ## Deployment Questions
 
-### Can I run this on the cloud?
+### Can I run this in the cloud?
 
-Yes, ZaroPGx can be deployed on:
-- **AWS**: EC2 instances with sufficient resources
-- **Google Cloud**: Compute Engine instances
-- **Azure**: Virtual machines
-- **Other clouds**: Any cloud provider supporting Docker
+Yes, ZaroPGx can be deployed on any cloud provider supporting Docker.
+Make sure you understand the differnce between a local and public/production deployment.
+ZaroPGx does not include a reverse proxy; you will have to set one up yourself. 
+NPM, Apache, Traefik, or Caddy are all good options for securing your deployment.
 
 ### How do I secure the deployment?
 
 **Network Security:**
-- Use VPN or private networks
+- Use a reverse proxy
 - Configure firewall rules
 - Enable HTTPS/TLS encryption
 - Implement access controls
+- Configure security mechanisms via the docker compose file and .env file
 
 **Data Security:**
 - Encrypt data at rest
@@ -146,11 +141,11 @@ Yes, ZaroPGx can be deployed on:
 
 ### Can I scale this for multiple users?
 
-Yes, ZaroPGx can be scaled by:
-- **Horizontal scaling**: Multiple app instances
-- **Load balancing**: Distribute requests across instances
+In theory, though yet untested, yes: ZaroPGx can be scaled by:
+- **Horizontal scaling**: Multiple app instances - deeper Nextflow integration may permit
+- **Load balancing**: Distribute requests across instances, via Docker Swarm or Kubernetes
 - **Database scaling**: Use external PostgreSQL cluster
-- **Storage scaling**: Use shared storage systems
+- **Storage scaling**: Use shared storage systems, such as networking file systems (e.g. ZFS)
 
 ## Data Questions
 
@@ -167,7 +162,7 @@ Data is stored locally in Docker volumes:
 No, ZaroPGx is designed for complete data privacy:
 - **No external transmission**: All processing happens locally
 - **Self-contained**: All tools run in local containers
-- **Offline capable**: Works without internet after setup
+- **Offline capable**: Works without internet after initial setup
 - **Data control**: You maintain complete control over your data
 
 ### Can I export my data?
@@ -176,7 +171,7 @@ Yes, ZaroPGx supports multiple export formats:
 - **PDF reports**: Clinical reports
 - **HTML reports**: Interactive web reports
 - **JSON data**: Machine-readable results
-- **FHIR format**: Healthcare interoperability standard
+- **FHIR format**: Healthcare interoperability standard (coming in 0.3)
 - **Raw data**: Original tool outputs
 
 ### How long is data retained?
@@ -192,16 +187,15 @@ Data retention is configurable:
 ### Why is my analysis taking so long?
 
 Common causes:
-- **Large files**: Whole genome data takes longer
+- **Large files**: Whole genome raw data especially takes longer
 - **Low resources**: Insufficient CPU/RAM
-- **Network issues**: Slow reference genome downloads
-- **Disk I/O**: Slow storage performance
+- **Network issues**: Slow reference genome downloads, slow sample uploads
+- **Storage drive I/O**: Slow storage bandwidth
 
 **Solutions:**
-- Use SSD storage
-- Increase system resources
-- Process smaller file subsets
-- Check for background processes
+1. Wait for completion despite long processing time, or
+2. Try using a more powerful device, or
+3. Disable computationally intensive services and try again
 
 ### Why are some genes showing "No Call"?
 
@@ -211,35 +205,22 @@ Possible causes:
 - **Missing variants**: Variants not in reference
 - **Tool limitations**: Some genes are harder to call
 
-**Solutions:**
-- Check coverage depth
-- Verify data quality
-- Use different tools
-- Review analysis parameters
-
 ### Why is my PDF report empty?
 
 Common causes:
-- **Analysis failed**: Check processing logs
+- **Analysis failed**: Check docker compose logs and processing logs
 - **Missing data**: Verify analysis completed
-- **Template issues**: Check report templates
 - **PDF engine problems**: Try different engine
-
-**Solutions:**
-- Review analysis logs
-- Check report files
-- Switch PDF engine
-- Verify data availability
 
 ## Development Questions
 
 ### Can I contribute to ZaroPGx?
 
-Yes! ZaroPGx is open-source and welcomes contributions:
+Yes! Your contribution to the open-source ZaroPGx development is welcomes:
 - **Code contributions**: Bug fixes, new features
 - **Documentation**: Improve guides and examples
 - **Testing**: Report bugs, test new features
-- **Community**: Help other users, share experiences
+- **Community**: Help other users, share experiences (on GitHub)
 
 ### How do I report bugs?
 

@@ -1,4 +1,7 @@
-services:
+  # In order to manually generate your docker compose file, use:
+  # 'mv docker-compose.yml.example docker-compose.yml' and adjust the parameters.
+
+services:  
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~
   # Main FastAPI Application with Web UI, API, and supporting services
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~

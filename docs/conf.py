@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = 'ZaroPGx'
-author = 'ZaroPGx Contributors'
+author = 'Iliya Yaroshevskiy'
 current_year = datetime.utcnow().year
 copyright = f"{current_year}, {author}"
 

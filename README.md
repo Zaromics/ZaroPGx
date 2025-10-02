@@ -112,6 +112,22 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 
 3. **Start services**
    
+   **Option A: Using startup scripts (recommended)**
+   
+   Choose the script that matches your environment:
+   
+   - **PowerShell (Windows):**
+     ```powershell
+     .\start-docker.ps1
+     ```
+   
+   - **Bash/Linux/WSL/Mac:**
+     ```bash
+     ./start-docker.sh
+     ```
+   
+   **Option B: Manual Docker Compose commands**
+   
    **Using default .env:**
    ```bash
    docker compose up -d --build

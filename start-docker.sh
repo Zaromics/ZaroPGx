@@ -1,6 +1,7 @@
 #!/bin/bash
 # Cross-platform Docker startup script
-# Works in both WSL and PowerShell (when run with bash)
+# Works in WSL and when run with bash from PowerShell
+# For native PowerShell support, use start-docker.ps1 instead
 
 echo "🚀 Starting ZaroPGx with Docker Compose"
 echo "======================================"
@@ -11,7 +12,7 @@ if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
     # PowerShell/WSL hybrid
     export COMPOSE_PROJECT_NAME=pgx
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    echo "🐧 Detected: Linux orWSL environment"
+    echo "🐧 Detected: Linux or WSL environment"
     # Pure WSL
     export COMPOSE_PROJECT_NAME=pgx
 else

@@ -7,7 +7,7 @@ title: Architecture Overview
 The system is a docker-compose stack centered on a FastAPI app with supporting bioinformatics and visualization services. Key components:
 
 - FastAPI app (`app`): Web UI and API, orchestrates PGx operations.
-- PostgreSQL (`db`): Main database with multiple schemas (e.g., `fhir`, `cpic`, `user_data`).
+- PostgreSQL (`db`): Main database.
 - PharmCAT (`pharmcat`): API wrapper around PharmCAT JAR for phenotype/report generation.
 - GATK API (`gatk-api`): Wrapper around GATK tooling.
 - PyPGx (`pypgx`): Service exposing PyPGx-based calling for supported genes.

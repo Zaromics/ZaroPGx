@@ -2,7 +2,7 @@
   "metadata": {
     "version": "0.2.0",
     "description": "ZaroPGx supported pharmacogenes",
-    "last_updated": "2025-01-27",
+    "last_updated": "2025-09-27",
     "source": "PyPGx v0.25.0, PharmCAT v3.0.1, OptiType v1.3.5",
     "total_genes": 91
   },
@@ -128,7 +128,7 @@
     },
     "pypgx_minus_pharmcat": {
       "name": "PyPGx Only",
-      "description": "Genes supported by PyPGx but not by PharmCAT (67 genes)",
+      "description": "Genes supported by PyPGx but not by PharmCAT (68 genes)",
       "count": 68,
       "genes": [
         "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
