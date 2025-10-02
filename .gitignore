@@ -191,6 +191,7 @@ reference/*
 
 # Sphinx docs
 /docs/getting-started.md
+/docs/developer/testing.md
 
 
 # Cursor rules

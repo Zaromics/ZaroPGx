@@ -2,12 +2,12 @@ FROM python:3.12
 
 # Add labels for better maintainability and alignment with official PharmCAT
 LABEL maintainer="ZaroPGx (wrapper only)"
-LABEL description="PharmCAT 3.0.1 Wrapper Service with Flask API"
+LABEL description="PharmCAT 3.0.1 Wrapper Service with FastAPI"
 LABEL version="3.0.1"
 
 WORKDIR /pharmcat
 
-# Install system dependencies (aligned with official PharmCAT)
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     wget \
@@ -30,7 +30,7 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* \
     && update-ca-certificates
 
-# Install Java 17 (aligned with official PharmCAT approach)
+# Install Java 17 (as per PharmCAT)
 RUN curl https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main" \
       | tee /etc/apt/sources.list.d/adoptium.list && \
@@ -39,7 +39,7 @@ RUN curl https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --de
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install bcftools, htslib, and samtools from source (aligned with official PharmCAT)
+# Install bcftools, htslib, and samtools from source (as per PharmCAT)
 ENV BCFTOOLS_VERSION=1.21
 ENV HTSLIB_VERSION=1.21
 ENV SAMTOOLS_VERSION=1.21

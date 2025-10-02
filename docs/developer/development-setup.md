@@ -11,31 +11,28 @@ Complete guide for setting up a ZaroPGx development environment.
 ### System Requirements
 
 **Minimum:**
-- 8 GB RAM
+- 8 GB DDR3 RAM
 - 4 CPU cores
-- 50 GB free disk space
-- Docker 20.10+
-- Docker Compose 2.0+
+- 50 GB free SSD space
+- Docker
+- Docker Compose
 
 **Recommended:**
-- 16+ GB RAM
+- 64+ GB DDR4+ RAM
 - 8+ CPU cores
-- 100+ GB SSD storage
-- Docker Desktop with WSL2 (Windows)
+- 1TB+ free SSD storage
+- Docker Desktop with WSL2 (if on Windows)
+    - Hint: git clone to your ~/ on the WSL virtual drive, instead of the windows filesystem.
+    - Use WSL bash for work and check that your WSL is connected in Docker Desktop settings.  
 
 ### Development Tools
 
 **Required:**
 - Git
 - Docker and Docker Compose
-- Python 3.12+ (for local development)
-- Node.js 18+ (for frontend development)
+- Python 3.12+ recommended
+- Node.js 18+ (for frontend)
 
-**Recommended:**
-- VS Code with Docker extension
-- Python extension for VS Code
-- GitLens extension
-- REST Client extension
 
 ## Environment Setup
 
@@ -96,14 +93,9 @@ VERBOSE_LOGGING=true
 
 ### Option 1: Full Docker Development
 
-**Start all services:**
+**Start services and view logs:**
 ```bash
-docker compose up -d --build
-```
-
-**View logs:**
-```bash
-docker compose logs -f app
+docker compose up -d && docker compose logs -f
 ```
 
 **Stop services:**
@@ -121,13 +113,13 @@ docker compose up -d db pharmcat pypgx gatk-api fhir-server
 **Run FastAPI app locally:**
 ```bash
 # Install dependencies
-pip install -e .
+uv pip install -e .
 
 # Run development server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Option 3: Minimal Development
+### Option 3: Minimal Development (NEEDS REVIEW)
 
 **Start only database:**
 ```bash
@@ -137,8 +129,8 @@ docker compose up -d db
 **Run everything locally:**
 ```bash
 # Install all dependencies
-pip install -e .
-pip install -r requirements-dev.txt
+uv pip install -e .
+uv pip install -r requirements-dev.txt
 
 # Run services
 python -m app.services.pharmcat_service &
@@ -182,31 +174,6 @@ alembic revision --autogenerate -m "Description"
 ### 3. Testing
 
 **Run tests:**
-```bash
-# All tests
-pytest
-
-# Specific test file
-pytest tests/test_api.py
-
-# With coverage
-pytest --cov=app --cov-report=html
-
-# Using Docker
-docker compose exec app pytest
-```
-
-**Test specific services:**
-```bash
-# Test API endpoints
-pytest tests/api/
-
-# Test services
-pytest tests/services/
-
-# Test reports
-pytest tests/reports/
-```
 
 ### 4. Code Quality
 
@@ -236,13 +203,15 @@ mypy app/
 app/
 ├── api/                 # API routes and models
 │   ├── routes/         # Route handlers
+│   ├── utils/ 
 │   ├── models.py       # Pydantic models
 │   └── db.py          # Database utilities
-├── core/               # Core utilities
 ├── pharmcat/          # PharmCAT integration
 ├── reports/            # Report generation
 ├── services/           # Background services
-└── utils/              # Utility functions
+└── templates/
+└── utils/
+└── visualizations/     # Kroki + mermaid diagrams
 ```
 
 **Adding new endpoints:**
@@ -390,88 +359,16 @@ async function checkStatus(jobId) {
 ### Test Structure
 
 **Test organization:**
-```
-tests/
-├── api/                # API endpoint tests
-├── services/           # Service tests
-├── reports/            # Report generation tests
-├── utils/              # Utility function tests
-├── fixtures/           # Test fixtures
-└── conftest.py         # Test configuration
-```
 
 **Writing tests:**
-```python
-# tests/api/test_upload.py
-import pytest
-from fastapi.testclient import TestClient
-from app.main import app
 
-client = TestClient(app)
-
-def test_upload_file():
-    with open("test_data/sample.vcf", "rb") as f:
-        response = client.post(
-            "/upload/genomic-data",
-            files={"file": f},
-            data={"sample_identifier": "test_sample"}
-        )
-    
-    assert response.status_code == 200
-    assert "job_id" in response.json()
-```
 
 ### Test Data
 
-**Test data management:**
-- Use `test_data/` directory for test files
-- Create fixtures for common test data
-- Use database transactions for isolation
-- Clean up after tests
-
-**Example test fixture:**
-```python
-# tests/conftest.py
-import pytest
-from app.api.db import SessionLocal, create_patient
-
-@pytest.fixture
-def db_session():
-    session = SessionLocal()
-    yield session
-    session.close()
-
-@pytest.fixture
-def test_patient(db_session):
-    patient_id = create_patient(db_session, "test_patient")
-    yield patient_id
-    # Cleanup handled by transaction rollback
-```
 
 ## Debugging
 
 ### Debugging Tools
-
-**VS Code debugging:**
-1. Install Python extension
-2. Create `.vscode/launch.json`:
-```json
-{
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Python: FastAPI",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/app/main.py",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            }
-        }
-    ]
-}
-```
 
 **Docker debugging:**
 ```bash
@@ -493,7 +390,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Debug logging
 logger.debug("Debug message")
 logger.info("Info message")
 logger.warning("Warning message")
@@ -590,12 +486,12 @@ docker compose up -d --build app
 # Development stage
 FROM python:3.12-slim as development
 COPY requirements-dev.txt .
-RUN pip install -r requirements-dev.txt
+RUN uv pip install -r requirements-dev.txt
 
 # Production stage
 FROM python:3.12-slim as production
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN uv pip install -r requirements.txt
 ```
 
 ## Next Steps

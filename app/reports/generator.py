@@ -99,7 +99,7 @@ def _normalize_version_text(version_text: str) -> str:
     """Extract a clean, numeric version string from arbitrary text.
 
     Examples:
-    - "The Genome Analysis Toolkit () v4.6.1.0" -> "4.6.1.0"
+    - "The Genome Analysis Toolkit () v4.6.2.0" -> "4.6.2.0"
     - "v6.8.0" -> "6.8.0"
     - "3.0.0" -> "3.0.0"
     - "N/A" -> "N/A"

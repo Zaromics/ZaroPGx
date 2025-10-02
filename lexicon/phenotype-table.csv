@@ -1,0 +1,72 @@
+Gene,Phenotype,Priority
+ABCG2,Normal Function,Normal/Routine/Low Risk
+ABCG2,Decreased Function,Abnormal/Priority/High Risk
+ABCG2,Poor Function,Abnormal/Priority/High Risk
+CACNA1S,Uncertain Susceptibility,Normal Risk
+CACNA1S,Malignant Hyperthermia Susceptibility,Abnormal/Priority/High Risk
+CFTR,Favorable Response,None
+CFTR,Unfavorable Response,None
+CFTR,Indeterminate,None
+CYP2B6,Intermediate Metabolizer,Abnormal/Priority/High Risk
+CYP2B6,Normal Metabolizer,Normal/Routine/Low Risk
+CYP2B6,Poor Metabolizer,Abnormal/Priority/High Risk
+CYP2B6,Rapid Metabolizer,Normal/Routine/Low Risk
+CYP2B6,Ultrarapid Metabolizer,Normal/Routine/Low Risk
+CYP2B6,Indeterminate,None
+CYP2C9,Normal Metabolizer,Normal/Routine/Low Risk
+CYP2C9,Intermediate Metabolizer,Abnormal/Priority/High Risk
+CYP2C9,Poor Metabolizer,Abnormal/Priority/High Risk
+CYP2C9,Indeterminate,Normal/Routine/Low Risk
+CYP2C19,Intermediate Metabolizer,Abnormal/Priority/High Risk
+CYP2C19,Likely Intermediate Metabolizer,Abnormal/Priority/High Risk
+CYP2C19,Likely Poor Metabolizer,Abnormal/Priority/High Risk
+CYP2C19,Normal Metabolizer,Normal/Routine/Low Risk
+CYP2C19,Poor Metabolizer,Abnormal/Priority/High Risk
+CYP2C19,Rapid Metabolizer,Abnormal/Priority/High Risk
+CYP2C19,Ultrarapid Metabolizer,Abnormal/Priority/High Risk
+CYP2C19,Indeterminate,None
+CYP2D6,Ultrarapid Metabolizer,Abnormal/Priority/High Risk
+CYP2D6,Normal Metabolizer,Normal/Routine/Low Risk
+CYP2D6,Intermediate Metabolizer,Abnormal/Priority/High Risk
+CYP2D6,Poor Metabolizer,Abnormal/Priority/High Risk
+CYP2D6,Indeterminate,None
+CYP3A5,Normal Metabolizer,Abnormal/Priority/High Risk
+CYP3A5,Intermediate Metabolizer,Abnormal/Priority/High Risk
+CYP3A5,Possible Intermediate Metabolizer,Abnormal/Priority/High Risk
+CYP3A5,Poor Metabolizer,Normal/Routine/Low Risk
+CYP3A5,Indeterminate,None
+DPYD,Normal Metabolizer,Normal/Routine/Low Risk
+DPYD,Intermediate Metabolizer,Abnormal/Priority/High Risk
+DPYD,Poor Metabolizer,Abnormal/Priority/High Risk
+F5,Favorable Response,None
+F5,Unfavorable Response,None
+G6PD,G6PD Normal,Normal Risk
+G6PD,G6PD Deficient with CNSHA,Abnormal/Priority/High Risk
+G6PD,G6PD Variable,Abnormal/Priority/High Risk
+G6PD,G6PD Deficient,Abnormal/Priority/High Risk
+G6PD,G6PD Indeterminate,Abnormal/Priority/High Risk
+IFNL3,Favorable Response,None
+IFNL3,Unfavorable Response,None
+IFNL3,Indeterminate,None
+NUDT15,Possible Intermediate Metabolizer,Abnormal/Priority/High Risk
+NUDT15,Poor Metabolizer,Abnormal/Priority/High Risk
+NUDT15,Normal Metabolizer,Normal/Routine/Low risk
+NUDT15,Intermediate Metabolizer,Abnormal/Priority/High Risk
+NUDT15,Indeterminate,Abnormal/Priority/High Risk
+RYR1,Uncertain Susceptibility,Normal Risk
+RYR1,Malignant Hyperthermia Susceptibility,Abnormal/Priority/High Risk
+SLCO1B1,Normal Function,Normal/Routine/Low Risk
+SLCO1B1,Decreased Function,Abnormal/Priority/High Risk
+SLCO1B1,Poor Function,Abnormal/Priority/High Risk
+SLCO1B1,Possible Decreased Function,Abnormal/Priority/High Risk
+SLCO1B1,Increased Function,None
+SLCO1B1,Indeterminate,None
+TPMT,Intermediate Metabolizer,Abnormal/Priority/High Risk
+TPMT,Normal Metabolizer,Normal/Routine/Low Risk
+TPMT,Poor Metabolizer,Abnormal/Priority/High Risk
+TPMT,Possible Intermediate Metabolizer,Abnormal/Priority/High Risk
+TPMT,Indeterminate,Abnormal/Priority/High Risk
+UGT1A1,Normal Metabolizer,Normal/Routine/Low Risk
+UGT1A1,Intermediate Metabolizer,Normal/Routine/Low Risk
+UGT1A1,Poor Metabolizer,Abnormal/Priority/High Risk
+UGT1A1,Indeterminate,None

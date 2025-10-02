@@ -6,9 +6,11 @@ title: System Architecture
 
 Detailed technical architecture and design principles of ZaroPGx.
 
+> **Quick Reference**: For a high-level overview of components and port mappings, see the [Architecture Overview](../architecture.md).
+
 ## High-Level Architecture
 
-ZaroPGx is built as a microservices architecture using Docker containers, orchestrated with Docker Compose. The system is designed for scalability, maintainability, and data privacy.
+ZaroPGx is built as a microservices architecture using both reference and API wrapper Docker containers, orchestrated with Docker Compose. The system is designed for extensibility, maintainability, and ensures PHI data privacy when run locally "on premises".
 
 ### Core Components
 
@@ -67,10 +69,10 @@ graph TB
 
 ## Service Architecture
 
-### FastAPI Application (`app`)
+### Core FastAPI Application (`app`)
 
-**Purpose**: Main orchestrator and web interface
-**Technology**: Python 3.12, FastAPI, SQLAlchemy
+**Purpose**: Main orchestrator and web user interface
+**Technology**: Python 3.12, FastAPI, SQLAlchemy, psycopg, sam,bcftools
 **Port**: 8765 → 8000
 
 **Key Responsibilities:**
@@ -90,15 +92,16 @@ graph TB
 ### PostgreSQL Database (`db`)
 
 **Purpose**: Primary data storage
-**Technology**: PostgreSQL 15
+**Technology**: PostgreSQL 17 (latest stable revision of)
 **Port**: 5444 → 5432
 
 **Schemas:**
 - `public`: Core application data
 - `cpic`: CPIC guidelines and data
-- `fhir`: FHIR resources
+- `fhir`: FHIR r5 genomic IG resources
 - `user_data`: User and patient data
 - `reports`: Generated reports metadata
+- `phenopackets`: In progress
 
 **Key Tables:**
 - `patients`: Patient information
@@ -110,14 +113,14 @@ graph TB
 ### PharmCAT Service (`pharmcat`)
 
 **Purpose**: Pharmacogenomic analysis engine
-**Technology**: Java 17, Flask wrapper
+**Technology**: Java 17, FastAPI wrapper
 **Port**: 5001 → 5000
 
 **Key Features:**
 - Star allele calling for 23 core pharmacogenes
-- CPIC guideline integration
-- Report generation
-- PyPGx integration for outside calls
+- CPIC, DWPG, FDA guidelines integration
+- HTML Report generation
+- Outside call integration for uncallable genes
 
 **API Endpoints:**
 - `POST /analyze`: Analyze VCF file
@@ -127,28 +130,26 @@ graph TB
 ### PyPGx Service (`pypgx`)
 
 **Purpose**: Comprehensive allele calling
-**Technology**: Python, PyPGx library
+**Technology**: Python, PyPGx affordances
 **Port**: 5053 → 5000
 
 **Key Features:**
-- Star allele calling for 60+ pharmacogenes
-- CYP2D6 complex allele calling
+- Star allele calling for 87 pharmacogenes
+- Difficult to type genes such as CYP2D6
+- Considers SVs and CNVs
 - Diplotype and phenotype prediction
-- Integration with PharmCAT
 
 **Supported Genes:**
-- CYP2D6, CYP2C19, CYP2C9, CYP3A4, CYP3A5
-- TPMT, DPYD, UGT1A1, COMT
-- And 50+ additional genes
+- see config/genes.json
 
 ### GATK API (`gatk-api`)
 
-**Purpose**: Genomic preprocessing
-**Technology**: Java, GATK toolkit
+**Purpose**: Multiple functions
+**Technology**: Java, GATK affordances
 **Port**: 5002 → 5000
 
 **Key Features:**
-- BAM/CRAM to VCF conversion
+- BAM/SAM/CRAM to VCF conversion
 - Variant calling and filtering
 - Quality control metrics
 - Reference genome processing
@@ -168,9 +169,7 @@ graph TB
 
 **Key Features:**
 - HLA-A, HLA-B, HLA-C typing
-- HLA-DRB1, HLA-DQA1, HLA-DQB1 typing
-- OptiType integration
-- nf-core/hlatyping pipeline
+- OptiType core
 
 ### HAPI FHIR Server (`fhir-server`)
 
@@ -179,10 +178,10 @@ graph TB
 **Port**: 8090 → 8080
 
 **Key Features:**
-- FHIR R4 compliance
-- Patient resource management
+- FHIR compliance
+- Groundwork laid for enterprise expansion
 - Observation resource storage
-- FHIR query capabilities
+- Structured semantic FHIR query capability
 
 ## Data Flow Architecture
 
@@ -277,33 +276,7 @@ erDiagram
 ### Docker Compose Structure
 
 ```yaml
-version: '3.8'
-services:
-  app:
-    build: ./docker/app
-    ports: ["8765:8000"]
-    depends_on: [db, pharmcat, pypgx, gatk-api]
-    volumes: ["./data:/data", "./reference:/reference"]
-    
-  db:
-    image: postgres:15
-    ports: ["5444:5432"]
-    volumes: ["./db/init:/docker-entrypoint-initdb.d"]
-    
-  pharmcat:
-    build: ./docker/pharmcat
-    ports: ["5001:5000"]
-    volumes: ["./data:/data", "./reference:/reference"]
-    
-  pypgx:
-    build: ./docker/pypgx
-    ports: ["5053:5000"]
-    volumes: ["./data:/data", "./reference:/reference"]
-    
-  gatk-api:
-    build: ./docker/gatk-api
-    ports: ["5002:5000"]
-    volumes: ["./data:/data", "./reference:/reference"]
+see `docker-compose.yml.example`
 ```
 
 ### Network Architecture
@@ -477,16 +450,10 @@ app/
 ### Testing Architecture
 
 **Test Types:**
-- Unit tests for individual components
-- Integration tests for service interactions
-- End-to-end tests for complete workflows
-- Performance tests for scalability
+- TO DO
 
 **Test Infrastructure:**
-- Test database setup
-- Mock services for external dependencies
-- Test data generation
-- Automated test execution
+- TO DO
 
 ## Deployment Architecture
 
@@ -518,11 +485,6 @@ app/
 - Security scanning
 - Image optimization
 
-**Deployment Process:**
-- Blue-green deployment
-- Rolling updates
-- Health checks
-- Rollback capability
 
 ## Next Steps
 

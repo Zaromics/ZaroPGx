@@ -10,9 +10,8 @@ Complete guide for deploying ZaroPGx in production environments.
 
 ZaroPGx can be deployed in various environments:
 - **Local Development**: Docker Compose on local machine
-- **Cloud Deployment**: AWS, Google Cloud, Azure
-- **On-Premises**: Private data centers
-- **Hybrid**: Combination of cloud and on-premises
+- **Cloud Deployment**: Should work with typical VPS vendors
+- **On-Premises**: Private data centers with Docker Swarm or Kubernetes
 
 ## Prerequisites
 
@@ -22,7 +21,7 @@ ZaroPGx can be deployed in various environments:
 - 8 CPU cores
 - 32 GB RAM
 - 500 GB SSD storage
-- Ubuntu 20.04+ or CentOS 8+
+- Ubuntu 20.04+
 - Docker 20.10+
 - Docker Compose 2.0+
 
@@ -30,7 +29,7 @@ ZaroPGx can be deployed in various environments:
 - 16+ CPU cores
 - 64+ GB RAM
 - 1+ TB NVMe SSD storage
-- Ubuntu 22.04 LTS
+- Ubuntu 22.04 LTS+
 - Docker 24.0+
 - Docker Compose 2.20+
 
@@ -86,8 +85,8 @@ DB_PASSWORD=your-secure-db-password
 # Application
 BIND_ADDRESS=0.0.0.0
 LOG_LEVEL=INFO
-AUTHOR_NAME=Your Organization
-SOURCE_URL=https://github.com/your-org/ZaroPGx
+AUTHOR_NAME=Powered by ZaroPGx
+SOURCE_URL=https://github.com/Zaroganos/ZaroPGx
 
 # Services
 PHARMCAT_API_URL=http://pharmcat:5000
@@ -148,7 +147,6 @@ sudo certbot certonly --standalone -d your-domain.com
 **Create production compose file:**
 ```yaml
 # docker-compose.prod.yml
-version: '3.8'
 
 services:
   app:
@@ -446,7 +444,7 @@ iostat -x 1
 **Centralized logging:**
 ```yaml
 # docker-compose.logging.yml
-version: '3.8'
+
 services:
   app:
     logging:

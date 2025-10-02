@@ -4,7 +4,7 @@ title: Architecture Overview
 
 ## High-level
 
-The system is a docker-compose stack centered on a FastAPI app with supporting bioinformatics and visualization services. Key components:
+The system is a docker compose stack centered on a core FastAPI app with supporting bioinformatics and visualization services. Key components:
 
 - FastAPI app (`app`): Web UI and API, orchestrates PGx operations.
 - PostgreSQL (`db`): Main database.
@@ -38,3 +38,7 @@ Shared host directories used across services:
 ## Workflows
 
 See `app/visualizations/workflow.md` and `app/visualizations/workflow.mmd` for diagrams and detailed flows. The app also integrates with Kroki to render diagrams in the UI.
+
+## Further Reading
+
+For detailed technical architecture, design principles, and implementation details, see the [System Architecture](developer/architecture.md) documentation.
