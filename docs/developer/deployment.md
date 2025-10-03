@@ -238,7 +238,7 @@ services:
     ports:
       - "8090:8080"
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/cpic_db
+      - SPRING_DATASOURCE_URL=jdbc:postgresql+psycopg://db:5432/cpic_db
       - SPRING_DATASOURCE_USERNAME=cpic_user
       - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
     depends_on:

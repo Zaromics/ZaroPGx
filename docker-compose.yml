@@ -82,6 +82,7 @@ services:
       - hapi.fhir.allow_external_references=true
       - hapi.fhir.allow_multiple_delete=true
       - hapi.fhir.reuse_cached_search_results_millis=60000
+      # Try not to add psycopg here, thanks~
       - spring.datasource.url=jdbc:postgresql://db:5432/cpic_db?currentSchema=fhir
       - spring.datasource.username=cpic_user
       - spring.datasource.password=test123
@@ -279,6 +280,7 @@ services:
     container_name: pgx_nextflow
     restart: unless-stopped
     environment:
+      - NXF_DISABLE_JVM_CGROUPS=true
       - NXF_HOME=/opt/nextflow
       - NXF_OPTS=-Xms1g -Xmx4g
     volumes:
@@ -310,7 +312,7 @@ services:
       - pypgx
       - kroki
     environment:
-      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+      - DATABASE_URL=postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
       - SECRET_KEY=${SECRET_KEY}
       - PHARMCAT_API_URL=http://pharmcat:5000
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar

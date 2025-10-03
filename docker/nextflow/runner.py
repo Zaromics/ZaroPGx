@@ -101,7 +101,7 @@ async def run(request: NextflowRunRequest):
             db_name = os.getenv("DB_NAME", "cpic_db")
             
             # Create database URL and engine
-            database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+            database_url = f"postgresql+psycopg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
             engine = create_engine(database_url, connect_args={"connect_timeout": 5})
             
             # Query workflow status directly

@@ -40,32 +40,28 @@ The system is designed to:
 - Optional export of reports to a bundled HAPI FHIR server (coming in 0.3)
 
 ## Architecture
+Containerized services orchestrated with Docker Compose with a core Nextflow-coordinated pipeline:
 
-Containerized services orchestrated with Docker Compose to provide a complete pharmacogenomic analysis pipeline:
-
-- **Core FastAPI Application** (Web UI, API, report generation, websocket progress tracking) - Main application orchestrating the analysis workflow
+- **Main FastAPI App** (Web UI, API, report generation, websocket progress tracking) - Main application orchestrating the analysis workflow
+  - Service Ports (Host → Container) 8765 → 8000
 - **Nextflow service** - Handles execution of the pipeline
 - **Genome Reference downloader** - Manages reference genome data for accurate variant calling
-- **PostgreSQL DB** (managed with Alembic) - Stores guidelines, sample data, and generated reports
+  - Service Ports (Host → Container) 5050 → 5050
+- **PostgreSQL DB** (via psycopg v3 & managed with Alembic) - Stores guidelines, sample data, and generated reports
+  - Service Ports (Host → Container) 5444 → 5432
 - **GATK service** (FastAPI wrapper) - Handles various conversion and preprocessing operations
+  - Service Ports (Host → Container) 5002 → 5000
 - **nf-core/hlatyping** (nextflow OptiType container) - Performs HLA Calling with either FASTQ or BAM inputs
 - **PyPGx service** - (FastAPI wrapper) - Provides comprehensive allele calling across multiple pharmacogenes, including difficult ones like CYP2D6
+  - Service Ports (Host → Container) 5053 → 5000
 - **PharmCAT service** (FastAPI wrapper) - Executes PharmCAT pipeline with PyPGx and OptiType outside calls to unlock full 23-gene coverage
+  - Service Ports (Host → Container) 5001 → 5000
 - **Kroki** - Renders workflow diagrams which serve as a visual depiction of the pipeline the report has been built from
 - **HAPI FHIR server** - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records
+  - Service Ports (Host → Container) 8090 → 8080
 
 
 **Workflow**: Genomic data sample submission → Preprocessing (if needed) → OptiType HLA Allele Calling → PyPGx Star Allele Calling → PharmCAT Matching with PyPGx and OptiType Outside Calls → Report Creation → optional EHR export via FHIR
-
-### Service Ports (Host → Container)
-
-- App/UI: 8765 → 8000
-- PostgreSQL: 5444 → 5432
-- PharmCAT wrapper: 5001 → 5000
-- GATK API: 5002 → 5000
-- PyPGx: 5053 → 5000
-- Genome downloader: 5050 → 5050
-- HAPI FHIR: 8090 → 8080
 
 ### Data Directories (Mounted)
 
@@ -76,12 +72,13 @@ Containerized services orchestrated with Docker Compose to provide a complete ph
 ## Requirements
 
 - Docker and Docker Compose
+  - if on Windows WSL, Docker Desktop is recommended
 - Git
 
 - Internet connection: first run requires significant bandwidth to fetch images, build containers, and load reference genomes
-- Hardware, Minimum (limited functions): 4 CPU cores, 8 GB DDR3 RAM, 50 GB storage space
-- Hardware, Recommended (all pipeline functions): 8+ CPU cores, 64+ GB DDR4 RAM, 1+ TB NVMe SSD storage space 
-- Hardware, Preferred (all pipeline functions with speed): 16 CPU cores, 128 GB ECC DDR4+ RAM, 2+ TB NVMe SSD storage space; with configured parallelism
+- Hardware, Bare Minimum (limited functions): 4 CPU cores, 8 GB DDR3 RAM, 50 GB storage space
+- Hardware, Acceptable (all pipeline functions): 8+ CPU cores, 64+ GB DDR4 RAM, 1+ TB NVMe SSD storage space 
+- Hardware, Preferred (all pipeline functions with quickness): 16 CPU cores, 128 GB ECC DDR4+ RAM, 2+ TB NVMe SSD storage space; with configured parallelism
 
 ## Quick Start
 

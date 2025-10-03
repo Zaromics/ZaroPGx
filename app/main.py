@@ -1142,7 +1142,7 @@ async def services_status(request: Request, current_user: str = Depends(get_opti
             "enabled": True  # App is always enabled
         },
         "database": {
-            "url": os.getenv("DATABASE_URL", "postgresql://cpic_user:cpic_password@db:5432/cpic_db"),
+            "url": os.getenv("DATABASE_URL", "postgresql+psycopg://cpic_user:cpic_password@db:5432/cpic_db"),
             "timeout": 5,
             "enabled": True  # Database is always enabled
         }

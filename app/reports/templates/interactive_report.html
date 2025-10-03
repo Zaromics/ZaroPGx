@@ -751,38 +751,22 @@
 
             <div id="export" class="tab-content">
                 <h3>Export to Electronic Health Record</h3>
-                <p>You can export this pharmacogenomic report to your Electronic Health Record (EHR) system 
-                   using FHIR (Fast Healthcare Interoperability Resources) standard.</p>
+                <p>FHIR export functionality is currently under construction. You can access the HAPI FHIR server directly for testing and development purposes.</p>
+
                 <div class="card">
-                    <form id="fhirExportForm">
-                        <div class="mb-3">
-                            <label for="fhirServerUrl" class="form-label">FHIR Server URL</label>
-                            <input type="url" class="form-control" id="fhirServerUrl" name="fhirServerUrl" 
-                                   placeholder="https://your-ehr-fhir-server.com/fhir">
-                            <div class="form-text">Enter the FHIR server URL of your EHR system</div>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Patient Information (Optional)</label>
-                            <div>
-                                <input type="text" class="form-control" id="patientFamilyName" 
-                                       placeholder="Family Name" style="margin-bottom: 0.5rem;">
-                                <input type="text" class="form-control" id="patientGivenName" 
-                                       placeholder="Given Name" style="margin-bottom: 0.5rem;">
-                            </div>
-                            <select class="form-select" id="patientGender">
-                                <option value="" selected>Gender (Optional)</option>
-                                <option value="male">Male</option>
-                                <option value="female">Female</option>
-                                <option value="other">Other</option>
-                                <option value="unknown">Unknown</option>
-                            </select>
-                            <input type="date" class="form-control" id="patientBirthDate" placeholder="Birth Date (Optional)">
-                        </div>
-                        <div>
-                            <button type="button" class="btn btn-primary" id="fhirExportBtn">Export to EHR</button>
-                        </div>
-                    </form>
-                    <div id="exportResult" style="margin-top: 1rem; display: none;"></div>
+                    <div style="text-align: center; padding: 20px;">
+                        <h4 style="margin-bottom: 15px; color: var(--warning-color);">🚧 Under Construction 🚧</h4>
+                        <p style="margin-bottom: 20px;">The FHIR export feature is being developed. For now, you can access the HAPI FHIR server directly.</p>
+                        <a href="http://localhost:8090"
+                           target="_blank"
+                           class="btn btn-primary"
+                           style="padding: 12px 24px; font-size: 16px;">
+                            Open HAPI FHIR Server
+                        </a>
+                        <p style="margin-top: 15px; font-size: 0.9em; color: #666;">
+                            HAPI FHIR Server is available at: <code>http://localhost:8090</code>
+                        </p>
+                    </div>
                 </div>
             </div>
 
