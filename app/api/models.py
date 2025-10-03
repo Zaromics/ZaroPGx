@@ -200,12 +200,12 @@ class JobStage(str, Enum):
     COMPLETE = "complete"
     
     # Legacy stages (DEPRECATED)
-    # UPLOAD = "upload"
-    # ANALYSIS = "analysis"
-    # GATK = "gatk"
-    # PYPGX = "pypgx"
-    # PHARMCAT = "pharmcat"
-    # REPORT = "report"
+    UPLOAD = "upload"
+    ANALYSIS = "analysis"
+    GATK = "gatk"
+    PYPGX = "pypgx"
+    PHARMCAT = "pharmcat"
+    REPORT = "report"
 
 
 class JobStageStatus(str, Enum):

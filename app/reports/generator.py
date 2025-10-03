@@ -36,7 +36,7 @@ from app.core.version_manager import get_all_versions, get_versions_dict
 
 # Import for pharmcat TSV parsing (used in multiple functions)
 from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
-from app.reports.pdf_generators import generate_pdf_report_dual_lane
+# from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
 
 # Do not hardcode; derive from pyproject when available
@@ -682,17 +682,18 @@ def create_interactive_html_report(
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
-    
+
     Args:
         patient_id: Patient identifier
         report_id: Report identifier
         diplotypes: List of diplotype results
         recommendations: List of drug recommendations
         output_path: Path to save the HTML report
-        
+
     Returns:
-        Path to the generated HTML file
     """
+    # Local import to avoid circular import
+    from app.reports.pdf_generators import generate_pdf_report_dual_lane
     try:
         logger.info(f"Generating interactive HTML report for patient {patient_id}, report {report_id}")
         

@@ -28,7 +28,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
 # Python deps for API using uv
-RUN uv pip install --system fastapi uvicorn httpx python-dotenv psutil sqlalchemy psycopg2-binary
+RUN uv pip install --system fastapi uvicorn httpx python-dotenv psutil sqlalchemy psycopg2-binary requests
 EXPOSE 5055
 
 ENTRYPOINT ["python3", "/opt/runner.py"]
