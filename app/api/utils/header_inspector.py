@@ -8,22 +8,26 @@ Public API:
   Returns a normalized JSON structure suitable for storage in genomic_file_headers.header_info.
 """
 
-import os
-import sys
-import gzip
+# Standard library imports
 import argparse
-from pathlib import Path
+import bz2
+import gzip
 import json
-import time
-import subprocess
-import shlex
 import os
-from typing import Dict, List, Optional, Union
 import re
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+# Local imports
 from app.api.utils.file_utils import is_compressed_file, has_index_file
 
+# Third-party imports (optional dependencies)
 try:
-    import pysam
+    import pysam  # type: ignore
 except ImportError:
     print("Error: pysam not installed. Install with: pip install pysam, or build it from source.")
     sys.exit(1)
@@ -116,9 +120,8 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
                     elif ln.startswith('##GATKCommandLine.') and not created_by:
                         # Example: ##GATKCommandLine.HaplotypeCaller=<ID=HaplotypeCaller,Version=3.8-1_..., ...>
                         try:
-                            import re as _re
-                            m_id = _re.search(r"GATKCommandLine\.([^=]+)=<", ln)
-                            m_ver = _re.search(r"Version=([^,>]+)", ln)
+                            m_id = re.search(r"GATKCommandLine\.([^=]+)=<", ln)
+                            m_ver = re.search(r"Version=([^,>]+)", ln)
                             tool = m_id.group(1) if m_id else "GATK"
                             ver = m_ver.group(1) if m_ver else None
                             created_by = f"GATK {tool}{(' ' + ver) if ver else ''}"
@@ -128,9 +131,8 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
                         # Example: ##bcftools_viewVersion=1.22-..., record bcftools version
                         created_by = ln.split('=', 1)[1]
                     elif ln.startswith('##contig='):
-                        import re as _re
-                        m_id = _re.search(r'ID=([^,>]+)', ln)
-                        m_len = _re.search(r'length=([0-9]+)', ln)
+                        m_id = re.search(r'ID=([^,>]+)', ln)
+                        m_len = re.search(r'length=([0-9]+)', ln)
                         if m_id:
                             cid = m_id.group(1)
                             contigs.append(cid)
@@ -175,9 +177,8 @@ def inspect_header(filepath: str, max_bytes: Optional[int] = None, timeout_sec: 
                         md_version = rec.split('=', 1)[1]
                     if rec.startswith('##GATKCommandLine.') and not md_created_by:
                         try:
-                            import re as _re
-                            m_id = _re.search(r"GATKCommandLine\.([^=]+)=<", rec)
-                            m_ver = _re.search(r"Version=([^,>]+)", rec)
+                            m_id = re.search(r"GATKCommandLine\.([^=]+)=<", rec)
+                            m_ver = re.search(r"Version=([^,>]+)", rec)
                             tool = m_id.group(1) if m_id else "GATK"
                             ver = m_ver.group(1) if m_ver else None
                             md_created_by = f"GATK {tool}{(' ' + ver) if ver else ''}"
@@ -397,7 +398,6 @@ class GenomicHeaderInspector:
         if filepath.endswith('.gz'):
             return gzip.open(filepath, mode + 't')
         elif filepath.endswith('.bz2'):
-            import bz2
             return bz2.open(filepath, mode + 't')
         else:
             return open(filepath, mode)

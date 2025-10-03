@@ -1,11 +1,14 @@
 import os
 import json
 import logging
+import shutil
+import uuid
 from datetime import datetime
 import re
 import base64
 from typing import List, Dict, Any
 import glob
+
 from weasyprint import HTML, CSS
 try:
     # WeasyPrint >= 53
@@ -16,7 +19,9 @@ except Exception:
         from weasyprint.fonts import FontConfiguration  # type: ignore
     except Exception:
         FontConfiguration = None  # type: ignore
+
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
 from app.visualizations.workflow_diagram import (
     render_workflow,
@@ -26,9 +31,14 @@ from app.visualizations.workflow_diagram import (
     render_kroki_mermaid_svg,
     render_with_graphviz,
 )
+
 from app.core.version_manager import get_all_versions, get_versions_dict
 
-# Version
+# Import for pharmcat TSV parsing (used in multiple functions)
+from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
+from app.reports.pdf_generators import generate_pdf_report_dual_lane
+from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
+
 # Do not hardcode; derive from pyproject when available
 __version__ = "0.0.0"
 
@@ -192,7 +202,7 @@ def build_citations() -> List[Dict[str, str]]:
         "text": f"PyPGx, version {pypgx_ver}. Available at: https://pypgx.readthedocs.io/en/latest/index.html (accessed {today}).",
     })
     citations.append({
-        "name": "Pharmacogenomics Clinical Annotation Tool (PharmCAT)",
+        "name": "PharmCAT",
         "text": f"Pharmacogenomics Clinical Annotation Tool (PharmCAT), version {pharmcat_ver}. Available at: https://github.com/PharmGKB/PharmCAT (accessed {today}).",
         "link": "https://github.com/PharmGKB/PharmCAT",
     })
@@ -207,9 +217,29 @@ def build_citations() -> List[Dict[str, str]]:
         "link": "https://cpicpgx.org/",
     })
     citations.append({
+        "name": "DWPG",
+        "text": f"Dutch Pharmacogenomics Working Group. Available at: https://www.dwpg.nl/ (accessed {today}).",
+        "link": "https://www.dwpg.nl/",
+    })
+    citations.append({
+        "name": "FDA",
+        "text": f"Food and Drug Administration PGx Guidelines. Available at: https://www.fda.gov/ (accessed {today}).",
+        "link": "https://www.fda.gov/",
+    })
+    citations.append({
+        "name": "MitoZ",
+        "text": f"MitoZ-based mitochondrial typing. Available at: https://mitoz.readthedocs.io/en/stable/ (accessed {today}).",
+        "link": "https://mitoz.readthedocs.io/en/stable/",
+    })
+    citations.append({
         "name": "PharmGKB",
         "text": f"Pharmacogenomics Knowledgebase (PharmGKB). Available at: https://www.pharmgkb.org/ (accessed {today}).",
         "link": "https://www.pharmgkb.org/",
+    })
+    citations.append({
+        "name": "nf-core/hlatyping",
+        "text": f"OptiType-based HLA typing using nf-core/hlatyping. Available at: https://nf-co.re/hlatyping (accessed {today}).",
+        "link": "https://nf-co.re/hlatyping",
     })
     return citations
 
@@ -335,9 +365,8 @@ def generate_pdf_report(
                 tsv_candidates.append(os.path.join(report_dir_probe, f"{patient_id}_pgx_pharmcat.tsv"))
                 tsv_candidates.append(os.path.join(report_dir_probe, f"{patient_id}.report.tsv"))
                 try:
-                    import glob as _g
-                    tsv_candidates.extend(_g.glob(os.path.join(report_dir_probe, "*_pgx_pharmcat.tsv")))
-                    any_pharmcat = _g.glob(os.path.join(report_dir_probe, "*.pharmcat.tsv"))
+                    tsv_candidates.extend(glob.glob(os.path.join(report_dir_probe, "*_pgx_pharmcat.tsv")))
+                    any_pharmcat = glob.glob(os.path.join(report_dir_probe, "*.pharmcat.tsv"))
                     if any_pharmcat:
                         any_pharmcat.sort(key=lambda p: os.path.getmtime(p), reverse=True)
                         tsv_candidates.extend(any_pharmcat)
@@ -348,8 +377,8 @@ def generate_pdf_report(
                     parent_dir = os.path.dirname(report_dir_probe)
                     tsv_candidates.append(os.path.join(parent_dir, f"{patient_id}_pgx_pharmcat.tsv"))
                     tsv_candidates.append(os.path.join(parent_dir, f"{patient_id}.report.tsv"))
-                    tsv_candidates.extend(_g.glob(os.path.join(parent_dir, "*_pgx_pharmcat.tsv")))
-                    any_pharmcat_parent = _g.glob(os.path.join(parent_dir, "*.pharmcat.tsv"))
+                    tsv_candidates.extend(glob.glob(os.path.join(parent_dir, "*_pgx_pharmcat.tsv")))
+                    any_pharmcat_parent = glob.glob(os.path.join(parent_dir, "*.pharmcat.tsv"))
                     if any_pharmcat_parent:
                         any_pharmcat_parent.sort(key=lambda p: os.path.getmtime(p), reverse=True)
                         tsv_candidates.extend(any_pharmcat_parent)
@@ -357,7 +386,6 @@ def generate_pdf_report(
                     pass
                 tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
                 if tsv_path:
-                    from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
                     _diplos, _ = parse_pharmcat_tsv(tsv_path)
                     try:
                         logger.info(f"Executive Summary TSV selected (PDF path): {tsv_path}")
@@ -436,7 +464,6 @@ def generate_pdf_report(
                     logger.info(f"✓ Using existing SVG workflow for PDF: {len(svg_content)} chars")
             else:
                 # If SVG doesn't exist, generate it first
-                from app.visualizations.workflow_diagram import render_workflow
                 logger.info("Generating SVG workflow for PDF...")
                 svg_bytes = render_workflow(fmt="svg", workflow=workflow)
                 if svg_bytes:
@@ -749,10 +776,8 @@ def create_interactive_html_report(
         if not workflow_png_url and not workflow_png_data_uri:
             # Try pure-Python Pillow PNG
             try:
-                from app.visualizations.workflow_diagram import render_simple_png_from_workflow
                 png_bytes = render_simple_png_from_workflow(workflow)
                 if png_bytes:
-                    import base64
                     b64 = base64.b64encode(png_bytes).decode("ascii")
                     workflow_png_data_uri = f"data:image/png;base64,{b64}"
             except Exception:
@@ -815,8 +840,7 @@ def create_interactive_html_report(
         # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
         def _is_uuid_like(s: str) -> bool:
             try:
-                import uuid as _uuid
-                _uuid.UUID(str(s))
+                uuid.UUID(str(s))
                 return True
             except Exception:
                 return False
@@ -879,7 +903,6 @@ def determine_tool_source(gene_name: str, file_type: str, workflow_config: Dict[
     
     # Load gene categories from config
     try:
-        import json
         config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "genes.json")
         with open(config_path, 'r') as f:
             genes_config = json.load(f)
@@ -1238,7 +1261,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             # Pick first existing in order
             tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
             if tsv_path:
-                from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
                 diplos, _recs = parse_pharmcat_tsv(tsv_path)
                 try:
                     logger.info(f"Executive Summary TSV selected: {tsv_path}")
@@ -1420,10 +1442,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         # Deep enrichment from per-gene pipeline artifacts if available
         try:
             # Locate any per-gene pipelines under a pypgx_* directory in this report_dir
-            import glob as _glob
-            from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
-
-            pipelines_root_candidates = _glob.glob(os.path.join(report_dir, "pypgx_*"))
+            pipelines_root_candidates = glob.glob(os.path.join(report_dir, "pypgx_*"))
             if pipelines_root_candidates:
                 pipelines_root = pipelines_root_candidates[0]
                 pipeline_dirs = [os.path.join(pipelines_root, d) for d in os.listdir(pipelines_root) if d.endswith("-pipeline") and os.path.isdir(os.path.join(pipelines_root, d))]
@@ -1540,9 +1559,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     
     logger.info(f"=== WORKFLOW DIAGRAM GENERATION START ===")
     logger.info(f"Workflow configuration: {per_sample_workflow}")
-    
-    # Import the workflow diagram functions
-    from app.visualizations.workflow_diagram import render_workflow, render_simple_png_from_workflow
     
     try:
         if REPORT_CONFIG.get("write_workflow_svg", True):
@@ -1737,13 +1753,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     template_data["sample_identifier"] = display_sample
                     template_data["display_sample_id"] = display_sample
                 # If still UUID-like, try to derive from PharmCAT files in report_dir
-                def _is_uuid_like(s: str) -> bool:
-                    try:
-                        import uuid as _uuid
-                        _uuid.UUID(str(s))
-                        return True
-                    except Exception:
-                        return False
                 if (not display_sample) or _is_uuid_like(display_sample):
                     try:
                         # Look for any *_pgx_pharmcat.* files and extract base
@@ -1917,7 +1926,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     try:
                         png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
                         if png_bytes:
-                            import base64
                             pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
                             workflow_svg_for_pdf = f'<div class="workflow-figure"><img src="{pdf_png_data_uri}" alt="Workflow Diagram" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" /></div>'
                             logger.info(f"✓ Generated PNG workflow for PDF (fallback): {len(png_bytes)} bytes")
@@ -1956,7 +1964,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     if PDF_FALLBACK:
                         logger.info("🔄 Attempting ReportLab fallback...")
                         try:
-                            from app.reports.pdf_generators import generate_pdf_report_dual_lane
                             result = generate_pdf_report_dual_lane(
                                 template_data=template_data,
                                 output_path=pdf_path,
@@ -1972,7 +1979,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             
             elif PDF_ENGINE == "reportlab":
                 try:
-                    from app.reports.pdf_generators import generate_pdf_report_dual_lane
                     result = generate_pdf_report_dual_lane(
                         template_data=template_data,
                         output_path=pdf_path,
@@ -2034,7 +2040,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             if os.path.exists(pharmcat_html_file):
                 # Copy it with our standardized naming if it doesn't already exist
                 if not os.path.exists(pharmcat_html_path):
-                    import shutil
                     shutil.copy(pharmcat_html_file, pharmcat_html_path)
                     logger.info(f"PharmCAT HTML report copied to: {pharmcat_html_path}")
             
@@ -2058,7 +2063,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             
             if os.path.exists(pharmcat_json_file):
                 if not os.path.exists(pharmcat_json_path):
-                    import shutil
                     shutil.copy(pharmcat_json_file, pharmcat_json_path)
                     logger.info(f"PharmCAT JSON report copied to: {pharmcat_json_path}")
             
@@ -2081,7 +2085,6 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             
             if os.path.exists(pharmcat_tsv_file):
                 if not os.path.exists(pharmcat_tsv_path):
-                    import shutil
                     shutil.copy(pharmcat_tsv_file, pharmcat_tsv_path)
                     logger.info(f"PharmCAT TSV report copied to: {pharmcat_tsv_path}")
             

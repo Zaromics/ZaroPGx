@@ -10,11 +10,49 @@ Both backends implement the same interface, making them interchangeable.
 The system respects environment configuration for engine priority and fallback behavior.
 """
 
-import os
-import logging
+# Standard library imports
 import base64
+import logging
+import os
+import re
+import tempfile
 from abc import ABC, abstractmethod
+from datetime import datetime
+from io import BytesIO
 from typing import Dict, Any, Optional, Union
+
+# Third-party imports
+from jinja2 import Environment, FileSystemLoader, Template
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
+from reportlab.platypus import (
+    Image,
+    PageBreak,
+    Paragraph,
+    Preformatted,
+    SimpleDocTemplate,
+    Spacer
+)
+from weasyprint import CSS, HTML
+from weasyprint.text.fonts import FontConfiguration
+
+# Local imports
+from app.reports.generator import (
+    build_citations,
+    build_platform_info,
+    get_author_name,
+    get_disclaimer,
+    get_license_name,
+    get_license_url,
+    get_source_url,
+    _sanitize_graphviz_svg
+)
+from app.visualizations.workflow_diagram import read_workflow_mermaid, render_with_kroki
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -67,16 +105,6 @@ class ReportLabGenerator(PDFGenerator):
                     workflow_diagram: Optional[bytes] = None) -> bool:
         """Generate PDF using ReportLab."""
         try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak, Preformatted
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import mm
-            from reportlab.lib import colors
-            from reportlab.lib.enums import TA_CENTER, TA_LEFT
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.utils import ImageReader
-            from io import BytesIO
-            
             logger.info(f"🎯 Using {self.name} for PDF generation")
             
             # Create PDF document
@@ -150,7 +178,6 @@ class ReportLabGenerator(PDFGenerator):
                 story.append(Spacer(1, 12))
             
             # Add timestamp if available
-            from datetime import datetime
             current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
             story.append(Paragraph(f"<b>Report Generated:</b> {current_time}", normal_style))
             story.append(Spacer(1, 12))
@@ -185,7 +212,6 @@ class ReportLabGenerator(PDFGenerator):
                         svg_content = workflow_diagram.decode('utf-8')
                         if '<svg' in svg_content or '<text' in svg_content:
                             # Extract text content from SVG for ReportLab
-                            import re
                             text_matches = re.findall(r'<text[^>]*>(.*?)</text>', svg_content, re.DOTALL)
                             if text_matches:
                                 # Create a text-based workflow representation
@@ -207,7 +233,6 @@ class ReportLabGenerator(PDFGenerator):
             # If no text extracted from workflow_diagram, try template_html
             if not workflow_text_extracted and 'template_html' in template_data:
                 # Try to extract workflow SVG content from the template HTML
-                import re
                 workflow_match = re.search(r'<div class="workflow-figure">(.*?)</div>', template_data['template_html'], re.DOTALL)
                 if workflow_match:
                     workflow_svg_content = workflow_match.group(1)
@@ -463,31 +488,18 @@ class WeasyPrintGenerator(PDFGenerator):
                     workflow_diagram: Optional[bytes] = None) -> bool:
         """Generate PDF using WeasyPrint (fallback method)."""
         try:
-            from weasyprint import HTML, CSS
-            from weasyprint.text.fonts import FontConfiguration
-            from jinja2 import Template
-            import tempfile
-            
             logger.info(f"🔄 Using {self.name} as fallback for PDF generation")
             
             # Generate proper HTML using the PDF template structure
             # This ensures we get the right template for PDF generation
             try:
-                from jinja2 import Environment, FileSystemLoader
-                import os
-                
                 # Get the template directory path
                 template_dir = os.path.join(os.path.dirname(__file__), 'templates')
                 env = Environment(loader=FileSystemLoader(template_dir))
                 
                 # Use the PDF template (report_template.html) for proper PDF generation
                 template = env.get_template("report_template.html")
-                
-                # Prepare the data for the PDF template
-                from datetime import datetime
-                from app.reports.generator import build_platform_info, build_citations, get_disclaimer, get_author_name, get_license_name, get_license_url, get_source_url, _sanitize_graphviz_svg
-                from app.visualizations.workflow_diagram import read_workflow_mermaid, render_with_kroki
-                
+
                 # Build the template data structure expected by report_template.html
                 report_data = {
                     "patient_id": template_data.get("patient_id", "Unknown"),
@@ -524,11 +536,10 @@ class WeasyPrintGenerator(PDFGenerator):
                             mermaid_src = read_workflow_mermaid()
                             png_bytes = render_with_kroki(mermaid_src, fmt="png")
                             if png_bytes:
-                                import base64 as _b64
                                 report_data["workflow_kroki_svg"] = None
                                 report_data["workflow_svg"] = None
                                 report_data["workflow_png_file_url"] = ""
-                                report_data["workflow_png_data_uri"] = f"data:image/png;base64,{_b64.b64encode(png_bytes).decode()}"
+                                report_data["workflow_png_data_uri"] = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
                                 logger.info("✓ Embedded Mermaid→PNG data URI for PDF")
                         except Exception as e:
                             logger.warning(f"Mermaid→PNG generation failed, falling back to SVG/PNG files: {e}")
@@ -551,9 +562,8 @@ class WeasyPrintGenerator(PDFGenerator):
                                     logger.warning(f"Failed to read Kroki SVG: {e}")
                             if "workflow_kroki_svg" not in report_data and "workflow_svg" not in report_data and png_path.exists():
                                 try:
-                                    import base64 as _b64
                                     report_data["workflow_png_file_url"] = ""
-                                    report_data["workflow_png_data_uri"] = f"data:image/png;base64,{_b64.b64encode(png_path.read_bytes()).decode()}"
+                                    report_data["workflow_png_data_uri"] = f"data:image/png;base64,{base64.b64encode(png_path.read_bytes()).decode()}"
                                     logger.info(f"✓ Embedded PNG data URI into PDF template: {png_path}")
                                 except Exception as e:
                                     logger.warning(f"Failed to embed PNG workflow: {e}")
@@ -715,8 +725,7 @@ class WeasyPrintGenerator(PDFGenerator):
                 
                 # Prepare template data for fallback template
                 template_data_copy = template_data.copy()
-                template = Template(html_template)
-                html_content = template.render(**template_data_copy)
+                html_content = Template(html_template).render(**template_data_copy)
             
             # Create temporary HTML file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
@@ -776,14 +785,12 @@ class PDFGeneratorFactory:
         
         if pdf_engine == "reportlab":
             try:
-                import reportlab
                 primary_generator = ReportLabGenerator()
                 logger.info("✓ ReportLab generator initialized as primary")
             except ImportError:
                 logger.warning("⚠ ReportLab not available for primary engine")
         elif pdf_engine == "weasyprint":
             try:
-                import weasyprint
                 primary_generator = WeasyPrintGenerator()
                 logger.info("✓ WeasyPrint generator initialized as primary")
             except ImportError:
@@ -791,7 +798,6 @@ class PDFGeneratorFactory:
         else:
             logger.warning(f"⚠ Invalid PDF_ENGINE '{pdf_engine}', defaulting to 'weasyprint'")
             try:
-                import weasyprint
                 primary_generator = WeasyPrintGenerator()
                 logger.info("✓ WeasyPrint generator initialized as primary (default)")
             except ImportError:
@@ -802,7 +808,6 @@ class PDFGeneratorFactory:
             if pdf_engine == "reportlab":
                 # Try WeasyPrint as fallback
                 try:
-                    import weasyprint
                     fallback_generator = WeasyPrintGenerator()
                     logger.info("✓ WeasyPrint generator initialized as fallback")
                 except ImportError:
@@ -810,7 +815,6 @@ class PDFGeneratorFactory:
             elif pdf_engine == "weasyprint":
                 # Try ReportLab as fallback
                 try:
-                    import reportlab
                     fallback_generator = ReportLabGenerator()
                     logger.info("✓ ReportLab generator initialized as fallback")
                 except ImportError:

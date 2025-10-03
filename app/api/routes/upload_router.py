@@ -27,7 +27,6 @@ from app.api.db import SessionLocal, create_patient, get_db, register_genetic_da
 from app.api.models import (
     FileAnalysis as PydanticFileAnalysis,
     FileType,
-    JobStage,
     LogLevel,
     StepStatus,
     UploadResponse,
@@ -42,12 +41,16 @@ from app.api.models import (
 )
 from app.api.utils.file_processor import FileProcessor
 from app.api.utils.header_inspector import inspect_header, extract_raw_header_text, filter_header_to_canonical_contigs
-from app.pharmcat.pharmcat_client import call_pharmcat_service
-from app.reports.generator import create_interactive_html_report, generate_report
+from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.services.workflow_service import WorkflowService
-from app.visualizations.workflow_diagram import render_kroki_mermaid_svg, render_simple_png_from_workflow, render_workflow, render_with_graphviz
+from app.visualizations.workflow_diagram import (
+    render_kroki_mermaid_svg,
+    render_simple_png_from_workflow,
+    render_workflow,
+    render_with_graphviz,
+)
 from ..utils.security import get_current_user, get_optional_user
 
 # Configure logging
@@ -1588,3 +1591,4 @@ async def download_all_reports(patient_id: str, current_user: str = Depends(get_
     except Exception as e:
         logger.error(f"Error creating ZIP file for patient {patient_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating ZIP file: {str(e)}")
+        

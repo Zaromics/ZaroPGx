@@ -10,9 +10,9 @@ This service provides a REST API wrapper around PharmCAT, enabling:
 - Workflow monitoring integration
 
 Output Formats:
-- JSON (.report.json): Complete gene calls, phenotypes, and drug recommendations
+- JSON (.report.json): Complete gene calls, phenotypes, and drug recommendations. Tedious to parse.
 - HTML (.report.html): Human-readable report with formatting
-- TSV (.report.tsv): Tab-separated values for easy parsing and integration
+- TSV (.report.tsv): Calls only Tab-separated values for easy parsing and integration
 
 The service automatically detects and processes all available output formats,
 providing both file URLs and content in the API response.

@@ -32,16 +32,16 @@ from werkzeug.utils import secure_filename
 
 from app.api.db import get_db
 from app.api.models import JobStage, Token, TokenData, WorkflowCreate, WorkflowStepCreate
+from app.api.utils.security import get_current_user, get_optional_user
 from app.api.routes import report_router, upload_router
 from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.workflow_router import router as workflow_router
-from app.api.utils.security import get_current_user, get_optional_user
 from app.pharmcat import pharmcat_client
 from app.pharmcat.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
 from app.reports.generator import create_interactive_html_report, generate_pdf_report, generate_report
+from app.services.cleanup_service import cleanup_service
 from app.services.job_status_service import JobStatusService
 from app.services.workflow_service import WorkflowService
-from app.services.cleanup_service import cleanup_service
 from app.utils.workflow_client import WorkflowClient, create_workflow_client
 
 # Configure more detailed logging

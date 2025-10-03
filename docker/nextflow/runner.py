@@ -1,22 +1,26 @@
+import asyncio
+import glob
+import json
+import logging
 import os
+import psutil
+import shutil
 import subprocess
 import threading
 import time
-import json
-import asyncio
-import logging
-import psutil
-import shutil
-import glob
+import uvicorn
 from datetime import datetime, timezone
-from typing import Dict, Optional
 from pathlib import Path
+from typing import Dict, Optional
 
+import requests
 from fastapi import FastAPI, HTTPException, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
-# Nextflow is the executor, not a workflow step
+# Nextflow is the executor, and only the executor, of the pipeline
 # Individual containers report their own progress; workflow monitoring is not required
 
 # Configure logging
@@ -30,7 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nextflow")
 
-app = FastAPI(title="Nextflow Pipeline Runner", version="1.0.0")
+app = FastAPI(title="Nextflow Pipeline Runner", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,7 +49,6 @@ running_jobs: Dict[str, Dict] = {}
 def check_external_service_health(service_name: str) -> bool:
     """Check if an external service is healthy."""
     try:
-        import requests
         response = requests.get(f"http://{service_name}:5000/health", timeout=2)
         return response.status_code == 200
     except:
@@ -89,10 +92,7 @@ async def run(request: NextflowRunRequest):
     if request.workflow_id:
         try:
             # Use direct database query for better performance
-            from sqlalchemy import create_engine, text
-            from sqlalchemy.orm import Session
-            import os
-            
+
             # Get database connection parameters
             db_user = os.getenv("DB_USER", "cpic_user")
             db_password = os.getenv("DB_PASSWORD", "cpic_password")
@@ -402,7 +402,5 @@ def cleanup_old_jobs():
     }
 
 if __name__ == '__main__':
-    import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=5055)
-
-
+    

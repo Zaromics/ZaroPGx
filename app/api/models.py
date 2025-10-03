@@ -24,13 +24,19 @@ class FileType(str, Enum):
     BCF = "bcf"
     BED = "bed"
     TWENTYTHREE_AND_ME = "23andme"
+    ANCESTRY_DNA = "ancestry"
     UNKNOWN = "unknown"
 
 
 class SequencingProfile(str, Enum):
-    WGS = "whole_genome_sequencing"
-    WES = "whole_exome_sequencing"
-    TARGETED = "targeted_sequencing"
+    WGS = "whole_genome_seq"
+    WES = "whole_exome_seq"
+    TARGETED = "targeted_seq"
+    T2T = "telomere-to-telomere_seq"
+    SHORT_READ = "short_read_seq"
+    LONG_READ = "long_read_seq"
+    NGS = "next_gen_seq"
+    CHIP = "chip_seq"
     UNKNOWN = "unknown"
 
 
@@ -104,6 +110,7 @@ class WorkflowInfo(BaseModel):
     Model representing the workflow configuration for processing a genomic file.
     """
     # Processing requirements
+    # needs_liftover: bool = False
     needs_gatk: bool = False
     needs_alignment: bool = False
     needs_pypgx: bool = False 
@@ -192,13 +199,13 @@ class JobStage(str, Enum):
     REPORT_GENERATION = "report_generation"
     COMPLETE = "complete"
     
-    # Legacy stages for backward compatibility
-    UPLOAD = "upload"
-    ANALYSIS = "analysis"
-    GATK = "gatk"
-    PYPGX = "pypgx"
-    PHARMCAT = "pharmcat"
-    REPORT = "report"
+    # Legacy stages (DEPRECATED)
+    # UPLOAD = "upload"
+    # ANALYSIS = "analysis"
+    # GATK = "gatk"
+    # PYPGX = "pypgx"
+    # PHARMCAT = "pharmcat"
+    # REPORT = "report"
 
 
 class JobStageStatus(str, Enum):

@@ -1115,6 +1115,3 @@ def build_plain_text_workflow_v2(workflow: Dict[str, Any]) -> str:
         logger.error(f"Error building plain text workflow: {str(e)}")
         # Return a simple fallback
         return '<div style="font-family: monospace; padding: 20px; text-align: center;">Workflow diagram could not be generated</div>'
-
-
-
