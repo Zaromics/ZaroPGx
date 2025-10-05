@@ -39,12 +39,14 @@ class WorkflowClient:
         self.base_url = base_url or os.getenv("WORKFLOW_API_BASE", "http://app:8000/api/v1")
         self.workflow_id = workflow_id or os.getenv("WORKFLOW_ID")
         self.step_name = step_name or os.getenv("STEP_NAME")
-        
+
         if not self.workflow_id:
             raise ValueError("Workflow ID must be provided either as parameter or WORKFLOW_ID environment variable")
-        
+
         if not self.step_name:
-            raise ValueError("Step name must be provided either as parameter or STEP_NAME environment variable")
+            # Try to infer step name from process name or use a default
+            self.step_name = os.getenv("NXF_PROCESS_NAME", "unknown_step")
+            logger.warning(f"STEP_NAME not provided, using inferred step name: {self.step_name}")
         
         self.client = httpx.AsyncClient(timeout=30.0)
         self.retry_count = 3

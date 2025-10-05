@@ -102,15 +102,15 @@ class WorkflowService:
                 workflow_metadata=workflow_data.metadata,
                 created_by=workflow_data.created_by
             )
-            
+
             self.db.add(workflow)
             self.db.commit()
             self.db.refresh(workflow)
             
             # Log workflow creation
             self._log_workflow_event(
-                workflow.id, 
-                LogLevel.INFO.value, 
+                workflow.id,
+                LogLevel.INFO.value,
                 f"Workflow '{workflow.name}' created successfully",
                 {"workflow_id": str(workflow.id)}
             )
@@ -217,7 +217,7 @@ class WorkflowService:
             # Log workflow update
             self._log_workflow_event(
                 workflow.id,
-                LogLevel.INFO.value,
+                LogLevel.INFO,
                 f"Workflow updated: {update_data.status.value if update_data.status else 'fields updated'}",
                 {"updated_fields": [k for k, v in update_data.dict(exclude_unset=True).items() if v is not None]}
             )
@@ -394,7 +394,7 @@ class WorkflowService:
             # Log step update
             self._log_workflow_event(
                 workflow_id,
-                LogLevel.INFO.value,
+                LogLevel.INFO,
                 f"Step '{step_name}' updated: {update_data.status.value if update_data.status else 'fields updated'}",
                 {"step_id": str(step.id), "step_status": update_data.status.value if update_data.status else step.status}
             )
