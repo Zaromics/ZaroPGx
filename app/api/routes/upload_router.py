@@ -1219,6 +1219,18 @@ async def upload_genomic_data(
             )
             step_order += 1
         
+        # Add PyPGx BAM→VCF conversion step only if workflow needs it AND user hasn't disabled it
+        if result["workflow"].get("needs_pypgx_bam2vcf", False):
+            workflow_service.add_workflow_step(
+                workflow.id,
+                WorkflowStepCreate(
+                    step_name="pypgx_bam2vcf",
+                    step_order=step_order,
+                    container_name="pypgx"
+                )
+            )
+            step_order += 1
+        
         # Add PyPGx analysis step only if workflow needs it AND user hasn't disabled it
         if result["workflow"].get("needs_pypgx", False):
             workflow_service.add_workflow_step(

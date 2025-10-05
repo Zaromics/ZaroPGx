@@ -95,7 +95,7 @@ async def run(request: NextflowRunRequest):
 
             # Get database connection parameters
             db_user = os.getenv("DB_USER", "cpic_user")
-            db_password = os.getenv("DB_PASSWORD", "cpic_password")
+            db_password = os.getenv("DB_PASSWORD", "test123")
             db_host = os.getenv("DB_HOST", "db")
             db_port = os.getenv("DB_PORT", "5432")
             db_name = os.getenv("DB_NAME", "cpic_db")
@@ -158,8 +158,10 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
         running_jobs[job_key]["status"] = "running"
         running_jobs[job_key]["message"] = "Nextflow pipeline started"
 
+        # Nextflow command - JVM options should be set via environment variables, not command line args
         cmd = [
-            'nextflow', 'run', 'pipelines/pgx/main.nf', '-profile', 'docker',
+            'nextflow',
+            'run', 'pipelines/pgx/main.nf', '-profile', 'docker',
             '--input', input_path,
             '--input_type', input_type,
             '--patient_id', str(patient_id),
@@ -168,9 +170,9 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
             '--outdir', outdir,
             '--skip_hla', skip_hla,
             '--skip_pypgx', skip_pypgx,
-            '-with-report', f"{outdir}/nextflow_report.html",
-            '-with-trace', f"{outdir}/nextflow_trace.txt",
-            '-with-timeline', f"{outdir}/nextflow_timeline.html",
+            '-with-report', f"{outdir}/report.html",
+            '-with-trace', f"{outdir}/trace.txt",
+            '-with-timeline', f"{outdir}/timeline.html",
             '-ansi-log', 'false'
         ]
 

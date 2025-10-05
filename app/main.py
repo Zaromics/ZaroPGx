@@ -80,6 +80,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
 PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
 PHARMCAT_API_URL = os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000")
+HLATYPING_API_URL = os.getenv("HLATYPING_API_URL", "http://hlatyping:5000")
 
 # Service toggle configuration
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -484,7 +485,8 @@ async def home(request: Request):
             service_urls = {
                 "gatk": os.getenv("GATK_API_URL", "http://gatk-api:5000") + "/health",
                 "pharmcat": os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000") + "/health", 
-                "pypgx": "http://pypgx:5000/health"  # Force to port 5000 directly
+                "pypgx": "http://pypgx:5000/health",  # Force to port 5000 directly
+                "hlatyping": os.getenv("HLATYPING_API_URL", "http://hlatyping:5000") + "/health"
             }
             
             unhealthy_services = []
@@ -1170,6 +1172,14 @@ async def services_status(request: Request, current_user: str = Depends(get_opti
         "enabled": True
     }
     
+    # Add hlatyping if OptiType is enabled (hlatyping is the OptiType implementation)
+    if OPTITYPE_ENABLED:
+        services_to_check["hlatyping"] = {
+            "url": os.getenv("HLATYPING_API_URL", "http://hlatyping:5000") + "/health",
+            "timeout": 10,
+            "enabled": True
+        }
+    
     # For debugging - log the URLs we're trying to check
     service_urls = []
     for k, v in services_to_check.items():
@@ -1181,6 +1191,7 @@ async def services_status(request: Request, current_user: str = Depends(get_opti
     logger.info(f"PYPGX_API_URL: {os.getenv('PYPGX_API_URL', 'not set')}")
     logger.info(f"GATK_API_URL: {os.getenv('GATK_API_URL', 'not set')}")
     logger.info(f"PHARMCAT_API_URL: {os.getenv('PHARMCAT_API_URL', 'not set')}")
+    logger.info(f"HLATYPING_API_URL: {os.getenv('HLATYPING_API_URL', 'not set')}")
     
     # Check each service
     unhealthy_services = {}

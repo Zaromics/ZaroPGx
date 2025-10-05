@@ -1,12 +1,22 @@
 import os
+import logging
 from typing import List, Optional
-from sqlalchemy import create_engine, MetaData, text, String, Integer, DateTime, Text, JSON, ForeignKey, CheckConstraint, Boolean, Enum
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, relationship
-from dotenv import load_dotenv
-from datetime import datetime, timezone
 import uuid
 import json
+from datetime import datetime, timezone
+
+# SQLAlchemy 2.0 imports with proper organization
+from sqlalchemy import create_engine, text, String, Integer, DateTime, Text, JSON, ForeignKey, Boolean, Column
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.sql import sqltypes
+
+# Third-party imports
+from dotenv import load_dotenv
+
+# Import enum classes for proper type handling
+from .models import WorkflowStatus, StepStatus, LogLevel
 
 # Load environment variables
 load_dotenv()
@@ -18,47 +28,67 @@ DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "cpic_db")
 
-# Create database URL
+# Create database URL with psycopg3
+import psycopg  # psycopg3 for modern PostgreSQL connections
 DATABASE_URL = f"postgresql+psycopg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Create SQLAlchemy engine
+# Create SQLAlchemy engine with PostgreSQL 17 and psycopg3 optimizations
 engine = create_engine(
     DATABASE_URL,
-    pool_pre_ping=True,  # Check connection before using
-    pool_size=5,  # Number of connections to keep open
-    max_overflow=10,  # Max additional connections when pool is full
+    # Connection pool settings optimized for PostgreSQL 17
+    pool_size=10,  # Increased for better performance with modern PostgreSQL
+    max_overflow=20,  # Increased overflow for high-concurrency scenarios
+    pool_pre_ping=True,  # Verify connections before reuse
+    pool_recycle=3600,  # Recycle connections every hour
+    pool_reset_on_return="commit",  # Reset connections properly on return
+
+    # Performance and compatibility settings
+    echo=False,  # Set to True for SQL debugging
+    future=True,  # Use SQLAlchemy 2.0 style (required for modern usage)
+
+    # PostgreSQL 17 and psycopg3 optimizations
+    connect_args={
+        "connect_timeout": 10,
+        "application_name": "ZaroPGx",
+        # Note: server_settings for JIT control may not be available in all psycopg3 versions
+        # Consider setting jit=off in postgresql.conf if experiencing performance issues
+    }
 )
 
 # Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    expire_on_commit=False
+)
 
-# Create base class for declarative models using modern style
-class Base(DeclarativeBase):
-    pass
+# Create base class for declarative models using SQLAlchemy 1.4 style
+Base = declarative_base()
 
 # Define all referenced tables to ensure foreign key resolution
 class Patient(Base):
     """SQLAlchemy model for user_data.patients table"""
     __tablename__ = "patients"
     __table_args__ = {"schema": "user_data"}
-    
-    patient_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    patient_identifier: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    patient_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_identifier = Column(String(255), nullable=False, unique=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class GeneticData(Base):
     """SQLAlchemy model for user_data.genetic_data table"""
     __tablename__ = "genetic_data"
     __table_args__ = {"schema": "user_data"}
-    
-    data_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    patient_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_data.patients.patient_id"), nullable=True)
-    file_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    file_path: Mapped[str] = mapped_column(Text, nullable=False)
-    is_supplementary: Mapped[bool] = mapped_column(Boolean, default=False)
-    parent_data_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_data.genetic_data.data_id"), nullable=True)
-    processed: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    data_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("user_data.patients.patient_id"), nullable=True)
+    file_type = Column(String(20), nullable=False)
+    file_path = Column(Text, nullable=False)
+    is_supplementary = Column(Boolean, default=False)
+    parent_data_id = Column(UUID(as_uuid=True), ForeignKey("user_data.genetic_data.data_id"), nullable=True)
+    processed = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 # Job Monitoring SQLAlchemy Models with modern declarative style
 class Job(Base):
@@ -67,35 +97,35 @@ class Job(Base):
     __table_args__ = {"schema": "job_monitoring"}
     
     # Primary key and foreign keys
-    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    patient_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_data.patients.patient_id"), nullable=True)
-    file_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_data.genetic_data.data_id"), nullable=True)
-    
+    job_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("user_data.patients.patient_id"), nullable=True)
+    file_id = Column(UUID(as_uuid=True), ForeignKey("user_data.genetic_data.data_id"), nullable=True)
+
     # Status and progress fields
-    status: Mapped[str] = mapped_column(String(50), nullable=False)
-    stage: Mapped[str] = mapped_column(String(50), nullable=False)
-    progress: Mapped[int] = mapped_column(Integer, default=0)
-    
+    status = Column(String(50), nullable=False)
+    stage = Column(String(50), nullable=False)
+    progress = Column(Integer, default=0)
+
     # Message fields
-    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    message = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
     
     # Metadata and timing fields
-    job_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    timeout_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    job_metadata = Column(JSON, default=dict)
+    started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    timeout_at = Column(DateTime(timezone=True), nullable=True)
     
     # Retry and creation fields
-    retry_count: Mapped[int] = mapped_column(Integer, default=0)
-    max_retries: Mapped[int] = mapped_column(Integer, default=3)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=3)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     # Relationships
-    stages: Mapped[List["JobStage"]] = relationship("JobStage", back_populates="job", cascade="all, delete-orphan")
-    events: Mapped[List["JobEvent"]] = relationship("JobEvent", back_populates="job", cascade="all, delete-orphan")
-    dependencies: Mapped[List["JobDependency"]] = relationship("JobDependency", back_populates="job", foreign_keys="[JobDependency.job_id]", cascade="all, delete-orphan")
+    stages = relationship("JobStage", back_populates="job", cascade="all, delete-orphan")
+    events = relationship("JobEvent", back_populates="job", cascade="all, delete-orphan")
+    dependencies = relationship("JobDependency", back_populates="job", foreign_keys="[JobDependency.job_id]", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"Job(id={self.job_id}, status={self.status}, stage={self.stage}, progress={self.progress}%)"
@@ -107,26 +137,26 @@ class JobStage(Base):
     __table_args__ = {"schema": "job_monitoring"}
     
     # Primary key and foreign key
-    stage_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
+    stage_id = Column(Integer, primary_key=True)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
     
     # Stage information
-    stage: Mapped[str] = mapped_column(String(50), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False)
-    progress: Mapped[int] = mapped_column(Integer, default=0)
-    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    
+    stage = Column(String(50), nullable=False)
+    status = Column(String(50), nullable=False)
+    progress = Column(Integer, default=0)
+    message = Column(Text, nullable=True)
+
     # Timing fields
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    
+    started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+
     # Metadata and creation
-    stage_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    
+    stage_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     # Relationships
-    job: Mapped["Job"] = relationship("Job", back_populates="stages")
+    job = relationship("Job", back_populates="stages")
 
     def __repr__(self) -> str:
         return f"JobStage(id={self.stage_id}, stage={self.stage}, status={self.status}, progress={self.progress}%)"
@@ -138,19 +168,19 @@ class JobEvent(Base):
     __table_args__ = {"schema": "job_monitoring"}
     
     # Primary key and foreign key
-    event_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
-    
+    event_id = Column(Integer, primary_key=True)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
+
     # Event information
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-    
+    event_type = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+
     # Metadata and creation
-    event_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    
+    event_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     # Relationships
-    job: Mapped["Job"] = relationship("Job", back_populates="events")
+    job = relationship("Job", back_populates="events")
 
     def __repr__(self) -> str:
         return f"JobEvent(id={self.event_id}, type={self.event_type}, message={self.message[:50]}...)"
@@ -162,17 +192,17 @@ class JobDependency(Base):
     __table_args__ = {"schema": "job_monitoring"}
     
     # Primary key and foreign keys
-    dependency_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
-    depends_on_job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
-    
+    dependency_id = Column(Integer, primary_key=True)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
+    depends_on_job_id = Column(UUID(as_uuid=True), ForeignKey("job_monitoring.jobs.job_id"), nullable=False)
+
     # Dependency information
-    dependency_type: Mapped[str] = mapped_column(String(50), default="sequential")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    
+    dependency_type = Column(String(50), default="sequential")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     # Relationships
-    job: Mapped["Job"] = relationship("Job", back_populates="dependencies", foreign_keys=[job_id])
-    depends_on_job: Mapped["Job"] = relationship("Job", foreign_keys=[depends_on_job_id])
+    job = relationship("Job", back_populates="dependencies", foreign_keys=[job_id])
+    depends_on_job = relationship("Job", foreign_keys=[depends_on_job_id])
 
     def __repr__(self) -> str:
         return f"JobDependency(id={self.dependency_id}, job={self.job_id}, depends_on={self.depends_on_job_id})"
@@ -185,29 +215,29 @@ class JobDependency(Base):
 class Workflow(Base):
     """SQLAlchemy model for workflows table - Primary workflow orchestration"""
     __tablename__ = "workflows"
-    
+
     # Primary key
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
     # Basic workflow information
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
-    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default=WorkflowStatus.PENDING.value)
+    created_by = Column(String, nullable=True)
+
     # Timing fields
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
     # Progress tracking
-    total_steps: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    completed_steps: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
-    
+    total_steps = Column(Integer, nullable=True)
+    completed_steps = Column(Integer, nullable=True, default=0)
+
     # Metadata and relationships
-    workflow_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    steps: Mapped[List["WorkflowStep"]] = relationship("WorkflowStep", back_populates="workflow", cascade="all, delete-orphan")
-    logs: Mapped[List["WorkflowLog"]] = relationship("WorkflowLog", back_populates="workflow", cascade="all, delete-orphan")
+    workflow_metadata = Column(JSON, default=dict)
+    steps = relationship("WorkflowStep", back_populates="workflow", cascade="all, delete-orphan")
+    logs = relationship("WorkflowLog", back_populates="workflow", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"Workflow(id={self.id}, name={self.name}, status={self.status})"
@@ -216,31 +246,31 @@ class Workflow(Base):
 class WorkflowStep(Base):
     """SQLAlchemy model for workflow_steps table - Individual step tracking"""
     __tablename__ = "workflow_steps"
-    
+
     # Primary key
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
     # Foreign key to workflow
-    workflow_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
-    
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+
     # Step information
-    step_name: Mapped[str] = mapped_column(String, nullable=False)
-    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
-    container_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
+    step_name = Column(String, nullable=False)
+    step_order = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default=StepStatus.PENDING.value)
+    container_name = Column(String, nullable=True)
+
     # Timing fields
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+
     # Data and error tracking
-    output_data: Mapped[dict] = mapped_column(JSON, default=dict)
-    error_details: Mapped[dict] = mapped_column(JSON, default=dict)
-    retry_count: Mapped[int] = mapped_column(Integer, default=0)
-    
+    output_data = Column(JSON, default=dict)
+    error_details = Column(JSON, default=dict)
+    retry_count = Column(Integer, default=0)
+
     # Relationships
-    workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="steps")
+    workflow = relationship("Workflow", back_populates="steps")
 
     def __repr__(self) -> str:
         return f"WorkflowStep(id={self.id}, step_name={self.step_name}, status={self.status})"
@@ -249,22 +279,22 @@ class WorkflowStep(Base):
 class WorkflowLog(Base):
     """SQLAlchemy model for workflow_logs table - Execution logs for debugging"""
     __tablename__ = "workflow_logs"
-    
+
     # Primary key
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    
+    id = Column(Integer, primary_key=True)
+
     # Foreign key to workflow
-    workflow_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
-    
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+
     # Log information
-    step_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    log_level: Mapped[str] = mapped_column(String, nullable=False, default="info")
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-    log_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    
+    step_name = Column(String, nullable=True)
+    log_level = Column(String, nullable=False, default=LogLevel.INFO.value)
+    message = Column(Text, nullable=False)
+    log_metadata = Column(JSON, default=dict)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     # Relationships
-    workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="logs")
+    workflow = relationship("Workflow", back_populates="logs")
 
     def __repr__(self) -> str:
         return f"WorkflowLog(id={self.id}, level={self.log_level}, message={self.message[:50]}...)"
@@ -275,7 +305,14 @@ def get_db():
     """Database session dependency for FastAPI"""
     db = SessionLocal()
     try:
+        # Test the connection immediately
+        db.execute(text("SELECT 1"))
         yield db
+    except Exception as e:
+        db.rollback()
+        logger = logging.getLogger(__name__)
+        logger.error(f"Database connection error: {e}")
+        raise
     finally:
         db.close()
 
@@ -438,20 +475,26 @@ def register_report(db, patient_id, report_type, report_path):
 # Store parsed header JSON into public.genomic_file_headers
 def save_genomic_header(db, file_path: str, file_format: str, header_info: dict):
     """Persist normalized header JSON to genomic_file_headers and return UUID id."""
-    result = db.execute(
-        text(
-            """
-            INSERT INTO genomic_file_headers (file_path, file_format, header_info)
-            VALUES (:file_path, :file_format, CAST(:header_info AS JSONB))
-            RETURNING id
-            """
-        ),
-        {
-            "file_path": file_path,
-            "file_format": file_format.upper(),
-            "header_info": json.dumps(header_info, ensure_ascii=False),
-        },
-    )
-    header_id = result.scalar()
-    db.commit()
-    return str(header_id) if header_id else None
+    try:
+        result = db.execute(
+            text(
+                """
+                INSERT INTO genomic_file_headers (file_path, file_format, header_info)
+                VALUES (:file_path, :file_format, :header_info)
+                RETURNING id
+                """
+            ),
+            {
+                "file_path": file_path,
+                "file_format": file_format.upper(),
+                "header_info": json.dumps(header_info, ensure_ascii=False),
+            },
+        )
+        header_id = result.scalar()
+        db.commit()
+        return str(header_id) if header_id else None
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error saving genomic header: {e}")
+        db.rollback()
+        raise
