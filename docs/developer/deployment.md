@@ -394,24 +394,22 @@ gzip $BACKUP_FILE
 find $BACKUP_DIR -name "*.sql.gz" -mtime +30 -delete
 ```
 
-### Database Migration
+### Database Schema Management
 
-**Run migrations:**
+**Note:** During early development (pre-v1.0), database schema changes are managed through direct SQL file modifications rather than migrations. Alembic is installed as a dependency for future production use.
+
+**Current approach (pre-v1.0):**
+- Schema changes are made directly to `db/init/00_complete_database_schema.sql`
+- Database is automatically initialized when PostgreSQL container starts
+- No manual migration steps required
+
+**Future approach (post-v1.0):**
 ```bash
-# Using Docker
+# Run migrations (when implemented)
 docker compose exec app alembic upgrade head
 
-# Or locally
-alembic upgrade head
-```
-
-**Rollback migration:**
-```bash
-# Rollback to previous version
+# Rollback migration (when implemented)
 alembic downgrade -1
-
-# Rollback to specific version
-alembic downgrade <revision_id>
 ```
 
 ## Monitoring and Logging

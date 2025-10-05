@@ -216,7 +216,15 @@ trace-*.txt
 # Old versions kept for reference
 *.old
 *.old/*
+alembic.ini.old
+alembic.old/
+migrations.old/
 
 # Stargazer stub is still lingering, need to figure out how to remove the stale scaffold file
 stargazer.zip
 stargazer.zip/
+
+# FHIR data
+/data/fhir-data/h2.mv.db
+/data/fhir-data/h2.trace.db
+data/fhir-data/*

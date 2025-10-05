@@ -2,7 +2,7 @@
 title: Supported File Formats
 ---
 
-# Supported File Formats
+# Supported File Formats [NEEDS CURATION]
 
 ZaroPGx supports multiple genomic data formats with automatic conversion and processing.
 

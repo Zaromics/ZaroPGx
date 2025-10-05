@@ -2,12 +2,11 @@
 
 ## Overview
 
-This directory contains the consolidated database schema for ZaroPGx. All database initialization is handled through a single, comprehensive SQL file.
+This directory contains the database schema for ZaroPGx. During early development (pre-v1.0), all schema changes are managed through direct SQL file modifications. Alembic is kept as a dependency for future production use.
 
 ## Structure
 
-- `init/00_complete_database_schema.sql` - **Single source of truth** for all database schemas
-- `init/*.old` - Backed up old migration files (can be safely deleted after testing)
+- `init/00_complete_database_schema.sql` - **Single source of truth** for all database schemas (current approach)
 
 ## What's Included
 
@@ -33,28 +32,11 @@ The consolidated schema includes:
 - ✅ Utility functions
 - ✅ Complete permissions setup
 
-## Migration History
-
-The following files have been consolidated into `00_complete_database_schema.sql`:
-
-- `01_create_all_schemas.sql` → **Consolidated**
-- `02_create_fhir_schema.sql` → **Consolidated** (backed up as `.old`)
-- `03_gene_groups_schema.sql` → **Consolidated** (backed up as `.old`)
-- `04_create_genomic_file_headers.sql` → **Consolidated** (backed up as `.old`)
-- `migrations/` directory → **Consolidated** (backed up as `.old`)
-- `alembic/` directory → **Consolidated** (backed up as `.old`)
-
 ## Usage
 
-The database is automatically initialized when the PostgreSQL container starts. No manual migration steps are required.
+The database is automatically initialized when the PostgreSQL container starts. No manual migration steps are required during early development.
 
-## Benefits of Consolidation
-
-1. **Single source of truth** - No more conflicting schema definitions
-2. **No race conditions** - All tables created in correct order
-3. **Simplified maintenance** - One file to manage instead of multiple systems
-4. **Consistent UUID usage** - All tables use UUIDs from the start
-5. **Complete initialization** - Database is fully ready after container startup
+**Note:** Alembic is installed as a dependency but not actively used until approaching v1.0 release.
 
 ## Testing
 
@@ -71,15 +53,4 @@ docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dn"
 docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt cpic.*"
 docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt user_data.*"
 docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt job_monitoring.*"
-```
-
-## Cleanup
-
-After confirming everything works, you can safely delete the `.old` files:
-
-```bash
-rm db/init/*.old
-rm -rf db/migrations.old
-rm -rf alembic.old
-rm alembic.ini.old
 ```

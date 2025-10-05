@@ -151,24 +151,22 @@ uvicorn app.main:app --reload
 - Rebuild specific service: `docker compose up -d --build pharmcat`
 - Rebuild all services: `docker compose up -d --build`
 
-### 2. Database Changes
+### 2. Database Schema Changes
 
-**Run migrations:**
+**Note:** During early development (pre-v1.0), database schema changes are managed through direct SQL modifications rather than Alembic migrations.
+
+**Current approach (pre-v1.0):**
+- Make schema changes directly in `db/init/00_complete_database_schema.sql`
+- Restart the PostgreSQL container to apply changes
+- No migration files or commands needed
+
+**Future approach (post-v1.0):**
 ```bash
-# Using Docker
+# Run migrations (when implemented)
 docker compose exec app alembic upgrade head
 
-# Local development
-alembic upgrade head
-```
-
-**Create new migration:**
-```bash
-# Using Docker
+# Create new migration (when implemented)
 docker compose exec app alembic revision --autogenerate -m "Description"
-
-# Local development
-alembic revision --autogenerate -m "Description"
 ```
 
 ### 3. Testing
@@ -273,7 +271,11 @@ class NewServiceClient:
 - `user_data`: User and patient data
 - `reports`: Generated reports metadata
 
-**Adding new tables:**
+**Adding new tables (current approach):**
+1. Add SQL DDL to `db/init/00_complete_database_schema.sql`
+2. Restart PostgreSQL container to apply changes
+
+**Adding new tables (future approach - post-v1.0):**
 1. Create SQLAlchemy model in `app/api/models.py`
 2. Generate migration: `alembic revision --autogenerate`
 3. Review migration file
@@ -293,16 +295,16 @@ class NewTable(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 ```
 
-### Database Migrations
+### Database Schema Management (Post-v1.0)
 
-**Migration workflow:**
+**Migration workflow (future - post-v1.0):**
 1. Modify SQLAlchemy models
 2. Generate migration: `alembic revision --autogenerate -m "Description"`
 3. Review generated migration
 4. Apply migration: `alembic upgrade head`
 5. Test migration with sample data
 
-**Rollback migration:**
+**Rollback migration (future - post-v1.0):**
 ```bash
 alembic downgrade -1
 ```

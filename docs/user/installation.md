@@ -6,47 +6,29 @@ title: Installation Guide
 
 Detailed installation instructions for different deployment scenarios.
 
-## System Requirements
-
-### Minimum Requirements (will work with VCF sample )
+## System Requirements (minimum for VCF inputs; recommended for others)
 - **CPU**: 4 cores (8+ recommended)
-- **RAM**: 8 GB (16+ GB recommended)
-- **Storage**: 30 GB free space (500+ GB for WGS)
+- **RAM**: 8 GB (64+ GB recommended)
+- **Storage**: 50 GB free space (1000+ GB recommended)
 - **OS**: Linux, macOS, or Windows with WSL2
-- **Docker**: 20.10+ with Docker Compose 2.0+
-
-### Recommended Requirements
-- **CPU**: 8+ cores
-- **RAM**: 32+ GB
-- **Storage**: 1+ TB SSD
-- **Network**: Stable internet for initial setup
+- **Network**: Stable internet needed for initial setup only (TODO: check nextflow behavior)
+- **Docker and docker compose**
 
 ## Docker Installation
-
-### Install Docker
+- If you do not have docker and docker composed installed, the easiest way to get up and running is: 
+- https://www.docker.com/products/docker-desktop/
+- This is particularly handy if you are on Windows w/ WSL2 or macOS.
+- On Windows, ensure WSL2 backend is enabled in Docker Desktop.
+- Otherwise, here's an example for Debian/Ubuntu-based systems:
 
 **Ubuntu/Debian:**
 ```bash
-# Update package index
 sudo apt update
-
-# Install Docker
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
-
-# Add user to docker group
 sudo usermod -aG docker $USER
 newgrp docker
 ```
-
-**macOS:**
-- Download Docker Desktop from https://www.docker.com/products/docker-desktop
-- Install and start Docker Desktop
-
-**Windows:**
-- Download Docker Desktop from https://www.docker.com/products/docker-desktop
-- Enable WSL2 backend for better performance
-- Install and start Docker Desktop
 
 ### Verify Installation
 
@@ -55,75 +37,67 @@ docker --version
 docker compose version
 ```
 
-## ZaroPGx Installation
+## Deploy ZaroPGx via docker compose
 
-### 1. Clone Repository
+### 1. Grab Repository
 
 ```bash
 git clone https://github.com/Zaroganos/ZaroPGx.git
 cd ZaroPGx
 ```
 
-### 2. Environment Configuration
+### 2. Review environment configuration options
 
-Choose the appropriate environment file:
+Choose an appropriate starting .env file: local|production|custom
 
-#### Local Development
-```bash
-cp .env.local .env
-```
-
-**Features:**
+**Local:**
 - Binds to localhost only
 - Development subnet (172.28.0.0/16)
 - Authentication disabled by default
 - Debug logging enabled
 
-#### Production Deployment
 ```bash
-cp .env.production .env
+cp .env.local .env
 ```
 
-**Features:**
+**Production:**
 - Binds to all interfaces (0.0.0.0)
 - Production subnet
 - Authentication enabled
 - Optimized logging
 
-#### Custom Configuration
 ```bash
-cp .env.example .env
-# Edit .env with your specific settings
+cp .env.production .env
 ```
 
-### 3. Configure Environment Variables
+**Custom**
+```bash
+cp .env.example .env
+```
+
+### 3. Configure options via environment variables
 
 Edit `.env` file with your settings:
 
 ```bash
 # Required for production
 SECRET_KEY=your-secret-key-here
-
 # Database settings
 POSTGRES_PASSWORD=your-db-password
-
 # Optional: Customize ports
 BIND_ADDRESS=8765
-
 # Optional: Feature toggles
 GATK_ENABLED=true
 PYPGX_ENABLED=true
 OPTITYPE_ENABLED=true
 ```
 
+See {doc}`../advanced-configuration` for complete .env conf options.
+
 ### 4. Start Services
 
 ```bash
-# Start all services
-docker compose up -d --build
-
-# Or start specific services
-docker compose up -d --build app db
+docker compose up -d --build && docker compose logs app -f
 ```
 
 ### 5. Verify Installation
@@ -131,14 +105,6 @@ docker compose up -d --build app db
 Check service status:
 ```bash
 docker compose ps
-```
-
-Expected output:
-```
-NAME                IMAGE                    COMMAND                  SERVICE             CREATED             STATUS              PORTS
-zaro-pgx-app        zaro-pgx-app:latest     "uvicorn app.main:app"   app                 2 minutes ago       Up 2 minutes        0.0.0.0:8765->8000/tcp
-zaro-pgx-db         postgres:15             "docker-entrypoint.s…"   db                  2 minutes ago       Up 2 minutes        0.0.0.0:5444->5432/tcp
-zaro-pgx-pharmcat   zaro-pgx-pharmcat:lat   "python app.py"          pharmcat            2 minutes ago       Up 2 minutes        0.0.0.0:5001->5000/tcp
 ```
 
 ## Service Ports
@@ -160,14 +126,11 @@ zaro-pgx-pharmcat   zaro-pgx-pharmcat:lat   "python app.py"          pharmcat   
 The system will automatically download reference genomes on first run:
 
 ```bash
-# Monitor download progress
 docker compose logs genome-downloader
-
-# Check downloaded references
 ls -la reference/
 ```
 
-### 2. Initialize Database
+### 2. Initialize Postgres Database
 
 The database initializes automatically with:
 - CPIC guidelines and data
@@ -184,76 +147,48 @@ curl -X POST \
   http://localhost:8765/upload/genomic-data
 ```
 
-## Configuration Options
 
-### Environment Variables
-
-See {doc}`../advanced-configuration` for complete configuration options.
-
-### Docker Compose Overrides
-
-Create `docker-compose.override.yml` for local customizations:
-
-```yaml
-version: '3.8'
-services:
-  app:
-    environment:
-      - LOG_LEVEL=DEBUG
-    volumes:
-      - ./custom-config:/app/config
-```
-
-## Troubleshooting Installation
+## Troubleshooting
 
 ### Common Issues
 
 **Port conflicts:**
+- Check what's using ports
 ```bash
-# Check what's using ports
 netstat -tulpn | grep :8765
-# Change ports in .env file
 ```
+- Change ports accordingly in .env
+
 
 **Permission errors:**
 ```bash
-# Fix Docker permissions
 sudo chown -R $USER:$USER .
-# Or run with sudo (not recommended)
 ```
 
-**Out of disk space:**
+**Out of storage space:**
+- Check drive space
 ```bash
-# Clean up Docker
-docker system prune -a
-# Check disk usage
 df -h
 ```
-
-**Memory issues:**
+- Clean up docker files (make sure you back up anything important!)
 ```bash
-# Increase Docker memory limit
-# In Docker Desktop: Settings → Resources → Memory
+docker system prune -a
 ```
+
+**Out of memory issues:**
+- Increase Docker memory limit
+- In Docker Desktop: Settings → Resources → Memory
 
 ### Logs and Debugging
 
 View service logs:
 ```bash
-# All services
-docker compose logs
-
-# Specific service
-docker compose logs app
-docker compose logs db
-
-# Follow logs in real-time
-docker compose logs -f app
+docker compose logs -f
 ```
 
 ## Next Steps
 
-- **Configure your environment**: {doc}`../advanced-configuration`
-- **Learn to use the system**: {doc}`usage`
-- **Understand file formats**: {doc}`file-formats`
-- **Set up monitoring**: {doc}`../developer/deployment`
+- **Advanced Configuration**: {doc}`../advanced-configuration`
+- **Usage Guide**: {doc}`usage`
+- **File Formats**: {doc}`file-formats`
+- **Deployment Guide**: {doc}`../developer/deployment`
