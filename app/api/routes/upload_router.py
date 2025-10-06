@@ -1573,14 +1573,30 @@ async def download_all_reports(patient_id: str, current_user: str = Depends(get_
         zip_buffer = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            reports_dir = Path(REPORTS_DIR) / patient_id
+            # Use the same path resolution as individual file serving
+            try:
+                from app.main import REPORTS_DIR as MAIN_REPORTS_DIR
+                reports_dir = MAIN_REPORTS_DIR / patient_id
+                logger.info(f"ZIP Download - Using main REPORTS_DIR: {MAIN_REPORTS_DIR}")
+            except ImportError:
+                # Fallback to string-based path resolution
+                reports_dir = Path(REPORTS_DIR) / patient_id
+                logger.info(f"ZIP Download - Using fallback REPORTS_DIR: {REPORTS_DIR}")
+            
+            logger.info(f"ZIP Download - Looking for reports in: {reports_dir}")
             
             if reports_dir.exists():
-                for file_path in reports_dir.rglob("*"):
+                files_found = list(reports_dir.rglob("*"))
+                logger.info(f"ZIP Download - Found {len(files_found)} files/directories")
+                
+                for file_path in files_found:
                     if file_path.is_file():
                         # Add file to ZIP with relative path
                         arcname = file_path.relative_to(reports_dir)
+                        logger.info(f"ZIP Download - Adding file: {file_path.name}")
                         zip_file.write(file_path, arcname)
+            else:
+                logger.warning(f"ZIP Download - Reports directory does not exist: {reports_dir}")
         
         zip_buffer.close()
         
