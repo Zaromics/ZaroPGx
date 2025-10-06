@@ -112,7 +112,6 @@
         }
         
         .stage-indicator.disabled {
-            opacity: 0.4;
             cursor: not-allowed;
         }
         
@@ -226,10 +225,16 @@
             animation: pulse-error 1s infinite;
         }
         
-        /* Disabled state - more faded than default muted */
-        .stage-indicator.disabled i,
-        .stage-indicator.disabled span {
-            opacity: 0.3;
+        /* Disabled state - only fade the icon and main text, NEVER the tooltip */
+        .stage-indicator.disabled .mb-1 i,
+        .stage-indicator.disabled > span {
+            opacity: 0.3 !important;
+        }
+        
+        /* Ensure tooltip content is NEVER faded, regardless of parent state */
+        .stage-indicator .stage-popup,
+        .stage-indicator .stage-popup * {
+            opacity: 1 !important;
         }
         
         /* Connection lost state - dimmed and pulsing red */
