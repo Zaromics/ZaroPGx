@@ -226,6 +226,22 @@
             margin-top: 24px;
         }
         
+        /* Special page layout for header section with narrower margins */
+        @page header-page {
+            size: A4;
+            margin: 8mm; /* Narrower margins for header content */
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 10px;
+                color: #888;
+            }
+        }
+        
+        /* Apply special page layout to header section */
+        .header-section {
+            page: header-page;
+        }
+        
         .footer {
             margin-top: 50px;
             text-align: center;
@@ -461,7 +477,7 @@
     <div class="header">
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
-        <p>Powered by ZaroPGx, a Zaromics Software Product</p>
+        <p>Powered by ZaroPGx, a Zaromics Software Tool</p>
     </div>
     
     <div class="report-info">
@@ -472,7 +488,7 @@
 
     <div class="section">
         <h2>Methodology</h2>
-        <p>The sample's genetic data were analyzed using PharmCAT (Pharmacogenomics Clinical Annotation Tool), which references CPIC (Clinical Pharmacogenetics Implementation Consortium) guidelines. Genetic variants were processed to identify star alleles and diplotypes, which were then mapped to phenotypes and matched with relevant recommendations.</p>
+        <p>The sample's genetic data were analyzed with the ZaroPGx pipeline, composed of several analytic tools, culminating in recommendation matching by PharmCAT (the Pharmacogenomics Clinical Annotation Tool), which references evidence-level A clinical guidelines published by CPIC (Clinical Pharmacogenetics Implementation Consortium), DPWG (Dutch Pharmacogenetics Working Group), and FDA (U.S. Food and Drug Administration). Notable pharmacogenetic variants were identified to determine star alleles and diplotypes, which were mapped to phenotypes and ultimately matched with relevant recommendations.</p>
     </div>
 
     <!-- Disclaimer moved here (below Methodology) for both HTML and PDF -->
@@ -482,7 +498,7 @@
 
     <div id="exec-summary" class="section">
         <h2>Executive Summary</h2>
-        <p>This report provides pharmacogenomic information based on the sample's genetic analysis. The information can be used to inform interpretation of genetic profiles in context.</p>
+        <p>This report provides pharmacogenomic information derived from in silico analysis of the sample's genetic data. The information can be used to inform interpretation of gene-drug interactions in context.</p>
         
         <div class="summary-highlights">
             <p>This sample's genetic profile indicates:</p>
@@ -619,7 +635,7 @@
     
     <div class="section">
         <h2>Drug Recommendations</h2>
-        <p>The following recommendations are based on CPIC guidelines and this sample's genetic profile:</p>
+        <p>The following recommendations are based on CPIC, DPWG, and FDA guidelines concerning the sample's genetic profile:</p>
         
         {% for rec in recommendations %}
         <div class="drug-recommendation 
@@ -669,9 +685,11 @@
         {% if header_text %}
         <div class="header-section">
             <h3>Genomic Datafile Header</h3>
-            <p class="header-note">The submitted genomic datafile's header matter is reproduced below. Please note that if any conversion or re-alignment operations were performed, the header information below does not reflect that; the header from the original uploaded file is what is shown.</p>
-            <pre class="file-header">{{ header_text }}</pre>
+            <p class="header-note">The sample genomic datafile's header is reproduced below. Please note that the information below is derived from the original submission, before any preprocessing (conversion, re-alignment, etc.) took place.</p>
+            <pre class="file-header">{{ header_text|e }}</pre>
         </div>
+        <!-- Page break to return to normal margins after header section -->
+        <div class="page-break"></div>
         {% endif %}
 
         <h3>Citations</h3>
@@ -685,19 +703,19 @@
             {% endif %}
         </ul>
         <h3>PharmCAT</h3>
-        <p>We acknowledge the use of PharmCAT (Pharmacogenomics Clinical Annotation Tool) for gene-level interpretations and recommendations.</p>
+        <p>We thank PharmCAT (Pharmacogenomics Clinical Annotation Tool) for gene-level interpretations and recommendations.</p>
         <ul>
             <li>Sangkuhl K, Whirl-Carrillo M, et al. Pharmacogenomics Clinical Annotation Tool (PharmCAT). <em>Clinical Pharmacology &amp; Therapeutics</em>. 2020;107(1):203–210. See also the <a href="https://pharmcat.clinpgx.org/faqs/#create-ones-own-pdf-report-based-on-the-pharmcat-json-file" target="_blank" rel="noopener">PharmCAT FAQ</a>.</li>
         </ul>
         <h3>GATK</h3>
-        <p>We acknowledge the use of the Genome Analysis Toolkit (GATK) for variant discovery.</p>
+        <p>We thank Genome Analysis Toolkit (GATK) for providing various tools and functions.</p>
         <ul>
             <li>McKenna A, et al. The Genome Analysis Toolkit: a MapReduce framework for analyzing next-generation DNA sequencing data. <em>Genome Research</em>. 2010;20(9):1297–1303.</li>
             <li>DePristo MA, et al. A framework for variation discovery and genotyping using next-generation DNA sequencing data. <em>Nature Genetics</em>. 2011;43(5):491–498.</li>
         </ul>
         <p class="small">Additional guidance: <a href="https://gatk.broadinstitute.org/hc/en-us/articles/360035530852-How-should-I-cite-GATK-in-my-own-publications" target="_blank" rel="noopener">How to cite GATK</a>.</p>
         <h3>PyPGx</h3>
-        <p>We acknowledge the use of PyPGx for star‑allele calling.</p>
+        <p>We thank PyPGx for star‑allele calling, and additional functions.</p>
         <ul>
             <li>Lee S‑B, et&nbsp;al. ClinPharmSeq: A targeted sequencing panel for clinical pharmacogenetics implementation. <em>PLOS ONE</em>. 2022.</li>
             <li>Lee S‑B, et&nbsp;al. Stargazer: a software tool for calling star alleles from next‑generation sequencing data using CYP2D6 as a model. <em>Genetics in Medicine</em>. 2018.</li>

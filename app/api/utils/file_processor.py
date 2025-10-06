@@ -553,34 +553,28 @@ class FileProcessor:
         elif analysis.file_type == FileType.VCF:
             workflow["needs_pypgx"] = True
             workflow["warnings"].append(
-                "<p>⚠️ VCF datafiles lack the necessary information to perform complete pharmacogenomic analysis.</p>"
+                "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis.</p>"
             )
             workflow["warnings"].append(
                 "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
             )
             workflow["warnings"].append(
-                "<p>⚠️ HLA-A, HLA-B, and HLA-C typing can not be performed.</p>"
-            )
-            workflow["warnings"].append(
-                "<p>⚠️ CYP2D6 typing will be performed, albeit with degraded accuracy.</p>"
-            )
-            workflow["warnings"].append(
-                "<p>⚠️ All genes whose phenotypes are affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
-            )
-            workflow["warnings"].append(
-                "<p>If you have an upstream, or original, datafile, such as FASTQ/BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield results with optimal fidelity.</p>"
+                "<p>If you have an upstream, or original, datafile, such as FASTQ/BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
             )
             workflow["warnings"].append(
                 "<p>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
             )
+            workflow["warnings"].append(
+                "<p>⚠️ HLA typing as well as mtDNA typing can not be performed.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>"
+            )
+            workflow["warnings"].append(
+                "<p>⚠️ All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
+            )
             workflow["recommendations"].append(
                 "<p>VCF files use the quick pipeline:</p>"
-            )
-            workflow["warnings"].append(
-                "<p>Skip HLA typing with nf-core/hlatyping (OptiType); VCF datafiles are unsuitable inputs for this operation.</p>"
-            )
-            workflow["warnings"].append(
-                "<p>If you have an upstream/original datafile e.g. FASTQ or BAM, please upload that instead in order to have HLA typing performed.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Step 1: Run PyPGx for star allele calling on all available pharmacogenes.</p>"

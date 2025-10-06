@@ -509,7 +509,7 @@
     <header>
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
-        <p>Powered by ZaroPGx, a Zaromics Software Product</p>
+        <p>Powered by ZaroPGx, a Zaromics Software Tool</p>
     </header>
     
     <div class="container">
@@ -774,7 +774,7 @@
                 <h3>Genomic Datafile Header</h3>
                 <p class="header-note">The submitted genomic datafile's header matter is reproduced below. Please note that if any conversion or re-alignment operations were performed, the header information below does not reflect that; the header from the original uploaded file is what is shown.</p>
                 {% if header_text %}
-                <pre class="file-header">{{ header_text }}</pre>
+                <pre class="file-header">{{ header_text|e }}</pre>
                 {% else %}
                 <div class="card">
                     <p>No header text was found for this submission.</p>

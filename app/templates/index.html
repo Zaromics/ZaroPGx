@@ -80,6 +80,12 @@
             margin-bottom: 1.5rem;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
+
+        /* Fix for analysis results card "lip" effect */
+        #analysisResults .alert {
+            margin-bottom: 0;
+            border-radius: 0;
+        }
         .card-header {
             background-color: var(--card-header-bg);
             color: var(--card-header-text);
@@ -1521,7 +1527,7 @@
                 });
 
                 // Add download all reports button
-                const patientId = data.data?.patient_id || data.patient_id || jobId;
+                const patientId = data.data?.patient_id || data.patient_id;
                 if (patientId) {
                     resultsHtml += `
                         <div class="mt-4">
@@ -1538,6 +1544,12 @@
                 resultsHtml += `</div>`;
                 resultsDiv.innerHTML = resultsHtml;
                 resultsDiv.classList.remove('d-none');
+                
+                // Hide the workflow analysis panel when showing results
+                const workflowPanel = document.getElementById('workflowAnalysisPanel');
+                if (workflowPanel) {
+                    workflowPanel.classList.add('d-none');
+                }
                 
                 // Log the completion in the log panel
                 addLogMessage("Analysis complete! 5 reports are available: 2 custom Reports (PDF, Interactive HTML) and 3 PharmCAT reports (HTML, JSON, TSV).", "success");
@@ -2489,19 +2501,19 @@
                         
                         // Show results window with completion data (now includes report URLs)
                         if (data && data.workflow_id) {
-                            console.log('Showing results for completed workflow:', data.workflow_id);
-                            console.log('Report URLs in completion data:', {
-                                pdf: data.pdf_report_url,
-                                html: data.html_report_url,
-                                pharmcat_html: data.pharmcat_html_report_url,
-                                pharmcat_json: data.pharmcat_json_report_url,
-                                pharmcat_tsv: data.pharmcat_tsv_report_url
-                            });
+                            // Extract patient_id from report URLs
+                            let patient_id = data.patient_id;
+                            if (!patient_id && data.pdf_report_url) {
+                                const match = data.pdf_report_url.match(/\/reports\/([^\/]+)\//);
+                                if (match) {
+                                    patient_id = match[1];
+                                }
+                            }
                             
                             // Create a data object that matches what showResults expects
                             const resultsData = {
                                 job_id: data.workflow_id,
-                                patient_id: data.patient_id,
+                                patient_id: patient_id,
                                 pdf_report_url: data.pdf_report_url,
                                 html_report_url: data.html_report_url,
                                 interactive_html_report_url: data.interactive_html_report_url,
@@ -2512,14 +2524,10 @@
                             
                             // Call the existing showResults function
                             window.showResults(resultsData);
-                        } else {
-                            console.warn('No workflow data available for showing results');
                         }
                     },
                     onError: (error) => {
                         console.error('Workflow error:', error);
-                        
-                        
                         // Update stage indicators using simple glyph system
                         window.GlyphManager.updateStageIndicators('Error', 'failed');
                         window.addLogMessage(`Workflow error: ${error.message}`, 'danger');
@@ -2533,12 +2541,9 @@
                     onStepUpdate: (data) => {
                         console.log('Step update received:', data);
                         console.log('Step name:', data.step_name, 'Status:', data.status);
-                        
-                        
                         // Update stage indicators using simple glyph system
                         window.GlyphManager.updateStageIndicators(data.step_name, data.status);
                         window.addLogMessage(`Step ${data.step_name}: ${data.status}`, 'info');
-                        
                         // Also add more detailed step information to the log
                         if (data.container_name) {
                             window.addLogMessage(`  Container: ${data.container_name}`, 'info');
@@ -2549,8 +2554,6 @@
                     },
                     onLogUpdate: (data) => {
                         console.log('Log update:', data);
-                        
-                        
                         // Map log levels to Bootstrap alert classes
                         const levelMap = {
                             'debug': 'info',

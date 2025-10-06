@@ -1410,7 +1410,7 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
             "current_stage": current_stage,
             "data": {
                 "workflow_id": workflow.id,
-                "patient_id": workflow.patient_id,
+                "patient_id": metadata.get("patient_id"),
                 "data_id": workflow.data_id,
                 "steps": [
                     {
@@ -1569,44 +1569,46 @@ async def download_all_reports(patient_id: str, current_user: str = Depends(get_
     Download all reports for a patient as a ZIP file.
     """
     try:
+        # Use the same path resolution as individual file serving
+        from app.main import REPORTS_DIR
+        reports_dir = REPORTS_DIR / patient_id
+        
+        # Security check: ensure the path is within the reports directory
+        try:
+            reports_dir = reports_dir.resolve()
+            reports_base = REPORTS_DIR.resolve()
+            if not str(reports_dir).startswith(str(reports_base)):
+                raise HTTPException(status_code=403, detail="Access denied")
+        except Exception:
+            raise HTTPException(status_code=403, detail="Invalid file path")
+        
+        # Check if directory exists
+        if not reports_dir.exists():
+            raise HTTPException(status_code=404, detail="Reports directory not found")
+        
         # Create ZIP file
         zip_buffer = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-        
+
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Use the same path resolution as individual file serving
-            try:
-                from app.main import REPORTS_DIR as MAIN_REPORTS_DIR
-                reports_dir = MAIN_REPORTS_DIR / patient_id
-                logger.info(f"ZIP Download - Using main REPORTS_DIR: {MAIN_REPORTS_DIR}")
-            except ImportError:
-                # Fallback to string-based path resolution
-                reports_dir = Path(REPORTS_DIR) / patient_id
-                logger.info(f"ZIP Download - Using fallback REPORTS_DIR: {REPORTS_DIR}")
-            
-            logger.info(f"ZIP Download - Looking for reports in: {reports_dir}")
-            
-            if reports_dir.exists():
-                files_found = list(reports_dir.rglob("*"))
-                logger.info(f"ZIP Download - Found {len(files_found)} files/directories")
-                
-                for file_path in files_found:
-                    if file_path.is_file():
-                        # Add file to ZIP with relative path
-                        arcname = file_path.relative_to(reports_dir)
-                        logger.info(f"ZIP Download - Adding file: {file_path.name}")
-                        zip_file.write(file_path, arcname)
-            else:
-                logger.warning(f"ZIP Download - Reports directory does not exist: {reports_dir}")
-        
+            files_found = list(reports_dir.rglob("*"))
+            logger.info(f"ZIP Download - Found {len(files_found)} files/directories in {reports_dir}")
+
+            for file_path in files_found:
+                if file_path.is_file():
+                    # Add file to ZIP with relative path
+                    arcname = file_path.relative_to(reports_dir)
+                    logger.info(f"ZIP Download - Adding file: {file_path.name}")
+                    zip_file.write(file_path, arcname)
+
         zip_buffer.close()
-        
+
         # Read ZIP file content
         with open(zip_buffer.name, 'rb') as f:
             zip_content = f.read()
-        
+
         # Clean up
         os.unlink(zip_buffer.name)
-        
+
         # Return ZIP file
         return Response(
             content=zip_content,
@@ -1615,7 +1617,9 @@ async def download_all_reports(patient_id: str, current_user: str = Depends(get_
                 "Content-Disposition": f"attachment; filename=reports_{patient_id}.zip"
             }
         )
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating ZIP file for patient {patient_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating ZIP file: {str(e)}")

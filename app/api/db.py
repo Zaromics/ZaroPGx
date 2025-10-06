@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 
 # SQLAlchemy 2.0 imports with proper organization
-from sqlalchemy import create_engine, text, String, Integer, DateTime, Text, JSON, ForeignKey, Boolean, Column
+from sqlalchemy import create_engine, text, String, Integer, DateTime, Text, JSON, ForeignKey, Boolean, Column, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -222,7 +222,7 @@ class Workflow(Base):
     # Basic workflow information
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
-    status = Column(String, nullable=False, default=WorkflowStatus.PENDING.value)
+    status = Column(Enum(WorkflowStatus, name='workflow_status_enum', values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=WorkflowStatus.PENDING)
     created_by = Column(String, nullable=True)
 
     # Timing fields
@@ -256,7 +256,7 @@ class WorkflowStep(Base):
     # Step information
     step_name = Column(String, nullable=False)
     step_order = Column(Integer, nullable=False)
-    status = Column(String, nullable=False, default=StepStatus.PENDING.value)
+    status = Column(Enum(StepStatus, name='step_status_enum', values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=StepStatus.PENDING)
     container_name = Column(String, nullable=True)
 
     # Timing fields
@@ -288,7 +288,7 @@ class WorkflowLog(Base):
 
     # Log information
     step_name = Column(String, nullable=True)
-    log_level = Column(String, nullable=False, default=LogLevel.INFO.value)
+    log_level = Column(Enum(LogLevel, name='log_level_enum', values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=LogLevel.INFO)
     message = Column(Text, nullable=False)
     log_metadata = Column(JSON, default=dict)
     timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

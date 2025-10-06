@@ -608,10 +608,19 @@ class WeasyPrintGenerator(PDFGenerator):
                             color: #888;
                         }
                     }
+                    @page header-page {
+                        size: A4;
+                        margin: 8mm;
+                        @bottom-right {
+                            content: "Page " counter(page) " of " counter(pages);
+                            font-size: 10px;
+                            color: #888;
+                        }
+                    }
                     /* Monospaced header text: full width, normal flow (no card) */
                     .file-header { font-family: 'Courier New', monospace; font-size: 12px; white-space: pre; background-color: transparent; border: none; padding: 0; border-radius: 0; line-height: 1.35; tab-size: 4; overflow: visible; }
                     .header-note { font-size: 0.95em; color: #555; margin: 0 0 8px 0; }
-                    .header-section { page-break-before: always !important; margin: 0 !important; padding: 0 !important; }
+                    .header-section { page-break-before: always !important; margin: 0 !important; padding: 0 !important; page: header-page; }
                     
                     /* Give workflow its own page and fill printable area */
                     .workflow-section {

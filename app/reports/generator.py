@@ -31,13 +31,12 @@ from app.visualizations.workflow_diagram import (
     render_kroki_mermaid_svg,
     render_with_graphviz,
 )
-
-from app.core.version_manager import get_all_versions, get_versions_dict
-
-# Import for pharmcat TSV parsing (used in multiple functions)
 from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
-# from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
+from app.core.version_manager import get_all_versions, get_versions_dict
+# Keep below import commented out; this prevents circular import
+# from app.reports.pdf_generators import generate_pdf_report_dual_lane
+
 
 # Do not hardcode; derive from pyproject when available
 __version__ = "0.0.0"
@@ -187,59 +186,60 @@ def _versions_index() -> Dict[str, str]:
     """Get versions index using centralized version management."""
     return get_versions_dict()
 
-
+# TODO: integrate zotero bridge
 def build_citations() -> List[Dict[str, str]]:
     """Build academically styled citations with versions (when available)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     vmap = _versions_index()
-    pypgx_ver = vmap.get("pypgx") or "N/A"
-    pharmcat_ver = vmap.get("pharmcat") or "N/A"
-    gatk_ver = vmap.get("gatk") or "N/A"
+    pypgx_ver = vmap.get("pypgx") or "0.25.0"
+    pharmcat_ver = vmap.get("pharmcat") or "3.0.1"
+    gatk_ver = vmap.get("gatk") or "4.6.2.0"
+    hlatyping_ver = vmap.get("hlatyping") or "2.1.0"
+    mtdna_server_2_ver = vmap.get("mtdna-server-2") or "2.1.16"
 
     citations: List[Dict[str, str]] = []
     citations.append({
         "name": "PyPGx",
         "text": f"PyPGx, version {pypgx_ver}. Available at: https://pypgx.readthedocs.io/en/latest/index.html (accessed {today}).",
+        "repo": "https://github.com/sbslee/pypgx",
     })
     citations.append({
         "name": "PharmCAT",
-        "text": f"Pharmacogenomics Clinical Annotation Tool (PharmCAT), version {pharmcat_ver}. Available at: https://github.com/PharmGKB/PharmCAT (accessed {today}).",
-        "link": "https://github.com/PharmGKB/PharmCAT",
+        "text": f"Pharmacogenomics Clinical Annotation Tool (PharmCAT), version {pharmcat_ver}. Available at: https://pharmcat.clinpgx.org/ (accessed {today}).",
+        "repo": "https://github.com/PharmGKB/PharmCAT",
     })
     citations.append({
         "name": "GATK",
         "text": f"Genome Analysis Toolkit (GATK), version {gatk_ver}. Broad Institute. Available at: https://gatk.broadinstitute.org/ (accessed {today}).",
-        "link": "https://gatk.broadinstitute.org/",
+        "repo": "https://github.com/broadinstitute/gatk",
     })
     citations.append({
         "name": "CPIC",
         "text": f"Clinical Pharmacogenetics Implementation Consortium (CPIC). Available at: https://cpicpgx.org/ (accessed {today}).",
-        "link": "https://cpicpgx.org/",
+        "repo": "https://github.com/cpicpgx",
     })
     citations.append({
         "name": "DWPG",
-        "text": f"Dutch Pharmacogenomics Working Group. Available at: https://www.dwpg.nl/ (accessed {today}).",
-        "link": "https://www.dwpg.nl/",
+        "text": f"Dutch Pharmacogenomics Working Group. Royal Dutch Pharmacist's Association (KNMP). Available at: https://www.knmp.nl/dossiers/farmacogenetica/pharmacogenetics (accessed {today}).",
     })
     citations.append({
         "name": "FDA",
-        "text": f"Food and Drug Administration PGx Guidelines. Available at: https://www.fda.gov/ (accessed {today}).",
-        "link": "https://www.fda.gov/",
+        "text": f"U.S. Food and Drug Administration (FDA) Pharmacogenetic Associations. Available at: https://www.fda.gov/medical-devices/precision-medicine/table-pharmacogenetic-associations (accessed {today}).",
     })
     citations.append({
         "name": "mtDNA-server-2",
         "text": f"mtDNA-server-2-based mitochondrial typing. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
-        "link": "https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/",
+        "repo": "https://github.com/genepi/mtdna-server-2",
     })
     citations.append({
         "name": "PharmGKB",
         "text": f"Pharmacogenomics Knowledgebase (PharmGKB). Available at: https://www.pharmgkb.org/ (accessed {today}).",
-        "link": "https://www.pharmgkb.org/",
+        "repo": "https://github.com/PharmGKB",
     })
     citations.append({
-        "name": "nf-core/hlatyping",
-        "text": f"OptiType-based HLA typing using nf-core/hlatyping. Available at: https://nf-co.re/hlatyping (accessed {today}).",
-        "link": "https://nf-co.re/hlatyping",
+        "name": "hlatyping",
+        "text": f"OptiType-based HLA typing with nf-core/hlatyping, version {hlatyping_ver}. Available at: https://nf-co.re/hlatyping (accessed {today}).",
+        "repo": "https://github.com/nf-core/hlatyping",
     })
     return citations
 
@@ -250,8 +250,7 @@ def build_citations() -> List[Dict[str, str]]:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# PDF Generation Configuration
-# Can be configured via environment variables:
+# PDF Generation Configuration via environment variables:
 # - PDF_ENGINE: 'weasyprint' (default) or 'reportlab'
 # - PDF_FALLBACK: 'true' or 'false' (default: true)
 PDF_ENGINE = os.environ.get("PDF_ENGINE", "weasyprint").lower()
@@ -542,6 +541,15 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
                     color: #888;
                 }
             }
+            @page header-page {
+                size: A4;
+                margin: 8mm;
+                @bottom-right {
+                    content: "Page " counter(page) " of " counter(pages);
+                    font-size: 10px;
+                    color: #888;
+                }
+            }
             img, svg { max-width: 100%; height: auto; }
             .workflow-figure { 
                 page-break-inside: avoid; 
@@ -581,6 +589,10 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
             }
+            /* Apply narrow margins to header section */
+            .header-section {
+                page: header-page;
+            }
         '''
         if FontConfiguration:
             stylesheets.append(CSS(string=pdf_css, font_config=FontConfiguration()))
@@ -611,17 +623,17 @@ def get_disclaimer() -> str:
     """
     return """
     DISCLAIMER: This pharmacogenomic report is for informational purposes only. ZaroPGx is an independently 
-    developed hobby software. It is not intended to be used as a substitute for professional medical advice, 
+    developed hobby software. It is not intended for use as a substitute for professional medical advice, 
     diagnosis, or treatment. The content herein is based on guidelines from the Clinical Pharmacogenetics 
-    Implementation Consortium (CPIC), the Pharmacogenomics Knowledgebase (PharmGKB), the Food and Drug 
+    Implementation Consortium (CPIC), the Pharmacogenomics Knowledgebase (PharmGKB), the U.S. Food and Drug 
     Administration (FDA), and the Dutch Pharmacogenetics Working Group (DPWG). The content may change as new 
     research becomes available. The content may vary depending on the sequencing or genotyping method used, 
-    the quality and composition of the genomic data submitted, and the revision of the constituent software.
+    the quality and composition of the genomic data submitted, and the versions of the constituent software.
 
 
     Results should be considered in an educational context only. 
-    Should the need for clinical or research interpretation arise, the nature of this report is such that it may serve 
-    only as a prompt for professional investigation by a qualified physician or medical genetics practitioner.
+    Should the need for qualified interpretation arise, this report by its nature can only serve as a prompt 
+    for professional investigation by a qualified physician or medical genetics practitioner.
     Responsible use of this report in such a context entails verification and validation of the findings by an  
     appropriately accredited sequencing or genotyping laboratory followed by interpretation and consultation 
     with an appropriately credentialed professional. 

@@ -96,7 +96,7 @@ class WorkflowService:
             workflow = Workflow(
                 name=workflow_data.name.strip(),
                 description=workflow_data.description,
-                status=WorkflowStatus.PENDING.value,
+                status=WorkflowStatus.PENDING,
                 total_steps=workflow_data.total_steps,
                 completed_steps=0,
                 workflow_metadata=workflow_data.metadata,
@@ -110,7 +110,7 @@ class WorkflowService:
             # Log workflow creation
             self._log_workflow_event(
                 workflow.id,
-                LogLevel.INFO.value,
+                LogLevel.INFO,
                 f"Workflow '{workflow.name}' created successfully",
                 {"workflow_id": str(workflow.id)}
             )
@@ -197,7 +197,7 @@ class WorkflowService:
             if update_data.description is not None:
                 workflow.description = update_data.description
             if update_data.status is not None:
-                workflow.status = update_data.status.value
+                workflow.status = update_data.status
             if update_data.total_steps is not None:
                 workflow.total_steps = update_data.total_steps
             if update_data.completed_steps is not None:
@@ -218,7 +218,7 @@ class WorkflowService:
             self._log_workflow_event(
                 workflow.id,
                 LogLevel.INFO,
-                f"Workflow updated: {update_data.status.value if update_data.status else 'fields updated'}",
+                f"Workflow updated: {update_data.status if update_data.status else 'fields updated'}",
                 {"updated_fields": [k for k, v in update_data.dict(exclude_unset=True).items() if v is not None]}
             )
             
@@ -304,7 +304,7 @@ class WorkflowService:
             # Log step creation
             self._log_workflow_event(
                 workflow_id,
-                LogLevel.INFO.value,
+                LogLevel.INFO,
                 f"Step '{step_data.step_name}' added to workflow",
                 {"step_id": str(step.id), "step_order": step_data.step_order}
             )
@@ -361,7 +361,7 @@ class WorkflowService:
             
             # Update fields
             if update_data.status is not None:
-                step.status = update_data.status.value
+                step.status = update_data.status
             if update_data.container_name is not None:
                 step.container_name = update_data.container_name
             if update_data.output_data is not None:
@@ -395,8 +395,8 @@ class WorkflowService:
             self._log_workflow_event(
                 workflow_id,
                 LogLevel.INFO,
-                f"Step '{step_name}' updated: {update_data.status.value if update_data.status else 'fields updated'}",
-                {"step_id": str(step.id), "step_status": update_data.status.value if update_data.status else step.status}
+                f"Step '{step_name}' updated: {update_data.status if update_data.status else 'fields updated'}",
+                {"step_id": str(step.id), "step_status": update_data.status if update_data.status else step.status}
             )
             
             # Update workflow progress if step completed
@@ -513,7 +513,7 @@ class WorkflowService:
             
             # Calculate estimated completion
             estimated_completion = None
-            if workflow.started_at and workflow.status == WorkflowStatus.RUNNING.value:
+            if workflow.started_at and workflow.status == WorkflowStatus.RUNNING:
                 # Simple estimation based on current progress
                 if progress_info.progress_percentage > 0:
                     elapsed = datetime.now(timezone.utc) - workflow.started_at
@@ -526,7 +526,7 @@ class WorkflowService:
                 total_steps=workflow.total_steps or 0,
                 completed_steps=workflow.completed_steps or 0,
                 progress_percentage=round(progress_info.progress_percentage, 2),
-                current_step=progress_info.current_step_name or progress_info.stage.value,
+                current_step=progress_info.current_step_name or progress_info.stage,
                 estimated_completion=estimated_completion,
                 message=progress_info.message
             )
@@ -568,7 +568,7 @@ class WorkflowService:
             log_entry = WorkflowLog(
                 workflow_id=workflow_id,
                 step_name=log_data.step_name,
-                log_level=log_data.log_level.value,
+                log_level=log_data.log_level,
                 message=log_data.message,
                 log_metadata=log_data.metadata
             )
@@ -593,7 +593,7 @@ class WorkflowService:
             except Exception as e:
                 logger.error(f"Failed to schedule log update broadcast: {e}")
             
-            logger.info(f"Logged event for workflow {workflow_id}: {log_data.log_level.value} - {log_data.message}")
+            logger.info(f"Logged event for workflow {workflow_id}: {log_data.log_level} - {log_data.message}")
             return log_entry
             
         except (ValueError, RuntimeError):
@@ -655,7 +655,7 @@ class WorkflowService:
             completed_steps = self.db.query(WorkflowStep).filter(
                 and_(
                     WorkflowStep.workflow_id == workflow_id,
-                    WorkflowStep.status == StepStatus.COMPLETED.value
+                    WorkflowStep.status == StepStatus.COMPLETED
                 )
             ).count()
             
@@ -667,13 +667,13 @@ class WorkflowService:
             
             # Check if workflow should be completed based on progress percentage
             if progress_response and progress_response.progress_percentage >= 100:
-                workflow.status = WorkflowStatus.COMPLETED.value
+                workflow.status = WorkflowStatus.COMPLETED
                 workflow.completed_at = datetime.now(timezone.utc)
                 
                 # Log workflow completion
                 self._log_workflow_event(
                     workflow_id,
-                    LogLevel.INFO.value,
+                    LogLevel.INFO,
                     "Workflow completed successfully with reports generated",
                     {"completed_steps": completed_steps, "total_steps": workflow.total_steps}
                 )

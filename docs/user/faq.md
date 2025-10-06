@@ -95,7 +95,7 @@ Analysis time depends on:
 ZaroPGx uses the following guidelines:
 **CPIC (Clinical Pharmacogenomics Implementation Consortium)**
 **DPWG (Dutch Pharmacogenetics Working Group)**
-**FDA (U.S. Food and Drugs Administration)**
+**FDA (U.S. Food and Drug Administration)**
 - Evidence-based recommendations
 - Regularly updated with new evidence
 - Graded by strength of evidence

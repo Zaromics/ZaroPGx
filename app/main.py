@@ -310,7 +310,9 @@ async def api_reference() -> HTMLResponse:
     .btn-primary:hover { background: #0b5ed7; }
     .frame { width: 100%; height: calc(100vh - 48px); border: 0; }
   </style>
-  <link rel=\"icon\" href=\"data:;base64,iVBORw0KGgo=\" />
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="shortcut icon" href="/static/favicon.png">
+  <link rel="apple-touch-icon" href="/static/favicon.png">
   <meta http-equiv=\"Content-Security-Policy\" content=\"frame-ancestors 'self';\" />
   <meta http-equiv=\"X-Frame-Options\" content=\"SAMEORIGIN\" />
   <meta http-equiv=\"Referrer-Policy\" content=\"no-referrer\" />
