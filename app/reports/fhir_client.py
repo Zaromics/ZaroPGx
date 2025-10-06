@@ -3,7 +3,7 @@ import json
 import logging
 import requests
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -232,8 +232,8 @@ class FhirClient:
             "subject": {
                 "reference": f"Patient/{patient_id}"
             },
-            "effectiveDateTime": datetime.utcnow().isoformat(),
-            "issued": datetime.utcnow().isoformat(),
+            "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
+            "issued": datetime.now(timezone.utc).isoformat(),
             "valueString": diplotype,
             "interpretation": [
                 {
@@ -323,8 +323,8 @@ class FhirClient:
             "subject": {
                 "reference": f"Patient/{patient_id}"
             },
-            "effectiveDateTime": datetime.utcnow().isoformat(),
-            "issued": datetime.utcnow().isoformat(),
+            "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
+            "issued": datetime.now(timezone.utc).isoformat(),
             "result": observation_references,
             "presentedForm": [
                 {

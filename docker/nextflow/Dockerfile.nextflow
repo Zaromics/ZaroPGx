@@ -1,34 +1,45 @@
-FROM openjdk:17-jdk-slim
+FROM eclipse-temurin:21-jre
 
 ARG NXF_VERSION=25.04.7
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git bash ca-certificates python3 python3-pip procps \
+    libpq-dev postgresql-client \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI for Docker-in-Docker support
+RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz | \
+    tar -xzC /usr/local/bin --strip-components=1 docker/docker && \
+    chmod +x /usr/local/bin/docker && \
+    chmod 755 /usr/local/bin/docker
 
 # Install Nextflow
 RUN curl -sL https://get.nextflow.io | bash \
     && mv nextflow /usr/local/bin/nextflow \
-    && chmod +x /usr/local/bin/nextflow
+    && chmod +x /usr/local/bin/nextflow \
+    && chmod 755 /usr/local/bin/nextflow
 
+# Nextflow JVM configuration - disable cgroup detection to avoid container compatibility issues
 ENV NXF_HOME=/opt/nextflow \
-    NXF_OPTS="-Xms1g -Xmx4g" \
+    NXF_OPTS="-Xms2g -Xmx12g -Djdk.nio.maxCachedBufferSize=262144 -Djava.library.path=/usr/lib/x86_64-linux-gnu" \
     NXF_VERBOSITY="3"
 
-RUN mkdir -p ${NXF_HOME}
+RUN mkdir -p ${NXF_HOME} && chmod 777 ${NXF_HOME}
 
 WORKDIR /workspace
+RUN chmod 777 /workspace
 
 # Lightweight HTTP runner to trigger pipelines from the app
 # Place it outside the bind-mounted /workspace to avoid being hidden
 COPY docker/nextflow/runner.py /opt/runner.py
 COPY app/utils/workflow_client.py /workflow-client/
-# Install uv for modern Python package management
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
-
-# Python deps for API using uv
-RUN uv pip install --system fastapi uvicorn httpx python-dotenv psutil sqlalchemy psycopg[binary] requests
+# Install uv for modern Python package management and move it to /usr/local/bin
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv
+# Create virtual environment and install Python deps
+RUN uv venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+RUN uv pip install fastapi uvicorn httpx python-dotenv psutil sqlalchemy psycopg requests
 EXPOSE 5055
 
 ENTRYPOINT ["python3", "/opt/runner.py"]

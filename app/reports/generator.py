@@ -3,7 +3,7 @@ import json
 import logging
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 import base64
 from typing import List, Dict, Any
@@ -190,7 +190,7 @@ def _versions_index() -> Dict[str, str]:
 
 def build_citations() -> List[Dict[str, str]]:
     """Build academically styled citations with versions (when available)."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     vmap = _versions_index()
     pypgx_ver = vmap.get("pypgx") or "N/A"
     pharmcat_ver = vmap.get("pharmcat") or "N/A"
@@ -227,9 +227,9 @@ def build_citations() -> List[Dict[str, str]]:
         "link": "https://www.fda.gov/",
     })
     citations.append({
-        "name": "MitoZ",
-        "text": f"MitoZ-based mitochondrial typing. Available at: https://mitoz.readthedocs.io/en/stable/ (accessed {today}).",
-        "link": "https://mitoz.readthedocs.io/en/stable/",
+        "name": "mtDNA-server-2",
+        "text": f"mtDNA-server-2-based mitochondrial typing. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
+        "link": "https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/",
     })
     citations.append({
         "name": "PharmGKB",
@@ -405,9 +405,9 @@ def generate_pdf_report(
             "patient_id": patient_id,
             "report_id": report_id,
             "sample_identifier": sample_identifier if sample_identifier else patient_id,
-            # New: explicit display sample id for templates that prefer it
+            # New: explicit display sample id for templates that prefer it (NEEDS FIXING)
             "display_sample_id": sample_identifier if sample_identifier else patient_id,
-            "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "report_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "diplotypes": [
                 {
                     **d,
@@ -806,7 +806,7 @@ def create_interactive_html_report(
             "patient_id": patient_id,
             "report_id": report_id,
             "sample_identifier": sample_identifier if sample_identifier else patient_id,
-            "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "report_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "diplotypes": [
                 {
                     **d,
@@ -1723,7 +1723,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             template_data = {
                 "patient_id": patient_id,
                 "report_id": report_id,
-                "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "report_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
                 "diplotypes": data.get("genes", []),
                 "recommendations": template_recommendations,
                 "disclaimer": get_disclaimer(),

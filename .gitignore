@@ -128,6 +128,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Docker compose yml (make changes to the example file(s) only)
+docker-compose.yml
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -212,6 +215,7 @@ data/nextflow/
 report-*.html
 timeline-*.html
 trace-*.txt
+work/
 
 # Old versions kept for reference
 *.old
@@ -228,3 +232,4 @@ stargazer.zip/
 /data/fhir-data/h2.mv.db
 /data/fhir-data/h2.trace.db
 data/fhir-data/*
+data/fhir-data/

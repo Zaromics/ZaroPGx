@@ -17,7 +17,7 @@ import os
 import re
 import tempfile
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Dict, Any, Optional, Union
 
@@ -178,7 +178,7 @@ class ReportLabGenerator(PDFGenerator):
                 story.append(Spacer(1, 12))
             
             # Add timestamp if available
-            current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             story.append(Paragraph(f"<b>Report Generated:</b> {current_time}", normal_style))
             story.append(Spacer(1, 12))
             
@@ -505,7 +505,7 @@ class WeasyPrintGenerator(PDFGenerator):
                     "patient_id": template_data.get("patient_id", "Unknown"),
                     "report_id": template_data.get("report_id", "Unknown"),
                     "sample_identifier": template_data.get("sample_identifier", template_data.get("patient_id", "Unknown")),
-                    "report_date": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "report_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
                     "diplotypes": template_data.get("diplotypes", []),
                     "recommendations": template_data.get("recommendations", []),
                     # Pass TSV-driven Executive Summary rows when provided

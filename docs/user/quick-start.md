@@ -4,14 +4,14 @@ title: Quick Start Guide
 
 # Quick Start Guide
 
-Get ZaroPGx running in minutes with this step-by-step guide.
+Get ZaroPGx up and running in no time with this step-by-step guide.
 
 ## Prerequisites
 
 - **Docker and Docker Compose** installed on your system
-- **8+ GB RAM** (16+ GB recommended for GATK processing)
-- **30+ GB free disk space** (500+ GB for whole genome sequencing)
-- **Internet connection** for initial setup (to download containers and reference data)
+- **8+ GB RAM** (64+ GB recommended for the most memory-intensive operations)
+- **50+ GB free drive space** (1000+ GB for the most storage-intensive workflows)
+- **Internet connection** for initial setup (to download containers and reference materials)
 
 ## Installation
 
@@ -24,32 +24,29 @@ cd ZaroPGx
 
 ### 2. Choose Your Environment
 
-**For local development and testing:**
+**Local development and testing:**
 ```bash
 cp .env.local .env
 ```
-
-**For production deployment:**
+**Production deployment:**
 ```bash
 cp .env.production .env
 ```
-
-**For custom configuration:**
+**Custom configuration (edit as needed):**
 ```bash
 cp .env.example .env
-# Edit .env with your specific settings
 ```
 
 ### 3. Start the Services
 
 ```bash
-docker compose up -d --build
+docker compose up -d --build && docker compose logs app -f
 ```
 
 This will:
-- Download and build all required containers
-- Initialize the PostgreSQL database
-- Download reference genomes (if not cached)
+- Download and build the software stack;
+- Initialize the PostgreSQL database;
+- Download reference materials (if not cached);
 - Start all services
 
 ### 4. Verify Installation
@@ -57,38 +54,36 @@ This will:
 Check that all services are running:
 ```bash
 docker compose ps
+# for all logs try
+docker compose logs -f
 ```
 
 You should see all services with "Up" status.
 
-## First Analysis
+## First Run-through
 
 ### 1. Access the Web Interface
 
 Open your browser and navigate to:
 - **Main Application**: http://localhost:8765
-- **API Documentation**: http://localhost:8765/docs
-- **FHIR Server** (optional): http://localhost:8090
 
 ### 2. Upload a Sample File
 
-1. Go to the main interface at http://localhost:8765
-2. Click "Upload Files" or drag and drop a VCF file
-3. Use the provided sample file: `test_data/sample_cpic.vcf`
-4. Click "Start Analysis"
+- If you would like to run the demo instead with a pre-loaded sample, click "Run Demo"
+
+1. Click "Browse..." or drag and drop the sample to be processed
+2. Click "Upload" to start the workflow, or click "View Header" to check some details from the sample's header first
 
 ### 3. Monitor Progress
 
 - Watch the real-time progress updates
-- View detailed logs for each processing step
-- Monitor resource usage in the interface
 
 ### 4. View Results
 
 Once complete, you'll see:
-- **PDF Report**: Clinical pharmacogenomic report
-- **Interactive HTML**: Detailed analysis with visualizations
-- **Raw Data**: PharmCAT outputs (if enabled)
+- **PDF Report**: Custom ZaroPGx pharmacogenomic report
+- **HTML Report**: Custom ZaroPGx interactive pgx report with detailed analysis and visualizations
+- **PharmCAT Report**: PharmCAT outputs (if enabled; HTML Report (main), JSON output, TSV calls-only output)
 
 ## Supported File Types
 
@@ -102,26 +97,7 @@ Once complete, you'll see:
 
 ## Next Steps
 
-- **Learn about file formats**: {doc}`file-formats`
-- **Understand reports**: {doc}`reports`
-- **Configure advanced settings**: {doc}`../advanced-configuration`
-- **Troubleshoot issues**: {doc}`troubleshooting`
-
-## Common Issues
-
-**Services won't start?**
-- Check Docker is running
-- Ensure ports 8765, 5444, 5001, 5002, 5053, 8090 are available
-- Review logs: `docker compose logs`
-
-**Out of memory errors?**
-- Increase Docker memory allocation
-- Use smaller reference genome subsets
-- Disable GATK processing for VCF files
-
-**Slow processing?**
-- Ensure sufficient RAM allocation
-- Use SSD storage for better I/O performance
-- Consider disabling optional services
-
-For detailed troubleshooting, see {doc}`troubleshooting`.
+- **File formats**: {doc}`file-formats`
+- **Reports**: {doc}`reports`
+- **Advanced settings**: {doc}`../advanced-configuration`
+- **Troubleshooting**: {doc}`troubleshooting`

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from app.api.db import get_db, register_report, get_guidelines_for_gene_drug
@@ -132,7 +132,7 @@ async def generate_report(
         return ReportResponse(
             report_id=report_id,
             patient_id=request.patient_id,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             report_url=f"/reports/{report_id}/download",
             report_type=request.report_type
         )
@@ -156,7 +156,7 @@ async def get_report_status(
         return {
             "report_id": report_id,
             "status": "completed",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "download_url": f"/reports/{report_id}/download"
         }
     except Exception as e:

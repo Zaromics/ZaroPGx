@@ -4,31 +4,31 @@
 
 ---
 
-**ZaroPGx** is a containerized bioinformatic pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by institutional resources. Nextflow is used to orchestrate an algorithmic workflow which integrates GATK preprocessing, OptiType/hlatyping and PyPGx allele calling, and PharmCAT with outside calls to unlock its full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx and 3 via hla-typing, albeit with less evidential clinical application. Report data will be made exportable to Personal and Electronic Health Records via the HAPI FHIR server integration. Designed as a self-hostable docker compose stack, ZaroPGx enables absolute data privacy and security when run locally. That said, environment configurations are provided for both local and web facing deployment, which allows the software to be made accessible to others over the internet.
+**ZaroPGx** is a containerized bioinformatic pipeline that processes genetic data and generates comprehensive pharmacogenomic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing, allele calling with hlatyping (OptiType), mtDNA-server-2, and PyPGx, and report generation via PharmCAT phenotype matching with outside calls from the three aforementioned tools, to unlock its full potential across 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx with associated guidelines of lesser confidence. Report data will be exportable to Personal/Electronic Health Records with the included HAPI FHIR server. Designed as a self-hostable docker compose stack, ZaroPGx enables absolute data privacy and security when run locally. For web facing deployments as well as local, environment configurations are provided which allow the software stack to be made safely accessible to others over the internet, though a reverse proxy and any other authentication, authorization tooling is not included, any typical modern solution should work. 
 
+*Last revised 2025-10-06*
 ## Status
-
 This project is in active development. Core functionality is being implemented incrementally.
 
-## Intended Function
-
+## What ZaroPGx can do
 The system is designed to:
 
-1. **Accept genomic data files** (VCF, BAM, FASTQ) and preprocess them using GATK when necessary
-2. **Perform allele calling** via PyPGx and OptiType for comprehensive pharmacogene coverage
-3. **Execute PharmCAT analysis** with PyPGx and OptiType providing outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes
-4. **Generate comprehensive reports** covering actionable results for 23 pharmacogenes and notable findings for approximately 90 genes in total, inclusive
-5. **Export data** to Electronic/Personal Health Record via the integrated HAPI FHIR service
-6. **Maintain privacy** through self-hosted deployment, ensuring no genomic data leaves the user's network
+1. **Accept genomic data files** (VCF, BAM, SAM, CRAM, FASTQ), preprocessing them when necessary
+2. **Perform allele calling** via PyPGx, hlatyping (OptiType), and mtDNA-server-2 for comprehensive pharmacogene coverage
+3. **Execute PharmCAT analysis** with PyPGx, hlatyping, and mtDNA-server-2 providing outside calls to unlock PharmCAT's full potential across 23 core pharmacogenes
+4. **Generate comprehensive reports** covering actionable results for 23 pharmacogenes and notable findings for approximately 90 genes in total
+5. **Export data** to Electronic/Personal Health Record via the integrated HAPI FHIR service in a FHIR compliant report
+6. **Maintain privacy** with self-hosted deployment, ensuring no sensitive PHI data leaves the local network
 
 ## Current Implementation Status
 
-- **VCF Processing**: Fully implemented for GRCh38/hg38, support for GRCh37/hg19 coming in 0.3 with bcftools liftover
+- **VCF Processing**: Fully implemented for GRCh38, support for GRCh37 coming soon in v0.3 with bcftools liftover
 - **FASTQ/BAM/SAM/CRAM inputs**: Scaffolded but not fully implemented; needs testing
-- **OptiType Integration**: Scaffolded Nextflow hlatyping OptiType workflow
-- **PyPGx Integration**: Service is integrated with main pipeline, optimization in progress to differentiate pipeline paths
-- **PharmCAT with Outside Calls**: Core PharmCAT service available, PyPGx and OptiType outside calls dictionary curation is in progress
-- **Comprehensive Reporting**: Basic PDF and interactive HTML generation is being revised
+- **mtDNA-server-2 Integration**: Scaffolding to start shortly (TO DO)
+- **OptiType Integration**: Scaffolded Nextflow hlatyping OptiType pipeline, needs sysbox work to enable docker-in-docker (TO DO)
+- **PyPGx Integration**: Core PyPGx service is integrated; optimization in progress to differentiate pipeline paths
+- **PharmCAT with Outside Calls**: Core PharmCAT service is integrated; PyPGx, OptiType, and mtDNA-server-2 outside calls dictionary curation is in progress
+- **Comprehensive Reporting**: Custom PDF and interactive HTML reports generation is available, being rapidly iterated
 - **FHIR Export**: HAPI FHIR server integrated, export / query response functionality in development (basic XML export coming in 0.3)
 
 ## Features (Current State)
@@ -115,7 +115,7 @@ Containerized services orchestrated with Docker Compose with a core Nextflow-coo
 
 3. **Start services**
    
-   **Option A: Using the simple startup script (recommended for non-technical users)**
+   **Option A: Using the simple startup script (recommended for CLI hesitant users)**
    
    Choose the startup script that matches your environment:
    - Ensure the shell script can be executed, if it does not appear to work.
@@ -196,8 +196,8 @@ curl -X POST http://localhost:8765/reports/generate \
   - Optional PharmCAT originals: `<file_id>_pgx_pharmcat.{html,json,tsv}`
 
 ## Sample Data
-
-For real-world sample data, try browsing the **Personal Genome Project**: https://my.pgp-hms.org/public_genetic_data
+For real-world sample data, try browsing the **Personal Genome Project**:
+- https://my.pgp-hms.org/public_genetic_data
 
 Filtered sample VCFs available in the repo:
 - `app/static/demo/pharmcat.example.vcf`
@@ -235,7 +235,7 @@ ZaroPGx/
 - **GATK** - Handles various preprocessing and conversions of input files for downstream analysis
 - **PharmCAT** (Java 17) with a FastAPI wrapper, the central pharmacogenomic analysis engine
 - **PyPGx** - Provides comprehensive allele calling across multiple pharmacogenes, enabling PharmCAT to achieve full 23-gene coverage through outside calls, plus reports calls for 87 total pharmacogenes of varying evidence level
-- **HAPI FHIR** - Enables export of pharmacogenomic results to healthcare systems and personal health records (coming in 0.3)
+- **HAPI FHIR** - Enables export of pharmacogenomic results to healthcare systems and personal health records (coming in v0.3)
 
 ## Report Handling
 
@@ -243,7 +243,7 @@ ZaroPGx/
 - The app consistently generates its own reports (PDF + interactive HTML)
 - When available, original PharmCAT reports are copied with normalized names (`<file_id>_pgx_pharmcat.*`)
 
-## FHIR Export (Optional) (Coming in 0.3)
+## FHIR Export (Optional) (Coming in v0.3)
 
 - HAPI FHIR server is bundled and exposed at `http://localhost:8090`
 - Report export endpoint: `POST /reports/{report_id}/export-to-fhir`
@@ -269,13 +269,15 @@ ZaroPGx/
 ## Acknowledgements & Citations
 
 - **GATK** (Genome Analysis Toolkit).
-  - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. Nature Genetics. 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
-- **OptiType (from nf-core/hlatyping)**
-  -  Sven F., Christopher Mohr, Alexander Peltzer, nf-core bot, Vikesh Ajith, Mark Polster, Gisela Gabernet, Jonas Scheid, VIJAY, Phil Ewels, Maxime U Garcia, Tobias Koch, Paolo Di Tommaso, & Kevin Menden. (2025). nf-core/hlatyping: 2.1.0 - Chewbacca (2.1.0). Zenodo. https://doi.org/10.5281/zenodo.15212533  Docs: https://nf-co.re/hlatyping/
+  - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. *Nature Genetics.* 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
+- **hlatyping** (hlatyping from nextflow-core, with OptiType base)
+  -  Sven F., Christopher Mohr, Alexander Peltzer, nf-core bot, Vikesh Ajith, Mark Polster, Gisela Gabernet, Jonas Scheid, VIJAY, Phil Ewels, Maxime U Garcia, Tobias Koch, Paolo Di Tommaso, & Kevin Menden. (2025). nf-core/hlatyping: 2.1.0 - Chewbacca (2.1.0). *Zenodo.* https://doi.org/10.5281/zenodo.15212533  Docs: https://nf-co.re/hlatyping/
 - **PharmCAT** (Pharmacogenomics Clinical Annotation Tool).
-  - Sangkuhl K, Whirl-Carrillo M, et al. Clinical Pharmacology & Therapeutics. 2020;107(1):203–210.  Docs: https://pharmcat.clinpgx.org/
+  - Sangkuhl K, Whirl-Carrillo M, et al. *Clinical Pharmacology & Therapeutics.* 2020;107(1):203–210.  Docs: https://pharmcat.clinpgx.org/
 - **PyPGx**
-  - Lee S‑B, et al. PLOS ONE. 2022 (ClinPharmSeq); Lee S‑B, et al. Genetics in Medicine. 2018 (Stargazer); Lee S‑B, et al. Clinical Pharmacology & Therapeutics. 2019 (Stargazer, 28 genes).  Docs: https://pypgx.readthedocs.io/en/latest/index.html
+  - Lee S‑B, et al. *PLOS ONE.* 2022 (ClinPharmSeq); Lee S‑B, et al. *Genetics in Medicine.* 2018 (Stargazer); Lee S‑B, et al. *Clinical Pharmacology & Therapeutics.* 2019 (Stargazer, 28 genes).  Docs: https://pypgx.readthedocs.io/en/latest/index.html
+- **mtDNA-server-2** 
+  - Weissensteiner H, Forer L, Kronenberg F, Schönherr S. mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics. *Nucleic Acids Res*. 2024 May 6:gkae296. doi: 10.1093/nar/gkae296. Epub ahead of print. PMID: 38709886.
 
 
 ## License

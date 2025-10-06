@@ -12,7 +12,7 @@ import traceback
 import uuid
 import zipfile
 from asyncio import Queue
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
 
@@ -62,7 +62,7 @@ logger = logging.getLogger("app")
 logger.info(f"Starting app with log level: {log_level}")
 
 # Add more aggressive console logging for debugging
-print(f"=========== ZaroPGx STARTING UP AT: {datetime.utcnow()} ===========")
+print(f"=========== ZaroPGx STARTING UP AT: {datetime.now(timezone.utc)} ===========")
 print(f"LOG LEVEL: {log_level}")
 print(f"GATK SERVICE URL: {os.getenv('GATK_API_URL', 'http://gatk-api:5000')}")
 print(f"PHARMCAT SERVICE URL: {os.getenv('PHARMCAT_API_URL', 'http://pharmcat:5000')}")
@@ -410,9 +410,9 @@ async def serve_report_file(patient_id: str, filename: str, current_user: str = 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -575,7 +575,7 @@ async def api_root():
 @app.get("/health")
 async def health_check():
     logger.info("Health check called")
-    return {"status": "healthy", "timestamp": str(datetime.utcnow())}
+    return {"status": "healthy", "timestamp": str(datetime.now(timezone.utc))}
 
 @app.get("/api/genome-download-status")
 async def genome_download_status():

@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 # -- Path setup --------------------------------------------------------------
 
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath('..'))
 
 project = 'ZaroPGx'
 author = 'Iliya Yaroshevskiy'
-current_year = datetime.utcnow().year
+current_year = datetime.now(timezone.utc).year
 copyright = f"{current_year}, {author}"
 
 # -- General configuration ---------------------------------------------------

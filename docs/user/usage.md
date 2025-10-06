@@ -3,22 +3,18 @@ title: User Guide
 ---
 
 # User Guide
-
 Learn how to use ZaroPGx to submit a sample for processing and receive insightful reports.
+- *Last revised 2025-10-06*
 
 ## Web Interface
+- The **Main Dashboard** provides:
 
-### Main Dashboard
-
-The main dashboard provides:
 - **File Upload**: Drag and drop or click to upload genomic files: single datafile is fine unless you have a raw FASTQ; in that case please upload both paired reads. If you have an existing index file, you may upload it as well, though it may not be necessary as a new one may be generated anyhow at some point throughout the pipeline. You may also enter an identifier for the sample.
 - **System Status**: Monitor service health visually by observing the service glyphs, progress bar, and processing log.
 - **Quick Actions**: Common tasks and shortcuts: you can check the header of a sample without running the pipeline. You can cancel a running pipeline cleanly. While uploading a sample, a cancel button is not provided, you may simply press the home button to reset the display. Service glyphs may be interacted with to toggle enable/disable override certain stages in the pipeline. 
 - **Report Screen**: Upon completion of a workflow, a report screen will appear, offering PharmCAT and custom ZaroPGx reports. 
 
-### Uploading Files
-
-#### Supported File Types
+### Uploading Supported File Types
 
 | Format | Extension | Description | Processing |
 |--------|-----------|-------------|------------|
@@ -62,7 +58,7 @@ The main dashboard provides:
    - PyPGx analysis (if enabled, recommended)
    - PharmCAT analysis (required)
 5. **Report Generation**: Create reports
-6. **Data Export**: Optional FHIR export (first XML, coming in 0.3)
+6. **Data Export**: Optional FHIR export (first XML, coming in v0.3)
 
 ### Monitoring Progress
 
@@ -70,15 +66,15 @@ The main dashboard provides:
 - Progress percentage (estimated)
 - Current processing stage (live logs)
 
-**Detailed Logs:**: Use docker compose logs -f , and see the /data dir on the ZaroPGx instance's host device for detailed Nextflow logs
-- Container-specific logs
-- Error messages and warnings
-- Processing statistics
-- Intermediate results
+**Detailed Logs:**
+- Use `docker compose logs -f`
+- See the /data directory for detailed service and Nextflow logs
+  - Container-specific logs can also be accessed via `docker compose logs -f {container-name}`
+- Nextflow logs will show:
+  - Error messages and warnings
+  - Processing statistics
 
 ## Reports
-
-### Report Types
 
 #### Custom PDF Report
 - **Executive Summary**: Key findings and recommendations
@@ -105,7 +101,7 @@ The main dashboard provides:
 #### Star Allele Notation
 - **Format**: `*1/*2` (diplotype) or `*1` (haplotype), or `*3+*15` or similar (atypical cases)
 - **Interpretation**: 
-  - `*1`: Reference allele. Typically synonymous with wild type.
+  - `*1`: Reference allele. Typically synonymous with wild (pheno)type.
   - `*2`, `*3`, etc.: Variant alleles
   - `*N`: Novel or undefined alleles
 
@@ -187,7 +183,8 @@ curl -O http://localhost:8765/reports/{patient_id}/{report_file}
 - Annotation databases
 - Tool-specific references
 
-### Data Retention (NOTE: The ZaroPGx Demo Reference server at pgx.zimerguz.net is for DEMO purposes only. Do not upload your sensitive data.)
+### Data Retention
+# (NOTE: The ZaroPGx Demo Reference server at pgx.zimerguz.net is for DEMO purposes only! Do not upload your sensitive data)
 
 - **Uploaded Files**: Retained indefinitely (configurable)
 - **Processing Logs**: Retained for 30 days (configurable)
@@ -211,13 +208,13 @@ curl http://localhost:8765/patients/{patient_id}/export
 ## Best Practices
 
 ### File Preparation
-1. **Choose the highest fidelity genomic datafile for submission**: Computing resources aside, make sure you choose the best file out of what's available per sample to upload.
-2. **Include Index Files**: Provide .bai, .crai, .csi, .tbi files when available
+1. **Choose the highest fidelity genomic datafile for submission**: Computing resources aside, make sure you choose the best file out of the files available for a given sample to upload.
+2. **Include Index Files**: Provide the accompanying index file (.bai, .crai, .csi, .tbi,) if available
 3. **Check Quality**: Verify file integrity before upload
 
 ### Analysis Configuration
-1. **Enable Relevant Tools**: Only enable tools your device can afford to run (the program will attempt to match your hardware, but if memory runs out, it may crash)
-2. **Monitor Resources**: Watch CPU and memory usage during processing (see Nextflow)
+1. **Enable Relevant Tools**: Only enable tools your device can afford to run (the program will attempt to match your hardware, but if memory or storage runs out, it may hang or crash)
+2. **Monitor Resources**: Watch CPU and memory usage during processing
 3. **Review Logs**: Check docker compose container logs and nextflow logs for warnings or errors
 
 ### Result Interpretation
@@ -227,8 +224,6 @@ curl http://localhost:8765/patients/{patient_id}/export
 4. **Validate Findings**: Follow up with a qualified professional and when applicable, an accredited laboratory
 
 ## Troubleshooting
-
-### Common Issues
 
 **Upload Failures:**
 - Check file format and size
@@ -241,19 +236,17 @@ curl http://localhost:8765/patients/{patient_id}/export
 - Review container logs
 
 **Report Generation Issues:**
-- Check disk space availability and permissions
-- Verify report template files
+- Check drive space availability and permissions
+- Verify that all software dependencies are properly configured
 - Review report generation logs
 
 ### Getting Help
-
 1. **Check Logs**: Review container and application logs
 2. **Documentation**: Consult this guide
-3. **Community**: See discussions on GitHub
-4. **Issues**: Report bugs and request features on GitHub
+3. **Community**: Check discussions on GitHub, or start a new thread
+4. **Issues**: Report bugs, request features, and suggest changes on GitHub
 
 ## Next Steps
-
 - **Learn about file formats**: {doc}`file-formats`
 - **Understand reports**: {doc}`reports`
 - **Configure advanced settings**: {doc}`../advanced-configuration`
