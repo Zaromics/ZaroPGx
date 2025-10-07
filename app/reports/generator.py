@@ -891,7 +891,7 @@ def determine_tool_source(gene_name: str, file_type: str, workflow_config: Dict[
     """
     Determine which tool was used to call a specific gene based on the logic:
     - HLA genes (HLA-A, HLA-B, HLA-C) → O (OptiType)
-    - MT-RNR1 → M (MitoZ)
+    - MT-RNR1 → M (mtDNA-server-2)
     - PyPGx-only genes → P (PyPGx)
     - Overlapping genes: VCF input → C (PharmCAT), others → P (PyPGx)
     - Environment variable overrides can force PyPGx preference
@@ -902,7 +902,7 @@ def determine_tool_source(gene_name: str, file_type: str, workflow_config: Dict[
         workflow_config: Workflow configuration dict
         
     Returns:
-        Single letter code: C (PharmCAT), P (PyPGx), O (OptiType), M (MitoZ)
+        Single letter code: C (PharmCAT), P (PyPGx), O (OptiType), M (mtDNA-server-2)
     """
     gene_name = gene_name.upper().strip()
     
@@ -910,7 +910,7 @@ def determine_tool_source(gene_name: str, file_type: str, workflow_config: Dict[
     if gene_name in ["HLA-A", "HLA-B", "HLA-C"]:
         return "O"
     
-    # MT-RNR1 → MitoZ
+    # MT-RNR1 → mtDNA-server-2
     if gene_name == "MT-RNR1":
         return "M"
     
@@ -936,10 +936,10 @@ def determine_tool_source(gene_name: str, file_type: str, workflow_config: Dict[
     if gene_name in pypgx_minus_pharmcat:
         return "P"
     
-    # PharmCAT outside callers (handled by PyPGx/OptiType/MitoZ, not PharmCAT directly)
+    # PharmCAT outside callers (handled by PyPGx/OptiType/mtDNA-server-2, not PharmCAT directly)
     if gene_name in pharmcat_outside_callers:
         # These are handled by outside tools, not PharmCAT directly
-        # CYP2D6 is handled by PyPGx, HLA genes by OptiType, MT-RNR1 by MitoZ
+        # CYP2D6 is handled by PyPGx, HLA genes by OptiType, MT-RNR1 by mtDNA-server-2
         if gene_name == "CYP2D6":
             return "P"  # CYP2D6 is handled by PyPGx
         # HLA genes and MT-RNR1 are already handled above
@@ -1032,7 +1032,7 @@ def _choose_better_gene_entry(existing: Dict[str, Any], candidate: Dict[str, Any
 
         # Special precedence:
         # - HLA-A/B/C → prefer O (OptiType)
-        # - MT-RNR1   → prefer M (MitoZ)
+        # - MT-RNR1   → prefer M (mtDNA-server-2)
         # - CYP2D6    → prefer P (PyPGx)
         if gene_name in {"HLA-A", "HLA-B", "HLA-C"}:
             if candidate_source == "O" and existing_source != "O":
