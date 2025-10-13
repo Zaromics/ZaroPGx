@@ -23,6 +23,7 @@ from app.api.models import (
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.services.websocket_manager import connection_manager
 from app.services.cleanup_service import cleanup_service
+from app.services.pharmcat_data_service import PharmCATDataService
 from datetime import datetime, timezone, timedelta
 import uuid
 import logging
@@ -767,4 +768,80 @@ class WorkflowService:
         except Exception as e:
             logger.error(f"Failed to get workflow steps: {str(e)}")
             return []
+    
+    def link_pharmcat_run(self, workflow_id: str, pharmcat_run_id: str) -> bool:
+        """
+        Link a PharmCAT run to a workflow.
+        
+        Args:
+            workflow_id: Workflow ID
+            pharmcat_run_id: PharmCAT run ID
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            workflow_id = uuid.UUID(str(workflow_id))
+            workflow = self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            
+            if not workflow:
+                logger.error(f"Workflow {workflow_id} not found")
+                return False
+            
+            # Update workflow metadata with PharmCAT run ID
+            metadata = workflow.workflow_metadata or {}
+            metadata['pharmcat_run_id'] = pharmcat_run_id
+            metadata['pharmcat_linked_at'] = datetime.now(timezone.utc).isoformat()
+            
+            workflow.workflow_metadata = metadata
+            self.db.commit()
+            
+            logger.info(f"Successfully linked PharmCAT run {pharmcat_run_id} to workflow {workflow_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error linking PharmCAT run to workflow: {e}")
+            self.db.rollback()
+            return False
+    
+    def get_pharmcat_run_id(self, workflow_id: str) -> Optional[str]:
+        """
+        Get the PharmCAT run ID for a workflow.
+        
+        Args:
+            workflow_id: Workflow ID
+            
+        Returns:
+            PharmCAT run ID if found, None otherwise
+        """
+        try:
+            workflow_id = uuid.UUID(str(workflow_id))
+            workflow = self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            
+            if not workflow:
+                return None
+            
+            metadata = workflow.workflow_metadata or {}
+            return metadata.get('pharmcat_run_id')
+            
+        except Exception as e:
+            logger.error(f"Error getting PharmCAT run ID for workflow {workflow_id}: {e}")
+            return None
+    
+    def get_pharmcat_data(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get PharmCAT data for a workflow.
+        
+        Args:
+            workflow_id: Workflow ID
+            
+        Returns:
+            Dict containing normalized PharmCAT data, or None if not found
+        """
+        try:
+            pharmcat_service = PharmCATDataService(self.db)
+            return pharmcat_service.get_pharmcat_data_for_workflow(workflow_id)
+        except Exception as e:
+            logger.error(f"Error getting PharmCAT data for workflow {workflow_id}: {e}")
+            return None
     

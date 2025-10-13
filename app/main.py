@@ -36,6 +36,7 @@ from app.api.utils.security import get_current_user, get_optional_user
 from app.api.routes import report_router, upload_router
 from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.workflow_router import router as workflow_router
+from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.pharmcat import pharmcat_client
 from app.pharmcat.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
 from app.reports.generator import create_interactive_html_report, generate_pdf_report, generate_report
@@ -242,6 +243,7 @@ app.include_router(upload_router.router)
 app.include_router(report_router.router)
 app.include_router(monitoring_router)
 app.include_router(workflow_router)
+app.include_router(pharmcat_router)
 
 # Override and disable authentication in development mode
 if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":

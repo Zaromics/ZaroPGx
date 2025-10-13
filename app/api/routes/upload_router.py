@@ -288,11 +288,22 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
         
         # Look for PharmCAT JSON results
         pharmcat_json_file = patient_dir / f"{patient_id}_pgx_pharmcat.json"
+        pharmcat_run_id = None
+        
         if pharmcat_json_file.exists():
             try:
                 with open(pharmcat_json_file, 'r', encoding='utf-8') as f:
                     pharmcat_results = json.load(f)
                     if isinstance(pharmcat_results, dict):
+                        # Load PharmCAT results into database
+                        from app.pharmcat.pharmcat_parser import load_pharmcat_file
+                        pharmcat_run_id = load_pharmcat_file(pharmcat_json_file)
+                        
+                        if pharmcat_run_id:
+                            # Link PharmCAT run to workflow
+                            workflow_service.link_pharmcat_run(workflow_id, pharmcat_run_id)
+                            logger.info(f"Successfully linked PharmCAT run {pharmcat_run_id} to workflow {workflow_id}")
+                        
                         # PharmCAT JSON has genes directly, not in a "data" object
                         pharmcat_data = pharmcat_results
                         logger.info(f"Loaded PharmCAT results from {pharmcat_json_file}")
@@ -423,9 +434,10 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
         # Log the number of diplotypes found
         logger.info(f"Extracted {len(formatted_diplotypes)} formatted diplotypes")
         
-        # Extract recommendations from PharmCAT results
+        # Extract recommendations from PharmCAT results with deduplication
         # PharmCAT structure: genes -> {CPIC|DPWG} -> {gene_name} -> relatedDrugs and drugRecommendations
-        recommendations = []
+        drug_groups = {}  # Group by drug name to avoid duplicates
+        
         if "genes" in pharmcat_data:
             # Extract from both CPIC and DPWG guidelines
             for guideline_source in ["CPIC", "DPWG"]:
@@ -437,37 +449,43 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
                             if "relatedDrugs" in gene_data:
                                 for drug in gene_data["relatedDrugs"]:
                                     if isinstance(drug, dict):
-                                        recommendations.append({
+                                        drug_name = drug.get("name", "Unknown")
+                                        
+                                        # Group by drug name to avoid duplicates
+                                        if drug_name not in drug_groups:
+                                            drug_groups[drug_name] = {
+                                                "drug": drug_name,
+                                                "genes": [],
+                                                "recommendations": []
+                                            }
+                                        
+                                        # Add gene if not already present
+                                        if gene_name not in drug_groups[drug_name]["genes"]:
+                                            drug_groups[drug_name]["genes"].append(gene_name)
+                                        
+                                        # Add recommendation
+                                        drug_groups[drug_name]["recommendations"].append({
                                             "gene": gene_name,
-                                            "drug": drug.get("name", "Unknown"),
-                                            "guideline": f"{guideline_source} Guideline for {gene_name} and {drug.get('name', 'Unknown')}",
+                                            "guideline": f"{guideline_source} Guideline for {gene_name} and {drug_name}",
                                             "recommendation": f"See {guideline_source} guidelines for specific recommendations",
-                                            "classification": guideline_source
+                                            "classification": guideline_source,
+                                            "guideline_source": guideline_source
                                         })
         
-        logger.info(f"PharmCAT returned {len(recommendations)} drug recommendations")
-        
-        # Simple recommendation format conversion if needed
+        # Convert grouped data to flattened format for compatibility
         formatted_recommendations = []
-        for drug in recommendations:
-            if not isinstance(drug, dict):
-                continue
-                
-            # Handle different possible structures for drug name
-            drug_name = drug.get("drug", {})
-            if isinstance(drug_name, dict):
-                drug_name = drug_name.get("name", "Unknown")
-            
-            formatted_recommendations.append({
-                "gene": drug.get("gene", ""),
-                "drug": drug_name,
-                "guideline": drug.get("guideline", ""),
-                "recommendation": drug.get("recommendation", "Unknown"),
-                "classification": drug.get("classification", "Unknown")
-            })
+        for drug_name, drug_data in drug_groups.items():
+            for rec in drug_data["recommendations"]:
+                formatted_recommendations.append({
+                    "gene": rec["gene"],
+                    "drug": drug_name,
+                    "guideline": rec["guideline"],
+                    "recommendation": rec["recommendation"],
+                    "classification": rec["classification"],
+                    "guideline_source": rec["guideline_source"]
+                })
         
-        # Log the number of recommendations found
-        logger.info(f"Extracted {len(formatted_recommendations)} formatted recommendations")
+        logger.info(f"PharmCAT returned {len(drug_groups)} unique drugs with {len(formatted_recommendations)} total recommendations")
         
         # Update progress: Diagram generation (35% of report generation)
         step_update = WorkflowStepUpdate(
@@ -547,178 +565,48 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
             or patient_id
         )
 
-        # Generate interactive HTML report first (needed for PDF generation)
-        logger.info(f"Generating interactive HTML report to {interactive_html_path}")
-        create_interactive_html_report(
-            patient_id=patient_id,
-            report_id=data_id,
-            diplotypes=formatted_diplotypes,
-            recommendations=formatted_recommendations,
-            output_path=str(interactive_html_path),
-            workflow=workflow_config.copy() if isinstance(workflow_config, dict) else {},
-            sample_identifier=effective_sample_identifier_reports
+        # Generate reports using the main report generation function with database integration
+        logger.info(f"Generating reports using main report generation function")
+        
+        # Get database session for report generation
+        from app.api.db import get_db
+        db_session = next(get_db())
+        
+        # Use the main report generation function with database integration
+        from app.reports.generator import generate_report
+        response_data = generate_report(
+            pharmcat_results={"data": pharmcat_data},
+            output_dir=str(patient_dir),
+            patient_info={
+                "id": patient_id,
+                "report_id": data_id,
+                "sample_identifier": effective_sample_identifier_reports
+            },
+            workflow_id=workflow_id,
+            db_session=db_session
         )
         
-        # Update progress: HTML report generated (65% of report generation)
+        # Update progress: Reports generated (100% of report generation)
         step_update = WorkflowStepUpdate(
             status=StepStatus.RUNNING,
-            output_data={"progress_percent": 65}
+            output_data={"progress_percent": 100}
         )
         workflow_service.update_workflow_step(workflow_id, "report_generation", step_update)
         
-        # Generate unified PDF report using centralized PDF generation system
-        logger.info(f"Generating unified PDF report to {pdf_report_path}")
-        
-        try:
-            
-            # Prepare template data for PDF generation using the PDF template structure
-            template_data = {
-                "patient_id": patient_id,
-                "report_id": data_id,
-                "sample_identifier": effective_sample_identifier_reports,
-                "display_sample_id": effective_sample_identifier_reports,
-                "file_type": workflow_config.get("file_type", "unknown"),
-                "analysis_results": {
-                    "GATK Processing": "Completed" if workflow_config.get("needs_gatk", False) else "Not Required",
-                    "PyPGx Analysis": "Completed" if workflow_config.get("needs_pypgx", False) else "Not Required",
-                    "PharmCAT Analysis": "Completed",
-                    "FHIR Export": "Not Implemented"
-                },
-                "workflow_diagram": workflow_config,
-                "diplotypes": formatted_diplotypes,
-                "recommendations": formatted_recommendations,
-                "workflow": workflow_config,
-                # Try to load header text synchronously for ReportLab fallback usage
-                # Load the newest *.header.txt in the patient's report dir
-                "header_text": (lambda _pd: (max([p for p in _pd.glob("*.header.txt") if p.is_file()], key=lambda p: p.stat().st_mtime).read_text(encoding='utf-8', errors='ignore') if any(_pd.glob("*.header.txt")) else ""))(Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id))
-            }
-
-            # Inject TSV-driven Executive Summary rows if enabled
-            try:
-                EXECSUM_USE_TSV = os.getenv("EXECSUM_USE_TSV", "false").strip().lower() in {"1", "true", "yes", "on"}
-                if EXECSUM_USE_TSV:
-                    # Look for TSV in the patient directory (same location as JSON)
-                    from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
-                    patient_dir_str = str(Path(os.getenv("REPORT_DIR", "/data/reports")) / str(patient_id))
-                    tsv_candidates = [
-                        os.path.join(patient_dir_str, f"{patient_id}_pgx_pharmcat.tsv"),
-                        os.path.join(patient_dir_str, f"{patient_id}.report.tsv"),
-                    ]
-                    try:
-                        import glob as _g
-                        tsv_candidates.extend(_g.glob(os.path.join(patient_dir_str, "*_pgx_pharmcat.tsv")))
-                        any_pharmcat = _g.glob(os.path.join(patient_dir_str, "*.pharmcat.tsv"))
-                        if any_pharmcat:
-                            any_pharmcat.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-                            tsv_candidates.extend(any_pharmcat)
-                    except Exception:
-                        pass
-                    tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
-                    execsum_rows_from_tsv = []
-                    if tsv_path:
-                        diplos, _ = parse_pharmcat_tsv(tsv_path)
-                        for row in diplos:
-                            execsum_rows_from_tsv.append({
-                                "gene": row.get("gene", ""),
-                                "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
-                                "rec_lookup_phenotype": row.get("rec_lookup_phenotype", row.get("phenotype", "")),
-                                "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
-                            })
-                        logger.info(f"Executive Summary TSV selected (router): {tsv_path}")
-                    template_data["execsum_from_tsv"] = execsum_rows_from_tsv if execsum_rows_from_tsv else None
-                    logger.info(f"Executive Summary rows (TSV, router): {len(execsum_rows_from_tsv)}; Using TSV: {EXECSUM_USE_TSV}")
-            except Exception as _e_exec:
-                logger.warning(f"Executive Summary TSV parse skipped (router): {_e_exec}")
-            
-            # Generate PDF using centralized system (respects environment configuration)
-            result = generate_pdf_report_dual_lane(
-                template_data=template_data,
-                output_path=str(pdf_report_path),
-                workflow_diagram=workflow_config
-            )
-            
-            if result["success"]:
-                logger.info(f"✓ PDF report generated successfully using {result['generator_used']}: {pdf_report_path}")
-                if result["fallback_used"]:
-                    logger.info("ℹ️ Used fallback generator due to primary failure")
-            else:
-                logger.error(f"✗ PDF generation failed: {result['error']}")
-                # Continue with HTML report only
-            
-            # Update progress: PDF report generated (90% of report generation)
-            step_update = WorkflowStepUpdate(
-                status=StepStatus.RUNNING,
-                output_data={"progress_percent": 90}
-            )
-            workflow_service.update_workflow_step(workflow_id, "report_generation", step_update)
-            
-        except Exception as e:
-            logger.error(f"✗ PDF generation failed: {str(e)}")
-            # Continue with HTML report only
+        # Log report generation completion
+        logger.info(f"Report generation completed for workflow {workflow_id}")
+        logger.info(f"Generated reports: {[k for k, v in response_data.items() if v]}")
         
         # Add provisional flag if the workflow was marked as provisional
         is_provisional = workflow_config.get("is_provisional", False)
         
-        # Robust JSON sanitization using Python's built-in JSON handling
-        def sanitize_for_json(data):
-            """Sanitize data to ensure it's JSON-safe using Python's built-in JSON handling"""
-
-            try:
-                # Test if the data can be serialized to JSON
-                json.dumps(data, ensure_ascii=False, default=str)
-                return data
-            except (TypeError, ValueError) as e:
-                logger.warning(f"JSON serialization failed, applying aggressive sanitization: {e}")
-                # If JSON serialization fails, apply aggressive sanitization
-                if isinstance(data, str):
-                    # Remove or replace problematic characters
-                    sanitized = data
-                    # Replace control characters
-                    sanitized = ''.join(char for char in sanitized if ord(char) >= 32 or char in '\n\r\t')
-                    # Escape quotes and backslashes
-                    sanitized = sanitized.replace('\\', '\\\\').replace('"', '\\"')
-                    return sanitized
-                elif isinstance(data, list):
-                    return [sanitize_for_json(item) for item in data]
-                elif isinstance(data, dict):
-                    return {str(key): sanitize_for_json(value) for key, value in data.items()}
-                else:
-                    return str(data)
+        # Add additional metadata to response_data from generate_report
+        response_data["is_provisional"] = is_provisional
+        response_data["job_directory"] = str(patient_dir)
         
-        # Sanitize the data before storing in workflow metadata
-        sanitized_diplotypes = sanitize_for_json(formatted_diplotypes)
-        sanitized_recommendations = sanitize_for_json(formatted_recommendations)
-        sanitized_warnings = sanitize_for_json(workflow_config.get("warnings", []))
-        
-        # Update workflow metadata with unified report URLs
-        response_data = {
-            "pdf_report_url": f"/reports/{patient_id}/{pdf_report_path.name}",
-            "html_report_url": f"/reports/{patient_id}/{interactive_html_path.name}",
-            "diplotypes": sanitized_diplotypes,
-            "recommendations": sanitized_recommendations,
-            "is_provisional": is_provisional,
-            "warnings": sanitized_warnings,
-            "job_directory": str(patient_dir)
-        }
-        
-        # Add PharmCAT report URLs if they exist and are enabled via environment variables
-        if pharmcat_html_exists and INCLUDE_PHARMCAT_HTML:
-            response_data["pharmcat_html_report_url"] = f"/reports/{patient_id}/{pharmcat_html_path.name}"
-            logger.info(f"Added PharmCAT HTML report URL (enabled via INCLUDE_PHARMCAT_HTML)")
-        if pharmcat_json_exists and INCLUDE_PHARMCAT_JSON:
-            response_data["pharmcat_json_report_url"] = f"/reports/{patient_id}/{pharmcat_json_path.name}"
-            logger.info(f"Added PharmCAT JSON report URL (enabled via INCLUDE_PHARMCAT_JSON)")
-        if pharmcat_tsv_exists and INCLUDE_PHARMCAT_TSV:
-            response_data["pharmcat_tsv_report_url"] = f"/reports/{patient_id}/{pharmcat_tsv_path.name}"
-            logger.info(f"Added PharmCAT TSV report URL (enabled via INCLUDE_PHARMCAT_TSV)")
-        
-        # Log which reports were skipped due to environment variable settings
-        if pharmcat_html_exists and not INCLUDE_PHARMCAT_HTML:
-            logger.info("PharmCAT HTML report exists but skipped due to INCLUDE_PHARMCAT_HTML=false")
-        if pharmcat_json_exists and not INCLUDE_PHARMCAT_JSON:
-            logger.info("PharmCAT JSON report exists but skipped due to INCLUDE_PHARMCAT_JSON=false")
-        if pharmcat_tsv_exists and not INCLUDE_PHARMCAT_TSV:
-            logger.info("PharmCAT TSV report exists but skipped due to INCLUDE_PHARMCAT_TSV=false")
+        # Add PharmCAT run_id if available
+        if pharmcat_run_id:
+            response_data["pharmcat_run_id"] = pharmcat_run_id
         
         # Update workflow metadata with reports
         updated_metadata = metadata.copy()
@@ -749,12 +637,12 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
                     "progress_percentage": 100,
                     "current_step": "completed",
                     "message": "Processing complete! - All processing finished",
-                    "pdf_report_url": response_data.get("pdf_report_url"),
-                    "html_report_url": response_data.get("html_report_url"),
-                    "interactive_html_report_url": response_data.get("html_report_url"),  # Use html_report_url as interactive
-                    "pharmcat_html_report_url": response_data.get("pharmcat_html_report_url"),
-                    "pharmcat_json_report_url": response_data.get("pharmcat_json_report_url"),
-                    "pharmcat_tsv_report_url": response_data.get("pharmcat_tsv_report_url")
+                    "pdf_report_url": response_data.get("pdf_path"),
+                    "html_report_url": response_data.get("html_path"),
+                    "interactive_html_report_url": response_data.get("interactive_html_path"),
+                    "pharmcat_html_report_url": response_data.get("pharmcat_html_path"),
+                    "pharmcat_json_report_url": response_data.get("pharmcat_json_path"),
+                    "pharmcat_tsv_report_url": response_data.get("pharmcat_tsv_path")
                 }
             ))
         except Exception as e:
@@ -1394,6 +1282,8 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
                 report_urls["pdf_report_url"] = reports["pdf_report_url"]
             if "html_report_url" in reports:
                 report_urls["html_report_url"] = reports["html_report_url"]
+            if "interactive_html_report_url" in reports:
+                report_urls["interactive_html_report_url"] = reports["interactive_html_report_url"]
             if "pharmcat_html_report_url" in reports:
                 report_urls["pharmcat_html_report_url"] = reports["pharmcat_html_report_url"]
             if "pharmcat_json_report_url" in reports:

@@ -7,7 +7,7 @@
         body {
             font-family: Arial, sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 10px; /* reduced from 20px to 10px */
             color: #333;
         }
         .header {
@@ -52,7 +52,7 @@
             margin-bottom: 20px;
         }
         th, td {
-            padding: 10px;
+            padding: 5px; /* reduced from 10px to 5px */
             text-align: left;
             border-bottom: 1px solid #ddd;
         }
@@ -62,10 +62,202 @@
         .gene-table tr:hover {
             background-color: #f5f5f5;
         }
+        
+        /* Specific styling for Genetic Results table to balance margins */
+        .gene-table {
+            margin-left: 0;
+            margin-right: 0;
+        }
+        
+        .gene-table th:first-child,
+        .gene-table td:first-child {
+            padding-left: 0px; /* further reduced left margin */
+            padding-right: 5px; /* keep some right padding for readability */
+        }
+        
+        .gene-table th:last-child,
+        .gene-table td:last-child {
+            padding-right: 0px; /* further reduced right margin to match left */
+            padding-left: 5px; /* keep some left padding for readability */
+        }
+        
+        /* Prevent row splitting across pages */
+        .gene-table tr {
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+        
+        /* Ensure table cells don't break */
+        .gene-table td,
+        .gene-table th {
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+        
+        .narrow-col {
+            width: 1.2em;
+            text-align: center;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        
+        .narrow-col th {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            height: 3em;
+            vertical-align: bottom;
+            padding: 0.5em 0.2em;
+        }
+        
         .drug-recommendation {
-            padding: 15px;
-            margin-bottom: 10px;
+            padding: 8px 0;
+            margin-bottom: 12px;
             border-radius: 5px;
+        }
+        .drug-recommendation h3 {
+            margin-top: 0;
+            margin-bottom: 8px;
+        }
+        /* Evidence-based border colors for recommendation cards */
+        .gene-recommendation {
+            border-left: 3px solid #007bff; /* Default blue */
+            padding: 8px 10px;
+            margin-bottom: 8px;
+            margin-left: 0;
+        }
+        .gene-recommendation.evidence-3 {
+            border-left-color: #dc3545 !important; /* Red for high actionability */
+        }
+        .gene-recommendation.evidence-2 {
+            border-left-color: #ffc107 !important; /* Yellow for moderate */
+        }
+        .gene-recommendation.evidence-1 {
+            border-left-color: #17a2b8 !important; /* Blue for informational */
+        }
+        .gene-recommendation.evidence-0 {
+            border-left-color: #6c757d !important; /* Gray for general */
+        }
+        .gene-recommendation h4 {
+            margin: 0 0 4px 0;
+            font-size: 0.95em;
+        }
+        .gene-recommendation p {
+            margin: 3px 0;
+            font-size: 0.9em;
+            line-height: 1.3;
+        }
+        /* Drugs grid with multi-column layout */
+        .drugs-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px 12px;
+            margin: 15px 0;
+        }
+        .drug-item-link {
+            text-decoration: none;
+            color: inherit;
+            display: block;
+            transition: transform 0.2s ease;
+        }
+        .drug-item-link:hover {
+            transform: translateX(3px);
+        }
+        .drug-item {
+            display: flex;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #6c757d;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        .drug-item:hover {
+            background-color: #e9ecef;
+        }
+        .drug-item .drug-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            margin-left: 4px;
+            flex-shrink: 0;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none;
+            display: inline-block;
+        }
+        .drug-item .drug-name {
+            font-weight: 500;
+            font-size: 0.95em;
+        }
+        /* Evidence level color coding */
+        .drug-item.evidence-3 {
+            border-left-color: #dc3545;
+            background-color: #fff5f5;
+        }
+        .drug-item.evidence-3 .drug-indicator {
+            background-color: #dc3545;
+        }
+        .drug-item.evidence-2 {
+            border-left-color: #ffc107;
+            background-color: #fffbf0;
+        }
+        .drug-item.evidence-2 .drug-indicator {
+            background-color: #ffc107;
+        }
+        .drug-item.evidence-1 {
+            border-left-color: #17a2b8;
+            background-color: #f0f9fb;
+        }
+        .drug-item.evidence-1 .drug-indicator {
+            background-color: #17a2b8;
+        }
+        .drug-item.evidence-0 {
+            border-left-color: #6c757d;
+            background-color: #f8f9fa;
+        }
+        .drug-item.evidence-0 .drug-indicator {
+            background-color: #6c757d;
+        }
+        .evidence-legend {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .evidence-legend p {
+            margin: 0 0 8px 0;
+        }
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 15px;
+            margin-bottom: 5px;
+        }
+        .legend-item .drug-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 6px;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none;
+            display: inline-block;
+        }
+        .legend-item.evidence-3 .drug-indicator {
+            background-color: #dc3545;
+        }
+        .legend-item.evidence-2 .drug-indicator {
+            background-color: #ffc107;
+        }
+        .legend-item.evidence-1 .drug-indicator {
+            background-color: #17a2b8;
+        }
+        .legend-item.evidence-0 .drug-indicator {
+            background-color: #6c757d;
         }
         /* Executive summary invisible columns */
         .exec-summary-table {
@@ -75,10 +267,10 @@
             margin-top: 10px;
         }
         .exec-summary-table td {
-            padding: 4px 6px; /* compact but readable */
+            padding: 6px 6px; /* slightly reduced vertical padding */
             border: none; /* invisible columns */
             border-bottom: 1px solid #e8e8e8; /* subtle row separator */
-            vertical-align: top;
+            vertical-align: middle; /* center align vertically */
         }
         .exec-summary-table tr:last-child td {
             border-bottom: none; /* remove border from last row */
@@ -186,11 +378,17 @@
         .rapid-metabolizer, .ultrarapid-metabolizer {
             background-color: #17a2b8;
         }
-        /* Possibly Wild Type: transparent background with black border */
-        .likely-wild-type {
+        /* Possibly Wild Type: transparent background with black border (VCF only) */
+        .possibly-wild-type {
             background-color: transparent;
             color: #000;
             border: 2px solid #000;
+        }
+        /* Likely Wild Type: transparent background with light green border (BAM/FASTQ/CRAM) */
+        .likely-wild-type {
+            background-color: transparent;
+            color: #000;
+            border: 2px solid #90EE90;
         }
         .disclaimer {
             margin-top: 50px;
@@ -240,6 +438,30 @@
         /* Apply special page layout to header section */
         .header-section {
             page: header-page;
+        }
+        
+        /* Special page layout for Drug Recommendations section with narrower margins */
+        @page recs-page {
+            size: A4;
+            margin: 12mm 10mm; /* Narrower left/right margins for recommendations */
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 10px;
+                color: #888;
+            }
+        }
+        
+        /* Apply special page layout to Drug Recommendations section */
+        .recs-section {
+            page: recs-page;
+        }
+        .recs-section h2 {
+            margin-top: 8px;
+            margin-bottom: 10px;
+        }
+        .recs-section > p {
+            margin-top: 0;
+            margin-bottom: 10px;
         }
         
         .footer {
@@ -353,6 +575,16 @@
                 page-break-after: always !important; 
                 break-after: page !important; 
             }
+            
+            /* PDF-specific body padding reduction */
+            body {
+                padding: 10px !important;
+            }
+            
+            /* PDF-specific table cell padding reduction */
+            th, td {
+                padding: 5px !important;
+            }
             /* Genomic header: new page, normal document flow */
             .header-section { page-break-before: always !important; }
             .header-section .file-header { white-space: pre !important; }
@@ -361,13 +593,99 @@
                 page-break-after: always !important; 
                 break-after: page !important; 
             }
-            /* Full-page workflow */
+            
+            /* PDF-specific styling for Executive Summary table */
+            .exec-summary-table td {
+                padding: 6px 6px !important;
+                vertical-align: middle !important;
+            }
+            
+            /* PDF-specific styling for Genetic Results table margins */
+            .gene-table th:first-child,
+            .gene-table td:first-child {
+                padding-left: 0px !important;
+                padding-right: 5px !important;
+            }
+            
+            .gene-table th:last-child,
+            .gene-table td:last-child {
+                padding-right: 0px !important;
+                padding-left: 5px !important;
+            }
+            
+            /* PDF-specific styling to prevent row splitting */
+            .gene-table tr {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }
+            
+            /* PDF-specific styling to prevent cell splitting */
+            .gene-table td,
+            .gene-table th {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }
+            
+            /* PDF-specific styling for drugs grid */
+            .drugs-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 6px 10px !important;
+                page-break-inside: avoid !important;
+            }
+            .drug-item {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                padding: 5px 8px !important;
+            }
+            
+            /* PDF-specific compact spacing for Drug Recommendations section */
+            .drug-recommendation {
+                padding: 4px 0 !important;
+                margin-bottom: 8px !important;
+            }
+            .drug-recommendation h3 {
+                margin-top: 0 !important;
+                margin-bottom: 6px !important;
+                font-size: 1.1em !important;
+            }
+            .gene-recommendation {
+                padding: 6px 8px !important;
+                margin-bottom: 6px !important;
+                margin-left: 0 !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }
+            .gene-recommendation h4 {
+                margin: 0 0 3px 0 !important;
+                font-size: 0.9em !important;
+            }
+            .gene-recommendation p {
+                margin: 2px 0 !important;
+                font-size: 0.85em !important;
+                line-height: 1.25 !important;
+            }
+            .gene-recommendation p:last-child {
+                margin-bottom: 0 !important;
+            }
+            /* Full-page workflow - dedicated page with minimal margins */
+            @page workflow-page {
+                size: A4;
+                margin: 5mm; /* Minimal margins for full-page diagram */
+                @bottom-right {
+                    content: "Page " counter(page) " of " counter(pages);
+                    font-size: 10px;
+                    color: #888;
+                }
+            }
             .workflow-section {
+                page: workflow-page;
                 page-break-before: always !important;
                 page-break-after: always !important;
                 margin: 0 !important;
                 padding: 0 !important;
-                position: relative !important; /* enable absolute positioning for title */
+                position: relative !important;
+                width: 200mm !important; /* A4 width (210mm) minus minimal margins (5mm × 2) */
+                height: 287mm !important; /* A4 height (297mm) minus minimal margins (5mm × 2) */
             }
             .workflow-figure {
                 margin: 0 !important;
@@ -375,25 +693,35 @@
                 background: #ffffff !important;
                 border: none !important;
                 border-radius: 0 !important;
-                width: 178mm !important;
-                height: 265mm !important;
+                width: 200mm !important;
+                height: 287mm !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
             }
             /* Overlay the title on top-left of the workflow page */
             .workflow-section > h2 {
                 position: absolute !important;
-                top: 0 !important;
-                left: 0 !important;
+                top: 2mm !important;
+                left: 2mm !important;
                 margin: 0 !important;
-                padding: 0 !important;
+                padding: 2mm 4mm !important;
                 border: none !important;
                 z-index: 2 !important;
-                background: transparent !important;
+                background: rgba(255, 255, 255, 0.9) !important;
+                border-radius: 3px !important;
+                font-size: 14px !important;
             }
             .workflow-figure img {
-                width: 178mm !important;
-                height: 265mm !important;
+                min-width: 200mm !important;
+                min-height: 287mm !important;
+                max-width: 200mm !important;
+                max-height: 287mm !important;
+                width: 200mm !important;
+                height: 287mm !important;
                 display: block !important;
-                margin: 0 auto !important;
+                margin: 0 !important;
+                padding: 0 !important;
                 border-radius: 0 !important;
             }
             .workflow-figure svg {
@@ -514,7 +842,7 @@
                             <td class="exec-summary-phenotype">
                                 {% set ph = r.rec_lookup_phenotype or '' %}
                                 {% set asv = r.rec_lookup_activity_score %}
-                                <span class="gene-phenotype {% if 'Possibly Wild Type' in ph %}likely-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>
+                                <span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>
                                 {% if asv is not none %}
                                     {% set s = asv if asv >= 0 else 0 %}
                                     {% if s == 0 %}
@@ -550,7 +878,7 @@
                             <td class="exec-summary-gene">{{ d.gene }}</td>
                             <td class="exec-summary-diplotype">{{ d.diplotype }}</td>
                             <td class="exec-summary-phenotype">
-                                <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">{{ d.phenotype }}</span>
+                                <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">{{ d.phenotype or 'Unknown' }}</span>
                                 {% if d.activity_score is not none %}
                                     {% set s = d.activity_score if d.activity_score >= 0 else 0 %}
                                     {% if s == 0 %}
@@ -587,6 +915,16 @@
     
     <div class="section">
         <h2>Genetic Results</h2>
+        
+        <div class="tool-key">
+            <h4>Source Legend:</h4>
+            <p><strong>Call:</strong> Calling tool - <strong>P</strong> = PyPGx, <strong>C</strong> = PharmCAT, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>G</strong> = GATK</p>
+            <p><strong>Data:</strong> Report data tool - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx</p>
+            <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB</p>
+        </div>
+        
+        <div style="margin-bottom: 15px;"></div>
+        
         <table class="gene-table">
             <thead>
                 <tr>
@@ -595,7 +933,9 @@
                     <th>Phenotype</th>
                     <th>Activity Score</th>
                     <th>Implications</th>
-                    <th>T*</th>
+                    <th class="narrow-col">Call</th>
+                    <th class="narrow-col">Data</th>
+                    <th class="narrow-col">Guide</th>
                 </tr>
             </thead>
             <tbody>
@@ -603,53 +943,134 @@
                 <tr>
                     <td>{{ d.gene }}</td>
                     <td>{{ d.diplotype }}</td>
-                    <td>{{ d.phenotype }}</td>
+                    <td>{{ d.phenotype or '' }}</td>
                     <td>{{ d.activity_score if d.activity_score else '' }}</td>
                     <td>
-                        {% if 'Normal' in d.phenotype %}
+                        {% if d.phenotype and 'Normal' in d.phenotype %}
                             Standard drug metabolism expected
-                        {% elif 'Poor' in d.phenotype %}
+                        {% elif d.phenotype and 'Poor' in d.phenotype %}
                             Reduced drug metabolism may require dose adjustments
-                        {% elif 'Intermediate' in d.phenotype %}
+                        {% elif d.phenotype and 'Intermediate' in d.phenotype %}
                             Slightly reduced metabolism may require monitoring
-                        {% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}
+                        {% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}
                             Increased metabolism may reduce efficacy at standard doses
+                        {% elif d.phenotype and ('Possibly Wild Type' in d.phenotype or 'Likely Wild Type' in d.phenotype) %}
+                            Reference genotype - consult clinical guidelines for specific drugs
                         {% else %}
                             Consult clinical guidelines
                         {% endif %}
                     </td>
-                    <td class="tool-source">{{ d.tool_source if d.tool_source else 'P' }}</td>
+                    <td class="narrow-col">{{ d.called_by if d.called_by else '' }}</td>
+                    <td class="narrow-col">{{ d.report_data_from if d.report_data_from else '' }}</td>
+                    <td class="narrow-col">{{ d.guideline_source if d.guideline_source else '' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
-        
-        <div class="tool-key">
-            <h4>Tool Key:</h4>
-            <p><strong>C</strong> = PharmCAT | 
-               <strong>P</strong> = PyPGx | 
-               <strong>O</strong> = OptiType | 
-               <strong>M</strong> = mtDNA-server-2</p>
-        </div>
     </div>
     
     <div class="section">
-        <h2>Drug Recommendations</h2>
-        <p>The following recommendations are based on CPIC, DPWG, and FDA guidelines concerning the sample's genetic profile:</p>
+        <h2>Drugs</h2>
+        <p>The following drugs have pharmacogenomic guidance available based on this sample's genetic profile:</p>
         
-        {% for rec in recommendations %}
-        <div class="drug-recommendation 
-            {% if 'standard' in rec.recommendation.lower() or 'normal' in rec.recommendation.lower() %}normal
-            {% elif 'avoid' in rec.recommendation.lower() %}alert
-            {% elif 'consider' in rec.recommendation.lower() or 'alternative' in rec.recommendation.lower() %}warning
-            {% else %}info{% endif %}">
-            <h3>{{ rec.drug }} ({{ rec.gene }})</h3>
-            <p><strong>Recommendation:</strong> {{ rec.recommendation }}</p>
-            <p><strong>Strength of Evidence:</strong> {{ rec.classification }}</p>
-            {% if rec.literature_references %}
-            <p><strong>References:</strong> {{ rec.literature_references|join(", ") }}</p>
-            {% endif %}
+        <div class="evidence-legend">
+            <p><strong>Evidence Level Legend:</strong></p>
+            <span class="legend-item evidence-3"><span class="drug-indicator"></span> High actionability (Level A/Strong)</span>
+            <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate actionability (Level B/Moderate)</span>
+            <span class="legend-item evidence-1"><span class="drug-indicator"></span> Informational (Level C/Optional)</span>
+            <span class="legend-item evidence-0"><span class="drug-indicator"></span> Guideline available</span>
         </div>
+        
+        {% set grouped_recommendations = {} %}
+        {% for rec in recommendations %}
+            {% set drug_name = rec.drug %}
+            {% if drug_name not in grouped_recommendations %}
+                {% set _ = grouped_recommendations.update({drug_name: []}) %}
+            {% endif %}
+            {% set _ = grouped_recommendations[drug_name].append(rec) %}
+        {% endfor %}
+        
+        <div class="drugs-grid">
+            {% for drug_name in grouped_recommendations.keys()|sort %}
+                {% set drug_recs = grouped_recommendations[drug_name] %}
+                {% set ns = namespace(max_evidence=0) %}
+                {% set debug_classifications = [] %}
+                {% for rec in drug_recs %}
+                    {% set classification = (rec.classification or '') %}
+                    {% set _ = debug_classifications.append(classification) %}
+                    {% set classification_upper = classification.upper() %}
+                    {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
+                        {% set evidence = 3 %}
+                    {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
+                        {% set evidence = 2 %}
+                    {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
+                        {% set evidence = 1 %}
+                    {% else %}
+                        {% set evidence = 0 %}
+                    {% endif %}
+                    {% if evidence > ns.max_evidence %}
+                        {% set ns.max_evidence = evidence %}
+                    {% endif %}
+                {% endfor %}
+                <!-- DEBUG: {{ drug_name }}: classifications=[{{ debug_classifications|join(', ') }}], max_evidence={{ ns.max_evidence }} -->
+                <a href="#drug-rec-{{ drug_name|lower|replace(' ', '-') }}" class="drug-item-link">
+                    <div class="drug-item evidence-{{ ns.max_evidence }}" title="{{ drug_name|title }}: Evidence Level {{ ns.max_evidence }} | Classifications: {{ debug_classifications|join(', ') }}">
+                        <span class="drug-indicator"></span>
+                        <span class="drug-name">{{ drug_name|title }}</span>
+                    </div>
+                </a>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <div class="section recs-section">
+        <h2>Drug Recommendations</h2>
+        <p>Detailed pharmacogenomic recommendations based on CPIC, DPWG, and FDA guidelines:</p>
+        
+        {% set grouped_recommendations = {} %}
+        {% for rec in recommendations %}
+            {% set drug_name = rec.drug %}
+            {% if drug_name not in grouped_recommendations %}
+                {% set _ = grouped_recommendations.update({drug_name: []}) %}
+            {% endif %}
+            {% set _ = grouped_recommendations[drug_name].append(rec) %}
+        {% endfor %}
+        
+        {% for drug_name in grouped_recommendations.keys()|sort %}
+            {% set drug_recs = grouped_recommendations[drug_name] %}
+            <div class="drug-recommendation" id="drug-rec-{{ drug_name|lower|replace(' ', '-') }}">
+                <h3>{{ drug_name|title }}</h3>
+                {% set recommendation_groups = {} %}
+                {% for rec in drug_recs %}
+                    {% set rec_key = (rec.recommendation or '') + "|" + (rec.classification or '') + "|" + (rec.guideline_source if rec.guideline_source else 'General') %}
+                    {% if rec_key not in recommendation_groups %}
+                        {% set _ = recommendation_groups.update({rec_key: {'rec': rec, 'genes': []}}) %}
+                    {% endif %}
+                    {% set _ = recommendation_groups[rec_key]['genes'].append(rec.gene) %}
+                {% endfor %}
+                
+                {% for rec_key, group_data in recommendation_groups.items() %}
+                    {% set classification = (group_data['rec'].classification or '') %}
+                    {% set classification_upper = classification.upper() %}
+                    {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
+                        {% set rec_evidence = 3 %}
+                    {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
+                        {% set rec_evidence = 2 %}
+                    {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
+                        {% set rec_evidence = 1 %}
+                    {% else %}
+                        {% set rec_evidence = 0 %}
+                    {% endif %}
+                    <div class="gene-recommendation evidence-{{ rec_evidence }}" style="background-color: #f8f9fa;">
+                        <h4>{{ group_data['genes']|join(', ') }} - {{ group_data['rec'].guideline_source if group_data['rec'].guideline_source else 'General' }}</h4>
+                        <p><strong>Recommendation:</strong> {{ group_data['rec'].recommendation }}</p>
+                        <p><strong>Strength of Evidence:</strong> {{ group_data['rec'].classification }}</p>
+                        {% if group_data['rec'].literature_references %}
+                        <p><strong>References:</strong> {{ group_data['rec'].literature_references|join(", ") }}</p>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
         {% endfor %}
     </div>
     
@@ -729,22 +1150,22 @@
     <div class="section workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
         <h2>Workflow Diagram</h2>
         
-        <!-- Primary Workflow Diagram (Mermaid preferred, Graphviz fallback) -->
+        <!-- Primary Workflow Diagram (PNG preferred for PDF, SVG for screen) -->
         <div class="workflow-figure">
-            {% if workflow_kroki_svg %}
-              <!-- Prefer Mermaid diagram -->
+            {% if workflow_png_data_uri %}
+              <!-- Prefer PNG data URI for reliable PDF rendering -->
+              <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
+            {% elif workflow_png_file_url %}
+              <!-- PNG file URL -->
+              <img src="{{ workflow_png_file_url }}" alt="Workflow Diagram" />
+            {% elif workflow_kroki_svg %}
+              <!-- Kroki Mermaid SVG (good for screen, may have issues in PDF) -->
               {{ workflow_kroki_svg | safe }}
             {% elif workflow_svg %}
-              <!-- Fallback to Graphviz SVG -->
+              <!-- Graphviz SVG (fallback) -->
               {{ workflow_svg | safe }}
-            {% elif workflow_png_file_url %}
-              <!-- Fallback to PNG file -->
-              <img src="{{ workflow_png_file_url }}" alt="Workflow Diagram" />
-            {% elif workflow_png_data_uri %}
-              <!-- Fallback to PNG data URI -->
-              <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
             {% elif workflow_html_fallback %}
-              <!-- Fallback to HTML -->
+              <!-- HTML fallback -->
               {{ workflow_html_fallback | safe }}
             {% else %}
               <!-- Hard fail-safe directly in template -->

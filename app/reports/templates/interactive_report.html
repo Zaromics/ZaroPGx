@@ -135,11 +135,18 @@
             background-color: var(--info-color);
         }
         
-        /* Possibly Wild Type: transparent background with black border */
-        .likely-wild-type {
+        /* Possibly Wild Type: transparent background with black border (VCF only) */
+        .possibly-wild-type {
             background-color: transparent;
             color: #000;
             border: 2px solid #000;
+        }
+        
+        /* Likely Wild Type: transparent background with light green border (BAM/FASTQ/CRAM) */
+        .likely-wild-type {
+            background-color: transparent;
+            color: #000;
+            border: 2px solid #90EE90;
         }
         
         table {
@@ -161,6 +168,22 @@
         
         tr:hover {
             background-color: rgba(0,0,0,0.02);
+        }
+        
+        .narrow-col {
+            width: 1.2em;
+            text-align: center;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        
+        .narrow-col th {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            height: 3em;
+            vertical-align: bottom;
+            padding: 0.5em 0.2em;
         }
         
         .card {
@@ -326,6 +349,37 @@
             transform: translateY(-3px);
         }
         
+        /* Evidence-based border colors for drug cards */
+        .drug-card.evidence-3 {
+            border-left-color: var(--danger-color);
+        }
+        .drug-card.evidence-2 {
+            border-left-color: var(--warning-color);
+        }
+        .drug-card.evidence-1 {
+            border-left-color: var(--info-color);
+        }
+        .drug-card.evidence-0 {
+            border-left-color: #6c757d;
+        }
+        
+        /* Evidence-based border colors for individual recommendation cards */
+        .gene-recommendation {
+            border-left: 3px solid #007bff; /* Default blue */
+        }
+        .gene-recommendation.evidence-3 {
+            border-left-color: var(--danger-color) !important;
+        }
+        .gene-recommendation.evidence-2 {
+            border-left-color: var(--warning-color) !important;
+        }
+        .gene-recommendation.evidence-1 {
+            border-left-color: var(--info-color) !important;
+        }
+        .gene-recommendation.evidence-0 {
+            border-left-color: #6c757d !important;
+        }
+        
         .normal-card {
             border-left-color: var(--success-color);
         }
@@ -374,6 +428,18 @@
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 20px;
+        }
+        
+        /* Single column layout for drug recommendations */
+        .recs-list {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .recs-list .drug-card {
+            width: 100%;
+            max-width: none;
         }
         
         @media (max-width: 768px) {
@@ -503,6 +569,153 @@
             color: #555;
             margin: 0 0 10px 0;
         }
+        
+        /* Drugs grid for interactive report */
+        .drugs-grid-interactive {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+            margin: 20px 0;
+        }
+        
+        .drug-item-interactive-link {
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+        
+        .drug-item-interactive {
+            display: flex;
+            align-items: center;
+            padding: 10px 14px;
+            border-radius: 6px;
+            background-color: #ffffff;
+            border: 2px solid #e1e8ed;
+            border-left: 5px solid #6c757d;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            cursor: pointer;
+        }
+        
+        .drug-item-interactive:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .drug-item-interactive .drug-indicator {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            margin-right: 10px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .drug-item-interactive .drug-name {
+            font-weight: 600;
+            font-size: 1em;
+            color: var(--dark-color);
+        }
+        
+        /* Evidence level color coding for interactive */
+        .drug-item-interactive.evidence-3 {
+            border-left-color: var(--danger-color);
+            background-color: #fff5f5;
+        }
+        
+        .drug-item-interactive.evidence-3 .drug-indicator {
+            background-color: var(--danger-color);
+        }
+        
+        .drug-item-interactive.evidence-2 {
+            border-left-color: var(--warning-color);
+            background-color: #fffbf0;
+        }
+        
+        .drug-item-interactive.evidence-2 .drug-indicator {
+            background-color: var(--warning-color);
+        }
+        
+        .drug-item-interactive.evidence-1 {
+            border-left-color: var(--info-color);
+            background-color: #f0f9fb;
+        }
+        
+        .drug-item-interactive.evidence-1 .drug-indicator {
+            background-color: var(--info-color);
+        }
+        
+        .drug-item-interactive.evidence-0 {
+            border-left-color: #6c757d;
+            background-color: #f8f9fa;
+        }
+        
+        .drug-item-interactive.evidence-0 .drug-indicator {
+            background-color: #6c757d;
+        }
+        
+        .evidence-legend {
+            margin-bottom: 25px;
+            padding: 15px 20px;
+            background-color: var(--light-color);
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .evidence-legend p {
+            margin: 0 0 12px 0;
+            font-weight: 600;
+            color: var(--dark-color);
+        }
+        
+        .legend-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 12px;
+            background-color: white;
+            border-radius: 20px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .legend-item .drug-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        
+        .legend-item.evidence-3 .drug-indicator {
+            background-color: var(--danger-color);
+        }
+        
+        .legend-item.evidence-2 .drug-indicator {
+            background-color: var(--warning-color);
+        }
+        
+        .legend-item.evidence-1 .drug-indicator {
+            background-color: var(--info-color);
+        }
+        
+        .legend-item.evidence-0 .drug-indicator {
+            background-color: #6c757d;
+        }
+        
+        @media (max-width: 768px) {
+            .drugs-grid-interactive {
+                grid-template-columns: 1fr;
+            }
+            
+            .legend-items {
+                flex-direction: column;
+                gap: 8px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -532,6 +745,7 @@
                 <div class="tab active" onclick="showTab('summary')">Summary</div>
                 <div class="tab" onclick="showTab('genes')">Genes</div>
                 <div class="tab" onclick="showTab('drugs')">Drugs</div>
+                <div class="tab" onclick="showTab('recs')">Recs</div>
                 <div class="tab" onclick="showTab('visualizations')">Visualizations</div>
                 <div class="tab" onclick="showTab('method')">Method</div>
                 <div class="tab" onclick="showTab('export')">Export</div>
@@ -557,19 +771,19 @@
                         <p><strong>Diplotype:</strong> {{ d.diplotype }}</p>
                         <p>
                             <strong>Phenotype:</strong> 
-                            <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
-                                {{ d.phenotype }}
+                            <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">
+                                {{ d.phenotype or 'Unknown' }}
                             </span>
                         </p>
                         <p>
                             <strong>Clinical Impact:</strong>
-                            {% if 'Normal' in d.phenotype %}
+                            {% if d.phenotype and 'Normal' in d.phenotype %}
                                 Standard drug metabolism expected for medications metabolized by {{ d.gene }}.
-                            {% elif 'Poor' in d.phenotype %}
+                            {% elif d.phenotype and 'Poor' in d.phenotype %}
                                 Reduced drug metabolism may require dose adjustments for medications metabolized by {{ d.gene }}.
-                            {% elif 'Intermediate' in d.phenotype %}
+                            {% elif d.phenotype and 'Intermediate' in d.phenotype %}
                                 Slightly reduced metabolism may require monitoring for medications metabolized by {{ d.gene }}.
-                            {% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}
+                            {% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}
                                 Increased metabolism may reduce efficacy at standard doses for medications metabolized by {{ d.gene }}.
                             {% else %}
                                 Consult clinical guidelines for medications metabolized by {{ d.gene }}.
@@ -598,7 +812,9 @@
                             <th>Phenotype</th>
                             <th>Activity Score</th>
                             <th>Implications</th>
-                            <th>Tool*</th>
+                            <th class="narrow-col">Call</th>
+                            <th class="narrow-col">Data</th>
+                            <th class="narrow-col">Guide</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -607,62 +823,167 @@
                             <td>{{ d.gene }}</td>
                             <td>{{ d.diplotype }}</td>
                             <td>
-                                <span class="gene-phenotype {% if 'Possibly Wild Type' in d.phenotype %}likely-wild-type{% elif 'Normal' in d.phenotype %}normal-metabolizer{% elif 'Poor' in d.phenotype %}poor-metabolizer{% elif 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}rapid-metabolizer{% endif %}">
-                                    {{ d.phenotype }}
+                                <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">
+                                    {{ d.phenotype or 'Unknown' }}
                                 </span>
                             </td>
                             <td>{{ d.activity_score if d.activity_score else '' }}</td>
                             <td>
-                                {% if 'Normal' in d.phenotype %}
+                                {% if d.phenotype and 'Normal' in d.phenotype %}
                                     Standard drug metabolism expected
-                                {% elif 'Poor' in d.phenotype %}
+                                {% elif d.phenotype and 'Poor' in d.phenotype %}
                                     Reduced drug metabolism may require dose adjustments
-                                {% elif 'Intermediate' in d.phenotype %}
+                                {% elif d.phenotype and 'Intermediate' in d.phenotype %}
                                     Slightly reduced metabolism may require monitoring
-                                {% elif 'Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype %}
+                                {% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}
                                     Increased metabolism may reduce efficacy at standard doses
                                 {% else %}
                                     Consult clinical guidelines
                                 {% endif %}
                             </td>
-                            <td class="tool-source">{{ d.tool_source if d.tool_source else 'P' }}</td>
+                            <td class="narrow-col">{{ d.called_by if d.called_by else '' }}</td>
+                            <td class="narrow-col">{{ d.report_data_from if d.report_data_from else '' }}</td>
+                            <td class="narrow-col">{{ d.guideline_source if d.guideline_source else '' }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
                 
                 <div class="tool-key">
-                    <h4>Tool Key:</h4>
-                    <p><strong>C</strong> = PharmCAT | 
-                       <strong>P</strong> = PyPGx | 
-                       <strong>O</strong> = OptiType | 
-                       <strong>M</strong> = mtDNA-server-2</p>
+                    <h4>Source Legend:</h4>
+                    <p><strong>Call:</strong> Calling tool - <strong>P</strong> = PyPGx, <strong>C</strong> = PharmCAT, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>G</strong> = GATK</p>
+                    <p><strong>Data:</strong> Report data tool - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx</p>
+                    <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB</p>
                 </div>
                 
                 <div id="geneInfoSection"></div>
             </div>
             
             <div id="drugs" class="tab-content">
-                <h3>Drug Recommendations</h3>
-                <p>The following recommendations are based on CPIC guidelines and this sample's genetic profile:</p>
+                <h3>Drugs</h3>
+                <p>The following drugs have pharmacogenomic guidance available based on this sample's genetic profile:</p>
                 
-                <div class="grid">
-                    {% for rec in recommendations %}
-                    <div class="card drug-card 
-                        {% if 'standard' in rec.recommendation.lower() or 'normal' in rec.recommendation.lower() %}normal-card
-                        {% elif 'avoid' in rec.recommendation.lower() %}alert-card
-                        {% elif 'consider' in rec.recommendation.lower() or 'alternative' in rec.recommendation.lower() %}warning-card
-                        {% else %}info-card{% endif %}">
-                        <h3>
-                            {{ rec.drug }}
-                            <small>{{ rec.gene }}</small>
-                        </h3>
-                        <p><strong>Recommendation:</strong> {{ rec.recommendation }}</p>
-                        <p><strong>Strength of Evidence:</strong> {{ rec.classification }}</p>
-                        {% if rec.literature_references %}
-                        <p><strong>References:</strong> {{ rec.literature_references|join(", ") }}</p>
-                        {% endif %}
+                <div class="evidence-legend">
+                    <p><strong>Evidence Level Legend:</strong></p>
+                    <div class="legend-items">
+                        <span class="legend-item evidence-3"><span class="drug-indicator"></span> High actionability (Level A/Strong)</span>
+                        <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate actionability (Level B/Moderate)</span>
+                        <span class="legend-item evidence-1"><span class="drug-indicator"></span> Informational (Level C/Optional)</span>
+                        <span class="legend-item evidence-0"><span class="drug-indicator"></span> Guideline available</span>
                     </div>
+                </div>
+                
+                {% set grouped_recommendations = {} %}
+                {% for rec in recommendations %}
+                    {% set drug_name = rec.drug %}
+                    {% if drug_name not in grouped_recommendations %}
+                        {% set _ = grouped_recommendations.update({drug_name: []}) %}
+                    {% endif %}
+                    {% set _ = grouped_recommendations[drug_name].append(rec) %}
+                {% endfor %}
+                
+                <div class="drugs-grid-interactive">
+                    {% for drug_name in grouped_recommendations.keys()|sort %}
+                        {% set drug_recs = grouped_recommendations[drug_name] %}
+                        {% set ns = namespace(max_evidence=0) %}
+                        {% set debug_classifications = [] %}
+                        {% for rec in drug_recs %}
+                            {% set classification = (rec.classification or '') %}
+                            {% set _ = debug_classifications.append(classification) %}
+                            {% set classification_upper = classification.upper() %}
+                            {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
+                                {% set evidence = 3 %}
+                            {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
+                                {% set evidence = 2 %}
+                            {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
+                                {% set evidence = 1 %}
+                            {% else %}
+                                {% set evidence = 0 %}
+                            {% endif %}
+                            {% if evidence > ns.max_evidence %}
+                                {% set ns.max_evidence = evidence %}
+                            {% endif %}
+                        {% endfor %}
+                        <!-- DEBUG: {{ drug_name }}: classifications=[{{ debug_classifications|join(', ') }}], max_evidence={{ ns.max_evidence }} -->
+                        <a href="#drug-rec-{{ drug_name|lower|replace(' ', '-') }}" class="drug-item-interactive-link" onclick="switchToRecsTab(event); return false;">
+                            <div class="drug-item-interactive evidence-{{ ns.max_evidence }}" title="{{ drug_name|title }}: Evidence Level {{ ns.max_evidence }} | Classifications: {{ debug_classifications|join(', ') }}">
+                                <span class="drug-indicator"></span>
+                                <span class="drug-name">{{ drug_name|title }}</span>
+                            </div>
+                        </a>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <div id="recs" class="tab-content">
+                <h3>Drug Recommendations</h3>
+                <p>Detailed pharmacogenomic recommendations based on CPIC, DPWG, and FDA guidelines:</p>
+                
+                {% set grouped_recommendations = {} %}
+                {% for rec in recommendations %}
+                    {% set drug_name = rec.drug %}
+                    {% if drug_name not in grouped_recommendations %}
+                        {% set _ = grouped_recommendations.update({drug_name: []}) %}
+                    {% endif %}
+                    {% set _ = grouped_recommendations[drug_name].append(rec) %}
+                {% endfor %}
+                
+                <div class="recs-list">
+                    {% for drug_name in grouped_recommendations.keys()|sort %}
+                        {% set drug_recs = grouped_recommendations[drug_name] %}
+                        
+                        {# Calculate max evidence level for this drug #}
+                        {% set ns = namespace(max_evidence=0) %}
+                        {% for rec in drug_recs %}
+                            {% set classification = (rec.classification or '') %}
+                            {% set classification_upper = classification.upper() %}
+                            {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
+                                {% set evidence = 3 %}
+                            {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
+                                {% set evidence = 2 %}
+                            {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
+                                {% set evidence = 1 %}
+                            {% else %}
+                                {% set evidence = 0 %}
+                            {% endif %}
+                            {% if evidence > ns.max_evidence %}
+                                {% set ns.max_evidence = evidence %}
+                            {% endif %}
+                        {% endfor %}
+                        
+                        <div class="card drug-card drug-rec-target evidence-{{ ns.max_evidence }}" id="drug-rec-{{ drug_name|lower|replace(' ', '-') }}">
+                            <h3>{{ drug_name|title }}</h3>
+                            {% set recommendation_groups = {} %}
+                            {% for rec in drug_recs %}
+                                {% set rec_key = (rec.recommendation or '') + "|" + (rec.classification or '') + "|" + (rec.guideline_source if rec.guideline_source else 'General') %}
+                                {% if rec_key not in recommendation_groups %}
+                                    {% set _ = recommendation_groups.update({rec_key: {'rec': rec, 'genes': []}}) %}
+                                {% endif %}
+                                {% set _ = recommendation_groups[rec_key]['genes'].append(rec.gene) %}
+                            {% endfor %}
+                            
+                            {% for rec_key, group_data in recommendation_groups.items() %}
+                                {% set classification = (group_data['rec'].classification or '') %}
+                                {% set classification_upper = classification.upper() %}
+                                {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
+                                    {% set rec_evidence = 3 %}
+                                {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
+                                    {% set rec_evidence = 2 %}
+                                {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
+                                    {% set rec_evidence = 1 %}
+                                {% else %}
+                                    {% set rec_evidence = 0 %}
+                                {% endif %}
+                                <div class="gene-recommendation evidence-{{ rec_evidence }}" style="margin-bottom: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
+                                    <h4 style="margin: 0 0 8px 0; color: #495057;">{{ group_data['genes']|join(', ') }} - {{ group_data['rec'].guideline_source if group_data['rec'].guideline_source else 'General' }}</h4>
+                                    <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation }}</p>
+                                    <p style="margin: 4px 0;"><strong>Strength of Evidence:</strong> {{ group_data['rec'].classification }}</p>
+                                    {% if group_data['rec'].literature_references %}
+                                    <p style="margin: 4px 0;"><strong>References:</strong> {{ group_data['rec'].literature_references|join(", ") }}</p>
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
                     {% endfor %}
                 </div>
             </div>
@@ -868,6 +1189,43 @@
         </div>
         {% endfor %}
     </div>
+    
+    <!-- Tab switching function for drug links -->
+    <script>
+        function switchToRecsTab(event) {
+            // Prevent default anchor behavior
+            if (event) {
+                event.preventDefault();
+            }
+            
+            // Get the target drug ID from the clicked link
+            var targetId = event ? event.currentTarget.getAttribute('href').substring(1) : null;
+            
+            // Switch to Recs tab
+            showTab('recs');
+            
+            // Wait for tab content to be visible, then scroll to the drug
+            setTimeout(function() {
+                if (targetId) {
+                    var targetElement = document.getElementById(targetId);
+                    if (targetElement) {
+                        targetElement.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'start',
+                            inline: 'nearest'
+                        });
+                        
+                        // Add a highlight effect
+                        targetElement.style.transition = 'box-shadow 0.3s ease';
+                        targetElement.style.boxShadow = '0 0 0 3px rgba(52, 152, 219, 0.5)';
+                        setTimeout(function() {
+                            targetElement.style.boxShadow = '';
+                        }, 2000);
+                    }
+                }
+            }, 100);
+        }
+    </script>
     
     <!-- External report visualization scripts -->
     <script src="/static/js/pgx-report.js"></script>

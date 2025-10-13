@@ -1457,7 +1457,6 @@
                 // Extract report URLs from upload response
                 const reportUrls = {
                     'pdf_report_url': data.pdf_report_url,
-                    'html_report_url': data.html_report_url,
                     'interactive_html_report_url': data.interactive_html_report_url,
                     'pharmcat_html_report_url': data.pharmcat_html_report_url,
                     'pharmcat_json_report_url': data.pharmcat_json_report_url,
@@ -1488,7 +1487,7 @@
                                 title: "Custom Reports",
                                 reports: [
                                     { key: 'pdf_report_url', label: 'View PDF Report', icon: 'bi-file-pdf', color: 'btn-primary' },
-                                    { key: 'html_report_url', label: 'View Interactive HTML Report', icon: 'bi-file-code', color: 'btn-info' }
+                                    { key: 'interactive_html_report_url', label: 'View Interactive HTML Report', icon: 'bi-file-code', color: 'btn-info' }
                                 ]
                             },
                             {
@@ -2515,7 +2514,6 @@
                                 job_id: data.workflow_id,
                                 patient_id: patient_id,
                                 pdf_report_url: data.pdf_report_url,
-                                html_report_url: data.html_report_url,
                                 interactive_html_report_url: data.interactive_html_report_url,
                                 pharmcat_html_report_url: data.pharmcat_html_report_url,
                                 pharmcat_json_report_url: data.pharmcat_json_report_url,
