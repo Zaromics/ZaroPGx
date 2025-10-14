@@ -280,6 +280,40 @@ docker compose logs -f
 - **File processing**: Ensure input file(s) is/are valid and contain required information
 - **PDF generation**: WeasyPrint is used; if PDF creation fails, ReportLab fallback may be used instead. Check if all containers are running and healthy
 
+## Data Cleanup
+
+### Complete and Selective Data Removal
+
+To completely remove all user data and reset ZaroPGx to a clean state:
+
+**Stop services and remove all data:**
+```bash
+# Stop all services
+docker compose down
+
+# Remove all containers, networks, and volumes (including database data)
+docker compose down -v
+
+# Remove all runtime data directories
+rm -rf data/
+rm -rf reference/
+```
+
+**Remove database data only:**
+```bash
+docker volume rm pgx_pgdata pgx_fhir-data pgx_pharmcat-references
+```
+
+**Remove select data dirs:**
+```bash
+- rm -rf data/reports/    # Generated pharmacogenomic reports (PDF, HTML, JSON, etc.)
+- rm -rf data/uploads/    # Uploaded genomic files (VCF, BAM, etc.)
+- rm -rf data/temp/       # Temporary processing files
+- rm -rf data/fhir-data/  # FHIR server data and patient records
+- rm -rf data/nextflow/   # Nextflow cache and workflow execution data
+- rm -rf reference/       # Reference genomes (GRCh37, GRCh38, hg19, hg38) - **Large files**
+```
+
 ## Contributing (is gratefully appreciated and welcome!)
 
 1. Create a feature branch: `git checkout -b feature/your-change`
