@@ -146,7 +146,7 @@ def get_author_name() -> str:
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
-    version="0.2.0"
+    version="0.2.2"
 )
 
 # OAuth2
