@@ -506,59 +506,116 @@ def normalize_pharmcat_results(response):
                 
                 # Extract drug recommendations from drugs section if available
                 if "drugs" in json_data and isinstance(json_data["drugs"], dict):
-                    logger.info(f"Processing drugs section with {len(json_data['drugs'])} drugs")
+                    logger.info(f"Processing drugs section with {len(json_data['drugs'])} guideline sources")
                     
-                    for drug_id, drug_info in json_data["drugs"].items():
-                        if not isinstance(drug_info, dict):
+                    # Dictionary to collect drug recommendations by drug name
+                    drug_recommendations_by_drug = {}
+                    
+                    # Process each guideline source (CPIC, DPWG, FDA)
+                    for guideline_source, drugs_in_source in json_data["drugs"].items():
+                        if not isinstance(drugs_in_source, dict):
                             continue
                         
-                        # Extract drug recommendations from guidelines
-                        if "guidelines" in drug_info and isinstance(drug_info["guidelines"], list):
-                            for guideline in drug_info["guidelines"]:
-                                guideline_name = guideline.get("name", "")
-                                
-                                # Extract annotations
-                                annotations = guideline.get("annotations", [])
-                                for annotation in annotations:
-                                    # Extract recommendation text
-                                    recommendation_text = ""
-                                    if "drugRecommendation" in annotation:
-                                        recommendation_text = annotation["drugRecommendation"]
-                                    elif "text" in annotation:
-                                        recommendation_text = annotation["text"]
-                                    else:
-                                        recommendation_text = "See report for details"
+                        logger.info(f"Processing {guideline_source} with {len(drugs_in_source)} drugs")
+                        
+                        # Process each drug within the guideline source
+                        for drug_name, drug_info in drugs_in_source.items():
+                            if not isinstance(drug_info, dict):
+                                continue
+                            
+                            # Initialize drug entry if not exists
+                            if drug_name not in drug_recommendations_by_drug:
+                                drug_recommendations_by_drug[drug_name] = {
+                                    "drug": drug_name,
+                                    "drugId": drug_info.get("id", ""),
+                                    "genes": set(),  # Use set to avoid duplicates
+                                    "recommendations": []
+                                }
+                            
+                            # Extract drug recommendations from guidelines
+                            if "guidelines" in drug_info and isinstance(drug_info["guidelines"], list):
+                                for guideline in drug_info["guidelines"]:
+                                    guideline_name = guideline.get("name", "")
                                     
-                                    # Extract classification
-                                    classification = ""
-                                    if "classification" in annotation:
-                                        class_obj = annotation.get("classification", {})
-                                        if isinstance(class_obj, dict):
-                                            classification = class_obj.get("term", "")
+                                    # Extract annotations
+                                    annotations = guideline.get("annotations", [])
+                                    for annotation in annotations:
+                                        # Extract recommendation text
+                                        recommendation_text = ""
+                                        if "drugRecommendation" in annotation:
+                                            recommendation_text = annotation["drugRecommendation"]
+                                        elif "text" in annotation:
+                                            recommendation_text = annotation["text"]
                                         else:
-                                            classification = str(class_obj)
-                                    
-                                    # Identify genes for this drug
-                                    genes_for_drug = []
-                                    if "genes" in drug_info:
-                                        genes_for_drug = drug_info.get("genes", [])
-                                    elif "gene" in annotation:
-                                        genes_for_drug = [annotation.get("gene", "")]
-                                    
-                                    if not genes_for_drug:
-                                        genes_for_drug = ["Unknown"]
-                                    
-                                    # Create a recommendation for each gene associated with this drug
-                                    for gene in genes_for_drug:
-                                        drug_rec = {
-                                            "gene": gene,
-                                            "drug": drug_id,
-                                            "drugId": drug_info.get("rxnormId", ""),
-                                            "guideline": guideline_name,
-                                            "recommendation": recommendation_text,
-                                            "classification": classification
-                                        }
-                                        drug_recommendations.append(drug_rec)
+                                            recommendation_text = "See report for details"
+                                        
+                                        # Extract classification and strength of evidence
+                                        # PharmCAT uses strengthOfEvidence for CPIC levels (A, B, C)
+                                        classification = ""
+                                        strength_of_evidence = annotation.get("strengthOfEvidence", "")
+                                        
+                                        # Use strengthOfEvidence if available (preferred for CPIC levels)
+                                        if strength_of_evidence:
+                                            classification = strength_of_evidence
+                                        elif "classification" in annotation:
+                                            class_obj = annotation.get("classification", {})
+                                            if isinstance(class_obj, dict):
+                                                classification = class_obj.get("term", "")
+                                            else:
+                                                classification = str(class_obj)
+                                        
+                                        # Identify genes for this drug
+                                        genes_for_drug = []
+                                        
+                                        # Try to extract gene from lookupKey (e.g., {'HLA-B': '*57:01 positive'})
+                                        lookup_key = annotation.get('lookupKey', {})
+                                        if isinstance(lookup_key, dict) and lookup_key:
+                                            genes_for_drug = list(lookup_key.keys())
+                                        
+                                        # Try phenotypes as fallback (e.g., {'HLA-B': '*57:01 positive'})
+                                        if not genes_for_drug:
+                                            phenotypes = annotation.get('phenotypes', {})
+                                            if isinstance(phenotypes, dict) and phenotypes:
+                                                genes_for_drug = list(phenotypes.keys())
+                                        
+                                        # Try genotypes array as another fallback
+                                        if not genes_for_drug:
+                                            genotypes = annotation.get('genotypes', [])
+                                            if genotypes and isinstance(genotypes[0], dict):
+                                                diplotypes = genotypes[0].get('diplotypes', [])
+                                                if diplotypes and isinstance(diplotypes[0], dict):
+                                                    gene = diplotypes[0].get('gene')
+                                                    if gene:
+                                                        genes_for_drug = [gene]
+                                        
+                                        # Legacy fallbacks
+                                        if not genes_for_drug:
+                                            if "genes" in drug_info:
+                                                genes_for_drug = drug_info.get("genes", [])
+                                            elif "gene" in annotation:
+                                                genes_for_drug = [annotation.get("gene", "")]
+                                        
+                                        if not genes_for_drug:
+                                            genes_for_drug = ["Unknown"]
+                                        
+                                        # Add genes to the drug's gene set (deduplication)
+                                        for gene in genes_for_drug:
+                                            drug_recommendations_by_drug[drug_name]["genes"].add(gene)
+                                            
+                                            # Create recommendation entry
+                                            recommendation = {
+                                                "gene": gene,
+                                                "guideline": guideline_name,
+                                                "guideline_source": guideline_source,
+                                                "recommendation": recommendation_text,
+                                                "classification": classification
+                                            }
+                                            drug_recommendations_by_drug[drug_name]["recommendations"].append(recommendation)
+                    
+                    # Convert sets to lists and create final drug recommendations list
+                    for drug_name, drug_data in drug_recommendations_by_drug.items():
+                        drug_data["genes"] = list(drug_data["genes"])  # Convert set to list
+                        drug_recommendations.append(drug_data)
                 
                 # If we found either genes or drug recommendations, consider JSON processing successful
                 if genes_data or drug_recommendations:
@@ -1192,11 +1249,11 @@ def parse_pharmcat_results(results: Dict[str, Any]) -> Dict[str, Any]:
                     for annotation in drug_data["annotations"]:
                         # Create standardized recommendation entry
                         recommendations.append({
-                            "drug": drug_name,
-                            "guidelines": drug_data.get("guidelines", []),
-                            "recommendation": annotation.get("drugRecommendation", "See report for details"),
-                            "classification": annotation.get("classification", "Unknown"),
-                            "implications": annotation.get("implications", [])
+                        "drug": drug_name,
+                        "guidelines": drug_data.get("guidelines", []),
+                        "recommendation": annotation.get("drugRecommendation", "See report for details"),
+                        "classification": annotation.get("strengthOfEvidence") or annotation.get("classification", "Unknown"),
+                        "implications": annotation.get("implications", [])
                         })
                 else:
                     # Add basic entry if no annotations
@@ -1431,7 +1488,7 @@ def extract_drug_recommendations_from_phenotype(phenotype_data):
                     "drugId": drug_rec.get("drugId", ""),
                     "guideline": drug_rec.get("guidelineName", ""),
                     "recommendation": drug_rec.get("recommendationText", "See report for details"),
-                    "classification": drug_rec.get("classification", "")
+                    "classification": drug_rec.get("strengthOfEvidence") or drug_rec.get("classification", "")
                 }
                 
                 drug_recommendations.append(normalized_rec)
@@ -1461,7 +1518,7 @@ def extract_drug_recommendations_from_phenotype(phenotype_data):
                             "drugId": drug_rec.get("drugId", ""),
                             "guideline": drug_rec.get("guidelineName", ""),
                             "recommendation": drug_rec.get("recommendationText", "See report for details"),
-                            "classification": drug_rec.get("classification", "")
+                            "classification": drug_rec.get("strengthOfEvidence") or drug_rec.get("classification", "")
                         }
                         
                         drug_recommendations.append(normalized_rec)

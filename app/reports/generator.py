@@ -10,19 +10,11 @@ from typing import List, Dict, Any
 import glob
 
 from weasyprint import HTML, CSS
-try:
-    # WeasyPrint >= 53
-    from weasyprint.text.fonts import FontConfiguration  # type: ignore
-except Exception:
-    try:
-        # WeasyPrint <= 52.x
-        from weasyprint.fonts import FontConfiguration  # type: ignore
-    except Exception:
-        FontConfiguration = None  # type: ignore
-
+from weasyprint.text.fonts import FontConfiguration  # type: ignore
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
+from app.services.pharmcat_data_service import PharmCATDataService
 from app.visualizations.workflow_diagram import (
     render_workflow,
     render_workflow_png_data_uri,
@@ -390,11 +382,39 @@ def generate_pdf_report(
                         logger.info(f"Executive Summary TSV selected (PDF path): {tsv_path}")
                     except Exception:
                         pass
+                    # Determine file type from workflow for wild type labeling
+                    inferred_file_type = "vcf"
+                    if workflow and isinstance(workflow, dict):
+                        inferred_file_type = str(workflow.get("file_type", "vcf")).lower()
+                    
                     for row in _diplos:
+                        # Get phenotype, applying wild type logic if needed
+                        diplotype_str = str(row.get("rec_lookup_diplotype", "")).strip()
+                        phenotype_str = str(row.get("rec_lookup_phenotype", row.get("phenotype", ""))).strip()
+                        # Check for reference genotype (case-insensitive, handle variations)
+                        diplotype_upper = diplotype_str.upper()
+                        is_reference = diplotype_upper in {"*1/*1", "REFERENCE/REFERENCE", "*1 / *1", "REFERENCE / REFERENCE"}
+                        # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
+                        phenotype_lower = phenotype_str.lower()
+                        is_empty_phenotype = (
+                            phenotype_str == "" or 
+                            phenotype_lower in {"n/a", "na", "unknown", "none", "-", "."} or
+                            phenotype_str.isspace()
+                        )
+                        
+                        # Assign wild type phenotype if conditions are met
+                        if is_reference and is_empty_phenotype:
+                            if inferred_file_type in {"vcf", "vcf.gz", "vcf.bgz"}:
+                                phenotype_str = "Possibly Wild Type"
+                                logger.debug(f"TSV PDF: Assigned 'Possibly Wild Type' to {row.get('gene')}")
+                            elif inferred_file_type in {"bam", "fastq", "fq", "cram", "sam"}:
+                                phenotype_str = "Likely Wild Type"
+                                logger.debug(f"TSV PDF: Assigned 'Likely Wild Type' to {row.get('gene')}")
+                        
                         execsum_rows_from_tsv.append({
                             "gene": row.get("gene", ""),
                             "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
-                            "rec_lookup_phenotype": row.get("rec_lookup_phenotype", row.get("phenotype", "")),
+                            "rec_lookup_phenotype": phenotype_str,
                             "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
                         })
             except Exception:
@@ -407,19 +427,7 @@ def generate_pdf_report(
             # New: explicit display sample id for templates that prefer it (NEEDS FIXING)
             "display_sample_id": sample_identifier if sample_identifier else patient_id,
             "report_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "diplotypes": [
-                {
-                    **d,
-                    "phenotype": (
-                        "Possibly Wild Type"
-                        if str(d.get("diplotype") or "").strip() in {"*1/*1", "Reference/Reference"} and (
-                            str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
-                        )
-                        else d.get("phenotype")
-                    )
-                }
-                if isinstance(d, dict) else d for d in diplotypes
-            ],
+            "diplotypes": diplotypes,
             "recommendations": recommendations,
             "disclaimer": get_disclaimer(),
             "platform_info": platform,
@@ -819,19 +827,7 @@ def create_interactive_html_report(
             "report_id": report_id,
             "sample_identifier": sample_identifier if sample_identifier else patient_id,
             "report_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "diplotypes": [
-                {
-                    **d,
-                    "phenotype": (
-                        "Possibly Wild Type"
-                        if str(d.get("diplotype") or "").strip() in {"*1/*1", "Reference/Reference"} and (
-                            str(d.get("phenotype") or "").strip() == "" or str(d.get("phenotype") or "").strip().lower() in {"n/a", "na"}
-                        )
-                        else d.get("phenotype")
-                    )
-                }
-                if isinstance(d, dict) else d for d in diplotypes
-            ],
+            "diplotypes": diplotypes,
             "recommendations": template_recommendations,
             "organized_recommendations": json.dumps(organize_gene_drug_recommendations(template_recommendations)),
             "disclaimer": get_disclaimer(),
@@ -956,13 +952,137 @@ def determine_tool_source(gene_name: str, file_type: str, workflow_config: Dict[
             return "C"
         else:
             # Default logic: VCF input → PharmCAT, others → PyPGx
-            if file_type.lower() in ["vcf"]:
+            if file_type and file_type.lower() in ["vcf"]:
                 return "C"
             else:
                 return "P"
     
     # Default fallback to PyPGx for unknown genes
     return "P"
+
+
+def determine_called_by(gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None) -> str:
+    """
+    Determine which tool actually made the genetic call.
+    
+    Args:
+        gene_name: Name of the gene
+        file_type: Type of input file (vcf, bam, cram, sam)
+        workflow_config: Workflow configuration dict
+        
+    Returns:
+        Single letter code: P (PyPGx), C (PharmCAT), O (OptiType), M (mtDNA-server-2), G (GATK)
+    """
+    gene_name = gene_name.upper().strip()
+    
+    # HLA genes → OptiType
+    if gene_name in ["HLA-A", "HLA-B", "HLA-C"]:
+        return "O"
+    
+    # MT-RNR1 → mtDNA-server-2
+    if gene_name == "MT-RNR1":
+        return "M"
+    
+    # Load gene categories from config
+    try:
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "genes.json")
+        with open(config_path, 'r') as f:
+            genes_config = json.load(f)
+        
+        # Get gene sets
+        pharmcat_can_call = set(genes_config.get("sets", {}).get("pharmcat_can_call", []))
+        pypgx_minus_pharmcat = set(genes_config.get("sets", {}).get("pypgx_minus_pharmcat", []))
+        pharmcat_outside_callers = set(genes_config.get("sets", {}).get("pharmcat_outside_callers", []))
+        
+    except Exception as e:
+        logger.warning(f"Failed to load genes.json config: {e}. Tool determination may be limited.")
+        pharmcat_can_call = set()
+        pypgx_minus_pharmcat = set()
+        pharmcat_outside_callers = set()
+    
+    # PyPGx-only genes → PyPGx
+    if gene_name in pypgx_minus_pharmcat:
+        return "P"
+    
+    # PharmCAT outside callers (handled by PyPGx/OptiType/mtDNA-server-2, not PharmCAT directly)
+    if gene_name in pharmcat_outside_callers:
+        if gene_name == "CYP2D6":
+            return "P"  # CYP2D6 is handled by PyPGx
+        # HLA genes and MT-RNR1 are already handled above
+    
+    # Overlapping genes (both PharmCAT and PyPGx can call)
+    if gene_name in pharmcat_can_call:
+        # Check for environment variable override
+        pypgx_preferred = os.environ.get("PYPGX_PREFERRED", "false").lower() in {"true", "1", "yes"}
+        pharmcat_preferred = os.environ.get("PHARMCAT_PREFERRED", "false").lower() in {"true", "1", "yes"}
+        
+        if pypgx_preferred:
+            return "P"
+        elif pharmcat_preferred:
+            return "C"
+        else:
+            # Default logic: VCF input → PharmCAT, others → PyPGx
+            if file_type and file_type.lower() in ["vcf"]:
+                return "C"
+            else:
+                return "P"
+    
+    # Default fallback to PyPGx for unknown genes
+    return "P"
+
+
+def determine_report_data_from(gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None) -> str:
+    """
+    Determine which tool provided the raw data for the report.
+    
+    Args:
+        gene_name: Name of the gene
+        file_type: Type of input file (vcf, bam, cram, sam)
+        workflow_config: Workflow configuration dict
+        
+    Returns:
+        Single letter code: P (PyPGx), C (PharmCAT), O (OptiType), M (mtDNA-server-2), G (GATK)
+    """
+    # For now, this is the same as called_by, but could be different in the future
+    # For example, if PharmCAT calls a gene but uses PyPGx data as input
+    return determine_called_by(gene_name, file_type, workflow_config)
+
+
+def determine_guideline_source(gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None) -> str:
+    """
+    Determine which guideline source was referenced for recommendations.
+    
+    Args:
+        gene_name: Name of the gene
+        file_type: Type of input file (vcf, bam, cram, sam)
+        workflow_config: Workflow configuration dict
+        
+    Returns:
+        Single letter code: F (FDA), D (DPWG), C (CPIC), P (PharmGKB)
+    """
+    called_by = determine_called_by(gene_name, file_type, workflow_config)
+    
+    # PharmCAT typically uses CPIC or DPWG guidelines
+    if called_by == "C":
+        # This could be more sophisticated based on gene-specific guidelines
+        return "C"  # Default to CPIC for PharmCAT
+    
+    # PyPGx doesn't typically provide guideline-based recommendations
+    elif called_by == "P":
+        return ""  # PyPGx doesn't have guideline sources
+    
+    # Other tools
+    elif called_by == "O":
+        return ""  # OptiType doesn't have guideline sources
+    
+    elif called_by == "M":
+        return ""  # mtDNA-server-2 doesn't have guideline sources
+    
+    elif called_by == "G":
+        return ""  # GATK doesn't have guideline sources
+    
+    else:
+        return ""
 
 
 def _load_all_gene_names() -> List[str]:
@@ -1100,12 +1220,44 @@ def _build_canonical_diplotypes(
     for name in sorted(canonical_names, key=lambda s: s.upper()):
         key = name.upper()
         if key in best_by_gene:
-            # Normalize fields and ensure tool_source exists
+            # Normalize fields and ensure source fields exist
             row = dict(best_by_gene[key])
             row["gene"] = name
             try:
+                # Set source fields if not already set (preserve PharmCAT data service settings)
+                if not row.get("called_by"):
+                    row["called_by"] = determine_called_by(name, file_type, workflow_config)
+                if not row.get("report_data_from"):
+                    row["report_data_from"] = determine_report_data_from(name, file_type, workflow_config)
+                if not row.get("guideline_source"):
+                    row["guideline_source"] = determine_guideline_source(name, file_type, workflow_config)
+                # Keep tool_source for backward compatibility
                 if not row.get("tool_source"):
                     row["tool_source"] = determine_tool_source(name, file_type, workflow_config)
+                
+                # Assign wild type phenotype labels based on file type
+                diplotype_str = str(row.get("diplotype") or "").strip()
+                phenotype_str = str(row.get("phenotype") or "").strip()
+                # Check for reference genotype (case-insensitive, handle variations)
+                diplotype_upper = diplotype_str.upper()
+                is_reference = diplotype_upper in {"*1/*1", "REFERENCE/REFERENCE", "*1 / *1", "REFERENCE / REFERENCE"}
+                # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
+                phenotype_lower = phenotype_str.lower()
+                is_empty_phenotype = (
+                    phenotype_str == "" or 
+                    phenotype_lower in {"n/a", "na", "unknown", "none", "-", "."} or
+                    phenotype_str.isspace()
+                )
+                
+                if is_reference and is_empty_phenotype:
+                    # VCF files → "Possibly Wild Type" (absence of known variants)
+                    if file_type and file_type.lower() in {"vcf", "vcf.gz", "vcf.bgz"}:
+                        row["phenotype"] = "Possibly Wild Type"
+                        logger.debug(f"Assigned 'Possibly Wild Type' to {row.get('gene')} (diplotype: {diplotype_str}, file_type: {file_type})")
+                    # BAM/FASTQ/CRAM files → "Likely Wild Type" (comprehensive analysis with SV/CNV)
+                    elif file_type and file_type.lower() in {"bam", "fastq", "fq", "cram", "sam"}:
+                        row["phenotype"] = "Likely Wild Type"
+                        logger.debug(f"Assigned 'Likely Wild Type' to {row.get('gene')} (diplotype: {diplotype_str}, file_type: {file_type})")
             except Exception:
                 pass
             canonical_rows.append(row)
@@ -1116,7 +1268,10 @@ def _build_canonical_diplotypes(
                 "diplotype": "",
                 "phenotype": "",
                 "activity_score": None,
-                "tool_source": determine_tool_source(name, file_type, workflow_config or {}),
+                "called_by": determine_called_by(name, file_type, workflow_config or {}),
+                "report_data_from": determine_report_data_from(name, file_type, workflow_config or {}),
+                "guideline_source": determine_guideline_source(name, file_type, workflow_config or {}),
+                "tool_source": determine_tool_source(name, file_type, workflow_config or {}),  # Keep for backward compatibility
             })
 
     return canonical_rows
@@ -1124,38 +1279,110 @@ def _build_canonical_diplotypes(
 def map_recommendations_for_template(drug_recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Map drug recommendations from PharmCAT format to template-compatible format.
+    Groups recommendations by drug name to avoid duplicates in the final output.
     
     Args:
         drug_recommendations: List of drug recommendations from normalized PharmCAT results
+        Can be either grouped structure: [{"drug": "warfarin", "genes": ["CYP2C9"], "recommendations": [...]}]
+        Or flattened structure: [{"drug": "warfarin", "gene": "CYP2C9", "recommendation": "..."}]
         
     Returns:
-        Template-compatible recommendations
+        Template-compatible recommendations, grouped by drug to avoid duplicates
     """
-    mapped_recommendations = []
+    # First, group all recommendations by drug name to handle duplicates
+    drug_groups = {}
     
-    for rec in drug_recommendations:
-        # Create a recommendation object with fields required by the template
-        mapped_rec = {
-            "drug": rec.get("drug", "Unknown"),
-            "gene": rec.get("genes", ""),  # Use the genes field from our normalized format
-            "recommendation": rec.get("recommendation", "See report for details"),
-            "classification": rec.get("classification", "Unknown"),
-            "literature_references": []  # Default empty list since templates check for this
-        }
+    for drug_data in drug_recommendations:
+        drug_name = drug_data.get("drug", "Unknown")
+        genes = drug_data.get("genes", [])
+        recommendations = drug_data.get("recommendations", [])
         
-        # Add implications as references if available
-        if "implications" in rec and rec["implications"]:
-            if isinstance(rec["implications"], list):
-                mapped_rec["literature_references"] = rec["implications"]
-            elif isinstance(rec["implications"], str):
-                # Split by semicolon if it's a string
-                mapped_rec["literature_references"] = [imp.strip() for imp in rec["implications"].split(";") if imp.strip()]
-        
-        mapped_recommendations.append(mapped_rec)
+        # If this is the new grouped structure, process it
+        if isinstance(genes, list) and isinstance(recommendations, list):
+            if drug_name not in drug_groups:
+                drug_groups[drug_name] = {
+                    "drug": drug_name,
+                    "genes": [],
+                    "recommendations": [],
+                    "pharmgkb_id": drug_data.get("pharmgkb_id"),
+                    "called_by": drug_data.get("called_by"),
+                    "report_data_from": drug_data.get("report_data_from")
+                }
+            
+            # Add genes and recommendations
+            for gene in genes:
+                if gene not in drug_groups[drug_name]["genes"]:
+                    drug_groups[drug_name]["genes"].append(gene)
+            
+            drug_groups[drug_name]["recommendations"].extend(recommendations)
+        else:
+            # Legacy flattened format - group by drug name
+            gene = drug_data.get("gene", "Unknown")
+            
+            if drug_name not in drug_groups:
+                drug_groups[drug_name] = {
+                    "drug": drug_name,
+                    "genes": [],
+                    "recommendations": [],
+                    "pharmgkb_id": drug_data.get("pharmgkb_id"),
+                    "called_by": drug_data.get("called_by"),
+                    "report_data_from": drug_data.get("report_data_from")
+                }
+            
+            # Add gene if not already present
+            if gene not in drug_groups[drug_name]["genes"]:
+                drug_groups[drug_name]["genes"].append(gene)
+            
+            # Create recommendation entry
+            recommendation_entry = {
+                "gene": gene,
+                "recommendation": drug_data.get("recommendation", "See report for details"),
+                "classification": drug_data.get("classification", "Unknown"),
+                "guideline": drug_data.get("guideline", ""),
+                "guideline_source": drug_data.get("guideline_source", ""),
+                "literature_references": drug_data.get("literature_references", [])
+            }
+            
+            drug_groups[drug_name]["recommendations"].append(recommendation_entry)
+    
+    # Convert grouped data to flattened format for template compatibility
+    mapped_recommendations = []
+    for drug_name, drug_data in drug_groups.items():
+        # Create one entry per gene-guideline combination, but keep them grouped by drug
+        for rec in drug_data["recommendations"]:
+            gene = rec.get("gene", "Unknown")
+            guideline = rec.get("guideline", "")
+            guideline_source = rec.get("guideline_source", "")
+            recommendation_text = rec.get("recommendation", "See report for details")
+            classification = rec.get("classification", "Unknown")
+            
+            # DEBUG: Log what we're mapping
+            logger.info(f"DEBUG MAP - Drug: {drug_name}, Gene: {gene}, Classification: '{classification}'")
+            
+            mapped_rec = {
+                "drug": drug_name,
+                "gene": gene,
+                "genes": gene,  # For backward compatibility
+                "recommendation": recommendation_text,
+                "classification": classification,
+                "guideline": guideline,
+                "guideline_source": guideline_source,
+                "literature_references": rec.get("literature_references", [])
+            }
+            
+            # Add drug-level metadata if available
+            if drug_data.get("pharmgkb_id"):
+                mapped_rec["pharmgkb_id"] = drug_data["pharmgkb_id"]
+            if drug_data.get("called_by"):
+                mapped_rec["called_by"] = drug_data["called_by"]
+            if drug_data.get("report_data_from"):
+                mapped_rec["report_data_from"] = drug_data["report_data_from"]
+            
+            mapped_recommendations.append(mapped_rec)
     
     return mapped_recommendations
 
-def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_info: Dict[str, Any] = None) -> Dict[str, str]:
+def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_info: Dict[str, Any] = None, workflow_id: str = None, db_session = None) -> Dict[str, str]:
     """
     Generate a report from PharmCAT results
     
@@ -1163,6 +1390,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         pharmcat_results: Results from PharmCAT (already normalized from main.py)
         output_dir: Directory to write report files to
         patient_info: Optional patient information
+        workflow_id: Optional workflow ID to get database PharmCAT data
+        db_session: Optional database session for database queries
         
     Returns:
         Dict containing file paths for all enabled reports
@@ -1173,30 +1402,72 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     except Exception:
         logger.info("Input pharmcat_results has no keys()")
     logger.info(f"Input patient_info: {patient_info}")
+    logger.info(f"Workflow ID: {workflow_id}")
     
-    # The data coming from main.py is already normalized, so we don't need to normalize again
-    # Check if the data is already in the expected format
-    if "data" in pharmcat_results and isinstance(pharmcat_results["data"], dict):
-        # Data is already in the expected format from main.py
-        data = pharmcat_results["data"]
-        logger.info("Using pre-normalized data from main.py")
-        logger.info(f"Data keys: {list(data.keys())}")
-    else:
-        # Fallback: try to normalize if the data structure is unexpected
-        logger.warning("Unexpected data structure, attempting normalization")
-        logger.warning(f"Expected 'data' key not found in: {list(pharmcat_results.keys())}")
+    # Try to get PharmCAT data from database first if workflow_id and db_session are provided
+    data = None
+    if workflow_id and db_session:
         try:
-            normalized_results = normalize_pharmcat_results(pharmcat_results)
-            data = normalized_results["data"]
-            logger.info("Successfully normalized data")
+            logger.info(f"Attempting to get PharmCAT data from database for workflow {workflow_id}")
+            logger.info(f"Database session type: {type(db_session)}")
+            pharmcat_service = PharmCATDataService(db_session)
+            data = pharmcat_service.get_pharmcat_data_for_workflow(workflow_id)
+            if data:
+                logger.info(f"Successfully retrieved PharmCAT data from database: {len(data.get('genes', []))} genes, {len(data.get('drugRecommendations', []))} recommendations")
+                logger.info(f"Database data keys: {list(data.keys())}")
+            else:
+                logger.warning("No PharmCAT data found in database, falling back to file-based data")
         except Exception as e:
-            logger.error(f"Failed to normalize data: {str(e)}")
-            # Create minimal data structure to prevent crashes
-            data = {
-                "genes": [],
-                "drugRecommendations": [],
-                "file_type": "unknown"
-            }
+            logger.error(f"Failed to get PharmCAT data from database: {e}", exc_info=True)
+            logger.warning("Falling back to file-based data")
+    
+    # Fallback to file-based data if database data is not available
+    if not data:
+        # Check if the data is already in the expected format (normalized)
+        if "data" in pharmcat_results and isinstance(pharmcat_results["data"], dict):
+            raw_data = pharmcat_results["data"]
+            
+            # Check if this is raw PharmCAT JSON (has 'drugs' key) or normalized data (has 'drugRecommendations' key)
+            if "drugRecommendations" in raw_data:
+                # This is already normalized data
+                data = raw_data
+                logger.info("Using pre-normalized data from main.py")
+                logger.info(f"Data keys: {list(data.keys())}")
+            elif "drugs" in raw_data:
+                # This is raw PharmCAT JSON, need to normalize it
+                logger.info("Detected raw PharmCAT JSON, normalizing with new grouped architecture")
+                try:
+                    normalized_results = normalize_pharmcat_results(raw_data)
+                    data = normalized_results["data"]
+                    logger.info(f"Successfully normalized raw PharmCAT JSON: {len(data.get('drugRecommendations', []))} drug recommendations")
+                except Exception as e:
+                    logger.error(f"Failed to normalize raw PharmCAT JSON: {str(e)}")
+                    # Create minimal data structure to prevent crashes
+                    data = {
+                        "genes": [],
+                        "drugRecommendations": [],
+                        "file_type": "unknown"
+                    }
+            else:
+                # Unknown data structure
+                logger.warning(f"Unknown data structure in 'data' key: {list(raw_data.keys())}")
+                data = raw_data
+        else:
+            # Fallback: try to normalize if the data structure is unexpected
+            logger.warning("Unexpected data structure, attempting normalization")
+            logger.warning(f"Expected 'data' key not found in: {list(pharmcat_results.keys())}")
+            try:
+                normalized_results = normalize_pharmcat_results(pharmcat_results)
+                data = normalized_results["data"]
+                logger.info("Successfully normalized data")
+            except Exception as e:
+                logger.error(f"Failed to normalize data: {str(e)}")
+                # Create minimal data structure to prevent crashes
+                data = {
+                    "genes": [],
+                    "drugRecommendations": [],
+                    "file_type": "unknown"
+                }
     
     # Enrich with PyPGx-only genes (not present in PharmCAT) if available
     try:
@@ -1208,21 +1479,36 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         pass
 
     # Map recommendations to template-compatible format
-    template_recommendations = map_recommendations_for_template(data.get("drugRecommendations", []))
+    raw_recs = data.get("drugRecommendations", [])
+    logger.info(f"DEBUG - Raw drugRecommendations count: {len(raw_recs)}")
+    if raw_recs:
+        logger.info(f"DEBUG - First raw recommendation sample: {raw_recs[0]}")
+    
+    template_recommendations = map_recommendations_for_template(raw_recs)
     logger.info(f"Mapped {len(template_recommendations)} recommendations for template")
+    if template_recommendations:
+        logger.info(f"DEBUG - First mapped recommendation sample: {template_recommendations[0]}")
     
     # Add tool source information to diplotypes
     file_type = str(data.get("file_type", "vcf")).lower()
     workflow_config = data.get("workflow", {})
     
-    # Process diplotypes to add tool source
+    # Process diplotypes to add source information
     enhanced_diplotypes = []
     for diplotype in data.get("genes", []):
         if isinstance(diplotype, dict):
             gene_name = diplotype.get("gene", "")
             if gene_name:
-                tool_source = determine_tool_source(gene_name, file_type, workflow_config)
-                diplotype["tool_source"] = tool_source
+                # Set source fields if not already set (preserve PharmCAT data service settings)
+                if not diplotype.get("called_by"):
+                    diplotype["called_by"] = determine_called_by(gene_name, file_type, workflow_config)
+                if not diplotype.get("report_data_from"):
+                    diplotype["report_data_from"] = determine_report_data_from(gene_name, file_type, workflow_config)
+                if not diplotype.get("guideline_source"):
+                    diplotype["guideline_source"] = determine_guideline_source(gene_name, file_type, workflow_config)
+                # Keep tool_source for backward compatibility
+                if not diplotype.get("tool_source"):
+                    diplotype["tool_source"] = determine_tool_source(gene_name, file_type, workflow_config)
                 enhanced_diplotypes.append(diplotype)
             else:
                 enhanced_diplotypes.append(diplotype)
@@ -1280,10 +1566,33 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 except Exception:
                     pass
                 for row in diplos:
+                    # Get phenotype, applying wild type logic if needed
+                    diplotype_str = str(row.get("rec_lookup_diplotype", "")).strip()
+                    phenotype_str = str(row.get("rec_lookup_phenotype", row.get("phenotype", ""))).strip()
+                    # Check for reference genotype (case-insensitive, handle variations)
+                    diplotype_upper = diplotype_str.upper()
+                    is_reference = diplotype_upper in {"*1/*1", "REFERENCE/REFERENCE", "*1 / *1", "REFERENCE / REFERENCE"}
+                    # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
+                    phenotype_lower = phenotype_str.lower()
+                    is_empty_phenotype = (
+                        phenotype_str == "" or 
+                        phenotype_lower in {"n/a", "na", "unknown", "none", "-", "."} or
+                        phenotype_str.isspace()
+                    )
+                    
+                    # Assign wild type phenotype if conditions are met (file_type already determined above)
+                    if is_reference and is_empty_phenotype:
+                        if file_type in {"vcf", "vcf.gz", "vcf.bgz"}:
+                            phenotype_str = "Possibly Wild Type"
+                            logger.debug(f"TSV HTML: Assigned 'Possibly Wild Type' to {row.get('gene')}")
+                        elif file_type in {"bam", "fastq", "fq", "cram", "sam"}:
+                            phenotype_str = "Likely Wild Type"
+                            logger.debug(f"TSV HTML: Assigned 'Likely Wild Type' to {row.get('gene')}")
+                    
                     execsum_rows_from_tsv.append({
                         "gene": row.get("gene", ""),
                         "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
-                        "rec_lookup_phenotype": row.get("rec_lookup_phenotype", row.get("phenotype", "")),
+                        "rec_lookup_phenotype": phenotype_str,
                         "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
                     })
     except Exception as _e_exec:
@@ -1297,7 +1606,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     template_data = {
         "patient": patient_info or {},
         "patient_id": patient_info.get("id", "unknown") if patient_info else "unknown",
-        "report_id": patient_info.get("report_id", "unknown") if patient_info else "unknown",
+        "report_id": workflow_id if workflow_id else (patient_info.get("report_id", "unknown") if patient_info else "unknown"),
         "report_date": datetime.now().strftime("%Y-%m-%d"),
         "genes": data.get("genes", []),
         "diplotypes": data.get("genes", []),  # For compatibility with template
@@ -1352,14 +1661,14 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     
     # Get patient and report IDs
     patient_id = patient_info.get("id", "unknown") if patient_info else "unknown"
-    # Use report_id from patient_info or generate one if not available
-    report_id = patient_info.get("report_id", patient_id) if patient_info else patient_id
+    # Use workflow_id for report_id to ensure consistency with PharmCAT data lookup
+    report_id = workflow_id if workflow_id else (patient_info.get("report_id", patient_id) if patient_info else patient_id)
     
-    # Create a report-specific directory using patient_id as the directory name
-    # This matches the new approach in upload_router.py where all reports go to patient directories
-    report_dir = os.path.join(output_dir, patient_id)
+    # Use output_dir directly as the report directory
+    # The upload_router.py already passes the correct patient directory path
+    report_dir = output_dir
     os.makedirs(report_dir, exist_ok=True)
-    logger.info(f"Created report directory: {report_dir}")
+    logger.info(f"Using report directory: {report_dir}")
 
     # Attempt to load genomic header text saved earlier in the pipeline
     header_text: str = ""
@@ -1604,20 +1913,46 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         logger.error(f"✗ Kroki Mermaid Workflow SVG generation failed: {str(e)}", exc_info=True)
     
     try:
-        if REPORT_CONFIG.get("write_workflow_png", False):
+        # Always generate PNG for reliable PDF embedding (default True)
+        if REPORT_CONFIG.get("write_workflow_png", True):
             logger.info("Generating PNG workflow diagram...")
-            png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+            png_bytes = None
+            
+            # Try Kroki Mermaid first (best quality, same as HTML report)
+            try:
+                from app.visualizations.workflow_diagram import read_workflow_mermaid, render_with_kroki
+                logger.info("Attempting PNG generation via Kroki Mermaid...")
+                mermaid_src = read_workflow_mermaid()
+                png_bytes = render_with_kroki(mermaid_src, fmt="png")
+                if png_bytes:
+                    logger.info(f"✓ PNG generated from Kroki Mermaid: {len(png_bytes)} bytes")
+            except Exception as e:
+                logger.warning(f"Kroki Mermaid PNG generation failed: {e}")
+            
+            # Fallback to Graphviz PNG if Kroki failed
             if not png_bytes:
-                # Force pure-Python PNG fallback so a file is always present
-                logger.info("PNG generation failed, trying Python fallback...")
+                try:
+                    logger.info("Attempting PNG generation via Graphviz...")
+                    png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                    if png_bytes:
+                        logger.info(f"✓ PNG generated from Graphviz: {len(png_bytes)} bytes")
+                except Exception as e:
+                    logger.warning(f"Graphviz PNG generation failed: {e}")
+            
+            # Final fallback to pure-Python text-based PNG
+            if not png_bytes:
+                logger.info("Both renderers failed, using pure-Python fallback...")
                 png_bytes = render_simple_png_from_workflow(per_sample_workflow)
+                if png_bytes:
+                    logger.info(f"✓ PNG generated from Python fallback: {len(png_bytes)} bytes")
+            
             if png_bytes:
                 png_path = os.path.join(report_dir, workflow_png_filename)
                 with open(png_path, "wb") as f_out:
                     f_out.write(png_bytes)
-                logger.info(f"✓ Workflow PNG generated successfully: {png_path} ({len(png_bytes)} bytes)")
+                logger.info(f"✓ Workflow PNG saved successfully: {png_path} ({len(png_bytes)} bytes)")
             else:
-                logger.warning("⚠ Workflow PNG generation still failed after fallback")
+                logger.warning("⚠ All PNG generation methods failed")
         else:
             logger.info("PNG workflow generation disabled in config")
     except Exception as e:
@@ -1897,67 +2232,91 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             logger.info(f"=== PDF GENERATION START (Engine: {PDF_ENGINE}) ===")
             logger.info(f"Workflow data: {per_sample_workflow}")
             
-            # Prefer embedding pre-rendered SVG (Kroki Mermaid first, then Graphviz), fallback to PNG
-            workflow_svg_for_pdf = ""
+            # For PDF, prefer PNG over SVG to avoid WeasyPrint text rendering issues
+            # PNG ensures the diagram is reliably visible with proper scaling
             pdf_png_data_uri = ""
+            workflow_kroki_svg_for_pdf = ""
+            workflow_graphviz_svg_for_pdf = ""
             
             try:
-                # Prefer Graphviz SVG for PDFs (WeasyPrint-friendly), then Kroki, then PNG
-                svg_graphviz_path = os.path.join(report_dir, f"{patient_id}_workflow.svg")
-                svg_kroki_path = os.path.join(report_dir, f"{patient_id}_workflow_kroki_mermaid.svg")
-                chosen_svg_content = ""
-                if os.path.exists(svg_graphviz_path):
+                png_path = os.path.join(report_dir, f"{patient_id}_workflow.png")
+                
+                # First, try to load pre-rendered PNG
+                if os.path.exists(png_path):
                     try:
-                        with open(svg_graphviz_path, "r", encoding="utf-8") as f_svg:
-                            chosen_svg_content = f_svg.read()
-                        logger.info(f"✓ Using pre-rendered Graphviz SVG for PDF: {len(chosen_svg_content)} chars")
+                        with open(png_path, "rb") as f_png:
+                            png_bytes = f_png.read()
+                            pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
+                        logger.info(f"✓ Loaded pre-rendered PNG for PDF: {len(png_bytes)} bytes")
                     except Exception as e:
-                        logger.warning(f"Failed reading Graphviz SVG for PDF: {e}")
-                if not chosen_svg_content and os.path.exists(svg_kroki_path):
+                        logger.warning(f"Failed reading pre-rendered PNG for PDF: {e}")
+                
+                # If no PNG exists, generate one from Kroki Mermaid (preferred) or Graphviz
+                if not pdf_png_data_uri:
                     try:
-                        with open(svg_kroki_path, "r", encoding="utf-8") as f_svg:
-                            chosen_svg_content = f_svg.read()
-                        logger.info(f"✓ Using pre-rendered Kroki Mermaid SVG for PDF: {len(chosen_svg_content)} chars")
-                    except Exception as e:
-                        logger.warning(f"Failed reading Kroki SVG for PDF: {e}")
-                if not chosen_svg_content:
-                    try:
-                        # Try generating a fresh SVG via Mermaid first for better text
-                        svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
-                        if svg_bytes:
-                            chosen_svg_content = svg_bytes.decode("utf-8", errors="ignore")
-                            # Save for future use
-                            with open(svg_graphviz_path, "w", encoding="utf-8") as f_out:
-                                f_out.write(chosen_svg_content)
-                            logger.info(f"✓ Generated SVG for PDF dynamically: {len(chosen_svg_content)} chars")
-                    except Exception as e:
-                        logger.warning(f"Dynamic SVG generation failed for PDF: {e}")
-                if chosen_svg_content:
-                    workflow_svg_for_pdf = f'<div class="workflow-figure">{chosen_svg_content}</div>'
-                else:
-                    # Fallback to PNG as a last resort
-                    try:
-                        png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                        # Try Kroki Mermaid → PNG first (best quality)
+                        logger.info("Generating PNG from Kroki Mermaid for PDF...")
+                        from app.visualizations.workflow_diagram import read_workflow_mermaid, render_with_kroki
+                        mermaid_src = read_workflow_mermaid()
+                        png_bytes = render_with_kroki(mermaid_src, fmt="png")
                         if png_bytes:
                             pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
-                            workflow_svg_for_pdf = f'<div class="workflow-figure"><img src="{pdf_png_data_uri}" alt="Workflow Diagram" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" /></div>'
-                            logger.info(f"✓ Generated PNG workflow for PDF (fallback): {len(png_bytes)} bytes")
-                        else:
-                            workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
-                            logger.info("ℹ Using text-based workflow description for PDF")
+                            # Save for future use
+                            with open(png_path, "wb") as f_out:
+                                f_out.write(png_bytes)
+                            logger.info(f"✓ Generated PNG from Kroki Mermaid for PDF: {len(png_bytes)} bytes")
                     except Exception as e:
-                        workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
-                        logger.warning(f"⚠ Workflow diagram PNG fallback failed, using text fallback: {e}")
+                        logger.warning(f"Kroki Mermaid → PNG generation failed: {e}")
+                    
+                    # If Kroki failed, try Graphviz → PNG
+                    if not pdf_png_data_uri:
+                        try:
+                            logger.info("Generating PNG from Graphviz for PDF...")
+                            png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
+                            if png_bytes:
+                                pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
+                                # Save for future use
+                                with open(png_path, "wb") as f_out:
+                                    f_out.write(png_bytes)
+                                logger.info(f"✓ Generated PNG from Graphviz for PDF: {len(png_bytes)} bytes")
+                        except Exception as e:
+                            logger.warning(f"Graphviz → PNG generation failed: {e}")
+                
+                # If PNG generation failed completely, fall back to SVG (last resort)
+                if not pdf_png_data_uri:
+                    logger.warning("⚠ PNG generation failed, falling back to SVG for PDF (may have rendering issues)")
+                    svg_kroki_path = os.path.join(report_dir, f"{patient_id}_workflow_kroki_mermaid.svg")
+                    svg_graphviz_path = os.path.join(report_dir, f"{patient_id}_workflow.svg")
+                    
+                    # Try Kroki SVG
+                    if os.path.exists(svg_kroki_path):
+                        try:
+                            with open(svg_kroki_path, "r", encoding="utf-8") as f_svg:
+                                workflow_kroki_svg_for_pdf = f_svg.read()
+                            logger.info(f"✓ Loaded Kroki Mermaid SVG as fallback for PDF: {len(workflow_kroki_svg_for_pdf)} chars")
+                        except Exception as e:
+                            logger.warning(f"Failed reading Kroki SVG fallback: {e}")
+                    
+                    # Try Graphviz SVG
+                    if not workflow_kroki_svg_for_pdf and os.path.exists(svg_graphviz_path):
+                        try:
+                            with open(svg_graphviz_path, "r", encoding="utf-8") as f_svg:
+                                workflow_graphviz_svg_for_pdf = f_svg.read()
+                            logger.info(f"✓ Loaded Graphviz SVG as fallback for PDF: {len(workflow_graphviz_svg_for_pdf)} chars")
+                        except Exception as e:
+                            logger.warning(f"Failed reading Graphviz SVG fallback: {e}")
+                
             except Exception as e:
-                workflow_svg_for_pdf = "<em>Workflow: Upload → Detect → VCF → PharmCAT → Reports</em>"
-                logger.warning(f"⚠ PDF workflow rendering block failed, using text fallback: {e}")
+                logger.warning(f"⚠ PDF workflow rendering block failed, template will use text fallback: {e}")
             
             # Render the HTML template with workflow diagram
+            # Prefer PNG for reliable PDF rendering; SVG as fallback only
             pdf_html_content = template.render(
                 **template_data,
-                workflow_svg=workflow_svg_for_pdf,
-                workflow_png_file_url="",
                 workflow_png_data_uri=pdf_png_data_uri,
+                workflow_kroki_svg=workflow_kroki_svg_for_pdf,
+                workflow_svg=workflow_graphviz_svg_for_pdf,
+                workflow_png_file_url="",
                 workflow_html_fallback="",
             )
             
@@ -2049,7 +2408,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         if REPORT_CONFIG["show_pharmcat_html_report"]:
             logger.info("Processing PharmCAT HTML report (enabled via INCLUDE_PHARMCAT_HTML)")
             # Look for the original PharmCAT HTML report
-            pharmcat_html_file = os.path.join(report_dir, f"{patient_id}.report.html")
+            pharmcat_html_file = os.path.join(report_dir, f"{patient_id}_pgx_pharmcat.html")
             if os.path.exists(pharmcat_html_file):
                 # Copy it with our standardized naming if it doesn't already exist
                 if not os.path.exists(pharmcat_html_path):

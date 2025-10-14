@@ -201,6 +201,159 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON SEQUENCES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON FUNCTIONS TO cpic_user;
 
 -- ============================================================================
+-- PHARMCAT SCHEMA - PharmCAT analysis results and data
+-- ============================================================================
+CREATE SCHEMA IF NOT EXISTS pharmcat;
+
+-- Main PharmCAT results table - stores the raw JSON and metadata
+CREATE TABLE pharmcat.results (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) UNIQUE NOT NULL,
+    run_timestamp TIMESTAMPTZ,
+    pharmcat_version VARCHAR(50),
+    data_version VARCHAR(50),
+    genome_build VARCHAR(20),
+    raw_data JSONB NOT NULL,
+    loaded_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Gene summary table - flattened gene information
+CREATE TABLE pharmcat.gene_summary (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) NOT NULL REFERENCES pharmcat.results(run_id) ON DELETE CASCADE,
+    gene_symbol VARCHAR(20) NOT NULL,
+    call_source VARCHAR(50),
+    phenotype_source VARCHAR(50),
+    phenotype_version VARCHAR(50),
+    allele_definition_version VARCHAR(50),
+    allele_definition_source VARCHAR(50),
+    chromosome VARCHAR(10),
+    phased BOOLEAN,
+    effectively_phased BOOLEAN,
+    gene_full_data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Diplotype calls table - individual diplotype results
+CREATE TABLE pharmcat.diplotypes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) NOT NULL REFERENCES pharmcat.results(run_id) ON DELETE CASCADE,
+    gene_symbol VARCHAR(20) NOT NULL,
+    diplotype_label VARCHAR(255),
+    allele1_name VARCHAR(100),
+    allele1_function VARCHAR(100),
+    allele2_name VARCHAR(100),
+    allele2_function VARCHAR(100),
+    activity_score DECIMAL(10,4),
+    phenotype VARCHAR(255),
+    match_score INTEGER,
+    outside_phenotype BOOLEAN,
+    outside_activity_score BOOLEAN,
+    inferred BOOLEAN,
+    combination BOOLEAN,
+    phenotype_data_source VARCHAR(50),
+    diplotype_key JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Drug-gene relationships table
+CREATE TABLE pharmcat.drug_gene_map (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) NOT NULL REFERENCES pharmcat.results(run_id) ON DELETE CASCADE,
+    gene_symbol VARCHAR(20) NOT NULL,
+    drug_name VARCHAR(255) NOT NULL,
+    drug_id VARCHAR(100),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Messages and warnings table
+CREATE TABLE pharmcat.messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) NOT NULL REFERENCES pharmcat.results(run_id) ON DELETE CASCADE,
+    gene_symbol VARCHAR(20),
+    rule_name VARCHAR(100),
+    version VARCHAR(20),
+    exception_type VARCHAR(50),
+    message TEXT,
+    matches JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Variants table - genetic variants found
+CREATE TABLE pharmcat.variants (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) NOT NULL REFERENCES pharmcat.results(run_id) ON DELETE CASCADE,
+    gene_symbol VARCHAR(20) NOT NULL,
+    chromosome VARCHAR(10),
+    position BIGINT,
+    reference_allele VARCHAR(10),
+    alternate_allele VARCHAR(10),
+    genotype_call VARCHAR(20),
+    dbsnp_id VARCHAR(20),
+    variant_data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Drug recommendations table
+CREATE TABLE pharmcat.drug_recommendations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) NOT NULL REFERENCES pharmcat.results(run_id) ON DELETE CASCADE,
+    drug_name VARCHAR(255) NOT NULL,
+    drug_id VARCHAR(100),
+    gene_symbol VARCHAR(20),
+    guideline_source VARCHAR(50),
+    guideline_id VARCHAR(100),
+    guideline_name VARCHAR(255),
+    guideline_url TEXT,
+    recommendation_text TEXT,
+    classification VARCHAR(50),
+    strength_of_evidence VARCHAR(50),
+    population TEXT,
+    implications TEXT,
+    drug_recommendation TEXT,
+    citations JSONB,
+    urls JSONB,
+    recommendation_data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Recommendation conditions table - links recommendations to phenotypes
+CREATE TABLE pharmcat.recommendation_conditions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    recommendation_id UUID NOT NULL REFERENCES pharmcat.drug_recommendations(id) ON DELETE CASCADE,
+    gene_symbol VARCHAR(20) NOT NULL,
+    phenotype VARCHAR(255) NOT NULL,
+    condition_data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Unannotated gene calls table
+CREATE TABLE pharmcat.unannotated_gene_calls (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id VARCHAR(255) NOT NULL REFERENCES pharmcat.results(run_id) ON DELETE CASCADE,
+    gene_symbol VARCHAR(20) NOT NULL,
+    allele_definition_version VARCHAR(50),
+    allele_definition_source VARCHAR(50),
+    phenotype_version VARCHAR(50),
+    phenotype_source VARCHAR(50),
+    chromosome VARCHAR(10),
+    phased BOOLEAN,
+    effectively_phased BOOLEAN,
+    call_source VARCHAR(50),
+    uncalled_haplotypes JSONB,
+    messages JSONB,
+    related_drugs JSONB,
+    source_diplotypes JSONB,
+    variants JSONB,
+    variants_of_interest JSONB,
+    has_undocumented_variations BOOLEAN,
+    treat_undocumented_variations_as_reference BOOLEAN,
+    gene_call_data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================================
 -- GENE GROUPS SCHEMA - Gene categorization for UI
 -- ============================================================================
 -- Gene Groups table for categorizing genes by function
@@ -260,6 +413,35 @@ CREATE INDEX idx_job_stages_job_id ON job_monitoring.job_stages(job_id);
 CREATE INDEX idx_job_events_job_id ON job_monitoring.job_events(job_id);
 CREATE INDEX idx_job_dependencies_job_id ON job_monitoring.job_dependencies(job_id);
 
+-- PharmCAT schema indexes
+CREATE INDEX idx_pharmcat_results_run_id ON pharmcat.results(run_id);
+CREATE INDEX idx_pharmcat_results_timestamp ON pharmcat.results(run_timestamp);
+CREATE INDEX idx_pharmcat_results_raw_data_gin ON pharmcat.results USING GIN (raw_data);
+CREATE INDEX idx_pharmcat_gene_summary_run_id ON pharmcat.gene_summary(run_id);
+CREATE INDEX idx_pharmcat_gene_summary_gene_symbol ON pharmcat.gene_summary(gene_symbol);
+CREATE INDEX idx_pharmcat_gene_summary_call_source ON pharmcat.gene_summary(call_source);
+CREATE INDEX idx_pharmcat_diplotypes_run_id ON pharmcat.diplotypes(run_id);
+CREATE INDEX idx_pharmcat_diplotypes_gene_symbol ON pharmcat.diplotypes(gene_symbol);
+CREATE INDEX idx_pharmcat_diplotypes_phenotype ON pharmcat.diplotypes(phenotype);
+CREATE INDEX idx_pharmcat_diplotypes_activity_score ON pharmcat.diplotypes(activity_score);
+CREATE INDEX idx_pharmcat_drug_gene_map_run_id ON pharmcat.drug_gene_map(run_id);
+CREATE INDEX idx_pharmcat_drug_gene_map_gene_symbol ON pharmcat.drug_gene_map(gene_symbol);
+CREATE INDEX idx_pharmcat_drug_gene_map_drug_name ON pharmcat.drug_gene_map(drug_name);
+CREATE INDEX idx_pharmcat_messages_run_id ON pharmcat.messages(run_id);
+CREATE INDEX idx_pharmcat_messages_gene_symbol ON pharmcat.messages(gene_symbol);
+CREATE INDEX idx_pharmcat_messages_exception_type ON pharmcat.messages(exception_type);
+CREATE INDEX idx_pharmcat_variants_run_id ON pharmcat.variants(run_id);
+CREATE INDEX idx_pharmcat_variants_gene_symbol ON pharmcat.variants(gene_symbol);
+CREATE INDEX idx_pharmcat_variants_chromosome_position ON pharmcat.variants(chromosome, position);
+CREATE INDEX idx_pharmcat_variants_dbsnp_id ON pharmcat.variants(dbsnp_id);
+CREATE INDEX idx_pharmcat_drug_recommendations_run_id ON pharmcat.drug_recommendations(run_id);
+CREATE INDEX idx_pharmcat_drug_recommendations_drug_name ON pharmcat.drug_recommendations(drug_name);
+CREATE INDEX idx_pharmcat_drug_recommendations_guideline_source ON pharmcat.drug_recommendations(guideline_source);
+CREATE INDEX idx_pharmcat_recommendation_conditions_recommendation_id ON pharmcat.recommendation_conditions(recommendation_id);
+CREATE INDEX idx_pharmcat_recommendation_conditions_gene_symbol ON pharmcat.recommendation_conditions(gene_symbol);
+CREATE INDEX idx_pharmcat_recommendation_conditions_phenotype ON pharmcat.recommendation_conditions(phenotype);
+CREATE INDEX idx_pharmcat_unannotated_gene_calls_run_id ON pharmcat.unannotated_gene_calls(run_id);
+CREATE INDEX idx_pharmcat_unannotated_gene_calls_gene_symbol ON pharmcat.unannotated_gene_calls(gene_symbol);
 
 -- Genomic file headers indexes
 CREATE INDEX idx_gfh_file_format ON genomic_file_headers(file_format);
@@ -364,19 +546,24 @@ GRANT USAGE ON SCHEMA user_data TO cpic_user;
 GRANT USAGE ON SCHEMA reports TO cpic_user;
 GRANT USAGE ON SCHEMA job_monitoring TO cpic_user;
 GRANT USAGE ON SCHEMA fhir TO cpic_user;
+GRANT USAGE ON SCHEMA pharmcat TO cpic_user;
 
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cpic TO cpic_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA user_data TO cpic_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA reports TO cpic_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA job_monitoring TO cpic_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA fhir TO cpic_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA pharmcat TO cpic_user;
 GRANT ALL PRIVILEGES ON TABLE genomic_file_headers TO cpic_user;
 GRANT ALL PRIVILEGES ON TABLE gene_groups TO cpic_user;
 GRANT ALL PRIVILEGES ON TABLE gene_group_members TO cpic_user;
 
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA cpic TO cpic_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA job_monitoring TO cpic_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA pharmcat TO cpic_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO cpic_user;
+
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA pharmcat TO cpic_user;
 
 -- Set default privileges for future tables
 ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON TABLES TO cpic_user;
@@ -384,10 +571,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA user_data GRANT ALL ON TABLES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA reports GRANT ALL ON TABLES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON TABLES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON TABLES TO cpic_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON TABLES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON SEQUENCES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON SEQUENCES TO cpic_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON SEQUENCES TO cpic_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO cpic_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON FUNCTIONS TO cpic_user;
 
 -- ============================================================================
 -- UTILITY FUNCTIONS
@@ -416,8 +606,84 @@ COMMENT ON SCHEMA user_data IS 'Patient and genetic data (HIPAA-compliant)';
 COMMENT ON SCHEMA reports IS 'Generated reports and analysis outputs';
 COMMENT ON SCHEMA job_monitoring IS 'Workflow and job tracking system';
 COMMENT ON SCHEMA fhir IS 'HAPI FHIR server tables';
+COMMENT ON SCHEMA pharmcat IS 'PharmCAT analysis results and pharmacogenomic data';
 COMMENT ON TABLE genomic_file_headers IS 'Stores parsed header information from genomic files (BAM, VCF, etc.)';
 COMMENT ON COLUMN genomic_file_headers.header_info IS 'Normalized JSON structure containing file format-specific header metadata';
+
+COMMENT ON TABLE pharmcat.results IS 'Main table storing raw PharmCAT JSON results and metadata';
+COMMENT ON TABLE pharmcat.gene_summary IS 'Flattened gene information from PharmCAT analysis';
+COMMENT ON TABLE pharmcat.diplotypes IS 'Individual diplotype calls and phenotypes';
+COMMENT ON TABLE pharmcat.drug_gene_map IS 'Drug-gene relationships identified in PharmCAT analysis';
+COMMENT ON TABLE pharmcat.messages IS 'Messages, warnings, and errors from PharmCAT analysis';
+COMMENT ON TABLE pharmcat.variants IS 'Genetic variants found during PharmCAT analysis';
+COMMENT ON TABLE pharmcat.drug_recommendations IS 'Drug-specific recommendations from PharmCAT analysis';
+COMMENT ON TABLE pharmcat.recommendation_conditions IS 'Conditions that trigger specific drug recommendations';
+COMMENT ON TABLE pharmcat.unannotated_gene_calls IS 'Gene calls that could not be fully annotated';
+
+-- ============================================================================
+-- PHARMCAT VIEWS - Convenience views for common queries
+-- ============================================================================
+
+-- View for actionable findings (non-normal phenotypes)
+CREATE VIEW pharmcat.actionable_findings AS
+SELECT 
+    d.run_id,
+    d.gene_symbol,
+    d.diplotype_label,
+    d.phenotype,
+    d.activity_score,
+    d.allele1_name,
+    d.allele1_function,
+    d.allele2_name,
+    d.allele2_function,
+    r.run_timestamp,
+    r.pharmcat_version
+FROM pharmcat.diplotypes d
+JOIN pharmcat.results r ON d.run_id = r.run_id
+WHERE d.phenotype NOT IN ('n/a', 'Normal Metabolizer', 'Uncertain Susceptibility')
+ORDER BY d.run_id, d.gene_symbol;
+
+-- View for drug recommendations summary
+CREATE VIEW pharmcat.drug_recommendations_summary AS
+SELECT 
+    dr.run_id,
+    dr.drug_name,
+    dr.guideline_source,
+    dr.classification,
+    dr.strength_of_evidence,
+    dr.recommendation_text,
+    COUNT(rc.gene_symbol) as affected_genes,
+    r.run_timestamp
+FROM pharmcat.drug_recommendations dr
+JOIN pharmcat.results r ON dr.run_id = r.run_id
+LEFT JOIN pharmcat.recommendation_conditions rc ON dr.id = rc.recommendation_id
+GROUP BY dr.id, dr.run_id, dr.drug_name, dr.guideline_source, 
+         dr.classification, dr.strength_of_evidence, dr.recommendation_text, r.run_timestamp
+ORDER BY dr.run_id, dr.drug_name;
+
+-- View for gene analysis summary
+CREATE VIEW pharmcat.gene_analysis_summary AS
+SELECT 
+    gs.run_id,
+    gs.gene_symbol,
+    gs.call_source,
+    gs.phenotype_source,
+    COUNT(DISTINCT d.id) as diplotype_count,
+    COUNT(DISTINCT dgm.drug_name) as drug_count,
+    COUNT(DISTINCT m.id) as message_count,
+    r.run_timestamp,
+    r.pharmcat_version
+FROM pharmcat.gene_summary gs
+JOIN pharmcat.results r ON gs.run_id = r.run_id
+LEFT JOIN pharmcat.diplotypes d ON gs.run_id = d.run_id AND gs.gene_symbol = d.gene_symbol
+LEFT JOIN pharmcat.drug_gene_map dgm ON gs.run_id = dgm.run_id AND gs.gene_symbol = dgm.gene_symbol
+LEFT JOIN pharmcat.messages m ON gs.run_id = m.run_id AND gs.gene_symbol = m.gene_symbol
+GROUP BY gs.run_id, gs.gene_symbol, gs.call_source, gs.phenotype_source, r.run_timestamp, r.pharmcat_version
+ORDER BY gs.run_id, gs.gene_symbol;
+
+COMMENT ON VIEW pharmcat.actionable_findings IS 'View showing only actionable pharmacogenomic findings (non-normal phenotypes)';
+COMMENT ON VIEW pharmcat.drug_recommendations_summary IS 'Summary view of drug recommendations with affected gene counts';
+COMMENT ON VIEW pharmcat.gene_analysis_summary IS 'Summary view of gene analysis results with counts';
 
 -- ============================================================================
 -- WORKFLOW MONITORING TABLES

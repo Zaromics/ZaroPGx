@@ -195,6 +195,7 @@ reference/*
 /dev-notes/*
 /resources/*
 /tests/*
+/scripts/dev-scripts/*
 
 # Developer documentation
 /dev-docs/*
