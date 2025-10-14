@@ -33,16 +33,18 @@
 ## Architecture
 Containerized services are orchestrated with Docker Compose with a core Nextflow-executed pipeline:
 
-- **Main App** - (FastAPI) - Web UI, API, workflow progress tracking, report generation.
+- **Main App** - (FastAPI) - Main App providing Web UI, API, workflow progress tracking, report generation.
   - *Main application orchestrating the analysis workflow*
   - Service Ports (Host → Container) 8765 → 8000
+  - Python 3.12; dependencies in `pyproject.toml`/`uv.lock`
 - **Nextflow executor service**
   - Manages execution of the core pipeline
 - **Genome Reference downloader**
   - Fetches reference materials including genomes
   - Service Ports (Host → Container) 5050 → 5050
-- **PostgreSQL DB** - (SQLalchemy2, psycopg 3 & schema managed with Alembic)
-  - Stores guidelines, sample data and workflow metadata, and generated reports
+- **PostgreSQL 17 DB** - (SQLalchemy2, psycopg 3 & schema managed with Alembic)
+  - Stores guideline and sample data and workflow metadata, and generated reports, allowing for persistent and offline analysis (if so desired)
+  - Initialization under `db/init` and `db/migrations` 
   - Service Ports (Host → Container) 5444 → 5432
 - **GATK service** - (FastAPI wrapper)
   - Handles various conversion, haplotyping, and preprocessing operations as needed
@@ -50,18 +52,17 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 - **nf-core/hlatyping** - (nextflow OptiType container)
   - Performs HLA Calling with either FASTQ or BAM inputs
 - **PyPGx service** - (FastAPI wrapper)
-  - Provides allele calling across dozens of pharmacogenes.
-  - Provides comprehensive allele calling (including Structural Variants and Copy Number Variants) for applicable genes such as CYP2D6 when possible, with BAM input.
+  - Performs allele calling for 87 total pharmacogenes.
+  - Provides comprehensive allele calling (including Structural Variants and Copy Number Variants) for applicable genes such as CYP2D6 when possible; with BAM input.
   - Service Ports (Host → Container) 5053 → 5000
-- **PharmCAT service** - (FastAPI wrapper)
+- **PharmCAT service** - (FastAPI wrapper, Java 17)
   - Executes PharmCAT pipeline with PyPGx, OptiType, and mtDNA-server-2 outside calls to unlock full 23-gene panel coverage
   - Service Ports (Host → Container) 5001 → 5000
 - **Kroki** & **Kroki Mermaid**
   - Renders workflow diagrams to serve as a visual depiction of the pipeline the report has been built from
 - **HAPI FHIR server**
-  - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records
+  - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records (coming in v0.3)
   - Service Ports (Host → Container) 8090 → 8080
-
 
 **Workflow**: *Genomic data sample submission → Preprocessing (if needed) → OptiType HLA Allele Calling → mtDNA-server-2 Mitochondrial DNA Allele Calling → PyPGx Allele Calling → PharmCAT phenotype matching with Outside Calls → Report Creation → optional PHR/EHR export via FHIR*
 
@@ -72,6 +73,8 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 - Reports: `/data/reports/<file_id>/` (per‑job directory)
 
 ## Requirements
+<u>Software</u>
+
 **Linux** environment preferred
 - *Docker*; *Docker Compose*; *Git* -- at minimum
 
@@ -83,17 +86,19 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
   - IF using Docker Desktop PAID/PREMIUM, *Sysbox* can be enabled directly in Docker Desktop via the <u>"Enhanced Container Isolation"</u> option. Proceed as usual.
     - *Docker Desktop* with *Sysbox* runtime enabled (ECI)
 
-**macOS** requires either running a Linux VM (e.g. Crossover, etc.) OR using the paid/premium Docker Desktop with included Sysbox
+**macOS** requires either running a Linux VM (e.g. Crossover, etc.) OR using the paid/premium *Docker Desktop* with included *Sysbox*
 
-- Internet connection: first run requires significant bandwidth to fetch images, build containers, and load reference genomes
-- Hardware, Bare Minimum (limited functions): 4 CPU cores, 8 GB DDR3 RAM, 50 GB storage space
-- Hardware, Acceptable (all pipeline functions): 8+ CPU cores, 64+ GB DDR4 RAM, 1+ TB NVMe SSD storage space 
-- Hardware, Preferred (all pipeline functions with quickness): 16 CPU cores, 128 GB ECC DDR4+ RAM, 2+ TB NVMe SSD storage space; with configured parallelism
+<u>Hardware</u> (projected)
+
+- *Internet connection*: <u>first run only</u> requires significant bandwidth to fetch images, build containers, and load reference genomes and db content; advisable to NOT be on a metered connection, and preferably use a wired one.
+- *Hardware, Minimum* (limited functions): **4 CPU cores, 8 GB DDR3 RAM, 50 GB storage space**
+- *Hardware, Acceptable* (all functions): **8+ CPU cores, 32-64+ GB DDR4 RAM, 1+ TB NVMe SSD storage space**
+- *Hardware, Preferred* (all functions, with swiftness): **16 CPU cores, 128 GB ECC DDR4+ RAM, 2+ TB NVMe SSD storage space**; with configured parallelism and various service parameter tuning
 
 ## Quick Start
 
-- At this time, reference pre-built docker images are not distributed.
-- You must clone the repository and build the compose stack locally.
+- At this time, reference pre-built docker images are not distributed. As the program approaches v1.0 release, container images will begin to be distributed through Dockerhub.
+- For now, you must clone this repository and build the docker compose stack locally. This should not require any special action on your part, but it will take some time, possibly as long as an hour if your hardware is closer to "minimum" than "preferred" spec.
 
 1. **Clone the repo**
    ```bash
@@ -101,59 +106,65 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
    cd ZaroPGx
    ```
 
-2. **Choose your environment configuration**
+2. **Choose your environment and docker compose configurations**
    
    For personal and home (LAN) use, a local deployment is recommended.
    
-   **Local Development (default):**
+   **Local Development (default):** Your typical template for personal / home use
    ```bash
    cp .env.local .env
    # edit .env as needed (at minimum set SECRET_KEY)
    ```
    
-   **Production/Web Deployment:**
+   **Production/Web Deployment:** For hosting an externally-accessible instance on the web
    ```bash
    cp .env.production .env
-   # edit .env as needed (at minimum set SECRET_KEY)
+   # edit .env as needed (set all Keys to a secure string)
    ```
    
-   **Custom Configuration:**
+   **Custom Configuration:** More complete and in-line documented, for convenience
    ```bash
    cp .env.example .env
    # edit .env as needed
    ```
 
+   **Choose your Docker Compose configuration** Start with example template
+   ```bash
+   mv docker-compose.yml.example docker-compose.yml
+   # edit docker-compose.yml as needed to customize service settings
+   ```
+
 3. **Start services**
    
-   **Option A: Using the simple startup script (recommended for CLI hesitant users)**
+   **Option A: Using the simple startup script (recommended if you are new to, or have never used, docker / docker compose.)**
    
    Choose the startup script that matches your environment:
-   - Ensure the shell script can be executed, if it does not appear to work.
+   - If the below command failed, ensure the shell script can be executed, if it does not appear to work. Typically you can check the file's permissions by right clicking it. PowerShell might require a set execution policy override.
    
-   - **PowerShell (Windows):** (If you are on Windows but cannot or may not use WSL)
+   - **PowerShell (Windows WSL):** If you are on Windows but cannot, may not, or choose not to use WSL2's virtual drive
      ```powershell
      .\start-docker.ps1
      ```
    
-   - **Bash/Linux/Mac/Windows with WSL:**
+   - **Bash (Linux / Mac/ Windows WSL):**
      ```bash
      ./start-docker.sh
      ```
    
-   **Option B: Manual Docker Compose commands**
+   **Option B: Manual Docker Compose commands** If you are familiar with docker compose
    
-   **Using default .env:**
+   **Once you have configured your .env and compose yml:**
    ```bash
-   docker compose up -d --build
+   docker compose up -d --build && docker compose logs -f
    ```
    
    **Using specific environment file:** (Advanced, for multiple configurations)
    ```bash
-   docker compose --env-file .env.local up -d --build
-   docker compose --env-file .env.production up -d --build
+   docker compose --env-file .env.local up -d --build && docker compose logs -f
+   docker compose --env-file .env.production up -d --build && docker compose logs -f
    ```
 
-4. **Access the application**
+4. **Access the Main App**
    - Web UI: `http://localhost:8765`
    - Documentation: `http://localhost:8765/docs`
    - HAPI FHIR dashboard (optional): `http://localhost:8090`
@@ -168,9 +179,11 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 1. Open `http://localhost:8765`
 2. Upload a sample VCF file
-3. Observe progress; on completion you'll see links to PDF and interactive HTML reports
+3. Observe progress; on completion you'll see links to the custom PDF and interactive HTML reports, as well as PharmCAT's report and raw data outputs.
 
 ### REST API (Advanced and Debugging)
+
+**See the FastAPI docs on the reference instance's page: https://pgx.zimerguz.net/api-reference**
 
 **Upload a genomic file**
 ```bash
@@ -205,7 +218,7 @@ curl -X POST http://localhost:8765/reports/generate \
   - `<file_id>_pgx_report_interactive.html`
   - Optional PharmCAT originals: `<file_id>_pgx_pharmcat.{html,json,tsv}`
 
-## Sample Data
+## Sample Data Access
 For real-world sample data, try browsing the **Personal Genome Project**:
 - https://my.pgp-hms.org/public_genetic_data
 
@@ -219,33 +232,26 @@ Filtered sample VCFs available in the repo:
 ZaroPGx/
 ├── app/                    # FastAPI core App, templates, static assets, etc.
 │   ├── api/                  # API routers, DB helpers, models
+│   ├── core/                 # Core utils and version management
 │   ├── pharmcat/             # PharmCAT client integration
 │   ├── reports/              # Report generation (PDF/HTML, FHIR export)
 │   ├── services/             # Background job processing
-│   ├── core/                 # Core utils and version management
+│   ├── templates/            # UI templates
+│   ├── utils/                # Utilities
 │   └── visualizations/       # Workflow diagrams and visual tools using Kroki
+├── data/                   # Runtime data (reports, uploads, temp files)
 ├── db/                     # Postgres DB initialization and migrations
-│   ├── init/                 # Database initialization scripts
-│   └── migrations/           # Schema migrations
 ├── docker/                 # Service Dockerfiles and service wrappers
-│   ├── pharmcat/             # PharmCAT service with FastAPI
-│   ├── pypgx/                # PyPGx service with FastAPI
 │   ├── gatk-api/             # GATK service FastAPI
 │   ├── genome-downloader/    # Reference genome fetcher (typically needs to only run once)
-│   └── postgresql/           # Database service configuration
-├── data/                   # Runtime data (reports, uploads, temp files)
+│   ├── nextflow/             # Nextflow executor wrapper
+│   ├── pharmcat/             # PharmCAT service with FastAPI
+│   └── pypgx/                # PyPGx service with FastAPI
+├── docs/                   # Sphinx docs with readthedocs theme (hosted internally, allowing for offline access)
+├── pipelines/              # Nextflow config
 ├── reference/              # Reference genomes and annotation files
-└── docker-compose.yml      # Container orchestration, configured via inline flags or .env file(s)
+└── docker-compose.yml      # Docker Compose orchestration instructions, configured via inline flags and with .env file
 ```
-
-## Service Details (Abridged)
-
-- **Core FastAPI App** (Python 3.12; dependencies in `pyproject.toml`/`uv.lock`) - Main application orchestrating the complete workflow and report creation
-- **PostgreSQL** DB with initialization under `db/init` and `db/migrations` - Stores guideline data and user data for persistent and offline analysis
-- **GATK** - Handles various preprocessing and conversions of input files for downstream analysis
-- **PharmCAT** (Java 17) with a FastAPI wrapper, the central pharmacogenomic analysis engine
-- **PyPGx** - Provides comprehensive allele calling across multiple pharmacogenes, enabling PharmCAT to achieve full 23-gene coverage through outside calls, plus reports calls for 87 total pharmacogenes of varying evidence level
-- **HAPI FHIR** - Enables export of pharmacogenomic results to healthcare systems and personal health records (coming in v0.3)
 
 ## Report Handling
 
@@ -265,11 +271,16 @@ ZaroPGx/
 
 ## Troubleshooting
 
-- **Service connectivity**: Confirm the `pgx-network` bridge exists and containers are healthy
-- **File processing**: Ensure input VCF is valid and contains required information
-- **PDF generation**: WeasyPrint is used; if PDF creation fails, ReportLab fallback may be used instead.
+- **Check the logs**: Keep an eye on the logs and set logging level to DEBUG
+```bash
+docker compose logs -f
+```
 
-## Contributing
+- **Service connectivity**: Confirm the `pgx-network` bridge exists and containers are healthy
+- **File processing**: Ensure input file(s) is/are valid and contain required information
+- **PDF generation**: WeasyPrint is used; if PDF creation fails, ReportLab fallback may be used instead. Check if all containers are running and healthy
+
+## Contributing (is gratefully appreciated and welcome!)
 
 1. Create a feature branch: `git checkout -b feature/your-change`
 2. Commit: `git commit -m "Describe your change"`
@@ -280,15 +291,17 @@ ZaroPGx/
 
 - **GATK** (Genome Analysis Toolkit).
   - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. *Nature Genetics.* 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
-- **hlatyping** (hlatyping from nextflow-core, with OptiType base)
+- **hlatyping** (hlatyping, with OptiType base, available in nf-core)
   -  Sven F., Christopher Mohr, Alexander Peltzer, nf-core bot, Vikesh Ajith, Mark Polster, Gisela Gabernet, Jonas Scheid, VIJAY, Phil Ewels, Maxime U Garcia, Tobias Koch, Paolo Di Tommaso, & Kevin Menden. (2025). nf-core/hlatyping: 2.1.0 - Chewbacca (2.1.0). *Zenodo.* https://doi.org/10.5281/zenodo.15212533  Docs: https://nf-co.re/hlatyping/
 - **PharmCAT** (Pharmacogenomics Clinical Annotation Tool).
   - Sangkuhl K, Whirl-Carrillo M, et al. *Clinical Pharmacology & Therapeutics.* 2020;107(1):203–210.  Docs: https://pharmcat.clinpgx.org/
-- **PyPGx**
+- **PyPGx** (by Seung-been "Steven" Lee)
   - Lee S‑B, et al. *PLOS ONE.* 2022 (ClinPharmSeq); Lee S‑B, et al. *Genetics in Medicine.* 2018 (Stargazer); Lee S‑B, et al. *Clinical Pharmacology & Therapeutics.* 2019 (Stargazer, 28 genes).  Docs: https://pypgx.readthedocs.io/en/latest/index.html
 - **mtDNA-server-2** 
   - Weissensteiner H, Forer L, Kronenberg F, Schönherr S. mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics. *Nucleic Acids Res*. 2024 May 6:gkae296. doi: 10.1093/nar/gkae296. Epub ahead of print. PMID: 38709886.
 
+This project was originally inspired by **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
+- Zampatti, S.; Fabrizio, C.; Ragazzo, M.; Campoli, G.; Caputo, V.; Strafella, C.; Pellicano, C.; Cascella, R.; Spalletta, G.; Petrosini, L.; et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *J. Pers. Med.* 2021, 11, 851. https://doi.org/10.3390/jpm11090851
 
 ## License
 
