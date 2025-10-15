@@ -323,18 +323,18 @@ docker volume rm pgx_pgdata pgx_fhir-data pgx_pharmcat-references
 
 ## Acknowledgements & Citations
 
-- **GATK** (Genome Analysis Toolkit, Broad Institute).
+- **GATK** (Genome Analysis Toolkit, Broad Institute)
   - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. *Nature Genetics.* 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
-- **hlatyping** (hlatyping, with OptiType base, available in nf-core)
+- **hlatyping** (nf-core/hlatyping, based on OptiType, by Christopher Mohr from Medical Data Integration Center and Quantitative Biology Center, Alexander Peltzer from Boehringer Ingelheim, and Sven Fillinger from Quantitative Biology Center)
   -  Sven F., Christopher Mohr, Alexander Peltzer, nf-core bot, Vikesh Ajith, Mark Polster, Gisela Gabernet, Jonas Scheid, VIJAY, Phil Ewels, Maxime U Garcia, Tobias Koch, Paolo Di Tommaso, & Kevin Menden. (2025). nf-core/hlatyping: 2.1.0 - Chewbacca (2.1.0). *Zenodo.* https://doi.org/10.5281/zenodo.15212533  Docs: https://nf-co.re/hlatyping/
-- **PharmCAT** (Pharmacogenomics Clinical Annotation Tool, Pharmacogenomics Knowledge Base).
+- **PharmCAT** (Pharmacogenomics Clinical Annotation Tool, Pharmacogenomics Knowledge Base, managed at Stanford University & University of Pennsylvania)
   - Sangkuhl K, Whirl-Carrillo M, et al. *Clinical Pharmacology & Therapeutics.* 2020;107(1):203–210.  Docs: https://pharmcat.clinpgx.org/
-- **PyPGx** (by Seung-been "Steven" Lee)
+- **PyPGx** (by Dr. Seung-been "Steven" Lee)
   - Lee S‑B, et al. *PLOS ONE.* 2022 (ClinPharmSeq); Lee S‑B, et al. *Genetics in Medicine.* 2018 (Stargazer); Lee S‑B, et al. *Clinical Pharmacology & Therapeutics.* 2019 (Stargazer, 28 genes).  Docs: https://pypgx.readthedocs.io/en/latest/index.html
 - **mtDNA-server-2** (Institute of Genetic Epidemiology, Medical University of Innsbruck)
   - Weissensteiner H, Forer L, Kronenberg F, Schönherr S. mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics. *Nucleic Acids Res*. 2024 May 6:gkae296. doi: 10.1093/nar/gkae296. Epub ahead of print. PMID: 38709886.
 
-This project was originally inspired by **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
+This project was originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
 - Zampatti, S.; Fabrizio, C.; Ragazzo, M.; Campoli, G.; Caputo, V.; Strafella, C.; Pellicano, C.; Cascella, R.; Spalletta, G.; Petrosini, L.; et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *J. Pers. Med.* 2021, 11, 851. https://doi.org/10.3390/jpm11090851
 
 ## License
