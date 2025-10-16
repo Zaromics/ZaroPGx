@@ -196,7 +196,7 @@ reference/*
 /resources/*
 /tests/*
 /scripts/dev-scripts/*
-/data/reports/manual-runs/*
+/data/manual-runs/*
 
 # Developer documentation
 /dev-docs/*
