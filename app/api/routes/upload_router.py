@@ -502,8 +502,11 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
             workflow_config_diagram = {
                 "file_type": workflow_config.get("file_type", "vcf"),
                 "used_gatk": workflow_config.get("needs_gatk", False),
+                "used_hla": workflow_config.get("needs_hla", False),
                 "used_pypgx": workflow_config.get("needs_pypgx", False),
+                "used_pypgx_bam2vcf": workflow_config.get("needs_pypgx_bam2vcf", False),
                 "used_pharmcat": True,
+                "used_mtdna": workflow_config.get("needs_mtdna", False),
                 "exported_to_fhir": False
             }
             

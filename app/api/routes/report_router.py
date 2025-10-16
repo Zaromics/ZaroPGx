@@ -30,23 +30,93 @@ os.makedirs(REPORT_DIR, exist_ok=True)
 # Background task to generate report
 def generate_report_background(patient_id: str, file_id: str, report_type: str, report_id: str, db: Session):
     try:
-        logger.info(f"Generating {report_type} report for patient {patient_id}, file {file_id}")
+        logger.info(f"🚀 Starting report generation for patient {patient_id}, file {file_id}")
+        logger.info(f"📋 Report type: {report_type}, Report ID: {report_id}")
         
-        # Get patient allele data from database
-        # This would be implemented with db queries
-        # Mock data for now
-        diplotypes = [
-            {"gene": "CYP2D6", "diplotype": "*1/*4", "phenotype": "Mock Data"},
-            {"gene": "CYP2C19", "diplotype": "*1/*1", "phenotype": "Mock Data"},
-            {"gene": "SLCO1B1", "diplotype": "rs4149056 TC", "phenotype": "Mock Data"}
+        logger.info(f"Generating {report_type} report for patient {patient_id}, file {file_id}")
+
+        # Try multiple path resolution strategies
+        pharmcat_data_dir = None
+        
+        # Strategy 1: Use environment variable if set
+        if os.getenv("PHARMCAT_DATA_DIR"):
+            pharmcat_data_dir = os.getenv("PHARMCAT_DATA_DIR")
+        
+        # Strategy 2: Look relative to current working directory
+        if not pharmcat_data_dir or not os.path.exists(pharmcat_data_dir):
+            pharmcat_data_dir = os.path.join(os.getcwd(), "data", "pharmcat_final_results")
+        
+        # Strategy 3: Look relative to this file
+        if not os.path.exists(pharmcat_data_dir):
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            pharmcat_data_dir = os.path.join(project_root, "data", "pharmcat_final_results")
+        
+        # Strategy 4
+        if not os.path.exists(pharmcat_data_dir):
+            docker_paths = [
+                "/data/reports"
+            ]
+            for path in docker_paths:
+                if os.path.exists(path):
+                    pharmcat_data_dir = path
+                    break
+        
+        logger.info(f"Using PharmCAT data directory: {pharmcat_data_dir}")
+        logger.info(f"Directory exists: {os.path.exists(pharmcat_data_dir)}")
+        
+        if os.path.exists(pharmcat_data_dir):
+            files = os.listdir(pharmcat_data_dir)
+            logger.info(f"Files in PharmCAT directory: {files}")
+        
+        # Check if PharmCAT results exist for this patient/sample
+        sample_files = [
+            f"{patient_id}.mm2.sortdup.bqsr.hc.report.json",
+            f"{patient_id}.mm2.sortdup.bqsr.hc.report.tsv",
+            f"{patient_id}.mm2.sortdup.bqsr.hc.phenotype.json"
         ]
+        
+        pharmcat_json_path = None
+        pharmcat_tsv_path = None
+        
+        for filename in sample_files:
+            file_path = os.path.join(pharmcat_data_dir, filename)
+            if os.path.exists(file_path):
+                if filename.endswith('.json') and 'report' in filename:
+                    pharmcat_json_path = file_path
+                elif filename.endswith('.tsv'):
+                    pharmcat_tsv_path = file_path
+                logger.info(f"Found PharmCAT file: {filename}")
+        
+        if not pharmcat_json_path or not pharmcat_tsv_path:
+            logger.warning(f"No PharmCAT results found for patient {patient_id}.")
+            # Do not fall back to mock data if PharmCAT results are not found
+            diplotypes = []
+        else:
+            # Load PharmCAT data
+            logger.info("Loading PharmCAT results")
+            import pandas as pd
+            
+            # Load TSV data
+            df = pd.read_csv(pharmcat_tsv_path, sep='\t', skiprows=1)
+            
+            # Convert to diplotypes format
+            diplotypes = []
+            for _, row in df.iterrows():
+                if pd.notna(row['Gene']) and pd.notna(row['Source Diplotype']):
+                    diplotypes.append({
+                        "gene": row['Gene'],
+                        "diplotype": row['Source Diplotype'],
+                        "phenotype": row['Phenotype'] if pd.notna(row['Phenotype']) else "Unknown",
+                        "activity_score": row['Activity Score'] if pd.notna(row['Activity Score']) else None
+                    })
+            
+            logger.info(f"Loaded {len(diplotypes)} real pharmacogenomic findings")
         
         # Get drug recommendations based on diplotypes
         recommendations = []
         for diplotype in diplotypes:
             gene = diplotype["gene"]
             # Get drugs that have guidelines for this gene
-            # In a real implementation, this would check the specific allele combination
             drug_guidelines = get_guidelines_for_gene_drug(db, gene, None)
             for guideline in drug_guidelines:
                 recommendations.append(
@@ -205,14 +275,76 @@ async def get_drug_recommendations(
     Optionally filter by specific drug.
     """
     try:
-        # Get patient allele data from database
-        # This would be implemented with db queries
-        # Mock data for now
-        diplotypes = [
-            {"gene": "CYP2D6", "diplotype": "*1/*4", "phenotype": "Intermediate Metabolizer"},
-            {"gene": "CYP2C19", "diplotype": "*1/*1", "phenotype": "Normal Metabolizer"},
-            {"gene": "SLCO1B1", "diplotype": "rs4149056 TC", "phenotype": "Intermediate Function"}
+        # Load PharmCAT results from the data directory
+        # Try multiple path resolution strategies
+        pharmcat_data_dir = None
+        
+        # Strategy 1: Use environment variable if set
+        if os.getenv("PHARMCAT_DATA_DIR"):
+            pharmcat_data_dir = os.getenv("PHARMCAT_DATA_DIR")
+        
+        # Strategy 2: Look relative to current working directory
+        if not pharmcat_data_dir or not os.path.exists(pharmcat_data_dir):
+            pharmcat_data_dir = os.path.join(os.getcwd(), "data", "pharmcat_final_results")
+        
+        # Strategy 3: Look relative to this file (for development)
+        if not os.path.exists(pharmcat_data_dir):
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            pharmcat_data_dir = os.path.join(project_root, "data", "pharmcat_final_results")
+        
+        # Strategy 4: Look in common path
+        if not os.path.exists(pharmcat_data_dir):
+            docker_paths = [
+                "/data/reports"
+            ]
+            for path in docker_paths:
+                if os.path.exists(path):
+                    pharmcat_data_dir = path
+                    break
+        
+        logger.info(f"Using PharmCAT data directory for recommendations: {pharmcat_data_dir}")
+        logger.info(f"Directory exists: {os.path.exists(pharmcat_data_dir)}")
+        
+        # Check if PharmCAT results exist for this patient/sample
+        sample_files = [
+            f"{patient_id}.mm2.sortdup.bqsr.hc.report.json",
+            f"{patient_id}.mm2.sortdup.bqsr.hc.report.tsv",
+            f"{patient_id}.mm2.sortdup.bqsr.hc.phenotype.json"
         ]
+        
+        pharmcat_tsv_path = None
+        
+        for filename in sample_files:
+            file_path = os.path.join(pharmcat_data_dir, filename)
+            if os.path.exists(file_path) and filename.endswith('.tsv'):
+                pharmcat_tsv_path = file_path
+                logger.info(f"Found PharmCAT TSV file: {filename}")
+                break
+        
+        if not pharmcat_tsv_path:
+            logger.warning(f"No PharmCAT results found for patient {patient_id}.")
+            # Do not fall back to mock data if PharmCAT results are not found
+            diplotypes = []
+        else:
+            # Load PharmCAT data
+            logger.info("Loading real PharmCAT results for drug recommendations")
+            import pandas as pd
+            
+            # Load TSV data
+            df = pd.read_csv(pharmcat_tsv_path, sep='\t', skiprows=1)
+            
+            # Convert to diplotypes format
+            diplotypes = []
+            for _, row in df.iterrows():
+                if pd.notna(row['Gene']) and pd.notna(row['Source Diplotype']):
+                    diplotypes.append({
+                        "gene": row['Gene'],
+                        "diplotype": row['Source Diplotype'],
+                        "phenotype": row['Phenotype'] if pd.notna(row['Phenotype']) else "Unknown",
+                        "activity_score": row['Activity Score'] if pd.notna(row['Activity Score']) else None
+                    })
+            
+            logger.info(f"Loaded {len(diplotypes)} real pharmacogenomic findings for recommendations")
         
         # Get drug recommendations based on diplotypes
         recommendations = []

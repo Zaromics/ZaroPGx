@@ -3,7 +3,7 @@ flowchart TD
 
   subgraph Client["Client/UI"]
     U[User]
-    U -->|Upload VCF/BAM/CRAM/ZIP| UploadEndpoints["POST /upload-vcf<br/>POST /upload/genomic-data"]
+    U -->|Upload VCF/BAM/CRAM/SAM/FASTQ/ZIP| UploadEndpoints["POST /upload-vcf<br/>POST /upload/genomic-data"]
   end
 
   subgraph FastAPI["FastAPI App (app/main.py, app/api/routes)"]
@@ -11,19 +11,46 @@ flowchart TD
     SaveTmp --> Detect[Detect file type]
     Detect -->|ZIP| Extract[Extract ZIP → locate genomic file]
     Extract --> Detect
-    Detect -->|BAM/SAM/CRAM| GATK
+    
+    %% File type routing
     Detect -->|VCF| VCF[VCF]
-    GATK --> VCF
-
-    VCF --> PYP_DEC{CYP2D6 star alleles?}
-    PYP_DEC -->|Yes| PYP
-    PYP --> VCF
-    PYP_DEC -->|No| VCF
-
-    VCF --> PCAT
+    Detect -->|BAM| BAM[BAM]
+    Detect -->|CRAM| CRAM[CRAM]
+    Detect -->|SAM| SAM[SAM]
+    Detect -->|FASTQ| FASTQ[FASTQ]
+    
+    %% File conversion paths
+    CRAM -->|samtools| ConvertCRAM[Convert CRAM → BAM]
+    SAM -->|samtools/GATK| ConvertSAM[Convert SAM → BAM]
+    FASTQ -->|bwa-mem2/BWA| AlignFASTQ[Align FASTQ → BAM]
+    
+    ConvertCRAM --> BAM
+    ConvertSAM --> BAM
+    AlignFASTQ --> BAM
+    
+    %% HLA typing for alignment files
+    BAM -->|if HLA enabled| HLA[HLA Typing<br/>OptiType/hlatyping]
+    HLA --> BAM_HLA[BAM with HLA data]
+    BAM_HLA --> PyPGx_BAM2VCF[PyPGx BAM2VCF<br/>Convert BAM → VCF]
+    
+    %% Direct VCF path
+    VCF --> VCF_Ready[VCF Ready]
+    PyPGx_BAM2VCF --> VCF_Ready
+    
+    %% PyPGx analysis decision
+    VCF_Ready --> PYP_DEC{CYP2D6 star alleles?}
+    PYP_DEC -->|Yes| PYP[PyPGx Analysis<br/>Star allele calling]
+    PYP --> VCF_Processed[VCF with PyPGx calls]
+    PYP_DEC -->|No| VCF_Processed
+    
+    %% PharmCAT analysis
+    VCF_Processed --> PCAT[PharmCAT Analysis<br/>Drug recommendations]
     PCAT --> PCOutputs["report.json<br/>report.html<br/>report.tsv<br/>match.json<br/>phenotype.json"]
+    
+    %% Report generation pipeline
     PCOutputs --> Normalize["Normalize results<br/>(pharmcat_client.normalize_...)"]
-    Normalize --> Generate["Generate reports<br/>(app/reports/generator.py)"]
+    Normalize --> WorkflowDiagram[Generate Workflow Diagram<br/>Visual representation]
+    WorkflowDiagram --> Generate["Generate Reports<br/>(app/reports/generator.py)"]
     Generate --> ReportsDir[/Write to /data/reports/<report_id>/]
     ReportsDir --> Serve["Serve at /reports/* (StaticFiles)"]
     Serve --> ExportDec{Export to FHIR?}
@@ -32,8 +59,10 @@ flowchart TD
 
   subgraph Services["External services (docker-compose)"]
     GATK["GATK API<br/>(docker/gatk-api)"]
+    HLA_SVC["HLA Typing Service<br/>(docker/hlatyping)"]
     PYP["PyPGx Service<br/>(docker/pypgx)"]
     PCAT["PharmCAT API/JAR<br/>(docker/pharmcat or JAR)"]
+    MTDNA["mtDNA Server<br/>(docker/mtdna-server-2)"]
   end
 
   subgraph FHIR["FHIR Export (optional)"]
@@ -48,9 +77,14 @@ flowchart TD
   %% Progress tracking
   UploadEndpoints -. updates .-> JobStatus["/progress/<job_id><br/>/job-status/<job_id>"]
 
+  %% Styling
   classDef app fill:#e7f0ff,stroke:#5b8def,stroke-width:1px;
   classDef svc fill:#f8f1ff,stroke:#9b59b6,stroke-width:1px;
   classDef fhir fill:#eaffea,stroke:#27ae60,stroke-width:1px;
   classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:1px;
+  classDef conversion fill:#ffe6e6,stroke:#e74c3c,stroke-width:1px;
+  classDef analysis fill:#e6ffe6,stroke:#27ae60,stroke-width:1px;
 
   class ReportsDir,Serve,SaveTmp io;
+  class ConvertCRAM,ConvertSAM,AlignFASTQ,PyPGx_BAM2VCF conversion;
+  class HLA,PYP,PCAT,WorkflowDiagram analysis;

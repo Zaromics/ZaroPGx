@@ -141,18 +141,24 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
     """Build a Mermaid flowchart for a specific sample workflow.
 
     Expected keys in workflow (all optional; sensible defaults applied):
-      - file_type: "vcf" | "bam" | "cram" | "sam" | "zip"
+      - file_type: "vcf" | "bam" | "cram" | "sam" | "fastq" | "zip"
       - extracted_file_type: e.g., "vcf" (if zip)
       - used_gatk: bool
+      - used_hla: bool (HLA typing with OptiType)
       - used_pypgx: bool
+      - used_pypgx_bam2vcf: bool (BAM to VCF conversion)
       - used_pharmcat: bool (default True)
+      - used_mtdna: bool (mtDNA analysis)
       - exported_to_fhir: bool
     """
     file_type = str(workflow.get("file_type", "vcf")).lower()
     extracted = str(workflow.get("extracted_file_type", "")).lower()
-    used_gatk = bool(workflow.get("used_gatk", file_type in {"bam", "cram", "sam"}))
+    used_gatk = bool(workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"}))
+    used_hla = bool(workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"}))
     used_pypgx = bool(workflow.get("used_pypgx", False))
+    used_pypgx_bam2vcf = bool(workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"}))
     used_pharmcat = bool(workflow.get("used_pharmcat", True))
+    used_mtdna = bool(workflow.get("used_mtdna", False))
     exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
 
     # Helper to mark active path
@@ -165,6 +171,8 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
         "classDef norm fill:#f5f7fa,stroke:#b5bdc9,stroke-width:1px;",
         "classDef svc fill:#f8f1ff,stroke:#9b59b6,stroke-width:1px;",
         "classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:1px;",
+        "classDef conversion fill:#ffe6e6,stroke:#e74c3c,stroke-width:1px;",
+        "classDef analysis fill:#e6ffe6,stroke:#27ae60,stroke-width:1px;",
         "",
         "subgraph Client[\"Client/UI\"]",
         "  U[User]",
@@ -186,42 +194,105 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
     else:
         m += ["  Detect:::active"]
 
-    if file_type in {"bam", "cram", "sam"}:
-        if used_gatk:
+    # File type routing and conversion logic
+    if file_type == "vcf":
+        m += ["  Detect --> VCF[VCF]:::active"]
+        vcf_ready = "VCF"
+    elif file_type in {"bam", "cram", "sam", "fastq"}:
+        # Show file type specific routing
+        if file_type == "bam":
+            m += ["  Detect --> BAM[BAM]:::active"]
+        elif file_type == "cram":
             m += [
-                "  Detect --> GATK[\"GATK variant calling\"]:::active",
-                "  GATK --> VCF[VCF]:::active",
+                "  Detect --> CRAM[CRAM]:::active",
+                "  CRAM --> ConvertCRAM[Convert CRAM → BAM]:::conversion",
+                "  ConvertCRAM --> BAM[BAM]"
+            ]
+        elif file_type == "sam":
+            m += [
+                "  Detect --> SAM[SAM]:::active", 
+                "  SAM --> ConvertSAM[Convert SAM → BAM]:::conversion",
+                "  ConvertSAM --> BAM[BAM]"
+            ]
+        elif file_type == "fastq":
+            m += [
+                "  Detect --> FASTQ[FASTQ]:::active",
+                "  FASTQ --> AlignFASTQ[Align FASTQ → BAM]:::conversion",
+                "  AlignFASTQ --> BAM[BAM]"
+            ]
+        
+        # HLA typing for alignment files
+        if used_hla:
+            m += [
+                "  BAM --> HLA[HLA Typing<br/>OptiType/hlatyping]:::analysis",
+                "  HLA --> BAM_HLA[BAM with HLA data]"
+            ]
+            bam_after_hla = "BAM_HLA"
+        else:
+            m += ["  BAM --> BAM_HLA[BAM]"]
+            bam_after_hla = "BAM_HLA"
+        
+        # PyPGx BAM2VCF conversion
+        if used_pypgx_bam2vcf:
+            m += [
+                f"  {bam_after_hla} --> PyPGx_BAM2VCF[PyPGx BAM2VCF<br/>Convert BAM → VCF]:::conversion",
+                "  PyPGx_BAM2VCF --> VCF[VCF]"
             ]
         else:
-            m += [
-                "  Detect --> GATK[\"GATK variant calling (skipped)\"]",
-                "  GATK --> VCF[VCF]",
-            ]
+            m += [f"  {bam_after_hla} --> VCF[VCF]"]
+        
+        vcf_ready = "VCF"
     else:
-        m += [
-            "  Detect --> VCF[VCF]:::active",
-        ]
+        m += ["  Detect --> VCF[VCF]:::active"]
+        vcf_ready = "VCF"
 
+    # PyPGx analysis decision
     if used_pypgx:
         m += [
-            "  VCF --> PYP[\"PyPGx\"]:::active",
-            "  PYP --> VCF",
+            f"  {vcf_ready} --> PYP_DEC{{Call star alleles?}}",
+            "  PYP_DEC -->|Yes| PYP[PyPGx Analysis<br/>Star allele calling]:::analysis",
+            "  PYP --> VCF_Processed[VCF with PyPGx calls]",
+            "  PYP_DEC -->|No| VCF_Processed[VCF]"
         ]
+        vcf_final = "VCF_Processed"
+    else:
+        m += [f"  {vcf_ready} --> VCF_Processed[VCF]"]
+        vcf_final = "VCF_Processed"
 
+    # mtDNA analysis (if enabled)
+    if used_mtdna:
+        m += [
+            f"  {vcf_final} --> MTDNA[mtDNA Analysis<br/>mtDNA-server-2]:::analysis",
+            "  MTDNA --> VCF_Final[VCF with mtDNA calls]"
+        ]
+        vcf_final = "VCF_Final"
+
+    # PharmCAT analysis
     if used_pharmcat:
         m += [
-            "  VCF --> PCAT[\"PharmCAT\"]:::active",
-            "  PCAT --> Outputs[\"report.json<br/>report.html<br/>phenotype.json\"]:::io",
+            f"  {vcf_final} --> PCAT[PharmCAT Analysis<br/>Drug recommendations]:::analysis",
+            "  PCAT --> Outputs[\"report.json<br/>report.html<br/>report.tsv<br/>match.json<br/>phenotype.json\"]:::io",
         ]
     else:
         m += [
-            "  VCF --> PCAT[\"PharmCAT (skipped)\"]",
+            f"  {vcf_final} --> PCAT[\"PharmCAT (skipped)\"]",
         ]
 
+    # Report generation pipeline
     m += [
-        "  Outputs --> Generate[\"Generate reports\"]:::active",
+        "  Outputs --> Normalize[\"Normalize results<br/>(pharmcat_client.normalize_...)\"]",
+        "  Normalize --> WorkflowDiagram[Generate Workflow Diagram<br/>Visual representation]:::analysis",
+        "  WorkflowDiagram --> Generate[\"Generate Reports<br/>(app/reports/generator.py)\"]:::active",
         "  Generate --> ReportsDir[/Write to /data/reports/:report_id/]:::io",
         "  ReportsDir --> Serve[\"Serve at /reports/*\"]",
+        "end",
+        "",
+        "subgraph Services[\"External Services\"]",
+        "  GATK_SVC[\"GATK API<br/>(docker/gatk-api)\"]:::svc",
+        "  HLA_SVC[\"HLA Typing Service<br/>(docker/hlatyping)\"]:::svc", 
+        "  PYP_SVC[\"PyPGx Service<br/>(docker/pypgx)\"]:::svc",
+        "  PCAT_SVC[\"PharmCAT API/JAR<br/>(docker/pharmcat)\"]:::svc",
+        "  MTDNA_SVC[\"mtDNA Server<br/>(docker/mtdna-server-2)\"]:::svc",
         "end",
         "",
         "subgraph Optional[\"FHIR Export (optional)\"]",
@@ -251,9 +322,12 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
 
     file_type = str(workflow.get("file_type", "vcf")).lower()
     extracted = str(workflow.get("extracted_file_type", "")).lower()
-    used_gatk = bool(workflow.get("used_gatk", file_type in {"bam", "cram", "sam"}))
+    used_gatk = bool(workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"}))
+    used_hla = bool(workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"}))
     used_pypgx = bool(workflow.get("used_pypgx", False))
+    used_pypgx_bam2vcf = bool(workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"}))
     used_pharmcat = bool(workflow.get("used_pharmcat", True))
+    used_mtdna = bool(workflow.get("used_mtdna", False))
     exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
 
     # Try two different approaches for PNG to ensure text renders
@@ -326,7 +400,7 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
             logger.debug(f"[GRAPHVIZ] Graph attrs: {attempt['graph_attrs']}")
             logger.debug(f"[GRAPHVIZ] Node attrs: {attempt['node_attrs']}")
             
-            result = _render_graphviz_diagram(g, file_type, extracted, used_gatk, used_pypgx, used_pharmcat, exported_to_fhir)
+            result = _render_graphviz_diagram(g, file_type, extracted, used_gatk, used_hla, used_pypgx, used_pypgx_bam2vcf, used_pharmcat, used_mtdna, exported_to_fhir)
             if result and len(result) > 1000:  # Reasonable size check for a real image
                 logger.info(f"[GRAPHVIZ] ✓ Successfully rendered with {attempt['name']} settings, size: {len(result)} bytes")
                 
@@ -356,14 +430,16 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
         raise RuntimeError("All Graphviz rendering attempts failed")
 
 
-def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool, used_pypgx: bool, used_pharmcat: bool, exported_to_fhir: bool) -> bytes:
+def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool, used_hla: bool, used_pypgx: bool, used_pypgx_bam2vcf: bool, used_pharmcat: bool, used_mtdna: bool, exported_to_fhir: bool) -> bytes:
     """Helper function to build the actual Graphviz diagram structure."""
-    logger.debug(f"[GRAPHVIZ] Building diagram structure - file_type: {file_type}, gatk: {used_gatk}, pypgx: {used_pypgx}")
+    logger.debug(f"[GRAPHVIZ] Building diagram structure - file_type: {file_type}, gatk: {used_gatk}, hla: {used_hla}, pypgx: {used_pypgx}")
 
-    def n(name: str, label: str, active: bool = False, shape: str = "box"):
+    def n(name: str, label: str, active: bool = False, shape: str = "box", fillcolor: str = None):
         node_kwargs = {}
         if active:
             node_kwargs = {"fillcolor": "#cfe8ff", "color": "#5b8def"}
+        elif fillcolor:
+            node_kwargs = {"fillcolor": fillcolor, "color": "#2c3e50"}
         logger.debug(f"[GRAPHVIZ] Adding node: {name} = '{label}' (active: {active})")
         g.node(name, label=label, shape=shape, **node_kwargs)
 
@@ -389,26 +465,102 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
         e("Extract", "Detect2", active=True)
         file_type = extracted or "vcf"
 
-    n("VCF", "VCF", active=True)
-    if file_type in {"bam", "cram", "sam"}:
-        n("GATK", "GATK variant calling", active=used_gatk)
-        e("Detect", "GATK", active=used_gatk)
-        e("GATK", "VCF", active=used_gatk)
-    else:
+    # File type routing and conversion logic
+    if file_type == "vcf":
+        n("VCF", "VCF", active=True)
         e("Detect", "VCF", active=True)
+        vcf_ready = "VCF"
+    elif file_type in {"bam", "cram", "sam", "fastq"}:
+        # Show file type specific routing
+        if file_type == "bam":
+            n("BAM", "BAM", active=True)
+            e("Detect", "BAM", active=True)
+        elif file_type == "cram":
+            n("CRAM", "CRAM", active=True)
+            e("Detect", "CRAM", active=True)
+            n("ConvertCRAM", "Convert CRAM → BAM", active=used_gatk, fillcolor="#ffe6e6")
+            e("CRAM", "ConvertCRAM", active=used_gatk)
+            n("BAM", "BAM")
+            e("ConvertCRAM", "BAM", active=used_gatk)
+        elif file_type == "sam":
+            n("SAM", "SAM", active=True)
+            e("Detect", "SAM", active=True)
+            n("ConvertSAM", "Convert SAM → BAM", active=used_gatk, fillcolor="#ffe6e6")
+            e("SAM", "ConvertSAM", active=used_gatk)
+            n("BAM", "BAM")
+            e("ConvertSAM", "BAM", active=used_gatk)
+        elif file_type == "fastq":
+            n("FASTQ", "FASTQ", active=True)
+            e("Detect", "FASTQ", active=True)
+            n("AlignFASTQ", "Align FASTQ → BAM", active=used_gatk, fillcolor="#ffe6e6")
+            e("FASTQ", "AlignFASTQ", active=used_gatk)
+            n("BAM", "BAM")
+            e("AlignFASTQ", "BAM", active=used_gatk)
+        
+        # HLA typing for alignment files
+        if used_hla:
+            n("HLA", "HLA Typing\nOptiType/hlatyping", active=True, fillcolor="#e6ffe6")
+            e("BAM", "HLA", active=True)
+            n("BAM_HLA", "BAM with HLA data")
+            e("HLA", "BAM_HLA", active=True)
+            bam_after_hla = "BAM_HLA"
+        else:
+            n("BAM_HLA", "BAM")
+            e("BAM", "BAM_HLA", active=True)
+            bam_after_hla = "BAM_HLA"
+        
+        # PyPGx BAM2VCF conversion
+        if used_pypgx_bam2vcf:
+            n("PyPGx_BAM2VCF", "PyPGx BAM2VCF\nConvert BAM → VCF", active=True, fillcolor="#ffe6e6")
+            e(bam_after_hla, "PyPGx_BAM2VCF", active=True)
+            n("VCF", "VCF")
+            e("PyPGx_BAM2VCF", "VCF", active=True)
+        else:
+            e(bam_after_hla, "VCF", active=True)
+        
+        vcf_ready = "VCF"
+    else:
+        n("VCF", "VCF", active=True)
+        e("Detect", "VCF", active=True)
+        vcf_ready = "VCF"
 
+    # PyPGx analysis decision
     if used_pypgx:
-        n("PYP", "PyPGx", active=True)
-        e("VCF", "PYP", active=True)
-        e("PYP", "VCF", active=True)
+        n("PYP_DEC", "Call star alleles?", shape="diamond")
+        e(vcf_ready, "PYP_DEC", active=True)
+        n("PYP", "PyPGx Analysis\nStar allele calling", active=True, fillcolor="#e6ffe6")
+        e("PYP_DEC", "PYP", active=True, label="Yes")
+        n("VCF_Processed", "VCF with PyPGx calls")
+        e("PYP", "VCF_Processed", active=True)
+        e("PYP_DEC", "VCF_Processed", active=True, label="No")
+        vcf_final = "VCF_Processed"
+    else:
+        n("VCF_Processed", "VCF")
+        e(vcf_ready, "VCF_Processed", active=True)
+        vcf_final = "VCF_Processed"
 
-    n("PCAT", "PharmCAT", active=used_pharmcat)
-    e("VCF", "PCAT", active=used_pharmcat)
+    # mtDNA analysis (if enabled)
+    if used_mtdna:
+        n("MTDNA", "mtDNA Analysis\nmtDNA-server-2", active=True, fillcolor="#e6ffe6")
+        e(vcf_final, "MTDNA", active=True)
+        n("VCF_Final", "VCF with mtDNA calls")
+        e("MTDNA", "VCF_Final", active=True)
+        vcf_final = "VCF_Final"
+
+    # PharmCAT analysis
+    n("PCAT", "PharmCAT Analysis\nDrug recommendations", active=used_pharmcat, fillcolor="#e6ffe6")
+    e(vcf_final, "PCAT", active=used_pharmcat)
 
     n("Outputs", "report.json | report.html | phenotype.json", active=True, shape="box")
-    e("PCAT", "Outputs", active=True)
-    n("Generate", "Generate reports", active=True)
-    e("Outputs", "Generate", active=True)
+    e("PCAT", "Outputs", active=used_pharmcat)
+    
+    # Report generation pipeline
+    n("Normalize", "Normalize results\n(pharmcat_client.normalize_...)")
+    e("Outputs", "Normalize", active=True)
+    n("WorkflowDiagram", "Generate Workflow Diagram\nVisual representation", active=True, fillcolor="#e6ffe6")
+    e("Normalize", "WorkflowDiagram", active=True)
+    n("Generate", "Generate Reports\n(app/reports/generator.py)", active=True)
+    e("WorkflowDiagram", "Generate", active=True)
     n("ReportsDir", "Write to /data/reports/:report_id/", active=True, shape="folder")
     e("Generate", "ReportsDir", active=True)
 
@@ -615,8 +767,11 @@ def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
         # Extract workflow information
         file_type = workflow.get('file_type', 'unknown')
         used_gatk = workflow.get('used_gatk', False)
+        used_hla = workflow.get('used_hla', False)
         used_pypgx = workflow.get('used_pypgx', False)
+        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
         used_pharmcat = workflow.get('used_pharmcat', False)
+        used_mtdna = workflow.get('used_mtdna', False)
         exported_to_fhir = workflow.get('exported_to_fhir', False)
         
         # Build workflow steps
@@ -628,23 +783,42 @@ def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
         # Add detection step
         if file_type.lower() in ['vcf', 'vcf.gz']:
             steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam']:
-            steps.append('Detect (BAM)')
+        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
+            steps.append(f'Detect ({file_type.upper()})')
         else:
             steps.append(f'Detect ({file_type.upper()})')
         
-        # Add file type step
-        steps.append(file_type.upper())
+        # Add file conversion steps
+        if file_type.lower() == 'cram' and used_gatk:
+            steps.append('CRAM→BAM')
+        elif file_type.lower() == 'sam' and used_gatk:
+            steps.append('SAM→BAM')
+        elif file_type.lower() == 'fastq' and used_gatk:
+            steps.append('FASTQ→BAM')
+        
+        # Add HLA typing for alignment files
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
+            steps.append('HLA Typing')
+        
+        # Add PyPGx BAM2VCF conversion
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
+            steps.append('BAM→VCF')
+        
+        # Add VCF step
+        steps.append('VCF')
         
         # Add processing steps
-        if used_gatk:
-            steps.append('GATK')
-        
         if used_pypgx:
             steps.append('PyPGx')
+        
+        if used_mtdna:
+            steps.append('mtDNA')
             
         if used_pharmcat:
             steps.append('PharmCAT')
+        
+        # Add workflow diagram generation
+        steps.append('Workflow Diagram')
             
         # Add final steps
         steps.append('Reports')
@@ -684,17 +858,47 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
     if workflow is None:
         workflow = {}
     file_type = str(workflow.get("file_type", "vcf")).upper()
-    used_gatk = bool(workflow.get("used_gatk", file_type in {"BAM", "CRAM", "SAM"}))
+    used_gatk = bool(workflow.get("used_gatk", file_type in {"BAM", "CRAM", "SAM", "FASTQ"}))
+    used_hla = bool(workflow.get("used_hla", file_type in {"BAM", "CRAM", "SAM", "FASTQ"}))
     used_pypgx = bool(workflow.get("used_pypgx", False))
+    used_pypgx_bam2vcf = bool(workflow.get("used_pypgx_bam2vcf", file_type in {"BAM", "CRAM", "SAM", "FASTQ"}))
+    used_pharmcat = bool(workflow.get("used_pharmcat", True))
+    used_mtdna = bool(workflow.get("used_mtdna", False))
     exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
 
     steps = ["Upload", f"Detect ({file_type})"]
-    if file_type in {"BAM", "CRAM", "SAM"}:
-        steps.append("GATK" + (" ✔" if used_gatk else " (skipped)"))
+    
+    # File conversion steps
+    if file_type == "CRAM":
+        steps.append("CRAM→BAM" + (" ✔" if used_gatk else " (skipped)"))
+    elif file_type == "SAM":
+        steps.append("SAM→BAM" + (" ✔" if used_gatk else " (skipped)"))
+    elif file_type == "FASTQ":
+        steps.append("FASTQ→BAM" + (" ✔" if used_gatk else " (skipped)"))
+    
+    # HLA typing for alignment files
+    if file_type in {"BAM", "CRAM", "SAM", "FASTQ"} and used_hla:
+        steps.append("HLA Typing ✔")
+    
+    # PyPGx BAM2VCF conversion
+    if file_type in {"BAM", "CRAM", "SAM", "FASTQ"} and used_pypgx_bam2vcf:
+        steps.append("BAM→VCF ✔")
+    
     steps.append("VCF")
+    
+    # PyPGx analysis
     if used_pypgx:
-        steps.append("PyPGx")
-    steps.append("PharmCAT")
+        steps.append("PyPGx ✔")
+    
+    # mtDNA analysis
+    if used_mtdna:
+        steps.append("mtDNA ✔")
+    
+    # PharmCAT analysis
+    if used_pharmcat:
+        steps.append("PharmCAT ✔")
+    
+    steps.append("Workflow Diagram")
     steps.append("Reports")
     if exported_to_fhir:
         steps.append("FHIR Export")
@@ -773,8 +977,11 @@ def build_simple_text_workflow(workflow: Dict[str, Any]) -> str:
         # Extract workflow information
         file_type = workflow.get('file_type', 'unknown')
         used_gatk = workflow.get('used_gatk', False)
+        used_hla = workflow.get('used_hla', False)
         used_pypgx = workflow.get('used_pypgx', False)
+        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
         used_pharmcat = workflow.get('used_pharmcat', False)
+        used_mtdna = workflow.get('used_mtdna', False)
         exported_to_fhir = workflow.get('exported_to_fhir', False)
         
         # Build workflow steps
@@ -786,23 +993,42 @@ def build_simple_text_workflow(workflow: Dict[str, Any]) -> str:
         # Add detection step
         if file_type.lower() in ['vcf', 'vcf.gz']:
             steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam']:
-            steps.append('Detect (BAM)')
+        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
+            steps.append(f'Detect ({file_type.upper()})')
         else:
             steps.append(f'Detect ({file_type.upper()})')
         
-        # Add file type step
-        steps.append(file_type.upper())
+        # Add file conversion steps
+        if file_type.lower() == 'cram' and used_gatk:
+            steps.append('CRAM→BAM')
+        elif file_type.lower() == 'sam' and used_gatk:
+            steps.append('SAM→BAM')
+        elif file_type.lower() == 'fastq' and used_gatk:
+            steps.append('FASTQ→BAM')
+        
+        # Add HLA typing for alignment files
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
+            steps.append('HLA Typing')
+        
+        # Add PyPGx BAM2VCF conversion
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
+            steps.append('BAM→VCF')
+        
+        # Add VCF step
+        steps.append('VCF')
         
         # Add processing steps
-        if used_gatk:
-            steps.append('GATK')
-        
         if used_pypgx:
             steps.append('PyPGx')
+        
+        if used_mtdna:
+            steps.append('mtDNA')
             
         if used_pharmcat:
             steps.append('PharmCAT')
+        
+        # Add workflow diagram generation
+        steps.append('Workflow Diagram')
             
         # Add final steps
         steps.append('Reports')
@@ -843,8 +1069,11 @@ def build_plain_text_workflow(workflow: Dict[str, Any]) -> str:
         # Extract workflow information
         file_type = workflow.get('file_type', 'unknown')
         used_gatk = workflow.get('used_gatk', False)
+        used_hla = workflow.get('used_hla', False)
         used_pypgx = workflow.get('used_pypgx', False)
+        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
         used_pharmcat = workflow.get('used_pharmcat', False)
+        used_mtdna = workflow.get('used_mtdna', False)
         exported_to_fhir = workflow.get('exported_to_fhir', False)
         
         # Build workflow steps
@@ -856,23 +1085,42 @@ def build_plain_text_workflow(workflow: Dict[str, Any]) -> str:
         # Add detection step
         if file_type.lower() in ['vcf', 'vcf.gz']:
             steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam']:
-            steps.append('Detect (BAM)')
+        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
+            steps.append(f'Detect ({file_type.upper()})')
         else:
             steps.append(f'Detect ({file_type.upper()})')
         
-        # Add file type step
-        steps.append(file_type.upper())
+        # Add file conversion steps
+        if file_type.lower() == 'cram' and used_gatk:
+            steps.append('CRAM→BAM')
+        elif file_type.lower() == 'sam' and used_gatk:
+            steps.append('SAM→BAM')
+        elif file_type.lower() == 'fastq' and used_gatk:
+            steps.append('FASTQ→BAM')
+        
+        # Add HLA typing for alignment files
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
+            steps.append('HLA Typing')
+        
+        # Add PyPGx BAM2VCF conversion
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
+            steps.append('BAM→VCF')
+        
+        # Add VCF step
+        steps.append('VCF')
         
         # Add processing steps
-        if used_gatk:
-            steps.append('GATK')
-        
         if used_pypgx:
             steps.append('PyPGx')
+        
+        if used_mtdna:
+            steps.append('mtDNA')
             
         if used_pharmcat:
             steps.append('PharmCAT')
+        
+        # Add workflow diagram generation
+        steps.append('Workflow Diagram')
             
         # Add final steps
         steps.append('Reports')
@@ -911,8 +1159,11 @@ def build_table_workflow(workflow: Dict[str, Any]) -> str:
         # Extract workflow information
         file_type = workflow.get('file_type', 'unknown')
         used_gatk = workflow.get('used_gatk', False)
+        used_hla = workflow.get('used_hla', False)
         used_pypgx = workflow.get('used_pypgx', False)
+        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
         used_pharmcat = workflow.get('used_pharmcat', False)
+        used_mtdna = workflow.get('used_mtdna', False)
         exported_to_fhir = workflow.get('exported_to_fhir', False)
         
         # Build workflow steps
@@ -924,23 +1175,42 @@ def build_table_workflow(workflow: Dict[str, Any]) -> str:
         # Add detection step
         if file_type.lower() in ['vcf', 'vcf.gz']:
             steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam']:
-            steps.append('Detect (BAM)')
+        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
+            steps.append(f'Detect ({file_type.upper()})')
         else:
             steps.append(f'Detect ({file_type.upper()})')
         
-        # Add file type step
-        steps.append(file_type.upper())
+        # Add file conversion steps
+        if file_type.lower() == 'cram' and used_gatk:
+            steps.append('CRAM→BAM')
+        elif file_type.lower() == 'sam' and used_gatk:
+            steps.append('SAM→BAM')
+        elif file_type.lower() == 'fastq' and used_gatk:
+            steps.append('FASTQ→BAM')
+        
+        # Add HLA typing for alignment files
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
+            steps.append('HLA Typing')
+        
+        # Add PyPGx BAM2VCF conversion
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
+            steps.append('BAM→VCF')
+        
+        # Add VCF step
+        steps.append('VCF')
         
         # Add processing steps
-        if used_gatk:
-            steps.append('GATK')
-        
         if used_pypgx:
             steps.append('PyPGx')
+        
+        if used_mtdna:
+            steps.append('mtDNA')
             
         if used_pharmcat:
             steps.append('PharmCAT')
+        
+        # Add workflow diagram generation
+        steps.append('Workflow Diagram')
             
         # Add final steps
         steps.append('Reports')
@@ -986,8 +1256,11 @@ def build_simple_text_workflow_v2(workflow: Dict[str, Any]) -> str:
         # Extract workflow information
         file_type = workflow.get('file_type', 'unknown')
         used_gatk = workflow.get('used_gatk', False)
+        used_hla = workflow.get('used_hla', False)
         used_pypgx = workflow.get('used_pypgx', False)
+        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
         used_pharmcat = workflow.get('used_pharmcat', False)
+        used_mtdna = workflow.get('used_mtdna', False)
         exported_to_fhir = workflow.get('exported_to_fhir', False)
         
         # Build workflow steps
@@ -999,23 +1272,42 @@ def build_simple_text_workflow_v2(workflow: Dict[str, Any]) -> str:
         # Add detection step
         if file_type.lower() in ['vcf', 'vcf.gz']:
             steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam']:
-            steps.append('Detect (BAM)')
+        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
+            steps.append(f'Detect ({file_type.upper()})')
         else:
             steps.append(f'Detect ({file_type.upper()})')
         
-        # Add file type step
-        steps.append(file_type.upper())
+        # Add file conversion steps
+        if file_type.lower() == 'cram' and used_gatk:
+            steps.append('CRAM→BAM')
+        elif file_type.lower() == 'sam' and used_gatk:
+            steps.append('SAM→BAM')
+        elif file_type.lower() == 'fastq' and used_gatk:
+            steps.append('FASTQ→BAM')
+        
+        # Add HLA typing for alignment files
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
+            steps.append('HLA Typing')
+        
+        # Add PyPGx BAM2VCF conversion
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
+            steps.append('BAM→VCF')
+        
+        # Add VCF step
+        steps.append('VCF')
         
         # Add processing steps
-        if used_gatk:
-            steps.append('GATK')
-        
         if used_pypgx:
             steps.append('PyPGx')
+        
+        if used_mtdna:
+            steps.append('mtDNA')
             
         if used_pharmcat:
             steps.append('PharmCAT')
+        
+        # Add workflow diagram generation
+        steps.append('Workflow Diagram')
             
         # Add final steps
         steps.append('Reports')
@@ -1056,8 +1348,11 @@ def build_plain_text_workflow_v2(workflow: Dict[str, Any]) -> str:
         # Extract workflow information
         file_type = workflow.get('file_type', 'unknown')
         used_gatk = workflow.get('used_gatk', False)
+        used_hla = workflow.get('used_hla', False)
         used_pypgx = workflow.get('used_pypgx', False)
+        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
         used_pharmcat = workflow.get('used_pharmcat', False)
+        used_mtdna = workflow.get('used_mtdna', False)
         exported_to_fhir = workflow.get('exported_to_fhir', False)
         
         # Build workflow steps
@@ -1069,23 +1364,42 @@ def build_plain_text_workflow_v2(workflow: Dict[str, Any]) -> str:
         # Add detection step
         if file_type.lower() in ['vcf', 'vcf.gz']:
             steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam']:
-            steps.append('Detect (BAM)')
+        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
+            steps.append(f'Detect ({file_type.upper()})')
         else:
             steps.append(f'Detect ({file_type.upper()})')
         
-        # Add file type step
-        steps.append(file_type.upper())
+        # Add file conversion steps
+        if file_type.lower() == 'cram' and used_gatk:
+            steps.append('CRAM→BAM')
+        elif file_type.lower() == 'sam' and used_gatk:
+            steps.append('SAM→BAM')
+        elif file_type.lower() == 'fastq' and used_gatk:
+            steps.append('FASTQ→BAM')
+        
+        # Add HLA typing for alignment files
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
+            steps.append('HLA Typing')
+        
+        # Add PyPGx BAM2VCF conversion
+        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
+            steps.append('BAM→VCF')
+        
+        # Add VCF step
+        steps.append('VCF')
         
         # Add processing steps
-        if used_gatk:
-            steps.append('GATK')
-        
         if used_pypgx:
             steps.append('PyPGx')
+        
+        if used_mtdna:
+            steps.append('mtDNA')
             
         if used_pharmcat:
             steps.append('PharmCAT')
+        
+        # Add workflow diagram generation
+        steps.append('Workflow Diagram')
             
         # Add final steps
         steps.append('Reports')

@@ -2424,7 +2424,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             else:
                 logger.warning("PharmCAT HTML report not found in report directory")
         else:
-            logger.info("PharmCAT HTML report processing disabled via INCLUDE_PHARMCAT_HTML environment variable")
+            logger.debug("PharmCAT HTML report processing disabled via INCLUDE_PHARMCAT_HTML environment variable")
         
         # PharmCAT JSON report
         if REPORT_CONFIG["show_pharmcat_json_report"]:
@@ -2446,7 +2446,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             else:
                 logger.warning("PharmCAT JSON report not found in report directory")
         else:
-            logger.info("PharmCAT JSON report processing disabled via INCLUDE_PHARMCAT_JSON environment variable")
+            logger.debug("PharmCAT JSON report processing disabled via INCLUDE_PHARMCAT_JSON environment variable")
         
         # PharmCAT TSV report
         if REPORT_CONFIG["show_pharmcat_tsv_report"]:
@@ -2468,7 +2468,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             else:
                 logger.warning("PharmCAT TSV report not found in report directory")
         else:
-            logger.info("PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable")
+            logger.debug("PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable")
         
         # Add the processed data to the report paths for reference
         report_paths["processed_data"] = data
