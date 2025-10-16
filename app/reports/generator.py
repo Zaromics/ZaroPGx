@@ -638,24 +638,20 @@ def get_disclaimer() -> str:
     research becomes available. The content may vary depending on the sequencing or genotyping method used, 
     the quality and composition of the genomic data submitted, and the versions of the constituent software.
 
-
     Results should be considered in an educational context only. 
     Should the need for qualified interpretation arise, this report by its nature can only serve as a prompt 
     for professional investigation by a qualified physician or medical genetics practitioner.
     Responsible use of this report in such a context entails verification and validation of the findings by an  
     appropriately accredited sequencing or genotyping laboratory followed by interpretation and consultation 
     with an appropriately credentialed professional. 
-    
 
     Please do not make any changes to your lifestyle or treatment regimen solely on the basis of this report.
     First, consult your trusted physician and verify the findings in the appropriate clinical manner.
     
-
+    If you choose to ignore this guidance, be aware that you do so at your own risk.
     ZaroPGx is provided with absolutely no warranty, and the author(s) are not liable for any consequences of its use.
-    If you choose to ignore the guidance herein, please be aware that you do so at your own risk.
 
-
-    ZaroPGx is made with care, standing on the shoulders of the myriad underlying free software, in the hope that 
+    This tool is made with care, standing on the shoulders of myriad underlying free software, in the hope that 
     it is useful to you. Thank you for using it, and thank you for supporting free and open source software.
 
     """
