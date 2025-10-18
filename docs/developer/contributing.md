@@ -1,6 +1,7 @@
 ---
 title: Contributing Guide
 ---
+# *[CURATION NEEDED]*
 
 # Contributing Guide
 

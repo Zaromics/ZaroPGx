@@ -348,7 +348,7 @@ def unregister_process(process_key: str):
 app = FastAPI(
     title="PyPGx Wrapper API",
     description="REST API for PyPGx supported star allele calling",
-    version="1.0.0",
+    version="0.2.2",
 )
 
 app.add_middleware(
@@ -394,7 +394,7 @@ def root():
     return {
         "message": "PyPGx Wrapper API",
         "usage": "POST to /genotype with a VCF file to call alleles",
-        "version": "1.0.0",
+        "version": "0.2.2",
         "endpoints": [
             "GET /health - Health check with gene config info",
             "GET /genes - Get supported genes information",

@@ -71,7 +71,7 @@ if not PYSAM_AVAILABLE:
 app = FastAPI(
     title="PharmCAT Wrapper API",
     description="REST API wrapper around PharmCAT for pharmacogenomic analysis",
-    version="1.0.0"
+    version="0.2.2"
 )
 
 app.add_middleware(

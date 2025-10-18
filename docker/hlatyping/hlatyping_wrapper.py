@@ -65,7 +65,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("hlatyping")
 
-app = FastAPI(title="nf-core/hlatyping Wrapper API", version="1.0.0")
+app = FastAPI(title="nf-core/hlatyping Wrapper API", version="0.2.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -14,7 +14,7 @@ import requests
 from tqdm import tqdm
 import uvicorn
 
-app = FastAPI(title="Genome Downloader API", version="1.0.0")
+app = FastAPI(title="Genome Downloader API", version="0.2.2")
 
 # Global variable to track download progress
 download_status = {

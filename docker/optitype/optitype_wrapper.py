@@ -34,7 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("optitype")
 
-app = FastAPI(title="OptiType Wrapper API", version="1.0.0")
+app = FastAPI(title="OptiType Wrapper API", version="0.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
