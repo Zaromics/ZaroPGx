@@ -5,7 +5,7 @@ import uuid
 import json
 from datetime import datetime, timezone
 
-# SQLAlchemy 2.0 imports with proper organization
+# SQLAlchemy 2.0 imports
 from sqlalchemy import create_engine, text, String, Integer, DateTime, Text, JSON, ForeignKey, Boolean, Column, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
@@ -28,14 +28,13 @@ DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "cpic_db")
 
-# Create database URL with psycopg3
-import psycopg  # psycopg3 for modern PostgreSQL connections
+# Assemble database URL with psycopg3
+import psycopg
 DATABASE_URL = f"postgresql+psycopg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # Create SQLAlchemy engine with PostgreSQL 17 and psycopg3 optimizations
 engine = create_engine(
     DATABASE_URL,
-    # Connection pool settings optimized for PostgreSQL 17
     pool_size=10,  # Increased for better performance with modern PostgreSQL
     max_overflow=20,  # Increased overflow for high-concurrency scenarios
     pool_pre_ping=True,  # Verify connections before reuse
@@ -44,7 +43,7 @@ engine = create_engine(
 
     # Performance and compatibility settings
     echo=False,  # Set to True for SQL debugging
-    future=True,  # Use SQLAlchemy 2.0 style (required for modern usage)
+    future=True,  # Use SQLAlchemy 2.0 style
 
     # PostgreSQL 17 and psycopg3 optimizations
     connect_args={
