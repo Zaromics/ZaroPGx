@@ -130,6 +130,7 @@ venv.bak/
 
 # Docker compose yml (make changes to the example file(s) only)
 docker-compose.yml
+compose.yml
 
 # Spyder project settings
 .spyderproject

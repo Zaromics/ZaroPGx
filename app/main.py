@@ -98,6 +98,7 @@ OPTITYPE_ENABLED = _env_flag("OPTITYPE_ENABLED", True)
 GENOME_DOWNLOADER_ENABLED = _env_flag("GENOME_DOWNLOADER_ENABLED", True)
 KROKI_ENABLED = _env_flag("KROKI_ENABLED", True)
 HAPI_FHIR_ENABLED = _env_flag("HAPI_FHIR_ENABLED", True)
+OUTSIDE_CALLS_OVERRIDE_ENABLED = _env_flag("OUTSIDECALLSOVERRIDE", False)
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
@@ -1109,7 +1110,7 @@ async def api_status():
             "test_job_endpoint": test_job_status,
             "routes": routes,
             "app_name": "ZaroPGx API",
-            "version": "1.0.0"
+            "version": "0.2.2"
         }
     except Exception as e:
         logger.exception(f"Error in api-status endpoint: {str(e)}")
