@@ -7,7 +7,8 @@ param(
     [string]$Branch = "main",
     [string]$TargetDir = "ZaroPGx",
     [switch]$Update,
-    [switch]$SkipDependencyCheck
+    [switch]$SkipDependencyCheck,
+    [string[]]$MissingDeps = @()
 )
 
 Write-Host "ZaroPGx bootstrap" -ForegroundColor Green
@@ -64,17 +65,83 @@ function Install-Dependencies {
         if ($Branch -ne "main") { $arguments += "-Branch `"$Branch`"" }
         if ($TargetDir -ne "ZaroPGx") { $arguments += "-TargetDir `"$TargetDir`"" }
         if ($Update) { $arguments += "-Update" }
+        # Pass SkipDependencyCheck and MissingDeps to elevated process
+        $arguments += "-SkipDependencyCheck"
+        # Pass missing dependencies as a comma-separated string
+        $depString = $MissingDeps -join ','
+        $arguments += "-MissingDeps '$depString'"
         
         try {
-            Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $($arguments -join ' ')" -Wait
-            exit 0
+            $elevatedProcess = Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $($arguments -join ' ')" -PassThru -Wait
+            if ($elevatedProcess.ExitCode -ne 0) {
+                Write-Host "Installation process exited with code: $($elevatedProcess.ExitCode)" -ForegroundColor Yellow
+                return $false
+            }
+            # After successful installation, re-check dependencies and continue
+            Write-Host ""
+            Write-Host "Dependencies installed successfully. Re-checking..." -ForegroundColor Green
+            return $true
         } catch {
             Write-Host "Failed to elevate privileges: $($_.Exception.Message)" -ForegroundColor Red
             return $false
         }
     }
     
-    # Install missing dependencies
+    # If SkipDependencyCheck is set and MissingDeps is provided, we're in the elevated process
+    # Parse MissingDeps if it was passed as a comma-separated string
+    if ($SkipDependencyCheck -and $MissingDeps.Count -gt 0) {
+        if ($MissingDeps.Count -eq 1 -and $MissingDeps[0] -match ',') {
+            # Split comma-separated string into array
+            $MissingDeps = $MissingDeps[0] -split ',' | ForEach-Object { $_.Trim() }
+        }
+        # Install dependencies and exit (this is the elevated process)
+        foreach ($dep in $MissingDeps) {
+            Write-Host ""
+            Write-Host "Installing $dep..." -ForegroundColor Yellow
+            
+            switch ($dep) {
+                "Git" {
+                    if ($wingetAvailable) {
+                        winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
+                    } elseif ($chocoAvailable) {
+                        choco install git -y
+                    }
+                }
+                "Docker" {
+                    if ($wingetAvailable) {
+                        Write-Host "Installing Docker Desktop via winget..." -ForegroundColor Cyan
+                        winget install --id Docker.DockerDesktop -e --source winget --accept-package-agreements --accept-source-agreements
+                    } elseif ($chocoAvailable) {
+                        choco install docker-desktop -y
+                    }
+                }
+                "WSL2" {
+                    if ($wingetAvailable) {
+                        Write-Host "Installing WSL2 via winget..." -ForegroundColor Cyan
+                        # Install WSL with Ubuntu as default distro
+                        winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
+                        winget install --id Canonical.Ubuntu.2204.LTS -e --source winget --accept-package-agreements --accept-source-agreements
+                        # Set WSL default version to 2
+                        wsl --set-default-version 2
+                    } elseif ($chocoAvailable) {
+                        choco install wsl2 -y
+                    } else {
+                        Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
+                        # Enable WSL and Virtual Machine Platform features
+                        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+                        Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+                        # Set WSL default version to 2
+                        wsl --set-default-version 2
+                    }
+                }
+            }
+        }
+        Write-Host ""
+        Write-Host "Dependencies installed successfully!" -ForegroundColor Green
+        exit 0
+    }
+    
+    # Install missing dependencies (normal flow - when already running as admin)
     foreach ($dep in $MissingDeps) {
         Write-Host ""
         Write-Host "Installing $dep..." -ForegroundColor Yellow
@@ -95,14 +162,34 @@ function Install-Dependencies {
                     choco install docker-desktop -y
                 }
             }
+            "WSL2" {
+                if ($wingetAvailable) {
+                    Write-Host "Installing WSL2 via winget..." -ForegroundColor Cyan
+                    # Install WSL with Ubuntu as default distro
+                    winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
+                    winget install --id Canonical.Ubuntu.2204.LTS -e --source winget --accept-package-agreements --accept-source-agreements
+                    # Set WSL default version to 2
+                    wsl --set-default-version 2
+                } elseif ($chocoAvailable) {
+                    choco install wsl2 -y
+                } else {
+                    Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
+                    # Enable WSL and Virtual Machine Platform features
+                    Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+                    Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+                    # Set WSL default version to 2
+                    wsl --set-default-version 2
+                }
+            }
         }
     }
     
     Write-Host ""
     Write-Host "Dependencies installed! You may need to:" -ForegroundColor Green
-    Write-Host "  1. Restart your terminal/PowerShell session" -ForegroundColor Yellow
-    Write-Host "  2. Start Docker Desktop manually" -ForegroundColor Yellow
-    Write-Host "  3. Re-run this bootstrap script" -ForegroundColor Yellow
+    Write-Host "  1. Restart your computer (especially if WSL2 was installed)" -ForegroundColor Yellow
+    Write-Host "  2. Restart your terminal/PowerShell session" -ForegroundColor Yellow
+    Write-Host "  3. Start Docker Desktop manually" -ForegroundColor Yellow
+    Write-Host "  4. Re-run this bootstrap script" -ForegroundColor Yellow
     Write-Host ""
     
     return $true
@@ -112,6 +199,31 @@ function Install-Dependencies {
 if (-not $SkipDependencyCheck) {
     Write-Host "Checking dependencies..." -ForegroundColor Cyan
     $missingDeps = @()
+    
+    # Check WSL2 (Windows only)
+    if ($IsWindows -or $env:OS -eq "Windows_NT") {
+        $wslCmd = Get-Command wsl -ErrorAction SilentlyContinue
+        if (-not $wslCmd) {
+            $missingDeps += "WSL2"
+            Write-Host "  ⚠ WSL2 not found" -ForegroundColor Yellow
+        } else {
+            # Check if WSL2 is properly configured
+            try {
+                wsl --status 2>&1 | Out-Null
+                $wslList = wsl --list --verbose 2>&1
+                if ($LASTEXITCODE -eq 0 -and $wslList -match "VERSION.*2") {
+                    Write-Host "  ✓ WSL2 found and configured" -ForegroundColor Green
+                } elseif ($LASTEXITCODE -eq 0) {
+                    Write-Host "  ⚠ WSL found but WSL2 may not be set as default" -ForegroundColor Yellow
+                    Write-Host "  ⚠ Consider running: wsl --set-default-version 2" -ForegroundColor Yellow
+                } else {
+                    Write-Host "  ⚠ WSL found but may not be properly configured" -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "  ⚠ WSL found but version check failed" -ForegroundColor Yellow
+            }
+        }
+    }
     
     # Check Git
     $gitCmd = Get-Command git -ErrorAction SilentlyContinue
@@ -172,17 +284,61 @@ if (-not $SkipDependencyCheck) {
             }
             Write-Host ""
             Write-Host "Installation links:" -ForegroundColor Cyan
-            Write-Host "  Git:            https://git-scm.com/downloads" -ForegroundColor Gray
-            Write-Host "  Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Gray
+            if ($missingDeps -contains "WSL2") {
+                Write-Host "  WSL2:          https://learn.microsoft.com/en-us/windows/wsl/install" -ForegroundColor Gray
+            }
+            if ($missingDeps -contains "Git") {
+                Write-Host "  Git:            https://git-scm.com/downloads" -ForegroundColor Gray
+            }
+            if ($missingDeps -contains "Docker") {
+                Write-Host "  Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Gray
+            }
             Write-Host ""
             exit 1
         }
         
-        # After installation, prompt to continue
-        $continue = Read-Host "Dependencies installed. Continue with setup? (y/N)"
-        if ($continue -notmatch '^[Yy]') {
-            Write-Host "Setup cancelled. Please restart this script when ready." -ForegroundColor Yellow
-            exit 0
+        # After installation, re-check dependencies to ensure they're now available
+        Write-Host ""
+        Write-Host "Re-checking dependencies after installation..." -ForegroundColor Cyan
+        
+        # Quick re-check - if still missing, prompt user
+        $stillMissing = @()
+        foreach ($dep in $missingDeps) {
+            switch ($dep) {
+                "Git" {
+                    $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+                    if (-not $gitCmd) { $stillMissing += "Git" }
+                }
+                "Docker" {
+                    $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+                    if (-not $dockerCmd) { $stillMissing += "Docker" }
+                }
+                "WSL2" {
+                    $wslCmd = Get-Command wsl -ErrorAction SilentlyContinue
+                    if (-not $wslCmd) { $stillMissing += "WSL2" }
+                }
+            }
+        }
+        
+        if ($stillMissing.Count -gt 0) {
+            Write-Host ""
+            Write-Host "⚠️  Some dependencies may still need configuration:" -ForegroundColor Yellow
+            foreach ($dep in $stillMissing) {
+                Write-Host "  - $dep" -ForegroundColor Yellow
+            }
+            Write-Host ""
+            Write-Host "You may need to:" -ForegroundColor Yellow
+            Write-Host "  1. Restart your computer (especially if WSL2 was installed)" -ForegroundColor Gray
+            Write-Host "  2. Restart your terminal/PowerShell session" -ForegroundColor Gray
+            Write-Host "  3. Re-run this bootstrap script" -ForegroundColor Gray
+            Write-Host ""
+            $continue = Read-Host "Continue anyway? (y/N)"
+            if ($continue -notmatch '^[Yy]') {
+                Write-Host "Setup cancelled. Please restart this script when ready." -ForegroundColor Yellow
+                exit 0
+            }
+        } else {
+            Write-Host "✓ All dependencies are now available!" -ForegroundColor Green
         }
     }
     
