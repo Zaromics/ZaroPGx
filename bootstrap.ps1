@@ -1,5 +1,13 @@
 # PowerShell bootstrap script for ZaroPGx
 # Clones (or optionally updates) the repository and launches the startup script
+#
+# System Requirements:
+#   - Windows 10 22H2 (build 19045) or Windows 11 22H2 (build 22631) or higher
+#   - WSL version 2.1.5 or later (for Docker Desktop)
+#   - Git for Windows
+#   - Docker Desktop (requires WSL2 backend)
+#   - 4GB RAM minimum, 64-bit processor with Second Level Address Translation (SLAT)
+#   - Hardware virtualization enabled in BIOS/UEFI
 
 [CmdletBinding()]
 param(
@@ -19,6 +27,41 @@ function Test-Administrator {
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Helper: Get Windows build number (used to decide if wsl --install is supported)
+function Get-WindowsBuildNumber {
+    try {
+        $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuildNumber
+        return [int]$build
+    } catch {
+        return 0
+    }
+}
+
+# Helper: Get WSL version (Docker Desktop requires WSL 2.1.5+)
+function Get-WSLVersion {
+    try {
+        $wslVersionOutput = wsl --version 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0 -and $wslVersionOutput -match "WSL version:\s+(\d+\.\d+\.\d+)") {
+            return [version]$matches[1]
+        }
+        # If wsl --version doesn't work, we're on inbox/legacy WSL (pre-2.0)
+        return [version]"0.0.0"
+    } catch {
+        return [version]"0.0.0"
+    }
+}
+
+# Helper: Check if any WSL distribution is installed
+function Test-WSLDistribution {
+    try {
+        $distros = wsl --list --quiet 2>&1 | Out-String
+        $distros = $distros.Trim()
+        return ($LASTEXITCODE -eq 0 -and $distros -ne "")
+    } catch {
+        return $false
+    }
 }
 
 # Function to install dependencies using available package manager
@@ -116,15 +159,33 @@ function Install-Dependencies {
                     }
                 }
                 "WSL2" {
-                    if ($wingetAvailable) {
-                        Write-Host "Installing WSL2 via winget..." -ForegroundColor Cyan
-                        # Install WSL with Ubuntu as default distro
-                        winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
-                        winget install --id Canonical.Ubuntu.2204.LTS -e --source winget --accept-package-agreements --accept-source-agreements
-                        # Set WSL default version to 2
+                    # Prefer the modern, supported path: wsl --install (Win10 22H2+/Win11)
+                    # Windows 10 build 19045 (22H2) or Windows 11 build 22000+ support wsl --install
+                    $buildNumber = Get-WindowsBuildNumber
+                    $supportsWslInstall = ($buildNumber -ge 19041)
+
+                    if ($supportsWslInstall) {
+                        Write-Host "Installing WSL using 'wsl --install'..." -ForegroundColor Cyan
+                        # Set WSL2 as default BEFORE installing distributions
+                        try { wsl --set-default-version 2 2>&1 | Out-Null } catch {}
+                        # Install WSL and Ubuntu 22.04; default can be changed later if desired
+                        wsl --install -d Ubuntu-22.04
+                        # Update WSL to latest version (ensures we have WSL 2.1.5+)
+                        Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
+                        try { wsl --update } catch { Write-Host "  Note: WSL update may complete after restart" -ForegroundColor Gray }
+                    } elseif ($wingetAvailable) {
+                        Write-Host "Installing WSL from Microsoft Store via winget..." -ForegroundColor Cyan
+                        # Updated package ID for WSL in Microsoft Store; try legacy ID as fallback
+                        winget install --id Microsoft.WSL -e --source winget --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+                        if ($LASTEXITCODE -ne 0) {
+                            Write-Host "Primary WSL package ID failed, trying legacy ID..." -ForegroundColor Yellow
+                            winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
+                        }
+                        Write-Host "Enabling required Windows features for WSL..." -ForegroundColor Cyan
+                        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+                        Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
                         wsl --set-default-version 2
-                    } elseif ($chocoAvailable) {
-                        choco install wsl2 -y
+                        Write-Host "Restart may be required. After restart, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
                     } else {
                         Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
                         # Enable WSL and Virtual Machine Platform features
@@ -132,6 +193,8 @@ function Install-Dependencies {
                         Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
                         # Set WSL default version to 2
                         wsl --set-default-version 2
+                        Write-Host "If prompted for the WSL kernel, download from: https://github.com/microsoft/wsl/releases" -ForegroundColor Gray
+                        Write-Host "After reboot, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
                     }
                 }
             }
@@ -163,15 +226,33 @@ function Install-Dependencies {
                 }
             }
             "WSL2" {
-                if ($wingetAvailable) {
-                    Write-Host "Installing WSL2 via winget..." -ForegroundColor Cyan
-                    # Install WSL with Ubuntu as default distro
-                    winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
-                    winget install --id Canonical.Ubuntu.2204.LTS -e --source winget --accept-package-agreements --accept-source-agreements
-                    # Set WSL default version to 2
+                # Prefer the modern, supported path: wsl --install (Win10 22H2+/Win11)
+                # Windows 10 build 19045 (22H2) or Windows 11 build 22000+ support wsl --install
+                $buildNumber = Get-WindowsBuildNumber
+                $supportsWslInstall = ($buildNumber -ge 19041)
+
+                if ($supportsWslInstall) {
+                    Write-Host "Installing WSL using 'wsl --install'..." -ForegroundColor Cyan
+                    # Set WSL2 as default BEFORE installing distributions
+                    try { wsl --set-default-version 2 2>&1 | Out-Null } catch {}
+                    # Install WSL and Ubuntu 22.04; default can be changed later if desired
+                    wsl --install -d Ubuntu-22.04
+                    # Update WSL to latest version (ensures we have WSL 2.1.5+)
+                    Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
+                    try { wsl --update } catch { Write-Host "  Note: WSL update may complete after restart" -ForegroundColor Gray }
+                } elseif ($wingetAvailable) {
+                    Write-Host "Installing WSL from Microsoft Store via winget..." -ForegroundColor Cyan
+                    # Updated package ID for WSL in Microsoft Store; try legacy ID as fallback
+                    winget install --id Microsoft.WSL -e --source winget --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "Primary WSL package ID failed, trying legacy ID..." -ForegroundColor Yellow
+                        winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
+                    }
+                    Write-Host "Enabling required Windows features for WSL..." -ForegroundColor Cyan
+                    Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+                    Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
                     wsl --set-default-version 2
-                } elseif ($chocoAvailable) {
-                    choco install wsl2 -y
+                    Write-Host "Restart may be required. After restart, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
                 } else {
                     Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
                     # Enable WSL and Virtual Machine Platform features
@@ -179,6 +260,8 @@ function Install-Dependencies {
                     Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
                     # Set WSL default version to 2
                     wsl --set-default-version 2
+                    Write-Host "If prompted for the WSL kernel, download from: https://github.com/microsoft/wsl/releases" -ForegroundColor Gray
+                    Write-Host "After reboot, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
                 }
             }
         }
@@ -187,9 +270,10 @@ function Install-Dependencies {
     Write-Host ""
     Write-Host "Dependencies installed! You may need to:" -ForegroundColor Green
     Write-Host "  1. Restart your computer (especially if WSL2 was installed)" -ForegroundColor Yellow
-    Write-Host "  2. Restart your terminal/PowerShell session" -ForegroundColor Yellow
-    Write-Host "  3. Start Docker Desktop manually" -ForegroundColor Yellow
-    Write-Host "  4. Re-run this bootstrap script" -ForegroundColor Yellow
+    Write-Host "  2. Run 'wsl --update' to ensure WSL version 2.1.5+ is installed" -ForegroundColor Yellow
+    Write-Host "  3. Restart your terminal/PowerShell session" -ForegroundColor Yellow
+    Write-Host "  4. Start Docker Desktop manually" -ForegroundColor Yellow
+    Write-Host "  5. Re-run this bootstrap script" -ForegroundColor Yellow
     Write-Host ""
     
     return $true
@@ -207,20 +291,42 @@ if (-not $SkipDependencyCheck) {
             $missingDeps += "WSL2"
             Write-Host "  ⚠ WSL2 not found" -ForegroundColor Yellow
         } else {
-            # Check if WSL2 is properly configured
+            # Check WSL version (Docker Desktop requires WSL 2.1.5+)
+            $wslVersion = Get-WSLVersion
+            $minRequiredVersion = [version]"2.1.5"
+            
+            if ($wslVersion -eq [version]"0.0.0") {
+                Write-Host "  ⚠ WSL found but using legacy/inbox version (pre-2.0)" -ForegroundColor Yellow
+                Write-Host "  ⚠ Docker Desktop requires WSL version 2.1.5 or higher" -ForegroundColor Yellow
+                Write-Host "  ⚠ Please update WSL with: wsl --update" -ForegroundColor Yellow
+            } elseif ($wslVersion -lt $minRequiredVersion) {
+                Write-Host "  ⚠ WSL version $wslVersion found (Docker requires 2.1.5+)" -ForegroundColor Yellow
+                Write-Host "  ⚠ Please update WSL with: wsl --update" -ForegroundColor Yellow
+            } else {
+                Write-Host "  ✓ WSL version $wslVersion found" -ForegroundColor Green
+            }
+            
+            # Check if WSL2 is properly configured and a distribution is installed
             try {
-                wsl --status 2>&1 | Out-Null
-                $wslList = wsl --list --verbose 2>&1
-                if ($LASTEXITCODE -eq 0 -and $wslList -match "VERSION.*2") {
-                    Write-Host "  ✓ WSL2 found and configured" -ForegroundColor Green
-                } elseif ($LASTEXITCODE -eq 0) {
-                    Write-Host "  ⚠ WSL found but WSL2 may not be set as default" -ForegroundColor Yellow
-                    Write-Host "  ⚠ Consider running: wsl --set-default-version 2" -ForegroundColor Yellow
+                $wslList = wsl --list --verbose 2>&1 | Out-String
+                if ($LASTEXITCODE -eq 0) {
+                    if ($wslList -match "VERSION.*2") {
+                        $hasDistro = Test-WSLDistribution
+                        if ($hasDistro) {
+                            Write-Host "  ✓ WSL2 distributions found" -ForegroundColor Green
+                        } else {
+                            Write-Host "  ⚠ WSL2 enabled but no distributions installed" -ForegroundColor Yellow
+                            Write-Host "  ⚠ Install a distribution with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Host "  ⚠ WSL found but WSL2 may not be set as default" -ForegroundColor Yellow
+                        Write-Host "  ⚠ Set WSL2 as default: wsl --set-default-version 2" -ForegroundColor Yellow
+                    }
                 } else {
                     Write-Host "  ⚠ WSL found but may not be properly configured" -ForegroundColor Yellow
                 }
             } catch {
-                Write-Host "  ⚠ WSL found but version check failed" -ForegroundColor Yellow
+                Write-Host "  ⚠ WSL found but status check failed" -ForegroundColor Yellow
             }
         }
     }
@@ -285,13 +391,16 @@ if (-not $SkipDependencyCheck) {
             Write-Host ""
             Write-Host "Installation links:" -ForegroundColor Cyan
             if ($missingDeps -contains "WSL2") {
-                Write-Host "  WSL2:          https://learn.microsoft.com/en-us/windows/wsl/install" -ForegroundColor Gray
+                Write-Host "  WSL2:           https://learn.microsoft.com/en-us/windows/wsl/install" -ForegroundColor Gray
+                Write-Host "  WSL Update:     Run 'wsl --update' in PowerShell (admin)" -ForegroundColor Gray
             }
             if ($missingDeps -contains "Git") {
                 Write-Host "  Git:            https://git-scm.com/downloads" -ForegroundColor Gray
             }
             if ($missingDeps -contains "Docker") {
                 Write-Host "  Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Gray
+                Write-Host "  Requirements:   Windows 10 22H2 (build 19045) or Windows 11" -ForegroundColor Gray
+                Write-Host "                  WSL version 2.1.5 or higher" -ForegroundColor Gray
             }
             Write-Host ""
             exit 1
@@ -329,8 +438,9 @@ if (-not $SkipDependencyCheck) {
             Write-Host ""
             Write-Host "You may need to:" -ForegroundColor Yellow
             Write-Host "  1. Restart your computer (especially if WSL2 was installed)" -ForegroundColor Gray
-            Write-Host "  2. Restart your terminal/PowerShell session" -ForegroundColor Gray
-            Write-Host "  3. Re-run this bootstrap script" -ForegroundColor Gray
+            Write-Host "  2. Run 'wsl --update' to ensure WSL 2.1.5+ is installed" -ForegroundColor Gray
+            Write-Host "  3. Restart your terminal/PowerShell session" -ForegroundColor Gray
+            Write-Host "  4. Re-run this bootstrap script" -ForegroundColor Gray
             Write-Host ""
             $continue = Read-Host "Continue anyway? (y/N)"
             if ($continue -notmatch '^[Yy]') {
