@@ -53,13 +53,24 @@ try {
 if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
     Write-Host "  Docker is not running. Attempting to start Docker Desktop..." -ForegroundColor Yellow
     $started = $false
+    
+    # Try to start Docker service (requires admin privileges)
     try {
         $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue
-        if ($svc) {
-            if ($svc.Status -ne "Running") { Start-Service -Name "com.docker.service"; $started = $true } else { $started = $true }
+        if ($svc -and $svc.Status -eq "Running") {
+            $started = $true
+            Write-Host "  Docker service is already running" -ForegroundColor Gray
+        } elseif ($svc) {
+            Start-Service -Name "com.docker.service" -ErrorAction Stop
+            $started = $true
+            Write-Host "  Started Docker service" -ForegroundColor Gray
         }
-    } catch {}
+    } catch {
+        # Service start failed (likely needs admin or doesn't exist), try .exe method
+        Write-Host "  Could not start Docker service (trying executable method)..." -ForegroundColor Gray
+    }
 
+    # If service method didn't work, try starting Docker Desktop.exe directly
     if (-not $started) {
         $candidates = @(
             "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
@@ -67,10 +78,16 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
         )
         foreach ($p in $candidates) {
             if (Test-Path $p) {
-                Start-Process -FilePath $p | Out-Null
+                Write-Host "  Starting Docker Desktop from: $p" -ForegroundColor Gray
+                Start-Process -FilePath $p -ErrorAction SilentlyContinue | Out-Null
                 $started = $true
                 break
             }
+        }
+        
+        if (-not $started) {
+            Write-Host "  [WARNING] Docker Desktop executable not found" -ForegroundColor Yellow
+            Write-Host "  Please start Docker Desktop manually" -ForegroundColor Yellow
         }
     }
 
