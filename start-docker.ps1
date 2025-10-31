@@ -36,9 +36,9 @@ $directories = @(
 foreach ($dir in $directories) {
     if (-not (Test-Path $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        Write-Host "  ✓ Created: $dir" -ForegroundColor Green
+        Write-Host "  [OK] Created: $dir" -ForegroundColor Green
     } else {
-        Write-Host "  ✓ Exists: $dir" -ForegroundColor Gray
+        Write-Host "  [OK] Exists: $dir" -ForegroundColor Gray
     }
 }
 
@@ -83,8 +83,8 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
         try { docker version 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $dockerOk = $true } } catch {}
     }
 
-    if ($dockerOk) { Write-Host "  ✓ Docker Desktop is running" -ForegroundColor Green }
-    else { Write-Host "  ⚠ Docker Desktop did not become ready within $timeoutSec seconds" -ForegroundColor Yellow }
+    if ($dockerOk) { Write-Host "  [OK] Docker Desktop is running" -ForegroundColor Green }
+    else { Write-Host "  [WARNING] Docker Desktop did not become ready within $timeoutSec seconds" -ForegroundColor Yellow }
 }
 
 # Inform about environment file usage
@@ -121,22 +121,22 @@ try {
     Write-Host "Testing GET /health on http://localhost:8765..." -ForegroundColor Gray
     $response = Invoke-WebRequest -Uri "http://localhost:8765/health" -TimeoutSec 10 -ErrorAction Stop
     if ($response.StatusCode -eq 200) {
-        Write-Host "✅ Health check passed!" -ForegroundColor Green
+        Write-Host "[SUCCESS] Health check passed!" -ForegroundColor Green
     } else {
-        Write-Host "⚠️  Health check returned status: $($response.StatusCode)" -ForegroundColor Yellow
+        Write-Host "[WARNING] Health check returned status: $($response.StatusCode)" -ForegroundColor Yellow
     }
 } catch {
-    Write-Host "❌ Health check failed (this is expected if app is still starting)" -ForegroundColor Yellow
+    Write-Host "[ERROR] Health check failed (this is expected if app is still starting)" -ForegroundColor Yellow
     Write-Host "   Error: $($_.Exception.Message)" -ForegroundColor Gray
 }
 
 Write-Host ""
-Write-Host "✅ ZaroPGx in Docker environment is started!" -ForegroundColor Green
-Write-Host "🌐 Web interface: http://localhost:8765" -ForegroundColor Cyan
-Write-Host "📊 Container status: docker compose ps" -ForegroundColor Cyan
-Write-Host "📝 Logs: docker compose logs -f" -ForegroundColor Cyan
+Write-Host "[SUCCESS] ZaroPGx in Docker environment is started!" -ForegroundColor Green
+Write-Host ">> Web interface: http://localhost:8765" -ForegroundColor Cyan
+Write-Host ">> Container status: docker compose ps" -ForegroundColor Cyan
+Write-Host ">> Logs: docker compose logs -f" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "🔧 If you see issues, try:" -ForegroundColor Yellow
+Write-Host ">> If you see issues, try:" -ForegroundColor Yellow
 Write-Host `
 "   docker compose down; docker compose build --no-cache; docker compose up -d --force-recreate" `
 -ForegroundColor Gray

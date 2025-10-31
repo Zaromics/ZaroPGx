@@ -290,21 +290,21 @@ if (-not $SkipDependencyCheck) {
         $wslCmd = Get-Command wsl -ErrorAction SilentlyContinue
         if (-not $wslCmd) {
             $missingDeps += "WSL2"
-            Write-Host "  ⚠ WSL2 not found" -ForegroundColor Yellow
+            Write-Host "  [WARNING] WSL2 not found" -ForegroundColor Yellow
         } else {
             # Check WSL version (Docker Desktop requires WSL 2.1.5+)
             $wslVersion = Get-WSLVersion
             $minRequiredVersion = [version]"2.1.5"
             
             if ($wslVersion -eq [version]"0.0.0") {
-                Write-Host "  ⚠ WSL found but using legacy/inbox version (pre-2.0)" -ForegroundColor Yellow
-                Write-Host "  ⚠ Docker Desktop requires WSL version 2.1.5 or higher" -ForegroundColor Yellow
-                Write-Host "  ⚠ Please update WSL with: wsl --update" -ForegroundColor Yellow
+                Write-Host "  [WARNING] WSL found but using legacy/inbox version (pre-2.0)" -ForegroundColor Yellow
+                Write-Host "  [WARNING] Docker Desktop requires WSL version 2.1.5 or higher" -ForegroundColor Yellow
+                Write-Host "  [WARNING] Please update WSL with: wsl --update" -ForegroundColor Yellow
             } elseif ($wslVersion -lt $minRequiredVersion) {
-                Write-Host "  ⚠ WSL version $wslVersion found (Docker requires 2.1.5+)" -ForegroundColor Yellow
-                Write-Host "  ⚠ Please update WSL with: wsl --update" -ForegroundColor Yellow
+                Write-Host "  [WARNING] WSL version $wslVersion found (Docker requires 2.1.5+)" -ForegroundColor Yellow
+                Write-Host "  [WARNING] Please update WSL with: wsl --update" -ForegroundColor Yellow
             } else {
-                Write-Host "  ✓ WSL version $wslVersion found" -ForegroundColor Green
+                Write-Host "  [OK] WSL version $wslVersion found" -ForegroundColor Green
             }
             
             # Check if WSL2 is properly configured and a distribution is installed
@@ -314,20 +314,20 @@ if (-not $SkipDependencyCheck) {
                     if ($wslList -match "VERSION.*2") {
                         $hasDistro = Test-WSLDistribution
                         if ($hasDistro) {
-                            Write-Host "  ✓ WSL2 distributions found" -ForegroundColor Green
+                            Write-Host "  [OK] WSL2 distributions found" -ForegroundColor Green
                         } else {
-                            Write-Host "  ⚠ WSL2 enabled but no distributions installed" -ForegroundColor Yellow
-                            Write-Host "  ⚠ Install a distribution with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                            Write-Host "  [WARNING] WSL2 enabled but no distributions installed" -ForegroundColor Yellow
+                            Write-Host "  [WARNING] Install a distribution with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
                         }
                     } else {
-                        Write-Host "  ⚠ WSL found but WSL2 may not be set as default" -ForegroundColor Yellow
-                        Write-Host "  ⚠ Set WSL2 as default: wsl --set-default-version 2" -ForegroundColor Yellow
+                        Write-Host "  [WARNING] WSL found but WSL2 may not be set as default" -ForegroundColor Yellow
+                        Write-Host "  [WARNING] Set WSL2 as default: wsl --set-default-version 2" -ForegroundColor Yellow
                     }
                 } else {
-                    Write-Host "  ⚠ WSL found but may not be properly configured" -ForegroundColor Yellow
+                    Write-Host "  [WARNING] WSL found but may not be properly configured" -ForegroundColor Yellow
                 }
             } catch {
-                Write-Host "  ⚠ WSL found but status check failed" -ForegroundColor Yellow
+                Write-Host "  [WARNING] WSL found but status check failed" -ForegroundColor Yellow
             }
         }
     }
@@ -337,7 +337,7 @@ if (-not $SkipDependencyCheck) {
     if (-not $gitCmd) {
         $missingDeps += "Git"
     } else {
-        Write-Host "  ✓ Git found" -ForegroundColor Green
+        Write-Host "  [OK] Git found" -ForegroundColor Green
     }
     
     # Check Docker
@@ -345,18 +345,18 @@ if (-not $SkipDependencyCheck) {
     if (-not $dockerCmd) {
         $missingDeps += "Docker"
     } else {
-        Write-Host "  ✓ Docker found" -ForegroundColor Green
+        Write-Host "  [OK] Docker found" -ForegroundColor Green
         
         # Check if Docker is running
         try {
             docker version 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "  ⚠ Docker is installed but not running. Please start Docker Desktop." -ForegroundColor Yellow
+                Write-Host "  [WARNING] Docker is installed but not running. Please start Docker Desktop." -ForegroundColor Yellow
             } else {
-                Write-Host "  ✓ Docker is running" -ForegroundColor Green
+                Write-Host "  [OK] Docker is running" -ForegroundColor Green
             }
         } catch {
-            Write-Host "  ⚠ Docker is installed but not running. Please start Docker Desktop." -ForegroundColor Yellow
+            Write-Host "  [WARNING] Docker is installed but not running. Please start Docker Desktop." -ForegroundColor Yellow
         }
     }
     
@@ -369,15 +369,15 @@ if (-not $SkipDependencyCheck) {
             docker compose version 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 $composeV2 = $true
-                Write-Host "  ✓ Docker Compose (V2) found" -ForegroundColor Green
+                Write-Host "  [OK] Docker Compose (V2) found" -ForegroundColor Green
             }
         } catch {}
     } else {
-        Write-Host "  ✓ Docker Compose found" -ForegroundColor Green
+        Write-Host "  [OK] Docker Compose found" -ForegroundColor Green
     }
     
     if (-not $composeCmd -and -not $composeV2) {
-        Write-Host "  ⚠ Docker Compose not found (usually included with Docker Desktop)" -ForegroundColor Yellow
+        Write-Host "  [WARNING] Docker Compose not found (usually included with Docker Desktop)" -ForegroundColor Yellow
     }
     
     # Handle missing dependencies
@@ -432,7 +432,7 @@ if (-not $SkipDependencyCheck) {
         
         if ($stillMissing.Count -gt 0) {
             Write-Host ""
-            Write-Host "⚠️  Some dependencies may still need configuration:" -ForegroundColor Yellow
+            Write-Host "[WARNING] Some dependencies may still need configuration:" -ForegroundColor Yellow
             foreach ($dep in $stillMissing) {
                 Write-Host "  - $dep" -ForegroundColor Yellow
             }
@@ -449,7 +449,7 @@ if (-not $SkipDependencyCheck) {
                 exit 0
             }
         } else {
-            Write-Host "✓ All dependencies are now available!" -ForegroundColor Green
+            Write-Host "[OK] All dependencies are now available!" -ForegroundColor Green
         }
     }
     
