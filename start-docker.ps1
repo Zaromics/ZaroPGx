@@ -162,8 +162,85 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
     }
 }
 
+# Function to install Docker Engine in WSL2
+function Install-DockerInWSL {
+    Write-Host ""
+    Write-Host "  Docker Engine can be automatically installed in WSL2" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Benefits:" -ForegroundColor Green
+    Write-Host "    - Shared across all Windows users" -ForegroundColor Gray
+    Write-Host "    - Lighter weight than Docker Desktop" -ForegroundColor Gray
+    Write-Host "    - Production-grade Docker Engine" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  Note: Requires sudo password in WSL" -ForegroundColor Yellow
+    Write-Host ""
+    
+    if (-not $AutoLocal) {
+        $response = Read-Host "Install Docker Engine in WSL2? (Y/n)"
+        if ($response -match '^[Nn]') {
+            return $false
+        }
+    } else {
+        # In AutoLocal mode, don't install automatically
+        Write-Host "  Skipping automatic installation in non-interactive mode" -ForegroundColor Gray
+        return $false
+    }
+    
+    Write-Host ""
+    Write-Host "  Installing Docker Engine in WSL2 (this may take a few minutes)..." -ForegroundColor Yellow
+    Write-Host "  You may be prompted for your WSL sudo password" -ForegroundColor Gray
+    Write-Host ""
+    
+    # Use Docker's convenience script for installation
+    $installScript = @"
+# Update package index
+sudo apt-get update
+
+# Install prerequisites
+sudo apt-get install -y ca-certificates curl gnupg lsb-release
+
+# Download and run Docker convenience script
+curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+sudo sh /tmp/get-docker.sh
+
+# Add current user to docker group (to run docker without sudo)
+sudo usermod -aG docker `$USER
+
+# Start Docker daemon
+sudo service docker start
+
+# Verify installation
+docker --version
+"@
+    
+    try {
+        # Run installation in WSL
+        wsl bash -c $installScript
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host ""
+            Write-Host "  [OK] Docker Engine installed successfully in WSL2!" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "  Note: You may need to restart WSL for group membership to take effect" -ForegroundColor Yellow
+            Write-Host "  Run: wsl --shutdown (then restart this script)" -ForegroundColor Gray
+            Write-Host ""
+            return $true
+        } else {
+            Write-Host ""
+            Write-Host "  [WARNING] Docker installation completed with errors" -ForegroundColor Yellow
+            return $false
+        }
+    } catch {
+        Write-Host ""
+        Write-Host "  [ERROR] Failed to install Docker: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
 # Function to check if Docker in WSL2 is available and configure it
 function Test-DockerInWSL {
+    param([bool]$OfferInstall = $false)
+    
     Write-Host "  Checking for Docker in WSL2..." -ForegroundColor Cyan
     
     # Check if WSL is available
@@ -184,25 +261,23 @@ function Test-DockerInWSL {
             if ($dockerStatus -match "running") {
                 Write-Host "    [OK] Docker daemon is running in WSL2" -ForegroundColor Green
                 
-                # Configure DOCKER_HOST to use WSL2
-                $wslIp = wsl bash -c "hostname -I | awk '{print `$1}'" 2>&1
-                if ($wslIp -and $wslIp -match "\d+\.\d+\.\d+\.\d+") {
-                    $env:DOCKER_HOST = "tcp://${wslIp}:2375"
-                    Write-Host "    Configured DOCKER_HOST=$env:DOCKER_HOST" -ForegroundColor Gray
-                    
-                    # Test connection
-                    try {
-                        docker info 2>&1 | Out-Null
-                        if ($LASTEXITCODE -eq 0) {
-                            Write-Host "    [OK] Successfully connected to Docker in WSL2" -ForegroundColor Green
-                            return $true
-                        }
-                    } catch {}
-                }
+                # Try using docker directly from Windows (Docker Desktop compatibility mode)
+                try {
+                    docker info 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "    [OK] Docker accessible from Windows" -ForegroundColor Green
+                        return $true
+                    }
+                } catch {}
                 
-                Write-Host "    [WARNING] Docker in WSL2 not exposed to Windows" -ForegroundColor Yellow
-                Write-Host "    To use Docker in WSL2 from Windows, you need to expose the daemon" -ForegroundColor Gray
-                return $false
+                Write-Host "    [INFO] Docker running but not accessible from Windows" -ForegroundColor Gray
+                Write-Host "    Will run docker commands through WSL" -ForegroundColor Gray
+                
+                # Create a wrapper to run docker commands through WSL
+                # Set environment variable to indicate we're using WSL Docker
+                $env:DOCKER_USE_WSL = "1"
+                return $true
+                
             } elseif ($dockerStatus -match "stopped") {
                 Write-Host "    Docker daemon is not running in WSL2" -ForegroundColor Gray
                 Write-Host "    Attempting to start Docker daemon..." -ForegroundColor Yellow
@@ -215,12 +290,22 @@ function Test-DockerInWSL {
                 $dockerStatus = wsl bash -c "docker info >/dev/null 2>&1 && echo 'running' || echo 'stopped'" 2>&1
                 if ($dockerStatus -match "running") {
                     Write-Host "    [OK] Docker daemon started in WSL2" -ForegroundColor Green
+                    $env:DOCKER_USE_WSL = "1"
                     return $true
                 } else {
                     Write-Host "    [WARNING] Could not start Docker daemon in WSL2" -ForegroundColor Yellow
+                    Write-Host "    Try: wsl sudo service docker start" -ForegroundColor Gray
                     return $false
                 }
             }
+        } else {
+            # Docker not found in WSL
+            Write-Host "    Docker not found in WSL2" -ForegroundColor Gray
+            
+            if ($OfferInstall) {
+                return Install-DockerInWSL
+            }
+            return $false
         }
     } catch {
         Write-Host "    Error checking Docker in WSL2: $($_.Exception.Message)" -ForegroundColor Gray
@@ -262,11 +347,36 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
             # Check if we got valid owner information
             if ($processOwner -and $processOwner.User) {
                 $processUser = "$($processOwner.Domain)\$($processOwner.User)"
+                $otherUsername = $processOwner.User
                 
                 if ($processUser -ne $currentUser) {
-                    Write-Host "  [WARNING] Docker Desktop is running under different user: $processUser" -ForegroundColor Yellow
-                    Write-Host "  Cannot start another Docker Desktop instance - skipping to WSL2 fallback" -ForegroundColor Gray
-                    $skipDockerDesktop = $true
+                    Write-Host "  Docker Desktop is running under different user: $otherUsername" -ForegroundColor Yellow
+                    Write-Host ""
+                    
+                    # Offer to continue with that user's Docker Desktop
+                    if (-not $AutoLocal) {
+                        $response = Read-Host "Would you like to close Docker Desktop and restart it under current user? (Y/n)"
+                        if ($response -notmatch '^[Nn]') {
+                            Write-Host "  Please close Docker Desktop in the other user session and press Enter to continue..."
+                            Read-Host
+                            # Check again if it's closed
+                            $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue | Select-Object -First 1
+                            if (-not $dockerDesktopRunning) {
+                                Write-Host "  [OK] Docker Desktop closed. Will attempt to start for current user..." -ForegroundColor Green
+                                $skipDockerDesktop = $false
+                            } else {
+                                Write-Host "  [WARNING] Docker Desktop still running. Falling back to WSL2..." -ForegroundColor Yellow
+                                $skipDockerDesktop = $true
+                            }
+                        } else {
+                            Write-Host "  Skipping Docker Desktop, will try WSL2..." -ForegroundColor Gray
+                            $skipDockerDesktop = $true
+                        }
+                    } else {
+                        # In AutoLocal mode, skip Docker Desktop automatically
+                        Write-Host "  Cannot use another user's Docker Desktop - skipping to WSL2 fallback" -ForegroundColor Gray
+                        $skipDockerDesktop = $true
+                    }
                 } else {
                     Write-Host "  Docker Desktop is already running under current user" -ForegroundColor Gray
                     $dockerDesktopStarted = $true
@@ -350,7 +460,8 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
             Write-Host "  Docker Desktop not available. Trying Docker in WSL2..." -ForegroundColor Yellow
         }
         
-        if (Test-DockerInWSL) {
+        # Offer to install Docker if not found
+        if (Test-DockerInWSL -OfferInstall $true) {
             $dockerOk = $true
             $dockerSource = "Docker in WSL2"
         }
@@ -362,13 +473,30 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
         Write-Host "  [ERROR] Could not start or connect to Docker" -ForegroundColor Red
         Write-Host ""
         Write-Host "Attempted methods:" -ForegroundColor Yellow
-        Write-Host "  1. Docker Desktop for current user - Failed" -ForegroundColor Gray
-        Write-Host "  2. Docker in WSL2 - Not available or not configured" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "Solutions:" -ForegroundColor Yellow
-        Write-Host "  1. Install Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Cyan
-        Write-Host "  2. Or set up Docker in WSL2 (see documentation)" -ForegroundColor Cyan
-        Write-Host "  3. Check Docker Desktop logs: $env:LOCALAPPDATA\Docker\log" -ForegroundColor Cyan
+        
+        if ($skipDockerDesktop) {
+            Write-Host "  1. Docker Desktop - SKIPPED (running under different user)" -ForegroundColor Gray
+            Write-Host "  2. Docker in WSL2 - Not available or not configured" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Because Docker Desktop is running under another user:" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Quick Fix Options:" -ForegroundColor Cyan
+            Write-Host "  Option A: Close Docker Desktop in the other user's session, then re-run this script" -ForegroundColor White
+            Write-Host "  Option B: Log in as the other user and run this script there" -ForegroundColor White
+            Write-Host ""
+            Write-Host "Long-term Solution (for multi-user systems):" -ForegroundColor Cyan
+            Write-Host "  Set up Docker Engine in WSL2 (shared across all Windows users)" -ForegroundColor White
+            Write-Host "  Guide: https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository" -ForegroundColor Gray
+        } else {
+            Write-Host "  1. Docker Desktop for current user - Not found or failed to start" -ForegroundColor Gray
+            Write-Host "  2. Docker in WSL2 - Not available or not configured" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Solutions:" -ForegroundColor Yellow
+            Write-Host "  1. Install Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Cyan
+            Write-Host "  2. Or set up Docker Engine in WSL2" -ForegroundColor Cyan
+            Write-Host "     Guide: https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository" -ForegroundColor Gray
+            Write-Host "  3. Check Docker Desktop logs: $env:LOCALAPPDATA\Docker\log" -ForegroundColor Cyan
+        }
         Write-Host ""
         if ($didPush) { Pop-Location }
         exit 1
