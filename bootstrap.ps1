@@ -1,6 +1,13 @@
 # PowerShell bootstrap script for ZaroPGx
 # Clones (or optionally updates) the repository and launches the startup script
 #
+# Usage:
+#   Quick install (bypasses execution policy):
+#     iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/bootstrap_one-cmd/bootstrap.ps1 | iex
+#   
+#   Or download and run (may require execution policy change):
+#     powershell -ExecutionPolicy Bypass -File bootstrap.ps1
+#
 # System Requirements:
 #   - Windows 10 22H2 (build 19045) or Windows 11 22H2 (build 22631) or higher
 #   - WSL version 2.1.5 or later (for Docker Desktop)
@@ -22,6 +29,19 @@ param(
 
 Write-Host "ZaroPGx bootstrap" -ForegroundColor Green
 Write-Host "==================" -ForegroundColor Green
+
+# Check and set execution policy for this process (doesn't require admin)
+$currentPolicy = Get-ExecutionPolicy -Scope Process
+if ($currentPolicy -eq "Restricted" -or $currentPolicy -eq "AllSigned") {
+    Write-Host "Setting execution policy to Bypass for this session..." -ForegroundColor Yellow
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+        Write-Host "  [OK] Execution policy set for this session" -ForegroundColor Green
+    } catch {
+        Write-Host "  [WARNING] Could not set execution policy: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  You may need to run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor Yellow
+    }
+}
 
 # Function to check if running as administrator
 function Test-Administrator {

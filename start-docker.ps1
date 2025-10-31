@@ -1,5 +1,12 @@
 # PowerShell Docker startup script for ZaroPGx
 # Works in PowerShell on Windows (including with Docker Desktop)
+#
+# Usage:
+#   .\start-docker.ps1                # Interactive - prompts for environment
+#   .\start-docker.ps1 -AutoLocal     # Automatic - uses .env.local
+#
+#   If execution policy error, run with:
+#   powershell -ExecutionPolicy Bypass -File start-docker.ps1
 
 param(
     [switch]$AutoLocal  # Automatically use .env.local without prompting
@@ -7,6 +14,17 @@ param(
 
 Write-Host "Starting ZaroPGx with Docker Compose" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Green
+
+# Check and set execution policy for this process (doesn't require admin)
+$currentPolicy = Get-ExecutionPolicy -Scope Process
+if ($currentPolicy -eq "Restricted" -or $currentPolicy -eq "AllSigned") {
+    Write-Host "  Setting execution policy to Bypass for this session..." -ForegroundColor Yellow
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+    } catch {
+        Write-Host "  [WARNING] Could not set execution policy: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
 
 # Detect environment
 $env:COMPOSE_PROJECT_NAME = "pgx"
