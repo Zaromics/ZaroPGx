@@ -176,14 +176,15 @@ function Install-DockerInWSL {
     Write-Host ""
     
     if (-not $AutoLocal) {
+        # Interactive mode - ask user
         $response = Read-Host "Install Docker Engine in WSL2? (Y/n)"
         if ($response -match '^[Nn]') {
             return $false
         }
     } else {
-        # In AutoLocal mode, don't install automatically
-        Write-Host "  Skipping automatic installation in non-interactive mode" -ForegroundColor Gray
-        return $false
+        # AutoLocal mode (bootstrap) - proceed automatically with user notification
+        Write-Host "  Proceeding with automatic installation..." -ForegroundColor Cyan
+        Write-Host "  This is necessary for the application to run" -ForegroundColor Gray
     }
     
     Write-Host ""
