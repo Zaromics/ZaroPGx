@@ -178,28 +178,23 @@ function Install-DockerInWSL {
             
             try {
                 wsl --install -d Ubuntu-22.04 --no-launch
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "  [OK] Ubuntu 22.04 installed" -ForegroundColor Green
-                    Write-Host ""
-                    Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
-                    Write-Host "  Ubuntu needs a username and password to be configured" -ForegroundColor Gray
-                    Write-Host ""
-                    Write-Host "  Please run: wsl" -ForegroundColor Cyan
-                    Write-Host "  Then follow the prompts to create a user account" -ForegroundColor Gray
-                    Write-Host "  After setup, re-run this script" -ForegroundColor Gray
-                    Write-Host ""
-                    return $false
-                } else {
-                    Write-Host "  [ERROR] Failed to install Ubuntu" -ForegroundColor Red
-                    Write-Host "  Please install manually: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
-                    Write-Host ""
-                    return $false
-                }
+                Write-Host ""
+                Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
+                Write-Host "  Ubuntu needs a username and password to be configured" -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "  Please run: wsl" -ForegroundColor Cyan
+                Write-Host "  Then follow the prompts to create a user account" -ForegroundColor Gray
+                Write-Host "  After setup, re-run this script" -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "  Exiting now so you can set up Ubuntu..." -ForegroundColor Yellow
+                if ($didPush) { Pop-Location }
+                exit 0
             } catch {
                 Write-Host "  [ERROR] Could not install Ubuntu: $($_.Exception.Message)" -ForegroundColor Red
                 Write-Host "  Please install manually: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
                 Write-Host ""
-                return $false
+                if ($didPush) { Pop-Location }
+                exit 1
             }
         }
     } catch {
