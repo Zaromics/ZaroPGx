@@ -189,46 +189,45 @@ function Install-DockerInWSL {
     
     Write-Host ""
     Write-Host "  Installing Docker Engine in WSL2 (this may take a few minutes)..." -ForegroundColor Yellow
-    Write-Host "  You may be prompted for your WSL sudo password" -ForegroundColor Gray
+    Write-Host "  You WILL be prompted for your WSL sudo password multiple times" -ForegroundColor Yellow
     Write-Host ""
     
-    # Use Docker's convenience script for installation
-    $installScript = @"
-# Update package index
-sudo apt-get update
-
-# Install prerequisites
-sudo apt-get install -y ca-certificates curl gnupg lsb-release
-
-# Download and run Docker convenience script
-curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-sudo sh /tmp/get-docker.sh
-
-# Add current user to docker group (to run docker without sudo)
-sudo usermod -aG docker `$USER
-
-# Start Docker daemon
-sudo service docker start
-
-# Verify installation
-docker --version
-"@
-    
     try {
-        # Run installation in WSL
-        wsl bash -c $installScript
+        # Run installation commands step by step for better error handling and password prompts
+        Write-Host "  Step 1/5: Updating package index..." -ForegroundColor Cyan
+        wsl sudo apt-get update
         
-        if ($LASTEXITCODE -eq 0) {
+        Write-Host "  Step 2/5: Installing prerequisites..." -ForegroundColor Cyan
+        wsl sudo apt-get install -y ca-certificates curl
+        
+        Write-Host "  Step 3/5: Downloading Docker installation script..." -ForegroundColor Cyan
+        wsl curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+        
+        Write-Host "  Step 4/5: Installing Docker Engine..." -ForegroundColor Cyan
+        Write-Host "  (This will take 1-2 minutes)" -ForegroundColor Gray
+        wsl sudo sh /tmp/get-docker.sh
+        
+        Write-Host "  Step 5/5: Configuring and starting Docker..." -ForegroundColor Cyan
+        # Get current WSL username
+        $wslUser = wsl whoami
+        wsl sudo usermod -aG docker $wslUser
+        wsl sudo service docker start
+        
+        # Verify installation
+        Start-Sleep -Seconds 2
+        $dockerVersion = wsl docker --version 2>&1
+        
+        if ($LASTEXITCODE -eq 0 -and $dockerVersion -match "Docker version") {
             Write-Host ""
-            Write-Host "  [OK] Docker Engine installed successfully in WSL2!" -ForegroundColor Green
-            Write-Host ""
-            Write-Host "  Note: You may need to restart WSL for group membership to take effect" -ForegroundColor Yellow
-            Write-Host "  Run: wsl --shutdown (then restart this script)" -ForegroundColor Gray
+            Write-Host "  [OK] Docker Engine installed successfully!" -ForegroundColor Green
+            Write-Host "  Installed: $dockerVersion" -ForegroundColor Gray
             Write-Host ""
             return $true
         } else {
             Write-Host ""
-            Write-Host "  [WARNING] Docker installation completed with errors" -ForegroundColor Yellow
+            Write-Host "  [WARNING] Docker installation completed but verification failed" -ForegroundColor Yellow
+            Write-Host "  Try running: wsl docker --version" -ForegroundColor Gray
+            Write-Host ""
             return $false
         }
     } catch {
@@ -507,13 +506,49 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
 Write-Host "  [OK] Using Docker from: $dockerSource" -ForegroundColor Green
 Write-Host ""
 
+# If using WSL Docker and bash script exists, use it directly (cleaner!)
+if ($env:DOCKER_USE_WSL -eq "1" -and (Test-Path "start-docker.sh")) {
+    Write-Host "  Using bash script for WSL Docker operations..." -ForegroundColor Cyan
+    Write-Host ""
+    
+    # Make script executable if needed
+    wsl chmod +x start-docker.sh 2>&1 | Out-Null
+    
+    # Run the bash script from WSL with auto-local mode
+    $wslPath = "/mnt/c$(($PWD.Path -replace '\\','/') -replace ':','')"
+    wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
+    
+    $bashExitCode = $LASTEXITCODE
+    if ($didPush) { Pop-Location }
+    exit $bashExitCode
+}
+
+# Helper function to run docker commands (through WSL if needed)
+function Invoke-Docker {
+    param([string]$Command)
+    
+    if ($env:DOCKER_USE_WSL -eq "1") {
+        # Run docker through WSL
+        $wslCommand = "cd /mnt/c$(($PWD.Path -replace '\\','/') -replace ':','') && $Command"
+        wsl bash -c $wslCommand
+    } else {
+        # Run docker directly on Windows
+        Invoke-Expression $Command
+    }
+}
+
 # Start containers
 Write-Host "  Starting ZaroPGx Docker Compose containers..." -ForegroundColor Yellow
+
+if ($env:DOCKER_USE_WSL -eq "1") {
+    Write-Host "  Note: Running Docker commands through WSL" -ForegroundColor Gray
+}
+
 Write-Host "  Stopping existing containers..." -ForegroundColor Gray
-docker compose down --remove-orphans
+Invoke-Docker "docker compose down --remove-orphans"
 
 Write-Host "  Building and starting containers..." -ForegroundColor Gray
-docker compose up -d --build
+Invoke-Docker "docker compose up -d --build"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Docker Compose failed to start containers" -ForegroundColor Red
@@ -527,7 +562,7 @@ Start-Sleep -Seconds 10
 
 # Check container status
 Write-Host "  Container Status:" -ForegroundColor Cyan
-docker compose ps
+Invoke-Docker "docker compose ps"
 
 # Test the app health endpoint
 Write-Host "  Testing app health endpoint..." -ForegroundColor Yellow
@@ -550,13 +585,23 @@ try {
 Write-Host ""
 Write-Host "[SUCCESS] ZaroPGx in Docker environment is started!" -ForegroundColor Green
 Write-Host ">> Web interface: http://localhost:8765" -ForegroundColor Cyan
-Write-Host ">> Container status: docker compose ps" -ForegroundColor Cyan
-Write-Host ">> Logs: docker compose logs -f" -ForegroundColor Cyan
-Write-Host ""
-Write-Host ">> If you see issues, try:" -ForegroundColor Yellow
-Write-Host `
-"   docker compose down; docker compose build --no-cache; docker compose up -d --force-recreate" `
--ForegroundColor Gray
 
+if ($env:DOCKER_USE_WSL -eq "1") {
+    Write-Host ">> Container status: wsl docker compose ps" -ForegroundColor Cyan
+    Write-Host ">> Logs: wsl docker compose logs -f" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host ">> If you see issues, try:" -ForegroundColor Yellow
+    Write-Host "   wsl docker compose down; wsl docker compose build --no-cache; wsl docker compose up -d --force-recreate" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Note: Using Docker Engine in WSL2" -ForegroundColor Gray
+} else {
+    Write-Host ">> Container status: docker compose ps" -ForegroundColor Cyan
+    Write-Host ">> Logs: docker compose logs -f" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host ">> If you see issues, try:" -ForegroundColor Yellow
+    Write-Host "   docker compose down; docker compose build --no-cache; docker compose up -d --force-recreate" -ForegroundColor Gray
+}
+
+Write-Host ""
 if ($didPush) { Pop-Location }
 exit 0
