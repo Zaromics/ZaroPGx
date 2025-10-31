@@ -1,5 +1,16 @@
 # PowerShell Docker startup script for ZaroPGx
-# Works in PowerShell on Windows (including with Docker Desktop)
+# Works in PowerShell on Windows with automatic Docker detection
+#
+# Smart Docker Detection (tries in order):
+#   1. Check if Docker is already running and accessible
+#   2. Try to start Docker Desktop for current user
+#   3. Fall back to Docker in WSL2 if Desktop fails
+#   4. Minimal user intervention required
+#
+# Note: Docker Desktop runs per-user on Windows
+#   - Each Windows user has their own Docker Desktop instance
+#   - Cannot share Docker Desktop between Windows users
+#   - WSL2 Docker Engine can be shared across all users
 #
 # Usage:
 #   .\start-docker.ps1                # Interactive - prompts for environment
@@ -151,136 +162,205 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
     }
 }
 
-# Check Docker Desktop status and start it if needed (Windows)
-Write-Host "  Checking Docker Desktop status..." -ForegroundColor Yellow
-$dockerOk = $false
-try {
-    docker version 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { $dockerOk = $true }
-} catch {}
-
-if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
-    Write-Host "  Docker is not running. Attempting to start Docker Desktop..." -ForegroundColor Yellow
-    $started = $false
-    $serviceRunning = $false
+# Function to check if Docker in WSL2 is available and configure it
+function Test-DockerInWSL {
+    Write-Host "  Checking for Docker in WSL2..." -ForegroundColor Cyan
     
-    # Check if Docker service is running
+    # Check if WSL is available
+    $wslAvailable = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslAvailable) {
+        Write-Host "    WSL not available" -ForegroundColor Gray
+        return $false
+    }
+    
+    # Check for Docker in default WSL distribution
     try {
-        $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue
-        if ($svc -and $svc.Status -eq "Running") {
-            $serviceRunning = $true
-            Write-Host "  Docker service is running" -ForegroundColor Gray
-        } elseif ($svc) {
-            # Try to start the service
-            Start-Service -Name "com.docker.service" -ErrorAction Stop
-            $serviceRunning = $true
-            $started = $true
-            Write-Host "  Started Docker service" -ForegroundColor Gray
+        $dockerInWsl = wsl bash -c "command -v docker" 2>&1
+        if ($LASTEXITCODE -eq 0 -and $dockerInWsl) {
+            Write-Host "    [OK] Docker found in WSL2" -ForegroundColor Green
+            
+            # Check if Docker daemon is running
+            $dockerStatus = wsl bash -c "docker info >/dev/null 2>&1 && echo 'running' || echo 'stopped'" 2>&1
+            if ($dockerStatus -match "running") {
+                Write-Host "    [OK] Docker daemon is running in WSL2" -ForegroundColor Green
+                
+                # Configure DOCKER_HOST to use WSL2
+                $wslIp = wsl bash -c "hostname -I | awk '{print `$1}'" 2>&1
+                if ($wslIp -and $wslIp -match "\d+\.\d+\.\d+\.\d+") {
+                    $env:DOCKER_HOST = "tcp://${wslIp}:2375"
+                    Write-Host "    Configured DOCKER_HOST=$env:DOCKER_HOST" -ForegroundColor Gray
+                    
+                    # Test connection
+                    try {
+                        docker info 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "    [OK] Successfully connected to Docker in WSL2" -ForegroundColor Green
+                            return $true
+                        }
+                    } catch {}
+                }
+                
+                Write-Host "    [WARNING] Docker in WSL2 not exposed to Windows" -ForegroundColor Yellow
+                Write-Host "    To use Docker in WSL2 from Windows, you need to expose the daemon" -ForegroundColor Gray
+                return $false
+            } elseif ($dockerStatus -match "stopped") {
+                Write-Host "    Docker daemon is not running in WSL2" -ForegroundColor Gray
+                Write-Host "    Attempting to start Docker daemon..." -ForegroundColor Yellow
+                
+                # Try to start Docker daemon in WSL2
+                wsl bash -c "sudo service docker start" 2>&1 | Out-Null
+                Start-Sleep -Seconds 3
+                
+                # Check again
+                $dockerStatus = wsl bash -c "docker info >/dev/null 2>&1 && echo 'running' || echo 'stopped'" 2>&1
+                if ($dockerStatus -match "running") {
+                    Write-Host "    [OK] Docker daemon started in WSL2" -ForegroundColor Green
+                    return $true
+                } else {
+                    Write-Host "    [WARNING] Could not start Docker daemon in WSL2" -ForegroundColor Yellow
+                    return $false
+                }
+            }
         }
     } catch {
-        # Service start failed (likely needs admin or doesn't exist)
-        Write-Host "  Could not start Docker service (trying executable method)..." -ForegroundColor Gray
+        Write-Host "    Error checking Docker in WSL2: $($_.Exception.Message)" -ForegroundColor Gray
     }
+    
+    return $false
+}
 
-    # Check if Docker Desktop is already running
+# Check Docker status and start if needed (Windows)
+Write-Host "  Checking Docker status..." -ForegroundColor Yellow
+$dockerOk = $false
+$dockerSource = "Unknown"
+
+# First, check if Docker is already accessible
+try {
+    docker info 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { 
+        $dockerOk = $true
+        $dockerSource = "Already Running"
+        Write-Host "  [OK] Docker is already running and accessible" -ForegroundColor Green
+    }
+} catch {}
+
+# If Docker not accessible and on Windows, try to start it
+if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
+    Write-Host "  Docker is not accessible. Trying Docker Desktop first..." -ForegroundColor Yellow
+    
+    # Try Docker Desktop for current user
+    $dockerDesktopStarted = $false
+    
+    # Check if Docker Desktop is already running under another user
     $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
     if ($dockerDesktopRunning) {
-        Write-Host "  Docker Desktop process is already running (PID: $($dockerDesktopRunning.Id))" -ForegroundColor Gray
-        $started = $true
-    } else {
-        # Try starting Docker Desktop.exe directly
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        try {
+            $processOwner = (Get-WmiObject Win32_Process -Filter "ProcessId=$($dockerDesktopRunning.Id)").GetOwner()
+            $processUser = "$($processOwner.Domain)\$($processOwner.User)"
+            
+            if ($processUser -ne $currentUser) {
+                Write-Host "  [WARNING] Docker Desktop is running under different user: $processUser" -ForegroundColor Yellow
+                Write-Host "  Cannot use another user's Docker Desktop instance" -ForegroundColor Gray
+            } else {
+                Write-Host "  Docker Desktop is already running under current user" -ForegroundColor Gray
+                $dockerDesktopStarted = $true
+            }
+        } catch {
+            Write-Host "  Docker Desktop process found - attempting to connect..." -ForegroundColor Gray
+            $dockerDesktopStarted = $true
+        }
+    }
+    
+    # If not running for current user, try to start it
+    if (-not $dockerDesktopStarted) {
         $candidates = @(
             "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
             "$env:ProgramFiles(x86)\Docker\Docker\Docker Desktop.exe"
         )
-        $exeFound = $false
+        
         foreach ($p in $candidates) {
             if (Test-Path $p) {
-                Write-Host "  Starting Docker Desktop from: $p" -ForegroundColor Cyan
+                Write-Host "  Starting Docker Desktop: $p" -ForegroundColor Cyan
                 try {
                     Start-Process -FilePath $p -ErrorAction Stop
-                    $exeFound = $true
-                    $started = $true
+                    $dockerDesktopStarted = $true
                     Write-Host "  [OK] Docker Desktop process started" -ForegroundColor Gray
                 } catch {
-                    Write-Host "  [WARNING] Failed to start Docker Desktop: $($_.Exception.Message)" -ForegroundColor Yellow
+                    Write-Host "  [WARNING] Failed to start: $($_.Exception.Message)" -ForegroundColor Yellow
                 }
                 break
             }
         }
+    }
+    
+    # Wait for Docker Desktop if we started it
+    if ($dockerDesktopStarted) {
+        Write-Host "  Waiting for Docker Desktop to be ready (up to 180 seconds)..." -ForegroundColor Gray
+        $timeoutSec = 180
+        $elapsed = 0
+        $dotCount = 0
         
-        if (-not $exeFound) {
-            Write-Host "  [WARNING] Docker Desktop executable not found in standard locations" -ForegroundColor Yellow
-            Write-Host "  Searched:" -ForegroundColor Gray
-            foreach ($p in $candidates) {
-                Write-Host "    - $p" -ForegroundColor Gray
+        while (-not $dockerOk -and $elapsed -lt $timeoutSec) {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            $dotCount++
+            Write-Host "." -NoNewline -ForegroundColor Gray
+            
+            try { 
+                docker info 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) { 
+                    $dockerOk = $true
+                    $dockerSource = "Docker Desktop"
+                }
+            } catch {}
+            
+            if ($dotCount % 10 -eq 0 -and -not $dockerOk) {
+                Write-Host " ($elapsed seconds)" -ForegroundColor Gray
+                Write-Host "  Still waiting" -NoNewline -ForegroundColor Gray
             }
+        }
+        Write-Host ""
+        
+        if ($dockerOk) {
+            Write-Host "  [OK] Docker Desktop is ready!" -ForegroundColor Green
+        } else {
+            Write-Host "  [WARNING] Docker Desktop did not become ready" -ForegroundColor Yellow
         }
     }
     
-    if (-not $started -and -not $serviceRunning) {
-        Write-Host "  [WARNING] Could not start Docker Desktop automatically" -ForegroundColor Yellow
-        Write-Host "  Please start Docker Desktop manually and wait for it to be ready" -ForegroundColor Yellow
-    }
-
-    # Wait up to 180s for Docker to become ready
-    if ($started -or $serviceRunning) {
-        Write-Host "  Waiting for Docker Desktop to be ready..." -ForegroundColor Gray
-        Write-Host "  This may take up to 3 minutes, especially on first start..." -ForegroundColor Gray
-    }
-    $timeoutSec = 180
-    $elapsed = 0
-    $dotCount = 0
-    while (-not $dockerOk -and $elapsed -lt $timeoutSec) {
-        Start-Sleep -Seconds 3
-        $elapsed += 3
-        $dotCount++
-        Write-Host "." -NoNewline -ForegroundColor Gray
+    # If Docker Desktop failed, try Docker in WSL2 as fallback
+    if (-not $dockerOk) {
+        Write-Host ""
+        Write-Host "  Docker Desktop not available. Trying Docker in WSL2..." -ForegroundColor Yellow
         
-        # Use docker info instead of docker version - more reliable for checking daemon readiness
-        try { 
-            docker info 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { 
-                $dockerOk = $true 
-            }
-        } catch {}
-        
-        # Show elapsed time every 30 seconds
-        if ($dotCount % 10 -eq 0 -and -not $dockerOk) {
-            Write-Host " ($elapsed seconds)" -ForegroundColor Gray
-            Write-Host "  Still waiting" -NoNewline -ForegroundColor Gray
+        if (Test-DockerInWSL) {
+            $dockerOk = $true
+            $dockerSource = "Docker in WSL2"
         }
     }
-    Write-Host ""  # New line after progress dots
-
-    if ($dockerOk) { 
-        Write-Host "  [OK] Docker Desktop is running" -ForegroundColor Green 
-    } else { 
-        Write-Host "  [ERROR] Docker Desktop did not become ready within $timeoutSec seconds" -ForegroundColor Red
+    
+    # Final check: if nothing worked, exit with error
+    if (-not $dockerOk) {
         Write-Host ""
-        Write-Host "Troubleshooting steps:" -ForegroundColor Yellow
-        Write-Host "  1. Check if Docker Desktop is running (system tray whale icon)" -ForegroundColor Cyan
-        Write-Host "  2. Try starting Docker Desktop manually from the Start menu" -ForegroundColor Cyan
-        Write-Host "  3. Check Docker Desktop logs at: $env:LOCALAPPDATA\Docker\log" -ForegroundColor Cyan
-        Write-Host "  4. Ensure WSL 2 is properly configured: wsl --list --verbose" -ForegroundColor Cyan
-        Write-Host "  5. Try restarting the Docker service: Restart-Service com.docker.service" -ForegroundColor Cyan
-        Write-Host "  6. After Docker Desktop is running, re-run this script" -ForegroundColor Cyan
+        Write-Host "  [ERROR] Could not start or connect to Docker" -ForegroundColor Red
         Write-Host ""
-        Write-Host "For more help, run Docker Desktop diagnostics:" -ForegroundColor Gray
-        Write-Host '  & "C:\Program Files\Docker\Docker\resources\com.docker.diagnose.exe" gather' -ForegroundColor Gray
+        Write-Host "Attempted methods:" -ForegroundColor Yellow
+        Write-Host "  1. Docker Desktop for current user - Failed" -ForegroundColor Gray
+        Write-Host "  2. Docker in WSL2 - Not available or not configured" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "Solutions:" -ForegroundColor Yellow
+        Write-Host "  1. Install Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Cyan
+        Write-Host "  2. Or set up Docker in WSL2 (see documentation)" -ForegroundColor Cyan
+        Write-Host "  3. Check Docker Desktop logs: $env:LOCALAPPDATA\Docker\log" -ForegroundColor Cyan
         Write-Host ""
         if ($didPush) { Pop-Location }
         exit 1
     }
 }
 
-# At this point, Docker should be running
-if (-not $dockerOk) {
-    Write-Host "  [ERROR] Docker is not running. Cannot start containers." -ForegroundColor Red
-    Write-Host "  Please start Docker Desktop manually and try again." -ForegroundColor Yellow
-    if ($didPush) { Pop-Location }
-    exit 1
-}
+Write-Host "  [OK] Using Docker from: $dockerSource" -ForegroundColor Green
+Write-Host ""
 
 # Start containers
 Write-Host "  Starting ZaroPGx Docker Compose containers..." -ForegroundColor Yellow
