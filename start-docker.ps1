@@ -252,7 +252,7 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
     $dockerDesktopStarted = $false
     
     # Check if Docker Desktop is already running under another user
-    $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
+    $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($dockerDesktopRunning) {
         $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         try {
