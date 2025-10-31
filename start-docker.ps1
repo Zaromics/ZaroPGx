@@ -81,3 +81,5 @@ Write-Host "📝 Logs: docker compose logs -f" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "🔧 If you see issues, try:" -ForegroundColor Yellow
 Write-Host "   docker compose down; docker compose build --no-cache; docker compose up -d --force-recreate" -ForegroundColor Gray
+
+exit 0
