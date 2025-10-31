@@ -42,6 +42,31 @@ foreach ($dir in $directories) {
     }
 }
 
+# Check WSL version if on Windows (Docker Desktop requires WSL 2.1.5+)
+if ($IsWindows -or $env:OS -eq "Windows_NT") {
+    try {
+        $wslVersionOutput = wsl --version 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0 -and $wslVersionOutput -match "WSL version:\s+(\d+\.\d+\.\d+)") {
+            $wslVersion = [version]$matches[1]
+            $minRequiredVersion = [version]"2.1.5"
+            if ($wslVersion -lt $minRequiredVersion) {
+                Write-Host "  [WARNING] WSL version $wslVersion detected (Docker requires 2.1.5+)" -ForegroundColor Yellow
+                Write-Host "  Docker Desktop may fail to start or show errors" -ForegroundColor Yellow
+                Write-Host ""
+                $updateResponse = Read-Host "Update WSL now? (Y/n)"
+                if ($updateResponse -notmatch '^[Nn]') {
+                    Write-Host "  Updating WSL..." -ForegroundColor Cyan
+                    wsl --update
+                    Write-Host "  WSL update complete. Please restart your terminal if needed." -ForegroundColor Green
+                    Write-Host ""
+                }
+            }
+        }
+    } catch {
+        # WSL version check failed, continue anyway
+    }
+}
+
 # Check Docker Desktop status and start it if needed (Windows)
 Write-Host "  Checking Docker Desktop status..." -ForegroundColor Yellow
 $dockerOk = $false

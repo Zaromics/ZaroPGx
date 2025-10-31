@@ -295,16 +295,40 @@ if (-not $SkipDependencyCheck) {
             # Check WSL version (Docker Desktop requires WSL 2.1.5+)
             $wslVersion = Get-WSLVersion
             $minRequiredVersion = [version]"2.1.5"
+            $needsUpdate = $false
             
             if ($wslVersion -eq [version]"0.0.0") {
                 Write-Host "  [WARNING] WSL found but using legacy/inbox version (pre-2.0)" -ForegroundColor Yellow
                 Write-Host "  [WARNING] Docker Desktop requires WSL version 2.1.5 or higher" -ForegroundColor Yellow
-                Write-Host "  [WARNING] Please update WSL with: wsl --update" -ForegroundColor Yellow
+                $needsUpdate = $true
             } elseif ($wslVersion -lt $minRequiredVersion) {
                 Write-Host "  [WARNING] WSL version $wslVersion found (Docker requires 2.1.5+)" -ForegroundColor Yellow
-                Write-Host "  [WARNING] Please update WSL with: wsl --update" -ForegroundColor Yellow
+                $needsUpdate = $true
             } else {
                 Write-Host "  [OK] WSL version $wslVersion found" -ForegroundColor Green
+            }
+            
+            # Offer to update WSL if outdated
+            if ($needsUpdate) {
+                Write-Host ""
+                $updateResponse = Read-Host "Would you like to update WSL now? (Y/n)"
+                if ($updateResponse -notmatch '^[Nn]') {
+                    Write-Host "  Updating WSL..." -ForegroundColor Cyan
+                    try {
+                        wsl --update
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "  [OK] WSL updated successfully!" -ForegroundColor Green
+                            Write-Host "  Note: You may need to restart your terminal" -ForegroundColor Gray
+                        } else {
+                            Write-Host "  [WARNING] WSL update completed with warnings" -ForegroundColor Yellow
+                        }
+                    } catch {
+                        Write-Host "  [WARNING] WSL update failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                        Write-Host "  Please run 'wsl --update' manually as administrator" -ForegroundColor Yellow
+                    }
+                } else {
+                    Write-Host "  Skipping WSL update. Docker Desktop may not start correctly." -ForegroundColor Yellow
+                }
             }
             
             # Check if WSL2 is properly configured and a distribution is installed
