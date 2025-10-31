@@ -110,7 +110,9 @@ foreach ($dir in $directories) {
 if ($IsWindows -or $env:OS -eq "Windows_NT") {
     try {
         $wslVersionOutput = wsl --version 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0 -and $wslVersionOutput -match "WSL version:\s+(\d+\.\d+\.\d+)") {
+        # Remove null characters that cause spacing issues in UTF-16 output
+        $wslVersionOutput = $wslVersionOutput -replace '\0', ''
+        if ($LASTEXITCODE -eq 0 -and $wslVersionOutput -match "WSL\s*version:\s*(\d+\.\d+\.\d+(?:\.\d+)?)") {
             $wslVersion = [version]$matches[1]
             $minRequiredVersion = [version]"2.1.5"
             if ($wslVersion -lt $minRequiredVersion) {

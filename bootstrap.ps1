@@ -44,7 +44,9 @@ function Get-WindowsBuildNumber {
 function Get-WSLVersion {
     try {
         $wslVersionOutput = wsl --version 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0 -and $wslVersionOutput -match "WSL version:\s+(\d+\.\d+\.\d+)") {
+        # Remove null characters that cause spacing issues in UTF-16 output
+        $wslVersionOutput = $wslVersionOutput -replace '\0', ''
+        if ($LASTEXITCODE -eq 0 -and $wslVersionOutput -match "WSL\s*version:\s*(\d+\.\d+\.\d+(?:\.\d+)?)") {
             return [version]$matches[1]
         }
         # If wsl --version doesn't work, we're on inbox/legacy WSL (pre-2.0)
