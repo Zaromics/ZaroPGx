@@ -213,20 +213,42 @@ function Install-DockerInWSL {
         wsl sudo usermod -aG docker $wslUser
         wsl sudo service docker start
         
-        # Verify installation
-        Start-Sleep -Seconds 2
+        # Wait a bit longer for Docker to start
+        Start-Sleep -Seconds 5
+        
+        # Verify installation - try both with and without sudo
+        Write-Host "  Verifying Docker installation..." -ForegroundColor Gray
         $dockerVersion = wsl docker --version 2>&1
+        
+        if ($LASTEXITCODE -ne 0) {
+            # Try with sudo if regular command failed
+            $dockerVersion = wsl sudo docker --version 2>&1
+        }
         
         if ($LASTEXITCODE -eq 0 -and $dockerVersion -match "Docker version") {
             Write-Host ""
             Write-Host "  [OK] Docker Engine installed successfully!" -ForegroundColor Green
             Write-Host "  Installed: $dockerVersion" -ForegroundColor Gray
             Write-Host ""
+            
+            # Ensure Docker daemon is running
+            wsl sudo service docker start 2>&1 | Out-Null
+            Start-Sleep -Seconds 3
+            
+            # Check if daemon is accessible
+            $daemonCheck = wsl sudo docker info 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
+            } else {
+                Write-Host "  [WARNING] Docker daemon may not be fully started yet" -ForegroundColor Yellow
+            }
+            Write-Host ""
             return $true
         } else {
             Write-Host ""
-            Write-Host "  [WARNING] Docker installation completed but verification failed" -ForegroundColor Yellow
-            Write-Host "  Try running: wsl docker --version" -ForegroundColor Gray
+            Write-Host "  [ERROR] Docker installation verification failed" -ForegroundColor Red
+            Write-Host "  Docker may not have installed correctly" -ForegroundColor Yellow
+            Write-Host "  Try running: wsl sudo docker --version" -ForegroundColor Gray
             Write-Host ""
             return $false
         }
@@ -303,7 +325,17 @@ function Test-DockerInWSL {
             Write-Host "    Docker not found in WSL2" -ForegroundColor Gray
             
             if ($OfferInstall) {
-                return Install-DockerInWSL
+                $installResult = Install-DockerInWSL
+                if ($installResult) {
+                    # Installation succeeded, set WSL mode and verify Docker is accessible
+                    $env:DOCKER_USE_WSL = "1"
+                    Write-Host "    [OK] Docker installed and WSL mode enabled" -ForegroundColor Green
+                    
+                    # Try to start Docker daemon again to be sure
+                    wsl sudo service docker start 2>&1 | Out-Null
+                    Start-Sleep -Seconds 2
+                }
+                return $installResult
             }
             return $false
         }
@@ -507,20 +539,25 @@ Write-Host "  [OK] Using Docker from: $dockerSource" -ForegroundColor Green
 Write-Host ""
 
 # If using WSL Docker and bash script exists, use it directly (cleaner!)
-if ($env:DOCKER_USE_WSL -eq "1" -and (Test-Path "start-docker.sh")) {
-    Write-Host "  Using bash script for WSL Docker operations..." -ForegroundColor Cyan
-    Write-Host ""
-    
-    # Make script executable if needed
-    wsl chmod +x start-docker.sh 2>&1 | Out-Null
-    
-    # Run the bash script from WSL with auto-local mode
-    $wslPath = "/mnt/c$(($PWD.Path -replace '\\','/') -replace ':','')"
-    wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
-    
-    $bashExitCode = $LASTEXITCODE
-    if ($didPush) { Pop-Location }
-    exit $bashExitCode
+if ($env:DOCKER_USE_WSL -eq "1") {
+    if (Test-Path "start-docker.sh") {
+        Write-Host "  Using bash script for WSL Docker operations..." -ForegroundColor Cyan
+        Write-Host ""
+        
+        # Make script executable if needed
+        wsl chmod +x start-docker.sh 2>&1 | Out-Null
+        
+        # Run the bash script from WSL with auto-local mode
+        $wslPath = "/mnt/c$(($PWD.Path -replace '\\','/') -replace ':','')"
+        wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
+        
+        $bashExitCode = $LASTEXITCODE
+        if ($didPush) { Pop-Location }
+        exit $bashExitCode
+    } else {
+        Write-Host "  [WARNING] start-docker.sh not found, using WSL docker commands directly" -ForegroundColor Yellow
+        Write-Host "  Note: Running commands through WSL (may need sudo)" -ForegroundColor Gray
+    }
 }
 
 # Helper function to run docker commands (through WSL if needed)
@@ -528,8 +565,8 @@ function Invoke-Docker {
     param([string]$Command)
     
     if ($env:DOCKER_USE_WSL -eq "1") {
-        # Run docker through WSL
-        $wslCommand = "cd /mnt/c$(($PWD.Path -replace '\\','/') -replace ':','') && $Command"
+        # Run docker through WSL with sudo (needed after fresh install)
+        $wslCommand = "cd /mnt/c$(($PWD.Path -replace '\\','/') -replace ':','') && sudo $Command"
         wsl bash -c $wslCommand
     } else {
         # Run docker directly on Windows
