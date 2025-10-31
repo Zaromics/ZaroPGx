@@ -164,6 +164,48 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
 
 # Function to install Docker Engine in WSL2
 function Install-DockerInWSL {
+    # First, check if WSL has a distribution installed
+    try {
+        $distros = wsl --list --quiet 2>&1 | Out-String
+        $distros = $distros.Trim()
+        if (-not $distros -or $distros -eq "") {
+            Write-Host ""
+            Write-Host "  [ERROR] No WSL Linux distribution installed" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "  A Linux distribution is required to install Docker in WSL2" -ForegroundColor Yellow
+            Write-Host "  Installing Ubuntu 22.04 (this may take a few minutes)..." -ForegroundColor Cyan
+            Write-Host ""
+            
+            try {
+                wsl --install -d Ubuntu-22.04 --no-launch
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  [OK] Ubuntu 22.04 installed" -ForegroundColor Green
+                    Write-Host ""
+                    Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
+                    Write-Host "  Ubuntu needs a username and password to be configured" -ForegroundColor Gray
+                    Write-Host ""
+                    Write-Host "  Please run: wsl" -ForegroundColor Cyan
+                    Write-Host "  Then follow the prompts to create a user account" -ForegroundColor Gray
+                    Write-Host "  After setup, re-run this script" -ForegroundColor Gray
+                    Write-Host ""
+                    return $false
+                } else {
+                    Write-Host "  [ERROR] Failed to install Ubuntu" -ForegroundColor Red
+                    Write-Host "  Please install manually: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                    Write-Host ""
+                    return $false
+                }
+            } catch {
+                Write-Host "  [ERROR] Could not install Ubuntu: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "  Please install manually: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                Write-Host ""
+                return $false
+            }
+        }
+    } catch {
+        Write-Host "  [WARNING] Could not check WSL distributions" -ForegroundColor Yellow
+    }
+    
     Write-Host ""
     Write-Host "  Docker Engine can be automatically installed in WSL2" -ForegroundColor Cyan
     Write-Host ""
@@ -517,8 +559,18 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
             Write-Host "  Option B: Log in as the other user and run this script there" -ForegroundColor White
             Write-Host ""
             Write-Host "Long-term Solution (for multi-user systems):" -ForegroundColor Cyan
-            Write-Host "  Set up Docker Engine in WSL2 (shared across all Windows users)" -ForegroundColor White
-            Write-Host "  Guide: https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository" -ForegroundColor Gray
+            Write-Host "  Set up WSL2 with Ubuntu and Docker Engine (shared across all users)" -ForegroundColor White
+            Write-Host ""
+            Write-Host "  Step 1: Check if WSL has a Linux distribution" -ForegroundColor Gray
+            Write-Host "    wsl --list" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Step 2: If none found, install Ubuntu:" -ForegroundColor Gray
+            Write-Host "    wsl --install -d Ubuntu-22.04" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Step 3: Run Ubuntu and set up username/password:" -ForegroundColor Gray
+            Write-Host "    wsl" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Step 4: Re-run this bootstrap script" -ForegroundColor Gray
         } else {
             Write-Host "  1. Docker Desktop for current user - Not found or failed to start" -ForegroundColor Gray
             Write-Host "  2. Docker in WSL2 - Not available or not configured" -ForegroundColor Gray

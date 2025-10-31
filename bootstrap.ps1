@@ -363,7 +363,23 @@ if (-not $SkipDependencyCheck) {
                             Write-Host "  [OK] WSL2 distributions found" -ForegroundColor Green
                         } else {
                             Write-Host "  [WARNING] WSL2 enabled but no distributions installed" -ForegroundColor Yellow
-                            Write-Host "  [WARNING] Install a distribution with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                            Write-Host ""
+                            Write-Host "  A Linux distribution is required for Docker in WSL2" -ForegroundColor Cyan
+                            Write-Host "  Installing Ubuntu 22.04 (recommended)..." -ForegroundColor Yellow
+                            
+                            try {
+                                wsl --install -d Ubuntu-22.04 --no-launch
+                                if ($LASTEXITCODE -eq 0) {
+                                    Write-Host "  [OK] Ubuntu 22.04 installed" -ForegroundColor Green
+                                    Write-Host "  Note: You'll need to set up a username/password on first use" -ForegroundColor Gray
+                                } else {
+                                    Write-Host "  [WARNING] Failed to install Ubuntu automatically" -ForegroundColor Yellow
+                                    Write-Host "  Please run: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                                }
+                            } catch {
+                                Write-Host "  [WARNING] Could not install Ubuntu: $($_.Exception.Message)" -ForegroundColor Yellow
+                                Write-Host "  Please run: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                            }
                         }
                     } else {
                         Write-Host "  [WARNING] WSL found but WSL2 may not be set as default" -ForegroundColor Yellow
