@@ -12,7 +12,8 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = "https://github.com/Zaroganos/ZaroPGx.git",
-    [string]$Branch = "main",
+    # TODO: Change back to "main" when ready to merge
+    [string]$Branch = "bootstrap_one-cmd",
     [string]$TargetDir = "ZaroPGx",
     [switch]$Update,
     [switch]$SkipDependencyCheck,
