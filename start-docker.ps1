@@ -144,55 +144,124 @@ try {
 if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
     Write-Host "  Docker is not running. Attempting to start Docker Desktop..." -ForegroundColor Yellow
     $started = $false
+    $serviceRunning = $false
     
-    # Try to start Docker service (requires admin privileges)
+    # Check if Docker service is running
     try {
         $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue
         if ($svc -and $svc.Status -eq "Running") {
-            $started = $true
-            Write-Host "  Docker service is already running" -ForegroundColor Gray
+            $serviceRunning = $true
+            Write-Host "  Docker service is running" -ForegroundColor Gray
         } elseif ($svc) {
+            # Try to start the service
             Start-Service -Name "com.docker.service" -ErrorAction Stop
+            $serviceRunning = $true
             $started = $true
             Write-Host "  Started Docker service" -ForegroundColor Gray
         }
     } catch {
-        # Service start failed (likely needs admin or doesn't exist), try .exe method
+        # Service start failed (likely needs admin or doesn't exist)
         Write-Host "  Could not start Docker service (trying executable method)..." -ForegroundColor Gray
     }
 
-    # If service method didn't work, try starting Docker Desktop.exe directly
-    if (-not $started) {
+    # Check if Docker Desktop is already running
+    $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
+    if ($dockerDesktopRunning) {
+        Write-Host "  Docker Desktop process is already running (PID: $($dockerDesktopRunning.Id))" -ForegroundColor Gray
+        $started = $true
+    } else {
+        # Try starting Docker Desktop.exe directly
         $candidates = @(
             "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
             "$env:ProgramFiles(x86)\Docker\Docker\Docker Desktop.exe"
         )
+        $exeFound = $false
         foreach ($p in $candidates) {
             if (Test-Path $p) {
-                Write-Host "  Starting Docker Desktop from: $p" -ForegroundColor Gray
-                Start-Process -FilePath $p -ErrorAction SilentlyContinue | Out-Null
-                $started = $true
+                Write-Host "  Starting Docker Desktop from: $p" -ForegroundColor Cyan
+                try {
+                    Start-Process -FilePath $p -ErrorAction Stop
+                    $exeFound = $true
+                    $started = $true
+                    Write-Host "  [OK] Docker Desktop process started" -ForegroundColor Gray
+                } catch {
+                    Write-Host "  [WARNING] Failed to start Docker Desktop: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
                 break
             }
         }
         
-        if (-not $started) {
-            Write-Host "  [WARNING] Docker Desktop executable not found" -ForegroundColor Yellow
-            Write-Host "  Please start Docker Desktop manually" -ForegroundColor Yellow
+        if (-not $exeFound) {
+            Write-Host "  [WARNING] Docker Desktop executable not found in standard locations" -ForegroundColor Yellow
+            Write-Host "  Searched:" -ForegroundColor Gray
+            foreach ($p in $candidates) {
+                Write-Host "    - $p" -ForegroundColor Gray
+            }
         }
+    }
+    
+    if (-not $started -and -not $serviceRunning) {
+        Write-Host "  [WARNING] Could not start Docker Desktop automatically" -ForegroundColor Yellow
+        Write-Host "  Please start Docker Desktop manually and wait for it to be ready" -ForegroundColor Yellow
     }
 
     # Wait up to 180s for Docker to become ready
+    if ($started -or $serviceRunning) {
+        Write-Host "  Waiting for Docker Desktop to be ready..." -ForegroundColor Gray
+        Write-Host "  This may take up to 3 minutes, especially on first start..." -ForegroundColor Gray
+    }
     $timeoutSec = 180
     $elapsed = 0
+    $dotCount = 0
     while (-not $dockerOk -and $elapsed -lt $timeoutSec) {
         Start-Sleep -Seconds 3
         $elapsed += 3
-        try { docker version 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $dockerOk = $true } } catch {}
+        $dotCount++
+        Write-Host "." -NoNewline -ForegroundColor Gray
+        
+        # Use docker info instead of docker version - more reliable for checking daemon readiness
+        try { 
+            docker info 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { 
+                $dockerOk = $true 
+            }
+        } catch {}
+        
+        # Show elapsed time every 30 seconds
+        if ($dotCount % 10 -eq 0 -and -not $dockerOk) {
+            Write-Host " ($elapsed seconds)" -ForegroundColor Gray
+            Write-Host "  Still waiting" -NoNewline -ForegroundColor Gray
+        }
     }
+    Write-Host ""  # New line after progress dots
 
-    if ($dockerOk) { Write-Host "  [OK] Docker Desktop is running" -ForegroundColor Green }
-    else { Write-Host "  [WARNING] Docker Desktop did not become ready within $timeoutSec seconds" -ForegroundColor Yellow }
+    if ($dockerOk) { 
+        Write-Host "  [OK] Docker Desktop is running" -ForegroundColor Green 
+    } else { 
+        Write-Host "  [ERROR] Docker Desktop did not become ready within $timeoutSec seconds" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Troubleshooting steps:" -ForegroundColor Yellow
+        Write-Host "  1. Check if Docker Desktop is running (system tray whale icon)" -ForegroundColor Cyan
+        Write-Host "  2. Try starting Docker Desktop manually from the Start menu" -ForegroundColor Cyan
+        Write-Host "  3. Check Docker Desktop logs at: $env:LOCALAPPDATA\Docker\log" -ForegroundColor Cyan
+        Write-Host "  4. Ensure WSL 2 is properly configured: wsl --list --verbose" -ForegroundColor Cyan
+        Write-Host "  5. Try restarting the Docker service: Restart-Service com.docker.service" -ForegroundColor Cyan
+        Write-Host "  6. After Docker Desktop is running, re-run this script" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "For more help, run Docker Desktop diagnostics:" -ForegroundColor Gray
+        Write-Host '  & "C:\Program Files\Docker\Docker\resources\com.docker.diagnose.exe" gather' -ForegroundColor Gray
+        Write-Host ""
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+}
+
+# At this point, Docker should be running
+if (-not $dockerOk) {
+    Write-Host "  [ERROR] Docker is not running. Cannot start containers." -ForegroundColor Red
+    Write-Host "  Please start Docker Desktop manually and try again." -ForegroundColor Yellow
+    if ($didPush) { Pop-Location }
+    exit 1
 }
 
 # Start containers
