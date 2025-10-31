@@ -250,6 +250,7 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
     
     # Try Docker Desktop for current user
     $dockerDesktopStarted = $false
+    $skipDockerDesktop = $false
     
     # Check if Docker Desktop is already running under another user
     $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -257,23 +258,34 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
         $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         try {
             $processOwner = (Get-WmiObject Win32_Process -Filter "ProcessId=$($dockerDesktopRunning.Id)").GetOwner()
-            $processUser = "$($processOwner.Domain)\$($processOwner.User)"
             
-            if ($processUser -ne $currentUser) {
-                Write-Host "  [WARNING] Docker Desktop is running under different user: $processUser" -ForegroundColor Yellow
-                Write-Host "  Cannot use another user's Docker Desktop instance" -ForegroundColor Gray
+            # Check if we got valid owner information
+            if ($processOwner -and $processOwner.User) {
+                $processUser = "$($processOwner.Domain)\$($processOwner.User)"
+                
+                if ($processUser -ne $currentUser) {
+                    Write-Host "  [WARNING] Docker Desktop is running under different user: $processUser" -ForegroundColor Yellow
+                    Write-Host "  Cannot start another Docker Desktop instance - skipping to WSL2 fallback" -ForegroundColor Gray
+                    $skipDockerDesktop = $true
+                } else {
+                    Write-Host "  Docker Desktop is already running under current user" -ForegroundColor Gray
+                    $dockerDesktopStarted = $true
+                }
             } else {
-                Write-Host "  Docker Desktop is already running under current user" -ForegroundColor Gray
-                $dockerDesktopStarted = $true
+                # Owner info not available, but process exists - likely different user
+                Write-Host "  [WARNING] Docker Desktop is running under another session" -ForegroundColor Yellow
+                Write-Host "  Cannot start another Docker Desktop instance - skipping to WSL2 fallback" -ForegroundColor Gray
+                $skipDockerDesktop = $true
             }
         } catch {
-            Write-Host "  Docker Desktop process found - attempting to connect..." -ForegroundColor Gray
-            $dockerDesktopStarted = $true
+            Write-Host "  [WARNING] Docker Desktop process found but cannot verify owner" -ForegroundColor Yellow
+            Write-Host "  Skipping Docker Desktop to avoid conflicts - trying WSL2" -ForegroundColor Gray
+            $skipDockerDesktop = $true
         }
     }
     
-    # If not running for current user, try to start it
-    if (-not $dockerDesktopStarted) {
+    # If not running for current user and not skipping, try to start it
+    if (-not $dockerDesktopStarted -and -not $skipDockerDesktop) {
         $candidates = @(
             "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
             "$env:ProgramFiles(x86)\Docker\Docker\Docker Desktop.exe"
@@ -294,8 +306,8 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
         }
     }
     
-    # Wait for Docker Desktop if we started it
-    if ($dockerDesktopStarted) {
+    # Wait for Docker Desktop if we started it (but not if we skipped it)
+    if ($dockerDesktopStarted -and -not $skipDockerDesktop) {
         Write-Host "  Waiting for Docker Desktop to be ready (up to 180 seconds)..." -ForegroundColor Gray
         $timeoutSec = 180
         $elapsed = 0
@@ -329,10 +341,14 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
         }
     }
     
-    # If Docker Desktop failed, try Docker in WSL2 as fallback
+    # If Docker Desktop failed or was skipped, try Docker in WSL2 as fallback
     if (-not $dockerOk) {
         Write-Host ""
-        Write-Host "  Docker Desktop not available. Trying Docker in WSL2..." -ForegroundColor Yellow
+        if ($skipDockerDesktop) {
+            Write-Host "  Falling back to Docker in WSL2..." -ForegroundColor Cyan
+        } else {
+            Write-Host "  Docker Desktop not available. Trying Docker in WSL2..." -ForegroundColor Yellow
+        }
         
         if (Test-DockerInWSL) {
             $dockerOk = $true
