@@ -522,6 +522,7 @@ if (-not (Test-Path $startScript)) {
 }
 
 Write-Host "Launching startup script..." -ForegroundColor Yellow
-& $startScript
+Write-Host "Using local development configuration (.env.local)" -ForegroundColor Cyan
+& $startScript -AutoLocal
 
 

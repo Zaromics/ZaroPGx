@@ -387,7 +387,8 @@ cd "${TARGET_DIR}" || exit 1
 
 if [[ -f "./start-docker.sh" ]]; then
   echo "Launching startup script..."
-  exec bash ./start-docker.sh
+  echo "Using local development configuration (.env.local)"
+  exec bash ./start-docker.sh --auto-local
 else
   echo "Error: start-docker.sh not found in ${TARGET_DIR}" >&2
   exit 1

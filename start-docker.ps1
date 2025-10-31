@@ -1,6 +1,10 @@
 # PowerShell Docker startup script for ZaroPGx
 # Works in PowerShell on Windows (including with Docker Desktop)
 
+param(
+    [switch]$AutoLocal  # Automatically use .env.local without prompting
+)
+
 Write-Host "Starting ZaroPGx with Docker Compose" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Green
 
@@ -25,31 +29,40 @@ if ($scriptDir -and (Test-Path $scriptDir)) {
 
 # Check for .env file and create from template if needed
 if (-not (Test-Path ".env")) {
-    Write-Host "  No .env file found. Choose a template:" -ForegroundColor Yellow
-    Write-Host "    1) .env.local      (Recommended for personal/home use)" -ForegroundColor Cyan
-    Write-Host "    2) .env.production (For web-facing deployment)" -ForegroundColor Cyan
-    Write-Host "    3) .env.example    (Complete configuration with documentation)" -ForegroundColor Cyan
-    Write-Host "    4) Skip             (Use inline defaults - not recommended)" -ForegroundColor Gray
-    Write-Host ""
-    
-    $envChoice = Read-Host "Select option [1-4]"
-    
-    $envSource = $null
-    switch ($envChoice) {
-        "1" { $envSource = ".env.local" }
-        "2" { $envSource = ".env.production" }
-        "3" { $envSource = ".env.example" }
-        "4" { 
-            Write-Host "  Skipping .env creation. Using inline defaults." -ForegroundColor Yellow
-            Write-Host "  Note: Some features may require environment configuration" -ForegroundColor Gray
+    if ($AutoLocal) {
+        # Auto-select .env.local for bootstrap one-command installation
+        Write-Host "  Setting up local development environment..." -ForegroundColor Yellow
+        $envSource = ".env.local"
+    } else {
+        # Interactive selection for manual installation
+        Write-Host "  No .env file found. Choose a template:" -ForegroundColor Yellow
+        Write-Host "    1) .env.local      (Recommended for personal/home use)" -ForegroundColor Cyan
+        Write-Host "    2) .env.production (For web-facing deployment)" -ForegroundColor Cyan
+        Write-Host "    3) .env.example    (Complete configuration with documentation)" -ForegroundColor Cyan
+        Write-Host "    4) Skip             (Use inline defaults - not recommended)" -ForegroundColor Gray
+        Write-Host ""
+        
+        $envChoice = Read-Host "Select option [1-4]"
+        
+        $envSource = $null
+        switch ($envChoice) {
+            "1" { $envSource = ".env.local" }
+            "2" { $envSource = ".env.production" }
+            "3" { $envSource = ".env.example" }
+            "4" { 
+                Write-Host "  Skipping .env creation. Using inline defaults." -ForegroundColor Yellow
+                Write-Host "  Note: Some features may require environment configuration" -ForegroundColor Gray
+            }
+            default { $envSource = ".env.local" }
         }
-        default { $envSource = ".env.local" }
     }
     
     if ($envSource -and (Test-Path $envSource)) {
         Copy-Item $envSource ".env"
         Write-Host "  [OK] Created .env from $envSource" -ForegroundColor Green
-        Write-Host "  Note: Review and customize .env as needed (especially SECRET_KEY)" -ForegroundColor Gray
+        if (-not $AutoLocal) {
+            Write-Host "  Note: Review and customize .env as needed (especially SECRET_KEY)" -ForegroundColor Gray
+        }
     } elseif ($envSource) {
         Write-Host "  [WARNING] $envSource not found, using inline defaults" -ForegroundColor Yellow
     }
