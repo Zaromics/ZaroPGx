@@ -20,6 +20,55 @@ else
     exit 1
 fi
 
+# Check for .env file and create from template if needed
+if [[ ! -f ".env" ]]; then
+    echo "📝 No .env file found. Choose a template:"
+    echo "   1) .env.local      (Recommended for personal/home use)"
+    echo "   2) .env.production (For web-facing deployment)"
+    echo "   3) .env.example    (Complete configuration with documentation)"
+    echo "   4) Skip            (Use inline defaults - not recommended)"
+    echo ""
+    read -p "Select option [1-4]: " env_choice
+    
+    env_source=""
+    case "$env_choice" in
+        1) env_source=".env.local" ;;
+        2) env_source=".env.production" ;;
+        3) env_source=".env.example" ;;
+        4) 
+            echo "⚠️  Skipping .env creation. Using inline defaults."
+            echo "ℹ️  Note: Some features may require environment configuration"
+            ;;
+        *) env_source=".env.local" ;;
+    esac
+    
+    if [[ -n "$env_source" ]] && [[ -f "$env_source" ]]; then
+        cp "$env_source" ".env"
+        echo "✅ Created .env from $env_source"
+        echo "ℹ️  Note: Review and customize .env as needed (especially SECRET_KEY)"
+    elif [[ -n "$env_source" ]]; then
+        echo "⚠️  WARNING: $env_source not found, using inline defaults"
+    fi
+    echo ""
+else
+    echo "✅ Environment configuration found (.env)"
+fi
+
+# Check for docker-compose.yml and create from example if needed
+if [[ ! -f "docker-compose.yml" ]] && [[ ! -f "compose.yml" ]]; then
+    if [[ -f "docker-compose.yml.example" ]]; then
+        echo "📝 Creating docker-compose.yml from example..."
+        cp docker-compose.yml.example docker-compose.yml
+        echo "✅ Created docker-compose.yml"
+        echo "ℹ️  Note: Review and customize docker-compose.yml if needed"
+    else
+        echo "❌ ERROR: No docker-compose.yml or docker-compose.yml.example found!"
+        exit 1
+    fi
+else
+    echo "✅ Docker Compose configuration found"
+fi
+
 # Ensure data directories exist
 echo "📁 Creating data directories..."
 mkdir -p data/uploads

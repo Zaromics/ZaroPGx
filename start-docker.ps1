@@ -23,6 +23,57 @@ if ($scriptDir -and (Test-Path $scriptDir)) {
     $didPush = $true
 }
 
+# Check for .env file and create from template if needed
+if (-not (Test-Path ".env")) {
+    Write-Host "  No .env file found. Choose a template:" -ForegroundColor Yellow
+    Write-Host "    1) .env.local      (Recommended for personal/home use)" -ForegroundColor Cyan
+    Write-Host "    2) .env.production (For web-facing deployment)" -ForegroundColor Cyan
+    Write-Host "    3) .env.example    (Complete configuration with documentation)" -ForegroundColor Cyan
+    Write-Host "    4) Skip             (Use inline defaults - not recommended)" -ForegroundColor Gray
+    Write-Host ""
+    
+    $envChoice = Read-Host "Select option [1-4]"
+    
+    $envSource = $null
+    switch ($envChoice) {
+        "1" { $envSource = ".env.local" }
+        "2" { $envSource = ".env.production" }
+        "3" { $envSource = ".env.example" }
+        "4" { 
+            Write-Host "  Skipping .env creation. Using inline defaults." -ForegroundColor Yellow
+            Write-Host "  Note: Some features may require environment configuration" -ForegroundColor Gray
+        }
+        default { $envSource = ".env.local" }
+    }
+    
+    if ($envSource -and (Test-Path $envSource)) {
+        Copy-Item $envSource ".env"
+        Write-Host "  [OK] Created .env from $envSource" -ForegroundColor Green
+        Write-Host "  Note: Review and customize .env as needed (especially SECRET_KEY)" -ForegroundColor Gray
+    } elseif ($envSource) {
+        Write-Host "  [WARNING] $envSource not found, using inline defaults" -ForegroundColor Yellow
+    }
+    Write-Host ""
+} else {
+    Write-Host "  [OK] Environment configuration found (.env)" -ForegroundColor Gray
+}
+
+# Check for docker-compose.yml and create from example if needed
+if (-not (Test-Path "docker-compose.yml") -and -not (Test-Path "compose.yml")) {
+    if (Test-Path "docker-compose.yml.example") {
+        Write-Host "  Creating docker-compose.yml from example..." -ForegroundColor Yellow
+        Copy-Item "docker-compose.yml.example" "docker-compose.yml"
+        Write-Host "  [OK] Created docker-compose.yml" -ForegroundColor Green
+        Write-Host "  Note: Review and customize docker-compose.yml if needed" -ForegroundColor Gray
+    } else {
+        Write-Host "  [ERROR] No docker-compose.yml or docker-compose.yml.example found!" -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+} else {
+    Write-Host "  [OK] Docker Compose configuration found" -ForegroundColor Gray
+}
+
 # Ensure data directories exist
 Write-Host "  Creating data directories..." -ForegroundColor Yellow
 $directories = @(
@@ -128,9 +179,6 @@ if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
     if ($dockerOk) { Write-Host "  [OK] Docker Desktop is running" -ForegroundColor Green }
     else { Write-Host "  [WARNING] Docker Desktop did not become ready within $timeoutSec seconds" -ForegroundColor Yellow }
 }
-
-# Inform about environment file usage
-if (Test-Path ".env") { Write-Host "  Using environment file: .env" -ForegroundColor Gray } else { Write-Host "  No .env found; using defaults and inline environment" -ForegroundColor Yellow }
 
 # Start containers
 Write-Host "  Starting ZaroPGx Docker Compose containers..." -ForegroundColor Yellow
