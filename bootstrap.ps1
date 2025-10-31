@@ -545,6 +545,18 @@ if (-not (Test-Path $startScript)) {
 
 Write-Host "Launching startup script..." -ForegroundColor Yellow
 Write-Host "Using local development configuration (.env.local)" -ForegroundColor Cyan
-& $startScript -AutoLocal
+
+# Launch start-docker.ps1 with execution policy bypass
+try {
+    powershell.exe -ExecutionPolicy Bypass -File $startScript -AutoLocal
+    $startScriptExitCode = $LASTEXITCODE
+    if ($startScriptExitCode -ne 0) {
+        Write-Host "start-docker.ps1 exited with code: $startScriptExitCode" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "Failed to launch start-docker.ps1: $($_.Exception.Message)" -ForegroundColor Red
+    if ($didPush) { Pop-Location }
+    exit 1
+}
 
 
