@@ -749,7 +749,10 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         wsl chmod +x start-docker.sh 2>&1 | Out-Null
         
         # Run the bash script from WSL with auto-local mode
-        $wslPath = "/mnt/c$(($PWD.Path -replace '\\','/') -replace ':','')"
+        # Convert Windows path to WSL path format: C:\Users\... -> /mnt/c/Users/...
+        $driveLetter = ($PWD.Path.Substring(0,1)).ToLower()
+        $pathWithoutDrive = $PWD.Path.Substring(2) -replace '\\','/'
+        $wslPath = "/mnt/$driveLetter$pathWithoutDrive"
         wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
         
         $bashExitCode = $LASTEXITCODE
@@ -767,7 +770,11 @@ function Invoke-Docker {
     
     if ($env:DOCKER_USE_WSL -eq "1") {
         # Run docker through WSL with sudo (needed after fresh install)
-        $wslCommand = "cd /mnt/c$(($PWD.Path -replace '\\','/') -replace ':','') && sudo $Command"
+        # Convert Windows path to WSL path format: C:\Users\... -> /mnt/c/Users/...
+        $driveLetter = ($PWD.Path.Substring(0,1)).ToLower()
+        $pathWithoutDrive = $PWD.Path.Substring(2) -replace '\\','/'
+        $wslPath = "/mnt/$driveLetter$pathWithoutDrive"
+        $wslCommand = "cd '$wslPath' && sudo $Command"
         wsl bash -c $wslCommand
     } else {
         # Run docker directly on Windows
