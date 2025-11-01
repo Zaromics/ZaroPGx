@@ -137,12 +137,18 @@ function Install-Dependencies {
                 # If we can't get the current script, download it fresh
                 Write-Host "  Downloading fresh copy of bootstrap script..." -ForegroundColor Gray
                 try {
-                    $scriptContent = (Invoke-WebRequest -Uri "$RepoUrl/raw/$Branch/bootstrap.ps1" -UseBasicParsing).Content
+                    # Convert git URL to raw content URL (remove .git suffix if present)
+                    $rawRepoUrl = $RepoUrl -replace '\.git$', ''
+                    $downloadUrl = "$rawRepoUrl/raw/$Branch/bootstrap.ps1"
+                    Write-Host "  Download URL: $downloadUrl" -ForegroundColor Gray
+                    $scriptContent = (Invoke-WebRequest -Uri $downloadUrl -UseBasicParsing).Content
                 } catch {
                     Write-Host "  [ERROR] Cannot save script for elevation: $($_.Exception.Message)" -ForegroundColor Red
                     Write-Host ""
+                    # Provide correct URL in error message too
+                    $rawRepoUrl = $RepoUrl -replace '\.git$', ''
                     Write-Host "  Please download and run the script manually:" -ForegroundColor Yellow
-                    Write-Host "  1. Download: $RepoUrl/raw/$Branch/bootstrap.ps1" -ForegroundColor Cyan
+                    Write-Host "  1. Download: $rawRepoUrl/raw/$Branch/bootstrap.ps1" -ForegroundColor Cyan
                     Write-Host "  2. Save as bootstrap.ps1" -ForegroundColor Cyan
                     Write-Host "  3. Run: powershell -ExecutionPolicy Bypass -File bootstrap.ps1" -ForegroundColor Cyan
                     Write-Host ""
