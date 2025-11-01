@@ -120,22 +120,46 @@ function Install-Dependencies {
         Write-Host "Administrator privileges required for installation." -ForegroundColor Yellow
         Write-Host "Restarting script with elevation..." -ForegroundColor Cyan
         
-        $scriptPath = $MyInvocation.ScriptName
-        if (-not $scriptPath) {
+        # Try multiple methods to get script path
+        $scriptPath = $null
+        if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
             $scriptPath = $PSCommandPath
+            Write-Host "  Using script path: $scriptPath" -ForegroundColor Gray
+        } elseif ($MyInvocation.MyCommand.Path -and (Test-Path $MyInvocation.MyCommand.Path)) {
+            $scriptPath = $MyInvocation.MyCommand.Path
+            Write-Host "  Using script path: $scriptPath" -ForegroundColor Gray
+        } elseif ($MyInvocation.ScriptName -and (Test-Path $MyInvocation.ScriptName)) {
+            $scriptPath = $MyInvocation.ScriptName
+            Write-Host "  Using script path: $scriptPath" -ForegroundColor Gray
         }
         
-        # If script is running from memory (iwr | iex), save to temp file first
-        if (-not $scriptPath -or -not (Test-Path $scriptPath)) {
+        # If script path not found or running from memory, create temp file
+        if (-not $scriptPath) {
             Write-Host "  Script is running from memory, creating temporary file..." -ForegroundColor Gray
             $tempScript = Join-Path $env:TEMP "zaropgx-bootstrap-temp.ps1"
             
+            # Try to get script content from current execution context
+            $scriptContent = $null
+            
+            # Method 1: Try to get from MyInvocation
             try {
-                # Save current script content to temp file
-                $scriptContent = Get-Content $PSCommandPath -Raw -ErrorAction Stop
-            } catch {
-                # If we can't get the current script, download it fresh
-                Write-Host "  Downloading fresh copy of bootstrap script..." -ForegroundColor Gray
+                $scriptContent = $MyInvocation.MyCommand.ScriptBlock.ToString()
+                if ($scriptContent) {
+                    Write-Host "  Retrieved script from execution context" -ForegroundColor Gray
+                }
+            } catch {}
+            
+            # Method 2: If that didn't work, try reading from PSCommandPath anyway
+            if (-not $scriptContent -and $PSCommandPath) {
+                try {
+                    $scriptContent = Get-Content $PSCommandPath -Raw -ErrorAction Stop
+                    Write-Host "  Retrieved script from PSCommandPath" -ForegroundColor Gray
+                } catch {}
+            }
+            
+            # Method 3: Last resort - download from GitHub
+            if (-not $scriptContent) {
+                Write-Host "  Downloading fresh copy of bootstrap script from GitHub..." -ForegroundColor Gray
                 try {
                     # Convert git URL to raw content URL (remove .git suffix if present)
                     $rawRepoUrl = $RepoUrl -replace '\.git$', ''
@@ -143,19 +167,18 @@ function Install-Dependencies {
                     Write-Host "  Download URL: $downloadUrl" -ForegroundColor Gray
                     $scriptContent = (Invoke-WebRequest -Uri $downloadUrl -UseBasicParsing).Content
                 } catch {
-                    Write-Host "  [ERROR] Cannot save script for elevation: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "  [ERROR] Cannot retrieve script for elevation: $($_.Exception.Message)" -ForegroundColor Red
                     Write-Host ""
-                    # Provide correct URL in error message too
-                    $rawRepoUrl = $RepoUrl -replace '\.git$', ''
-                    Write-Host "  Please download and run the script manually:" -ForegroundColor Yellow
-                    Write-Host "  1. Download: $rawRepoUrl/raw/$Branch/bootstrap.ps1" -ForegroundColor Cyan
-                    Write-Host "  2. Save as bootstrap.ps1" -ForegroundColor Cyan
-                    Write-Host "  3. Run: powershell -ExecutionPolicy Bypass -File bootstrap.ps1" -ForegroundColor Cyan
+                    Write-Host "  Workaround: Run this script as Administrator directly" -ForegroundColor Yellow
+                    Write-Host "  Right-click PowerShell -> Run as Administrator, then:" -ForegroundColor Yellow
+                    Write-Host "    cd `"$((Get-Location).Path)`"" -ForegroundColor Cyan
+                    Write-Host "    .\bootstrap.ps1" -ForegroundColor Cyan
                     Write-Host ""
                     return $false
                 }
             }
             
+            # Save to temp file
             $scriptContent | Out-File -FilePath $tempScript -Encoding UTF8 -Force
             $scriptPath = $tempScript
             Write-Host "  [OK] Temporary script created: $tempScript" -ForegroundColor Green
