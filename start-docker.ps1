@@ -825,9 +825,34 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Wait for services to be ready
-Write-Host "  Waiting for services to start..." -ForegroundColor Yellow
-Start-Sleep -Seconds 10
+# Wait for app ready state by watching logs
+Write-Host "  Waiting for ZaroPGx to be ready (up to 5 minutes)..." -ForegroundColor Yellow
+
+$timeoutSec = 300
+$startTime = Get-Date
+$spinner = @('|','/','-','\')
+$i = 0
+$readyFound = $false
+
+while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
+    try {
+        $logs = Invoke-Docker "docker compose logs --no-color app"
+        if ($logs -match "ZaroPGx is ready and listening for requests!") {
+            Write-Host "`n  [OK] ZaroPGx is ready!" -ForegroundColor Green
+            $readyFound = $true
+            break
+        }
+    } catch {}
+    $spinChar = $spinner[$i % $spinner.Length]
+    Write-Host ("`r  Launching... " + $spinChar) -NoNewline -ForegroundColor Gray
+    $i++
+    Start-Sleep -Seconds 2
+}
+Write-Host ""
+
+if (-not $readyFound) {
+    Write-Host "  [WARNING] App did not report ready within timeout. Continuing anyway." -ForegroundColor Yellow
+}
 
 # Check container status
 Write-Host "  Container Status:" -ForegroundColor Cyan

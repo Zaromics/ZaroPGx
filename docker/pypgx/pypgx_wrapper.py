@@ -148,7 +148,7 @@ class GeneConfig:
 gene_config = GeneConfig()
 
 # Memory and parallel processing configuration
-PYPGX_MEMORY_LIMIT = os.getenv('PYPGX_MEMORY_LIMIT', '12G')
+PYPGX_MEMORY_LIMIT = os.getenv('PYPGX_MEMORY_LIMIT', '7G')
 PYPGX_MAX_PARALLEL_GENES = int(os.getenv('PYPGX_MAX_PARALLEL_GENES', '8'))
 PYPGX_BATCH_SIZE = int(os.getenv('PYPGX_BATCH_SIZE', '4'))
 

@@ -106,9 +106,30 @@ echo "🐳 Starting ZaroPGx Docker Compose containers..."
 docker compose down --remove-orphans
 docker compose up -d --build
 
-# Wait for services to be ready
-echo "⏳ Waiting for services to start..."
-sleep 10
+# Wait for app ready state by watching logs
+echo "⏳ Waiting for ZaroPGx to be ready (up to 5 minutes)..."
+
+timeout=300
+start_ts=$(date +%s)
+spin='|/-\'
+i=0
+ready=0
+
+while (( $(date +%s) - start_ts < timeout )); do
+  if docker compose logs --no-color app | grep -q "ZaroPGx is ready and listening for requests!"; then
+    echo ""
+    echo "✅ ZaroPGx is ready!"
+    ready=1
+    break
+  fi
+  printf "\r  Launching... %s" "${spin:i++%${#spin}:1}"
+  sleep 2
+done
+echo ""
+
+if [[ "$ready" != "1" ]]; then
+  echo "⚠️  App did not report ready within timeout. Continuing anyway."
+fi
 
 # Check container status
 echo "📊 Container Status:"

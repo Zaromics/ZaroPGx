@@ -1,0 +1,11 @@
+{% extends "!layout.html" %}
+
+{% block document %}
+  <div class="ai-disclaimer" role="note" aria-label="AI content disclaimer">
+    <span class="ai-disclaimer-icon" aria-hidden="true">ⓘ</span>
+    <span>This page was composed with the aid of generative artificial intelligence; it is {{ curation_display | default('partially') }} curated.</span>
+  </div>
+  {{ super() }}
+{% endblock %}
+
+

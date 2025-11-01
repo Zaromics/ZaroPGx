@@ -39,6 +39,15 @@ developer/deployment
 developer/testing
 ```
 
+## Roadmap
+
+```{toctree}
+:maxdepth: 1
+:caption: Roadmap
+
+to-do
+```
+
 ## Quick Navigation
 
 - **Getting Started**: {doc}`user/quick-start`

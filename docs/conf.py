@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 # Add project root to sys.path to enable autodoc to find the codebase
 sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath('_ext'))
 
 # -- Project information -----------------------------------------------------
 
@@ -28,6 +29,7 @@ extensions = [
     'sphinx.ext.githubpages',
     'sphinx_copybutton',
     'sphinx_design',
+    'ai_disclaimer',
 ]
 
 myst_enable_extensions = [
@@ -101,4 +103,5 @@ html_js_files = [
 
 html_css_files = [
     'back-to-app.css',
+    'ai-disclaimer.css',
 ]
