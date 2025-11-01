@@ -766,6 +766,22 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
         
         $bashExitCode = $LASTEXITCODE
+        
+        if ($bashExitCode -eq 0) {
+            Write-Host ""
+            Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Green
+            Write-Host "  🎉 Setup complete! Launching WSL session..." -ForegroundColor Green
+            Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "You'll now be in a WSL bash session where Docker commands work." -ForegroundColor Cyan
+            Write-Host "Type 'exit' when you're done to return to PowerShell." -ForegroundColor Gray
+            Write-Host ""
+            Start-Sleep -Seconds 2
+            
+            # Launch interactive WSL session in the project directory
+            wsl bash -c "cd '$wslPath' && exec bash"
+        }
+        
         if ($didPush) { Pop-Location }
         exit $bashExitCode
     } else {
