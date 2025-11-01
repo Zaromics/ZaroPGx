@@ -120,9 +120,68 @@ function Install-Dependencies {
         Write-Host "Administrator privileges required for installation." -ForegroundColor Yellow
         Write-Host "Restarting script with elevation..." -ForegroundColor Cyan
         
-        $scriptPath = $MyInvocation.ScriptName
-        if (-not $scriptPath) {
+        # Try multiple methods to get script path
+        $scriptPath = $null
+        if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
             $scriptPath = $PSCommandPath
+            Write-Host "  Using script path: $scriptPath" -ForegroundColor Gray
+        } elseif ($MyInvocation.MyCommand.Path -and (Test-Path $MyInvocation.MyCommand.Path)) {
+            $scriptPath = $MyInvocation.MyCommand.Path
+            Write-Host "  Using script path: $scriptPath" -ForegroundColor Gray
+        } elseif ($MyInvocation.ScriptName -and (Test-Path $MyInvocation.ScriptName)) {
+            $scriptPath = $MyInvocation.ScriptName
+            Write-Host "  Using script path: $scriptPath" -ForegroundColor Gray
+        }
+        
+        # If script path not found or running from memory, create temp file
+        if (-not $scriptPath) {
+            Write-Host "  Script is running from memory, creating temporary file..." -ForegroundColor Gray
+            $tempScript = Join-Path $env:TEMP "zaropgx-bootstrap-temp.ps1"
+            
+            # Try to get script content from current execution context
+            $scriptContent = $null
+            
+            # Method 1: Try to get from MyInvocation
+            try {
+                $scriptContent = $MyInvocation.MyCommand.ScriptBlock.ToString()
+                if ($scriptContent) {
+                    Write-Host "  Retrieved script from execution context" -ForegroundColor Gray
+                }
+            } catch {}
+            
+            # Method 2: If that didn't work, try reading from PSCommandPath anyway
+            if (-not $scriptContent -and $PSCommandPath) {
+                try {
+                    $scriptContent = Get-Content $PSCommandPath -Raw -ErrorAction Stop
+                    Write-Host "  Retrieved script from PSCommandPath" -ForegroundColor Gray
+                } catch {}
+            }
+            
+            # Method 3: Last resort - download from GitHub
+            if (-not $scriptContent) {
+                Write-Host "  Downloading fresh copy of bootstrap script from GitHub..." -ForegroundColor Gray
+                try {
+                    # Convert git URL to raw content URL (remove .git suffix if present)
+                    $rawRepoUrl = $RepoUrl -replace '\.git$', ''
+                    $downloadUrl = "$rawRepoUrl/raw/$Branch/bootstrap.ps1"
+                    Write-Host "  Download URL: $downloadUrl" -ForegroundColor Gray
+                    $scriptContent = (Invoke-WebRequest -Uri $downloadUrl -UseBasicParsing).Content
+                } catch {
+                    Write-Host "  [ERROR] Cannot retrieve script for elevation: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host ""
+                    Write-Host "  Workaround: Run this script as Administrator directly" -ForegroundColor Yellow
+                    Write-Host "  Right-click PowerShell -> Run as Administrator, then:" -ForegroundColor Yellow
+                    Write-Host "    cd `"$((Get-Location).Path)`"" -ForegroundColor Cyan
+                    Write-Host "    .\bootstrap.ps1" -ForegroundColor Cyan
+                    Write-Host ""
+                    return $false
+                }
+            }
+            
+            # Save to temp file
+            $scriptContent | Out-File -FilePath $tempScript -Encoding UTF8 -Force
+            $scriptPath = $tempScript
+            Write-Host "  [OK] Temporary script created: $tempScript" -ForegroundColor Green
         }
         
         # Build arguments to pass to elevated process
@@ -137,10 +196,32 @@ function Install-Dependencies {
         $depString = $MissingDeps -join ','
         $arguments += "-MissingDeps '$depString'"
         
+        Write-Host ""
+        Write-Host "  Starting elevated PowerShell window..." -ForegroundColor Cyan
+        Write-Host "  Please approve the UAC prompt if it appears." -ForegroundColor Yellow
+        Write-Host ""
+        
         try {
             $elevatedProcess = Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $($arguments -join ' ')" -PassThru -Wait
+            
+            # Clean up temp script if we created one
+            if ($scriptPath -like "*zaropgx-bootstrap-temp.ps1") {
+                try { Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            
             if ($elevatedProcess.ExitCode -ne 0) {
-                Write-Host "Installation process exited with code: $($elevatedProcess.ExitCode)" -ForegroundColor Yellow
+                Write-Host "  Installation process exited with code: $($elevatedProcess.ExitCode)" -ForegroundColor Yellow
+                Write-Host ""
+                
+                # Provide helpful error messages for common exit codes
+                if ($elevatedProcess.ExitCode -eq -196608 -or $elevatedProcess.ExitCode -eq 1) {
+                    Write-Host "  This may indicate:" -ForegroundColor Yellow
+                    Write-Host "    - UAC prompt was cancelled" -ForegroundColor Gray
+                    Write-Host "    - Script execution was blocked" -ForegroundColor Gray
+                    Write-Host "    - An error occurred during installation" -ForegroundColor Gray
+                    Write-Host ""
+                }
+                
                 return $false
             }
             # After successful installation, re-check dependencies and continue
@@ -148,7 +229,8 @@ function Install-Dependencies {
             Write-Host "Dependencies installed successfully. Re-checking..." -ForegroundColor Green
             return $true
         } catch {
-            Write-Host "Failed to elevate privileges: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "  Failed to elevate privileges: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host ""
             return $false
         }
     }
@@ -156,75 +238,125 @@ function Install-Dependencies {
     # If SkipDependencyCheck is set and MissingDeps is provided, we're in the elevated process
     # Parse MissingDeps if it was passed as a comma-separated string
     if ($SkipDependencyCheck -and $MissingDeps.Count -gt 0) {
+        Write-Host ""
+        Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+        Write-Host "  ZaroPGx Dependency Installation (Elevated)" -ForegroundColor Cyan
+        Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  This window is running with administrator privileges" -ForegroundColor Gray
+        Write-Host "  Installing required dependencies..." -ForegroundColor Gray
+        Write-Host ""
+        
         if ($MissingDeps.Count -eq 1 -and $MissingDeps[0] -match ',') {
             # Split comma-separated string into array
             $MissingDeps = $MissingDeps[0] -split ',' | ForEach-Object { $_.Trim() }
         }
+        
+        $installSuccess = $true
+        
         # Install dependencies and exit (this is the elevated process)
         foreach ($dep in $MissingDeps) {
             Write-Host ""
             Write-Host "Installing $dep..." -ForegroundColor Yellow
             
-            switch ($dep) {
-                "Git" {
-                    if ($wingetAvailable) {
-                        winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
-                    } elseif ($chocoAvailable) {
-                        choco install git -y
-                    }
-                }
-                "Docker" {
-                    if ($wingetAvailable) {
-                        Write-Host "Installing Docker Desktop via winget..." -ForegroundColor Cyan
-                        winget install --id Docker.DockerDesktop -e --source winget --accept-package-agreements --accept-source-agreements
-                    } elseif ($chocoAvailable) {
-                        choco install docker-desktop -y
-                    }
-                }
-                "WSL2" {
-                    # Prefer the modern, supported path: wsl --install (Win10 22H2+/Win11)
-                    # Windows 10 build 19045 (22H2) or Windows 11 build 22000+ support wsl --install
-                    $buildNumber = Get-WindowsBuildNumber
-                    $supportsWslInstall = ($buildNumber -ge 19041)
-
-                    if ($supportsWslInstall) {
-                        Write-Host "Installing WSL using 'wsl --install'..." -ForegroundColor Cyan
-                        # Set WSL2 as default BEFORE installing distributions
-                        try { wsl --set-default-version 2 2>&1 | Out-Null } catch {}
-                        # Install WSL and Ubuntu 22.04; default can be changed later if desired
-                        wsl --install -d Ubuntu-22.04
-                        # Update WSL to latest version (ensures we have WSL 2.1.5+)
-                        Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
-                        try { wsl --update } catch { Write-Host "  Note: WSL update may complete after restart" -ForegroundColor Gray }
-                    } elseif ($wingetAvailable) {
-                        Write-Host "Installing WSL from Microsoft Store via winget..." -ForegroundColor Cyan
-                        # Updated package ID for WSL in Microsoft Store; try legacy ID as fallback
-                        winget install --id Microsoft.WSL -e --source winget --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-                        if ($LASTEXITCODE -ne 0) {
-                            Write-Host "Primary WSL package ID failed, trying legacy ID..." -ForegroundColor Yellow
-                            winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
+            try {
+                switch ($dep) {
+                    "Git" {
+                        if ($wingetAvailable) {
+                            winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
+                            if ($LASTEXITCODE -ne 0) { throw "Git installation failed with exit code $LASTEXITCODE" }
+                        } elseif ($chocoAvailable) {
+                            choco install git -y
+                            if ($LASTEXITCODE -ne 0) { throw "Git installation failed with exit code $LASTEXITCODE" }
                         }
-                        Write-Host "Enabling required Windows features for WSL..." -ForegroundColor Cyan
-                        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
-                        Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
-                        wsl --set-default-version 2
-                        Write-Host "Restart may be required. After restart, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
-                    } else {
-                        Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
-                        # Enable WSL and Virtual Machine Platform features
-                        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
-                        Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
-                        # Set WSL default version to 2
-                        wsl --set-default-version 2
-                        Write-Host "If prompted for the WSL kernel, download from: https://github.com/microsoft/wsl/releases" -ForegroundColor Gray
-                        Write-Host "After reboot, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                    }
+                    "Docker" {
+                        if ($wingetAvailable) {
+                            Write-Host "Installing Docker Desktop via winget..." -ForegroundColor Cyan
+                            Write-Host "(This may take several minutes)" -ForegroundColor Gray
+                            winget install --id Docker.DockerDesktop -e --source winget --accept-package-agreements --accept-source-agreements
+                            if ($LASTEXITCODE -ne 0) { throw "Docker installation failed with exit code $LASTEXITCODE" }
+                        } elseif ($chocoAvailable) {
+                            choco install docker-desktop -y
+                            if ($LASTEXITCODE -ne 0) { throw "Docker installation failed with exit code $LASTEXITCODE" }
+                        }
+                    }
+                    "WSL2" {
+                        # Prefer the modern, supported path: wsl --install (Win10 22H2+/Win11)
+                        # Windows 10 build 19045 (22H2) or Windows 11 build 22000+ support wsl --install
+                        $buildNumber = Get-WindowsBuildNumber
+                        $supportsWslInstall = ($buildNumber -ge 19041)
+
+                        if ($supportsWslInstall) {
+                            Write-Host "Installing WSL using 'wsl --install'..." -ForegroundColor Cyan
+                            # Set WSL2 as default BEFORE installing distributions
+                            try { wsl --set-default-version 2 2>&1 | Out-Null } catch {}
+                            # Install WSL and Ubuntu 22.04; default can be changed later if desired
+                            wsl --install -d Ubuntu-22.04
+                            # Update WSL to latest version (ensures we have WSL 2.1.5+)
+                            Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
+                            try { wsl --update } catch { Write-Host "  Note: WSL update may complete after restart" -ForegroundColor Gray }
+                        } elseif ($wingetAvailable) {
+                            Write-Host "Installing WSL from Microsoft Store via winget..." -ForegroundColor Cyan
+                            # Updated package ID for WSL in Microsoft Store; try legacy ID as fallback
+                            winget install --id Microsoft.WSL -e --source winget --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+                            if ($LASTEXITCODE -ne 0) {
+                                Write-Host "Primary WSL package ID failed, trying legacy ID..." -ForegroundColor Yellow
+                                winget install --id Microsoft.WindowsSubsystemLinux -e --source winget --accept-package-agreements --accept-source-agreements
+                            }
+                            Write-Host "Enabling required Windows features for WSL..." -ForegroundColor Cyan
+                            Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+                            Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+                            wsl --set-default-version 2
+                            Write-Host "Restart may be required. After restart, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                        } else {
+                            Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
+                            # Enable WSL and Virtual Machine Platform features
+                            Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+                            Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+                            # Set WSL default version to 2
+                            wsl --set-default-version 2
+                            Write-Host "If prompted for the WSL kernel, download from: https://github.com/microsoft/wsl/releases" -ForegroundColor Gray
+                            Write-Host "After reboot, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                        }
                     }
                 }
+                Write-Host "  [OK] $dep installation completed" -ForegroundColor Green
+            } catch {
+                Write-Host "  [ERROR] Failed to install ${dep}: $($_.Exception.Message)" -ForegroundColor Red
+                $installSuccess = $false
             }
         }
+        
         Write-Host ""
-        Write-Host "Dependencies installed successfully!" -ForegroundColor Green
-        exit 0
+        Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+        if ($installSuccess) {
+            Write-Host "  Installation Complete!" -ForegroundColor Green
+            Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "Dependencies installed successfully!" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Important Next Steps:" -ForegroundColor Yellow
+            Write-Host "  1. Close this window" -ForegroundColor Gray
+            Write-Host "  2. Restart your terminal/PowerShell session" -ForegroundColor Gray
+            Write-Host "  3. If you installed WSL2, you may need to restart your computer" -ForegroundColor Gray
+            Write-Host "  4. Start Docker Desktop manually (if installed)" -ForegroundColor Gray
+            Write-Host "  5. Re-run the bootstrap script" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "This window will close in 10 seconds..." -ForegroundColor Gray
+            Start-Sleep -Seconds 10
+            exit 0
+        } else {
+            Write-Host "  Installation Completed with Errors" -ForegroundColor Yellow
+            Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "Some dependencies failed to install." -ForegroundColor Yellow
+            Write-Host "Please review the error messages above." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Press any key to close this window..." -ForegroundColor Gray
+            $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit 1
+        }
     }
     
     # Install missing dependencies (normal flow - when already running as admin)
