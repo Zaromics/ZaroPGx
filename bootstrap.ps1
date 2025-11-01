@@ -546,10 +546,30 @@ if (-not (Test-Path $TargetDir)) {
                 if ($LASTEXITCODE -ne 0) { Write-Host "git checkout failed." -ForegroundColor Red; exit 1 }
                 git -C $TargetDir pull --ff-only
                 if ($LASTEXITCODE -ne 0) { Write-Host "git pull failed (non-fast-forward)." -ForegroundColor Red; exit 1 }
+                
+                # Re-normalize line endings after pull (in case .gitattributes was updated)
+                Write-Host "Re-normalizing line endings..." -ForegroundColor Gray
+                git -C $TargetDir rm --cached -r . 2>&1 | Out-Null
+                git -C $TargetDir reset --hard 2>&1 | Out-Null
             }
         }
     } else {
         Write-Host "Skipping update (use -Update to fetch latest)." -ForegroundColor Gray
+        
+        # Check if we need to re-normalize line endings even without update
+        if (Test-Path (Join-Path $TargetDir ".git")) {
+            $shFile = Join-Path $TargetDir "start-docker.sh"
+            if (Test-Path $shFile) {
+                # Check if file has CRLF line endings
+                $content = Get-Content -Path $shFile -Raw
+                if ($content -match "`r`n") {
+                    Write-Host "Detected incorrect line endings, re-normalizing files..." -ForegroundColor Yellow
+                    git -C $TargetDir rm --cached -r . 2>&1 | Out-Null
+                    git -C $TargetDir reset --hard 2>&1 | Out-Null
+                    Write-Host "  [OK] Files re-normalized" -ForegroundColor Green
+                }
+            }
+        }
     }
 }
 

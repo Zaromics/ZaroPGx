@@ -748,7 +748,14 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         # Convert line endings and make script executable
         Write-Host "  Preparing bash script..." -ForegroundColor Gray
         # Convert Windows line endings (CRLF) to Unix line endings (LF)
-        wsl sed -i 's/\r$//' start-docker.sh 2>&1 | Out-Null
+        # Try dos2unix first, fall back to sed if not available
+        wsl bash -c "command -v dos2unix" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            wsl dos2unix start-docker.sh 2>&1 | Out-Null
+        } else {
+            # Use sed to remove CR characters
+            wsl bash -c "sed -i 's/\r$$//' start-docker.sh" 2>&1 | Out-Null
+        }
         wsl chmod +x start-docker.sh 2>&1 | Out-Null
         
         # Run the bash script from WSL with auto-local mode
