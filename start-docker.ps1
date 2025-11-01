@@ -168,6 +168,49 @@ function Install-DockerInWSL {
     try {
         $distros = wsl --list --quiet 2>&1 | Out-String
         $distros = $distros.Trim()
+        
+        # Check if distro exists but might not be initialized
+        if ($distros -and $distros -ne "") {
+            # Distro is listed, but check if it's actually usable
+            $testUser = wsl whoami 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not $testUser) {
+                Write-Host ""
+                Write-Host "  [WARNING] WSL distribution found but not initialized" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "  ============================================" -ForegroundColor Cyan
+                Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
+                Write-Host "  ============================================" -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host "  Your WSL distribution needs to be set up with a username and password." -ForegroundColor White
+                Write-Host ""
+                Write-Host "  Opening WSL for initial setup..." -ForegroundColor Cyan
+                Write-Host "  Please follow the prompts in the WSL window to create a user account" -ForegroundColor Gray
+                Write-Host ""
+                
+                # Launch WSL to trigger setup
+                Start-Process -FilePath "wsl" -Wait
+                
+                # Verify setup is complete
+                Write-Host ""
+                Write-Host "  Verifying WSL setup..." -ForegroundColor Cyan
+                $testUser = wsl whoami 2>&1
+                if ($LASTEXITCODE -eq 0 -and $testUser -and $testUser -ne "root") {
+                    Write-Host "  [OK] WSL is configured with user: $testUser" -ForegroundColor Green
+                    Write-Host ""
+                    # Continue with Docker installation - don't return, just continue to next section
+                } else {
+                    Write-Host "  [ERROR] WSL setup not complete" -ForegroundColor Red
+                    Write-Host ""
+                    Write-Host "  Please complete WSL setup and re-run this script" -ForegroundColor Yellow
+                    Write-Host "  Run: wsl" -ForegroundColor Cyan
+                    Write-Host ""
+                    if ($didPush) { Pop-Location }
+                    exit 1
+                }
+            }
+            # If we get here, distro is installed and initialized - continue to Docker installation
+        }
+        
         if (-not $distros -or $distros -eq "") {
             Write-Host ""
             Write-Host "  [ERROR] No WSL Linux distribution installed" -ForegroundColor Red
@@ -177,21 +220,52 @@ function Install-DockerInWSL {
             Write-Host ""
             
             try {
-                wsl --install -d Ubuntu-22.04 --no-launch
-                Write-Host ""
-                Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
-                Write-Host "  Ubuntu needs a username and password to be configured" -ForegroundColor Gray
-                Write-Host ""
-                Write-Host "  Please run: wsl" -ForegroundColor Cyan
-                Write-Host "  Then follow the prompts to create a user account" -ForegroundColor Gray
-                Write-Host "  After setup, re-run this script" -ForegroundColor Gray
-                Write-Host ""
-                Write-Host "  Exiting now so you can set up Ubuntu..." -ForegroundColor Yellow
-                if ($didPush) { Pop-Location }
-                exit 0
+                # Install Ubuntu with --no-launch, then explicitly launch it
+                Write-Host "  Installing Ubuntu 22.04..." -ForegroundColor Cyan
+                $installOutput = wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-String
+                
+                if ($LASTEXITCODE -eq 0 -or $installOutput -match "already installed") {
+                    Write-Host "  [OK] Ubuntu 22.04 installed" -ForegroundColor Green
+                    Write-Host ""
+                    Write-Host "  ============================================" -ForegroundColor Cyan
+                    Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
+                    Write-Host "  ============================================" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "  Ubuntu needs a username and password to be configured." -ForegroundColor White
+                    Write-Host "  Opening WSL window for initial setup..." -ForegroundColor Cyan
+                    Write-Host "  Please follow the prompts in the WSL window to create a user account" -ForegroundColor Gray
+                    Write-Host ""
+                    
+                    # Launch WSL to trigger setup and wait for it to complete
+                    Start-Process -FilePath "wsl" -Wait
+                    
+                    # Verify that Ubuntu is now set up
+                    Write-Host ""
+                    Write-Host "  Verifying Ubuntu setup..." -ForegroundColor Cyan
+                    $testUser = wsl whoami 2>&1
+                    if ($LASTEXITCODE -eq 0 -and $testUser -and $testUser -ne "root") {
+                        Write-Host "  [OK] Ubuntu is configured with user: $testUser" -ForegroundColor Green
+                        Write-Host ""
+                        # Continue with Docker installation
+                    } else {
+                        Write-Host "  [ERROR] Ubuntu setup not complete" -ForegroundColor Red
+                        Write-Host ""
+                        Write-Host "  Please complete Ubuntu setup and re-run this script" -ForegroundColor Yellow
+                        Write-Host "  Run: wsl" -ForegroundColor Cyan
+                        Write-Host ""
+                        if ($didPush) { Pop-Location }
+                        exit 1
+                    }
+                } else {
+                    throw "Installation failed with exit code $LASTEXITCODE"
+                }
             } catch {
                 Write-Host "  [ERROR] Could not install Ubuntu: $($_.Exception.Message)" -ForegroundColor Red
-                Write-Host "  Please install manually: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "  Manual installation steps:" -ForegroundColor Yellow
+                Write-Host "    1. Run: wsl --install -d Ubuntu-22.04" -ForegroundColor Cyan
+                Write-Host "    2. Follow the prompts to set up Ubuntu" -ForegroundColor Gray
+                Write-Host "    3. Re-run this bootstrap script" -ForegroundColor Gray
                 Write-Host ""
                 if ($didPush) { Pop-Location }
                 exit 1
@@ -273,7 +347,7 @@ function Install-DockerInWSL {
             Start-Sleep -Seconds 3
             
             # Check if daemon is accessible
-            $daemonCheck = wsl sudo docker info 2>&1
+            wsl sudo docker info 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
             } else {
