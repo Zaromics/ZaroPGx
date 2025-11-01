@@ -745,7 +745,10 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         Write-Host "  Using bash script for WSL Docker operations..." -ForegroundColor Cyan
         Write-Host ""
         
-        # Make script executable if needed
+        # Convert line endings and make script executable
+        Write-Host "  Preparing bash script..." -ForegroundColor Gray
+        # Convert Windows line endings (CRLF) to Unix line endings (LF)
+        wsl sed -i 's/\r$//' start-docker.sh 2>&1 | Out-Null
         wsl chmod +x start-docker.sh 2>&1 | Out-Null
         
         # Run the bash script from WSL with auto-local mode
