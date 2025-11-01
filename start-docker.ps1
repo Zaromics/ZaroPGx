@@ -182,13 +182,39 @@ function Install-DockerInWSL {
                 Write-Host "  ============================================" -ForegroundColor Cyan
                 Write-Host ""
                 Write-Host "  Your WSL distribution needs to be set up with a username and password." -ForegroundColor White
+                Write-Host "  Opening WSL terminal for initial setup..." -ForegroundColor Cyan
                 Write-Host ""
-                Write-Host "  Opening WSL for initial setup..." -ForegroundColor Cyan
-                Write-Host "  Please follow the prompts in the WSL window to create a user account" -ForegroundColor Gray
+                Write-Host "  A new WSL window will open. Please:" -ForegroundColor Yellow
+                Write-Host "    1. Enter a username (lowercase, no spaces)" -ForegroundColor Gray
+                Write-Host "    2. Enter a password (you'll be asked to confirm it)" -ForegroundColor Gray
+                Write-Host "    3. Wait for the setup to complete" -ForegroundColor Gray
+                Write-Host "    4. Type 'exit' and press Enter to close the window" -ForegroundColor Gray
                 Write-Host ""
+                Write-Host "  Launching WSL in 3 seconds..." -ForegroundColor Cyan
+                Start-Sleep -Seconds 3
                 
-                # Launch WSL to trigger setup
-                Start-Process -FilePath "wsl" -Wait
+                # Get the default distribution name
+                $defaultDistro = wsl --list --quiet 2>&1 | Select-Object -First 1
+                $defaultDistro = $defaultDistro.Trim()
+                
+                # Try to launch the specific distribution
+                if ($defaultDistro -match "Ubuntu-22.04") {
+                    $ubuntuExe = Get-Command ubuntu2204.exe -ErrorAction SilentlyContinue
+                    if ($ubuntuExe) {
+                        Write-Host "  Opening Ubuntu 22.04 terminal..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "ubuntu2204.exe" -Wait
+                    } else {
+                        Write-Host "  Opening WSL with Ubuntu-22.04..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "wsl.exe" -ArgumentList "-d","Ubuntu-22.04" -Wait
+                    }
+                } else {
+                    # Launch default WSL distribution
+                    Write-Host "  Opening WSL terminal..." -ForegroundColor Gray
+                    Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                    Start-Process -FilePath "wsl.exe" -Wait
+                }
                 
                 # Verify setup is complete
                 Write-Host ""
@@ -201,8 +227,14 @@ function Install-DockerInWSL {
                 } else {
                     Write-Host "  [ERROR] WSL setup not complete" -ForegroundColor Red
                     Write-Host ""
-                    Write-Host "  Please complete WSL setup and re-run this script" -ForegroundColor Yellow
-                    Write-Host "  Run: wsl" -ForegroundColor Cyan
+                    Write-Host "  The WSL terminal may not have opened properly." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Please manually complete setup:" -ForegroundColor Yellow
+                    Write-Host "    1. Open a PowerShell window" -ForegroundColor Gray
+                    Write-Host "    2. Run: wsl" -ForegroundColor Cyan
+                    Write-Host "    3. Follow the prompts to create a username and password" -ForegroundColor Gray
+                    Write-Host "    4. Type 'exit' to close the WSL window" -ForegroundColor Gray
+                    Write-Host "    5. Re-run this bootstrap script" -ForegroundColor Gray
                     Write-Host ""
                     if ($didPush) { Pop-Location }
                     exit 1
@@ -225,24 +257,66 @@ function Install-DockerInWSL {
                 $installOutput = wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-String
                 
                 if ($LASTEXITCODE -eq 0 -or $installOutput -match "already installed") {
-                    Write-Host "  [OK] Ubuntu 22.04 installed" -ForegroundColor Green
+                    Write-Host "  [OK] Ubuntu 22.04 installation initiated" -ForegroundColor Green
+                    
+                    # Wait for distribution to be fully registered (can take a few seconds)
+                    Write-Host "  Waiting for Ubuntu to be fully registered..." -ForegroundColor Gray
+                    $maxWait = 30
+                    $waited = 0
+                    $distroReady = $false
+                    
+                    while ($waited -lt $maxWait -and -not $distroReady) {
+                        Start-Sleep -Seconds 2
+                        $waited += 2
+                        
+                        # Check if distribution is now listed
+                        $distroList = wsl --list --quiet 2>&1 | Out-String
+                        if ($distroList -match "Ubuntu-22.04" -or $distroList -match "Ubuntu") {
+                            $distroReady = $true
+                            Write-Host "  [OK] Ubuntu is registered and ready" -ForegroundColor Green
+                        }
+                    }
+                    
+                    if (-not $distroReady) {
+                        Write-Host "  [WARNING] Ubuntu registration may still be in progress" -ForegroundColor Yellow
+                        Write-Host "  Continuing anyway..." -ForegroundColor Gray
+                    }
+                    
                     Write-Host ""
                     Write-Host "  ============================================" -ForegroundColor Cyan
                     Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
                     Write-Host "  ============================================" -ForegroundColor Cyan
                     Write-Host ""
                     Write-Host "  Ubuntu needs a username and password to be configured." -ForegroundColor White
-                    Write-Host "  Opening WSL window for initial setup..." -ForegroundColor Cyan
-                    Write-Host "  Please follow the prompts in the WSL window to create a user account" -ForegroundColor Gray
+                    Write-Host "  Opening Ubuntu terminal for initial setup..." -ForegroundColor Cyan
                     Write-Host ""
+                    Write-Host "  A new Ubuntu window will open. Please:" -ForegroundColor Yellow
+                    Write-Host "    1. Wait for the 'Installing...' message to complete" -ForegroundColor Gray
+                    Write-Host "    2. Enter a username (lowercase, no spaces)" -ForegroundColor Gray
+                    Write-Host "    3. Enter a password (you'll be asked to confirm it)" -ForegroundColor Gray
+                    Write-Host "    4. Wait for the command prompt to appear" -ForegroundColor Gray
+                    Write-Host "    5. Type 'exit' and press Enter to close the Ubuntu window" -ForegroundColor Gray
+                    Write-Host ""
+                    Write-Host "  Launching Ubuntu in 3 seconds..." -ForegroundColor Cyan
+                    Start-Sleep -Seconds 3
                     
-                    # Launch WSL to trigger setup and wait for it to complete
-                    Start-Process -FilePath "wsl" -Wait
+                    # Try to launch ubuntu.exe (the app launcher) first, fallback to wsl
+                    $ubuntuExe = Get-Command ubuntu2204.exe -ErrorAction SilentlyContinue
+                    if ($ubuntuExe) {
+                        Write-Host "  Opening Ubuntu 22.04 terminal..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "ubuntu2204.exe" -Wait
+                    } else {
+                        # Fallback to WSL with explicit distribution
+                        Write-Host "  Opening WSL with Ubuntu-22.04..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "wsl.exe" -ArgumentList "-d","Ubuntu-22.04" -Wait
+                    }
                     
                     # Verify that Ubuntu is now set up
                     Write-Host ""
                     Write-Host "  Verifying Ubuntu setup..." -ForegroundColor Cyan
-                    $testUser = wsl whoami 2>&1
+                    $testUser = wsl -d Ubuntu-22.04 whoami 2>&1
                     if ($LASTEXITCODE -eq 0 -and $testUser -and $testUser -ne "root") {
                         Write-Host "  [OK] Ubuntu is configured with user: $testUser" -ForegroundColor Green
                         Write-Host ""
@@ -250,8 +324,14 @@ function Install-DockerInWSL {
                     } else {
                         Write-Host "  [ERROR] Ubuntu setup not complete" -ForegroundColor Red
                         Write-Host ""
-                        Write-Host "  Please complete Ubuntu setup and re-run this script" -ForegroundColor Yellow
-                        Write-Host "  Run: wsl" -ForegroundColor Cyan
+                        Write-Host "  The Ubuntu terminal may not have opened properly." -ForegroundColor Yellow
+                        Write-Host ""
+                        Write-Host "  Please manually complete setup:" -ForegroundColor Yellow
+                        Write-Host "    1. Open Windows Start Menu" -ForegroundColor Gray
+                        Write-Host "    2. Search for 'Ubuntu 22.04' and click it" -ForegroundColor Gray
+                        Write-Host "    3. Follow the prompts to create a username and password" -ForegroundColor Gray
+                        Write-Host "    4. Type 'exit' to close the Ubuntu window" -ForegroundColor Gray
+                        Write-Host "    5. Re-run this bootstrap script" -ForegroundColor Gray
                         Write-Host ""
                         if ($didPush) { Pop-Location }
                         exit 1
