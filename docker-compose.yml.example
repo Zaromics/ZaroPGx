@@ -245,7 +245,7 @@ services:
         limits:
           memory: 20G
         reservations:
-          memory: 8G
+          memory: 7G
 
 
   # OptiType Service (CLI container, no HTTP wrapper) 

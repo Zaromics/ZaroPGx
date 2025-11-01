@@ -769,9 +769,7 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         
         if ($bashExitCode -eq 0) {
             Write-Host ""
-            Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Green
-            Write-Host "  🎉 Setup complete! Launching WSL session..." -ForegroundColor Green
-            Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Green
+            Write-Host "  Setup complete! Launching WSL session..." -ForegroundColor Green
             Write-Host ""
             Write-Host "You'll now be in a WSL bash session where Docker commands work." -ForegroundColor Cyan
             Write-Host "Type 'exit' when you're done to return to PowerShell." -ForegroundColor Gray
