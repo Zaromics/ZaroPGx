@@ -2,23 +2,17 @@
 title: Frequently Asked Questions
 ---
 
-# Frequently Asked Questions
-
-Expected questions and answers about ZaroPGx.
-
-## General Questions
-
 ### What is ZaroPGx?
 
 ZaroPGx is a containerized pharmacogenomics platform with that processes genomic data and generates clinical reports. It integrates multiple bioinformatics tools (PharmCAT, PyPGx, GATK, OptiType) to provide comprehensive pharmacogene analysis.
 
-### Who can use ZaroPGx?
+### Who is ZaroPGx for?
 
 ZaroPGx is designed for general use. The simple user interface is meant to minimize user friction, while under-the-hood subroutines intelligently guide the submitted sample through the pipeline.
 
-### Is ZaroPGx free to use?
+### How much does ZaroPGx cost?
 
-Yes, ZaroPGx is open-source software licensed under AGPLv3. You can use, modify, and distribute it freely, subject to the license terms.
+Gratis; ZaroPGx is free and open-source software licensed under AGPLv3. You can *use*, modify, and distribute it freely, subject to the license terms.
 
 ### What makes ZaroPGx different from other PGx tools?
 
@@ -31,13 +25,14 @@ Yes, ZaroPGx is open-source software licensed under AGPLv3. You can use, modify,
 
 ## Technical Questions
 
-### What file formats are supported?
+### Which file formats are supported?
 
 ZaroPGx supports:
-- **VCF**: Variant Call Format
-- **BAM**: Binary Alignment Map 
-- **CRAM**: Compressed BAM
-- **SAM**: Sequence Alignment Map
+- **VCF**: Variant Call Format (now)
+- **BAM**: Binary Alignment Map (soon)
+- **CRAM**: Compressed BAM (soon)
+- **SAM**: Sequence Alignment Map (soon
+)
 - **FASTQ**: Raw sequencing data. Paired reads preferred.
 
 ### What reference genomes are supported?
