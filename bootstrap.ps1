@@ -3,7 +3,7 @@
 #
 # Usage:
 #   Quick install (bypasses execution policy):
-#     iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/bootstrap_one-cmd/bootstrap.ps1 | iex
+#     iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1 | iex
 #   
 #   Or download and run (may require execution policy change):
 #     powershell -ExecutionPolicy Bypass -File bootstrap.ps1
@@ -19,8 +19,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = "https://github.com/Zaroganos/ZaroPGx.git",
-    # TODO: Change back to "main" when ready to merge
-    [string]$Branch = "bootstrap_one-cmd",
+    [string]$Branch = "main",
     [string]$TargetDir = "ZaroPGx",
     [switch]$Update,
     [switch]$SkipDependencyCheck,

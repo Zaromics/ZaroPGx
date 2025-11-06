@@ -6,8 +6,7 @@ set -euo pipefail
 # Clones (or optionally updates) the repository and launches the startup script
 
 REPO_URL="https://github.com/Zaroganos/ZaroPGx.git"
-# TODO: Change back to "main" when ready to merge
-BRANCH="bootstrap_one-cmd"
+BRANCH="main"
 TARGET_DIR="ZaroPGx"
 UPDATE="false"
 SKIP_DEPENDENCY_CHECK="false"
