@@ -75,11 +75,15 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 ## Requirements
 <u>Software</u>
 
+**The bootstrap script can automatically install missing dependencies for you!**
+
 **Linux** environment preferred
 - *Docker*; *Docker Compose*; *Git* -- at minimum
+- Auto-install supported via: apt, yum, dnf, pacman
 
 **Windows 10/11** requires *WSL2* installed and configured
 - *WSL2*; *Docker*; *Docker Compose*; *Git*
+- Auto-install supported via: winget (Windows 10/11) or chocolatey
 - If your needs require HLA and MT typing: (at this time) your device will require *Sysbox*
   - IF using *Sysbox* for free (it's open source), *Docker Desktop* may NOT be used. If you have *Docker Desktop* already installed, it should still work <u>as long as you launch ZaroPGx via shell from the WSL2 virtual drive</u>; if it doesn't work, you may have to uninstall or disable Docker Desktop until you are finished using ZaroPGx.
     - *Sysbox*
@@ -87,6 +91,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
     - *Docker Desktop* with *Sysbox* runtime enabled (ECI)
 
 **macOS** requires either running a Linux VM (e.g. Crossover, etc.) OR using the paid/premium *Docker Desktop* with included *Sysbox*
+- Auto-install supported via: homebrew (Git only; Docker Desktop must be installed manually)
 
 <u>Hardware</u> (projected)
 
@@ -99,6 +104,59 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 - At this time, reference pre-built docker images are not distributed. As the program approaches v1.0 release, container images will begin to be distributed through Dockerhub.
 - For now, you must clone this repository and build the docker compose stack locally. This should not require any special action on your part, but it will take some time, possibly as long as an hour if your hardware is closer to "minimum" than "preferred" spec.
+
+### 🚀 One-Command Installation (Easiest)
+
+**For most users, this is the simplest way to get started:**
+
+**PowerShell (Windows):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1 | iex
+```
+
+**Bash (Linux/macOS/WSL):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh | bash
+```
+
+This single command will:
+- Check for required dependencies (Git, Docker, Docker Compose)
+- Offer to automatically install missing dependencies (with your permission)
+- Download the bootstrap script
+- Clone the repository
+- Create necessary directories
+- Start Docker containers
+- Launch the application
+
+**Note:** If Git, Docker, or Docker Compose are not installed, the script will:
+1. Detect your package manager (winget, chocolatey, apt, yum, dnf, brew, pacman)
+2. Ask if you want to install missing dependencies automatically
+3. Request administrator/sudo privileges if needed
+4. Install the dependencies and guide you through next steps
+
+If automatic installation is not available or you prefer manual installation, the script will provide direct links to installation pages.
+
+**Security Note:** If you're cautious about running remote scripts (which is good practice!), you can inspect the bootstrap scripts first:
+- PowerShell: https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1
+- Bash: https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh
+
+**To update an existing installation:**
+
+**PowerShell:**
+```powershell
+iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1) } -Update"
+```
+
+**Bash:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh | bash -s -- --update
+```
+
+---
+
+### 📋 Manual Installation (Advanced)
+
+If you prefer more control or want to customize the installation:
 
 1. **Clone the repo**
    ```bash

@@ -2,23 +2,17 @@
 title: Frequently Asked Questions
 ---
 
-# Frequently Asked Questions
-
-Expected questions and answers about ZaroPGx.
-
-## General Questions
-
 ### What is ZaroPGx?
 
 ZaroPGx is a containerized pharmacogenomics platform with that processes genomic data and generates clinical reports. It integrates multiple bioinformatics tools (PharmCAT, PyPGx, GATK, OptiType) to provide comprehensive pharmacogene analysis.
 
-### Who can use ZaroPGx?
+### Who is ZaroPGx for?
 
 ZaroPGx is designed for general use. The simple user interface is meant to minimize user friction, while under-the-hood subroutines intelligently guide the submitted sample through the pipeline.
 
-### Is ZaroPGx free to use?
+### How much does ZaroPGx cost?
 
-Yes, ZaroPGx is open-source software licensed under AGPLv3. You can use, modify, and distribute it freely, subject to the license terms.
+Gratis; ZaroPGx is free and open-source software licensed under AGPLv3. You can *use*, modify, and distribute it freely, subject to the license terms.
 
 ### What makes ZaroPGx different from other PGx tools?
 
@@ -31,30 +25,30 @@ Yes, ZaroPGx is open-source software licensed under AGPLv3. You can use, modify,
 
 ## Technical Questions
 
-### What file formats are supported?
+### Which file formats are supported?
 
 ZaroPGx supports:
-- **VCF**: Variant Call Format
-- **BAM**: Binary Alignment Map 
-- **CRAM**: Compressed BAM
-- **SAM**: Sequence Alignment Map
-- **FASTQ**: Raw sequencing data. Paired reads preferred.
+- **VCF**: Variant Call Format (now)
+- **BAM**: Binary Alignment Map (soon)
+- **CRAM**: Compressed BAM (soon)
+- **SAM**: Sequence Alignment Map (soon)
+- **FASTQ**: Raw sequencing data. Paired reads preferred. (soon)
 
 ### What reference genomes are supported?
 
-- **GRCh38/hg38**: Fully supported (recommended)
-- **GRCh37/hg19**: Supported with bcftools liftover to GRCh38/hg38
+- **GRCh38**: Fully supported (now)
+- **GRCh37**: Supported with bcftools liftover to GRCh38 (soon)
 
-### How much computing power do I need?
+### What are the computing hardware requirements?
 
 **Minimum Requirements (VCF input):**:
 - 4 CPU cores
-- 8 GB RAM
+- 16 GB RAM
 - 30 GB storage
 
 **Recommended (FASTQ/BAM/SAM/CRAM input):**
 - 8+ CPU cores
-- 32+ GB RAM, 64GB preferred
+- 64+ GB RAM
 - 1+ TB SSD storage
 
 ### How long does analysis take?
@@ -62,8 +56,8 @@ ZaroPGx supports:
 Analysis time depends on:
 - **File size**: Larger files take longer
 - **File type**: VCF is fastest, FASTQ is slowest
-- **System resources**: More CPU/RAM = faster processing
-- **Reference genome**: GRCh37/hg19 adds a liftover re-alignment delay
+- **System resources**: More CPU+RAM = faster processing
+- **Reference genome**: GRCh37 adds a liftover re-alignment delay
 
 **Typical times (ballpark estimate):**
 - **VCF (exome)**: 5-15 minutes
@@ -71,17 +65,17 @@ Analysis time depends on:
 - **BAM (exome)**: from 15-30 minutes, up to several hours or more
 - **FASTQ (exome)**: from 30-60 minutes, up to several hours or more
 
-## Clinical Questions
+## Clinical Considerations
 
-### What pharmacogenes are analyzed?
+### Which pharmacogenes are analyzed?
 
-**Core 23 Pharmacogenes (PharmCAT):**
+**Core 23 Pharmacogenes  (reports available):**
 - ABCG2, CACNA1S, CFTR, CYP2B6, CYP2C19, CYP2C9,
 - CYP3A4, CYP3A5, CYP4F2, CYP2D6, DPYD, G6PD,
 - HLA-A, HLA-B, IFNL3, MT-RNR1, NAT2, NUDT15, RYR1,
 - SLCO1B1, TPMT, UGT1A1, VKORC1
 
-**Additional Genes (PyPGx only):**
+**Additional Pharmacogenes (no reports):**
 - "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
 - "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2C8", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2",
 - "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP17A1",
@@ -90,9 +84,8 @@ Analysis time depends on:
 - "PTGIS", "RARG", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B3", "SLCO2B1",
 - "SULT1A1", "TBXAS1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "XPC"
 
-### What clinical guidelines are used?
+### What clinical guidelines does ZaroPGx use?
 
-ZaroPGx uses the following guidelines:
 **CPIC (Clinical Pharmacogenomics Implementation Consortium)**
 **DPWG (Dutch Pharmacogenetics Working Group)**
 **FDA (U.S. Food and Drug Administration)**
@@ -107,11 +100,11 @@ Accuracy depends on:
 - **Input data quality**: Higher coverage = better accuracy
 - **Gene complexity**: Some genes are harder to call accurately
 - **Tool limitations**: Each tool has specific strengths/weaknesses
-- **Reference genome**: hg38 generally more accurate than hg19
+- **Reference genome**: GRCh38 generally more accurate than GRCh37
 
 ### Can I use this for clinical decision-making?
 
-Please do not. ZaroPGx is a research tool and should not be used directly for clinical decision-making without:
+Please do not use the reports in an authoritative context such as a clinical setting. ZaroPGx is a hobby research tool and should not be used directly for clinical decision-making without:
 - **Laboratory validation**: Verify results with clinical grade lab testing
 - **Expert interpretation**: Review by a qualified practitioner
 
@@ -124,7 +117,7 @@ Make sure you understand the differnce between a local and public/production dep
 ZaroPGx does not include a reverse proxy; you will have to set one up yourself. 
 NPM, Apache, Traefik, or Caddy are all good options for securing your deployment.
 
-### How do I secure the deployment?
+### How do I secure my ZaroPGx deployment?
 
 **Network Security:**
 - Use a reverse proxy
@@ -141,11 +134,7 @@ NPM, Apache, Traefik, or Caddy are all good options for securing your deployment
 
 ### Can I scale this for multiple users?
 
-In theory, though yet untested, yes: ZaroPGx can be scaled by:
-- **Horizontal scaling**: Multiple app instances - deeper Nextflow integration may permit
-- **Load balancing**: Distribute requests across instances, via Docker Swarm or Kubernetes
-- **Database scaling**: Use external PostgreSQL cluster
-- **Storage scaling**: Use shared storage systems, such as networking file systems (e.g. ZFS)
+In theory, it is possible, however, a large-scale persistent deployment is not being developed at this time.
 
 ## Data Questions
 
@@ -171,7 +160,7 @@ Yes, ZaroPGx supports multiple export formats:
 - **PDF reports**: Clinical reports
 - **HTML reports**: Interactive web reports
 - **JSON data**: Machine-readable results
-- **FHIR format**: Healthcare interoperability standard (coming in 0.3)
+- **FHIR format**: Healthcare interoperability standard (soon; coming in 0.3)
 - **Raw data**: Original tool outputs
 
 ### How long is data retained?
@@ -182,7 +171,7 @@ Data retention is configurable:
 - **Manual cleanup**: Remove data manually when needed
 - **Backup**: Create backups before cleanup
 
-## Troubleshooting Questions
+## Troubleshooting
 
 ### Why is my analysis taking so long?
 
@@ -212,7 +201,7 @@ Common causes:
 - **Missing data**: Verify analysis completed
 - **PDF engine problems**: Try different engine
 
-## Development Questions
+## Development
 
 ### Can I contribute to ZaroPGx?
 
@@ -243,7 +232,7 @@ Yes, ZaroPGx is designed for extensibility:
 - **Tool integration**: Add new analysis tools
 - **Report customization**: Modify report templates
 
-## Next Steps
+## See Next
 
 - **Get started**: {doc}`quick-start`
 - **Learn more**: {doc}`usage`

@@ -226,7 +226,7 @@ services:
     environment:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
-      - PYPGX_MEMORY_LIMIT=12G
+      - PYPGX_MEMORY_LIMIT=7G
       - PYPGX_MAX_PARALLEL_GENES=8
       - PYPGX_BATCH_SIZE=4
       - PYPGX_PHARMCAT_PREFERENCE=${PYPGX_PHARMCAT_PREFERENCE:-auto}  # auto|pypgx|pharmcat
@@ -245,7 +245,7 @@ services:
         limits:
           memory: 20G
         reservations:
-          memory: 8G
+          memory: 7G
 
 
   # OptiType Service (CLI container, no HTTP wrapper) 

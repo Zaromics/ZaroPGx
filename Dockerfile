@@ -95,7 +95,7 @@ COPY . /app/
 
 # Build Sphinx documentation to be served by the app at /documentation
 # Do not fail the image build if docs have warnings
-RUN [ -d docs ] && python -m sphinx -b html docs docs/_build/html || true
+RUN [ -d docs ] && python -m sphinx -b html -E -a docs docs/_build/html || true
 
 # Expose the port for the application
 EXPOSE 8000
