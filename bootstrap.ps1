@@ -11,9 +11,9 @@
 # System Requirements:
 #   - Windows 10 22H2 (build 19045) or Windows 11 22H2 (build 22631) or higher
 #   - WSL version 2.1.5 or later (for Docker Desktop)
-#   - Git for Windows
+#   - Git for Windows [TODO: Add to the bootstrap script]
 #   - Docker Desktop (requires WSL2 backend)
-#   - 4GB RAM minimum, 64-bit processor with Second Level Address Translation (SLAT)
+#   - 16GB RAM minimum, 64-bit processor with Second Level Address Translation (SLAT)
 #   - Hardware virtualization enabled in BIOS/UEFI
 
 [CmdletBinding()]
