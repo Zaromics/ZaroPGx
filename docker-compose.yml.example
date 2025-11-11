@@ -1,5 +1,5 @@
   # In order to manually generate your docker compose file, use:
-  # 'mv docker-compose.yml.example docker-compose.yml' and adjust the parameters.
+  # 'cp docker-compose.yml.example docker-compose.yml' and adjust the parameters.
 
 services:  
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~
