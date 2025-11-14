@@ -407,13 +407,15 @@ function Install-DockerInWSL {
         # Wait a bit longer for Docker to start
         Start-Sleep -Seconds 5
         
-        # Verify installation - try both with and without sudo
+        # Verify installation - test in a NEW shell session (group membership takes effect in new sessions)
         Write-Host "  Verifying Docker installation..." -ForegroundColor Gray
-        $dockerVersion = wsl docker --version 2>&1
+        # Use a new bash session to test docker group membership
+        $dockerVersion = wsl bash -c "docker --version" 2>&1
         
         if ($LASTEXITCODE -ne 0) {
-            # Try with sudo if regular command failed
-            $dockerVersion = wsl sudo docker --version 2>&1
+            # Try with sudo if regular command failed (group membership may not have taken effect yet)
+            Write-Host "  Note: Testing with sudo (group membership will be active in new WSL sessions)" -ForegroundColor Gray
+            $dockerVersion = wsl bash -c "sudo docker --version" 2>&1
         }
         
         if ($LASTEXITCODE -eq 0 -and $dockerVersion -match "Docker version") {
@@ -423,15 +425,22 @@ function Install-DockerInWSL {
             Write-Host ""
             
             # Ensure Docker daemon is running
-            wsl sudo service docker start 2>&1 | Out-Null
+            wsl bash -c "sudo service docker start" 2>&1 | Out-Null
             Start-Sleep -Seconds 3
             
-            # Check if daemon is accessible
-            wsl sudo docker info 2>&1 | Out-Null
+            # Check if daemon is accessible in a new shell session (where group membership is active)
+            wsl bash -c "docker info >/dev/null 2>&1" 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
-                Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
+                Write-Host "  [OK] Docker daemon is running and accessible (no sudo needed)" -ForegroundColor Green
             } else {
-                Write-Host "  [WARNING] Docker daemon may not be fully started yet" -ForegroundColor Yellow
+                # Fall back to sudo check - this means group membership hasn't propagated yet
+                wsl bash -c "sudo docker info >/dev/null 2>&1" 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
+                    Write-Host "  [INFO] Docker group membership is active - commands will work without sudo in new sessions" -ForegroundColor Gray
+                } else {
+                    Write-Host "  [WARNING] Docker daemon may not be fully started yet" -ForegroundColor Yellow
+                }
             }
             Write-Host ""
             return $true
@@ -522,9 +531,38 @@ function Test-DockerInWSL {
                     $env:DOCKER_USE_WSL = "1"
                     Write-Host "    [OK] Docker installed and WSL mode enabled" -ForegroundColor Green
                     
-                    # Try to start Docker daemon again to be sure
-                    wsl sudo service docker start 2>&1 | Out-Null
-                    Start-Sleep -Seconds 2
+                    # Ensure Docker daemon is running and accessible
+                    Write-Host "    Verifying Docker daemon is ready..." -ForegroundColor Gray
+                    wsl bash -c "sudo service docker start" 2>&1 | Out-Null
+                    Start-Sleep -Seconds 3
+                    
+                    # Test docker access in a new shell (where group membership is active)
+                    $dockerReady = $false
+                    for ($i = 1; $i -le 5; $i++) {
+                        wsl bash -c "docker info >/dev/null 2>&1" 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            $dockerReady = $true
+                            Write-Host "    [OK] Docker is ready and accessible" -ForegroundColor Green
+                            break
+                        } else {
+                            # Try with sudo as fallback
+                            wsl bash -c "sudo docker info >/dev/null 2>&1" 2>&1 | Out-Null
+                            if ($LASTEXITCODE -eq 0) {
+                                $dockerReady = $true
+                                Write-Host "    [OK] Docker is ready (using sudo for now)" -ForegroundColor Green
+                                break
+                            }
+                        }
+                        if ($i -lt 5) {
+                            Write-Host "    Waiting for Docker daemon... ($i/5)" -ForegroundColor Gray
+                            Start-Sleep -Seconds 2
+                        }
+                    }
+                    
+                    if (-not $dockerReady) {
+                        Write-Host "    [WARNING] Docker daemon may not be fully ready yet" -ForegroundColor Yellow
+                        Write-Host "    Continuing anyway - it should be ready by the time containers start" -ForegroundColor Gray
+                    }
                 }
                 return $installResult
             }
@@ -758,11 +796,28 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         }
         wsl chmod +x start-docker.sh 2>&1 | Out-Null
         
+        # Final verification that Docker is accessible before running bash script
+        Write-Host "  Verifying Docker is ready before starting containers..." -ForegroundColor Gray
+        wsl bash -c "docker info >/dev/null 2>&1" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] Docker is ready" -ForegroundColor Green
+        } else {
+            # Try with sudo
+            wsl bash -c "sudo docker info >/dev/null 2>&1" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [OK] Docker is ready (using sudo)" -ForegroundColor Green
+            } else {
+                Write-Host "  [WARNING] Docker may not be fully ready - bash script will attempt to start it" -ForegroundColor Yellow
+            }
+        }
+        Write-Host ""
+        
         # Run the bash script from WSL with auto-local mode
         # Convert Windows path to WSL path format: C:\Users\... -> /mnt/c/Users/...
         $driveLetter = ($PWD.Path.Substring(0,1)).ToLower()
         $pathWithoutDrive = $PWD.Path.Substring(2) -replace '\\','/'
         $wslPath = "/mnt/$driveLetter$pathWithoutDrive"
+        Write-Host "  Launching Docker Compose setup..." -ForegroundColor Cyan
         wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
         
         $bashExitCode = $LASTEXITCODE
