@@ -270,6 +270,45 @@ function Get-DockerDaemonStatus {
     return $result
 }
 
+# Helper function to start Docker daemon in WSL with timeout protection
+function Start-DockerDaemonInWSL {
+    param(
+        [switch]$NoMessage
+    )
+    
+    # First check if Docker is already running - if so, skip starting
+    $statusCheck = Get-DockerDaemonStatus -CommandTimeout 3 -JobTimeout 5
+    if ($statusCheck -match "running") {
+        if (-not $NoMessage) {
+            Write-Host "  Docker daemon is already running" -ForegroundColor Gray
+        }
+        return @{
+            ExitCode = 0
+            Output = "Already running"
+        }
+    }
+    
+    if (-not $NoMessage) {
+        Write-Host "  Starting Docker daemon..." -ForegroundColor Gray
+    }
+    
+    # Start Docker daemon in background and don't wait for it to complete
+    # 'service docker start' can hang waiting for the service to fully initialize
+    # So we start it and then check status separately
+    $process = Start-Process -FilePath "wsl" -ArgumentList "sudo","service","docker","start" -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+    
+    # Give it a moment to start the process
+    Start-Sleep -Seconds 1
+    
+    # Don't wait for the process - just return immediately
+    # The verification step will check if Docker is actually running
+    return @{
+        ExitCode = 0
+        Output = "Start command issued (checking status separately)"
+        ProcessId = $process.Id
+    }
+}
+
 # Function to install Docker Engine in WSL2
 function Install-DockerInWSL {
     # First, check if WSL has a distribution installed
@@ -533,9 +572,8 @@ function Install-DockerInWSL {
             Write-Host ""
             
             # Ensure Docker daemon is running
-            Write-Host "  Starting Docker daemon..." -ForegroundColor Gray
-            wsl bash -c "sudo service docker start" 2>&1 | Out-Null
-            Start-Sleep -Seconds 3
+            Start-DockerDaemonInWSL | Out-Null
+            # Start command issued - verification step will check if it actually started
             
             # Check if daemon is accessible with timeout and retries
             Write-Host "  Verifying Docker daemon is ready..." -ForegroundColor Gray
@@ -618,8 +656,8 @@ function Test-DockerInWSL {
                 Write-Host "    Attempting to start Docker daemon..." -ForegroundColor Yellow
                 
                 # Try to start Docker daemon in WSL2
-                wsl bash -c "sudo service docker start" 2>&1 | Out-Null
-                Start-Sleep -Seconds 3
+                Start-DockerDaemonInWSL -NoMessage | Out-Null
+                # Start command issued - status check below will verify if it started
                 
                 # Check again (with timeout to prevent hanging)
                 $dockerStatus = Get-DockerDaemonStatus
@@ -646,11 +684,11 @@ function Test-DockerInWSL {
                     Write-Host "    [OK] Docker installed and WSL mode enabled" -ForegroundColor Green
                     
                     # Ensure Docker daemon is running and accessible
-                    Write-Host "    Verifying Docker daemon is ready..." -ForegroundColor Gray
-                    wsl bash -c "sudo service docker start" 2>&1 | Out-Null
-                    Start-Sleep -Seconds 3
+                    Start-DockerDaemonInWSL -NoMessage | Out-Null
+                    # Start command issued - verification step will check if it actually started
                     
                     # Test docker access in a new shell (where group membership is active)
+                    Write-Host "    Verifying Docker daemon is ready..." -ForegroundColor Gray
                     $daemonCheck = Test-DockerDaemonInWSL -ShowProgress
                     
                     if ($daemonCheck.Success) {
