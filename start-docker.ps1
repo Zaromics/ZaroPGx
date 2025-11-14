@@ -162,6 +162,114 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
     }
 }
 
+# Helper function to check Docker daemon status in WSL with timeout protection
+function Test-DockerDaemonInWSL {
+    param(
+        [int]$MaxRetries = 5,
+        [int]$RetryDelay = 3,
+        [int]$CommandTimeout = 5,
+        [int]$JobTimeout = 8,
+        [switch]$ShowProgress
+    )
+    
+    for ($retry = 1; $retry -le $MaxRetries; $retry++) {
+        if ($ShowProgress) {
+            Write-Host "    Attempt $retry/$MaxRetries..." -NoNewline -ForegroundColor Gray
+        }
+        
+        # Try without sudo first (group membership should be active)
+        $job = Start-Job -ScriptBlock {
+            param($timeoutSec)
+            $output = wsl bash -c "timeout $timeoutSec bash -c 'docker info >/dev/null 2>&1'; echo `$?" 2>&1
+            $exitCode = $LASTEXITCODE
+            if ($output -match "^0$" -or $exitCode -eq 0) {
+                return 0
+            }
+            return 1
+        } -ArgumentList $CommandTimeout
+        
+        $jobResult = $null
+        $completed = $job | Wait-Job -Timeout $JobTimeout
+        if ($completed) {
+            $jobResult = Receive-Job -Job $job
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        
+        if ($jobResult -eq 0) {
+            if ($ShowProgress) {
+                Write-Host " [OK]" -ForegroundColor Green
+            }
+            return @{
+                Success = $true
+                NeedsSudo = $false
+            }
+        }
+        
+        # Try with sudo as fallback
+        $job = Start-Job -ScriptBlock {
+            param($timeoutSec)
+            $output = wsl bash -c "timeout $timeoutSec bash -c 'sudo docker info >/dev/null 2>&1'; echo `$?" 2>&1
+            $exitCode = $LASTEXITCODE
+            if ($output -match "^0$" -or $exitCode -eq 0) {
+                return 0
+            }
+            return 1
+        } -ArgumentList $CommandTimeout
+        
+        $jobResult = $null
+        $completed = $job | Wait-Job -Timeout $JobTimeout
+        if ($completed) {
+            $jobResult = Receive-Job -Job $job
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        
+        if ($jobResult -eq 0) {
+            if ($ShowProgress) {
+                Write-Host " [OK]" -ForegroundColor Green
+            }
+            return @{
+                Success = $true
+                NeedsSudo = $true
+            }
+        }
+        
+        if ($ShowProgress) {
+            Write-Host " [waiting...]" -ForegroundColor Yellow
+        }
+        if ($retry -lt $MaxRetries) {
+            Start-Sleep -Seconds $RetryDelay
+        }
+    }
+    
+    return @{
+        Success = $false
+        NeedsSudo = $null
+    }
+}
+
+# Helper function to check Docker daemon status (simple check, returns string)
+function Get-DockerDaemonStatus {
+    param(
+        [int]$CommandTimeout = 5,
+        [int]$JobTimeout = 8
+    )
+    
+    $job = Start-Job -ScriptBlock {
+        param($timeoutSec)
+        $output = wsl bash -c "timeout $timeoutSec bash -c 'docker info >/dev/null 2>&1 && echo running || echo stopped'" 2>&1
+        return $output
+    } -ArgumentList $CommandTimeout
+    
+    $result = $null
+    $completed = $job | Wait-Job -Timeout $JobTimeout
+    if ($completed) {
+        $result = Receive-Job -Job $job
+    }
+    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    
+    return $result
+}
+
 # Function to install Docker Engine in WSL2
 function Install-DockerInWSL {
     # First, check if WSL has a distribution installed
@@ -425,22 +533,26 @@ function Install-DockerInWSL {
             Write-Host ""
             
             # Ensure Docker daemon is running
+            Write-Host "  Starting Docker daemon..." -ForegroundColor Gray
             wsl bash -c "sudo service docker start" 2>&1 | Out-Null
             Start-Sleep -Seconds 3
             
-            # Check if daemon is accessible in a new shell session (where group membership is active)
-            wsl bash -c "docker info >/dev/null 2>&1" 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "  [OK] Docker daemon is running and accessible (no sudo needed)" -ForegroundColor Green
-            } else {
-                # Fall back to sudo check - this means group membership hasn't propagated yet
-                wsl bash -c "sudo docker info >/dev/null 2>&1" 2>&1 | Out-Null
-                if ($LASTEXITCODE -eq 0) {
+            # Check if daemon is accessible with timeout and retries
+            Write-Host "  Verifying Docker daemon is ready..." -ForegroundColor Gray
+            $daemonCheck = Test-DockerDaemonInWSL -ShowProgress
+            
+            if ($daemonCheck.Success) {
+                if (-not $daemonCheck.NeedsSudo) {
+                    Write-Host "  [OK] Docker daemon is running and accessible (no sudo needed)" -ForegroundColor Green
+                } else {
                     Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
                     Write-Host "  [INFO] Docker group membership is active - commands will work without sudo in new sessions" -ForegroundColor Gray
-                } else {
-                    Write-Host "  [WARNING] Docker daemon may not be fully started yet" -ForegroundColor Yellow
                 }
+            } else {
+                Write-Host ""
+                Write-Host "  [WARNING] Docker daemon verification timed out" -ForegroundColor Yellow
+                Write-Host "  Docker may still be starting up - continuing anyway" -ForegroundColor Gray
+                Write-Host "  If containers fail to start, try: wsl sudo service docker start" -ForegroundColor Gray
             }
             Write-Host ""
             return $true
@@ -478,8 +590,9 @@ function Test-DockerInWSL {
         if ($LASTEXITCODE -eq 0 -and $dockerInWsl) {
             Write-Host "    [OK] Docker found in WSL2" -ForegroundColor Green
             
-            # Check if Docker daemon is running
-            $dockerStatus = wsl bash -c "docker info >/dev/null 2>&1 && echo 'running' || echo 'stopped'" 2>&1
+            # Check if Docker daemon is running (with timeout to prevent hanging)
+            $dockerStatus = Get-DockerDaemonStatus
+            
             if ($dockerStatus -match "running") {
                 Write-Host "    [OK] Docker daemon is running in WSL2" -ForegroundColor Green
                 
@@ -508,8 +621,9 @@ function Test-DockerInWSL {
                 wsl bash -c "sudo service docker start" 2>&1 | Out-Null
                 Start-Sleep -Seconds 3
                 
-                # Check again
-                $dockerStatus = wsl bash -c "docker info >/dev/null 2>&1 && echo 'running' || echo 'stopped'" 2>&1
+                # Check again (with timeout to prevent hanging)
+                $dockerStatus = Get-DockerDaemonStatus
+                
                 if ($dockerStatus -match "running") {
                     Write-Host "    [OK] Docker daemon started in WSL2" -ForegroundColor Green
                     $env:DOCKER_USE_WSL = "1"
@@ -537,29 +651,15 @@ function Test-DockerInWSL {
                     Start-Sleep -Seconds 3
                     
                     # Test docker access in a new shell (where group membership is active)
-                    $dockerReady = $false
-                    for ($i = 1; $i -le 5; $i++) {
-                        wsl bash -c "docker info >/dev/null 2>&1" 2>&1 | Out-Null
-                        if ($LASTEXITCODE -eq 0) {
-                            $dockerReady = $true
-                            Write-Host "    [OK] Docker is ready and accessible" -ForegroundColor Green
-                            break
-                        } else {
-                            # Try with sudo as fallback
-                            wsl bash -c "sudo docker info >/dev/null 2>&1" 2>&1 | Out-Null
-                            if ($LASTEXITCODE -eq 0) {
-                                $dockerReady = $true
-                                Write-Host "    [OK] Docker is ready (using sudo for now)" -ForegroundColor Green
-                                break
-                            }
-                        }
-                        if ($i -lt 5) {
-                            Write-Host "    Waiting for Docker daemon... ($i/5)" -ForegroundColor Gray
-                            Start-Sleep -Seconds 2
-                        }
-                    }
+                    $daemonCheck = Test-DockerDaemonInWSL -ShowProgress
                     
-                    if (-not $dockerReady) {
+                    if ($daemonCheck.Success) {
+                        if (-not $daemonCheck.NeedsSudo) {
+                            Write-Host "    [OK] Docker is ready and accessible" -ForegroundColor Green
+                        } else {
+                            Write-Host "    [OK] Docker is ready (using sudo for now)" -ForegroundColor Green
+                        }
+                    } else {
                         Write-Host "    [WARNING] Docker daemon may not be fully ready yet" -ForegroundColor Yellow
                         Write-Host "    Continuing anyway - it should be ready by the time containers start" -ForegroundColor Gray
                     }
@@ -798,17 +898,16 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         
         # Final verification that Docker is accessible before running bash script
         Write-Host "  Verifying Docker is ready before starting containers..." -ForegroundColor Gray
-        wsl bash -c "docker info >/dev/null 2>&1" 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [OK] Docker is ready" -ForegroundColor Green
-        } else {
-            # Try with sudo
-            wsl bash -c "sudo docker info >/dev/null 2>&1" 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "  [OK] Docker is ready (using sudo)" -ForegroundColor Green
+        $daemonCheck = Test-DockerDaemonInWSL -MaxRetries 1 -ShowProgress:$false
+        
+        if ($daemonCheck.Success) {
+            if (-not $daemonCheck.NeedsSudo) {
+                Write-Host "  [OK] Docker is ready" -ForegroundColor Green
             } else {
-                Write-Host "  [WARNING] Docker may not be fully ready - bash script will attempt to start it" -ForegroundColor Yellow
+                Write-Host "  [OK] Docker is ready (using sudo)" -ForegroundColor Green
             }
+        } else {
+            Write-Host "  [WARNING] Docker may not be fully ready - bash script will attempt to start it" -ForegroundColor Yellow
         }
         Write-Host ""
         
