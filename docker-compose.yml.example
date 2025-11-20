@@ -16,7 +16,6 @@ services:
       - pharmcat
       - gatk-api
       - pypgx
-      - kroki
     environment:
       - DATABASE_URL=postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
       - SECRET_KEY=${SECRET_KEY}
@@ -28,7 +27,7 @@ services:
       - GATK_API_URL=http://gatk-api:5000
       - PYPGX_API_URL=http://pypgx:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
-      - USE_NEXTFLOW=${USE_NEXTFLOW}
+      - USE_NEXTFLOW=${USE_NEXTFLOW} # deprecated
       - NEXTFLOW_RUNNER_URL=${NEXTFLOW_RUNNER_URL}
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
       - KROKI_URL=http://kroki:8000
@@ -77,7 +76,7 @@ services:
       - pgx-network
 
 
-  # Reference genome downloader service
+  # Reference material downloader service
   genome-downloader:
     build:
       context: ./docker/genome-downloader
@@ -112,7 +111,8 @@ services:
       # Mount reference files where PharmCAT expects them
       - pharmcat-references:/pharmcat
     ports:
-      - "5001:5000"  # FastAPI port
+      # FastAPI
+      - "5001:5000"
     environment:
       - DATA_DIR=/data
       - JAVA_OPTS=-Xmx4g
@@ -270,7 +270,7 @@ services:
 
 
   # nf-core/hlatyping Wrapper Service (HTTP API running Nextflow)
-  # OptiType v1.3.5 inside
+  # OptiType inside version <= v1.3.5
   hlatyping:
     build:
       context: .
@@ -286,7 +286,7 @@ services:
       - ./data:/data
       # Mount host docker socket so Nextflow can launch docker tasks with -profile docker
       - /var/run/docker.sock:/var/run/docker.sock
-      # Optional Nextflow cache directory to persist between runs
+      # Nextflow cache directory to persist between runs (Optional) 
       - ./data/nextflow:/opt/nextflow
     ports:
       - "5060:5000"
@@ -300,7 +300,7 @@ services:
       - pgx-network
 
 
-  # Kroki Service for diagram rendering (Mermaid, Graphviz, etc.)
+  # Kroki Service for diagram and visual rendering
   kroki:
     image: yuzutech/kroki:latest
     container_name: pgx_kroki
@@ -337,7 +337,7 @@ services:
       - pgx-network
 
 
-  # Nextflow executor for orchestrating the ZaroPGx pharmacogenomic pipeline
+  # Nextflow executor orchestrating the ZaroPGx pipeline
   nextflow:
     build:
       context: .
