@@ -10,7 +10,7 @@
 #
 # System Requirements:
 #   - Windows 10 22H2 (build 19045) or Windows 11 22H2 (build 22631) or higher
-#   - 16GB RAM, 64-bit processor with Second Level Address Translation (SLAT)
+#   - 16GB RAM, modern 64-bit processor ( with Second Level Address Translation (SLAT) )
 #   - Hardware virtualization enabled in BIOS/UEFI
 
 [CmdletBinding()]
@@ -23,8 +23,8 @@ param(
     [string[]]$MissingDeps = @()
 )
 
-Write-Host "ZaroPGx bootstrap" -ForegroundColor Green
-Write-Host "==================" -ForegroundColor Green
+Write-Host "Bootstrapping ZaroPGx..." -ForegroundColor Green
+Write-Host "════════════════════════" -ForegroundColor Green
 
 # Check and set execution policy for this process (doesn't require admin)
 $currentPolicy = Get-ExecutionPolicy -Scope Process
@@ -101,13 +101,14 @@ function Install-Dependencies {
         Write-Host "Please install dependencies manually:" -ForegroundColor Yellow
         Write-Host "  Git:            https://git-scm.com/downloads" -ForegroundColor Cyan
         Write-Host "  Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Cyan
+        Write-Host "and/or     WSL 2: https://learn.microsoft.com/en-us/windows/wsl/install" -ForegroundColor Cyan
         Write-Host ""
         return $false
     }
     
     $response = Read-Host "Would you like to automatically install missing dependencies? (y/N)"
     if ($response -notmatch '^[Yy]') {
-        Write-Host "Installation cancelled. Please install dependencies manually." -ForegroundColor Yellow
+        Write-Host "Installation of missing dependencies is cancelled. Please re-run or install dependencies manually." -ForegroundColor Yellow
         return $false
     }
     
