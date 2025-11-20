@@ -24,7 +24,7 @@ params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 params.sample_identifier = params.sample_identifier ?: ''
 
-// FASTQ alignment
+// FASTQ alignment process (OPTIMAL STARTING FORMAT per workflow_logic.md)
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir "${outdir}", mode: 'copy'
@@ -123,7 +123,7 @@ PY
     '''
 }
 
-// OptiType HLA calling on FASTQ
+// OptiType HLA calling on FASTQ (OPTIMAL per workflow_logic.md)
 process OptiTypeHLAFromFastq {
     tag "hla_fastq_${patient_id}"
     publishDir "${outdir}", mode: 'copy'

@@ -3,16 +3,6 @@
 # Works in WSL and when run with bash from PowerShell
 # For native PowerShell support, use start-docker.ps1 instead
 
-# Parse command line arguments
-AUTO_LOCAL=false
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --auto-local) AUTO_LOCAL=true ;;
-        *) echo "Unknown parameter: $1"; exit 1 ;;
-    esac
-    shift
-done
-
 echo "🚀 Starting ZaroPGx with Docker Compose"
 echo "======================================"
 
@@ -28,64 +18,6 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
 else
     echo "❓ Unknown environment: $OSTYPE"
     exit 1
-fi
-
-# Check for .env file and create from template if needed
-if [[ ! -f ".env" ]]; then
-    if [[ "$AUTO_LOCAL" == "true" ]]; then
-        # Auto-select .env.local for bootstrap one-command installation
-        echo "📝 Setting up local development environment..."
-        env_source=".env.local"
-    else
-        # Interactive selection for manual installation
-        echo "📝 No .env file found. Choose a template:"
-        echo "   1) .env.local      (Recommended for personal/home use)"
-        echo "   2) .env.production (For web-facing deployment)"
-        echo "   3) .env.example    (Complete configuration with documentation)"
-        echo "   4) Skip            (Use inline defaults - not recommended)"
-        echo ""
-        read -p "Select option [1-4]: " env_choice
-        
-        env_source=""
-        case "$env_choice" in
-            1) env_source=".env.local" ;;
-            2) env_source=".env.production" ;;
-            3) env_source=".env.example" ;;
-            4) 
-                echo "⚠️  Skipping .env creation. Using inline defaults."
-                echo "ℹ️  Note: Some features may require environment configuration"
-                ;;
-            *) env_source=".env.local" ;;
-        esac
-    fi
-    
-    if [[ -n "$env_source" ]] && [[ -f "$env_source" ]]; then
-        cp "$env_source" ".env"
-        echo "✅ Created .env from $env_source"
-        if [[ "$AUTO_LOCAL" != "true" ]]; then
-            echo "ℹ️  Note: Review and customize .env as needed (especially SECRET_KEY)"
-        fi
-    elif [[ -n "$env_source" ]]; then
-        echo "⚠️  WARNING: $env_source not found, using inline defaults"
-    fi
-    echo ""
-else
-    echo "✅ Environment configuration found (.env)"
-fi
-
-# Check for docker-compose.yml and create from example if needed
-if [[ ! -f "docker-compose.yml" ]] && [[ ! -f "compose.yml" ]]; then
-    if [[ -f "docker-compose.yml.example" ]]; then
-        echo "📝 Creating docker-compose.yml from example..."
-        cp docker-compose.yml.example docker-compose.yml
-        echo "✅ Created docker-compose.yml"
-        echo "ℹ️  Note: Review and customize docker-compose.yml if needed"
-    else
-        echo "❌ ERROR: No docker-compose.yml or docker-compose.yml.example found!"
-        exit 1
-    fi
-else
-    echo "✅ Docker Compose configuration found"
 fi
 
 # Ensure data directories exist
@@ -106,30 +38,9 @@ echo "🐳 Starting ZaroPGx Docker Compose containers..."
 docker compose down --remove-orphans
 docker compose up -d --build
 
-# Wait for app ready state by watching logs
-echo "⏳ Waiting for ZaroPGx to be ready (up to 5 minutes)..."
-
-timeout=300
-start_ts=$(date +%s)
-spin='|/-\'
-i=0
-ready=0
-
-while (( $(date +%s) - start_ts < timeout )); do
-  if docker compose logs --no-color app | grep -q "ZaroPGx is ready and listening for requests!"; then
-    echo ""
-    echo "✅ ZaroPGx is ready!"
-    ready=1
-    break
-  fi
-  printf "\r  Launching... %s" "${spin:i++%${#spin}:1}"
-  sleep 2
-done
-echo ""
-
-if [[ "$ready" != "1" ]]; then
-  echo "⚠️  App did not report ready within timeout. Continuing anyway."
-fi
+# Wait for services to be ready
+echo "⏳ Waiting for services to start..."
+sleep 10
 
 # Check container status
 echo "📊 Container Status:"
