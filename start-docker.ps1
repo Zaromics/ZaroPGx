@@ -1,8 +1,41 @@
 # PowerShell Docker startup script for ZaroPGx
-# Works in PowerShell on Windows (including with Docker Desktop)
+# Works in PowerShell on Windows with automatic Docker detection
+#
+# Smart Docker Detection (tries in order):
+#   1. Check if Docker is already running and accessible
+#   2. Try to start Docker Desktop for current user
+#   3. Fall back to Docker in WSL2 if Desktop fails
+#   4. Minimal user intervention required
+#
+# Note: Docker Desktop runs per-user on Windows
+#   - Each Windows user has their own Docker Desktop instance
+#   - Cannot share Docker Desktop between Windows users
+#   - WSL2 Docker Engine can be shared across all users
+#
+# Usage:
+#   .\start-docker.ps1                # Interactive - prompts for environment
+#   .\start-docker.ps1 -AutoLocal     # Automatic - uses .env.local
+#
+#   If execution policy error, run with:
+#   powershell -ExecutionPolicy Bypass -File start-docker.ps1
+
+param(
+    [switch]$AutoLocal  # Automatically use .env.local without prompting
+)
 
 Write-Host "Starting ZaroPGx with Docker Compose" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Green
+
+# Check and set execution policy for this process (doesn't require admin)
+$currentPolicy = Get-ExecutionPolicy -Scope Process
+if ($currentPolicy -eq "Restricted" -or $currentPolicy -eq "AllSigned") {
+    Write-Host "  Setting execution policy to Bypass for this session..." -ForegroundColor Yellow
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+    } catch {
+        Write-Host "  [WARNING] Could not set execution policy: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
 
 # Detect environment
 $env:COMPOSE_PROJECT_NAME = "pgx"
@@ -13,6 +46,74 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
     Write-Host "  Detected: Linux environment" -ForegroundColor Cyan
 } else {
     Write-Host "  Unknown environment" -ForegroundColor Yellow
+}
+
+# Ensure we run from the repository root (so compose.yml and .env are discovered)
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$didPush = $false
+if ($scriptDir -and (Test-Path $scriptDir)) {
+    Push-Location $scriptDir
+    $didPush = $true
+}
+
+# Check for .env file and create from template if needed
+if (-not (Test-Path ".env")) {
+    if ($AutoLocal) {
+        # Auto-select .env.local for bootstrap one-command installation
+        Write-Host "  Setting up local development environment..." -ForegroundColor Yellow
+        $envSource = ".env.local"
+    } else {
+        # Interactive selection for manual installation
+        Write-Host "  No .env file found. Choose a template:" -ForegroundColor Yellow
+        Write-Host "    1) .env.local      (Recommended for personal/home use)" -ForegroundColor Cyan
+        Write-Host "    2) .env.production (For web-facing deployment)" -ForegroundColor Cyan
+        Write-Host "    3) .env.example    (Complete configuration with documentation)" -ForegroundColor Cyan
+        Write-Host "    4) Skip             (Use inline defaults - not recommended)" -ForegroundColor Gray
+        Write-Host ""
+        
+        $envChoice = Read-Host "Select option [1-4]"
+        
+        $envSource = $null
+        switch ($envChoice) {
+            "1" { $envSource = ".env.local" }
+            "2" { $envSource = ".env.production" }
+            "3" { $envSource = ".env.example" }
+            "4" { 
+                Write-Host "  Skipping .env creation. Using inline defaults." -ForegroundColor Yellow
+                Write-Host "  Note: Some features may require environment configuration" -ForegroundColor Gray
+            }
+            default { $envSource = ".env.local" }
+        }
+    }
+    
+    if ($envSource -and (Test-Path $envSource)) {
+        Copy-Item $envSource ".env"
+        Write-Host "  [OK] Created .env from $envSource" -ForegroundColor Green
+        if (-not $AutoLocal) {
+            Write-Host "  Note: Review and customize .env as needed (especially SECRET_KEY)" -ForegroundColor Gray
+        }
+    } elseif ($envSource) {
+        Write-Host "  [WARNING] $envSource not found, using inline defaults" -ForegroundColor Yellow
+    }
+    Write-Host ""
+} else {
+    Write-Host "  [OK] Environment configuration found (.env)" -ForegroundColor Gray
+}
+
+# Check for docker-compose.yml and create from example if needed
+if (-not (Test-Path "docker-compose.yml") -and -not (Test-Path "compose.yml")) {
+    if (Test-Path "docker-compose.yml.example") {
+        Write-Host "  Creating docker-compose.yml from example..." -ForegroundColor Yellow
+        Copy-Item "docker-compose.yml.example" "docker-compose.yml"
+        Write-Host "  [OK] Created docker-compose.yml" -ForegroundColor Green
+        Write-Host "  Note: Review and customize docker-compose.yml if needed" -ForegroundColor Gray
+    } else {
+        Write-Host "  [ERROR] No docker-compose.yml or docker-compose.yml.example found!" -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+} else {
+    Write-Host "  [OK] Docker Compose configuration found" -ForegroundColor Gray
 }
 
 # Ensure data directories exist
@@ -28,32 +129,926 @@ $directories = @(
 foreach ($dir in $directories) {
     if (-not (Test-Path $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        Write-Host "  ✓ Created: $dir" -ForegroundColor Green
+        Write-Host "  [OK] Created: $dir" -ForegroundColor Green
     } else {
-        Write-Host "  ✓ Exists: $dir" -ForegroundColor Gray
+        Write-Host "  [OK] Exists: $dir" -ForegroundColor Gray
+    }
+}
+
+# Check WSL version if on Windows (Docker Desktop requires WSL 2.1.5+)
+if ($IsWindows -or $env:OS -eq "Windows_NT") {
+    try {
+        $wslVersionOutput = wsl --version 2>&1 | Out-String
+        # Remove null characters that cause spacing issues in UTF-16 output
+        $wslVersionOutput = $wslVersionOutput -replace '\0', ''
+        if ($LASTEXITCODE -eq 0 -and $wslVersionOutput -match "WSL\s*version:\s*(\d+\.\d+\.\d+(?:\.\d+)?)") {
+            $wslVersion = [version]$matches[1]
+            $minRequiredVersion = [version]"2.1.5"
+            if ($wslVersion -lt $minRequiredVersion) {
+                Write-Host "  [WARNING] WSL version $wslVersion detected (Docker requires 2.1.5+)" -ForegroundColor Yellow
+                Write-Host "  Docker Desktop may fail to start or show errors" -ForegroundColor Yellow
+                Write-Host ""
+                $updateResponse = Read-Host "Update WSL now? (Y/n)"
+                if ($updateResponse -notmatch '^[Nn]') {
+                    Write-Host "  Updating WSL..." -ForegroundColor Cyan
+                    wsl --update
+                    Write-Host "  WSL update complete. Please restart your terminal if needed." -ForegroundColor Green
+                    Write-Host ""
+                }
+            }
+        }
+    } catch {
+        # WSL version check failed, continue anyway
+    }
+}
+
+# Helper function to check Docker daemon status in WSL with timeout protection
+function Test-DockerDaemonInWSL {
+    param(
+        [int]$MaxRetries = 5,
+        [int]$RetryDelay = 3,
+        [int]$CommandTimeout = 5,
+        [int]$JobTimeout = 8,
+        [switch]$ShowProgress
+    )
+    
+    for ($retry = 1; $retry -le $MaxRetries; $retry++) {
+        if ($ShowProgress) {
+            Write-Host "    Attempt $retry/$MaxRetries..." -NoNewline -ForegroundColor Gray
+        }
+        
+        # Try without sudo first (group membership should be active)
+        $job = Start-Job -ScriptBlock {
+            param($timeoutSec)
+            $output = wsl bash -c "timeout $timeoutSec bash -c 'docker info >/dev/null 2>&1'; echo `$?" 2>&1
+            $exitCode = $LASTEXITCODE
+            if ($output -match "^0$" -or $exitCode -eq 0) {
+                return 0
+            }
+            return 1
+        } -ArgumentList $CommandTimeout
+        
+        $jobResult = $null
+        $completed = $job | Wait-Job -Timeout $JobTimeout
+        if ($completed) {
+            $jobResult = Receive-Job -Job $job
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        
+        if ($jobResult -eq 0) {
+            if ($ShowProgress) {
+                Write-Host " [OK]" -ForegroundColor Green
+            }
+            return @{
+                Success = $true
+                NeedsSudo = $false
+            }
+        }
+        
+        # Try with sudo as fallback
+        $job = Start-Job -ScriptBlock {
+            param($timeoutSec)
+            $output = wsl bash -c "timeout $timeoutSec bash -c 'sudo docker info >/dev/null 2>&1'; echo `$?" 2>&1
+            $exitCode = $LASTEXITCODE
+            if ($output -match "^0$" -or $exitCode -eq 0) {
+                return 0
+            }
+            return 1
+        } -ArgumentList $CommandTimeout
+        
+        $jobResult = $null
+        $completed = $job | Wait-Job -Timeout $JobTimeout
+        if ($completed) {
+            $jobResult = Receive-Job -Job $job
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        
+        if ($jobResult -eq 0) {
+            if ($ShowProgress) {
+                Write-Host " [OK]" -ForegroundColor Green
+            }
+            return @{
+                Success = $true
+                NeedsSudo = $true
+            }
+        }
+        
+        if ($ShowProgress) {
+            Write-Host " [waiting...]" -ForegroundColor Yellow
+        }
+        if ($retry -lt $MaxRetries) {
+            Start-Sleep -Seconds $RetryDelay
+        }
+    }
+    
+    return @{
+        Success = $false
+        NeedsSudo = $null
+    }
+}
+
+# Helper function to check Docker daemon status (simple check, returns string)
+function Get-DockerDaemonStatus {
+    param(
+        [int]$CommandTimeout = 5,
+        [int]$JobTimeout = 8
+    )
+    
+    $job = Start-Job -ScriptBlock {
+        param($timeoutSec)
+        $output = wsl bash -c "timeout $timeoutSec bash -c 'docker info >/dev/null 2>&1 && echo running || echo stopped'" 2>&1
+        return $output
+    } -ArgumentList $CommandTimeout
+    
+    $result = $null
+    $completed = $job | Wait-Job -Timeout $JobTimeout
+    if ($completed) {
+        $result = Receive-Job -Job $job
+    }
+    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    
+    return $result
+}
+
+# Helper function to start Docker daemon in WSL with timeout protection
+function Start-DockerDaemonInWSL {
+    param(
+        [switch]$NoMessage
+    )
+    
+    # First check if Docker is already running - if so, skip starting
+    $statusCheck = Get-DockerDaemonStatus -CommandTimeout 3 -JobTimeout 5
+    if ($statusCheck -match "running") {
+        if (-not $NoMessage) {
+            Write-Host "  Docker daemon is already running" -ForegroundColor Gray
+        }
+        return @{
+            ExitCode = 0
+            Output = "Already running"
+        }
+    }
+    
+    if (-not $NoMessage) {
+        Write-Host "  Starting Docker daemon..." -ForegroundColor Gray
+    }
+    
+    # Start Docker daemon in background and don't wait for it to complete
+    # 'service docker start' can hang waiting for the service to fully initialize
+    # So we start it and then check status separately
+    $process = Start-Process -FilePath "wsl" -ArgumentList "sudo","service","docker","start" -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+    
+    # Give it a moment to start the process
+    Start-Sleep -Seconds 1
+    
+    # Don't wait for the process - just return immediately
+    # The verification step will check if Docker is actually running
+    return @{
+        ExitCode = 0
+        Output = "Start command issued (checking status separately)"
+        ProcessId = $process.Id
+    }
+}
+
+# Function to install Docker Engine in WSL2
+function Install-DockerInWSL {
+    # First, check if WSL has a distribution installed
+    try {
+        $distros = wsl --list --quiet 2>&1 | Out-String
+        $distros = $distros.Trim()
+        
+        # Check if distro exists but might not be initialized
+        if ($distros -and $distros -ne "") {
+            # Distro is listed, but check if it's actually usable
+            $testUser = wsl whoami 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not $testUser) {
+                Write-Host ""
+                Write-Host "  [WARNING] WSL distribution found but not initialized" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "  ============================================" -ForegroundColor Cyan
+                Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
+                Write-Host "  ============================================" -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host "  Your WSL distribution needs to be set up with a username and password." -ForegroundColor White
+                Write-Host "  Opening WSL terminal for initial setup..." -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host "  A new WSL window will open. Please:" -ForegroundColor Yellow
+                Write-Host "    1. Enter a username (lowercase, no spaces)" -ForegroundColor Gray
+                Write-Host "    2. Enter a password (you'll be asked to confirm it)" -ForegroundColor Gray
+                Write-Host "    3. Wait for the setup to complete" -ForegroundColor Gray
+                Write-Host "    4. Type 'exit' and press Enter to close the window" -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "  Launching WSL in 3 seconds..." -ForegroundColor Cyan
+                Start-Sleep -Seconds 3
+                
+                # Get the default distribution name
+                $defaultDistro = wsl --list --quiet 2>&1 | Select-Object -First 1
+                $defaultDistro = $defaultDistro.Trim()
+                
+                # Try to launch the specific distribution
+                if ($defaultDistro -match "Ubuntu-22.04") {
+                    $ubuntuExe = Get-Command ubuntu2204.exe -ErrorAction SilentlyContinue
+                    if ($ubuntuExe) {
+                        Write-Host "  Opening Ubuntu 22.04 terminal..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "ubuntu2204.exe" -Wait
+                    } else {
+                        Write-Host "  Opening WSL with Ubuntu-22.04..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "wsl.exe" -ArgumentList "-d","Ubuntu-22.04" -Wait
+                    }
+                } else {
+                    # Launch default WSL distribution
+                    Write-Host "  Opening WSL terminal..." -ForegroundColor Gray
+                    Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                    Start-Process -FilePath "wsl.exe" -Wait
+                }
+                
+                # Verify setup is complete
+                Write-Host ""
+                Write-Host "  Verifying WSL setup..." -ForegroundColor Cyan
+                $testUser = wsl whoami 2>&1
+                if ($LASTEXITCODE -eq 0 -and $testUser -and $testUser -ne "root") {
+                    Write-Host "  [OK] WSL is configured with user: $testUser" -ForegroundColor Green
+                    Write-Host ""
+                    # Continue with Docker installation - don't return, just continue to next section
+                } else {
+                    Write-Host "  [ERROR] WSL setup not complete" -ForegroundColor Red
+                    Write-Host ""
+                    Write-Host "  The WSL terminal may not have opened properly." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Please manually complete setup:" -ForegroundColor Yellow
+                    Write-Host "    1. Open a PowerShell window" -ForegroundColor Gray
+                    Write-Host "    2. Run: wsl" -ForegroundColor Cyan
+                    Write-Host "    3. Follow the prompts to create a username and password" -ForegroundColor Gray
+                    Write-Host "    4. Type 'exit' to close the WSL window" -ForegroundColor Gray
+                    Write-Host "    5. Re-run this bootstrap script" -ForegroundColor Gray
+                    Write-Host ""
+                    if ($didPush) { Pop-Location }
+                    exit 1
+                }
+            }
+            # If we get here, distro is installed and initialized - continue to Docker installation
+        }
+        
+        if (-not $distros -or $distros -eq "") {
+            Write-Host ""
+            Write-Host "  [ERROR] No WSL Linux distribution installed" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "  A Linux distribution is required to install Docker in WSL2" -ForegroundColor Yellow
+            Write-Host "  Installing Ubuntu 22.04 (this may take a few minutes)..." -ForegroundColor Cyan
+            Write-Host ""
+            
+            try {
+                # Install Ubuntu with --no-launch, then explicitly launch it
+                Write-Host "  Installing Ubuntu 22.04..." -ForegroundColor Cyan
+                $installOutput = wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-String
+                
+                if ($LASTEXITCODE -eq 0 -or $installOutput -match "already installed") {
+                    Write-Host "  [OK] Ubuntu 22.04 installation initiated" -ForegroundColor Green
+                    
+                    # Wait for distribution to be fully registered (can take a few seconds)
+                    Write-Host "  Waiting for Ubuntu to be fully registered..." -ForegroundColor Gray
+                    $maxWait = 30
+                    $waited = 0
+                    $distroReady = $false
+                    
+                    while ($waited -lt $maxWait -and -not $distroReady) {
+                        Start-Sleep -Seconds 2
+                        $waited += 2
+                        
+                        # Check if distribution is now listed
+                        $distroList = wsl --list --quiet 2>&1 | Out-String
+                        if ($distroList -match "Ubuntu-22.04" -or $distroList -match "Ubuntu") {
+                            $distroReady = $true
+                            Write-Host "  [OK] Ubuntu is registered and ready" -ForegroundColor Green
+                        }
+                    }
+                    
+                    if (-not $distroReady) {
+                        Write-Host "  [WARNING] Ubuntu registration may still be in progress" -ForegroundColor Yellow
+                        Write-Host "  Continuing anyway..." -ForegroundColor Gray
+                    }
+                    
+                    Write-Host ""
+                    Write-Host "  ============================================" -ForegroundColor Cyan
+                    Write-Host "  IMPORTANT: First-time setup required" -ForegroundColor Yellow
+                    Write-Host "  ============================================" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "  Ubuntu needs a username and password to be configured." -ForegroundColor White
+                    Write-Host "  Opening Ubuntu terminal for initial setup..." -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "  A new Ubuntu window will open. Please:" -ForegroundColor Yellow
+                    Write-Host "    1. Wait for the 'Installing...' message to complete" -ForegroundColor Gray
+                    Write-Host "    2. Enter a username (lowercase, no spaces)" -ForegroundColor Gray
+                    Write-Host "    3. Enter a password (you'll be asked to confirm it)" -ForegroundColor Gray
+                    Write-Host "    4. Wait for the command prompt to appear" -ForegroundColor Gray
+                    Write-Host "    5. Type 'exit' and press Enter to close the Ubuntu window" -ForegroundColor Gray
+                    Write-Host ""
+                    Write-Host "  Launching Ubuntu in 3 seconds..." -ForegroundColor Cyan
+                    Start-Sleep -Seconds 3
+                    
+                    # Try to launch ubuntu.exe (the app launcher) first, fallback to wsl
+                    $ubuntuExe = Get-Command ubuntu2204.exe -ErrorAction SilentlyContinue
+                    if ($ubuntuExe) {
+                        Write-Host "  Opening Ubuntu 22.04 terminal..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "ubuntu2204.exe" -Wait
+                    } else {
+                        # Fallback to WSL with explicit distribution
+                        Write-Host "  Opening WSL with Ubuntu-22.04..." -ForegroundColor Gray
+                        Write-Host "  (This will stay open until you complete setup and type 'exit')" -ForegroundColor Gray
+                        Start-Process -FilePath "wsl.exe" -ArgumentList "-d","Ubuntu-22.04" -Wait
+                    }
+                    
+                    # Verify that Ubuntu is now set up
+                    Write-Host ""
+                    Write-Host "  Verifying Ubuntu setup..." -ForegroundColor Cyan
+                    $testUser = wsl -d Ubuntu-22.04 whoami 2>&1
+                    if ($LASTEXITCODE -eq 0 -and $testUser -and $testUser -ne "root") {
+                        Write-Host "  [OK] Ubuntu is configured with user: $testUser" -ForegroundColor Green
+                        Write-Host ""
+                        # Continue with Docker installation
+                    } else {
+                        Write-Host "  [ERROR] Ubuntu setup not complete" -ForegroundColor Red
+                        Write-Host ""
+                        Write-Host "  The Ubuntu terminal may not have opened properly." -ForegroundColor Yellow
+                        Write-Host ""
+                        Write-Host "  Please manually complete setup:" -ForegroundColor Yellow
+                        Write-Host "    1. Open Windows Start Menu" -ForegroundColor Gray
+                        Write-Host "    2. Search for 'Ubuntu 22.04' and click it" -ForegroundColor Gray
+                        Write-Host "    3. Follow the prompts to create a username and password" -ForegroundColor Gray
+                        Write-Host "    4. Type 'exit' to close the Ubuntu window" -ForegroundColor Gray
+                        Write-Host "    5. Re-run this bootstrap script" -ForegroundColor Gray
+                        Write-Host ""
+                        if ($didPush) { Pop-Location }
+                        exit 1
+                    }
+                } else {
+                    throw "Installation failed with exit code $LASTEXITCODE"
+                }
+            } catch {
+                Write-Host "  [ERROR] Could not install Ubuntu: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host ""
+                Write-Host "  Manual installation steps:" -ForegroundColor Yellow
+                Write-Host "    1. Run: wsl --install -d Ubuntu-22.04" -ForegroundColor Cyan
+                Write-Host "    2. Follow the prompts to set up Ubuntu" -ForegroundColor Gray
+                Write-Host "    3. Re-run this bootstrap script" -ForegroundColor Gray
+                Write-Host ""
+                if ($didPush) { Pop-Location }
+                exit 1
+            }
+        }
+    } catch {
+        Write-Host "  [WARNING] Could not check WSL distributions" -ForegroundColor Yellow
+    }
+    
+    Write-Host ""
+    Write-Host "  Docker Engine can be automatically installed in WSL2" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Benefits:" -ForegroundColor Green
+    Write-Host "    - Shared across all Windows users" -ForegroundColor Gray
+    Write-Host "    - Lighter weight than Docker Desktop" -ForegroundColor Gray
+    Write-Host "    - Production-grade Docker Engine" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  Note: Requires sudo password in WSL" -ForegroundColor Yellow
+    Write-Host ""
+    
+    if (-not $AutoLocal) {
+        # Interactive mode - ask user
+        $response = Read-Host "Install Docker Engine in WSL2? (Y/n)"
+        if ($response -match '^[Nn]') {
+            return $false
+        }
+    } else {
+        # AutoLocal mode (bootstrap) - proceed automatically with user notification
+        Write-Host "  Proceeding with automatic installation..." -ForegroundColor Cyan
+        Write-Host "  This is necessary for the application to run" -ForegroundColor Gray
+    }
+    
+    Write-Host ""
+    Write-Host "  Installing Docker Engine in WSL2 (this may take a few minutes)..." -ForegroundColor Yellow
+    Write-Host "  You WILL be prompted for your WSL sudo password multiple times" -ForegroundColor Yellow
+    Write-Host ""
+    
+    try {
+        # Run installation commands step by step for better error handling and password prompts
+        Write-Host "  Step 1/5: Updating package index..." -ForegroundColor Cyan
+        wsl sudo apt-get update
+        
+        Write-Host "  Step 2/5: Installing prerequisites..." -ForegroundColor Cyan
+        wsl sudo apt-get install -y ca-certificates curl
+        
+        Write-Host "  Step 3/5: Downloading Docker installation script..." -ForegroundColor Cyan
+        wsl curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+        
+        Write-Host "  Step 4/5: Installing Docker Engine..." -ForegroundColor Cyan
+        Write-Host "  (This will take 1-2 minutes)" -ForegroundColor Gray
+        wsl sudo sh /tmp/get-docker.sh
+        
+        Write-Host "  Step 5/5: Configuring and starting Docker..." -ForegroundColor Cyan
+        # Get current WSL username
+        $wslUser = wsl whoami
+        wsl sudo usermod -aG docker $wslUser
+        wsl sudo service docker start
+        
+        # Wait a bit longer for Docker to start
+        Start-Sleep -Seconds 5
+        
+        # Verify installation - test in a NEW shell session (group membership takes effect in new sessions)
+        Write-Host "  Verifying Docker installation..." -ForegroundColor Gray
+        # Use a new bash session to test docker group membership
+        $dockerVersion = wsl bash -c "docker --version" 2>&1
+        
+        if ($LASTEXITCODE -ne 0) {
+            # Try with sudo if regular command failed (group membership may not have taken effect yet)
+            Write-Host "  Note: Testing with sudo (group membership will be active in new WSL sessions)" -ForegroundColor Gray
+            $dockerVersion = wsl bash -c "sudo docker --version" 2>&1
+        }
+        
+        if ($LASTEXITCODE -eq 0 -and $dockerVersion -match "Docker version") {
+            Write-Host ""
+            Write-Host "  [OK] Docker Engine installed successfully!" -ForegroundColor Green
+            Write-Host "  Installed: $dockerVersion" -ForegroundColor Gray
+            Write-Host ""
+            
+            # Ensure Docker daemon is running
+            Start-DockerDaemonInWSL | Out-Null
+            # Start command issued - verification step will check if it actually started
+            
+            # Check if daemon is accessible with timeout and retries
+            Write-Host "  Verifying Docker daemon is ready..." -ForegroundColor Gray
+            $daemonCheck = Test-DockerDaemonInWSL -ShowProgress
+            
+            if ($daemonCheck.Success) {
+                if (-not $daemonCheck.NeedsSudo) {
+                    Write-Host "  [OK] Docker daemon is running and accessible (no sudo needed)" -ForegroundColor Green
+                } else {
+                    Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
+                    Write-Host "  [INFO] Docker group membership is active - commands will work without sudo in new sessions" -ForegroundColor Gray
+                }
+            } else {
+                Write-Host ""
+                Write-Host "  [WARNING] Docker daemon verification timed out" -ForegroundColor Yellow
+                Write-Host "  Docker may still be starting up - continuing anyway" -ForegroundColor Gray
+                Write-Host "  If containers fail to start, try: wsl sudo service docker start" -ForegroundColor Gray
+            }
+            Write-Host ""
+            return $true
+        } else {
+            Write-Host ""
+            Write-Host "  [ERROR] Docker installation verification failed" -ForegroundColor Red
+            Write-Host "  Docker may not have installed correctly" -ForegroundColor Yellow
+            Write-Host "  Try running: wsl sudo docker --version" -ForegroundColor Gray
+            Write-Host ""
+            return $false
+        }
+    } catch {
+        Write-Host ""
+        Write-Host "  [ERROR] Failed to install Docker: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+# Function to check if Docker in WSL2 is available and configure it
+function Test-DockerInWSL {
+    param([bool]$OfferInstall = $false)
+    
+    Write-Host "  Checking for Docker in WSL2..." -ForegroundColor Cyan
+    
+    # Check if WSL is available
+    $wslAvailable = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslAvailable) {
+        Write-Host "    WSL not available" -ForegroundColor Gray
+        return $false
+    }
+    
+    # Check for Docker in default WSL distribution
+    try {
+        $dockerInWsl = wsl bash -c "command -v docker" 2>&1
+        if ($LASTEXITCODE -eq 0 -and $dockerInWsl) {
+            Write-Host "    [OK] Docker found in WSL2" -ForegroundColor Green
+            
+            # Check if Docker daemon is running (with timeout to prevent hanging)
+            $dockerStatus = Get-DockerDaemonStatus
+            
+            if ($dockerStatus -match "running") {
+                Write-Host "    [OK] Docker daemon is running in WSL2" -ForegroundColor Green
+                
+                # Try using docker directly from Windows (Docker Desktop compatibility mode)
+                try {
+                    docker info 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "    [OK] Docker accessible from Windows" -ForegroundColor Green
+                        return $true
+                    }
+                } catch {}
+                
+                Write-Host "    [INFO] Docker running but not accessible from Windows" -ForegroundColor Gray
+                Write-Host "    Will run docker commands through WSL" -ForegroundColor Gray
+                
+                # Create a wrapper to run docker commands through WSL
+                # Set environment variable to indicate we're using WSL Docker
+                $env:DOCKER_USE_WSL = "1"
+                return $true
+                
+            } elseif ($dockerStatus -match "stopped") {
+                Write-Host "    Docker daemon is not running in WSL2" -ForegroundColor Gray
+                Write-Host "    Attempting to start Docker daemon..." -ForegroundColor Yellow
+                
+                # Try to start Docker daemon in WSL2
+                Start-DockerDaemonInWSL -NoMessage | Out-Null
+                # Start command issued - status check below will verify if it started
+                
+                # Check again (with timeout to prevent hanging)
+                $dockerStatus = Get-DockerDaemonStatus
+                
+                if ($dockerStatus -match "running") {
+                    Write-Host "    [OK] Docker daemon started in WSL2" -ForegroundColor Green
+                    $env:DOCKER_USE_WSL = "1"
+                    return $true
+                } else {
+                    Write-Host "    [WARNING] Could not start Docker daemon in WSL2" -ForegroundColor Yellow
+                    Write-Host "    Try: wsl sudo service docker start" -ForegroundColor Gray
+                    return $false
+                }
+            }
+        } else {
+            # Docker not found in WSL
+            Write-Host "    Docker not found in WSL2" -ForegroundColor Gray
+            
+            if ($OfferInstall) {
+                $installResult = Install-DockerInWSL
+                if ($installResult) {
+                    # Installation succeeded, set WSL mode and verify Docker is accessible
+                    $env:DOCKER_USE_WSL = "1"
+                    Write-Host "    [OK] Docker installed and WSL mode enabled" -ForegroundColor Green
+                    
+                    # Ensure Docker daemon is running and accessible
+                    Start-DockerDaemonInWSL -NoMessage | Out-Null
+                    # Start command issued - verification step will check if it actually started
+                    
+                    # Test docker access in a new shell (where group membership is active)
+                    Write-Host "    Verifying Docker daemon is ready..." -ForegroundColor Gray
+                    $daemonCheck = Test-DockerDaemonInWSL -ShowProgress
+                    
+                    if ($daemonCheck.Success) {
+                        if (-not $daemonCheck.NeedsSudo) {
+                            Write-Host "    [OK] Docker is ready and accessible" -ForegroundColor Green
+                        } else {
+                            Write-Host "    [OK] Docker is ready (using sudo for now)" -ForegroundColor Green
+                        }
+                    } else {
+                        Write-Host "    [WARNING] Docker daemon may not be fully ready yet" -ForegroundColor Yellow
+                        Write-Host "    Continuing anyway - it should be ready by the time containers start" -ForegroundColor Gray
+                    }
+                }
+                return $installResult
+            }
+            return $false
+        }
+    } catch {
+        Write-Host "    Error checking Docker in WSL2: $($_.Exception.Message)" -ForegroundColor Gray
+    }
+    
+    return $false
+}
+
+# Check Docker status and start if needed (Windows)
+Write-Host "  Checking Docker status..." -ForegroundColor Yellow
+$dockerOk = $false
+$dockerSource = "Unknown"
+
+# First, check if Docker is already accessible
+try {
+    docker info 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { 
+        $dockerOk = $true
+        $dockerSource = "Already Running"
+        Write-Host "  [OK] Docker is already running and accessible" -ForegroundColor Green
+    }
+} catch {}
+
+# If Docker not accessible and on Windows, try to start it
+if (-not $dockerOk -and ($IsWindows -or $env:OS -eq "Windows_NT")) {
+    Write-Host "  Docker is not accessible. Trying Docker Desktop first..." -ForegroundColor Yellow
+    
+    # Try Docker Desktop for current user
+    $dockerDesktopStarted = $false
+    $skipDockerDesktop = $false
+    
+    # Check if Docker Desktop is already running under another user
+    $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($dockerDesktopRunning) {
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        try {
+            $processOwner = (Get-WmiObject Win32_Process -Filter "ProcessId=$($dockerDesktopRunning.Id)").GetOwner()
+            
+            # Check if we got valid owner information
+            if ($processOwner -and $processOwner.User) {
+                $processUser = "$($processOwner.Domain)\$($processOwner.User)"
+                $otherUsername = $processOwner.User
+                
+                if ($processUser -ne $currentUser) {
+                    Write-Host "  Docker Desktop is running under different user: $otherUsername" -ForegroundColor Yellow
+                    Write-Host ""
+                    
+                    # Offer to continue with that user's Docker Desktop
+                    if (-not $AutoLocal) {
+                        $response = Read-Host "Would you like to close Docker Desktop and restart it under current user? (Y/n)"
+                        if ($response -notmatch '^[Nn]') {
+                            Write-Host "  Please close Docker Desktop in the other user session and press Enter to continue..."
+                            Read-Host
+                            # Check again if it's closed
+                            $dockerDesktopRunning = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue | Select-Object -First 1
+                            if (-not $dockerDesktopRunning) {
+                                Write-Host "  [OK] Docker Desktop closed. Will attempt to start for current user..." -ForegroundColor Green
+                                $skipDockerDesktop = $false
+                            } else {
+                                Write-Host "  [WARNING] Docker Desktop still running. Falling back to WSL2..." -ForegroundColor Yellow
+                                $skipDockerDesktop = $true
+                            }
+                        } else {
+                            Write-Host "  Skipping Docker Desktop, will try WSL2..." -ForegroundColor Gray
+                            $skipDockerDesktop = $true
+                        }
+                    } else {
+                        # In AutoLocal mode, skip Docker Desktop automatically
+                        Write-Host "  Cannot use another user's Docker Desktop - skipping to WSL2 fallback" -ForegroundColor Gray
+                        $skipDockerDesktop = $true
+                    }
+                } else {
+                    Write-Host "  Docker Desktop is already running under current user" -ForegroundColor Gray
+                    $dockerDesktopStarted = $true
+                }
+            } else {
+                # Owner info not available, but process exists - likely different user
+                Write-Host "  [WARNING] Docker Desktop is running under another session" -ForegroundColor Yellow
+                Write-Host "  Cannot start another Docker Desktop instance - skipping to WSL2 fallback" -ForegroundColor Gray
+                $skipDockerDesktop = $true
+            }
+        } catch {
+            Write-Host "  [WARNING] Docker Desktop process found but cannot verify owner" -ForegroundColor Yellow
+            Write-Host "  Skipping Docker Desktop to avoid conflicts - trying WSL2" -ForegroundColor Gray
+            $skipDockerDesktop = $true
+        }
+    }
+    
+    # If not running for current user and not skipping, try to start it
+    if (-not $dockerDesktopStarted -and -not $skipDockerDesktop) {
+        $candidates = @(
+            "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+            "$env:ProgramFiles(x86)\Docker\Docker\Docker Desktop.exe"
+        )
+        
+        foreach ($p in $candidates) {
+            if (Test-Path $p) {
+                Write-Host "  Starting Docker Desktop: $p" -ForegroundColor Cyan
+                try {
+                    Start-Process -FilePath $p -ErrorAction Stop
+                    $dockerDesktopStarted = $true
+                    Write-Host "  [OK] Docker Desktop process started" -ForegroundColor Gray
+                } catch {
+                    Write-Host "  [WARNING] Failed to start: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+                break
+            }
+        }
+    }
+    
+    # Wait for Docker Desktop if we started it (but not if we skipped it)
+    if ($dockerDesktopStarted -and -not $skipDockerDesktop) {
+        Write-Host "  Waiting for Docker Desktop to be ready (up to 180 seconds)..." -ForegroundColor Gray
+        $timeoutSec = 180
+        $elapsed = 0
+        $dotCount = 0
+        
+        while (-not $dockerOk -and $elapsed -lt $timeoutSec) {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            $dotCount++
+            Write-Host "." -NoNewline -ForegroundColor Gray
+            
+            try { 
+                docker info 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) { 
+                    $dockerOk = $true
+                    $dockerSource = "Docker Desktop"
+                }
+            } catch {}
+            
+            if ($dotCount % 10 -eq 0 -and -not $dockerOk) {
+                Write-Host " ($elapsed seconds)" -ForegroundColor Gray
+                Write-Host "  Still waiting" -NoNewline -ForegroundColor Gray
+            }
+        }
+        Write-Host ""
+        
+        if ($dockerOk) {
+            Write-Host "  [OK] Docker Desktop is ready!" -ForegroundColor Green
+        } else {
+            Write-Host "  [WARNING] Docker Desktop did not become ready" -ForegroundColor Yellow
+        }
+    }
+    
+    # If Docker Desktop failed or was skipped, try Docker in WSL2 as fallback
+    if (-not $dockerOk) {
+        Write-Host ""
+        if ($skipDockerDesktop) {
+            Write-Host "  Falling back to Docker in WSL2..." -ForegroundColor Cyan
+        } else {
+            Write-Host "  Docker Desktop not available. Trying Docker in WSL2..." -ForegroundColor Yellow
+        }
+        
+        # Offer to install Docker if not found
+        if (Test-DockerInWSL -OfferInstall $true) {
+            $dockerOk = $true
+            $dockerSource = "Docker in WSL2"
+        }
+    }
+    
+    # Final check: if nothing worked, exit with error
+    if (-not $dockerOk) {
+        Write-Host ""
+        Write-Host "  [ERROR] Could not start or connect to Docker" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Attempted methods:" -ForegroundColor Yellow
+        
+        if ($skipDockerDesktop) {
+            Write-Host "  1. Docker Desktop - SKIPPED (running under different user)" -ForegroundColor Gray
+            Write-Host "  2. Docker in WSL2 - Not available or not configured" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Because Docker Desktop is running under another user:" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Quick Fix Options:" -ForegroundColor Cyan
+            Write-Host "  Option A: Close Docker Desktop in the other user's session, then re-run this script" -ForegroundColor White
+            Write-Host "  Option B: Log in as the other user and run this script there" -ForegroundColor White
+            Write-Host ""
+            Write-Host "Long-term Solution (for multi-user systems):" -ForegroundColor Cyan
+            Write-Host "  Set up WSL2 with Ubuntu and Docker Engine (shared across all users)" -ForegroundColor White
+            Write-Host ""
+            Write-Host "  Step 1: Check if WSL has a Linux distribution" -ForegroundColor Gray
+            Write-Host "    wsl --list" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Step 2: If none found, install Ubuntu:" -ForegroundColor Gray
+            Write-Host "    wsl --install -d Ubuntu-22.04" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Step 3: Run Ubuntu and set up username/password:" -ForegroundColor Gray
+            Write-Host "    wsl" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Step 4: Re-run this bootstrap script" -ForegroundColor Gray
+        } else {
+            Write-Host "  1. Docker Desktop for current user - Not found or failed to start" -ForegroundColor Gray
+            Write-Host "  2. Docker in WSL2 - Not available or not configured" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Solutions:" -ForegroundColor Yellow
+            Write-Host "  1. Install Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Cyan
+            Write-Host "  2. Or set up Docker Engine in WSL2" -ForegroundColor Cyan
+            Write-Host "     Guide: https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository" -ForegroundColor Gray
+            Write-Host "  3. Check Docker Desktop logs: $env:LOCALAPPDATA\Docker\log" -ForegroundColor Cyan
+        }
+        Write-Host ""
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+}
+
+Write-Host "  [OK] Using Docker from: $dockerSource" -ForegroundColor Green
+Write-Host ""
+
+# If using WSL Docker and bash script exists, use it directly (cleaner!)
+if ($env:DOCKER_USE_WSL -eq "1") {
+    if (Test-Path "start-docker.sh") {
+        Write-Host "  Using bash script for WSL Docker operations..." -ForegroundColor Cyan
+        Write-Host ""
+        
+        # Convert line endings and make script executable
+        Write-Host "  Preparing bash script..." -ForegroundColor Gray
+        # Convert Windows line endings (CRLF) to Unix line endings (LF)
+        # Try dos2unix first, fall back to sed if not available
+        wsl bash -c "command -v dos2unix" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            wsl dos2unix start-docker.sh 2>&1 | Out-Null
+        } else {
+            # Use sed to remove CR characters
+            wsl bash -c "sed -i 's/\r$$//' start-docker.sh" 2>&1 | Out-Null
+        }
+        wsl chmod +x start-docker.sh 2>&1 | Out-Null
+        
+        # Final verification that Docker is accessible before running bash script
+        Write-Host "  Verifying Docker is ready before starting containers..." -ForegroundColor Gray
+        $daemonCheck = Test-DockerDaemonInWSL -MaxRetries 1 -ShowProgress:$false
+        
+        if ($daemonCheck.Success) {
+            if (-not $daemonCheck.NeedsSudo) {
+                Write-Host "  [OK] Docker is ready" -ForegroundColor Green
+            } else {
+                Write-Host "  [OK] Docker is ready (using sudo)" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "  [WARNING] Docker may not be fully ready - bash script will attempt to start it" -ForegroundColor Yellow
+        }
+        Write-Host ""
+        
+        # Run the bash script from WSL with auto-local mode
+        # Convert Windows path to WSL path format: C:\Users\... -> /mnt/c/Users/...
+        $driveLetter = ($PWD.Path.Substring(0,1)).ToLower()
+        $pathWithoutDrive = $PWD.Path.Substring(2) -replace '\\','/'
+        $wslPath = "/mnt/$driveLetter$pathWithoutDrive"
+        Write-Host "  Launching Docker Compose setup..." -ForegroundColor Cyan
+        wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
+        
+        $bashExitCode = $LASTEXITCODE
+        
+        if ($bashExitCode -eq 0) {
+            Write-Host ""
+            Write-Host "  Setup complete! Launching WSL session..." -ForegroundColor Green
+            Write-Host ""
+            Write-Host "You'll now be in a WSL bash session where Docker commands work." -ForegroundColor Cyan
+            Write-Host "Type 'exit' when you're done to return to PowerShell." -ForegroundColor Gray
+            Write-Host ""
+            Start-Sleep -Seconds 2
+            
+            # Launch interactive WSL session in the project directory
+            wsl bash -c "cd '$wslPath' && exec bash"
+        }
+        
+        if ($didPush) { Pop-Location }
+        exit $bashExitCode
+    } else {
+        Write-Host "  [WARNING] start-docker.sh not found, using WSL docker commands directly" -ForegroundColor Yellow
+        Write-Host "  Note: Running commands through WSL (may need sudo)" -ForegroundColor Gray
+    }
+}
+
+# Helper function to run docker commands (through WSL if needed)
+function Invoke-Docker {
+    param([string]$Command)
+    
+    if ($env:DOCKER_USE_WSL -eq "1") {
+        # Run docker through WSL with sudo (needed after fresh install)
+        # Convert Windows path to WSL path format: C:\Users\... -> /mnt/c/Users/...
+        $driveLetter = ($PWD.Path.Substring(0,1)).ToLower()
+        $pathWithoutDrive = $PWD.Path.Substring(2) -replace '\\','/'
+        $wslPath = "/mnt/$driveLetter$pathWithoutDrive"
+        $wslCommand = "cd '$wslPath' && sudo $Command"
+        wsl bash -c $wslCommand
+    } else {
+        # Run docker directly on Windows
+        Invoke-Expression $Command
     }
 }
 
 # Start containers
 Write-Host "  Starting ZaroPGx Docker Compose containers..." -ForegroundColor Yellow
+
+if ($env:DOCKER_USE_WSL -eq "1") {
+    Write-Host "  Note: Running Docker commands through WSL" -ForegroundColor Gray
+}
+
 Write-Host "  Stopping existing containers..." -ForegroundColor Gray
-docker compose down --remove-orphans
+Invoke-Docker "docker compose down --remove-orphans"
 
 Write-Host "  Building and starting containers..." -ForegroundColor Gray
-docker compose up -d --build
+Invoke-Docker "docker compose up -d --build"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Docker Compose failed to start containers" -ForegroundColor Red
+    if ($didPush) { Pop-Location }
     exit 1
 }
 
-# Wait for services to be ready
-Write-Host "  Waiting for services to start..." -ForegroundColor Yellow
-Start-Sleep -Seconds 10
+# Wait for app ready state by watching logs
+Write-Host "  Waiting for ZaroPGx to be ready (up to 5 minutes)..." -ForegroundColor Yellow
+
+$timeoutSec = 300
+$startTime = Get-Date
+$spinner = @('|','/','-','\')
+$i = 0
+$readyFound = $false
+
+while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
+    try {
+        $logs = Invoke-Docker "docker compose logs --no-color app"
+        if ($logs -match "ZaroPGx is ready and listening for requests!") {
+            Write-Host "`n  [OK] ZaroPGx is ready!" -ForegroundColor Green
+            $readyFound = $true
+            break
+        }
+    } catch {}
+    $spinChar = $spinner[$i % $spinner.Length]
+    Write-Host ("`r  Launching... " + $spinChar) -NoNewline -ForegroundColor Gray
+    $i++
+    Start-Sleep -Seconds 2
+}
+Write-Host ""
+
+if (-not $readyFound) {
+    Write-Host "  [WARNING] App did not report ready within timeout. Continuing anyway." -ForegroundColor Yellow
+}
 
 # Check container status
 Write-Host "  Container Status:" -ForegroundColor Cyan
-docker compose ps
+Invoke-Docker "docker compose ps"
 
 # Test the app health endpoint
 Write-Host "  Testing app health endpoint..." -ForegroundColor Yellow
@@ -64,20 +1059,35 @@ try {
     Write-Host "Testing GET /health on http://localhost:8765..." -ForegroundColor Gray
     $response = Invoke-WebRequest -Uri "http://localhost:8765/health" -TimeoutSec 10 -ErrorAction Stop
     if ($response.StatusCode -eq 200) {
-        Write-Host "✅ Health check passed!" -ForegroundColor Green
+        Write-Host "[SUCCESS] Health check passed!" -ForegroundColor Green
     } else {
-        Write-Host "⚠️  Health check returned status: $($response.StatusCode)" -ForegroundColor Yellow
+        Write-Host "[WARNING] Health check returned status: $($response.StatusCode)" -ForegroundColor Yellow
     }
 } catch {
-    Write-Host "❌ Health check failed (this is expected if app is still starting)" -ForegroundColor Yellow
+    Write-Host "[ERROR] Health check failed (this is expected if app is still starting)" -ForegroundColor Yellow
     Write-Host "   Error: $($_.Exception.Message)" -ForegroundColor Gray
 }
 
 Write-Host ""
-Write-Host "✅ ZaroPGx in Docker environment is started!" -ForegroundColor Green
-Write-Host "🌐 Web interface: http://localhost:8765" -ForegroundColor Cyan
-Write-Host "📊 Container status: docker compose ps" -ForegroundColor Cyan
-Write-Host "📝 Logs: docker compose logs -f" -ForegroundColor Cyan
+Write-Host "[SUCCESS] ZaroPGx in Docker environment is started!" -ForegroundColor Green
+Write-Host ">> Web interface: http://localhost:8765" -ForegroundColor Cyan
+
+if ($env:DOCKER_USE_WSL -eq "1") {
+    Write-Host ">> Container status: wsl docker compose ps" -ForegroundColor Cyan
+    Write-Host ">> Logs: wsl docker compose logs -f" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host ">> If you see issues, try:" -ForegroundColor Yellow
+    Write-Host "   wsl docker compose down; wsl docker compose build --no-cache; wsl docker compose up -d --force-recreate" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Note: Using Docker Engine in WSL2" -ForegroundColor Gray
+} else {
+    Write-Host ">> Container status: docker compose ps" -ForegroundColor Cyan
+    Write-Host ">> Logs: docker compose logs -f" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host ">> If you see issues, try:" -ForegroundColor Yellow
+    Write-Host "   docker compose down; docker compose build --no-cache; docker compose up -d --force-recreate" -ForegroundColor Gray
+}
+
 Write-Host ""
-Write-Host "🔧 If you see issues, try:" -ForegroundColor Yellow
-Write-Host "   docker compose down; docker compose build --no-cache; docker compose up -d --force-recreate" -ForegroundColor Gray
+if ($didPush) { Pop-Location }
+exit 0

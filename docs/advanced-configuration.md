@@ -91,7 +91,7 @@ This document lists environment variables and configuration flags used in the Za
 - **MAX_MEMORY**: Memory hint for Java jobs. Default: `20g`.
 
 ### PyPGx wrapper service
-- **PYPGX_MEMORY_LIMIT**: Memory limit hint for PyPGx. Default: `12G`.
+- **PYPGX_MEMORY_LIMIT**: Memory limit hint for PyPGx. Default: `7G`.
 - **PYPGX_MAX_PARALLEL_GENES**: Max concurrent gene tasks. Default: `8`.
 - **PYPGX_BATCH_SIZE**: Batch size for processing. Default: `4`.
 - **PYPGX_PHARMCAT_PREFERENCE**: Gene set preference: `auto` | `pypgx` | `pharmcat`. Default: `auto`.

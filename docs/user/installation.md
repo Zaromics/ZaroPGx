@@ -8,7 +8,7 @@ Detailed installation instructions for different deployment scenarios.
 
 ## System Requirements (minimum for VCF inputs; recommended for others)
 - **CPU**: 4 cores (8+ recommended)
-- **RAM**: 8 GB (64+ GB recommended)
+- **RAM**: 16 GB (64+ GB recommended)
 - **Storage**: 50 GB free space (1000+ GB recommended)
 - **OS**: Linux, macOS, or Windows with WSL2
 - **Network**: Stable internet needed for initial setup only (TODO: check nextflow behavior)
