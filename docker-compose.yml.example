@@ -1,10 +1,12 @@
   # In order to manually generate your docker compose file, use:
   # 'cp docker-compose.yml.example docker-compose.yml' and adjust the parameters.
 
-services:  
+name: zaropgx
+
+services:
+
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~
-  # Main FastAPI Application with Web UI, API, and supporting services
-  # ~~~~~~~~~~MAIN APP~~~~~~~~~~
+  # ZaroPGx Main Application running FastAPI with Web UI, API, and supporting services
   app:
     build:
       context: .
@@ -12,10 +14,10 @@ services:
     container_name: pgx_app
     restart: unless-stopped
     depends_on:
-      - db
-      - pharmcat
-      - gatk-api
-      - pypgx
+      db:
+        condition: service_healthy
+      pharmcat:
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
       - SECRET_KEY=${SECRET_KEY}
@@ -44,10 +46,11 @@ services:
     ports:
       - "${BIND_ADDRESS:-8765}:8000"
     healthcheck:
-      test: ["CMD", "echo", "Healthcheck disabled for debugging"]
-      interval: 10s
-      timeout: 5s
-      retries: 1
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - pgx-network
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -59,16 +62,16 @@ services:
     container_name: pgx_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: cpic_user
-      POSTGRES_PASSWORD: test123
-      POSTGRES_DB: cpic_db
+      POSTGRES_USER: ${DB_USER:-cpic_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-test123}
+      POSTGRES_DB: ${DB_NAME:-cpic_db}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
     ports:
       - "5444:5432"
     healthcheck:
-      test: ["CMD", "echo", "Healthcheck disabled for debugging"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-cpic_user}"]
       interval: 10s
       timeout: 5s
       retries: 1
@@ -91,6 +94,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
     ports:
       - "5050:5050"
     networks:
@@ -140,9 +149,9 @@ services:
       - hapi.fhir.allow_external_references=true
       - hapi.fhir.allow_multiple_delete=true
       - hapi.fhir.reuse_cached_search_results_millis=60000
-      - spring.datasource.url=jdbc:postgresql://db:5432/cpic_db?currentSchema=fhir
-      - spring.datasource.username=cpic_user
-      - spring.datasource.password=test123
+      - spring.datasource.url=jdbc:postgresql://db:5432/${DB_NAME:-cpic_db}?currentSchema=fhir
+      - spring.datasource.username=${DB_USER:-cpic_user}
+      - spring.datasource.password=${DB_PASSWORD:-test123}
       - spring.datasource.driverClassName=org.postgresql.Driver
       - spring.jpa.properties.hibernate.dialect=ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
       - spring.jpa.hibernate.ddl-auto=update
@@ -161,7 +170,7 @@ services:
       - SPRING_DATASOURCE_INITIALIZATION_MODE=always
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./data/fhir-data:/data/hapi
     healthcheck:
@@ -248,27 +257,6 @@ services:
           memory: 7G
 
 
-  # OptiType Service (CLI container, no HTTP wrapper) 
-  # CURRENTLY UNUSED, USING HLATYPING INSTEAD
-  # FEEL FREE TO DELETE THIS SECTION ON YOUR MACHINE
-  # optitype:
-  #   image: smithnickh/optitype:v2.0
-  #   container_name: pgx_optitype
-  #   restart: unless-stopped
-  #   # Keep the container running so we can exec CLI commands into it from other services
-  #   command: ["tail", "-f", "/dev/null"]
-  #   volumes:
-  #     - ./data:/data
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "command -v OptiTypePipeline.py >/dev/null 2>&1 || test -f /OptiTypePipeline.py || test -f /opt/OptiType/OptiTypePipeline.py"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 40s
-  #   networks:
-  #     - pgx-network
-
-
   # nf-core/hlatyping Wrapper Service (HTTP API running Nextflow)
   # OptiType inside version <= v1.3.5
   hlatyping:
@@ -328,6 +316,7 @@ services:
   mermaid:
     image: yuzutech/kroki-mermaid:latest
     container_name: pgx_kroki_mermaid
+    restart: unless-stopped
     command: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-software-rasterizer", "--disable-gpu", "--disable-features=GlobalMediaControls"]
     expose:
       - "8002"
@@ -385,6 +374,8 @@ services:
 volumes:
   pgdata:
     driver: local
+  # Note: fhir-data volume defined but fhir-server uses bind mount ./data/fhir-data
+  # Consider using this named volume for production deployments
   fhir-data:
     driver: local
   pharmcat-references:
