@@ -520,7 +520,9 @@ class WeasyPrintGenerator(PDFGenerator):
                     "current_year": datetime.now().year,
                     "workflow": template_data.get("workflow", {}),
                     "workflow_diagram": template_data.get("workflow_diagram", {}),
-                    "header_text": template_data.get("header_text", "")
+                    "header_text": template_data.get("header_text", ""),
+                    # Add workflow warnings/alerts for report display
+                    "workflow_warnings": template_data.get("workflow_warnings", []),
                 }
                 # For PDF, prefer PNG over SVG to avoid WeasyPrint text rendering issues
                 # PNG ensures the diagram is reliably visible with proper scaling

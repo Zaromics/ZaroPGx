@@ -742,7 +742,8 @@
             <h2>Gene-Drug Interaction Dashboard</h2>
             
             <div class="tabs">
-                <div class="tab active" onclick="showTab('summary')">Summary</div>
+                <div class="tab active" onclick="showTab('alerts')">Alerts</div>
+                <div class="tab" onclick="showTab('summary')">Summary</div>
                 <div class="tab" onclick="showTab('genes')">Genes</div>
                 <div class="tab" onclick="showTab('drugs')">Drugs</div>
                 <div class="tab" onclick="showTab('recs')">Recs</div>
@@ -753,7 +754,25 @@
                 <div class="tab" onclick="showTab('acknowledgements')">Acknowledgements</div>
             </div>
             
-            <div id="summary" class="tab-content active">
+            <div id="alerts" class="tab-content active">
+                <h3>Alerts and Warnings</h3>
+                {% if workflow_warnings and workflow_warnings|length > 0 %}
+                    <div class="alerts-container">
+                        {% for warning in workflow_warnings %}
+                            <div class="alert alert-warning" style="margin-bottom: 15px; padding: 15px; border-left: 4px solid #f39c12;">
+                                {{ warning|safe }}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="alert alert-info" style="margin-bottom: 15px; padding: 15px; border-left: 4px solid #3498db;">
+                        <p><strong>No alerts or warnings</strong></p>
+                        <p>No workflow warnings or alerts were generated for this report.</p>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <div id="summary" class="tab-content">
                 <h3>Executive Summary</h3>
                 <p>This interactive report provides comprehensive pharmacogenomic information based on the sample's genetic analysis.</p>
 

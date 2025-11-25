@@ -297,12 +297,26 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
                     if isinstance(pharmcat_results, dict):
                         # Load PharmCAT results into database
                         from app.pharmcat.pharmcat_parser import load_pharmcat_file
-                        pharmcat_run_id = load_pharmcat_file(pharmcat_json_file)
-                        
-                        if pharmcat_run_id:
-                            # Link PharmCAT run to workflow
-                            workflow_service.link_pharmcat_run(workflow_id, pharmcat_run_id)
-                            logger.info(f"Successfully linked PharmCAT run {pharmcat_run_id} to workflow {workflow_id}")
+                        try:
+                            pharmcat_run_id = load_pharmcat_file(pharmcat_json_file)
+                            
+                            if pharmcat_run_id:
+                                # Link PharmCAT run to workflow
+                                workflow_service.link_pharmcat_run(workflow_id, pharmcat_run_id)
+                                logger.info(f"Successfully linked PharmCAT run {pharmcat_run_id} to workflow {workflow_id}")
+                            else:
+                                logger.warning("load_pharmcat_file returned None - database insert may have failed")
+                        except Exception as db_error:
+                            # Check if it's a database constraint error
+                            error_str = str(db_error).lower()
+                            if "value too long" in error_str or "varchar" in error_str:
+                                logger.error(f"Database constraint error: {db_error}")
+                                logger.error("This usually means the database schema needs to be updated.")
+                                logger.error("Run migration: db/init/migrations/01_fix_pharmcat_variant_allele_length.sql")
+                            else:
+                                logger.error(f"Failed to load PharmCAT data into database: {db_error}")
+                            # Continue with file-based data fallback
+                            pharmcat_run_id = None
                         
                         # PharmCAT JSON has genes directly, not in a "data" object
                         pharmcat_data = pharmcat_results

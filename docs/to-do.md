@@ -5,12 +5,13 @@ curation: full
 
 ## Input Format Support Priorities
 
-- **Priority 0 (Supported)**: VCF, GRCh38, NGS-derived
-- **Priority 1 (Development)**: VCF, GRCh37, NGS-derived (liftover via bcftools)
-- **Priority 2 (Development)**: BAM, CRAM, SAM, FASTQ, BCF (NGS-derived)
-- **Priority 3 (Research)**: Other sequencing/genotyping formats
-- **Priority 4 (Research)**: BED, gVCF, 23andMe, AncestryDNA, TXT formats
-- **Priority 5 (Early Research)**: T2T and other emerging formats
+- **Priority 0   (Supported)**: VCF, GRCh38, NGS-derived
+- **Priority 1   (Development)**: VCF, GRCh37, NGS-derived (liftover via bcftools)
+- **Priority 1.5 (Development)**: BAM
+- **Priority 2   (Development)**: CRAM, SAM, FASTQ, BCF (NGS-derived)
+- **Priority 3   (Research)**: Other sequencing/genotyping formats
+- **Priority 4   (Research)**: BED, gVCF, 23andMe, AncestryDNA, TXT formats
+- **Priority 5   (Early Research)**: T2T and other emerging formats
 
 ## Pipeline Function
 
@@ -31,16 +32,17 @@ curation: full
 
 ## Calling & Tools
 
-- PharmCAT
+### PharmCAT
   - Implement translation layer (lexicon) to translate outside calls to recognized nomenclature
-- PyPGx
+  - Implement optional and intelligent switch to toggle assume reference when missing
+### PyPGx
   - Batch execution (done) and advanced parallelization controls (CPU/RAM/storage)
   - BAM-to-VCF preprocessing check
   - Evaluate imputation options; expose via advanced settings
-- HLA Typing
+### HLA Typing
   - Use nf-core/hlatyping (OptiType) for HLA-A/B/C when FASTQ; confirm BAM pathway
   - Align to GRCh38 as part of HLA path
-- Future tools
+### Ancillary and Future tools
   - Now included in Zaromics suite
 
 ## Reporting
@@ -51,6 +53,7 @@ curation: full
 - Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
 - Abstract report theme so cross-pipeline outputs remain stylistically consistent
+- Custom reports: add a QR code containing the raw data
 
 ## UI/UX
 

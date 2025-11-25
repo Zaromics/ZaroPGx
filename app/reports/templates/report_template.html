@@ -283,11 +283,33 @@
         .exec-summary-gene {
             text-align: left;
             font-weight: bold;
-            overflow-wrap: anywhere; /* allow wrapping if needed */
+            overflow-wrap: normal; /* allow wrapping if needed */
         }
         .exec-summary-diplotype {
             text-align: center;
-            white-space: nowrap; /* diplotypes are short; keep compact */
+            word-wrap: break-word; /* allow wrapping for long diplotypes */
+            overflow-wrap: break-word; /* modern browsers */
+            max-width: 500px; /* reasonable max width before wrapping */
+            word-break: normal; /* prevent breaking within allele names - only break after slash */
+            white-space: normal; /* allow wrapping */
+        }
+        /* Smaller font for long diplotypes (>60 characters) */
+        .exec-summary-diplotype.long-diplotype {
+            font-size: 14px; /* 2px smaller than default 16px */
+        }
+        /* Prevent breaking within each allele part */
+        .diplotype-allele {
+            white-space: nowrap; /* prevent breaking within allele names */
+            display: inline-block;
+        }
+        /* Enable breaking after the slash separator */
+        .diplotype-break {
+            display: inline-block;
+            white-space: normal; /* allow breaking at this point */
+            /* Insert zero-width space after slash to allow breaking */
+        }
+        .diplotype-break::after {
+            content: '\200B'; /* zero-width space after slash - preferred break point */
         }
         .exec-summary-phenotype {
             text-align: left;
@@ -823,6 +845,27 @@
         {{ disclaimer }}
     </div>
 
+    {# Alerts page - after disclaimer, before executive summary #}
+    <div class="section" style="page-break-after: always;">
+        <h2>Alerts and Warnings</h2>
+        <p>The given workflow raised the following alerts and warnings. Please review them carefully as their implications can qualify and significantly alter the interpretation of result data.</p>
+        
+        <div class="alerts-container" style="margin-top: 20px;">
+            {% if workflow_warnings and workflow_warnings|length > 0 %}
+                {% for warning in workflow_warnings %}
+                    <div class="alert-box" style="margin-bottom: 15px; padding: 12px; border-left: 4px solid #f39c12; background-color: #fffbf0; border-radius: 4px;">
+                        {{ warning|safe }}
+                    </div>
+                {% endfor %}
+            {% else %}
+                <div class="alert-box" style="margin-bottom: 15px; padding: 12px; border-left: 4px solid #3498db; background-color: #f0f9fb; border-radius: 4px;">
+                    <p><strong>No alerts or warnings</strong></p>
+                    <p>No workflow warnings or alerts were generated for this report.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
     <div id="exec-summary" class="section">
         <h2>Executive Summary</h2>
         <p>This page provides pharmacogenomic information derived from in silico analysis of the sample's genetic data. The information to follow can inform interpretation of actionable gene-drug interactions when considered in context.</p>
@@ -837,7 +880,7 @@
                         <tr>
                             <td class="exec-summary-number">{{ loop.index }}.</td>
                             <td class="exec-summary-gene">{{ r.gene }}</td>
-                            <td class="exec-summary-diplotype">{{ r.rec_lookup_diplotype or '' }}</td>
+                            <td class="exec-summary-diplotype{% if (r.rec_lookup_diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = (r.rec_lookup_diplotype or '') %}{% if '/' in diplo %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
                             <td class="exec-summary-phenotype">
                                 {% set ph = r.rec_lookup_phenotype or '' %}
                                 {% set asv = r.rec_lookup_activity_score %}
@@ -875,7 +918,7 @@
                         <tr>
                             <td class="exec-summary-number">{{ loop.index }}.</td>
                             <td class="exec-summary-gene">{{ d.gene }}</td>
-                            <td class="exec-summary-diplotype">{{ d.diplotype }}</td>
+                            <td class="exec-summary-diplotype{% if (d.diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = d.diplotype or '' %}{% if '/' in diplo %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
                             <td class="exec-summary-phenotype">
                                 <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">{{ d.phenotype or 'Unknown' }}</span>
                                 {% if d.activity_score is not none %}

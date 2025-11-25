@@ -56,6 +56,7 @@ ENV PYTHONPATH=/app
 ENV DATA_DIR=/data
 ENV TEMP_DIR=/tmp/pypgx
 ENV REFERENCE_DIR=/reference
+# ENV PYTHONWARNINGS="ignore:invalid escape sequence:SyntaxWarning" # Fixed in PyPGx main
 
 # Health check to ensure the API is responsive
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

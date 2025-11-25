@@ -978,6 +978,32 @@ def run_pharmcat_jar(input_file: str, output_dir: str, sample_id: Optional[str] 
             "-v",  # Verbose output
         ]
         
+        # Add VCF preprocessor flags based on environment variables
+        # These flags control how missing/absent/unspecified PGx positions are handled
+        # Default to False if not set (as per requirement)
+        def str_to_bool(value: Optional[str]) -> bool:
+            """Convert string to boolean, defaulting to False if None or empty."""
+            if value is None:
+                return False
+            return str(value).lower() in ("true", "1", "yes", "on")
+        
+        pharmcat_absent_to_ref = str_to_bool(os.environ.get("PHARMCAT_ABSENT_TO_REF"))
+        pharmcat_unspecified_to_ref = str_to_bool(os.environ.get("PHARMCAT_UNSPECIFIED_TO_REF"))
+        
+        # --missing-to-ref (-0) is equivalent to both --absent-to-ref and --unspecified-to-ref
+        # If both are enabled, use --missing-to-ref for simplicity
+        if pharmcat_absent_to_ref and pharmcat_unspecified_to_ref:
+            cmd.append("--missing-to-ref")
+            logger.info("Using --missing-to-ref flag (equivalent to both --absent-to-ref and --unspecified-to-ref)")
+        else:
+            # Add individual flags if only one is enabled
+            if pharmcat_absent_to_ref:
+                cmd.append("--absent-to-ref")
+                logger.info("Using --absent-to-ref flag: assuming absent PGx sites are homozygous reference (0/0)")
+            if pharmcat_unspecified_to_ref:
+                cmd.append("--unspecified-to-ref")
+                logger.info("Using --unspecified-to-ref flag: converting unspecified genotypes (./.) to homozygous reference (0/0)")
+        
         # Add sample ID parameter only if we successfully extracted it from VCF
         if vcf_sample_id:
             cmd.extend(["-s", vcf_sample_id])

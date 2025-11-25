@@ -4,11 +4,11 @@ title: Home
 
 # {{ project_name }} Documentation
 
-Welcome to the comprehensive documentation for {{ project_name }} — a containerized pharmacogenomics (PGx) platform that processes genetic data and generates clinical reports.
+Welcome to the documentation for {{ project_name }} — a containerized pharmacogenomics platform that processes genetic data and generates comprehensive reports.
 
 ## For Users
 
-If you're looking to use ZaroPGx for pharmacogenomic analysis:
+Use ZaroPGx to perform pharmacogenomic analysis:
 
 ```{toctree}
 :maxdepth: 2
@@ -25,11 +25,11 @@ user/faq
 
 ## For Developers
 
-If you're contributing to or extending ZaroPGx:
+Contributing to or extending ZaroPGx:
 
 ```{toctree}
 :maxdepth: 2
-:caption: Developer Guide
+:caption: Developer Guide [NEEDS CURATION]
 
 developer/architecture
 developer/api-reference

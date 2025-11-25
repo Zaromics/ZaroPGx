@@ -389,7 +389,10 @@ def generate_pdf_report(
                     
                     for row in _diplos:
                         # Get phenotype, applying wild type logic if needed
-                        diplotype_str = str(row.get("rec_lookup_diplotype", "")).strip()
+                        # Fallback to source diplotype if recommendation lookup diplotype is empty
+                        rec_lookup_dip = (row.get("rec_lookup_diplotype") or "").strip()
+                        source_dip = (row.get("diplotype") or "").strip()
+                        diplotype_str = (rec_lookup_dip or source_dip).strip()
                         phenotype_str = str(row.get("rec_lookup_phenotype", row.get("phenotype", ""))).strip()
                         # Check for reference genotype (case-insensitive, handle variations)
                         diplotype_upper = diplotype_str.upper()
@@ -413,7 +416,7 @@ def generate_pdf_report(
                         
                         execsum_rows_from_tsv.append({
                             "gene": row.get("gene", ""),
-                            "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
+                            "rec_lookup_diplotype": diplotype_str,  # Use fallback value
                             "rec_lookup_phenotype": phenotype_str,
                             "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
                         })
@@ -694,7 +697,8 @@ def create_interactive_html_report(
     recommendations: List[Dict[str, Any]],
     output_path: str,
     workflow: Dict[str, Any] | None = None,
-    sample_identifier: str | None = None
+    sample_identifier: str | None = None,
+    workflow_warnings: List[str] | None = None
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -840,6 +844,8 @@ def create_interactive_html_report(
             "source_url": get_source_url(),
             "current_year": datetime.now().year,
             "header_text": header_text,
+            # Add workflow warnings/alerts for report display
+            "workflow_warnings": workflow_warnings or [],
         }
         
         # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
@@ -1402,6 +1408,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
     
     # Try to get PharmCAT data from database first if workflow_id and db_session are provided
     data = None
+    workflow_warnings = []  # Initialize warnings list
     if workflow_id and db_session:
         try:
             logger.info(f"Attempting to get PharmCAT data from database for workflow {workflow_id}")
@@ -1411,7 +1418,22 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
             if data:
                 logger.info(f"Successfully retrieved PharmCAT data from database: {len(data.get('genes', []))} genes, {len(data.get('drugRecommendations', []))} recommendations")
                 logger.info(f"Database data keys: {list(data.keys())}")
-            else:
+            
+            # Also retrieve workflow warnings from workflow metadata
+            try:
+                from app.api.db import Workflow
+                import uuid
+                workflow_uuid = uuid.UUID(str(workflow_id))
+                workflow = db_session.query(Workflow).filter(Workflow.id == workflow_uuid).first()
+                if workflow and workflow.workflow_metadata:
+                    workflow_config = workflow.workflow_metadata.get("workflow", {})
+                    workflow_warnings = workflow_config.get("warnings", [])
+                    logger.info(f"Retrieved {len(workflow_warnings)} workflow warnings from database")
+            except Exception as e:
+                logger.warning(f"Failed to retrieve workflow warnings: {e}")
+                workflow_warnings = []
+            
+            if not data:
                 logger.warning("No PharmCAT data found in database, falling back to file-based data")
         except Exception as e:
             logger.error(f"Failed to get PharmCAT data from database: {e}", exc_info=True)
@@ -1563,7 +1585,10 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     pass
                 for row in diplos:
                     # Get phenotype, applying wild type logic if needed
-                    diplotype_str = str(row.get("rec_lookup_diplotype", "")).strip()
+                    # Fallback to source diplotype if recommendation lookup diplotype is empty
+                    rec_lookup_dip = (row.get("rec_lookup_diplotype") or "").strip()
+                    source_dip = (row.get("diplotype") or "").strip()
+                    diplotype_str = (rec_lookup_dip or source_dip).strip()
                     phenotype_str = str(row.get("rec_lookup_phenotype", row.get("phenotype", ""))).strip()
                     # Check for reference genotype (case-insensitive, handle variations)
                     diplotype_upper = diplotype_str.upper()
@@ -1587,7 +1612,7 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                     
                     execsum_rows_from_tsv.append({
                         "gene": row.get("gene", ""),
-                        "rec_lookup_diplotype": row.get("rec_lookup_diplotype", ""),
+                        "rec_lookup_diplotype": diplotype_str,  # Use fallback value
                         "rec_lookup_phenotype": phenotype_str,
                         "rec_lookup_activity_score": row.get("rec_lookup_activity_score"),
                     })
@@ -1633,6 +1658,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
         },
         # Inject optional TSV-driven Executive Summary rows for template use
         "execsum_from_tsv": execsum_rows_from_tsv if (EXECSUM_USE_TSV and execsum_rows_from_tsv) else None,
+        # Add workflow warnings/alerts for report display
+        "workflow_warnings": workflow_warnings,
     }
     # Inject unified display sample id sourced from workflow metadata or persisted field
     try:
@@ -2081,6 +2108,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 "header_text": header_text,
                 # Pass TSV-driven Executive Summary rows if enabled and available
                 "execsum_from_tsv": execsum_rows_from_tsv if (EXECSUM_USE_TSV and execsum_rows_from_tsv) else None,
+                # Add workflow warnings/alerts for report display
+                "workflow_warnings": workflow_warnings,
             }
             try:
                 logger.info(f"Executive Summary rows (TSV): {len(execsum_rows_from_tsv) if execsum_rows_from_tsv else 0}; Using TSV: {EXECSUM_USE_TSV}")
@@ -2212,7 +2241,8 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 diplotypes=data.get("genes", []),
                 recommendations=template_recommendations,
                 output_path=interactive_html_path,
-                workflow=per_sample_workflow
+                workflow=per_sample_workflow,
+                workflow_warnings=workflow_warnings
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
             

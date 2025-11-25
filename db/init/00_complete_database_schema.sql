@@ -287,8 +287,8 @@ CREATE TABLE pharmcat.variants (
     gene_symbol VARCHAR(20) NOT NULL,
     chromosome VARCHAR(10),
     position BIGINT,
-    reference_allele VARCHAR(10),
-    alternate_allele VARCHAR(10),
+    reference_allele VARCHAR(60),  -- Increased from VARCHAR(10) to accommodate complex indels (full data in variant_data JSONB)
+    alternate_allele VARCHAR(60),   -- Increased from VARCHAR(10) to accommodate complex indels (full data in variant_data JSONB)
     genotype_call VARCHAR(20),
     dbsnp_id VARCHAR(20),
     variant_data JSONB,

@@ -135,8 +135,8 @@ class PharmCATVariant(Base):
     gene_symbol = Column(String(20), nullable=False)
     chromosome = Column(String(10))
     position = Column(Integer)
-    reference_allele = Column(String(10))
-    alternate_allele = Column(String(10))
+    reference_allele = Column(String(60))  # Increased from 10 to accommodate complex indels (full data in variant_data JSONB)
+    alternate_allele = Column(String(60))  # Increased from 10 to accommodate complex indels (full data in variant_data JSONB)
     genotype_call = Column(String(20))
     dbsnp_id = Column(String(20))
     variant_data = Column(JSONB)
@@ -314,7 +314,18 @@ class PharmCATParser:
             
         except Exception as e:
             self.db_session.rollback()
-            logger.error(f"Error parsing PharmCAT data: {e}")
+            error_msg = str(e)
+            logger.error(f"Error parsing PharmCAT data: {error_msg}")
+            logger.error(f"Error type: {type(e).__name__}")
+            
+            # Check for specific database constraint errors
+            if "value too long" in error_msg.lower() or "varchar" in error_msg.lower():
+                logger.error("=" * 80)
+                logger.error("DATABASE SCHEMA ISSUE DETECTED!")
+                logger.error("=" * 80)
+            
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             raise
     
     def _parse_timestamp(self, timestamp_str: Optional[str]) -> Optional[datetime]:
@@ -427,16 +438,30 @@ class PharmCATParser:
     def _parse_variants(self, variants: List[Dict[str, Any]], run_id: str, gene_symbol: str) -> None:
         """Parse genetic variants"""
         for variant in variants:
+            # Truncate alleles if they exceed database limit (60 chars)
+            # Full data is still stored in variant_data JSONB field
+            ref_allele = variant.get('referenceAllele', '')
+            alt_allele = variant.get('alternateAllele', '')
+            
+            # Truncate to 60 characters if needed (database limit)
+            if ref_allele and len(ref_allele) > 60:
+                logger.warning(f"Truncating reference_allele from {len(ref_allele)} to 60 chars for variant at {variant.get('chromosome')}:{variant.get('position')}")
+                ref_allele = ref_allele[:60]
+            
+            if alt_allele and len(alt_allele) > 60:
+                logger.warning(f"Truncating alternate_allele from {len(alt_allele)} to 60 chars for variant at {variant.get('chromosome')}:{variant.get('position')}")
+                alt_allele = alt_allele[:60]
+            
             variant_record = PharmCATVariant(
                 run_id=run_id,
                 gene_symbol=gene_symbol,
                 chromosome=variant.get('chromosome'),
                 position=variant.get('position'),
-                reference_allele=variant.get('referenceAllele'),
-                alternate_allele=variant.get('alternateAllele'),
+                reference_allele=ref_allele,
+                alternate_allele=alt_allele,
                 genotype_call=variant.get('genotypeCall'),
                 dbsnp_id=variant.get('dbsnpId'),
-                variant_data=variant
+                variant_data=variant  # Full data preserved here
             )
             self.db_session.add(variant_record)
     

@@ -401,7 +401,7 @@ class FileProcessor:
             logger.debug(f"Error extracting genome name from path {reference_path}: {e}")
             return "unknown"
 
-    def determine_workflow(self, analysis: FileAnalysis) -> Dict:
+    def determine_workflow(self, analysis: FileAnalysis, gatk_enabled: Optional[bool] = None) -> Dict:
         """
         Determine the appropriate workflow based on file analysis.
 
@@ -415,6 +415,10 @@ class FileProcessor:
         - SAM files: conversion to BAM using GATK or samtools
         - FASTA files: reference genome files (unsupported for direct analysis)
         - BED files: genomic interval files (unsupported for direct analysis)
+
+        Args:
+            analysis: FileAnalysis object containing file type and characteristics
+            gatk_enabled: Optional boolean indicating if GATK is enabled
 
         Returns a dictionary with workflow configuration and recommendations.
         """
@@ -433,6 +437,21 @@ class FileProcessor:
             "unsupported": False,
             "unsupported_reason": None
         }
+        
+        # Check PharmCAT flag environment variables
+        def str_to_bool(value: Optional[str]) -> bool:
+            """Convert string to boolean, defaulting to False if None or empty."""
+            if value is None:
+                return False
+            return str(value).lower() in ("true", "1", "yes", "on")
+        
+        pharmcat_absent_to_ref = str_to_bool(os.environ.get("PHARMCAT_ABSENT_TO_REF"))
+        pharmcat_unspecified_to_ref = str_to_bool(os.environ.get("PHARMCAT_UNSPECIFIED_TO_REF"))
+        pharmcat_flags_enabled = pharmcat_absent_to_ref or pharmcat_unspecified_to_ref
+        
+        # Check GATK status from environment if not provided
+        if gatk_enabled is None:
+            gatk_enabled = str_to_bool(os.environ.get("GATK_ENABLED"))
 
         # FASTQ (curated on 2025-09-27)
         if analysis.file_type == FileType.FASTQ:
@@ -573,6 +592,40 @@ class FileProcessor:
             workflow["warnings"].append(
                 "<p>⚠️ All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
             )
+            
+            # Warn about PharmCAT flags if enabled (only for VCF files, as BAM/etc will get proper preprocessing with GATK)
+            if pharmcat_flags_enabled:
+                if pharmcat_absent_to_ref and pharmcat_unspecified_to_ref:
+                    workflow["warnings"].append(
+                        "<p>⚠️ <strong>PharmCAT Configuration Warning:</strong> Both PHARMCAT_ABSENT_TO_REF and PHARMCAT_UNSPECIFIED_TO_REF are enabled.</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>This configuration assumes that absent and unspecified pharmacogenomic loci are homozygous reference (0/0). "
+                        "This may result in <strong>inaccurate results</strong> in reports if complete pre-processing could not be performed.</p>"
+                    )
+                elif pharmcat_absent_to_ref:
+                    workflow["warnings"].append(
+                        "<p>⚠️ <strong>PharmCAT Configuration Warning:</strong> PHARMCAT_ABSENT_TO_REF is enabled.</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>This configuration assumes that absent pharmacogenomic loci are homozygous reference (0/0). "
+                        "This may result in <strong>inaccurate results</strong> in reports if complete pre-processing could not be performed.</p>"
+                    )
+                elif pharmcat_unspecified_to_ref:
+                    workflow["warnings"].append(
+                        "<p>⚠️ <strong>PharmCAT Configuration Warning:</strong> PHARMCAT_UNSPECIFIED_TO_REF is enabled.</p>"
+                    )
+                    workflow["warnings"].append(
+                        "<p>This configuration converts unspecified genotypes (./.) to homozygous reference (0/0). "
+                        "This may result in <strong>inaccurate results</strong> in reports if complete pre-processing could not be performed.</p>"
+                    )
+                
+                # Additional context about when these flags are appropriate
+                workflow["warnings"].append(
+                    "<p>These flags should only be used when the provenance of the genome file ensures that prior evaluation "
+                    "of all queried loci (i.e. genotyping, haplotype calling) has been performed adequately. "
+                    "Otherwise, these flags make <strong>significant assumptions about uninterpretable loci</strong> that may compromise result accuracy.</p>"
+                )
             workflow["recommendations"].append(
                 "<p>VCF files use the quick pipeline:</p>"
             )
