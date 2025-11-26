@@ -1,9 +1,8 @@
 FROM python:3.12
 
-# Add labels for better maintainability and alignment with official PharmCAT
 LABEL maintainer="ZaroPGx (wrapper only)"
-LABEL description="PharmCAT 3.0.1 Wrapper Service with FastAPI"
-LABEL version="3.0.1"
+LABEL description="PharmCAT Wrapper Service with FastAPI"
+LABEL version="3.1.1"
 
 WORKDIR /pharmcat
 
@@ -40,9 +39,9 @@ RUN curl https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --de
     rm -rf /var/lib/apt/lists/*
 
 # Install bcftools, htslib, and samtools from source (as per PharmCAT)
-ENV BCFTOOLS_VERSION=1.21
-ENV HTSLIB_VERSION=1.21
-ENV SAMTOOLS_VERSION=1.21
+ENV BCFTOOLS_VERSION=1.22
+ENV HTSLIB_VERSION=1.22
+ENV SAMTOOLS_VERSION=1.22
 RUN wget https://github.com/samtools/htslib/releases/download/${HTSLIB_VERSION}/htslib-${HTSLIB_VERSION}.tar.bz2 && \
     wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSION}/bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
     wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
@@ -66,14 +65,14 @@ RUN wget https://github.com/samtools/htslib/releases/download/${HTSLIB_VERSION}/
            htslib-${HTSLIB_VERSION}.tar.bz2 bcftools-${BCFTOOLS_VERSION}.tar.bz2 samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
     ldconfig
 
-# Set up environment variables for PharmCAT tools (aligned with official PharmCAT)
+# Environment variables for PharmCAT tools
 ENV BCFTOOLS_PATH=/usr/local/bin/bcftools
 ENV BGZIP_PATH=/usr/local/bin/bgzip
 ENV HTSLIB_PATH=/usr/local
 ENV PCAT_PLATFORM=docker
 ENV PATH="/pharmcat:/usr/local/bin:${PATH}"
 
-# Download PharmCAT pipeline distribution
+# Download PharmCAT distribution from GitHub
 ARG PHARMCAT_VERSION
 RUN wget -q https://github.com/PharmGKB/PharmCAT/releases/download/v${PHARMCAT_VERSION}/pharmcat-pipeline-${PHARMCAT_VERSION}.tar.gz \
     && mkdir -p /pharmcat/pipeline \
@@ -83,7 +82,7 @@ RUN wget -q https://github.com/PharmGKB/PharmCAT/releases/download/v${PHARMCAT_V
 # Set up PharmCAT directory structure (aligned with official layout)
 RUN mkdir -p /pharmcat/pcat /pharmcat/data
 
-# Debug: List what's in the pipeline directory to see actual file structure
+# Debug: List pipeline dir contents to check file structure
 RUN ls -la /pharmcat/pipeline/
 
 # Copy PharmCAT preprocessor components from pipeline distribution
@@ -148,7 +147,7 @@ RUN if [ -d "/pharmcat/pipeline/pcat" ]; then \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-# Install PharmCAT Python dependencies using uv (inside the container, NOT the wrapper)
+# Install PharmCAT Python dependencies (inside the container, NOT the wrapper)
 RUN uv pip install --system -r /pharmcat/pipeline/requirements.txt
 
 # Add PharmCAT pipeline scripts to path and verify installation
@@ -164,7 +163,7 @@ RUN chmod +x /pharmcat/pipeline/pharmcat_pipeline && \
     echo "Testing pharmcat_pipeline help..." && \
     pharmcat_pipeline --help | head -5
 
-# Install wrapper API dependencies using uv
+# Install wrapper API dependencies
 RUN uv pip install --system \
     requests \
     psutil \
@@ -185,7 +184,7 @@ RUN mkdir -p /data /tmp/pharmcat && \
     chmod -R 777 /tmp/pharmcat
 VOLUME /data
 
-# Set up environment variables (aligned with official PharmCAT)
+# Environment variables
 ENV DATA_DIR=/data
 ENV TEMP_DIR=/tmp/pharmcat
 ENV PHARMCAT_PIPELINE_DIR=/pharmcat/pipeline
@@ -193,15 +192,14 @@ ENV PHARMCAT_JAR=/pharmcat/pharmcat.jar
 ENV PHARMCAT_HOME=/pharmcat
 ENV CLASSPATH=/pharmcat/pharmcat.jar
 
-# Expose port for the FastAPI
+# FastAPI port
 EXPOSE 5000
 
-# Add health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:5000/health || exit 1
 
-# Set working directory for the API
+# API working directory
 WORKDIR /app
 
-# Start the FastAPI using the start script
+# Launch FastAPI via the start script
 CMD ["/start.sh"]

@@ -388,7 +388,7 @@ class VersionManager:
                         display_names = {
                             'postgres': 'PostgreSQL',
                             'hapiproject/hapi': 'HAPI FHIR Server',
-                            'hapiproject/hapi:v6.8.0': 'HAPI FHIR Server',
+                            'hapiproject/hapi:latest': 'HAPI FHIR Server',
                         }
                         
                         display_name = display_names.get(service_name, service_name)

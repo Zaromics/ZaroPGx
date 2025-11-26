@@ -137,8 +137,8 @@ class PharmCATVariant(Base):
     position = Column(Integer)
     reference_allele = Column(String(60))  # Increased from 10 to accommodate complex indels (full data in variant_data JSONB)
     alternate_allele = Column(String(60))  # Increased from 10 to accommodate complex indels (full data in variant_data JSONB)
-    genotype_call = Column(String(20))
-    dbsnp_id = Column(String(20))
+    genotype_call = Column(String(100))    # Increased from 20 to accommodate complex indels (full data in variant_data JSONB)
+    dbsnp_id = Column(String(30))          # Increased from 20 for future dbSNP ID growth
     variant_data = Column(JSONB)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -344,36 +344,107 @@ class PharmCATParser:
             return None
     
     def _parse_genes(self, genes_data: Dict[str, Any], run_id: str) -> None:
-        """Parse genes data and load into database"""
-        for source, genes in genes_data.items():
-            for gene_symbol, gene_data in genes.items():
-                # Create gene summary
-                gene_summary = PharmCATGeneSummary(
-                    run_id=run_id,
-                    gene_symbol=gene_symbol,
-                    call_source=source,  # Use the top-level key (CPIC, DPWG, etc.) as call_source
-                    phenotype_source=gene_data.get('phenotypeSource'),
-                    phenotype_version=gene_data.get('phenotypeVersion'),
-                    allele_definition_version=gene_data.get('alleleDefinitionVersion'),
-                    allele_definition_source=gene_data.get('alleleDefinitionSource'),
-                    chromosome=gene_data.get('chr'),
-                    phased=gene_data.get('phased'),
-                    effectively_phased=gene_data.get('effectivelyPhased'),
-                    gene_full_data=gene_data
-                )
-                self.db_session.add(gene_summary)
+        """Parse genes data and load into database.
+        
+        Handles two PharmCAT JSON formats:
+        1. Nested: genes -> source (CPIC/DPWG) -> gene_symbol -> gene_data
+        2. Flat: genes -> gene_symbol -> gene_data (gene_data contains 'geneSymbol' field)
+        """
+        gene_count = 0
+        diplotype_count = 0
+        
+        logger.info(f"Parsing genes data for run {run_id}. Top-level keys: {list(genes_data.keys()) if genes_data else 'None'}")
+        
+        # Detect format: check if first value looks like gene data (has 'geneSymbol' or 'sourceDiplotypes')
+        # or if it's a nested structure (contains gene symbols as keys)
+        is_flat_format = False
+        if genes_data:
+            first_key = next(iter(genes_data.keys()))
+            first_value = genes_data.get(first_key, {})
+            if isinstance(first_value, dict):
+                # If it has gene-specific fields, it's flat format
+                if 'geneSymbol' in first_value or 'sourceDiplotypes' in first_value or 'alleleDefinitionVersion' in first_value:
+                    is_flat_format = True
+                    logger.info(f"Detected FLAT PharmCAT format (genes -> gene_symbol -> gene_data)")
+                else:
+                    logger.info(f"Detected NESTED PharmCAT format (genes -> source -> gene_symbol -> gene_data)")
+        
+        if is_flat_format:
+            # Flat format: genes -> gene_symbol -> gene_data
+            for gene_symbol, gene_data in genes_data.items():
+                if not isinstance(gene_data, dict):
+                    logger.warning(
+                        "Skipping gene '%s' with unexpected type %s",
+                        gene_symbol,
+                        type(gene_data).__name__,
+                    )
+                    continue
                 
-                # Parse diplotypes
-                self._parse_diplotypes(gene_data.get('sourceDiplotypes', []), run_id, gene_symbol)
+                # Determine source from gene_data if available
+                source = gene_data.get('phenotypeSource', 'CPIC')
                 
-                # Parse drug-gene relationships
+                gene_count += 1
+                self._store_gene_data(gene_symbol, gene_data, source, run_id)
+                
+                # Count diplotypes
+                source_diplotypes = gene_data.get('sourceDiplotypes', [])
+                diplotype_count += len(source_diplotypes)
+                self._parse_diplotypes(source_diplotypes, run_id, gene_symbol)
                 self._parse_related_drugs(gene_data.get('relatedDrugs', []), run_id, gene_symbol)
-                
-                # Parse messages
                 self._parse_messages(gene_data.get('messages', []), run_id, gene_symbol)
-                
-                # Parse variants
                 self._parse_variants(gene_data.get('variants', []), run_id, gene_symbol)
+        else:
+            # Nested format: genes -> source -> gene_symbol -> gene_data
+            for source, genes in genes_data.items():
+                if not isinstance(genes, dict):
+                    logger.warning(
+                        "Skipping genes block for source '%s' with unexpected type %s",
+                        source,
+                        type(genes).__name__,
+                    )
+                    continue
+                
+                logger.info(f"Processing source '{source}' with {len(genes)} genes")
+
+                for gene_symbol, gene_data in genes.items():
+                    if not isinstance(gene_data, dict):
+                        logger.warning(
+                            "Skipping gene '%s' in source '%s' with unexpected type %s",
+                            gene_symbol,
+                            source,
+                            type(gene_data).__name__,
+                        )
+                        continue
+
+                    gene_count += 1
+                    self._store_gene_data(gene_symbol, gene_data, source, run_id)
+                    
+                    # Count diplotypes
+                    source_diplotypes = gene_data.get('sourceDiplotypes', [])
+                    diplotype_count += len(source_diplotypes)
+                    self._parse_diplotypes(source_diplotypes, run_id, gene_symbol)
+                    self._parse_related_drugs(gene_data.get('relatedDrugs', []), run_id, gene_symbol)
+                    self._parse_messages(gene_data.get('messages', []), run_id, gene_symbol)
+                    self._parse_variants(gene_data.get('variants', []), run_id, gene_symbol)
+        
+        logger.info(f"Completed parsing {gene_count} genes with {diplotype_count} diplotypes for run {run_id}")
+    
+    def _store_gene_data(self, gene_symbol: str, gene_data: Dict[str, Any], source: str, run_id: str) -> None:
+        """Store gene summary data in the database."""
+        gene_summary = PharmCATGeneSummary(
+            run_id=run_id,
+            gene_symbol=gene_symbol,
+            call_source=source,
+            phenotype_source=gene_data.get('phenotypeSource'),
+            phenotype_version=gene_data.get('phenotypeVersion'),
+            allele_definition_version=gene_data.get('alleleDefinitionVersion'),
+            allele_definition_source=gene_data.get('alleleDefinitionSource'),
+            chromosome=gene_data.get('chr'),
+            phased=gene_data.get('phased'),
+            effectively_phased=gene_data.get('effectivelyPhased'),
+            gene_full_data=gene_data
+        )
+        self.db_session.add(gene_summary)
     
     def _parse_diplotypes(self, diplotypes: List[Dict[str, Any]], run_id: str, gene_symbol: str) -> None:
         """Parse diplotype data"""
@@ -436,14 +507,39 @@ class PharmCATParser:
             self.db_session.add(message_record)
     
     def _parse_variants(self, variants: List[Dict[str, Any]], run_id: str, gene_symbol: str) -> None:
-        """Parse genetic variants"""
+        """Parse genetic variants from PharmCAT JSON format.
+        
+        PharmCAT JSON variant structure:
+        - chromosome: e.g., "chr4"
+        - position: e.g., 88131171
+        - dbSnpId: e.g., "rs2231142" (note capital S)
+        - call: e.g., "G/G" (the genotype call)
+        - wildtypeAllele: e.g., "G" (reference allele)
+        - alleles: array of allele names
+        - phased: boolean
+        - hasUndocumentedVariations: boolean
+        - warnings: array
+        """
         for variant in variants:
+            # Get reference allele from wildtypeAllele (PharmCAT's field name)
+            ref_allele = variant.get('wildtypeAllele', '') or ''
+            
+            # Get genotype call from 'call' field (PharmCAT uses 'call', not 'genotypeCall')
+            genotype_call = variant.get('call', '')
+            
+            # Try to derive alternate allele from the genotype call
+            # If call is "G/T" and ref is "G", alternate is "T"
+            alt_allele = ''
+            if genotype_call and ref_allele:
+                # Split the call (e.g., "G/T" -> ["G", "T"])
+                call_parts = genotype_call.replace('|', '/').split('/')
+                for part in call_parts:
+                    if part and part != ref_allele:
+                        alt_allele = part
+                        break
+            
             # Truncate alleles if they exceed database limit (60 chars)
             # Full data is still stored in variant_data JSONB field
-            ref_allele = variant.get('referenceAllele', '')
-            alt_allele = variant.get('alternateAllele', '')
-            
-            # Truncate to 60 characters if needed (database limit)
             if ref_allele and len(ref_allele) > 60:
                 logger.warning(f"Truncating reference_allele from {len(ref_allele)} to 60 chars for variant at {variant.get('chromosome')}:{variant.get('position')}")
                 ref_allele = ref_allele[:60]
@@ -452,6 +548,18 @@ class PharmCATParser:
                 logger.warning(f"Truncating alternate_allele from {len(alt_allele)} to 60 chars for variant at {variant.get('chromosome')}:{variant.get('position')}")
                 alt_allele = alt_allele[:60]
             
+            # Truncate genotype_call if it exceeds database limit (100 chars)
+            # This can happen with complex indels like "ATCGATCG/ATCGATCGATCG"
+            if genotype_call and len(genotype_call) > 100:
+                logger.warning(f"Truncating genotype_call from {len(genotype_call)} to 100 chars for variant at {variant.get('chromosome')}:{variant.get('position')}")
+                genotype_call = genotype_call[:100]
+            
+            # Truncate dbsnp_id if it exceeds database limit (30 chars)
+            dbsnp_id = variant.get('dbSnpId', '') or ''
+            if dbsnp_id and len(dbsnp_id) > 30:
+                logger.warning(f"Truncating dbsnp_id from {len(dbsnp_id)} to 30 chars for variant at {variant.get('chromosome')}:{variant.get('position')}")
+                dbsnp_id = dbsnp_id[:30]
+            
             variant_record = PharmCATVariant(
                 run_id=run_id,
                 gene_symbol=gene_symbol,
@@ -459,8 +567,8 @@ class PharmCATParser:
                 position=variant.get('position'),
                 reference_allele=ref_allele,
                 alternate_allele=alt_allele,
-                genotype_call=variant.get('genotypeCall'),
-                dbsnp_id=variant.get('dbsnpId'),
+                genotype_call=genotype_call,
+                dbsnp_id=dbsnp_id,
                 variant_data=variant  # Full data preserved here
             )
             self.db_session.add(variant_record)
@@ -468,9 +576,17 @@ class PharmCATParser:
     def _parse_drugs(self, drugs_data: Dict[str, Any], run_id: str) -> None:
         """Parse drug recommendations data from nested structure"""
         # drugs_data structure: {"CPIC Guideline Annotation": {drug_name: drug_data}, ...}
+        drug_count = 0
+        recommendation_count = 0
+        
+        logger.info(f"Parsing drugs data for run {run_id}. Top-level keys: {list(drugs_data.keys()) if drugs_data else 'None'}")
+        
         for guideline_source, drugs_in_source in drugs_data.items():
             if not isinstance(drugs_in_source, dict):
+                logger.warning(f"Skipping drugs for source '{guideline_source}' with unexpected type {type(drugs_in_source).__name__}")
                 continue
+            
+            logger.info(f"Processing drug source '{guideline_source}' with {len(drugs_in_source)} drugs")
                 
             for drug_name, drug_data in drugs_in_source.items():
                 if not isinstance(drug_data, dict):
@@ -522,6 +638,7 @@ class PharmCATParser:
                         )
                         self.db_session.add(recommendation)
                         self.db_session.flush()  # Get the ID
+                        recommendation_count += 1
                         
                         # Parse recommendation conditions from genotypes
                         self._parse_recommendation_conditions_from_annotation(
@@ -529,6 +646,10 @@ class PharmCATParser:
                             recommendation.id, 
                             run_id
                         )
+                
+                drug_count += 1
+        
+        logger.info(f"Completed parsing {drug_count} drugs with {recommendation_count} recommendations for run {run_id}")
     
     def _extract_gene_symbol_from_annotation(self, annotation: Dict[str, Any]) -> Optional[str]:
         """Extract gene symbol from annotation lookupKey or phenotypes"""
@@ -766,6 +887,27 @@ class PharmCATParser:
             for r in results
         ]
     
+    def get_all_runs(self) -> List[Dict[str, Any]]:
+        """Get all PharmCAT runs from the database"""
+        results = self.db_session.query(PharmCATResult).order_by(
+            PharmCATResult.created_at.desc()
+        ).all()
+        
+        return [
+            {
+                'id': str(r.id),
+                'run_id': r.run_id,
+                'title': r.run_id,  # run_id is typically the title
+                'run_timestamp': r.run_timestamp,
+                'pharmcat_version': r.pharmcat_version,
+                'data_version': r.data_version,
+                'genome_build': r.genome_build,
+                'created_at': r.created_at,
+                'loaded_at': r.loaded_at
+            }
+            for r in results
+        ]
+    
     def explore_structure(self, data: Dict[str, Any], path: str = "", max_depth: int = 5) -> None:
         """Recursively explore and print JSON structure"""
         if max_depth == 0:
@@ -826,6 +968,11 @@ def get_pharmcat_summary(run_id: str, db_session: Optional[Session] = None) -> D
         Dictionary containing summary information
     """
     with PharmCATParser(db_session) as parser:
+        # Get run metadata from the results table
+        result = parser.db_session.query(PharmCATResult).filter(
+            PharmCATResult.run_id == run_id
+        ).first()
+        
         genes = parser.get_gene_summary(run_id)
         diplotypes = parser.get_diplotypes(run_id)
         actionable = parser.get_actionable_findings(run_id)
@@ -833,9 +980,13 @@ def get_pharmcat_summary(run_id: str, db_session: Optional[Session] = None) -> D
         
         return {
             'run_id': run_id,
+            'pharmcat_version': result.pharmcat_version if result else None,
+            'data_version': result.data_version if result else None,
+            'created_at': result.created_at if result else None,
+            'sample_identifier': run_id,  # run_id is typically the sample identifier/title
             'total_genes': len(genes),
             'total_diplotypes': len(diplotypes),
-            'actionable_findings': len(actionable),
+            'actionable_findings_count': len(actionable),
             'total_messages': len(messages),
             'genes': genes,
             'actionable_findings': actionable,

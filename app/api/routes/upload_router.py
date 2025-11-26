@@ -298,7 +298,8 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
                         # Load PharmCAT results into database
                         from app.pharmcat.pharmcat_parser import load_pharmcat_file
                         try:
-                            pharmcat_run_id = load_pharmcat_file(pharmcat_json_file)
+                            # Pass the workflow_service's database session to ensure consistency
+                            pharmcat_run_id = load_pharmcat_file(pharmcat_json_file, workflow_service.db)
                             
                             if pharmcat_run_id:
                                 # Link PharmCAT run to workflow
@@ -363,47 +364,70 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
                 logger.warning(f"Failed TSV fallback for PharmCAT parsing: {e}")
 
         # Extract diplotypes from PharmCAT results
-        # PharmCAT structure: genes -> {CPIC|DPWG} -> {gene_name} -> {sourceDiplotypes|recommendationDiplotypes}[]
+        # PharmCAT can have two formats:
+        # 1. NESTED: genes -> {CPIC|DPWG} -> {gene_name} -> {sourceDiplotypes|recommendationDiplotypes}[]
+        # 2. FLAT: genes -> {gene_name} -> {sourceDiplotypes|recommendationDiplotypes}[]
         diplotypes = []
         if "genes" in pharmcat_data:
-            # Extract from both CPIC and DPWG guidelines
-            for guideline_source in ["CPIC", "DPWG"]:
-                if guideline_source in pharmcat_data["genes"]:
-                    guideline_genes = pharmcat_data["genes"][guideline_source]
-                    for gene_name, gene_data in guideline_genes.items():
-                        if isinstance(gene_data, dict):
-                            # Prioritize recommendationDiplotypes over sourceDiplotypes to avoid duplication
-                            # recommendationDiplotypes contains the final processed results
-                            diplotype_source = None
-                            if "recommendationDiplotypes" in gene_data and gene_data["recommendationDiplotypes"]:
-                                diplotype_source = "recommendationDiplotypes"
-                            elif "sourceDiplotypes" in gene_data and gene_data["sourceDiplotypes"]:
-                                diplotype_source = "sourceDiplotypes"
+            genes_data = pharmcat_data["genes"]
+            
+            # Detect format by checking if first key is a guideline source or a gene symbol
+            is_nested_format = False
+            if genes_data:
+                first_key = next(iter(genes_data.keys()))
+                if first_key in ["CPIC", "DPWG", "FDA"]:
+                    is_nested_format = True
+                    logger.info("Detected NESTED PharmCAT format for diplotype extraction")
+                else:
+                    logger.info("Detected FLAT PharmCAT format for diplotype extraction")
+            
+            def extract_diplotypes_from_gene(gene_name: str, gene_data: dict, guideline_source: str):
+                """Helper to extract diplotypes from gene data."""
+                extracted = []
+                if not isinstance(gene_data, dict):
+                    return extracted
+                
+                # Prioritize recommendationDiplotypes over sourceDiplotypes to avoid duplication
+                diplotype_source = None
+                if "recommendationDiplotypes" in gene_data and gene_data["recommendationDiplotypes"]:
+                    diplotype_source = "recommendationDiplotypes"
+                elif "sourceDiplotypes" in gene_data and gene_data["sourceDiplotypes"]:
+                    diplotype_source = "sourceDiplotypes"
+                
+                if diplotype_source:
+                    for diplotype in gene_data[diplotype_source]:
+                        if isinstance(diplotype, dict):
+                            allele1 = diplotype.get("allele1", {}) or {}
+                            allele2 = diplotype.get("allele2", {}) or {}
+                            diplotype_name = f"{allele1.get('name', 'Unknown')}/{allele2.get('name', 'Unknown')}"
                             
-                            if diplotype_source:
-                                for diplotype in gene_data[diplotype_source]:
-                                    if isinstance(diplotype, dict):
-                                        # Extract diplotype information
-                                        allele1 = diplotype.get("allele1", {}) or {}
-                                        allele2 = diplotype.get("allele2", {}) or {}
-                                        diplotype_name = f"{allele1.get('name', 'Unknown')}/{allele2.get('name', 'Unknown')}"
-                                        
-                                        # Handle phenotypes array
-                                        phenotypes = diplotype.get("phenotypes", [])
-                                        if phenotypes and len(phenotypes) > 0:
-                                            phenotype = phenotypes[0]  # Take the first phenotype
-                                        else:
-                                            phenotype = "Unknown"
-                                        
-                                        activity_score = diplotype.get("activityScore")
-                                        
-                                        diplotypes.append({
-                                            "gene": gene_name,
-                                            "diplotype": diplotype_name,
-                                            "phenotype": phenotype,
-                                            "activity_score": activity_score,
-                                            "guideline_source": guideline_source
-                                        })
+                            phenotypes = diplotype.get("phenotypes", [])
+                            phenotype = phenotypes[0] if phenotypes else "Unknown"
+                            
+                            activity_score = diplotype.get("activityScore")
+                            
+                            extracted.append({
+                                "gene": gene_name,
+                                "diplotype": diplotype_name,
+                                "phenotype": phenotype,
+                                "activity_score": activity_score,
+                                "guideline_source": guideline_source
+                            })
+                return extracted
+            
+            if is_nested_format:
+                # Nested format: genes -> CPIC/DPWG -> gene_name -> data
+                for guideline_source in ["CPIC", "DPWG"]:
+                    if guideline_source in genes_data:
+                        guideline_genes = genes_data[guideline_source]
+                        for gene_name, gene_data in guideline_genes.items():
+                            diplotypes.extend(extract_diplotypes_from_gene(gene_name, gene_data, guideline_source))
+            else:
+                # Flat format: genes -> gene_name -> data
+                for gene_name, gene_data in genes_data.items():
+                    # Get guideline source from gene data if available
+                    guideline_source = gene_data.get("phenotypeSource", "CPIC") if isinstance(gene_data, dict) else "CPIC"
+                    diplotypes.extend(extract_diplotypes_from_gene(gene_name, gene_data, guideline_source))
         
         logger.info(f"PharmCAT returned {len(diplotypes)} diplotypes")
         
@@ -449,42 +473,65 @@ async def handle_final_stages_progression(workflow_service: WorkflowService, wor
         logger.info(f"Extracted {len(formatted_diplotypes)} formatted diplotypes")
         
         # Extract recommendations from PharmCAT results with deduplication
-        # PharmCAT structure: genes -> {CPIC|DPWG} -> {gene_name} -> relatedDrugs and drugRecommendations
+        # PharmCAT can have two formats (same as diplotypes):
+        # 1. NESTED: genes -> {CPIC|DPWG} -> {gene_name} -> relatedDrugs
+        # 2. FLAT: genes -> {gene_name} -> relatedDrugs
         drug_groups = {}  # Group by drug name to avoid duplicates
         
+        def extract_drugs_from_gene(gene_name: str, gene_data: dict, guideline_source: str):
+            """Helper to extract drug recommendations from gene data."""
+            if not isinstance(gene_data, dict):
+                return
+            if "relatedDrugs" not in gene_data:
+                return
+            
+            for drug in gene_data["relatedDrugs"]:
+                if isinstance(drug, dict):
+                    drug_name = drug.get("name", "Unknown")
+                    
+                    # Group by drug name to avoid duplicates
+                    if drug_name not in drug_groups:
+                        drug_groups[drug_name] = {
+                            "drug": drug_name,
+                            "genes": [],
+                            "recommendations": []
+                        }
+                    
+                    # Add gene if not already present
+                    if gene_name not in drug_groups[drug_name]["genes"]:
+                        drug_groups[drug_name]["genes"].append(gene_name)
+                    
+                    # Add recommendation
+                    drug_groups[drug_name]["recommendations"].append({
+                        "gene": gene_name,
+                        "guideline": f"{guideline_source} Guideline for {gene_name} and {drug_name}",
+                        "recommendation": f"See {guideline_source} guidelines for specific recommendations",
+                        "classification": guideline_source,
+                        "guideline_source": guideline_source
+                    })
+        
         if "genes" in pharmcat_data:
-            # Extract from both CPIC and DPWG guidelines
-            for guideline_source in ["CPIC", "DPWG"]:
-                if guideline_source in pharmcat_data["genes"]:
-                    guideline_genes = pharmcat_data["genes"][guideline_source]
-                    for gene_name, gene_data in guideline_genes.items():
-                        if isinstance(gene_data, dict):
-                            # Extract drug recommendations from this gene
-                            if "relatedDrugs" in gene_data:
-                                for drug in gene_data["relatedDrugs"]:
-                                    if isinstance(drug, dict):
-                                        drug_name = drug.get("name", "Unknown")
-                                        
-                                        # Group by drug name to avoid duplicates
-                                        if drug_name not in drug_groups:
-                                            drug_groups[drug_name] = {
-                                                "drug": drug_name,
-                                                "genes": [],
-                                                "recommendations": []
-                                            }
-                                        
-                                        # Add gene if not already present
-                                        if gene_name not in drug_groups[drug_name]["genes"]:
-                                            drug_groups[drug_name]["genes"].append(gene_name)
-                                        
-                                        # Add recommendation
-                                        drug_groups[drug_name]["recommendations"].append({
-                                            "gene": gene_name,
-                                            "guideline": f"{guideline_source} Guideline for {gene_name} and {drug_name}",
-                                            "recommendation": f"See {guideline_source} guidelines for specific recommendations",
-                                            "classification": guideline_source,
-                                            "guideline_source": guideline_source
-                                        })
+            genes_data = pharmcat_data["genes"]
+            
+            # Detect format (same logic as diplotypes)
+            is_nested_format = False
+            if genes_data:
+                first_key = next(iter(genes_data.keys()))
+                if first_key in ["CPIC", "DPWG", "FDA"]:
+                    is_nested_format = True
+            
+            if is_nested_format:
+                # Nested format: genes -> CPIC/DPWG -> gene_name -> data
+                for guideline_source in ["CPIC", "DPWG"]:
+                    if guideline_source in genes_data:
+                        guideline_genes = genes_data[guideline_source]
+                        for gene_name, gene_data in guideline_genes.items():
+                            extract_drugs_from_gene(gene_name, gene_data, guideline_source)
+            else:
+                # Flat format: genes -> gene_name -> data
+                for gene_name, gene_data in genes_data.items():
+                    guideline_source = gene_data.get("phenotypeSource", "CPIC") if isinstance(gene_data, dict) else "CPIC"
+                    extract_drugs_from_gene(gene_name, gene_data, guideline_source)
         
         # Convert grouped data to flattened format for compatibility
         formatted_recommendations = []

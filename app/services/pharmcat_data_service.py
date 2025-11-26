@@ -133,17 +133,23 @@ class PharmCATDataService:
             Dict containing normalized PharmCAT data in the format expected by report generation
         """
         try:
+            logger.info(f"Retrieving normalized PharmCAT data for run_id: {run_id}")
+            
             # Get comprehensive summary
             summary = get_pharmcat_summary(run_id, self.db)
             if not summary:
                 logger.warning(f"No summary data found for run {run_id}")
                 return None
             
+            logger.info(f"Summary retrieved: total_genes={summary.get('total_genes')}, actionable={summary.get('actionable_findings_count')}")
+            
             # Get detailed gene data
             genes = parser.get_gene_summary(run_id)
             diplotypes = parser.get_diplotypes(run_id)
             drug_recommendations = parser.get_drug_recommendations(run_id)
             messages = parser.get_messages(run_id)
+            
+            logger.info(f"Raw data counts - genes: {len(genes)}, diplotypes: {len(diplotypes)}, drug_recs: {len(drug_recommendations)}, messages: {len(messages)}")
             
             # Transform data to match report generation expectations
             normalized_data = {

@@ -420,89 +420,98 @@ def normalize_pharmcat_results(response):
             genes_data = []
             drug_recommendations = []
             
-            # Process PharmCAT v3format (genes, drugs structure)
+            # Process PharmCAT v3 format (genes, drugs structure)
             if "genes" in json_data or "drugs" in json_data:
-                logger.info("Processing PharmCAT v3format with genes/drugs structure")
+                logger.info("Processing PharmCAT v3 format with genes/drugs structure")
                 
                 # Extract genes from genes section if available
                 if "genes" in json_data and isinstance(json_data["genes"], dict):
-                    logger.info(f"Processing {len(json_data['genes'])} guideline sources in genes")
+                    genes_section = json_data["genes"]
                     
-                    for guideline_source, genes_dict in json_data["genes"].items():
-                        if not isinstance(genes_dict, dict):
-                            continue
-                            
-                        logger.info(f"Processing guideline source: {guideline_source}")
-                        logger.info(f"Found {len(genes_dict)} genes in {guideline_source}")
+                    # Detect format: FLAT (genes -> gene_symbol -> data) vs NESTED (genes -> CPIC/DPWG -> gene_symbol -> data)
+                    is_nested_format = False
+                    if genes_section:
+                        first_key = next(iter(genes_section.keys()))
+                        if first_key in ["CPIC", "DPWG", "FDA"]:
+                            is_nested_format = True
+                            logger.info("Detected NESTED PharmCAT format (genes -> guideline -> gene)")
+                        else:
+                            logger.info("Detected FLAT PharmCAT format (genes -> gene_symbol)")
+                    
+                    def process_gene_data(gene_id: str, gene_report: dict, guideline_source: str):
+                        """Helper to process a single gene's data."""
+                        if not isinstance(gene_report, dict):
+                            return
                         
-                        # Each guideline source contains multiple genes
-                        for gene_id, gene_report in genes_dict.items():
-                            if not isinstance(gene_report, dict):
+                        # Extract basic gene information
+                        diplotype = "Unknown/Unknown"
+                        function = "Unknown"
+                        activity_score = None
+                        
+                        # Look for phenotype information in recommendationDiplotypes
+                        if "recommendationDiplotypes" in gene_report and isinstance(gene_report["recommendationDiplotypes"], list) and gene_report["recommendationDiplotypes"]:
+                            rec_diplotype = gene_report["recommendationDiplotypes"][0]
+                            
+                            if "label" in rec_diplotype:
+                                diplotype = rec_diplotype["label"]
+                            
+                            if "phenotypes" in rec_diplotype:
+                                phenotypes = rec_diplotype["phenotypes"]
+                                if isinstance(phenotypes, list):
+                                    function = ", ".join(phenotypes)
+                                else:
+                                    function = str(phenotypes)
+                            
+                            if "activityScore" in rec_diplotype:
+                                activity_score = rec_diplotype["activityScore"]
+                        
+                        # Create gene entry
+                        gene_entry = {
+                            "gene": gene_id,
+                            "diplotype": diplotype,
+                            "phenotype": function,
+                            "activity_score": activity_score,
+                            "guideline_source": guideline_source
+                        }
+                        
+                        genes_data.append(gene_entry)
+                        logger.info(f"Added gene from v3format: {gene_entry}")
+                        
+                        # Extract drug information from relatedDrugs array
+                        if "relatedDrugs" in gene_report and isinstance(gene_report["relatedDrugs"], list) and gene_report["relatedDrugs"]:
+                            for drug_info in gene_report["relatedDrugs"]:
+                                if not isinstance(drug_info, dict):
+                                    continue
+                                
+                                drug_name = drug_info.get("name", "Unknown")
+                                drug_id = drug_info.get("id", "")
+                                
+                                drug_recommendations.append({
+                                    "gene": gene_id,
+                                    "drug": drug_name,
+                                    "drugId": drug_id,
+                                    "guideline": guideline_source,
+                                    "recommendation": f"See {guideline_source} guidelines for {gene_id}",
+                                    "classification": "Related drug"
+                                })
+                    
+                    if is_nested_format:
+                        # NESTED: genes -> CPIC/DPWG -> gene_symbol -> data
+                        logger.info(f"Processing {len(genes_section)} guideline sources in genes")
+                        for guideline_source, genes_dict in genes_section.items():
+                            if not isinstance(genes_dict, dict):
                                 continue
-                                
-                            logger.info(f"Processing gene {gene_id} from {guideline_source}")
-                            
-                            # Extract basic gene information
-                            diplotype = "Unknown/Unknown"
-                            function = "Unknown"
-                            activity_score = None
-                            
-                            # Look for phenotype information in recommendationDiplotypes
-                            if "recommendationDiplotypes" in gene_report and isinstance(gene_report["recommendationDiplotypes"], list) and gene_report["recommendationDiplotypes"]:
-                                # Use the first recommendation diplotype
-                                rec_diplotype = gene_report["recommendationDiplotypes"][0]
-                                
-                                # Extract diplotype
-                                if "label" in rec_diplotype:
-                                    diplotype = rec_diplotype["label"]
-                                
-                                # Extract phenotype
-                                if "phenotypes" in rec_diplotype:
-                                    phenotypes = rec_diplotype["phenotypes"]
-                                    if isinstance(phenotypes, list):
-                                        function = ", ".join(phenotypes)
-                                    else:
-                                        function = str(phenotypes)
-                                
-                                # Extract activity score
-                                if "activityScore" in rec_diplotype:
-                                    activity_score = rec_diplotype["activityScore"]
-                            
-                            # DO NOT DO NOT DO NOT Fall back to sourceDiplotypes if recommendationDiplotypes not available
-                            
-                            # Create gene entry
-                            gene_entry = {
-                                "gene": gene_id,
-                                "diplotype": diplotype,
-                                "phenotype": function,
-                                "activity_score": activity_score,
-                                "guideline_source": guideline_source
-                            }
-                            
-                            genes_data.append(gene_entry)
-                            logger.info(f"Added gene from v3format: {gene_entry}")
-                            
-                            # Extract drug information from relatedDrugs array
-                            if "relatedDrugs" in gene_report and isinstance(gene_report["relatedDrugs"], list) and gene_report["relatedDrugs"]:
-                                logger.info(f"Found {len(gene_report['relatedDrugs'])} related drugs for {gene_id}")
-                                
-                                for drug_info in gene_report["relatedDrugs"]:
-                                    if not isinstance(drug_info, dict):
-                                        continue
-                                    
-                                    # Extract drug information
-                                    drug_name = drug_info.get("name", "Unknown")
-                                    drug_id = drug_info.get("id", "")
-                                    
-                                    # Create drug recommendation entry
-                                    drug_recommendations.append({
-                                        "gene": gene_id,
-                                        "drug": drug_name,
-                                        "drugId": drug_id,
-                                        "guideline": guideline_source,
-                                        "recommendation": f"See {guideline_source} guidelines for {gene_id}",
-                                        "classification": "Related drug"
-                                    })
+                            logger.info(f"Processing guideline source: {guideline_source}")
+                            logger.info(f"Found {len(genes_dict)} genes in {guideline_source}")
+                            for gene_id, gene_report in genes_dict.items():
+                                process_gene_data(gene_id, gene_report, guideline_source)
+                    else:
+                        # FLAT: genes -> gene_symbol -> data
+                        logger.info(f"Processing {len(genes_section)} genes in FLAT format")
+                        for gene_id, gene_report in genes_section.items():
+                            # Get guideline source from gene data if available
+                            guideline_source = gene_report.get("phenotypeSource", "CPIC") if isinstance(gene_report, dict) else "CPIC"
+                            process_gene_data(gene_id, gene_report, guideline_source)
                 
                 # Extract drug recommendations from drugs section if available
                 if "drugs" in json_data and isinstance(json_data["drugs"], dict):

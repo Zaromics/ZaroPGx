@@ -113,7 +113,7 @@ services:
       context: .
       dockerfile: docker/pharmcat/Dockerfile
       args:
-        PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.0.1}
+        PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.1.1}
     container_name: pgx_pharmcat
     restart: unless-stopped
     volumes:
