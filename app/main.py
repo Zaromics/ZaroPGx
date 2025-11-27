@@ -149,7 +149,7 @@ def get_author_name() -> str:
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
-    version="0.2.2"
+    version="0.2.3"
 )
 
 # OAuth2
@@ -1119,7 +1119,7 @@ async def api_status():
             "test_job_endpoint": test_job_status,
             "routes": routes,
             "app_name": "ZaroPGx API",
-            "version": "0.2.2"
+            "version": "0.2.3"
         }
     except Exception as e:
         logger.exception(f"Error in api-status endpoint: {str(e)}")
