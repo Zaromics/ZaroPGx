@@ -34,6 +34,7 @@ services:
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
       - KROKI_URL=http://kroki:8000
       - SOURCE_URL=${SOURCE_URL}
+      - FHIR_EXPORT_ENABLED=${FHIR_EXPORT_ENABLED:-true}
       - PYTHONPATH=/app
       - WORKFLOW_API_BASE=http://app:8000/api/v1
       - PYTHONDONTWRITEBYTECODE=1

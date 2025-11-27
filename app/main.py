@@ -37,6 +37,7 @@ from app.api.routes import report_router, upload_router
 from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.workflow_router import router as workflow_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
+from app.api.routes.fhir_export_router import router as fhir_export_router
 from app.pharmcat import pharmcat_client
 from app.pharmcat.pharmcat_client import call_pharmcat_service, normalize_pharmcat_results
 from app.reports.generator import create_interactive_html_report, generate_pdf_report, generate_report
@@ -99,6 +100,7 @@ GENOME_DOWNLOADER_ENABLED = _env_flag("GENOME_DOWNLOADER_ENABLED", True)
 KROKI_ENABLED = _env_flag("KROKI_ENABLED", True)
 HAPI_FHIR_ENABLED = _env_flag("HAPI_FHIR_ENABLED", True)
 OUTSIDE_CALLS_OVERRIDE_ENABLED = _env_flag("OUTSIDECALLSOVERRIDE", False)
+FHIR_EXPORT_ENABLED = _env_flag("FHIR_EXPORT_ENABLED", True)  # Enable FHIR export by default
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
@@ -245,6 +247,13 @@ app.include_router(report_router.router)
 app.include_router(monitoring_router)
 app.include_router(workflow_router)
 app.include_router(pharmcat_router)
+
+# Conditionally include FHIR export router (enabled by default)
+if FHIR_EXPORT_ENABLED:
+    app.include_router(fhir_export_router)
+    logger.info("FHIR export functionality enabled (endpoints at /fhir/*)")
+else:
+    logger.info("FHIR export functionality disabled (set FHIR_EXPORT_ENABLED=true to enable)")
 
 # Override and disable authentication in development mode
 if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
@@ -1129,7 +1138,12 @@ async def services_config():
             "optitype": {"enabled": OPTITYPE_ENABLED},
             "genome_downloader": {"enabled": GENOME_DOWNLOADER_ENABLED},
             "kroki": {"enabled": KROKI_ENABLED},
-            "hapi_fhir": {"enabled": HAPI_FHIR_ENABLED}
+            "hapi_fhir": {"enabled": HAPI_FHIR_ENABLED},
+            "fhir_export": {
+                "enabled": FHIR_EXPORT_ENABLED,
+                "description": "FHIR R4 export for pharmacogenomic reports",
+                "endpoints": "/fhir/*" if FHIR_EXPORT_ENABLED else None
+            }
         }
     }
 

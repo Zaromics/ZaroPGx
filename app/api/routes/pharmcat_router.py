@@ -412,5 +412,5 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "pharmcat-api",
-        "version": "0.2.2"
+        "version": "0.2.3"
     }

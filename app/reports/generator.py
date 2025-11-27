@@ -29,6 +29,9 @@ from app.core.version_manager import get_all_versions, get_versions_dict
 # Keep below import commented out; this prevents circular import
 # from app.reports.pdf_generators import generate_pdf_report_dual_lane
 
+# FHIR Export - import lazily to avoid circular imports
+# from app.services.fhir_export_service import FHIRExportService, FHIR_EXPORT_ENABLED
+
 
 # Do not hardcode; derive from pyproject when available
 __version__ = "0.0.0"
@@ -269,9 +272,13 @@ INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
 EXECSUM_USE_TSV = _env_flag("EXECSUM_USE_TSV", False)
 
+# FHIR Export - automatically generate FHIR R4 exports during report generation
+FHIR_EXPORT_ENABLED = _env_flag("FHIR_EXPORT_ENABLED", True)
+
 # Log the configuration for debugging
 logger.info(f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}")
 logger.info(f"Executive Summary Configuration - Use TSV: {EXECSUM_USE_TSV}")
+logger.info(f"FHIR Export Configuration - Enabled: {FHIR_EXPORT_ENABLED}")
 
 # Report configuration dictionary
 REPORT_CONFIG = {
@@ -290,6 +297,9 @@ REPORT_CONFIG = {
     "show_pharmcat_html_report": INCLUDE_PHARMCAT_HTML,  # Original HTML report from PharmCAT
     "show_pharmcat_json_report": INCLUDE_PHARMCAT_JSON,  # Original JSON report from PharmCAT
     "show_pharmcat_tsv_report": INCLUDE_PHARMCAT_TSV,   # Original TSV report from PharmCAT
+    
+    # FHIR Export - generate FHIR R4 compliant exports
+    "generate_fhir_export": FHIR_EXPORT_ENABLED,  # FHIR JSON/XML exports
 }
 
 # Configure WeasyPrint logging for debugging text rendering issues
@@ -2495,6 +2505,86 @@ def generate_report(pharmcat_results: Dict[str, Any], output_dir: str, patient_i
                 logger.warning("PharmCAT TSV report not found in report directory")
         else:
             logger.debug("PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable")
+        
+        # FHIR Export - Generate FHIR R4 compliant exports if enabled
+        if REPORT_CONFIG["generate_fhir_export"]:
+            logger.info("=== FHIR EXPORT GENERATION START ===")
+            try:
+                # Import lazily to avoid circular imports
+                from app.services.fhir_export_service import FHIRExportService
+                
+                # We need a database session for the FHIR export service
+                if db_session:
+                    fhir_service = FHIRExportService(db_session)
+                    
+                    # Get the PharmCAT run_id - it might be in workflow metadata or we can use patient_id
+                    pharmcat_run_id = None
+                    if workflow_id:
+                        try:
+                            from app.api.db import Workflow
+                            import uuid as uuid_module
+                            workflow_uuid = uuid_module.UUID(str(workflow_id))
+                            workflow_obj = db_session.query(Workflow).filter(Workflow.id == workflow_uuid).first()
+                            if workflow_obj and workflow_obj.workflow_metadata:
+                                pharmcat_run_id = workflow_obj.workflow_metadata.get('pharmcat_run_id')
+                                logger.info(f"Found PharmCAT run_id in workflow metadata: {pharmcat_run_id}")
+                        except Exception as e:
+                            logger.warning(f"Could not get PharmCAT run_id from workflow: {e}")
+                    
+                    if not pharmcat_run_id:
+                        logger.info("No explicit PharmCAT run_id found; using workflow data for FHIR export")
+                    
+                    # Prepare patient info for FHIR export
+                    fhir_patient_info = None
+                    if patient_info:
+                        fhir_patient_info = {
+                            "id": patient_info.get("id", patient_id),
+                            "name": patient_info.get("name"),
+                            "gender": patient_info.get("gender"),
+                            "birthDate": patient_info.get("birthDate"),
+                        }
+                    
+                    # Generate both JSON and XML FHIR exports directly from normalized data
+                    fhir_result = fhir_service.save_fhir_export(
+                        run_id=pharmcat_run_id,
+                        patient_id=patient_id,
+                        patient_info=fhir_patient_info,
+                        output_format="both",  # Generate both JSON and XML
+                        include_recommendations=True,
+                        pharmcat_data=data,
+                        workflow_id=workflow_id,
+                    )
+                    
+                    if fhir_result.get("success"):
+                        files_saved = fhir_result.get("files_saved", [])
+                        for file_info in files_saved:
+                            fmt = file_info.get("format", "")
+                            url = file_info.get("url", "")
+                            if fmt == "json":
+                                report_paths["fhir_json_path"] = url
+                                data["fhir_json_url"] = url
+                                logger.info(f"✓ FHIR JSON export generated: {url}")
+                            elif fmt == "xml":
+                                report_paths["fhir_xml_path"] = url
+                                data["fhir_xml_url"] = url
+                                logger.info(f"✓ FHIR XML export generated: {url}")
+                        
+                        # Mark workflow as having FHIR export
+                        data["exported_to_fhir"] = True
+                    else:
+                        logger.warning(f"FHIR export failed: {fhir_result.get('error', 'Unknown error')}")
+                else:
+                    logger.warning("No database session available - skipping FHIR export")
+                    
+            except ImportError as e:
+                logger.warning(f"FHIR export service not available: {e}")
+            except Exception as e:
+                logger.error(f"FHIR export generation failed: {e}", exc_info=True)
+                # Don't fail the entire report generation if FHIR export fails
+            
+            logger.info("=== FHIR EXPORT GENERATION END ===")
+        else:
+            logger.debug("FHIR export disabled via FHIR_EXPORT_ENABLED environment variable")
         
         # Add the processed data to the report paths for reference
         report_paths["processed_data"] = data
