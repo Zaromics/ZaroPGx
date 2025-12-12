@@ -1,12 +1,27 @@
 # ZaroPGx — Pharmacogenomic Analysis Platform
-
-<img width="1352" height="2575" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
+**To see the analysis in action, click below to watch the demo video on YouTube:**
+[<img src="https://img.youtube.com/vi/FzKI48IQb3I/hqdefault.jpg" width="800" height="600"
+/>](https://www.youtube.com/embed/FzKI48IQb3I)
 
 ---
 ## What ZaroPGx does
 **ZaroPGx** is a containerized bioinformatic pipeline that **processes genetic data** and generates comprehensive pharmacogenetic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing; **allele calling** with hlatyping (OptiType), mtDNA-server-2, PyPGx, and optionally PharmCAT; and report generation via PharmCAT **phenotype matching** with outside calls from the three aforementioned tools, to unlock its full panel of 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx. **Reports generated** include custom PDF (printing friendly!) and interactive HTML formats, as well as the PharmCAT original HTML report, with raw data outputs available. Report data will soon be exportable to Personal and Electronic Health Records with the included HAPI FHIR server. Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when run locally in a secure network. Web-facing (production/public), as well as local (private), deployments are straightforward to configure with provided environment configuration templates, allowing the software stack to be safely accessible to others over the internet. A reverse proxy or any other authentication and/or authorization tooling is not included, but can be easily added or integrated according to your unique needs. 
 
-*Last revised 2025-10-13*
+### 🚀 Quickstart Reference -- One-Command Installation
+**Quickstart reference for the easy simple setup script**
+
+**PowerShell (Windows):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1 | iex
+```
+
+**Bash (Linux/macOS/WSL):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh | bash
+```
+
+<img width="600" height="1100" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
+
 ## Status
 **This project is in active development.**
 - NGS-derived GRCh38 VCF sample inputs can be processed without difficulty and produce substantial report content.
@@ -105,7 +120,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 - At this time, reference pre-built docker images are not distributed. As the program approaches v1.0 release, container images will begin to be distributed through Dockerhub.
 - For now, you must clone this repository and build the docker compose stack locally. This should not require any special action on your part, but it will take some time, possibly as long as an hour if your hardware is closer to "minimum" than "preferred" spec.
 
-### 🚀 One-Command Installation (Easiest)
+### 🚀 One-Command Installation (Easy Mode)
 
 **For most users, this is the simplest way to get started:**
 
@@ -154,7 +169,7 @@ curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh
 
 ---
 
-### 📋 Manual Installation (Advanced)
+### Manual Installation (Advanced)
 
 If you prefer more control or want to customize the installation:
 
@@ -340,7 +355,7 @@ docker compose logs -f
 
 ## Data Cleanup
 
-### Complete and Selective Data Removal
+### Data Removal- Complete and Selective modes 
 
 To completely remove all user data and reset ZaroPGx to a clean state:
 
@@ -380,6 +395,8 @@ docker volume rm pgx_pgdata pgx_fhir-data pgx_pharmcat-references
 4. Open a Pull Request
 
 ## Acknowledgements & Citations
+**This section is incomplete as the constituent software components are being assembled and all relevant research and clinical publications are being compiled.
+If your work is a part of ZaroPGx and you wish to add or amend text recognizing your work, yourself, and/or your organization, please send a message to the author. I will gladly attend to your request.**
 
 - **GATK** (Genome Analysis Toolkit, Broad Institute)
   - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. *Nature Genetics.* 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
