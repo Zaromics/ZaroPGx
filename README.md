@@ -1,6 +1,6 @@
 # ZaroPGx — Pharmacogenomic Analysis Platform
 **To see the analysis in action, click below to watch the demo video on YouTube:**
-[<img src="https://img.youtube.com/vi/FzKI48IQb3I/hqdefault.jpg" width="800" height="600"
+[<img src="https://img.youtube.com/vi/FzKI48IQb3I/hqdefault.jpg" width="600" height="400"
 />](https://www.youtube.com/embed/FzKI48IQb3I)
 
 ---
