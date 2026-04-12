@@ -17,7 +17,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 ### Uploading Supported File Types
 
 | Format | Extension | Description | Processing |
-|--------|-----------|-------------|------------|
+| --- | --- | --- | --- |
 | **VCF** | `.vcf`, `.vcf.gz` | Variant calls | Direct analysis |
 | **BAM** | `.bam` | Aligned reads | HLA typing → Analysis |
 | **CRAM** | `.cram` | Compressed BAM | GATK → HLA typing → Analysis |

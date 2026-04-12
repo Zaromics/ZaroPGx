@@ -236,3 +236,4 @@ stargazer.zip/
 /data/fhir-data/h2.trace.db
 data/fhir-data/*
 data/fhir-data/
+app/pharmcat/logs.txt

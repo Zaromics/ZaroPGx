@@ -6,9 +6,12 @@ import json
 import tempfile
 import shutil
 import traceback
+from contextlib import ExitStack
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import httpx
+
+from app.utils.outside_calls_override import get_override_file_path
 
 # Import pysam for VCF sample extraction
 try:
@@ -118,43 +121,46 @@ def call_pharmcat_service(vcf_path: str, output_json: Optional[str] = None, samp
         # Try the wrapper API first as it's more reliable
         logger.info("Trying PharmCAT API")
         pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
+
+        effective_outside_tsv_path = outside_tsv_path
+        if not effective_outside_tsv_path:
+            effective_outside_tsv_path = get_override_file_path()
         
         try:
-            logger.info(f"Calling PharmCAT API at {pharmcat_api_url}/process")
-            with open(vcf_path, 'rb') as f:
-                files = {'file': f}
-                # Attach outside call TSV if provided
-                if outside_tsv_path and os.path.exists(outside_tsv_path):
-                    try:
-                        files['outside_tsv'] = (os.path.basename(outside_tsv_path), open(outside_tsv_path, 'rb'), 'text/tab-separated-values')
-                        logger.info(f"Including outside TSV in request: {outside_tsv_path}")
-                    except Exception as e:
-                        logger.warning(f"Failed to attach outside TSV: {str(e)}")
+            logger.info(f"Calling PharmCAT API at {pharmcat_api_url}/genotype")
+
+            with ExitStack() as stack:
+                vcf_file_handle = stack.enter_context(open(vcf_path, 'rb'))
+                files = {'file': vcf_file_handle}
+
+                if effective_outside_tsv_path and os.path.exists(effective_outside_tsv_path):
+                    outside_handle = stack.enter_context(open(effective_outside_tsv_path, 'rb'))
+                    files['outside_tsv'] = (
+                        os.path.basename(effective_outside_tsv_path),
+                        outside_handle,
+                        'text/tab-separated-values',
+                    )
+                    logger.info(f"Including outside TSV in request: {effective_outside_tsv_path}")
+
                 data = {}
-                if sample_id:
-                    data['sampleId'] = sample_id
                 if report_id:
-                    data['reportId'] = report_id
+                    data['report_id'] = report_id
                     logger.info(f"Using report_id: {report_id} for consistent directory naming")
-                
-                # Always use patient_id (internal UUID) for directory naming
-                if patient_id:
-                    data['patientId'] = patient_id
-                    logger.info(f"Using database patient ID for organizing reports: {patient_id}")
-                elif sample_id:
-                    # Fallback to sample_id if patient_id is unavailable
-                    data['patientId'] = sample_id
-                    logger.info(f"Using sample_id for organizing reports: {sample_id}")
-                # Optionally pass a display identifier for UI/report embedding (service may ignore)
+
+                effective_patient_id = patient_id or sample_id
+                if effective_patient_id:
+                    data['patient_id'] = effective_patient_id
+                    logger.info(f"Using patient_id for organizing reports: {effective_patient_id}")
+
                 if sample_identifier:
-                    data['displayId'] = sample_identifier
-                    logger.info(f"Passing display sample identifier: {sample_identifier}")
-                
+                    data['sample_identifier'] = sample_identifier
+                    logger.info(f"Passing sample identifier: {sample_identifier}")
+
                 response = requests.post(
-                    f"{pharmcat_api_url}/process",
+                    f"{pharmcat_api_url}/genotype",
                     files=files,
                     data=data,
-                    timeout=300  # 5 minute timeout
+                    timeout=300
                 )
                 
                 # Check for HTTP errors
@@ -500,6 +506,7 @@ def normalize_pharmcat_results(response):
                         logger.info(f"Processing {len(genes_section)} guideline sources in genes")
                         for guideline_source, genes_dict in genes_section.items():
                             if not isinstance(genes_dict, dict):
+                                logger.warning(f"Unexpected PharmCAT JSON shape: genes_section[{guideline_source}] is {type(genes_dict)}, expected dict")
                                 continue
                             logger.info(f"Processing guideline source: {guideline_source}")
                             logger.info(f"Found {len(genes_dict)} genes in {guideline_source}")
@@ -512,6 +519,8 @@ def normalize_pharmcat_results(response):
                             # Get guideline source from gene data if available
                             guideline_source = gene_report.get("phenotypeSource", "CPIC") if isinstance(gene_report, dict) else "CPIC"
                             process_gene_data(gene_id, gene_report, guideline_source)
+                elif "genes" in json_data and json_data.get("genes") is not None:
+                    logger.warning(f"Unexpected PharmCAT JSON shape: json_data['genes'] is {type(json_data.get('genes'))}, expected dict")
                 
                 # Extract drug recommendations from drugs section if available
                 if "drugs" in json_data and isinstance(json_data["drugs"], dict):
@@ -523,6 +532,7 @@ def normalize_pharmcat_results(response):
                     # Process each guideline source (CPIC, DPWG, FDA)
                     for guideline_source, drugs_in_source in json_data["drugs"].items():
                         if not isinstance(drugs_in_source, dict):
+                            logger.warning(f"Unexpected PharmCAT JSON shape: drugs_in_source is {type(drugs_in_source)}, expected dict")
                             continue
                         
                         logger.info(f"Processing {guideline_source} with {len(drugs_in_source)} drugs")
@@ -625,6 +635,8 @@ def normalize_pharmcat_results(response):
                     for drug_name, drug_data in drug_recommendations_by_drug.items():
                         drug_data["genes"] = list(drug_data["genes"])  # Convert set to list
                         drug_recommendations.append(drug_data)
+                elif "drugs" in json_data and json_data.get("drugs") is not None:
+                    logger.warning(f"Unexpected PharmCAT JSON shape: json_data['drugs'] is {type(json_data.get('drugs'))}, expected dict")
                 
                 # If we found either genes or drug recommendations, consider JSON processing successful
                 if genes_data or drug_recommendations:
@@ -755,33 +767,46 @@ async def async_call_pharmcat_api(input_file: str, report_id: Optional[str] = No
         # Get the PharmCAT API URL from environment or use default
         pharmcat_api_url = os.environ.get("PHARMCAT_API_URL", "http://pharmcat:5000")
 
+        effective_outside_tsv_path = get_override_file_path()
+
+
         # Read the file as bytes
         with open(input_file, 'rb') as f:
             file_content = f.read()
+
+        outside_content = None
+        outside_filename = None
+        if effective_outside_tsv_path and os.path.exists(effective_outside_tsv_path):
+            with open(effective_outside_tsv_path, 'rb') as f:
+                outside_content = f.read()
+            outside_filename = os.path.basename(effective_outside_tsv_path)
         
         # Prepare form data
         files = {"file": (os.path.basename(input_file), file_content, "application/octet-stream")}
+        if outside_content is not None and outside_filename is not None:
+            files["outside_tsv"] = (outside_filename, outside_content, "text/tab-separated-values")
+        
         data = {}
         
         # Add report_id if provided
         if report_id:
-            data["reportId"] = report_id
+            data["report_id"] = report_id
             logger.info(f"Added report_id to request: {report_id}")
         
         # Use patient_id for file naming (not sample_identifier)
         if patient_id:
-            data["patientId"] = patient_id
+            data["patient_id"] = patient_id
             logger.info(f"Added database patient ID to request: {patient_id}")
         
         # Pass sample_identifier as displayId for display purposes only
         if sample_identifier:
-            data["displayId"] = sample_identifier
+            data["sample_identifier"] = sample_identifier
             logger.info(f"Added user's sample identifier for display: {sample_identifier}")
         
         async with httpx.AsyncClient(timeout=300) as client:  # 5 minute timeout
             # Make the POST request with both files and form data
             response = await client.post(
-                f"{pharmcat_api_url}/process",
+                f"{pharmcat_api_url}/genotype",
                 files=files,
                 data=data
             )
@@ -926,7 +951,7 @@ def call_pharmcat_api(input_file: str) -> Dict[str, Any]:
             
             # Make the POST request
             response = requests.post(
-                f"{PHARMCAT_API_URL}/api/process",
+                f"{PHARMCAT_API_URL}/genotype",
                 files=files,
                 timeout=300  # 5 minute timeout
             )
