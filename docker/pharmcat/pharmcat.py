@@ -92,6 +92,8 @@ PHARMCAT_JAR = os.environ.get("PHARMCAT_JAR", "/pharmcat/pharmcat.jar")
 PHARMCAT_PIPELINE_DIR = os.environ.get("PHARMCAT_PIPELINE_DIR", "/pharmcat/pipeline")
 # Path to PharmCAT reference files (where PharmCAT expects them)
 PHARMCAT_REFERENCE_DIR = os.environ.get("PHARMCAT_REFERENCE_DIR", "/pharmcat")
+# Path to outside calls override file (for manual HLA/MT-RNR1/CYP2D6 calls)
+OUTSIDE_CALLS_OVERRIDE_PATH = os.environ.get("OUTSIDE_CALLS_OVERRIDE_PATH", "/data/lexicon/outside_calls.tsv")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -343,13 +345,24 @@ async def process_genotype(
                     shutil.copy2(file_path, vcf_path)
                     logger.info(f"Copied VCF file to temp directory: {vcf_path}")
                 
-                # Handle outside TSV file if provided
-                if outside_tsv:
-                    outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
+                # Handle outside TSV file - check for override first
+                outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
+                outside_calls_override_enabled = os.environ.get("OUTSIDECALLSOVERRIDE", "").lower() in ("true", "1", "yes", "on")
+                
+                if outside_calls_override_enabled and os.path.exists(OUTSIDE_CALLS_OVERRIDE_PATH):
+                    # Use the manual override file instead of any provided outside TSV
+                    shutil.copy2(OUTSIDE_CALLS_OVERRIDE_PATH, outside_path)
+                    logger.info(f"Using outside calls OVERRIDE from {OUTSIDE_CALLS_OVERRIDE_PATH}")
+                    logger.info(f"Override file copied to {outside_path}")
+                elif outside_tsv:
+                    # Use provided outside TSV if no override
                     with open(outside_path, "wb") as f:
                         content = await outside_tsv.read()
                         f.write(content)
-                    logger.info(f"Saved outside call TSV to {outside_path}")
+                    logger.info(f"Saved uploaded outside call TSV to {outside_path}")
+                else:
+                    outside_path = None
+                    logger.info("No outside calls file provided or override enabled")
                 
                 # Extract actual sample ID from VCF file for PharmCAT -s parameter
                 vcf_sample_id = extract_sample_id_from_vcf(vcf_path)
@@ -357,6 +370,18 @@ async def process_genotype(
                     logger.info(f"Extracted VCF sample ID for PharmCAT: {vcf_sample_id}")
                 else:
                     logger.warning("Could not extract sample ID from VCF file - PharmCAT may fail")
+
+                # PharmCAT pipeline does not take an explicit CLI arg for outside calls.
+                # It detects outside calls based on a file naming convention in the same directory.
+                # For single-sample VCFs, <base>.outside.tsv works.
+                # For multi-sample VCFs, <base>.<sample_id>.outside.tsv is accepted.
+                if outside_path and os.path.exists(outside_path) and vcf_sample_id:
+                    multisample_outside_path = os.path.join(temp_dir, f"{base_name}.{vcf_sample_id}.outside.tsv")
+                    try:
+                        shutil.copy2(outside_path, multisample_outside_path)
+                        logger.info(f"Also wrote outside calls file for multi-sample naming: {multisample_outside_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to write multi-sample outside calls file: {e}")
                 
                 # Update processing status
                 processing_status.update({

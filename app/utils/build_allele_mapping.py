@@ -2,14 +2,18 @@
 Generate a PyPGx → PharmCAT allele/diplotype translation map.
 
 Inputs:
-  - lexicon/pharmcat_phenotypes.tsv (tab-separated)
+  - lexicon/phenotypes.tsv (tab-separated)
+
+  Historical note: this file was previously named lexicon/pharmcat_phenotypes.tsv.
+  The current TSV may include extra columns (e.g. CPIC/DPWG phenotype columns);
+  this script only reads "Gene" and "Named Alleles".
 
 Outputs (not written unless you run this module):
   - lexicon/allele_map_pypgx_to_pharmcat.csv
   - lexicon/allele_map_pypgx_to_pharmcat.json
 
 Notes
-  - Only genes present in pharmcat_phenotypes.tsv are considered
+  - Only genes present in phenotypes.tsv are considered
   - HLA-A and HLA-B are skipped as requested
   - For most loci, PharmCAT and PyPGx use identical allele tokens; we provide
     normalization rules and identity mapping by default so the file is a
@@ -27,7 +31,7 @@ from typing import Iterable, List, Tuple
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PHARMCAT_TSV = REPO_ROOT / "lexicon" / "pharmcat_phenotypes.tsv"
+PHARMCAT_TSV = REPO_ROOT / "lexicon" / "phenotypes.tsv"
 OUT_CSV = REPO_ROOT / "lexicon" / "allele_map_pypgx_to_pharmcat.csv"
 OUT_JSON = REPO_ROOT / "lexicon" / "allele_map_pypgx_to_pharmcat.json"
 

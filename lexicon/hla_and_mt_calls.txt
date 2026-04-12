@@ -1,0 +1,30 @@
+MT DNA:
+
+Variants and Hetroplasmies
+Detected 9 variants, 3 heteroplasmies and 3 InDels.
+
+Variant	Level	Type	Flags
+263 (A>G)	0.999	Variant	PASS
+302 (A>AC)	0.032	InDel	clustered_events;multiallelic
+302 (A>ACCC)	0.146	InDel	clustered_events;multiallelic
+310 (T>TC)	0.999	InDel	clustered_events
+750 (A>G)	0.999	Variant	PASS
+3107 (N>T)	0.536,0.499	Heteroplasmy	PASS
+4659 (G>A)	0.209	Heteroplasmy	PASS
+4769 (A>G)	1.00	Variant	PASS
+4793 (A>G)	0.995	Variant	PASS
+6296 (C>A)	0.993	Variant	PASS
+8860 (A>G)	0.999	Variant	PASS
+10935 (A>C)	0.983	Heteroplasmy	PASS
+13959 (C>T)	0.990	Variant	PASS
+15326 (A>G)	0.999	Variant	PASS
+16519 (T>C)	0.996	Variant	PASS
+
+---
+
+HLA:
+
+HLA-A, A*01:01, A*24:02
+HLA-B, B*08:01, B*38:01
+HLA-C, C*07:01, C*12:03
+
