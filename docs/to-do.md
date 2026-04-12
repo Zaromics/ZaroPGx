@@ -26,7 +26,6 @@ curation: full
 - Recognize and/or regenerate index files as needed; map unaligned to appropriate reference: currently GRCh38.p14
 - Consider preprocessing complementing PyPGx-led VCF generation (evaluate necessity)
 - Add mtdna-server-2
-- Get Sysbox working
 - Finish wiring in hlatyping
 - Improve analysis, make better use of samtools and bcftools
 
