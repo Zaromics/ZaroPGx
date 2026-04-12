@@ -1,0 +1,16 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+
+# App Data
+data/
+
+# Development Notes
+GEMINI.md
+DOCKERHUB_PUBLISHING_PLAN.md

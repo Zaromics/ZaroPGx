@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh
 *Features*
 - [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
 - [...] Priority 1 (*Development*): **FHIR offline export** as JSON, XML; Custom PharmCAT definitions for outside calls. *Projected release in v0.3*
-- [...] Priority 2 (*Development*): Nextflow-based containers (**hlatyping & mtDNA-server-2**) sysbox implementation and wiring-in. *Projected release in v0.4 at the latest, depending on sysbox complexity.*
+- [...] Priority 2 (*Development*): Wiring-in mtDNA-server-2 container. *Projected release in v0.4.*
 - [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.4-0.5*
 - [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
 - [...] Priority 5 (*Early research*): In-depth and targeted analytics, with specialty curation to reduce cognitive load
@@ -99,13 +99,8 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 **Windows 10/11** requires *WSL2* installed and configured
 - *WSL2*; *Docker*; *Docker Compose*; *Git*
 - Auto-install supported via: winget (Windows 10/11) or chocolatey
-- If your needs require HLA and MT typing: (at this time) your device will require *Sysbox*
-  - IF using *Sysbox* for free (it's open source), *Docker Desktop* may NOT be used. If you have *Docker Desktop* already installed, it should still work <u>as long as you launch ZaroPGx via shell from the WSL2 virtual drive</u>; if it doesn't work, you may have to uninstall or disable Docker Desktop until you are finished using ZaroPGx.
-    - *Sysbox*
-  - IF using Docker Desktop PAID/PREMIUM, *Sysbox* can be enabled directly in Docker Desktop via the <u>"Enhanced Container Isolation"</u> option. Proceed as usual.
-    - *Docker Desktop* with *Sysbox* runtime enabled (ECI)
 
-**macOS** requires either running a Linux VM (e.g. Crossover, etc.) OR using the paid/premium *Docker Desktop* with included *Sysbox*
+**macOS** requires either running a Linux VM (e.g. Crossover, etc.) OR using *Docker Desktop*
 - Auto-install supported via: homebrew (Git only; Docker Desktop must be installed manually)
 
 <u>Hardware</u> (projected)
@@ -410,6 +405,16 @@ If your work is a part of ZaroPGx and you wish to add or amend text recognizing 
   - Weissensteiner H, Forer L, Kronenberg F, Schönherr S. mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics. *Nucleic Acids Res*. 2024 May 6:gkae296. doi: 10.1093/nar/gkae296. Epub ahead of print. PMID: 38709886.
 
 This project was originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
+- Zampatti, S.; Fabrizio, C.; Ragazzo, M.; Campoli, G.; Caputo, V.; Strafella, C.; Pellicano, C.; Cascella, R.; Spalletta, G.; Petrosini, L.; et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *J. Pers. Med.* 2021, 11, 851. https://doi.org/10.3390/jpm11090851
+
+## License
+
+[AGPLv3](LICENSE)
+
+Copyright (C) 2024-2025 Iliya Yaroshevskiy
+
+This project is licensed under the AGPLv3 License.
+originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
 - Zampatti, S.; Fabrizio, C.; Ragazzo, M.; Campoli, G.; Caputo, V.; Strafella, C.; Pellicano, C.; Cascella, R.; Spalletta, G.; Petrosini, L.; et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *J. Pers. Med.* 2021, 11, 851. https://doi.org/10.3390/jpm11090851
 
 ## License
