@@ -65,7 +65,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("hlatyping")
 
-app = FastAPI(title="nf-core/hlatyping Wrapper API", version="0.2.3", description="REST API wrapper around nf-core/hlatyping for the ZaroPGx pipeline")
+app = FastAPI(title="nf-core/hlatyping Wrapper API", version="0.2.4", description="REST API wrapper around nf-core/hlatyping for the ZaroPGx pipeline")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
