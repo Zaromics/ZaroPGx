@@ -26,7 +26,7 @@ curation: full
 - Recognize and/or regenerate index files as needed; map unaligned to appropriate reference: currently GRCh38.p14
 - Consider preprocessing complementing PyPGx-led VCF generation (evaluate necessity)
 - Add mtdna-server-2
-- Finish wiring in hlatyping
+- Finish wiring in ZaroHLA
 - Improve analysis, make better use of samtools and bcftools
 
 ## Calling & Tools
@@ -39,7 +39,7 @@ curation: full
   - BAM-to-VCF preprocessing check
   - Evaluate imputation options; expose via advanced settings
 ### HLA Typing
-  - Use nf-core/hlatyping (OptiType) for HLA-A/B/C when FASTQ; confirm BAM pathway
+  - Use ZaroHLA (OptiType) for HLA-A/B/C when FASTQ; confirm BAM pathway
   - Align to GRCh38 as part of HLA path
 ### Ancillary and Future tools
   - Now included in Zaromics suite

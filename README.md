@@ -5,7 +5,7 @@
 
 ---
 ## What ZaroPGx does
-**ZaroPGx** is a containerized bioinformatic pipeline that **processes genetic data** and generates comprehensive pharmacogenetic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing; **allele calling** with hlatyping (OptiType), mtDNA-server-2, PyPGx, and optionally PharmCAT; and report generation via PharmCAT **phenotype matching** with outside calls from the three aforementioned tools, to unlock its full panel of 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx. **Reports generated** include custom PDF (printing friendly!) and interactive HTML formats, as well as the PharmCAT original HTML report, with raw data outputs available. Report data will soon be exportable to Personal and Electronic Health Records with the included HAPI FHIR server. Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when run locally in a secure network. Web-facing (production/public), as well as local (private), deployments are straightforward to configure with provided environment configuration templates, allowing the software stack to be safely accessible to others over the internet. A reverse proxy or any other authentication and/or authorization tooling is not included, but can be easily added or integrated according to your unique needs. 
+**ZaroPGx** is a containerized bioinformatic pipeline that **processes genetic data** and generates comprehensive pharmacogenetic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing; **allele calling** with ZaroHLA (OptiType), mtDNA-server-2, PyPGx, and optionally PharmCAT; and report generation via PharmCAT **phenotype matching** with outside calls from the three aforementioned tools, to unlock its full panel of 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx. **Reports generated** include custom PDF (printing friendly!) and interactive HTML formats, as well as the PharmCAT original HTML report, with raw data outputs available. Report data will soon be exportable to Personal and Electronic Health Records with the included HAPI FHIR server. Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when run locally in a secure network. Web-facing (production/public), as well as local (private), deployments are straightforward to configure with provided environment configuration templates, allowing the software stack to be safely accessible to others over the internet. A reverse proxy or any other authentication and/or authorization tooling is not included, but can be easily added or integrated according to your unique needs. 
 
 ### 🚀 Quickstart Reference -- One-Command Installation
 **Quickstart reference for the easy simple setup script**
@@ -64,7 +64,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 - **GATK service** - (FastAPI wrapper)
   - Handles various conversion, haplotyping, and preprocessing operations as needed
   - Service Ports (Host → Container) 5002 → 5000
-- **nf-core/hlatyping** - (nextflow OptiType container)
+- **ZaroHLA** - (nextflow OptiType container)
   - Performs HLA Calling with either FASTQ or BAM inputs
 - **PyPGx service** - (FastAPI wrapper)
   - Performs allele calling for 87 total pharmacogenes.
@@ -395,8 +395,8 @@ If your work is a part of ZaroPGx and you wish to add or amend text recognizing 
 
 - **GATK** (Genome Analysis Toolkit, Broad Institute)
   - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. *Nature Genetics.* 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
-- **hlatyping** (nf-core/hlatyping, based on OptiType, by Christopher Mohr from Medical Data Integration Center and Quantitative Biology Center, Alexander Peltzer from Boehringer Ingelheim, and Sven Fillinger from Quantitative Biology Center)
-  -  Sven F., Christopher Mohr, Alexander Peltzer, nf-core bot, Vikesh Ajith, Mark Polster, Gisela Gabernet, Jonas Scheid, VIJAY, Phil Ewels, Maxime U Garcia, Tobias Koch, Paolo Di Tommaso, & Kevin Menden. (2025). nf-core/hlatyping: 2.1.0 - Chewbacca (2.1.0). *Zenodo.* https://doi.org/10.5281/zenodo.15212533  Docs: https://nf-co.re/hlatyping/
+- **ZaroHLA** (based on OptiType, by Schubert B, Kohlbacher O, et al.)
+  - Schubert B, et al. OptiType: precision HLA typing from next-generation sequencing data. *Bioinformatics.* 2014;30(23):3310-3316. doi: 10.1093/bioinformatics/btu548. Docs: https://github.com/FRED-2/OptiType
 - **PharmCAT** (Pharmacogenomics Clinical Annotation Tool, Pharmacogenomics Knowledge Base, managed at Stanford University & University of Pennsylvania)
   - Sangkuhl K, Whirl-Carrillo M, et al. *Clinical Pharmacology & Therapeutics.* 2020;107(1):203–210.  Docs: https://pharmcat.clinpgx.org/
 - **PyPGx** (by Dr. Seung-been "Steven" Lee)

@@ -189,7 +189,7 @@ def build_citations() -> List[Dict[str, str]]:
     pypgx_ver = vmap.get("pypgx") or "0.25.0"
     pharmcat_ver = vmap.get("pharmcat") or "3.1.1"
     gatk_ver = vmap.get("gatk") or "4.6.2.0"
-    hlatyping_ver = vmap.get("hlatyping") or "2.1.0"
+    zarohla_ver = vmap.get("zarohla") or "2.1.0"
     mtdna_server_2_ver = vmap.get("mtdna-server-2") or "2.1.16"
 
     citations: List[Dict[str, str]] = []
@@ -232,9 +232,9 @@ def build_citations() -> List[Dict[str, str]]:
         "repo": "https://github.com/PharmGKB",
     })
     citations.append({
-        "name": "hlatyping",
-        "text": f"OptiType-based HLA typing with nf-core/hlatyping, version {hlatyping_ver}. Available at: https://nf-co.re/hlatyping (accessed {today}).",
-        "repo": "https://github.com/nf-core/hlatyping",
+        "name": "ZaroHLA",
+        "text": f"OptiType-based HLA typing with ZaroHLA, version {zarohla_ver}. Available at: https://github.com/FRED-2/OptiType (accessed {today}).",
+        "repo": "https://github.com/ZaroHLA",
     })
     return citations
 

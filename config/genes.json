@@ -9,7 +9,7 @@
   "categories": {
     "hla": {
       "name": "HLA Class I",
-      "description": "Human Leukocyte Antigen class I loci supported by OptiType/nf-core hlatyping",
+      "description": "Human Leukocyte Antigen class I loci supported by OptiType/ZaroHLA",
       "count": 3,
       "genes": [
         "HLA-A", "HLA-B", "HLA-C"

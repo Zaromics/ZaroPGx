@@ -1078,8 +1078,8 @@ async def upload_genomic_data(
     
     Supported file types:
     - VCF: Direct processing through PyPGx and PharmCAT. If GRCh37/hg19 reference genome is detected, bcftools liftover will be used to convert.
-    - BAM/CRAM/SAM: BAM is processed by hlatyping then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
-    - FASTQ: Processed by hlatyping, then GATK, then PyPGx and PharmCAT
+    - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
+    - FASTQ: Processed by ZaroHLA, then GATK, then PyPGx and PharmCAT
     - 23andMe/BED: Not yet supported, requires conversion to VCF (future implementation)
     
     The system automatically detects and uses index files (.bai, .crai, .csi, .tbi, .idx) when provided.
@@ -1166,7 +1166,7 @@ async def upload_genomic_data(
                 WorkflowStepCreate(
                     step_name="hla_typing",
                     step_order=step_order,
-                    container_name="hlatyping"
+                    container_name="zarohla"
                 )
             )
             step_order += 1

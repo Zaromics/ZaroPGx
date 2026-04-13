@@ -75,7 +75,7 @@ async def call_hla(
     patient_id: Optional[str] = Form("unknown"),
     report_id: Optional[str] = Form("unknown"),
     workflow_id: Optional[str] = Form(None),
-    step_name: Optional[str] = Form("hlatyping")
+    step_name: Optional[str] = Form("zarohla")
 ) -> Dict[str, Any]:
     
     workflow_client = None
@@ -83,7 +83,7 @@ async def call_hla(
         try:
             workflow_client = WorkflowClient(workflow_id, step_name)
             if await workflow_client.is_workflow_cancelled():
-                logger.info(f"Workflow {workflow_id} is cancelled, aborting hlatyping processing")
+                logger.info(f"Workflow {workflow_id} is cancelled, aborting ZaroHLA processing")
                 return {"success": False, "error": "Workflow has been cancelled"}
                 
             await workflow_client.start_step("Starting HLA typing")
