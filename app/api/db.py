@@ -22,11 +22,11 @@ from .models import WorkflowStatus, StepStatus, LogLevel
 load_dotenv()
 
 # Get database connection parameters from environment variables
-DB_USER = os.getenv("DB_USER", "cpic_user")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "cpic_password")
+DB_USER = os.getenv("DB_USER", "zaropgx_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "zaropgx_password")
 DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "cpic_db")
+DB_NAME = os.getenv("DB_NAME", "zaropgx_db")
 
 # Assemble database URL with psycopg3
 import psycopg

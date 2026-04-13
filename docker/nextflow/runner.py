@@ -94,11 +94,11 @@ async def run(request: NextflowRunRequest):
             # Use direct database query for better performance
 
             # Get database connection parameters
-            db_user = os.getenv("DB_USER", "cpic_user")
+            db_user = os.getenv("DB_USER", "zaropgx_user")
             db_password = os.getenv("DB_PASSWORD", "test123")
             db_host = os.getenv("DB_HOST", "db")
             db_port = os.getenv("DB_PORT", "5432")
-            db_name = os.getenv("DB_NAME", "cpic_db")
+            db_name = os.getenv("DB_NAME", "zaropgx_db")
             
             # Create database URL and engine
             database_url = f"postgresql+psycopg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"

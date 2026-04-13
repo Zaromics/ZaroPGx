@@ -693,7 +693,7 @@ from app.main import app
 os.environ["TESTING"] = "true"
 os.environ["DB_HOST"] = "localhost"
 os.environ["DB_PORT"] = "5432"
-os.environ["DB_NAME"] = "test_cpic_db"
+os.environ["DB_NAME"] = "test_zaropgx_db"
 os.environ["DB_USER"] = "test_user"
 os.environ["DB_PASSWORD"] = "test_password"
 
@@ -749,7 +749,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_cpic_db
+          POSTGRES_DB: test_zaropgx_db
         options: >-
           --health-cmd pg_isready
           --health-interval 10s

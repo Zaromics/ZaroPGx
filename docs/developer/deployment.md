@@ -78,8 +78,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 POSTGRES_PASSWORD=your-secure-db-password
 DB_HOST=db
 DB_PORT=5432
-DB_NAME=cpic_db
-DB_USER=cpic_user
+DB_NAME=zaropgx_db
+DB_USER=zaropgx_user
 DB_PASSWORD=your-secure-db-password
 
 # Application
@@ -179,14 +179,14 @@ services:
       - "5444:5432"
     environment:
       - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=cpic_db
-      - POSTGRES_USER=cpic_user
+      - POSTGRES_DB=zaropgx_db
+      - POSTGRES_USER=zaropgx_user
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cpic_user -d cpic_db"]
+      test: ["CMD-SHELL", "pg_isready -U zaropgx_user -d zaropgx_db"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -238,8 +238,8 @@ services:
     ports:
       - "8090:8080"
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql+psycopg://db:5432/cpic_db
-      - SPRING_DATASOURCE_USERNAME=cpic_user
+      - SPRING_DATASOURCE_URL=jdbc:postgresql+psycopg://db:5432/zaropgx_db
+      - SPRING_DATASOURCE_USERNAME=zaropgx_user
       - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
     depends_on:
       - db
@@ -387,7 +387,7 @@ DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="$BACKUP_DIR/zaro_pgx_$DATE.sql"
 
 mkdir -p $BACKUP_DIR
-docker compose exec -T db pg_dump -U cpic_user cpic_db > $BACKUP_FILE
+docker compose exec -T db pg_dump -U zaropgx_user zaropgx_db > $BACKUP_FILE
 gzip $BACKUP_FILE
 
 # Keep only last 30 days
@@ -620,7 +620,7 @@ BACKUP_DIR="/backups/postgres"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 # Create backup
-docker compose exec -T db pg_dump -U cpic_user cpic_db | gzip > "$BACKUP_DIR/db_$DATE.sql.gz"
+docker compose exec -T db pg_dump -U zaropgx_user zaropgx_db | gzip > "$BACKUP_DIR/db_$DATE.sql.gz"
 
 # Upload to S3
 aws s3 cp "$BACKUP_DIR/db_$DATE.sql.gz" s3://your-backup-bucket/
@@ -645,7 +645,7 @@ aws s3 cp "$BACKUP_DIR/files_$DATE.tar.gz" s3://your-backup-bucket/
 **Database recovery:**
 ```bash
 # Restore from backup
-gunzip -c db_20240115_120000.sql.gz | docker compose exec -T db psql -U cpic_user cpic_db
+gunzip -c db_20240115_120000.sql.gz | docker compose exec -T db psql -U zaropgx_user zaropgx_db
 ```
 
 **Full system recovery:**
@@ -657,7 +657,7 @@ docker compose down
 tar -xzf files_20240115_120000.tar.gz -C /
 
 # Restore database
-gunzip -c db_20240115_120000.sql.gz | docker compose exec -T db psql -U cpic_user cpic_db
+gunzip -c db_20240115_120000.sql.gz | docker compose exec -T db psql -U zaropgx_user zaropgx_db
 
 # Start services
 docker compose up -d

@@ -71,19 +71,19 @@ docker compose down -v
 docker compose up -d db
 
 # Connect and verify all schemas exist
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dn"
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dn"
 
 # Check that all tables exist in each schema
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt cpic.*"
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt user_data.*"
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt job_monitoring.*"
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt pharmcat.*"
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt cpic.*"
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt user_data.*"
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt job_monitoring.*"
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt pharmcat.*"
 
 # Verify PharmCAT views were created
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dv pharmcat.*"
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dv pharmcat.*"
 
 # Check public tables
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -c "\dt public.*"
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt public.*"
 ```
 
 ## Fresh Database Reset

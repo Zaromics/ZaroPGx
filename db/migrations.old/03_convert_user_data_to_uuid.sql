@@ -65,5 +65,5 @@ CREATE INDEX idx_genetic_data_parent_id ON user_data.genetic_data(parent_data_id
 CREATE INDEX idx_genetic_data_patient_id ON user_data.genetic_data(patient_id);
 
 -- Grant permissions
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA user_data TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA user_data TO cpic_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA user_data TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA user_data TO zaropgx_user;

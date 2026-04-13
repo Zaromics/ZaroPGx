@@ -68,8 +68,8 @@ LOG_LEVEL=DEBUG
 # Database
 DB_HOST=localhost
 DB_PORT=5444
-DB_NAME=cpic_db
-DB_USER=cpic_user
+DB_NAME=zaropgx_db
+DB_USER=zaropgx_user
 DB_PASSWORD=test123
 
 # Services

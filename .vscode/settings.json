@@ -15,8 +15,8 @@
             "driver": "PostgreSQL",
             "name": "ZaroPGx PostgreSQL",
             "group": "ZaroPGx",
-            "database": "cpic_db",
-            "username": "cpic_user",
+            "database": "zaropgx_db",
+            "username": "zaropgx_user",
             "password": "test123",
             "connectionTimeout": 10
         }

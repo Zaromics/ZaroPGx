@@ -67,11 +67,11 @@ This document lists environment variables and configuration flags used in the Za
 - **DOWNLOAD_ON_STARTUP**: If `true`, schedule downloads at startup. Default: `true`.
 
 ### PostgreSQL Database
-- **DB_USER**: Database user. Default: `cpic_user` (app/db.py);
-- **DB_PASSWORD**: Database password. Default: `cpic_password` (app/db.py). In docker-compose init: `test123`.
+- **DB_USER**: Database user. Default: `zaropgx_user` (app/db.py);
+- **DB_PASSWORD**: Database password. Default: `zaropgx_password` (app/db.py). In docker-compose init: `test123`.
 - **DB_HOST**: Database host. Default: `db`.
 - **DB_PORT**: Database port. Default: `5432`.
-- **DB_NAME**: Database name. Default: `cpic_db`.
+- **DB_NAME**: Database name. Default: `zaropgx_db`.
 - **DATABASE_URL**: Full SQLAlchemy URL. If not provided, constructed from the above.
 - **POSTGRES_PASSWORD**: Postgres container password (docker-compose).
 
