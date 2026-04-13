@@ -25,15 +25,15 @@ BEGIN
     SELECT EXISTS (
         SELECT 1 
         FROM information_schema.role_table_grants 
-        WHERE grantee = 'cpic_user' 
+        WHERE grantee = 'zaropgx_user' 
         AND table_schema = 'fhir'
         AND privilege_type = 'INSERT'
     ) INTO has_fhir_perms;
     
     IF NOT has_fhir_perms THEN
-        RAISE WARNING 'FHIR schema permissions may not be fully set for cpic_user';
+        RAISE WARNING 'FHIR schema permissions may not be fully set for zaropgx_user';
     ELSE
-        RAISE NOTICE 'FHIR schema permissions verified for cpic_user';
+        RAISE NOTICE 'FHIR schema permissions verified for zaropgx_user';
     END IF;
 END $$;
 

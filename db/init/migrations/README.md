@@ -10,13 +10,13 @@ Connect to the database and run the migration:
 
 ```bash
 # Connect to database
-docker exec -it pgx_db psql -U cpic_user -d cpic_db
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db
 
 # Run the migration
 \i /docker-entrypoint-initdb.d/migrations/{migration}}
 
 # Or run directly:
-docker exec -it pgx_db psql -U cpic_user -d cpic_db -f /docker-entrypoint-initdb.d/migrations/{migration}
+docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -f /docker-entrypoint-initdb.d/migrations/{migration}
 ```
 
 ### Check Current Schema

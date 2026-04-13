@@ -65,6 +65,6 @@ CREATE INDEX idx_job_stages_job_id ON job_monitoring.job_stages(job_id);
 CREATE INDEX idx_job_events_job_id ON job_monitoring.job_events(job_id);
 
 -- Grant permissions
-GRANT USAGE ON SCHEMA job_monitoring TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA job_monitoring TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA job_monitoring TO cpic_user;
+GRANT USAGE ON SCHEMA job_monitoring TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA job_monitoring TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA job_monitoring TO zaropgx_user;

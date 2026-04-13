@@ -253,7 +253,7 @@ docker compose ps db
 docker compose logs db
 
 # Test database connection
-docker exec -it zaro-pgx-db psql -U cpic_user -d cpic_db
+docker exec -it zaro-pgx-db psql -U zaropgx_user -d zaropgx_db
 
 # Reset database
 docker compose down
@@ -271,7 +271,7 @@ docker compose up -d --build
 **Solutions:**
 ```bash
 # Check database integrity
-docker exec -it zaro-pgx-db psql -U cpic_user -d cpic_db -c "VACUUM ANALYZE;"
+docker exec -it zaro-pgx-db psql -U zaropgx_user -d zaropgx_db -c "VACUUM ANALYZE;"
 
 # Backup and restore
 ./scripts/db-backup.sh

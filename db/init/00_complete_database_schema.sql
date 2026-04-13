@@ -191,14 +191,14 @@ CREATE TABLE job_monitoring.job_dependencies (
 CREATE SCHEMA IF NOT EXISTS fhir;
 
 -- Grant all necessary permissions for HAPI FHIR to create its own tables
-GRANT ALL PRIVILEGES ON SCHEMA fhir TO cpic_user;
-GRANT CREATE ON SCHEMA fhir TO cpic_user;
-GRANT USAGE ON SCHEMA fhir TO cpic_user;
+GRANT ALL PRIVILEGES ON SCHEMA fhir TO zaropgx_user;
+GRANT CREATE ON SCHEMA fhir TO zaropgx_user;
+GRANT USAGE ON SCHEMA fhir TO zaropgx_user;
 
 -- Set default privileges for future tables that HAPI will create
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON SEQUENCES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON FUNCTIONS TO cpic_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON SEQUENCES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON FUNCTIONS TO zaropgx_user;
 
 -- ============================================================================
 -- PHARMCAT SCHEMA - PharmCAT analysis results and data
@@ -541,43 +541,43 @@ VALUES
 -- PERMISSIONS
 -- ============================================================================
 -- Grant permissions to the database user
-GRANT USAGE ON SCHEMA cpic TO cpic_user;
-GRANT USAGE ON SCHEMA user_data TO cpic_user;
-GRANT USAGE ON SCHEMA reports TO cpic_user;
-GRANT USAGE ON SCHEMA job_monitoring TO cpic_user;
-GRANT USAGE ON SCHEMA fhir TO cpic_user;
-GRANT USAGE ON SCHEMA pharmcat TO cpic_user;
+GRANT USAGE ON SCHEMA cpic TO zaropgx_user;
+GRANT USAGE ON SCHEMA user_data TO zaropgx_user;
+GRANT USAGE ON SCHEMA reports TO zaropgx_user;
+GRANT USAGE ON SCHEMA job_monitoring TO zaropgx_user;
+GRANT USAGE ON SCHEMA fhir TO zaropgx_user;
+GRANT USAGE ON SCHEMA pharmcat TO zaropgx_user;
 
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cpic TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA user_data TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA reports TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA job_monitoring TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA fhir TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA pharmcat TO cpic_user;
-GRANT ALL PRIVILEGES ON TABLE genomic_file_headers TO cpic_user;
-GRANT ALL PRIVILEGES ON TABLE gene_groups TO cpic_user;
-GRANT ALL PRIVILEGES ON TABLE gene_group_members TO cpic_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cpic TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA user_data TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA reports TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA job_monitoring TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA fhir TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA pharmcat TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE genomic_file_headers TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE gene_groups TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE gene_group_members TO zaropgx_user;
 
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA cpic TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA job_monitoring TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA pharmcat TO cpic_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO cpic_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA cpic TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA job_monitoring TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA pharmcat TO zaropgx_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO zaropgx_user;
 
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA pharmcat TO cpic_user;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA pharmcat TO zaropgx_user;
 
 -- Set default privileges for future tables
-ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA user_data GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA reports GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON SEQUENCES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON SEQUENCES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON SEQUENCES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO cpic_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON FUNCTIONS TO cpic_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA user_data GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA reports GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON SEQUENCES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON SEQUENCES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON SEQUENCES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO zaropgx_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON FUNCTIONS TO zaropgx_user;
 
 -- ============================================================================
 -- UTILITY FUNCTIONS
@@ -749,9 +749,9 @@ CREATE INDEX idx_workflow_logs_workflow_id ON workflow_logs(workflow_id);
 CREATE INDEX idx_workflow_logs_timestamp ON workflow_logs(timestamp);
 
 -- Grant permissions
-GRANT ALL PRIVILEGES ON TABLE workflows TO cpic_user;
-GRANT ALL PRIVILEGES ON TABLE workflow_steps TO cpic_user;
-GRANT ALL PRIVILEGES ON TABLE workflow_logs TO cpic_user;
+GRANT ALL PRIVILEGES ON TABLE workflows TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE workflow_steps TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE workflow_logs TO zaropgx_user;
 
 -- Comments for documentation
 COMMENT ON TABLE workflows IS 'Primary workflow orchestration table for enhanced monitoring system';
