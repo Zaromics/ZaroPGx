@@ -29,7 +29,7 @@ flowchart TD
     AlignFASTQ --> BAM
     
     %% HLA typing for alignment files
-    BAM -->|if HLA enabled| HLA[HLA Typing<br/>OptiType/hlatyping]
+    BAM -->|if HLA enabled| HLA[HLA Typing<br/>OptiType/ZaroHLA]
     HLA --> BAM_HLA[BAM with HLA data]
     BAM_HLA --> PyPGx_BAM2VCF[PyPGx BAM2VCF<br/>Convert BAM → VCF]
     
@@ -59,7 +59,7 @@ flowchart TD
 
   subgraph Services["External services (docker-compose)"]
     GATK["GATK API<br/>(docker/gatk-api)"]
-    HLA_SVC["HLA Typing Service<br/>(docker/hlatyping)"]
+    HLA_SVC["HLA Typing Service<br/>(docker/zarohla)"]
     PYP["PyPGx Service<br/>(docker/pypgx)"]
     PCAT["PharmCAT API/JAR<br/>(docker/pharmcat or JAR)"]
     MTDNA["mtDNA Server<br/>(docker/mtdna-server-2)"]

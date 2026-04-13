@@ -224,7 +224,7 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
         # HLA typing for alignment files
         if used_hla:
             m += [
-                "  BAM --> HLA[HLA Typing<br/>OptiType/hlatyping]:::analysis",
+                "  BAM --> HLA[HLA Typing<br/>OptiType/ZaroHLA]:::analysis",
                 "  HLA --> BAM_HLA[BAM with HLA data]"
             ]
             bam_after_hla = "BAM_HLA"
@@ -289,7 +289,7 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
         "",
         "subgraph Services[\"External Services\"]",
         "  GATK_SVC[\"GATK API<br/>(docker/gatk-api)\"]:::svc",
-        "  HLA_SVC[\"HLA Typing Service<br/>(docker/hlatyping)\"]:::svc", 
+        "  HLA_SVC[\"HLA Typing Service<br/>(docker/zarohla)\"]:::svc", 
         "  PYP_SVC[\"PyPGx Service<br/>(docker/pypgx)\"]:::svc",
         "  PCAT_SVC[\"PharmCAT API/JAR<br/>(docker/pharmcat)\"]:::svc",
         "  MTDNA_SVC[\"mtDNA Server<br/>(docker/mtdna-server-2)\"]:::svc",
@@ -499,7 +499,7 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
         
         # HLA typing for alignment files
         if used_hla:
-            n("HLA", "HLA Typing\nOptiType/hlatyping", active=True, fillcolor="#e6ffe6")
+            n("HLA", "HLA Typing\nOptiType/ZaroHLA", active=True, fillcolor="#e6ffe6")
             e("BAM", "HLA", active=True)
             n("BAM_HLA", "BAM with HLA data")
             e("HLA", "BAM_HLA", active=True)

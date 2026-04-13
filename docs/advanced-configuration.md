@@ -79,9 +79,9 @@ This document lists environment variables and configuration flags used in the Za
 - **NXF_HOME**: Nextflow home/cache directory. Defaults to `/opt/nextflow` in containers or set to `/data/nextflow` for persistence in some wrappers.
 - **NXF_OPTS**: Nextflow JVM options. Defaults vary by container, e.g. `-Xms1g -Xmx4g`.
 
-### hlatyping (OptiType) service
-- **HLATYPING_PIPELINE_VERSION**: nf-core/hlatyping pipeline version. Default: `2.1.0`, current as of 0.3 release.
-- **HLATYPING_PROFILE**: Nextflow profile for hlatyping. Default: `docker`. A conda-based profile is provided as fallback alternative.
+### ZaroHLA (OptiType) service
+- **ZAROHLA_PIPELINE_VERSION**: ZaroHLA pipeline version. Default: `2.1.0`, current as of 0.3 release.
+- **ZAROHLA_PROFILE**: Nextflow profile for zarohla. Default: `docker`. A conda-based profile is provided as fallback alternative.
 
 ### GATK wrapper service
 - **GATK_CONTAINER**: Container name for GATK. Default: `gatk`.

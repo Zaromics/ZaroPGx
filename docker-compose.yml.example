@@ -262,11 +262,11 @@ services:
 
 
   # ZaroHLA Wrapper Service (Native OptiType 1.5.0)
-  hlatyping:
+  zarohla:
     build:
       context: .
       dockerfile: docker/zarohla/Dockerfile
-    container_name: pgx_hlatyping
+    container_name: pgx_zarohla
     restart: unless-stopped
     environment:
       - DATA_DIR=/data

@@ -466,7 +466,7 @@ class FileProcessor:
                 "Support for single FASTQ datafile as input is being reviewed.")
             # Detailed FASTQ alignment recommendations based on read type and hardware resources
             workflow["recommendations"].append(
-                "<p>Step 1: HLA typing using OptiType. nf-core/hlatyping is the tool which provides OptiType.</p>"
+                "<p>Step 1: HLA typing using OptiType. ZaroHLA is the tool which provides OptiType.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Step 2: Alignment to GRCh38 (hg38) reference genome, based on read type: "

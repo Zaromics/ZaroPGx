@@ -161,7 +161,7 @@ graph TB
 4. Quality filtering
 5. VCF output generation
 
-### HLA Typing Service (`hlatyping`)
+### ZaroHLA Typing Service (`zarohla`)
 
 **Purpose**: HLA allele calling
 **Technology**: Nextflow, OptiType

@@ -7,7 +7,7 @@ This module provides a single source of truth for workflow progress percentage a
 The progress calculation follows the workflow stages defined in updated workflow_logic.md:
 - 1-9% - ANALYSIS: File info and Header inspection
 - 10-19% - GATK: Conversion to BAM from SAM/CRAM (skip if n/a)
-- 20-34% - HLA: OptiType/hlatyping step (skip if n/a)
+- 20-34% - HLA: OptiType/ZaroHLA step (skip if n/a)
 - 35-49% - GATK: Conversion to BAM from FASTQ (skip if n/a)
 - 50-64% - PYPGX: PyPGx main step (skip if n/a)
 - 65-74% - PYPGX: PyPGx bam2vcf conversion step (skip if n/a)
@@ -77,7 +77,7 @@ class WorkflowProgressCalculator:
         WorkflowStage.HLA: {
             "min_progress": 20,
             "max_progress": 34,
-            "message": "hlatyping processing:HLA typing with OptiType",
+            "message": "ZaroHLA processing:HLA typing with OptiType",
             "is_skippable": True
         },
         WorkflowStage.PYPGX: {
@@ -264,7 +264,7 @@ class WorkflowProgressCalculator:
             "header_analysis": (1, 9),        # 1-9%: ANALYSIS - File info and Header inspection
             "gatk_cram_sam_to_bam": (10, 19), # 10-19%: GATK - CRAM/SAM→BAM conversion  
             "gatk_alignment": (35, 49),       # 35-49%: GATK - FASTQ→BAM alignment
-            "hla_typing": (20, 34),           # 20-34%: HLA - OptiType/hlatyping step
+            "hla_typing": (20, 34),           # 20-34%: HLA - OptiType/ZaroHLA step
             "pypgx_analysis": (50, 74) if is_vcf_workflow else (50, 64),  # Full range for VCF, split for BAM. NOT WORKING! NEEDS FIXING.
             "pypgx_bam2vcf": (65, 74),        # 65-74%: PYPGX - bam2vcf conversion (only for non-VCF)
             "pharmcat_analysis": (75, 89),    # 75-89%: PHARMCAT - PharmCAT step

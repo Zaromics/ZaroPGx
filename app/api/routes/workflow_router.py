@@ -546,7 +546,7 @@ async def cancel_container_jobs(workflow_id: str, workflow_metadata: dict):
     # List of container services with standardized cancel endpoint
     containers = [
         {"name": "gatk-api", "url": "http://gatk-api:5000"},
-        {"name": "hlatyping", "url": "http://hlatyping:5000"},
+        {"name": "zarohla", "url": "http://zarohla:5000"},
         {"name": "pypgx", "url": "http://pypgx:5000"},
         {"name": "pharmcat", "url": "http://pharmcat:5000"}
     ]

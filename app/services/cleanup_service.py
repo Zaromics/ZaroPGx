@@ -79,7 +79,7 @@ class CleanupService:
                 f"/tmp/pharmcat/{workflow_id}",
                 f"/tmp/gatk_temp/{workflow_id}",
                 f"/tmp/pypgx/{workflow_id}",
-                f"/tmp/hlatyping/{workflow_id}",
+                f"/tmp/zarohla/{workflow_id}",
                 f"/data/temp/{workflow_id}",
             ])
             
@@ -160,7 +160,7 @@ class CleanupService:
                 Path("/tmp/pharmcat"),
                 Path("/tmp/gatk_temp"),
                 Path("/tmp/pypgx"),
-                Path("/tmp/hlatyping"),
+                Path("/tmp/zarohla"),
             ]
             
             for temp_dir in temp_dirs:
@@ -253,7 +253,7 @@ class CleanupService:
             ("/tmp/pharmcat", Path("/tmp/pharmcat")),
             ("/tmp/gatk_temp", Path("/tmp/gatk_temp")),
             ("/tmp/pypgx", Path("/tmp/pypgx")),
-            ("/tmp/hlatyping", Path("/tmp/hlatyping")),
+            ("/tmp/zarohla", Path("/tmp/zarohla")),
         ]
         
         for name, path in temp_dirs:

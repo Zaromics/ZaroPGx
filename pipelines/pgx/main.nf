@@ -144,9 +144,9 @@ process OptiTypeHLAFromFastq {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
     if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=hlatyping_fastq )
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=zarohla_fastq )
     fi
-    curl "${CURL_ARGS[@]}" http://hlatyping:5000/call-hla > hla_result.json 2>hla.log
+    curl "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json 2>hla.log
     python3 - <<'PY'
 import json,sys
 data=json.load(open('hla_result.json'))
@@ -182,9 +182,9 @@ process OptiTypeHLAFromBAM {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
     if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=hlatyping_bam )
+      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=zarohla_bam )
     fi
-    curl "${CURL_ARGS[@]}" http://hlatyping:5000/call-hla > hla_result.json 2>hla.log
+    curl "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json 2>hla.log
     python3 - <<'PY'
 import json,sys
 data=json.load(open('hla_result.json'))

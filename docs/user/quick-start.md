@@ -90,10 +90,10 @@ Once complete, you'll see:
 | Format | Description | Processing Path |
 |--------|-------------|-----------------|
 | **VCF** | Variant Call Format | Direct → PyPGx → PharmCAT |
-| **BAM** | Binary Alignment Map | hlatyping → PyPGx → PharmCAT |
-| **CRAM** | Compressed BAM | GATK → hlatyping → PyPGx → PharmCAT |
-| **SAM** | Sequence Alignment Map | GATK → hlatyping → PyPGx → PharmCAT |
-| **FASTQ** | Raw sequencing data | hlatyping → GATK → PyPGx → PharmCAT |
+| **BAM** | Binary Alignment Map | ZaroHLA → PyPGx → PharmCAT |
+| **CRAM** | Compressed BAM | GATK → ZaroHLA → PyPGx → PharmCAT |
+| **SAM** | Sequence Alignment Map | GATK → ZaroHLA → PyPGx → PharmCAT |
+| **FASTQ** | Raw sequencing data | ZaroHLA → GATK → PyPGx → PharmCAT |
 
 ## Next Steps
 
