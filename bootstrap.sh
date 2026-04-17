@@ -5,7 +5,7 @@ set -euo pipefail
 # Bash bootstrap script for ZaroPGx
 # Clones (or optionally updates) the repository and launches the startup script
 
-REPO_URL="https://github.com/Zaroganos/ZaroPGx.git"
+REPO_URL="https://github.com/Zaromics/ZaroPGx.git"
 BRANCH="main"
 TARGET_DIR="ZaroPGx"
 UPDATE="false"

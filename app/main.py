@@ -549,7 +549,7 @@ async def home(request: Request):
                 "author_name": get_author_name(),
                 "license_name": "GNU Affero General Public License v3.0",
                 "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
-                "source_url": os.getenv("SOURCE_URL", "https://github.com/Zaroganos/ZaroPGx"),
+                "source_url": os.getenv("SOURCE_URL", "https://github.com/Zaromics/ZaroPGx"),
                 "current_year": datetime.now().year,
             },
         )

@@ -42,7 +42,7 @@ docker compose version
 ### 1. Grab Repository
 
 ```bash
-git clone https://github.com/Zaroganos/ZaroPGx.git
+git clone https://github.com/Zaromics/ZaroPGx.git
 cd ZaroPGx
 ```
 

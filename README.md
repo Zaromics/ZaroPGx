@@ -12,12 +12,12 @@
 
 **PowerShell (Windows):**
 ```powershell
-iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 | iex
 ```
 
 **Bash (Linux/macOS/WSL):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
 <img width="600" height="1100" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
@@ -121,12 +121,12 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 **PowerShell (Windows):**
 ```powershell
-iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 | iex
 ```
 
 **Bash (Linux/macOS/WSL):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
 This single command will:
@@ -147,19 +147,19 @@ This single command will:
 If automatic installation is not available or you prefer manual installation, the script will provide direct links to installation pages.
 
 **Security Note:** If you're cautious about running remote scripts (which is good practice!), you can inspect the bootstrap scripts first:
-- PowerShell: https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1
-- Bash: https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh
+- PowerShell: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1
+- Bash: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh
 
 **To update an existing installation:**
 
 **PowerShell:**
 ```powershell
-iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1) } -Update"
+iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1) } -Update"
 ```
 
 **Bash:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.sh | bash -s -- --update
+curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash -s -- --update
 ```
 
 ---
@@ -170,7 +170,7 @@ If you prefer more control or want to customize the installation:
 
 1. **Clone the repo**
    ```bash
-   git clone https://github.com/Zaroganos/ZaroPGx.git
+   git clone https://github.com/Zaromics/ZaroPGx.git
    cd ZaroPGx
    ```
 

@@ -39,7 +39,7 @@ Complete guide for setting up a ZaroPGx development environment.
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/Zaroganos/ZaroPGx.git
+git clone https://github.com/Zaromics/ZaroPGx.git
 cd ZaroPGx
 ```
 
