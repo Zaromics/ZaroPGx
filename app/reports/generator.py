@@ -96,7 +96,7 @@ def get_license_url() -> str:
 
 
 def get_source_url() -> str:
-    return os.getenv("SOURCE_URL", "https://github.com/Zaroganos/ZaroPGx")
+    return os.getenv("SOURCE_URL", "https://github.com/Zaromics/ZaroPGx")
 
 
 def _normalize_version_text(version_text: str) -> str:

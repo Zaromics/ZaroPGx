@@ -24,7 +24,7 @@ This document lists environment variables and configuration flags used in the Za
 - **ALGORITHM**: JWT algorithm. Used as constant `HS256` in code.
 - **ACCESS_TOKEN_EXPIRE_MINUTES**: Token expiry minutes. Used as constant `30` in code.
 - **AUTHOR_NAME**: Override author shown in reports. If unset, read from `pyproject.toml` or fallback to `Zaromics Initiative`.
-- **SOURCE_URL**: Project source URL in UI and reports. Default: `https://github.com/Zaroganos/ZaroPGx`.
+- **SOURCE_URL**: Project source URL in UI and reports. Default: `https://github.com/Zaromics/ZaroPGx`.
 - **ZAROPGX_VERSION**: Overrides app version used in reports. If unset, read from `pyproject.toml`.
 
 *Reports composition and content*

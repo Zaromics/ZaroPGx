@@ -86,7 +86,7 @@ DB_PASSWORD=your-secure-db-password
 BIND_ADDRESS=0.0.0.0
 LOG_LEVEL=INFO
 AUTHOR_NAME=Powered by ZaroPGx
-SOURCE_URL=https://github.com/Zaroganos/ZaroPGx
+SOURCE_URL=https://github.com/Zaromics/ZaroPGx
 
 # Services
 PHARMCAT_API_URL=http://pharmcat:5000
@@ -281,7 +281,7 @@ sudo apt install docker.io docker-compose-plugin
 sudo usermod -aG docker ubuntu
 
 # Clone repository
-git clone https://github.com/Zaroganos/ZaroPGx.git
+git clone https://github.com/Zaromics/ZaroPGx.git
 cd ZaroPGx
 
 # Configure environment

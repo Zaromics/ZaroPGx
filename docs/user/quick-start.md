@@ -18,7 +18,7 @@ Get ZaroPGx up and running in no time with this step-by-step guide.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/Zaroganos/ZaroPGx.git
+git clone https://github.com/Zaromics/ZaroPGx.git
 cd ZaroPGx
 ```
 

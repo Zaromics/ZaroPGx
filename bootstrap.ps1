@@ -3,7 +3,7 @@
 #
 # Usage:
 #   Quick install (bypasses execution policy):
-#     iwr -useb https://raw.githubusercontent.com/Zaroganos/ZaroPGx/main/bootstrap.ps1 | iex
+#     iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 | iex
 #   
 #   Or download and run (may require execution policy change):
 #     powershell -ExecutionPolicy Bypass -File bootstrap.ps1
@@ -15,7 +15,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoUrl = "https://github.com/Zaroganos/ZaroPGx.git",
+    [string]$RepoUrl = "https://github.com/Zaromics/ZaroPGx.git",
     [string]$Branch = "main",
     [string]$TargetDir = "ZaroPGx",
     [switch]$Update,
@@ -183,7 +183,7 @@ function Install-Dependencies {
         
         # Build arguments to pass to elevated process
         $arguments = @()
-        if ($RepoUrl -ne "https://github.com/Zaroganos/ZaroPGx.git") { $arguments += "-RepoUrl `"$RepoUrl`"" }
+        if ($RepoUrl -ne "https://github.com/Zaromics/ZaroPGx.git") { $arguments += "-RepoUrl `"$RepoUrl`"" }
         if ($Branch -ne "main") { $arguments += "-Branch `"$Branch`"" }
         if ($TargetDir -ne "ZaroPGx") { $arguments += "-TargetDir `"$TargetDir`"" }
         if ($Update) { $arguments += "-Update" }

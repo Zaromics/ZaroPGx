@@ -7,7 +7,7 @@ description = "[DEVELOPMENT] ZaroPGx Pharmacogenomic Analysis Platform"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 authors = [
-  { name = "Iliya Yaroshevskiy", email = "iyarosh1@binghamton.edu" }
+  { name = "Iliya Yaroshevskiy", email = "zaromics@gmail.com" }
 ]
 
 dependencies = [
@@ -45,20 +45,31 @@ dependencies = [
   "biopython>=1.85,<2.0.0",
   "pysam>=0.22.0,<0.23.0",
   # Additional utilities
-  "starlette",
-  "sse-starlette",
-  "werkzeug",
+  "starlette>=0.47.2,<1.0.0",
+  "sse-starlette>=3.0.2,<4.0.0",
+  "werkzeug>=3.1.3,<4.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest",
-  "black",
-  "isort",
-  "flake8",
-  "mypy",
+  "pytest>=8.4.2,<9.0.0",
+  "black>=25.9.0,<26.0.0",
+  "isort>=6.1.0,<7.0.0",
+  "flake8>=7.3.0,<8.0.0",
+  "mypy>=1.18.2,<2.0.0",
 ]
 
 [build-system]
 requires = ["setuptools>=80.9.0"]
 build-backend = "setuptools.build_meta"
+
+# Flat-layout auto-discovery scans the repo root and, with implicit namespaces
+# (PEP 420), treats many sibling dirs (app, db, docker, config, …) as separate
+# top-level packages. Setuptools then aborts with "Multiple top-level packages
+# discovered in a flat-layout" — see:
+# https://setuptools.pypa.io/en/latest/userguide/package_discovery.html#flat-layout
+# Fix: custom discovery limited to the real distribution root package `app`.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+namespaces = true
