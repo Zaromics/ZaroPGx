@@ -1,21 +1,22 @@
-# ZaroPGx — Pharmacogenomic Analysis Platform
-**To see the analysis in action, click below to watch the demo video on YouTube:**
+# ZaroPGx — A Pharmacogenomic Analysis Platform
+**See the analysis in action: click below to watch a demo on YouTube:**
 [<img src="https://img.youtube.com/vi/FzKI48IQb3I/hqdefault.jpg" width="600" height="400"
 />](https://www.youtube.com/embed/FzKI48IQb3I)
 
 ---
-## What ZaroPGx does
-**ZaroPGx** is a containerized bioinformatic pipeline that **processes genetic data** and generates comprehensive pharmacogenetic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing; **allele calling** with ZaroHLA (OptiType), mtDNA-server-2, PyPGx, and optionally PharmCAT; and report generation via PharmCAT **phenotype matching** with outside calls from the three aforementioned tools, to unlock its full panel of 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPgx. **Reports generated** include custom PDF (printing friendly!) and interactive HTML formats, as well as the PharmCAT original HTML report, with raw data outputs available. Report data will soon be exportable to Personal and Electronic Health Records with the included HAPI FHIR server. Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when run locally in a secure network. Web-facing (production/public), as well as local (private), deployments are straightforward to configure with provided environment configuration templates, allowing the software stack to be safely accessible to others over the internet. A reverse proxy or any other authentication and/or authorization tooling is not included, but can be easily added or integrated according to your unique needs. 
+## What ZaroPGx Does
+**ZaroPGx** is a containerized bioinformatic pipeline that **processes genetic data** and generates comprehensive pharmacogenetic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing; **allele calling** with ZaroHLA (OptiType), mtDNA-server-2, PyPGx, and optionally PharmCAT; and report generation via PharmCAT **phenotype matching** with outside calls from up to all three aforementioned tools, unlocking its full panel of 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPGx. **Reports generated** include custom Zaromics reports in printer-friendly PDF, and interactive HTML formats, including as well the native PharmCAT HTML report, with raw data outputs available too. Report data will soon be seamlessly exportable to Personal / Electronic Health Records via the bundled HAPI FHIR server. Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when loaded in a local and secure network. Web-facing (public) as well as local (private) deployments are straightforward to configure with the provided environment configuration templates, allowing the software stack to be securely served to users over the web. A bundled reverse proxy or authentication / authorization tool is not yet included, but you can easily add or integrate within or alongside the compose stack according to your specific needs. 
 
-### 🚀 Quickstart Reference -- One-Command Installation
-**Quickstart reference for the easy simple setup script**
+### 🚀 Quickstart -- One-Command Setup
+**Quick and super simple setup script**
+**(Full Getting Started section is below)**
 
 **PowerShell (Windows):**
 ```powershell
 iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 | iex
 ```
 
-**Bash (Linux/macOS/WSL):**
+**Bash (Linux / macOS / WSL):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
@@ -23,10 +24,10 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 <img width="600" height="1100" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
 
 ## Status
-**This project is in active development.**
-- NGS-derived GRCh38 VCF sample inputs can be processed without difficulty and produce substantial report content.
+**This project is in early development.**
+- NGS-derived GRCh38 VCF sample inputs can be processed without difficulty and readily produce substantial report content.
 
-**Remaining core functionality is being implemented incrementally:**
+**Core functionality is being implemented incrementally:**
 
 *Input formats*
 - [X] Priority 0 (*Supported*): **VCF, GRCh38**/hg38, NGS-derived.
@@ -34,11 +35,11 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 - [...] Priority 2 (*Development*): **BAM, CRAM, SAM, FASTQ, BCF**, all NGS-derived. *Scaffolded, needs testing. Projected release in v0.4, with BAM support first and foremost.*
 - [...] Priority 3 (*Research*): Other sequencing and genotyping formats.
 - [...] Priority 4 (*Research*): BED, detailed gVCF, 23andMe, AncestryDNA, various TXT formats.
-- [...] Priority 5 (*Early research*): T2T format, and all others.
+- [...] Priority 5 (*Early research*): T2T format, and others.
 
 *Features*
 - [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
-- [...] Priority 1 (*Development*): **FHIR offline export** as JSON, XML; Custom PharmCAT definitions for outside calls. *Projected release in v0.3*
+- [o] Priority 1 (*Development*): **FHIR offline export** as JSON, XML; Custom PharmCAT definitions for outside calls. *Projected release in v0.3*
 - [...] Priority 2 (*Development*): Wiring-in mtDNA-server-2 container. *Projected release in v0.4.*
 - [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.4-0.5*
 - [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
@@ -48,35 +49,36 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 ## Architecture
 Containerized services are orchestrated with Docker Compose with a core Nextflow-executed pipeline:
 
-- **Main App** - (FastAPI) - Main App providing Web UI, API, workflow progress tracking, report generation.
+- **ZaroPGx App** - (FastAPI) - Main App providing Web UI, API, workflow progress tracking, report generation
   - *Main application orchestrating the analysis workflow*
   - Service Ports (Host → Container) 8765 → 8000
   - Python 3.12; dependencies in `pyproject.toml`/`uv.lock`
-- **Nextflow executor service**
+- **Nextflow executor**
   - Manages execution of the core pipeline
 - **Genome Reference downloader**
-  - Fetches reference materials including genomes
+  - Fetches reference materials including genome assemblies
   - Service Ports (Host → Container) 5050 → 5050
-- **PostgreSQL 17 DB** - (SQLalchemy2, psycopg 3 & schema managed with Alembic)
-  - Stores guideline and sample data and workflow metadata, and generated reports, allowing for persistent and offline analysis (if so desired)
+- **PostgreSQL 17 DB** - (SQLAlchemy 2, Psycopg 3 & schema managed with Alembic)
+  - Stores data of guidelines, sample runs, workflow metadata, and generated reports, allowing for persistent and local analysis
   - Initialization under `db/init` and `db/migrations` 
   - Service Ports (Host → Container) 5444 → 5432
-- **GATK service** - (FastAPI wrapper)
-  - Handles various conversion, haplotyping, and preprocessing operations as needed
+- **GATK service** - (FastAPI wrapped)
+  - Handles various conversion, haplotyping, and preprocessing operations
   - Service Ports (Host → Container) 5002 → 5000
-- **ZaroHLA** - (nextflow OptiType container)
+- **ZaroHLA** - (Custom FastAPI wrapped OptiType implementation)
   - Performs HLA Calling with either FASTQ or BAM inputs
-- **PyPGx service** - (FastAPI wrapper)
-  - Performs allele calling for 87 total pharmacogenes.
-  - Provides comprehensive allele calling (including Structural Variants and Copy Number Variants) for applicable genes such as CYP2D6 when possible; with BAM input.
+  - (Needs Testing)
+- **PyPGx service** - (FastAPI wrapped)
+  - Performs allele calling for up to 87 total pharmacogenes
+  - Provides comprehensive allele calling (including Structural Variants and Copy Number Variants) for such genes as CYP2D6 when possible with BAM input.
   - Service Ports (Host → Container) 5053 → 5000
-- **PharmCAT service** - (FastAPI wrapper, Java 17)
-  - Executes PharmCAT pipeline with PyPGx, OptiType, and mtDNA-server-2 outside calls to unlock full 23-gene panel coverage
+- **PharmCAT service** - (FastAPI wrapped, Java 17)
+  - Executes PharmCAT pipeline with PyPGx, OptiType, and mtDNA-server-2 outside calls to unlock its full 23-gene panel coverage
   - Service Ports (Host → Container) 5001 → 5000
 - **Kroki** & **Kroki Mermaid**
-  - Renders workflow diagrams to serve as a visual depiction of the pipeline the report has been built from
+  - Renders workflow diagrams to draw a visual depiction of the pipeline the report has been built from
 - **HAPI FHIR server**
-  - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records (coming in v0.3)
+  - Enables export of formatted pharmacogenomic report data to Personal and Electronic Health Records (projected v0.3)
   - Service Ports (Host → Container) 8090 → 8080
 
 **Workflow**: *Genomic data sample submission → Preprocessing (if needed) → OptiType HLA Allele Calling → mtDNA-server-2 Mitochondrial DNA Allele Calling → PyPGx Allele Calling → PharmCAT phenotype matching with Outside Calls → Report Creation → optional PHR/EHR export via FHIR*
@@ -90,7 +92,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 ## Requirements
 <u>Software</u>
 
-**The bootstrap script can automatically install missing dependencies for you!**
+**NB: The simple bootstrap script will automatically install missing dependencies for you!**
 
 **Linux** environment preferred
 - *Docker*; *Docker Compose*; *Git* -- at minimum
@@ -98,26 +100,31 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 **Windows 10/11** requires *WSL2* installed and configured
 - *WSL2*; *Docker*; *Docker Compose*; *Git*
-- Auto-install supported via: winget (Windows 10/11) or chocolatey
+- Auto-install supported via: winget or chocolatey
 
-**macOS** requires either running a Linux VM (e.g. Crossover, etc.) OR using *Docker Desktop*
+**macOS** requires either *Docker Desktop* or to run a Linux VM (e.g. Crossover)
 - Auto-install supported via: homebrew (Git only; Docker Desktop must be installed manually)
+- (macOS support needs testing)
 
-<u>Hardware</u> (projected)
+<u>Hardware</u>
+
+- *Virtualization*: Hardware Virtualization must be enabled for Windows and macOS users
+
+(resource usage, projected)
 
 - *Internet connection*: <u>first run only</u> requires significant bandwidth to fetch images, build containers, and load reference genomes and db content; advisable to NOT be on a metered connection, and preferably use a wired one.
-- *Hardware, Minimum* (limited functions): **4 CPU cores, 8 GB DDR3 RAM, 50 GB storage space**
-- *Hardware, Acceptable* (all functions): **8+ CPU cores, 32-64+ GB DDR4 RAM, 1+ TB NVMe SSD storage space**
-- *Hardware, Preferred* (all functions, with swiftness): **16 CPU cores, 128 GB ECC DDR4+ RAM, 2+ TB NVMe SSD storage space**; with configured parallelism and various service parameter tuning
+- *Hardware, Minimum* (limited function): **4 CPU cores, 8 GB DDR3 RAM, 50 GB storage**
+- *Hardware, Acceptable* (full function): **8 CPU cores, 32-64 GB DDR4 RAM, 1 TB NVMe SSD storage**
+- *Hardware, Preferred* (fast, full function): **16 CPU cores, 128 GB ECC DDR4+ RAM, 2 TB NVMe SSD storage**
 
-## Quick Start
+## Get Started
 
 - At this time, reference pre-built docker images are not distributed. As the program approaches v1.0 release, container images will begin to be distributed through Dockerhub.
 - For now, you must clone this repository and build the docker compose stack locally. This should not require any special action on your part, but it will take some time, possibly as long as an hour if your hardware is closer to "minimum" than "preferred" spec.
 
-### 🚀 One-Command Installation (Easy Mode)
+### One-Command Setup
 
-**For most users, this is the simplest way to get started:**
+**This is the simplest way to get started: launch your shell and run the command below**
 
 **PowerShell (Windows):**
 ```powershell
@@ -132,21 +139,20 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 This single command will:
 - Check for required dependencies (Git, Docker, Docker Compose)
 - Offer to automatically install missing dependencies (with your permission)
-- Download the bootstrap script
+- Download the ZaroPGx bootstrap script
 - Clone the repository
 - Create necessary directories
-- Start Docker containers
-- Launch the application
+- Start the Docker compose containers
 
 **Note:** If Git, Docker, or Docker Compose are not installed, the script will:
 1. Detect your package manager (winget, chocolatey, apt, yum, dnf, brew, pacman)
 2. Ask if you want to install missing dependencies automatically
-3. Request administrator/sudo privileges if needed
+3. Request elevated privileges if required
 4. Install the dependencies and guide you through next steps
 
 If automatic installation is not available or you prefer manual installation, the script will provide direct links to installation pages.
 
-**Security Note:** If you're cautious about running remote scripts (which is good practice!), you can inspect the bootstrap scripts first:
+**Security Note:** If you're cautious about running remote scripts (which is good practice), you can inspect the bootstrap scripts here:
 - PowerShell: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1
 - Bash: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh
 
@@ -168,15 +174,15 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 
 If you prefer more control or want to customize the installation:
 
-1. **Clone the repo**
+1. **Clone the repository**
    ```bash
    git clone https://github.com/Zaromics/ZaroPGx.git
    cd ZaroPGx
    ```
 
-2. **Choose your environment and docker compose configurations**
+2. **Choose your environment and docker compose configuration**
    
-   For personal and home (LAN) use, a local deployment is recommended.
+   For personal and home (LAN) use, a local deployment is recommended
    
    **Local Development (default):** Your typical template for personal / home use
    ```bash
@@ -184,7 +190,7 @@ If you prefer more control or want to customize the installation:
    # edit .env as needed (at minimum set SECRET_KEY)
    ```
    
-   **Production/Web Deployment:** For hosting an externally-accessible instance on the web
+   **Web Deployment:** For hosting an externally accessible service on the web
    ```bash
    cp .env.production .env
    # edit .env as needed (set all Keys to a secure string)
@@ -199,17 +205,17 @@ If you prefer more control or want to customize the installation:
    **Choose your Docker Compose configuration** Start with example template
    ```bash
    mv docker-compose.yml.example docker-compose.yml
-   # edit docker-compose.yml as needed to customize service settings
    ```
+   - edit docker-compose.yml as needed to customize service settings
 
 3. **Start services**
    
-   **Option A: Using the simple startup script (recommended if you are new to, or have never used, docker / docker compose.)**
+   **Option A: Simple startup script** Recommended for those unfamiliar with docker / docker compose
    
    Choose the startup script that matches your environment:
-   - If the below command failed, ensure the shell script can be executed, if it does not appear to work. Typically you can check the file's permissions by right clicking it. PowerShell might require a set execution policy override.
+   - If the below command failed or did not appear to work, please ensure the shell script can be executed. Typically you can check the file's permissions by right clicking it. PowerShell might require you to set an 'execution policy override'.
    
-   - **PowerShell (Windows WSL):** If you are on Windows but cannot, may not, or choose not to use WSL2's virtual drive
+   - **PowerShell (Windows):** If you are on Windows but cannot, may not, or choose not to use WSL2's virtual drive
      ```powershell
      .\start-docker.ps1
      ```
@@ -219,7 +225,7 @@ If you prefer more control or want to customize the installation:
      ./start-docker.sh
      ```
    
-   **Option B: Manual Docker Compose commands** If you are familiar with docker compose
+   **Option B: Docker Compose commands** Recommended for advanced users
    
    **Once you have configured your .env and compose yml:**
    ```bash
@@ -243,15 +249,15 @@ If you prefer more control or want to customize the installation:
 
 ## Usage
 
-### Web UI (Recommended)
+### Web Interface (Recommended)
 
 1. Open `http://localhost:8765`
 2. Upload a sample VCF file
-3. Observe progress; on completion you'll see links to the custom PDF and interactive HTML reports, as well as PharmCAT's report and raw data outputs.
+3. Observe progress, and on completion you will see links to the custom PDF and interactive HTML reports, as well as PharmCAT's report and raw data outputs.
 
 ### REST API (Advanced and Debugging)
 
-**See the FastAPI docs on the reference instance's page: https://pgx.zimerguz.net/api-reference**
+**See the FastAPI docs on the reference instance's page: https://pgx.zaromics.net/api-reference**
 
 **Upload a genomic file**
 ```bash
@@ -327,7 +333,7 @@ ZaroPGx/
 - The app consistently generates its own reports (PDF + interactive HTML)
 - When available, original PharmCAT reports are copied with normalized names (`<file_id>_pgx_pharmcat.*`)
 
-## FHIR Export (Optional) (Coming in v0.3)
+## FHIR Export (Optional) (projected v0.3)
 
 - HAPI FHIR server is bundled and exposed at `http://localhost:8090`
 - Report export endpoint: `POST /reports/{report_id}/export-to-fhir`
@@ -359,7 +365,7 @@ To completely remove all user data and reset ZaroPGx to a clean state:
 # Stop all services
 docker compose down
 
-# Remove all containers, networks, and volumes (including database data)
+# Remove all containers, networks, and volumes (including database data) - warning! - Irretrievable
 docker compose down -v
 
 # Remove all runtime data directories
@@ -372,26 +378,11 @@ rm -rf reference/
 docker volume rm pgx_pgdata pgx_fhir-data pgx_pharmcat-references
 ```
 
-**Remove select data dirs:**
-```bash
-- rm -rf data/reports/    # Generated pharmacogenomic reports (PDF, HTML, JSON, etc.)
-- rm -rf data/uploads/    # Uploaded genomic files (VCF, BAM, etc.)
-- rm -rf data/temp/       # Temporary processing files
-- rm -rf data/fhir-data/  # FHIR server data and patient records
-- rm -rf data/nextflow/   # Nextflow cache and workflow execution data
-- rm -rf reference/       # Reference genomes (GRCh37, GRCh38, hg19, hg38) - **Large files**
-```
-
-## Contributing (is gratefully appreciated and welcome!)
-
-1. Create a feature branch: `git checkout -b feature/your-change`
-2. Commit: `git commit -m "Describe your change"`
-3. Push: `git push origin feature/your-change`
-4. Open a Pull Request
+## Contributions are welcome and are gratefully appreciated!
 
 ## Acknowledgements & Citations
 **This section is incomplete as the constituent software components are being assembled and all relevant research and clinical publications are being compiled.
-If your work is a part of ZaroPGx and you wish to add or amend text recognizing your work, yourself, and/or your organization, please send a message to the author. I will gladly attend to your request.**
+If your work is a part of ZaroPGx and you wish to add or amend text recognizing yourself, your work, and/or your organization, please send me a message and I will gladly attend to your request.**
 
 - **GATK** (Genome Analysis Toolkit, Broad Institute)
   - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. *Nature Genetics.* 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
@@ -411,16 +402,6 @@ This project was originally inspired by software such as **NeuroPGx**, available
 
 [AGPLv3](LICENSE)
 
-Copyright (C) 2024-2025 Iliya Yaroshevskiy
+Copyright (C) 2024-2026 Iliya Yaroshevskiy
 
-This project is licensed under the AGPLv3 License.
-originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
-- Zampatti, S.; Fabrizio, C.; Ragazzo, M.; Campoli, G.; Caputo, V.; Strafella, C.; Pellicano, C.; Cascella, R.; Spalletta, G.; Petrosini, L.; et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *J. Pers. Med.* 2021, 11, 851. https://doi.org/10.3390/jpm11090851
-
-## License
-
-[AGPLv3](LICENSE)
-
-Copyright (C) 2024-2025 Iliya Yaroshevskiy
-
-This project is licensed under the AGPLv3 License.
+This project is provided under the AGPLv3 License.
