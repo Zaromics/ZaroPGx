@@ -237,3 +237,9 @@ stargazer.zip/
 data/fhir-data/*
 data/fhir-data/
 app/pharmcat/logs.txt
+
+# Local-only files
+.env.bak
+docker-compose.yml.bak
+CLAUDE.md
+
