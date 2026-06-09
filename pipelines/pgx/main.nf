@@ -352,17 +352,6 @@ process PharmCATRun {
     '''
 }
 
-// Helper process to create empty files for optional inputs
-process CreateEmptyFile {
-    output:
-    path 'empty.tsv', emit: empty_tsv
-    
-    script:
-    '''
-    touch empty.tsv
-    '''
-}
-
 workflow {
     main:
     assert params.input : 'Missing --input path'
@@ -377,8 +366,10 @@ workflow {
     reference_ch = Channel.value(params.reference)
     outdir_ch = Channel.value(params.outdir)
     
-    // Create an actual empty file for optional inputs
-    empty_file_ch = CreateEmptyFile().empty_tsv.first()  // value channel: reusable across branches (queue channel can't be consumed twice)
+    // Static empty fallback for optional outside-call inputs. A plain path value
+    // (not a channel): valid as a process input AND as an .ifEmpty() default, and
+    // reusable across branches — avoids the queue-consumed-twice / DataflowVariable issues.
+    empty_file_ch = file("${projectDir}/assets/empty.tsv")
 
     // Handle different input types with optimal HLA calling strategy
     
