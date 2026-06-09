@@ -139,7 +139,8 @@ async def call_hla(
             
         cmd = ["optitype", "run", "-i", str(f1_path)]
         if f2_path and os.path.exists(f2_path) and os.path.getsize(f2_path) > 0:
-            cmd.append(str(f2_path))
+            # OptiType v1.5 CLI takes each paired-end file as its own -i (not a bare positional)
+            cmd.extend(["-i", str(f2_path)])
             
         cmd.extend([f"--{seq_type}", "--mapper", mapper, "-o", str(outdir)])
         
@@ -166,7 +167,8 @@ async def call_hla(
             await workflow_client.log_progress("Parsing OptiType results")
             
         results = {}
-        result_files = list(outdir.glob("*_result.tsv"))
+        # OptiType v1.5 writes into a timestamped subdir (outdir/<ts>/<ts>_result.tsv)
+        result_files = list(outdir.rglob("*_result.tsv"))
         if not result_files:
             raise Exception("OptiType did not produce a _result.tsv file")
             
