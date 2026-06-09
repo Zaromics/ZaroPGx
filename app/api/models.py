@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from enum import Enum
@@ -509,7 +509,8 @@ class WorkflowStepResponse(BaseModel):
     """Model for workflow step responses"""
     model_config = ConfigDict(
         str_strip_whitespace=True,
-        extra="forbid"
+        extra="forbid",
+        from_attributes=True,  # allow model_validate() on SQLAlchemy ORM rows
     )
     
     id: str = Field(..., description="Step ID")
@@ -524,6 +525,12 @@ class WorkflowStepResponse(BaseModel):
     output_data: Dict[str, Any] = Field(..., description="Step output data")
     error_details: Dict[str, Any] = Field(..., description="Error details")
     retry_count: int = Field(..., description="Number of retries")
+
+    @field_validator("id", "workflow_id", mode="before")
+    @classmethod
+    def _coerce_uuid_to_str(cls, v):
+        # ORM primary keys are UUID objects; coerce to str for the str-typed fields
+        return str(v) if v is not None else v
 
 
 class WorkflowLogCreate(BaseModel):
