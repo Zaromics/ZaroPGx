@@ -1,12 +1,7 @@
-  # In order to manually generate your docker compose file, use:
-  # 'cp docker-compose.yml.example docker-compose.yml' and adjust the parameters.
 
 name: zaropgx
-
 services:
-
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~
-  # ZaroPGx Main Application running FastAPI with Web UI, API, and supporting services
   app:
     build:
       context: .
@@ -59,7 +54,7 @@ services:
   
   # PostgreSQL Database
   db:
-    image: postgres:17
+    image: postgres:18
     container_name: pgx_db
     restart: unless-stopped
     environment:
@@ -67,7 +62,9 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-test123}
       POSTGRES_DB: ${DB_NAME:-zaropgx_db}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # PG18+ stores data in a major-version subdir and rejects a mount at
+      # /var/lib/postgresql/data; mount the volume at the postgres home instead.
+      - pgdata:/var/lib/postgresql
       - ./db/init:/docker-entrypoint-initdb.d
     ports:
       - "5444:5432"
@@ -114,7 +111,7 @@ services:
       context: .
       dockerfile: docker/pharmcat/Dockerfile
       args:
-        PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.1.1}
+        PHARMCAT_VERSION: ${PHARMCAT_VERSION:-3.2.0}
     container_name: pgx_pharmcat
     restart: unless-stopped
     volumes:
@@ -242,7 +239,7 @@ services:
       - PYPGX_MEMORY_LIMIT=7G
       - PYPGX_MAX_PARALLEL_GENES=8
       - PYPGX_BATCH_SIZE=4
-      - PYPGX_PHARMCAT_PREFERENCE=${PYPGX_PHARMCAT_PREFERENCE:-auto}  # auto|pypgx|pharmcat
+      - PYPGX_PHARMCAT_PREFERENCE=pharmcat  # auto|pypgx|pharmcat
     ports:
       - "5053:5000"
     healthcheck:
@@ -261,7 +258,9 @@ services:
           memory: 7G
 
 
-  # ZaroHLA Wrapper Service (Native OptiType 1.5.0)
+  # ZaroHLA — OptiType v1.5 HLA Class I typing service.
+  # ACTIVE HLA path: the app, the Nextflow pipeline, and the workflow router all
+  # call it at http://zarohla:5000 (gated on OPTITYPE_ENABLED).
   zarohla:
     build:
       context: .
@@ -270,6 +269,7 @@ services:
     restart: unless-stopped
     environment:
       - DATA_DIR=/data
+      - WORKFLOW_API_BASE=http://app:8000/api/v1
     volumes:
       - ./data:/data
     ports:
@@ -278,10 +278,42 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - pgx-network
+
+  # nf-core/hlatyping Wrapper Service (HTTP API running Nextflow) — DISABLED
+  # The docker/hlatyping/ build context is missing, so this service cannot build.
+  # Kept as a restorable placeholder (alternate HLA path, now with HLA-HD support).
+  # To re-enable: restore docker/hlatyping/Dockerfile.hlatyping for nf-core/hlatyping
+  # pipeline v2.2.0 (requires Nextflow >= 25.04.2), then uncomment the block below.
+  # hlatyping:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/hlatyping/Dockerfile.hlatyping
+  #   container_name: pgx_hlatyping
+  #   restart: unless-stopped
+  #   environment:
+  #     - DATA_DIR=/data
+  #     - HLATYPING_PROFILE=docker
+  #     - HLATYPING_PIPELINE_VERSION=2.2.0
+  #     - NXF_OPTS=-Xms1g -Xmx8g
+  #   volumes:
+  #     - ./data:/data
+  #     # Mount host docker socket so Nextflow can launch docker tasks with -profile docker
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - ./data/nextflow:/opt/nextflow
+  #   ports:
+  #     - "5061:5000"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 40s
+  #   networks:
+  #     - pgx-network
 
 
   # Kroki Service for diagram and visual rendering

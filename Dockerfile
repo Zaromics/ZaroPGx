@@ -51,23 +51,26 @@ RUN apt-get update && \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-# Install bcftools from source
-RUN git clone --recurse-submodules https://github.com/samtools/htslib.git && \
-    cd htslib && \
-    autoreconf -i && \
-    ./configure && \
-    make && \
+# Install htslib + bcftools from pinned release tarballs
+# (reproducible and faster than building git HEAD; matches the pharmcat container)
+ENV HTSLIB_VERSION=1.23.1
+ENV BCFTOOLS_VERSION=1.23.1
+RUN curl -fsSL -O https://github.com/samtools/htslib/releases/download/${HTSLIB_VERSION}/htslib-${HTSLIB_VERSION}.tar.bz2 && \
+    curl -fsSL -O https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSION}/bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
+    tar -xjf htslib-${HTSLIB_VERSION}.tar.bz2 && \
+    tar -xjf bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
+    cd htslib-${HTSLIB_VERSION} && \
+    ./configure --prefix=/usr/local && \
+    make -j"$(nproc)" && \
     make install && \
-    cd .. && \
-    git clone https://github.com/samtools/bcftools.git && \
-    cd bcftools && \
-    autoreconf -i && \
-    ./configure && \
-    make && \
+    cd ../bcftools-${BCFTOOLS_VERSION} && \
+    ./configure --prefix=/usr/local && \
+    make -j"$(nproc)" && \
     make install && \
     cd .. && \
     ldconfig && \
-    rm -rf htslib bcftools
+    rm -rf htslib-${HTSLIB_VERSION} bcftools-${BCFTOOLS_VERSION} \
+           htslib-${HTSLIB_VERSION}.tar.bz2 bcftools-${BCFTOOLS_VERSION}.tar.bz2
 
 # Set work directory
 WORKDIR /app

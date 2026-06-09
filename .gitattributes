@@ -1,5 +1,6 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Auto detect text files and force LF in the repo AND in working copies
+# (eol=lf prevents phantom CRLF "modified" diffs on Windows checkouts)
+* text=auto eol=lf
 
 # Ensure shell scripts always use LF line endings (required for WSL execution)
 *.sh text eol=lf
@@ -9,3 +10,21 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+
+# Treat known binary assets as binary (never normalize line endings)
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.bgz  binary
+*.bz2  binary
+*.bam  binary
+*.bai  binary
+*.bcf  binary
+*.fna  binary
+*.fa   binary
+*.fasta binary

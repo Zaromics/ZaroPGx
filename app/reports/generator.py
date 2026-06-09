@@ -186,8 +186,8 @@ def build_citations() -> List[Dict[str, str]]:
     """Build academically styled citations with versions (when available)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     vmap = _versions_index()
-    pypgx_ver = vmap.get("pypgx") or "0.25.0"
-    pharmcat_ver = vmap.get("pharmcat") or "3.1.1"
+    pypgx_ver = vmap.get("pypgx") or "0.26.0"
+    pharmcat_ver = vmap.get("pharmcat") or "3.2.0"
     gatk_ver = vmap.get("gatk") or "4.6.2.0"
     zarohla_ver = vmap.get("zarohla") or "2.1.0"
     mtdna_server_2_ver = vmap.get("mtdna-server-2") or "2.1.16"
