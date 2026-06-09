@@ -204,7 +204,7 @@ If you prefer more control or want to customize the installation:
 
    **Choose your Docker Compose configuration** Start with example template
    ```bash
-   mv docker-compose.yml.example docker-compose.yml
+   cp docker-compose.yml.example docker-compose.yml
    ```
    - edit docker-compose.yml as needed to customize service settings
 
@@ -229,13 +229,21 @@ If you prefer more control or want to customize the installation:
    
    **Once you have configured your .env and compose yml:**
    ```bash
-   docker compose up -d --build && docker compose logs -f
+   docker compose pull                              # pull pre-built images (Docker Hub: zaromicsresearch/zaropgx-*)
+   docker compose up -d && docker compose logs -f   # start — runs the published images, no local build
    ```
+   The stack runs the **published images by default** (no build wait — only PharmCAT's
+   one-time ~8-min reference-genome download on first start). To build locally instead —
+   e.g. you changed the source — add `--build` (the `build:` sections are the fallback):
+   ```bash
+   docker compose up -d --build
+   ```
+   Set `ZAROPGX_TAG` in `.env` to pin a version (default `0.2.6`) or `latest`.
    
    **Using specific environment file:** (Advanced, for multiple configurations)
    ```bash
-   docker compose --env-file .env.local up -d --build && docker compose logs -f
-   docker compose --env-file .env.production up -d --build && docker compose logs -f
+   docker compose --env-file .env.local pull && docker compose --env-file .env.local up -d
+   docker compose --env-file .env.production pull && docker compose --env-file .env.production up -d
    ```
 
 4. **Access the Main App**
