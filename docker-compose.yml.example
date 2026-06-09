@@ -138,7 +138,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # First run downloads the GRCh38 reference (~8-15 min). Don't mark unhealthy before
+      # then, or app's `depends_on: pharmcat: service_healthy` blocks the whole stack.
+      start_period: 1200s
     networks:
       - pgx-network
 
@@ -363,9 +365,8 @@ services:
 
   # Nextflow executor orchestrating the ZaroPGx pipeline
   nextflow:
-    # Optional/deprecated and build-only (no published image). Opt in with:
-    #   docker compose --profile optional up -d
-    profiles: ["optional"]
+    # CORE pipeline orchestrator — the app submits every analysis here (USE_NEXTFLOW=True).
+    image: zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG:-0.2.6}
     build:
       context: .
       dockerfile: docker/nextflow/Dockerfile.nextflow

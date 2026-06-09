@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre-noble
 
 ARG NXF_VERSION=25.04.7
 
@@ -13,10 +13,9 @@ RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-24.
     chmod +x /usr/local/bin/docker && \
     chmod 755 /usr/local/bin/docker
 
-# Install Nextflow
-RUN curl -sL https://get.nextflow.io | bash \
-    && mv nextflow /usr/local/bin/nextflow \
-    && chmod +x /usr/local/bin/nextflow \
+# Install the PINNED Nextflow version. The get.nextflow.io script ignores the ARG and
+# installs "latest" (which pulled an incompatible 26.x); download the versioned dist directly.
+RUN curl -fsSL "https://github.com/nextflow-io/nextflow/releases/download/v${NXF_VERSION}/nextflow-${NXF_VERSION}-dist" -o /usr/local/bin/nextflow \
     && chmod 755 /usr/local/bin/nextflow
 
 # Nextflow JVM configuration - disable cgroup detection to avoid container compatibility issues

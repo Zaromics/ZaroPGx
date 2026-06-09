@@ -1365,7 +1365,7 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
             "data": {
                 "workflow_id": workflow.id,
                 "patient_id": metadata.get("patient_id"),
-                "data_id": workflow.data_id,
+                "data_id": metadata.get("data_id"),
                 "steps": [
                     {
                         "name": step.step_name,

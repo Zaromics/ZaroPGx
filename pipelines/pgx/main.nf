@@ -27,7 +27,7 @@ params.sample_identifier = params.sample_identifier ?: ''
 // FASTQ alignment
 process FastqToBAM {
     tag "align_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path fastq
@@ -60,7 +60,7 @@ PY
 // CRAM to BAM conversion
 process CramToBAM {
     tag "cram2bam_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path cram
@@ -93,7 +93,7 @@ PY
 // SAM to BAM conversion
 process SamToBAM {
     tag "sam2bam_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path sam
@@ -126,7 +126,7 @@ PY
 // OptiType HLA calling on FASTQ
 process OptiTypeHLAFromFastq {
     tag "hla_fastq_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path fastq
@@ -164,7 +164,7 @@ PY
 // OptiType HLA calling on BAM (will internally convert to FASTQ - less optimal)
 process OptiTypeHLAFromBAM {
     tag "hla_bam_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path bam
@@ -201,7 +201,7 @@ PY
 
 process PyPGxBam2Vcf {
     tag "bam2vcf_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path bam
@@ -233,7 +233,7 @@ PY
 
 process PyPGxGenotypeAll {
     tag "pypgx_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path vcf
@@ -308,7 +308,7 @@ PY
 
 process PharmCATRun {
     tag "pharmcat_${patient_id}"
-    publishDir "${outdir}", mode: 'copy'
+    publishDir { outdir }, mode: 'copy'
 
     input:
     path vcf
@@ -365,8 +365,8 @@ process CreateEmptyFile {
 
 workflow {
     main:
-    assert params.input, 'Missing --input path'
-    assert params.input_type, 'Missing --input_type (vcf|bam|cram|sam|fastq)'
+    assert params.input : 'Missing --input path'
+    assert params.input_type : 'Missing --input_type (vcf|bam|cram|sam|fastq)'
     
     // Create input channels
     input_ch = Channel.fromPath(params.input)
@@ -378,7 +378,7 @@ workflow {
     outdir_ch = Channel.value(params.outdir)
     
     // Create an actual empty file for optional inputs
-    empty_file_ch = CreateEmptyFile().empty_tsv
+    empty_file_ch = CreateEmptyFile().empty_tsv.first()  // value channel: reusable across branches (queue channel can't be consumed twice)
 
     // Handle different input types with optimal HLA calling strategy
     
