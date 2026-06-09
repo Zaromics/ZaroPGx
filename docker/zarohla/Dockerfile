@@ -32,6 +32,10 @@ COPY app/utils/workflow_client.py /workflow-client/
 # Create /data directory for uploads/results and set permissions
 RUN mkdir -p /data && chown -R zarouser:zarouser /app /data /workflow-client
 
+# Matplotlib (imported by OptiType) needs a writable config dir; zarouser has no home
+ENV HOME=/tmp
+ENV MPLCONFIGDIR=/tmp/matplotlib
+
 # Switch to non-root user for security
 USER zarouser
 
