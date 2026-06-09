@@ -104,7 +104,11 @@ chmod -R 755 reference/
 # Start containers
 echo "🐳 Starting ZaroPGx Docker Compose containers..."
 docker compose down --remove-orphans
-docker compose up -d --build
+# Published images by default: pull pre-built images from Docker Hub.
+# Build-only services (no published image) are skipped here and built on `up`.
+# To build everything locally instead, run: docker compose build
+docker compose pull
+docker compose up -d
 
 # Wait for app ready state by watching logs
 echo "⏳ Waiting for ZaroPGx to be ready (up to 5 minutes)..."

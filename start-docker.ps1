@@ -1008,8 +1008,11 @@ if ($env:DOCKER_USE_WSL -eq "1") {
 Write-Host "  Stopping existing containers..." -ForegroundColor Gray
 Invoke-Docker "docker compose down --remove-orphans"
 
-Write-Host "  Building and starting containers..." -ForegroundColor Gray
-Invoke-Docker "docker compose up -d --build"
+Write-Host "  Pulling pre-built images from Docker Hub (build-only services build on up)..." -ForegroundColor Gray
+Invoke-Docker "docker compose pull"
+
+Write-Host "  Starting containers..." -ForegroundColor Gray
+Invoke-Docker "docker compose up -d"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Docker Compose failed to start containers" -ForegroundColor Red
