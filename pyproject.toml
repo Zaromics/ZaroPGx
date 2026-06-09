@@ -9,6 +9,8 @@ requires-python = ">=3.12,<3.13"
 authors = [
   { name = "Iliya Yaroshevskiy", email = "zaromics@gmail.com" }
 ]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "NOTICE"]
 
 dependencies = [
   # Web and ASGI
