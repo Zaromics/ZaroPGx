@@ -72,7 +72,6 @@ html_theme_options = {
     'collapse_navigation': False,
     'navigation_depth': 4,
     'style_external_links': True,
-    'display_version': True,
     'prev_next_buttons_location': 'bottom',
     'style_nav_header_background': '#2980B9',
     'logo_only': False,

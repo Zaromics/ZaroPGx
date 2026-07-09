@@ -4,7 +4,7 @@ ZaroHLA is a containerized, API-driven wrapper around [OptiType v1.5.0](https://
 
 ## Overview
 
-This repository provides a lightweight FastAPI service that exposes the modernized OptiType v1.5 genotyping algorithm. By leveraging the latest pip-installable version of OptiType (currently sourced directly from the FRED-2 GitHub `master` branch), ZaroHLA handles the complexities of dependency management, data formatting, and execution within a clean, isolated Docker environment.
+This repository provides a lightweight FastAPI service that exposes the modernized OptiType v1.5 genotyping algorithm. By leveraging the pip-installable version of OptiType (sourced directly from the FRED-2 GitHub repository, pinned to the `v1.5.0` tag), ZaroHLA handles the complexities of dependency management, data formatting, and execution within a clean, isolated Docker environment.
 
 ### Features
 * **Native OptiType 1.5 Integration:** Uses the updated, high-performance Click-based CLI (`optitype run`) rather than the legacy `OptiTypePipeline.py` script.
@@ -67,4 +67,5 @@ curl -X 'POST' \
 ```
 
 ## Maintenance Notes
-* **OptiType PyPI Status:** Once OptiType officially publishes version 1.5.0+ to the public PyPI registry, the `Dockerfile` can be safely reverted from the direct GitHub installation (`git+https://github.com/FRED-2/OptiType.git`) to standard pip (`pip install optitype`).
+* **Version pin:** `Dockerfile` installs OptiType pinned to `git+https://github.com/FRED-2/OptiType.git@v1.5.0` (previously floated on `master`, which was non-reproducible). Bump the `@v1.5.0` tag deliberately when a newer OptiType release ships.
+* **OptiType PyPI Status:** Once OptiType officially publishes version 1.5.0+ to the public PyPI registry, the `Dockerfile` can be safely switched from the pinned GitHub installation to standard pip (`pip install optitype==<version>`).

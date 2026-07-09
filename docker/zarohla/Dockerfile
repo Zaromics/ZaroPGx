@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     samtools \
     && pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir git+https://github.com/FRED-2/OptiType.git uvicorn[standard] gunicorn fastapi python-multipart httpx httptools psutil \
+    && pip install --no-cache-dir git+https://github.com/FRED-2/OptiType.git@v1.5.0 uvicorn[standard] gunicorn fastapi python-multipart httpx httptools psutil \
     && apt-get purge -y --auto-remove build-essential git libglpk-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
