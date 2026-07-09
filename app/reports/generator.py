@@ -245,7 +245,7 @@ def build_citations() -> List[Dict[str, str]]:
     citations.append(
         {
             "name": "CPIC",
-            "text": f"Clinical Pharmacogenetics Implementation Consortium (CPIC). Available at: https://cpicpgx.org/ (accessed {today}).",
+            "text": f"Clinical Pharmacogenetics Implementation Consortium (CPIC). Available at: https://www.clinpgx.org/ (accessed {today}).",
             "repo": "https://github.com/cpicpgx",
         }
     )

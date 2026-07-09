@@ -1172,7 +1172,7 @@ class FHIRExportService:
         drug_lower = drug_name.lower().replace(" ", "-") if drug_name else ""
 
         if source_upper == "CPIC" or source_upper == "C":
-            return f"https://cpicpgx.org/guidelines/"
+            return f"https://www.clinpgx.org/guidelineAnnotations"
         elif source_upper == "DPWG" or source_upper == "D":
             return "https://www.pharmgkb.org/page/dpwg"
         elif source_upper == "FDA" or source_upper == "F":
