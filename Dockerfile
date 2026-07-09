@@ -81,7 +81,6 @@ COPY pyproject.toml uv.lock ./
 RUN uv export --frozen --format requirements-txt > requirements.lock \
     && uv pip sync --system requirements.lock \
     && uv pip install --system "graphviz>=0.21,<1.0.0" \
-    && uv pip install --system "pysam>=0.22,<0.24" \
     && rm -f requirements.lock
 
 # Install Sphinx docs requirements separately (kept lightweight)

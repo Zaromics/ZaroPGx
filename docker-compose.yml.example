@@ -146,8 +146,11 @@ services:
 
 
   # HAPI FHIR Server for EHR/PHR/EMR integration
+  # Pinned (not :latest) — this service owns a live Postgres schema shared with the
+  # rest of the stack, and point releases have shipped non-zero-downtime migrations.
+  # Bump ${HAPI_FHIR_TAG} deliberately; update data/versions/hapi.json to match.
   fhir-server:
-    image: hapiproject/hapi:latest
+    image: hapiproject/hapi:${HAPI_FHIR_TAG:-v8.10.0-2}
     container_name: pgx_fhir_server
     restart: unless-stopped
     ports:
