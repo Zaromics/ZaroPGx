@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,6 +24,12 @@ logger = logging.getLogger(__name__)
 class VersionManager:
     """Centralized version management for ZaroPGx services."""
 
+    # How long to reuse a live HAPI FHIR version check before re-fetching. A
+    # single report-generation run calls get_all_versions()/get_versions_dict()
+    # several times in quick succession; this avoids paying a network
+    # round-trip (up to the 3s request timeout) on every one of them.
+    _HAPI_VERSION_CACHE_TTL = 30.0
+
     def __init__(
         self,
         versions_dir: str = "/data/versions",
@@ -33,6 +40,8 @@ class VersionManager:
         self.project_root = (
             Path(project_root) if project_root else Path(__file__).parent.parent.parent
         )
+        self._hapi_version_cache: Optional[str] = None
+        self._hapi_version_cache_time: float = 0.0
         # When True, include all services from compose even if a manifest exists
         env_include_all = os.getenv(
             "VERSION_MANAGER_INCLUDE_ALL_COMPOSE", "false"
@@ -150,7 +159,26 @@ class VersionManager:
         return versions
 
     def _get_hapi_version(self) -> str:
-        """Get HAPI FHIR server version."""
+        """Get HAPI FHIR server version.
+
+        Result (including env-var overrides and "N/A" misses) is cached for
+        `_HAPI_VERSION_CACHE_TTL` seconds so the handful of calls this makes
+        per report-generation run don't each pay a live network round-trip.
+        """
+        now = time.monotonic()
+        if (
+            self._hapi_version_cache is not None
+            and (now - self._hapi_version_cache_time) < self._HAPI_VERSION_CACHE_TTL
+        ):
+            return self._hapi_version_cache
+
+        version = self._fetch_hapi_version()
+        self._hapi_version_cache = version
+        self._hapi_version_cache_time = now
+        return version
+
+    def _fetch_hapi_version(self) -> str:
+        """Uncached HAPI FHIR server version lookup."""
         # Check environment variable first
         env_ver = os.getenv("HAPI_FHIR_VERSION")
         if env_ver:
@@ -522,9 +550,16 @@ class VersionManager:
         return None
 
     def get_versions_dict(self) -> Dict[str, str]:
-        """Get versions as a dictionary mapping service names to versions."""
+        """Get versions as a dict mapping lowercased service names to versions.
+
+        Keys are lowercased so callers can look up by a plain, case-insensitive
+        key (e.g. "pypgx", "zarohla") regardless of how a manifest's "name"
+        field is cased (e.g. "PyPGx", "ZaroHLA").
+        """
         all_versions = self.get_all_versions()
-        return {v.get("name", ""): v.get("version", "N/A") for v in all_versions}
+        return {
+            v.get("name", "").lower(): v.get("version", "N/A") for v in all_versions
+        }
 
 
 # Global instance for easy access
