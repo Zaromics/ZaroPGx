@@ -27,6 +27,7 @@ def is_compressed_file(file_path: str | Path) -> bool:
 
     return False
 
+
 # TODO: check inside zipped file for index file
 def has_index_file(file_path: str | Path) -> bool:
     """Check for a common set of genomic index file siblings."""
@@ -37,5 +38,3 @@ def has_index_file(file_path: str | Path) -> bool:
         if sibling.exists():
             return True
     return False
-
-

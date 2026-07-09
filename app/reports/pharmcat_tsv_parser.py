@@ -8,7 +8,9 @@ def _normalize_header(name: str) -> str:
     return (name or "").strip().lower().replace(" ", "_")
 
 
-def parse_pharmcat_tsv(tsv_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def parse_pharmcat_tsv(
+    tsv_path: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Parse a PharmCAT TSV report and extract diplotypes and drug recommendations.
 
@@ -26,7 +28,11 @@ def parse_pharmcat_tsv(tsv_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[s
         raw = f.read()
 
     # Some generators may include comments; strip them but keep header
-    lines = [ln for ln in raw.splitlines() if ln.strip() != "" and not ln.lstrip().startswith("#")]
+    lines = [
+        ln
+        for ln in raw.splitlines()
+        if ln.strip() != "" and not ln.lstrip().startswith("#")
+    ]
     if not lines:
         return [], []
 
@@ -36,11 +42,15 @@ def parse_pharmcat_tsv(tsv_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[s
         if "\t" in ln:
             parts = [p.strip() for p in ln.split("\t")]
             norm = [_normalize_header(p) for p in parts]
-            if any(col in {"gene", "gene_symbol", "locus", "gene_name"} for col in norm):
+            if any(
+                col in {"gene", "gene_symbol", "locus", "gene_name"} for col in norm
+            ):
                 header_start_idx = idx
                 break
     # Use csv with delimiter='\t' starting at the detected header
-    reader = csv.DictReader(io.StringIO("\n".join(lines[header_start_idx:])), delimiter="\t")
+    reader = csv.DictReader(
+        io.StringIO("\n".join(lines[header_start_idx:])), delimiter="\t"
+    )
     headers = [_normalize_header(h) for h in (reader.fieldnames or [])]
 
     # Header candidates
@@ -52,26 +62,36 @@ def parse_pharmcat_tsv(tsv_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[s
         return None
 
     gene_col = find_col(["gene", "gene_symbol", "locus", "gene_name"]) or "gene"
-    dip_col = find_col(["diplotype", "source_diplotype", "call", "star_alleles", "genotype", "result"])  # broad
-    pheno_col = find_col(["phenotype", "predicted_phenotype", "phenotype_call"])  # common variants
+    dip_col = find_col(
+        ["diplotype", "source_diplotype", "call", "star_alleles", "genotype", "result"]
+    )  # broad
+    pheno_col = find_col(
+        ["phenotype", "predicted_phenotype", "phenotype_call"]
+    )  # common variants
     as_col = find_col(["activity_score", "activityscore", "as"])  # optional
     # Recommendation Lookup columns for Executive Summary
-    rec_dip_col = find_col([
-        "recommendation_lookup_diplotype",
-        "recommendation\u00a0lookup\u00a0diplotype",
-        "recommendation lookup diplotype",
-    ])
-    rec_pheno_col = find_col([
-        "recommendation_lookup_phenotype",
-        "recommendation\u00a0lookup\u00a0phenotype",
-        "recommendation lookup phenotype",
-    ])
-    rec_as_col = find_col([
-        "recommendation_lookup_activity_score",
-        "recommendation\u00a0lookup\u00a0activity\u00a0score",
-        "recommendation lookup activity score",
-        "rec_lookup_activity_score",
-    ])
+    rec_dip_col = find_col(
+        [
+            "recommendation_lookup_diplotype",
+            "recommendation\u00a0lookup\u00a0diplotype",
+            "recommendation lookup diplotype",
+        ]
+    )
+    rec_pheno_col = find_col(
+        [
+            "recommendation_lookup_phenotype",
+            "recommendation\u00a0lookup\u00a0phenotype",
+            "recommendation lookup phenotype",
+        ]
+    )
+    rec_as_col = find_col(
+        [
+            "recommendation_lookup_activity_score",
+            "recommendation\u00a0lookup\u00a0activity\u00a0score",
+            "recommendation lookup activity score",
+            "rec_lookup_activity_score",
+        ]
+    )
     drug_col = find_col(["drug", "medication"])  # optional
     guideline_col = find_col(["guideline", "source", "guideline_source"])  # optional
     rec_col = find_col(["recommendation", "action", "recommendation_text"])  # optional
@@ -100,7 +120,14 @@ def parse_pharmcat_tsv(tsv_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[s
         rec_as_val = (gv(rec_as_col) or "").strip() if rec_as_col else ""
 
         # If any informative field present (from main or rec-lookup), register an entry
-        if diplotype_val or phenotype_val or activity_score_val or rec_dip_val or rec_pheno_val or rec_as_val:
+        if (
+            diplotype_val
+            or phenotype_val
+            or activity_score_val
+            or rec_dip_val
+            or rec_pheno_val
+            or rec_as_val
+        ):
             entry: Dict[str, Any] = {
                 "gene": gene,
                 "diplotype": diplotype_val or "Unknown",
@@ -130,14 +157,18 @@ def parse_pharmcat_tsv(tsv_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[s
             drug = (gv(drug_col) or "").strip()
             rec = (gv(rec_col) or "").strip()
             if drug or rec:
-                recommendations.append({
-                    "gene": gene,
-                    "drug": drug or "Unknown",
-                    "guideline": (gv(guideline_col) or "").strip() if guideline_col else "",
-                    "recommendation": rec or "See guideline",
-                    "classification": (gv(class_col) or "").strip() if class_col else "Unknown",
-                })
+                recommendations.append(
+                    {
+                        "gene": gene,
+                        "drug": drug or "Unknown",
+                        "guideline": (
+                            (gv(guideline_col) or "").strip() if guideline_col else ""
+                        ),
+                        "recommendation": rec or "See guideline",
+                        "classification": (
+                            (gv(class_col) or "").strip() if class_col else "Unknown"
+                        ),
+                    }
+                )
 
     return diplotypes, recommendations
-
-
