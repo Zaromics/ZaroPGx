@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PHARMCAT_TSV = REPO_ROOT / "lexicon" / "phenotypes.tsv"
 OUT_CSV = REPO_ROOT / "lexicon" / "allele_map_pypgx_to_pharmcat.csv"
@@ -144,7 +143,9 @@ def build_mapping(pairs: Iterable[Tuple[str, str]]) -> List[AlleleMapping]:
         if key in seen:
             continue
         seen.add(key)
-        results.append(AlleleMapping(gene=gene, pypgx=pypgx_tok, pharmcat=pharmcat_tok, notes=""))
+        results.append(
+            AlleleMapping(gene=gene, pypgx=pypgx_tok, pharmcat=pharmcat_tok, notes="")
+        )
     # Add gene-specific synonyms
     for gene, syns in GENE_SPECIFIC_SYNONYMS.items():
         for pypgx_tok_raw, pharmcat_tok_raw in syns.items():
@@ -154,7 +155,11 @@ def build_mapping(pairs: Iterable[Tuple[str, str]]) -> List[AlleleMapping]:
             if key in seen:
                 continue
             seen.add(key)
-            results.append(AlleleMapping(gene=gene, pypgx=pypgx_tok, pharmcat=pharmcat_tok, notes="synonym"))
+            results.append(
+                AlleleMapping(
+                    gene=gene, pypgx=pypgx_tok, pharmcat=pharmcat_tok, notes="synonym"
+                )
+            )
 
     # Stable sort by gene, then PyPGx token
     results.sort(key=lambda m: (m.gene, m.pypgx.lower()))
@@ -184,10 +189,10 @@ def main() -> None:
     pairs = read_pharmcat_named_alleles(PHARMCAT_TSV)
     mappings = build_mapping(pairs)
     write_outputs(mappings)
-    print(f"Wrote {OUT_CSV.relative_to(REPO_ROOT)} and {OUT_JSON.relative_to(REPO_ROOT)}")
+    print(
+        f"Wrote {OUT_CSV.relative_to(REPO_ROOT)} and {OUT_JSON.relative_to(REPO_ROOT)}"
+    )
 
 
 if __name__ == "__main__":
     main()
-
-

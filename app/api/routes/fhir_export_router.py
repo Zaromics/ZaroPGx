@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.api.db import get_db
 from app.api.utils.security import get_optional_user
-from app.services.fhir_export_service import FHIRExportService, FHIR_EXPORT_ENABLED
+from app.services.fhir_export_service import FHIR_EXPORT_ENABLED, FHIRExportService
 
 logger = logging.getLogger(__name__)
 
@@ -33,21 +33,30 @@ router = APIRouter(
 # Pydantic models for request/response validation
 class PatientInfo(BaseModel):
     """Patient information for FHIR export."""
+
     id: Optional[str] = Field(None, description="Patient identifier")
     name: Optional[dict] = Field(None, description="Patient name (family, given)")
     gender: Optional[str] = Field(None, description="Patient gender")
-    birthDate: Optional[str] = Field(None, description="Patient birth date (YYYY-MM-DD)")
+    birthDate: Optional[str] = Field(
+        None, description="Patient birth date (YYYY-MM-DD)"
+    )
 
 
 class FHIRExportRequest(BaseModel):
     """Request model for FHIR export."""
-    patient_info: Optional[PatientInfo] = Field(None, description="Optional patient information")
+
+    patient_info: Optional[PatientInfo] = Field(
+        None, description="Optional patient information"
+    )
     output_format: str = Field("json", description="Output format: json or xml")
-    include_recommendations: bool = Field(True, description="Include therapeutic implications and recommendations")
+    include_recommendations: bool = Field(
+        True, description="Include therapeutic implications and recommendations"
+    )
 
 
 class FHIRExportResponse(BaseModel):
     """Response model for FHIR export."""
+
     success: bool
     format: Optional[str] = None
     filename: Optional[str] = None
@@ -61,13 +70,17 @@ async def fhir_export_status(
 ) -> dict:
     """
     Check if FHIR export functionality is enabled.
-    
+
     Returns:
         Status of FHIR export feature
     """
     return {
         "enabled": FHIR_EXPORT_ENABLED,
-        "message": "FHIR export is enabled" if FHIR_EXPORT_ENABLED else "FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
+        "message": (
+            "FHIR export is enabled"
+            if FHIR_EXPORT_ENABLED
+            else "FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable."
+        ),
         "supported_formats": ["json", "xml"] if FHIR_EXPORT_ENABLED else [],
         "implementation_guide": "HL7 Genomics Reporting Implementation Guide (FHIR R4)",
         "reference_url": "https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.html",
@@ -78,21 +91,23 @@ async def fhir_export_status(
 async def export_run_to_fhir(
     run_id: str,
     output_format: str = Query("json", description="Output format: json or xml"),
-    include_recommendations: bool = Query(True, description="Include drug recommendations"),
+    include_recommendations: bool = Query(
+        True, description="Include drug recommendations"
+    ),
     db: Session = Depends(get_db),
     current_user: str = Depends(get_optional_user),
 ):
     """
     Export a PharmCAT run as a FHIR Bundle.
-    
+
     This endpoint generates a downloadable FHIR R4-compliant file containing
     the pharmacogenomic report data following the HL7 Genomics Reporting IG.
-    
+
     Args:
         run_id: PharmCAT run ID to export
         output_format: Output format (json or xml)
         include_recommendations: Whether to include therapeutic implications
-        
+
     Returns:
         FHIR Bundle as JSON or XML file
     """
@@ -101,7 +116,7 @@ async def export_run_to_fhir(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
         )
-    
+
     try:
         service = FHIRExportService(db)
         result = service.export_pgx_report(
@@ -109,16 +124,20 @@ async def export_run_to_fhir(
             output_format=output_format,
             include_recommendations=include_recommendations,
         )
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=404,
                 detail=result.get("error", "Failed to export FHIR report"),
             )
-        
+
         # Determine content type
-        content_type = "application/fhir+xml" if output_format.lower() == "xml" else "application/fhir+json"
-        
+        content_type = (
+            "application/fhir+xml"
+            if output_format.lower() == "xml"
+            else "application/fhir+json"
+        )
+
         return Response(
             content=result["content"],
             media_type=content_type,
@@ -126,7 +145,7 @@ async def export_run_to_fhir(
                 "Content-Disposition": f'attachment; filename="{result["filename"]}"',
             },
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -146,14 +165,14 @@ async def export_run_to_fhir_with_patient(
 ):
     """
     Export a PharmCAT run as a FHIR Bundle with patient information.
-    
+
     This endpoint allows specifying patient information to include in the
     FHIR Bundle export.
-    
+
     Args:
         run_id: PharmCAT run ID to export
         request: Export request with patient info and options
-        
+
     Returns:
         FHIR Bundle as JSON or XML file
     """
@@ -162,31 +181,35 @@ async def export_run_to_fhir_with_patient(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
         )
-    
+
     try:
         service = FHIRExportService(db)
-        
+
         # Convert patient info to dict
         patient_info = None
         if request.patient_info:
             patient_info = request.patient_info.model_dump(exclude_none=True)
-        
+
         result = service.export_pgx_report(
             run_id=run_id,
             patient_info=patient_info,
             output_format=request.output_format,
             include_recommendations=request.include_recommendations,
         )
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=404,
                 detail=result.get("error", "Failed to export FHIR report"),
             )
-        
+
         # Determine content type
-        content_type = "application/fhir+xml" if request.output_format.lower() == "xml" else "application/fhir+json"
-        
+        content_type = (
+            "application/fhir+xml"
+            if request.output_format.lower() == "xml"
+            else "application/fhir+json"
+        )
+
         return Response(
             content=result["content"],
             media_type=content_type,
@@ -194,7 +217,7 @@ async def export_run_to_fhir_with_patient(
                 "Content-Disposition": f'attachment; filename="{result["filename"]}"',
             },
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -214,14 +237,14 @@ async def export_workflow_to_fhir(
 ):
     """
     Export a workflow's PharmCAT results as a FHIR Bundle.
-    
+
     This endpoint retrieves PharmCAT data associated with a workflow and
     generates a FHIR R4-compliant export.
-    
+
     Args:
         workflow_id: Workflow ID to export
         output_format: Output format (json or xml)
-        
+
     Returns:
         FHIR Bundle as JSON or XML file
     """
@@ -230,23 +253,27 @@ async def export_workflow_to_fhir(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
         )
-    
+
     try:
         service = FHIRExportService(db)
         result = service.export_workflow_to_fhir(
             workflow_id=workflow_id,
             output_format=output_format,
         )
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=404,
                 detail=result.get("error", "Failed to export FHIR report"),
             )
-        
+
         # Determine content type
-        content_type = "application/fhir+xml" if output_format.lower() == "xml" else "application/fhir+json"
-        
+        content_type = (
+            "application/fhir+xml"
+            if output_format.lower() == "xml"
+            else "application/fhir+json"
+        )
+
         return Response(
             content=result["content"],
             media_type=content_type,
@@ -254,7 +281,7 @@ async def export_workflow_to_fhir(
                 "Content-Disposition": f'attachment; filename="{result["filename"]}"',
             },
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -274,13 +301,13 @@ async def preview_fhir_export(
 ):
     """
     Preview a FHIR export without downloading.
-    
+
     Returns the FHIR Bundle in the response body for inspection.
-    
+
     Args:
         run_id: PharmCAT run ID to preview
         output_format: Output format (json or xml)
-        
+
     Returns:
         FHIR Bundle content and metadata
     """
@@ -289,20 +316,20 @@ async def preview_fhir_export(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
         )
-    
+
     try:
         service = FHIRExportService(db)
         result = service.export_pgx_report(
             run_id=run_id,
             output_format=output_format,
         )
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=404,
                 detail=result.get("error", "Failed to generate FHIR preview"),
             )
-        
+
         # For preview, return as JSON response with metadata
         return {
             "success": True,
@@ -310,10 +337,18 @@ async def preview_fhir_export(
             "filename": result["filename"],
             "content": result["content"] if output_format.lower() == "json" else None,
             "bundle": result.get("bundle") if output_format.lower() == "json" else None,
-            "xml_preview": result["content"][:2000] + "..." if output_format.lower() == "xml" and len(result["content"]) > 2000 else result["content"] if output_format.lower() == "xml" else None,
-            "resource_counts": _count_resources(result.get("bundle", {})) if result.get("bundle") else None,
+            "xml_preview": (
+                result["content"][:2000] + "..."
+                if output_format.lower() == "xml" and len(result["content"]) > 2000
+                else result["content"] if output_format.lower() == "xml" else None
+            ),
+            "resource_counts": (
+                _count_resources(result.get("bundle", {}))
+                if result.get("bundle")
+                else None
+            ),
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -330,7 +365,7 @@ async def get_supported_formats(
 ) -> dict:
     """
     Get information about supported FHIR export formats.
-    
+
     Returns:
         Supported formats and their details
     """
@@ -346,7 +381,7 @@ async def get_supported_formats(
             {
                 "id": "xml",
                 "name": "FHIR XML",
-                "content_type": "application/fhir+xml", 
+                "content_type": "application/fhir+xml",
                 "description": "FHIR Bundle in XML format (CDA-compatible)",
                 "extension": ".xml",
             },
@@ -371,16 +406,25 @@ async def get_supported_formats(
 # File-saving endpoints - Save FHIR exports to reports directory
 # ============================================================================
 
+
 class FHIRSaveRequest(BaseModel):
     """Request model for saving FHIR export to reports directory."""
-    patient_id: Optional[str] = Field(None, description="Patient ID for subdirectory (defaults to run_id)")
-    patient_info: Optional[PatientInfo] = Field(None, description="Optional patient information")
+
+    patient_id: Optional[str] = Field(
+        None, description="Patient ID for subdirectory (defaults to run_id)"
+    )
+    patient_info: Optional[PatientInfo] = Field(
+        None, description="Optional patient information"
+    )
     output_format: str = Field("json", description="Output format: json, xml, or both")
-    include_recommendations: bool = Field(True, description="Include therapeutic implications")
+    include_recommendations: bool = Field(
+        True, description="Include therapeutic implications"
+    )
 
 
 class FHIRSaveResponse(BaseModel):
     """Response model for saved FHIR export."""
+
     success: bool
     files_saved: list = []
     report_directory: Optional[str] = None
@@ -396,14 +440,14 @@ async def save_fhir_export_for_run(
 ):
     """
     Export a PharmCAT run as FHIR and save to the reports directory.
-    
+
     The FHIR export file is saved alongside other report outputs (PDF, HTML, etc.)
     in the patient/run subdirectory under /data/reports/.
-    
+
     Args:
         run_id: PharmCAT run ID to export
         request: Save request with patient info and format options
-        
+
     Returns:
         Information about saved files including paths and URLs
     """
@@ -412,15 +456,15 @@ async def save_fhir_export_for_run(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
         )
-    
+
     try:
         service = FHIRExportService(db)
-        
+
         # Convert patient info to dict
         patient_info = None
         if request.patient_info:
             patient_info = request.patient_info.model_dump(exclude_none=True)
-        
+
         result = service.save_fhir_export(
             run_id=run_id,
             patient_id=request.patient_id,
@@ -428,19 +472,19 @@ async def save_fhir_export_for_run(
             output_format=request.output_format,
             include_recommendations=request.include_recommendations,
         )
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=500,
                 detail=result.get("error", "Failed to save FHIR export"),
             )
-        
+
         return FHIRSaveResponse(
             success=True,
             files_saved=result.get("files_saved", []),
             report_directory=result.get("report_directory"),
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -460,14 +504,14 @@ async def save_fhir_export_for_workflow(
 ):
     """
     Export a workflow's PharmCAT results as FHIR and save to reports directory.
-    
+
     The FHIR export file is saved alongside other report outputs in the
     workflow's subdirectory under /data/reports/.
-    
+
     Args:
         workflow_id: Workflow ID to export
         request: Save request with patient info and format options
-        
+
     Returns:
         Information about saved files including paths and URLs
     """
@@ -476,34 +520,34 @@ async def save_fhir_export_for_workflow(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
         )
-    
+
     try:
         service = FHIRExportService(db)
-        
+
         # Convert patient info to dict
         patient_info = None
         if request.patient_info:
             patient_info = request.patient_info.model_dump(exclude_none=True)
-        
+
         result = service.save_fhir_export_for_workflow(
             workflow_id=workflow_id,
             patient_id=request.patient_id,
             patient_info=patient_info,
             output_format=request.output_format,
         )
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=500,
                 detail=result.get("error", "Failed to save FHIR export"),
             )
-        
+
         return FHIRSaveResponse(
             success=True,
             files_saved=result.get("files_saved", []),
             report_directory=result.get("report_directory"),
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -524,15 +568,15 @@ async def quick_save_fhir_export(
 ):
     """
     Quick save: Export and save FHIR with minimal options (GET request).
-    
+
     Convenience endpoint for simple FHIR exports without patient info.
     Files are saved to /data/reports/{patient_id or run_id}/.
-    
+
     Args:
         run_id: PharmCAT run ID to export
         output_format: json, xml, or both
         patient_id: Optional subdirectory name
-        
+
     Returns:
         Information about saved files
     """
@@ -541,7 +585,7 @@ async def quick_save_fhir_export(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
         )
-    
+
     try:
         service = FHIRExportService(db)
         result = service.save_fhir_export(
@@ -549,20 +593,20 @@ async def quick_save_fhir_export(
             patient_id=patient_id,
             output_format=output_format,
         )
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=500,
                 detail=result.get("error", "Failed to save FHIR export"),
             )
-        
+
         return {
             "success": True,
             "message": f"FHIR export saved successfully",
             "files_saved": result.get("files_saved", []),
             "report_directory": result.get("report_directory"),
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -582,4 +626,3 @@ def _count_resources(bundle: dict) -> dict:
         resource_type = resource.get("resourceType", "Unknown")
         counts[resource_type] = counts.get(resource_type, 0) + 1
     return counts
-

@@ -34,17 +34,17 @@ References:
 - bcftools annotate: https://samtools.github.io/bcftools/bcftools.html#annotate
 """
 
-import os
-import sys
-import subprocess
-import shlex
-import logging
-import tempfile
 import gzip
+import logging
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
-from urllib.request import urlopen
 from urllib.error import URLError
+from urllib.request import urlopen
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -72,7 +72,10 @@ DEFAULT_BCFTOOLS_MEMORY = "4G"
 DEFAULT_BCFTOOLS_THREADS = 4
 DEFAULT_TIMEOUT_SECONDS = 3600  # 1 hour timeout for large files
 
-def download_chain_file(target_genome: str = "hg19", reference_genome: str = "hg38", max_retries: int = 3) -> str:
+
+def download_chain_file(
+    target_genome: str = "hg19", reference_genome: str = "hg38", max_retries: int = 3
+) -> str:
     """
     Download UCSC chain file for genome coordinate conversion if not already present.
 
@@ -97,7 +100,9 @@ def download_chain_file(target_genome: str = "hg19", reference_genome: str = "hg
     reference = reference_genome.lower().replace("grch", "hg")
 
     if target == reference:
-        raise ValueError(f"Cannot liftover from {target_genome} to {reference_genome}: same genome build")
+        raise ValueError(
+            f"Cannot liftover from {target_genome} to {reference_genome}: same genome build"
+        )
 
     # Determine chain file key following UCSC naming conventions
     chain_key = f"{target}_to_{reference}"
@@ -106,11 +111,15 @@ def download_chain_file(target_genome: str = "hg19", reference_genome: str = "hg
         # Try reverse mapping for bidirectional conversions
         reverse_key = f"{reference}_to_{target}"
         if reverse_key in CHAIN_FILE_URLS:
-            logger.warning(f"Direct chain file not available for {chain_key}, using reverse: {reverse_key}")
+            logger.warning(
+                f"Direct chain file not available for {chain_key}, using reverse: {reverse_key}"
+            )
             chain_key = reverse_key
         else:
             supported = list(CHAIN_FILE_URLS.keys())
-            raise ValueError(f"Unsupported genome conversion: {target_genome} to {reference_genome}. Supported: {supported}")
+            raise ValueError(
+                f"Unsupported genome conversion: {target_genome} to {reference_genome}. Supported: {supported}"
+            )
 
     chain_url = CHAIN_FILE_URLS[chain_key]
     expected_path = CHAIN_FILE_PATHS.get(chain_key, f"/tmp/{chain_key}.over.chain.gz")
@@ -121,7 +130,9 @@ def download_chain_file(target_genome: str = "hg19", reference_genome: str = "hg
             logger.info(f"Using existing valid chain file: {expected_path}")
             return expected_path
         else:
-            logger.warning(f"Existing chain file is invalid, re-downloading: {expected_path}")
+            logger.warning(
+                f"Existing chain file is invalid, re-downloading: {expected_path}"
+            )
             os.remove(expected_path)
 
     # Create directory structure if needed
@@ -130,14 +141,16 @@ def download_chain_file(target_genome: str = "hg19", reference_genome: str = "hg
     # Download with retry logic
     for attempt in range(max_retries):
         try:
-            logger.info(f"Downloading chain file from {chain_url} (attempt {attempt + 1}/{max_retries})")
+            logger.info(
+                f"Downloading chain file from {chain_url} (attempt {attempt + 1}/{max_retries})"
+            )
 
             with urlopen(chain_url) as response:
                 # Check response status and content type
                 if response.status != 200:
                     raise URLError(f"HTTP {response.status}: {response.reason}")
 
-                with open(expected_path, 'wb') as f:
+                with open(expected_path, "wb") as f:
                     # Download in chunks for large files
                     chunk_size = 8192
                     downloaded_size = 0
@@ -150,21 +163,28 @@ def download_chain_file(target_genome: str = "hg19", reference_genome: str = "hg
 
             # Validate downloaded file
             if not _validate_chain_file(expected_path):
-                raise RuntimeError(f"Downloaded chain file failed validation: {expected_path}")
+                raise RuntimeError(
+                    f"Downloaded chain file failed validation: {expected_path}"
+                )
 
-            logger.info(f"Successfully downloaded and validated chain file: {expected_path} ({downloaded_size} bytes)")
+            logger.info(
+                f"Successfully downloaded and validated chain file: {expected_path} ({downloaded_size} bytes)"
+            )
             return expected_path
 
         except URLError as e:
             logger.warning(f"Download attempt {attempt + 1} failed: {e}")
             if attempt == max_retries - 1:
-                raise FileNotFoundError(f"Failed to download chain file after {max_retries} attempts: {chain_url}")
+                raise FileNotFoundError(
+                    f"Failed to download chain file after {max_retries} attempts: {chain_url}"
+                )
             continue
         except Exception as e:
             logger.error(f"Unexpected error during download attempt {attempt + 1}: {e}")
             if attempt == max_retries - 1:
                 raise FileNotFoundError(f"Error downloading chain file: {e}")
             continue
+
 
 def _validate_chain_file(chain_path: str) -> bool:
     """
@@ -187,14 +207,16 @@ def _validate_chain_file(chain_path: str) -> bool:
 
         # Check for minimum reasonable size (UCSC chain files are typically > 1MB)
         if file_size < 1024 * 1024:  # 1MB
-            logger.warning(f"Chain file seems too small ({file_size} bytes): {chain_path}")
+            logger.warning(
+                f"Chain file seems too small ({file_size} bytes): {chain_path}"
+            )
             # Don't fail validation for small files, just warn
 
         # Basic format check - chain files should start with "chain"
         try:
-            with open(chain_path, 'rb') as f:
+            with open(chain_path, "rb") as f:
                 header = f.read(100)  # Read first 100 bytes
-                if b'chain' not in header.lower():
+                if b"chain" not in header.lower():
                     logger.warning(f"Chain file missing 'chain' header: {chain_path}")
                     return False
         except Exception as e:
@@ -206,6 +228,7 @@ def _validate_chain_file(chain_path: str) -> bool:
     except Exception as e:
         logger.error(f"Error validating chain file {chain_path}: {e}")
         return False
+
 
 def validate_liftover_input(input_path: str) -> Dict[str, Union[bool, str, list]]:
     """
@@ -220,12 +243,7 @@ def validate_liftover_input(input_path: str) -> Dict[str, Union[bool, str, list]
     Returns:
         Dictionary with validation results, warnings, and metadata
     """
-    result = {
-        "valid": True,
-        "error": None,
-        "warnings": [],
-        "metadata": {}
-    }
+    result = {"valid": True, "error": None, "warnings": [], "metadata": {}}
 
     if not os.path.exists(input_path):
         result["valid"] = False
@@ -240,7 +258,7 @@ def validate_liftover_input(input_path: str) -> Dict[str, Union[bool, str, list]
     # Get basic file information
     file_size = os.path.getsize(input_path)
     result["metadata"]["file_size"] = file_size
-    result["metadata"]["is_compressed"] = input_path.endswith(('.gz', '.bgz'))
+    result["metadata"]["is_compressed"] = input_path.endswith((".gz", ".bgz"))
 
     # Performance warnings for large files
     if file_size > 10 * 1024 * 1024 * 1024:  # 10GB
@@ -263,14 +281,16 @@ def validate_liftover_input(input_path: str) -> Dict[str, Union[bool, str, list]
     try:
         # Check VCF header structure and format compliance
         cmd = f"bcftools view -h {shlex.quote(input_path)}"
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=60
+        )
 
         if proc.returncode != 0:
             result["valid"] = False
             result["error"] = f"Invalid VCF format: {proc.stderr.strip()}"
             return result
 
-        header_lines = proc.stdout.strip().split('\n')
+        header_lines = proc.stdout.strip().split("\n")
 
         # Validate VCF header structure
         if not header_lines:
@@ -279,11 +299,15 @@ def validate_liftover_input(input_path: str) -> Dict[str, Union[bool, str, list]
             return result
 
         # Check for required VCF header lines
-        has_fileformat = any(line.startswith('##fileformat=VCF') for line in header_lines)
-        has_chrom_line = any(line.startswith('#CHROM') for line in header_lines)
+        has_fileformat = any(
+            line.startswith("##fileformat=VCF") for line in header_lines
+        )
+        has_chrom_line = any(line.startswith("#CHROM") for line in header_lines)
 
         if not has_fileformat:
-            result["warnings"].append("Missing ##fileformat header line - may not be GWAS-VCF compliant")
+            result["warnings"].append(
+                "Missing ##fileformat header line - may not be GWAS-VCF compliant"
+            )
 
         if not has_chrom_line:
             result["valid"] = False
@@ -302,7 +326,9 @@ def validate_liftover_input(input_path: str) -> Dict[str, Union[bool, str, list]
         result["metadata"]["gwas_compliant"] = gwas_compliance["compliant"]
 
         # Count samples for multi-sample VCF detection
-        sample_count = _count_vcf_samples(header_lines[-1])  # Last line should be #CHROM line
+        sample_count = _count_vcf_samples(
+            header_lines[-1]
+        )  # Last line should be #CHROM line
         result["metadata"]["sample_count"] = sample_count
 
         if sample_count > 1:
@@ -313,57 +339,61 @@ def validate_liftover_input(input_path: str) -> Dict[str, Union[bool, str, list]
 
     except subprocess.TimeoutExpired:
         result["valid"] = False
-        result["error"] = "VCF validation timed out - file may be too large or corrupted"
+        result["error"] = (
+            "VCF validation timed out - file may be too large or corrupted"
+        )
     except Exception as e:
         result["valid"] = False
         result["error"] = f"VCF validation failed: {e}"
 
     return result
 
+
 def _extract_genome_info_from_header(header_lines: list) -> str:
     """Extract genome build information from VCF header."""
     genome_patterns = [
-        r'##reference=(.+)',
-        r'##assembly=(.+)',
-        r'##contig.*ID=([^,>]+)',
+        r"##reference=(.+)",
+        r"##assembly=(.+)",
+        r"##contig.*ID=([^,>]+)",
     ]
 
     for line in header_lines:
         for pattern in genome_patterns:
             import re
+
             match = re.search(pattern, line)
             if match:
-                genome_id = match.group(1) if len(match.groups()) == 1 else match.group(2)
+                genome_id = (
+                    match.group(1) if len(match.groups()) == 1 else match.group(2)
+                )
                 # Normalize common genome identifiers
-                if 'hg38' in genome_id.lower() or 'grch38' in genome_id.lower():
-                    return 'GRCh38/hg38'
-                elif 'hg19' in genome_id.lower() or 'grch37' in genome_id.lower():
-                    return 'GRCh37/hg19'
+                if "hg38" in genome_id.lower() or "grch38" in genome_id.lower():
+                    return "GRCh38/hg38"
+                elif "hg19" in genome_id.lower() or "grch37" in genome_id.lower():
+                    return "GRCh37/hg19"
 
-    return 'unknown'
+    return "unknown"
+
 
 def _check_gwas_vcf_compliance(header_lines: list) -> Dict[str, Union[bool, list]]:
     """Check GWAS-VCF specification compliance."""
-    compliance = {
-        "compliant": True,
-        "warnings": []
-    }
+    compliance = {"compliant": True, "warnings": []}
 
     # GWAS-VCF recommended header lines
     recommended_headers = [
-        '##fileformat=VCF',
-        '##FILTER',
-        '##FORMAT',
-        '##INFO',
-        '##contig',
-        '##source',
-        '##reference'
+        "##fileformat=VCF",
+        "##FILTER",
+        "##FORMAT",
+        "##INFO",
+        "##contig",
+        "##source",
+        "##reference",
     ]
 
     found_headers = set()
     for line in header_lines:
         for rec_header in recommended_headers:
-            if line.startswith(f'##{rec_header}'):
+            if line.startswith(f"##{rec_header}"):
                 found_headers.add(rec_header)
 
     missing_headers = set(recommended_headers) - found_headers
@@ -375,18 +405,20 @@ def _check_gwas_vcf_compliance(header_lines: list) -> Dict[str, Union[bool, list
 
     return compliance
 
+
 def _count_vcf_samples(chrom_line: str) -> int:
     """Count samples in VCF #CHROM line."""
-    if not chrom_line.startswith('#CHROM'):
+    if not chrom_line.startswith("#CHROM"):
         return 0
 
     # Split by tab and count columns after FORMAT
-    parts = chrom_line.split('\t')
+    parts = chrom_line.split("\t")
     if len(parts) < 8:  # Need at least CHROM, POS, ID, REF, ALT, QUAL, FILTER, FORMAT
         return 0
 
     # Samples are columns after FORMAT
     return len(parts) - 9  # Subtract 8 fixed columns + 1 for FORMAT
+
 
 def get_liftover_stats(input_path: str, output_path: str) -> Dict[str, Union[int, str]]:
     """
@@ -404,32 +436,43 @@ def get_liftover_stats(input_path: str, output_path: str) -> Dict[str, Union[int
         "output_variants": 0,
         "variants_lifted": 0,
         "variants_dropped": 0,
-        "conversion_rate": 0.0
+        "conversion_rate": 0.0,
     }
 
     try:
         # Count input variants
         cmd = f"bcftools view -H {shlex.quote(input_path)} | wc -l"
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=60
+        )
         if proc.returncode == 0:
-            stats["input_variants"] = int(proc.stdout.strip()) if proc.stdout.strip().isdigit() else 0
+            stats["input_variants"] = (
+                int(proc.stdout.strip()) if proc.stdout.strip().isdigit() else 0
+            )
 
         # Count output variants
         cmd = f"bcftools view -H {shlex.quote(output_path)} | wc -l"
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=60
+        )
         if proc.returncode == 0:
-            stats["output_variants"] = int(proc.stdout.strip()) if proc.stdout.strip().isdigit() else 0
+            stats["output_variants"] = (
+                int(proc.stdout.strip()) if proc.stdout.strip().isdigit() else 0
+            )
 
         # Calculate statistics
         stats["variants_lifted"] = stats["output_variants"]
         stats["variants_dropped"] = stats["input_variants"] - stats["output_variants"]
         if stats["input_variants"] > 0:
-            stats["conversion_rate"] = (stats["output_variants"] / stats["input_variants"]) * 100
+            stats["conversion_rate"] = (
+                stats["output_variants"] / stats["input_variants"]
+            ) * 100
 
     except Exception as e:
         logger.warning(f"Failed to get liftover stats: {e}")
 
     return stats
+
 
 def liftover_vcf(
     input_path: str,
@@ -439,7 +482,7 @@ def liftover_vcf(
     reference_genome: str = "hg38",
     force: bool = False,
     temp_dir: Optional[str] = None,
-    threads: Optional[int] = None
+    threads: Optional[int] = None,
 ) -> Dict[str, Union[bool, str, Dict]]:
     """
     Convert VCF file from one genome build to another using bcftools annotate with UCSC chain files.
@@ -479,7 +522,7 @@ def liftover_vcf(
             "success": False,
             "error": error_msg,
             "warnings": validation.get("warnings", []),
-            "metadata": validation.get("metadata", {})
+            "metadata": validation.get("metadata", {}),
         }
 
     # Log GWAS-VCF compliance information
@@ -491,7 +534,9 @@ def liftover_vcf(
 
     # Check output file existence
     if os.path.exists(output_path) and not force:
-        raise FileExistsError(f"Output file already exists: {output_path}. Use force=True to overwrite.")
+        raise FileExistsError(
+            f"Output file already exists: {output_path}. Use force=True to overwrite."
+        )
 
     # Download and validate chain file if needed
     if not chain_file:
@@ -501,21 +546,13 @@ def liftover_vcf(
         except (FileNotFoundError, ValueError, RuntimeError) as e:
             error_msg = f"Failed to obtain chain file: {e}"
             logger.error(error_msg)
-            return {
-                "success": False,
-                "error": error_msg,
-                "metadata": metadata
-            }
+            return {"success": False, "error": error_msg, "metadata": metadata}
 
     # Ensure chain file exists and is valid
     if not os.path.exists(chain_file):
         error_msg = f"Chain file not found: {chain_file}"
         logger.error(error_msg)
-        return {
-            "success": False,
-            "error": error_msg,
-            "metadata": metadata
-        }
+        return {"success": False, "error": error_msg, "metadata": metadata}
 
     # Set up threading for performance
     if threads is None:
@@ -533,20 +570,27 @@ def liftover_vcf(
         # Build optimized bcftools annotate command for GWAS-VCF processing
         # Use --rename-chrs for coordinate conversion and maintain GWAS-VCF format
         cmd_parts = [
-            "bcftools", "annotate",
-            "--rename-chrs", chain_file,
+            "bcftools",
+            "annotate",
+            "--rename-chrs",
+            chain_file,
             "-Oz",  # Output compressed (GWAS-VCF standard)
-            "--threads", str(threads),
-            "-o", shlex.quote(temp_output),
-            shlex.quote(input_path)
+            "--threads",
+            str(threads),
+            "-o",
+            shlex.quote(temp_output),
+            shlex.quote(input_path),
         ]
 
         # Add GWAS-VCF specific options for better compatibility
         if metadata.get("sample_count", 0) == 1:
             # Single sample VCF - add GWAS-VCF recommended metadata
-            cmd_parts.extend([
-                "--set-id", "%CHROM\\_%POS\\_%REF\\_%ALT",  # Standardize variant IDs
-            ])
+            cmd_parts.extend(
+                [
+                    "--set-id",
+                    "%CHROM\\_%POS\\_%REF\\_%ALT",  # Standardize variant IDs
+                ]
+            )
 
         cmd = " ".join(cmd_parts)
         logger.info(f"Running GWAS-VCF liftover command: {cmd}")
@@ -557,7 +601,7 @@ def liftover_vcf(
             shell=True,
             capture_output=True,
             text=True,
-            timeout=DEFAULT_TIMEOUT_SECONDS
+            timeout=DEFAULT_TIMEOUT_SECONDS,
         )
 
         if proc.returncode != 0:
@@ -575,7 +619,7 @@ def liftover_vcf(
                 "error": error_msg,
                 "bcftools_stderr": proc.stderr,
                 "bcftools_returncode": proc.returncode,
-                "metadata": metadata
+                "metadata": metadata,
             }
 
         # Validate output file was created
@@ -587,7 +631,7 @@ def liftover_vcf(
                 "error": error_msg,
                 "bcftools_stdout": proc.stdout,
                 "bcftools_stderr": proc.stderr,
-                "metadata": metadata
+                "metadata": metadata,
             }
 
         # Atomic move to final location
@@ -610,55 +654,47 @@ def liftover_vcf(
             "warnings": validation.get("warnings", []),
             "metadata": metadata,
             "bcftools_version": _get_bcftools_version(),
-            "gwas_compliant": metadata.get("gwas_compliant", False)
+            "gwas_compliant": metadata.get("gwas_compliant", False),
         }
 
     except subprocess.TimeoutExpired:
         error_msg = f"Liftover timed out after {DEFAULT_TIMEOUT_SECONDS} seconds"
         logger.error(error_msg)
-        return {
-            "success": False,
-            "error": error_msg,
-            "metadata": metadata
-        }
+        return {"success": False, "error": error_msg, "metadata": metadata}
     except Exception as e:
         error_msg = f"Unexpected error during liftover: {e}"
         logger.error(error_msg, exc_info=True)
-        return {
-            "success": False,
-            "error": error_msg,
-            "metadata": metadata
-        }
+        return {"success": False, "error": error_msg, "metadata": metadata}
     finally:
         # Clean up temporary directory
         if temp_dir and os.path.exists(temp_dir):
             import shutil
+
             try:
                 shutil.rmtree(temp_dir)
                 logger.debug(f"Cleaned up temporary directory: {temp_dir}")
             except Exception as e:
                 logger.warning(f"Failed to clean up temp directory {temp_dir}: {e}")
 
+
 def _get_bcftools_version() -> str:
     """Get bcftools version for logging purposes."""
     try:
         proc = subprocess.run(
-            ["bcftools", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10
+            ["bcftools", "--version"], capture_output=True, text=True, timeout=10
         )
         if proc.returncode == 0:
-            return proc.stdout.strip().split('\n')[0]
+            return proc.stdout.strip().split("\n")[0]
     except Exception:
         pass
     return "unknown"
+
 
 def liftover_vcf_simple(
     input_path: str,
     output_path: str,
     target_genome: str = "hg19",
-    reference_genome: str = "hg38"
+    reference_genome: str = "hg38",
 ) -> bool:
     """
     Simplified liftover function for basic pharmacogenomics use cases.
@@ -686,26 +722,33 @@ def liftover_vcf_simple(
             target_genome=target_genome,
             reference_genome=reference_genome,
             force=True,
-            threads=2  # Conservative threading for compatibility
+            threads=2,  # Conservative threading for compatibility
         )
 
         if result["success"]:
             stats = result.get("statistics", {})
-            logger.info(f"Simple liftover completed: {stats.get('conversion_rate', 0):.1f}% conversion rate")
+            logger.info(
+                f"Simple liftover completed: {stats.get('conversion_rate', 0):.1f}% conversion rate"
+            )
             return True
         else:
-            logger.error(f"Simple liftover failed: {result.get('error', 'Unknown error')}")
+            logger.error(
+                f"Simple liftover failed: {result.get('error', 'Unknown error')}"
+            )
             return False
 
     except Exception as e:
         logger.error(f"Simple liftover failed with exception: {e}")
         return False
 
+
 # Example usage and testing function
 def main():
     """Example usage and testing."""
     if len(sys.argv) < 3:
-        print("Usage: python 37liftover38.py <input.vcf> <output.vcf> [target_genome] [reference_genome]")
+        print(
+            "Usage: python 37liftover38.py <input.vcf> <output.vcf> [target_genome] [reference_genome]"
+        )
         print("Example: python 37liftover38.py input.vcf output.vcf hg19 hg38")
         sys.exit(1)
 
@@ -721,7 +764,7 @@ def main():
         output_path=output_file,
         target_genome=target,
         reference_genome=reference,
-        force=True
+        force=True,
     )
 
     if result["success"]:
@@ -737,6 +780,7 @@ def main():
     else:
         print(f"✗ Liftover failed: {result['error']}")
         sys.exit(1)
+
 
 """
 PHARMACOGENOMICS WORKFLOW INTEGRATION GUIDE:

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Literal, Optional, Dict, Any
-import logging
-import requests
 import base64
+import logging
+import os
 from contextlib import suppress
+from pathlib import Path
+from typing import Any, Dict, Literal, Optional
+
+import requests
 
 try:
     from graphviz import Digraph  # type: ignore
@@ -31,7 +32,7 @@ def get_repo_root() -> Path:
 
 def read_workflow_mermaid() -> str:
     """Read the Mermaid source for the workflow diagram from workflow.mmd in the same directory.
-    
+
     Falls back to a minimal inline diagram if the file is not found.
     """
     current_dir = Path(__file__).resolve().parent
@@ -39,7 +40,7 @@ def read_workflow_mermaid() -> str:
     logger.info(f"Looking for workflow.mmd at: {mmd_path}")
     logger.info(f"Current directory exists: {current_dir.exists()}")
     logger.info(f"workflow.mmd file exists: {mmd_path.exists()}")
-    
+
     try:
         content = mmd_path.read_text(encoding="utf-8")
         logger.info(f"Successfully read workflow.mmd: {len(content)} chars")
@@ -58,21 +59,25 @@ def read_workflow_mermaid() -> str:
 
 def try_read_static_asset(preferred: str = "svg") -> tuple[str, bytes] | None:
     """Try to read a pre-rendered static asset from the current directory.
-    
+
     Returns tuple of (fmt, content_bytes) or None if not found.
     """
     current_dir = Path(__file__).resolve().parent
     candidates: list[tuple[str, Path]] = []
     if preferred == "svg":
-        candidates.extend([
-            ("svg", current_dir / "workflow.svg"),
-            ("png", current_dir / "workflow.png"),
-        ])
+        candidates.extend(
+            [
+                ("svg", current_dir / "workflow.svg"),
+                ("png", current_dir / "workflow.png"),
+            ]
+        )
     else:
-        candidates.extend([
-            ("png", current_dir / "workflow.png"),
-            ("svg", current_dir / "workflow.svg"),
-        ])
+        candidates.extend(
+            [
+                ("png", current_dir / "workflow.png"),
+                ("svg", current_dir / "workflow.svg"),
+            ]
+        )
     for fmt, p in candidates:
         if p.exists():
             try:
@@ -108,14 +113,14 @@ def render_with_kroki(
     else:
         base = "http://localhost:8001"
         logger.debug("Using default local Kroki URL: %s", base)
-    
+
     url = f"{base.rstrip('/')}/mermaid/{fmt}"
-    
+
     # Validate URL format
-    if not url.startswith(('http://', 'https://')):
+    if not url.startswith(("http://", "https://")):
         logger.error("Invalid Kroki URL format: %s (missing scheme)", url)
         raise ValueError(f"Invalid Kroki URL format: {url} (missing scheme)")
-    
+
     # Ensure Mermaid init sets a universally compatible font
     def _ensure_font_init(src: str) -> str:
         try:
@@ -132,7 +137,9 @@ def render_with_kroki(
 
     headers = {"Content-Type": "text/plain; charset=utf-8"}
     logger.info("Rendering Mermaid via Kroki: %s", url)
-    resp = requests.post(url, data=prepared_source.encode("utf-8"), headers=headers, timeout=30)
+    resp = requests.post(
+        url, data=prepared_source.encode("utf-8"), headers=headers, timeout=30
+    )
     resp.raise_for_status()
     return resp.content
 
@@ -153,10 +160,16 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
     """
     file_type = str(workflow.get("file_type", "vcf")).lower()
     extracted = str(workflow.get("extracted_file_type", "")).lower()
-    used_gatk = bool(workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"}))
-    used_hla = bool(workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"}))
+    used_gatk = bool(
+        workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"})
+    )
+    used_hla = bool(
+        workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"})
+    )
     used_pypgx = bool(workflow.get("used_pypgx", False))
-    used_pypgx_bam2vcf = bool(workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"}))
+    used_pypgx_bam2vcf = bool(
+        workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"})
+    )
     used_pharmcat = bool(workflow.get("used_pharmcat", True))
     used_mtdna = bool(workflow.get("used_mtdna", False))
     exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
@@ -174,12 +187,12 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
         "classDef conversion fill:#ffe6e6,stroke:#e74c3c,stroke-width:1px;",
         "classDef analysis fill:#e6ffe6,stroke:#27ae60,stroke-width:1px;",
         "",
-        "subgraph Client[\"Client/UI\"]",
+        'subgraph Client["Client/UI"]',
         "  U[User]",
-        "  U --> Upload[\"Upload file\"]",
+        '  U --> Upload["Upload file"]',
         "end",
         "",
-        "subgraph FastAPI[\"FastAPI App\"]",
+        'subgraph FastAPI["FastAPI App"]',
         "  Upload --> SaveTmp[/Save to /tmp and /data/uploads/]",
         "  SaveTmp --> Detect[Detect file type]",
     ]
@@ -206,41 +219,41 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
             m += [
                 "  Detect --> CRAM[CRAM]:::active",
                 "  CRAM --> ConvertCRAM[Convert CRAM → BAM]:::conversion",
-                "  ConvertCRAM --> BAM[BAM]"
+                "  ConvertCRAM --> BAM[BAM]",
             ]
         elif file_type == "sam":
             m += [
-                "  Detect --> SAM[SAM]:::active", 
+                "  Detect --> SAM[SAM]:::active",
                 "  SAM --> ConvertSAM[Convert SAM → BAM]:::conversion",
-                "  ConvertSAM --> BAM[BAM]"
+                "  ConvertSAM --> BAM[BAM]",
             ]
         elif file_type == "fastq":
             m += [
                 "  Detect --> FASTQ[FASTQ]:::active",
                 "  FASTQ --> AlignFASTQ[Align FASTQ → BAM]:::conversion",
-                "  AlignFASTQ --> BAM[BAM]"
+                "  AlignFASTQ --> BAM[BAM]",
             ]
-        
+
         # HLA typing for alignment files
         if used_hla:
             m += [
                 "  BAM --> HLA[HLA Typing<br/>OptiType/ZaroHLA]:::analysis",
-                "  HLA --> BAM_HLA[BAM with HLA data]"
+                "  HLA --> BAM_HLA[BAM with HLA data]",
             ]
             bam_after_hla = "BAM_HLA"
         else:
             m += ["  BAM --> BAM_HLA[BAM]"]
             bam_after_hla = "BAM_HLA"
-        
+
         # PyPGx BAM2VCF conversion
         if used_pypgx_bam2vcf:
             m += [
                 f"  {bam_after_hla} --> PyPGx_BAM2VCF[PyPGx BAM2VCF<br/>Convert BAM → VCF]:::conversion",
-                "  PyPGx_BAM2VCF --> VCF[VCF]"
+                "  PyPGx_BAM2VCF --> VCF[VCF]",
             ]
         else:
             m += [f"  {bam_after_hla} --> VCF[VCF]"]
-        
+
         vcf_ready = "VCF"
     else:
         m += ["  Detect --> VCF[VCF]:::active"]
@@ -252,7 +265,7 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
             f"  {vcf_ready} --> PYP_DEC{{Call star alleles?}}",
             "  PYP_DEC -->|Yes| PYP[PyPGx Analysis<br/>Star allele calling]:::analysis",
             "  PYP --> VCF_Processed[VCF with PyPGx calls]",
-            "  PYP_DEC -->|No| VCF_Processed[VCF]"
+            "  PYP_DEC -->|No| VCF_Processed[VCF]",
         ]
         vcf_final = "VCF_Processed"
     else:
@@ -263,7 +276,7 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
     if used_mtdna:
         m += [
             f"  {vcf_final} --> MTDNA[mtDNA Analysis<br/>mtDNA-server-2]:::analysis",
-            "  MTDNA --> VCF_Final[VCF with mtDNA calls]"
+            "  MTDNA --> VCF_Final[VCF with mtDNA calls]",
         ]
         vcf_final = "VCF_Final"
 
@@ -271,122 +284,250 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
     if used_pharmcat:
         m += [
             f"  {vcf_final} --> PCAT[PharmCAT Analysis<br/>Drug recommendations]:::analysis",
-            "  PCAT --> Outputs[\"report.json<br/>report.html<br/>report.tsv<br/>match.json<br/>phenotype.json\"]:::io",
+            '  PCAT --> Outputs["report.json<br/>report.html<br/>report.tsv<br/>match.json<br/>phenotype.json"]:::io',
         ]
     else:
         m += [
-            f"  {vcf_final} --> PCAT[\"PharmCAT (skipped)\"]",
+            f'  {vcf_final} --> PCAT["PharmCAT (skipped)"]',
         ]
 
     # Report generation pipeline
     m += [
-        "  Outputs --> Normalize[\"Normalize results<br/>(pharmcat_client.normalize_...)\"]",
+        '  Outputs --> Normalize["Normalize results<br/>(pharmcat_client.normalize_...)"]',
         "  Normalize --> WorkflowDiagram[Generate Workflow Diagram<br/>Visual representation]:::analysis",
-        "  WorkflowDiagram --> Generate[\"Generate Reports<br/>(app/reports/generator.py)\"]:::active",
+        '  WorkflowDiagram --> Generate["Generate Reports<br/>(app/reports/generator.py)"]:::active',
         "  Generate --> ReportsDir[/Write to /data/reports/:report_id/]:::io",
-        "  ReportsDir --> Serve[\"Serve at /reports/*\"]",
+        '  ReportsDir --> Serve["Serve at /reports/*"]',
         "end",
         "",
-        "subgraph Services[\"External Services\"]",
-        "  GATK_SVC[\"GATK API<br/>(docker/gatk-api)\"]:::svc",
-        "  HLA_SVC[\"HLA Typing Service<br/>(docker/zarohla)\"]:::svc", 
-        "  PYP_SVC[\"PyPGx Service<br/>(docker/pypgx)\"]:::svc",
-        "  PCAT_SVC[\"PharmCAT API/JAR<br/>(docker/pharmcat)\"]:::svc",
-        "  MTDNA_SVC[\"mtDNA Server<br/>(docker/mtdna-server-2)\"]:::svc",
+        'subgraph Services["External Services"]',
+        '  GATK_SVC["GATK API<br/>(docker/gatk-api)"]:::svc',
+        '  HLA_SVC["HLA Typing Service<br/>(docker/zarohla)"]:::svc',
+        '  PYP_SVC["PyPGx Service<br/>(docker/pypgx)"]:::svc',
+        '  PCAT_SVC["PharmCAT API/JAR<br/>(docker/pharmcat)"]:::svc',
+        '  MTDNA_SVC["mtDNA Server<br/>(docker/mtdna-server-2)"]:::svc',
         "end",
         "",
-        "subgraph Optional[\"FHIR Export (optional)\"]",
+        'subgraph Optional["FHIR Export (optional)"]',
     ]
     if exported_to_fhir:
         m += [
-            "  Generate -.-> FhirRoute[\"POST /reports/:report_id/export-to-fhir\"]:::active",
+            '  Generate -.-> FhirRoute["POST /reports/:report_id/export-to-fhir"]:::active',
             "  FhirRoute --> DiagnosticReport[(DiagnosticReport)]:::active",
         ]
     else:
         m += [
-            "  Generate -.-> FhirRoute[\"POST /reports/:report_id/export-to-fhir\"]",
+            '  Generate -.-> FhirRoute["POST /reports/:report_id/export-to-fhir"]',
         ]
     m += ["end"]
 
     return "\n".join(m)
 
 
-def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = "svg") -> bytes:
+def render_with_graphviz(
+    workflow: Dict[str, Any], fmt: Literal["svg", "png"] = "svg"
+) -> bytes:
     """Local fallback renderer using Graphviz to avoid external dependencies."""
     logger.info(f"[GRAPHVIZ] Rendering workflow diagram - format: {fmt}")
     logger.debug(f"[GRAPHVIZ] Workflow data: {workflow}")
-    
+
     if Digraph is None:
         logger.error("[GRAPHVIZ] Graphviz library not available")
         raise RuntimeError("graphviz is not available")
 
     file_type = str(workflow.get("file_type", "vcf")).lower()
     extracted = str(workflow.get("extracted_file_type", "")).lower()
-    used_gatk = bool(workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"}))
-    used_hla = bool(workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"}))
+    used_gatk = bool(
+        workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"})
+    )
+    used_hla = bool(
+        workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"})
+    )
     used_pypgx = bool(workflow.get("used_pypgx", False))
-    used_pypgx_bam2vcf = bool(workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"}))
+    used_pypgx_bam2vcf = bool(
+        workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"})
+    )
     used_pharmcat = bool(workflow.get("used_pharmcat", True))
     used_mtdna = bool(workflow.get("used_mtdna", False))
     exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
 
     # Try two different approaches for PNG to ensure text renders
     attempts = []
-    
+
     if fmt == "png":
         # Attempt 1: WeasyPrint-optimized settings with Arial (best compatibility)
-        attempts.append({
-            "name": "weasyprint_optimized",
-            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "Arial", "fontsize": "12"},
-            "node_attrs": {"fontname": "Arial", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
-                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
-            "edge_attrs": {"fontname": "Arial", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
-        })
-        
+        attempts.append(
+            {
+                "name": "weasyprint_optimized",
+                "graph_attrs": {
+                    "rankdir": "TB",
+                    "dpi": "96",
+                    "bgcolor": "white",
+                    "fontname": "Arial",
+                    "fontsize": "12",
+                },
+                "node_attrs": {
+                    "fontname": "Arial",
+                    "fontsize": "12",
+                    "shape": "box",
+                    "style": "rounded,filled",
+                    "fillcolor": "#f5f7fa",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+                "edge_attrs": {
+                    "fontname": "Arial",
+                    "fontsize": "11",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+            }
+        )
+
         # Attempt 2: System fonts with guaranteed text visibility
-        attempts.append({
-            "name": "system_default",
-            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "sans-serif"},
-            "node_attrs": {"fontname": "sans-serif", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
-                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
-            "edge_attrs": {"fontname": "sans-serif", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
-        })
-        
+        attempts.append(
+            {
+                "name": "system_default",
+                "graph_attrs": {
+                    "rankdir": "TB",
+                    "dpi": "96",
+                    "bgcolor": "white",
+                    "fontname": "sans-serif",
+                },
+                "node_attrs": {
+                    "fontname": "sans-serif",
+                    "fontsize": "12",
+                    "shape": "box",
+                    "style": "rounded,filled",
+                    "fillcolor": "#f5f7fa",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+                "edge_attrs": {
+                    "fontname": "sans-serif",
+                    "fontsize": "11",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+            }
+        )
+
         # Attempt 3: Liberation Sans fallback with explicit text color
-        attempts.append({
-            "name": "liberation_sans",
-            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "Liberation Sans"},
-            "node_attrs": {"fontname": "Liberation Sans", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
-                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
-            "edge_attrs": {"fontname": "Liberation Sans", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
-        })
+        attempts.append(
+            {
+                "name": "liberation_sans",
+                "graph_attrs": {
+                    "rankdir": "TB",
+                    "dpi": "96",
+                    "bgcolor": "white",
+                    "fontname": "Liberation Sans",
+                },
+                "node_attrs": {
+                    "fontname": "Liberation Sans",
+                    "fontsize": "12",
+                    "shape": "box",
+                    "style": "rounded,filled",
+                    "fillcolor": "#f5f7fa",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+                "edge_attrs": {
+                    "fontname": "Liberation Sans",
+                    "fontsize": "11",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+            }
+        )
     else:
         # SVG version optimized for WeasyPrint with guaranteed text rendering
-        attempts.append({
-            "name": "svg_weasyprint_text",
-            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "Arial", "fontsize": "12"},
-            "node_attrs": {"fontname": "Arial", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
-                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
-            "edge_attrs": {"fontname": "Arial", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
-        })
-        
+        attempts.append(
+            {
+                "name": "svg_weasyprint_text",
+                "graph_attrs": {
+                    "rankdir": "TB",
+                    "dpi": "96",
+                    "bgcolor": "white",
+                    "fontname": "Arial",
+                    "fontsize": "12",
+                },
+                "node_attrs": {
+                    "fontname": "Arial",
+                    "fontsize": "12",
+                    "shape": "box",
+                    "style": "rounded,filled",
+                    "fillcolor": "#f5f7fa",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+                "edge_attrs": {
+                    "fontname": "Arial",
+                    "fontsize": "11",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+            }
+        )
+
         # SVG version with system fonts for better compatibility
-        attempts.append({
-            "name": "svg_system_fonts",
-            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white", "fontname": "sans-serif", "fontsize": "12"},
-            "node_attrs": {"fontname": "sans-serif", "fontsize": "12", "shape": "box", "style": "rounded,filled", 
-                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"},
-            "edge_attrs": {"fontname": "sans-serif", "fontsize": "11", "color": "#2c3e50", "penwidth": "2", "fontcolor": "#2c3e50"}
-        })
-        
+        attempts.append(
+            {
+                "name": "svg_system_fonts",
+                "graph_attrs": {
+                    "rankdir": "TB",
+                    "dpi": "96",
+                    "bgcolor": "white",
+                    "fontname": "sans-serif",
+                    "fontsize": "12",
+                },
+                "node_attrs": {
+                    "fontname": "sans-serif",
+                    "fontsize": "12",
+                    "shape": "box",
+                    "style": "rounded,filled",
+                    "fillcolor": "#f5f7fa",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+                "edge_attrs": {
+                    "fontname": "sans-serif",
+                    "fontsize": "11",
+                    "color": "#2c3e50",
+                    "penwidth": "2",
+                    "fontcolor": "#2c3e50",
+                },
+            }
+        )
+
         # Fallback SVG version with minimal font requirements
-        attempts.append({
-            "name": "svg_fallback",
-            "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white"},
-            "node_attrs": {"fontsize": "12", "shape": "box", "style": "rounded,filled", 
-                          "fillcolor": "#f5f7fa", "color": "#2c3e50", "fontcolor": "#2c3e50"},
-            "edge_attrs": {"fontsize": "11", "color": "#2c3e50", "fontcolor": "#2c3e50"}
-        })
+        attempts.append(
+            {
+                "name": "svg_fallback",
+                "graph_attrs": {"rankdir": "TB", "dpi": "96", "bgcolor": "white"},
+                "node_attrs": {
+                    "fontsize": "12",
+                    "shape": "box",
+                    "style": "rounded,filled",
+                    "fillcolor": "#f5f7fa",
+                    "color": "#2c3e50",
+                    "fontcolor": "#2c3e50",
+                },
+                "edge_attrs": {
+                    "fontsize": "11",
+                    "color": "#2c3e50",
+                    "fontcolor": "#2c3e50",
+                },
+            }
+        )
 
     last_error = None
     for attempt in attempts:
@@ -395,34 +536,52 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
             g.attr(**attempt["graph_attrs"])
             g.node_attr.update(**attempt["node_attrs"])
             g.edge_attr.update(**attempt["edge_attrs"])
-            
+
             logger.info(f"[GRAPHVIZ] Trying render with {attempt['name']} settings")
             logger.debug(f"[GRAPHVIZ] Graph attrs: {attempt['graph_attrs']}")
             logger.debug(f"[GRAPHVIZ] Node attrs: {attempt['node_attrs']}")
-            
-            result = _render_graphviz_diagram(g, file_type, extracted, used_gatk, used_hla, used_pypgx, used_pypgx_bam2vcf, used_pharmcat, used_mtdna, exported_to_fhir)
+
+            result = _render_graphviz_diagram(
+                g,
+                file_type,
+                extracted,
+                used_gatk,
+                used_hla,
+                used_pypgx,
+                used_pypgx_bam2vcf,
+                used_pharmcat,
+                used_mtdna,
+                exported_to_fhir,
+            )
             if result and len(result) > 1000:  # Reasonable size check for a real image
-                logger.info(f"[GRAPHVIZ] ✓ Successfully rendered with {attempt['name']} settings, size: {len(result)} bytes")
-                
+                logger.info(
+                    f"[GRAPHVIZ] ✓ Successfully rendered with {attempt['name']} settings, size: {len(result)} bytes"
+                )
+
                 # For PNG, try to debug if text is included by checking for common text patterns
                 if fmt == "png":
                     # Save debug copy for inspection
                     try:
                         import tempfile
-                        with tempfile.NamedTemporaryFile(suffix=f"_debug_{attempt['name']}.png", delete=False) as tmp:
+
+                        with tempfile.NamedTemporaryFile(
+                            suffix=f"_debug_{attempt['name']}.png", delete=False
+                        ) as tmp:
                             tmp.write(result)
                             logger.info(f"[GRAPHVIZ] Debug PNG saved: {tmp.name}")
                     except Exception as debug_e:
                         logger.debug(f"[GRAPHVIZ] Could not save debug PNG: {debug_e}")
-                
+
                 return result
             else:
-                logger.warning(f"[GRAPHVIZ] ✗ Render with {attempt['name']} produced small/empty result: {len(result) if result else 0} bytes")
+                logger.warning(
+                    f"[GRAPHVIZ] ✗ Render with {attempt['name']} produced small/empty result: {len(result) if result else 0} bytes"
+                )
         except Exception as e:
             logger.warning(f"Graphviz render failed with {attempt['name']}: {str(e)}")
             last_error = e
             continue
-    
+
     # If all attempts failed, raise the last error
     if last_error:
         raise last_error
@@ -430,11 +589,30 @@ def render_with_graphviz(workflow: Dict[str, Any], fmt: Literal["svg", "png"] = 
         raise RuntimeError("All Graphviz rendering attempts failed")
 
 
-def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool, used_hla: bool, used_pypgx: bool, used_pypgx_bam2vcf: bool, used_pharmcat: bool, used_mtdna: bool, exported_to_fhir: bool) -> bytes:
+def _render_graphviz_diagram(
+    g,
+    file_type: str,
+    extracted: str,
+    used_gatk: bool,
+    used_hla: bool,
+    used_pypgx: bool,
+    used_pypgx_bam2vcf: bool,
+    used_pharmcat: bool,
+    used_mtdna: bool,
+    exported_to_fhir: bool,
+) -> bytes:
     """Helper function to build the actual Graphviz diagram structure."""
-    logger.debug(f"[GRAPHVIZ] Building diagram structure - file_type: {file_type}, gatk: {used_gatk}, hla: {used_hla}, pypgx: {used_pypgx}")
+    logger.debug(
+        f"[GRAPHVIZ] Building diagram structure - file_type: {file_type}, gatk: {used_gatk}, hla: {used_hla}, pypgx: {used_pypgx}"
+    )
 
-    def n(name: str, label: str, active: bool = False, shape: str = "box", fillcolor: str = None):
+    def n(
+        name: str,
+        label: str,
+        active: bool = False,
+        shape: str = "box",
+        fillcolor: str = None,
+    ):
         node_kwargs = {}
         if active:
             node_kwargs = {"fillcolor": "#cfe8ff", "color": "#5b8def"}
@@ -478,7 +656,12 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
         elif file_type == "cram":
             n("CRAM", "CRAM", active=True)
             e("Detect", "CRAM", active=True)
-            n("ConvertCRAM", "Convert CRAM → BAM", active=used_gatk, fillcolor="#ffe6e6")
+            n(
+                "ConvertCRAM",
+                "Convert CRAM → BAM",
+                active=used_gatk,
+                fillcolor="#ffe6e6",
+            )
             e("CRAM", "ConvertCRAM", active=used_gatk)
             n("BAM", "BAM")
             e("ConvertCRAM", "BAM", active=used_gatk)
@@ -496,7 +679,7 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
             e("FASTQ", "AlignFASTQ", active=used_gatk)
             n("BAM", "BAM")
             e("AlignFASTQ", "BAM", active=used_gatk)
-        
+
         # HLA typing for alignment files
         if used_hla:
             n("HLA", "HLA Typing\nOptiType/ZaroHLA", active=True, fillcolor="#e6ffe6")
@@ -508,16 +691,21 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
             n("BAM_HLA", "BAM")
             e("BAM", "BAM_HLA", active=True)
             bam_after_hla = "BAM_HLA"
-        
+
         # PyPGx BAM2VCF conversion
         if used_pypgx_bam2vcf:
-            n("PyPGx_BAM2VCF", "PyPGx BAM2VCF\nConvert BAM → VCF", active=True, fillcolor="#ffe6e6")
+            n(
+                "PyPGx_BAM2VCF",
+                "PyPGx BAM2VCF\nConvert BAM → VCF",
+                active=True,
+                fillcolor="#ffe6e6",
+            )
             e(bam_after_hla, "PyPGx_BAM2VCF", active=True)
             n("VCF", "VCF")
             e("PyPGx_BAM2VCF", "VCF", active=True)
         else:
             e(bam_after_hla, "VCF", active=True)
-        
+
         vcf_ready = "VCF"
     else:
         n("VCF", "VCF", active=True)
@@ -528,7 +716,12 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
     if used_pypgx:
         n("PYP_DEC", "Call star alleles?", shape="diamond")
         e(vcf_ready, "PYP_DEC", active=True)
-        n("PYP", "PyPGx Analysis\nStar allele calling", active=True, fillcolor="#e6ffe6")
+        n(
+            "PYP",
+            "PyPGx Analysis\nStar allele calling",
+            active=True,
+            fillcolor="#e6ffe6",
+        )
         e("PYP_DEC", "PYP", active=True, label="Yes")
         n("VCF_Processed", "VCF with PyPGx calls")
         e("PYP", "VCF_Processed", active=True)
@@ -548,16 +741,26 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
         vcf_final = "VCF_Final"
 
     # PharmCAT analysis
-    n("PCAT", "PharmCAT Analysis\nDrug recommendations", active=used_pharmcat, fillcolor="#e6ffe6")
+    n(
+        "PCAT",
+        "PharmCAT Analysis\nDrug recommendations",
+        active=used_pharmcat,
+        fillcolor="#e6ffe6",
+    )
     e(vcf_final, "PCAT", active=used_pharmcat)
 
     n("Outputs", "report.json | report.html | phenotype.json", active=True, shape="box")
     e("PCAT", "Outputs", active=used_pharmcat)
-    
+
     # Report generation pipeline
     n("Normalize", "Normalize results\n(pharmcat_client.normalize_...)")
     e("Outputs", "Normalize", active=True)
-    n("WorkflowDiagram", "Generate Workflow Diagram\nVisual representation", active=True, fillcolor="#e6ffe6")
+    n(
+        "WorkflowDiagram",
+        "Generate Workflow Diagram\nVisual representation",
+        active=True,
+        fillcolor="#e6ffe6",
+    )
     e("Normalize", "WorkflowDiagram", active=True)
     n("Generate", "Generate Reports\n(app/reports/generator.py)", active=True)
     e("WorkflowDiagram", "Generate", active=True)
@@ -576,15 +779,17 @@ def _render_graphviz_diagram(g, file_type: str, extracted: str, used_gatk: bool,
 
     logger.debug(f"[GRAPHVIZ] Starting final pipe rendering for {g.format}")
     logger.debug(f"[GRAPHVIZ] Graphviz source:\n{g.source}")
-    
+
     result = g.pipe()
-    logger.debug(f"[GRAPHVIZ] Pipe completed successfully, result size: {len(result) if result else 0} bytes")
+    logger.debug(
+        f"[GRAPHVIZ] Pipe completed successfully, result size: {len(result) if result else 0} bytes"
+    )
     return result
 
 
 def render_kroki_mermaid_svg(workflow: Optional[Dict[str, Any]] = None) -> bytes:
     """Render workflow to SVG using Kroki Mermaid for comparison purposes.
-    
+
     This function prioritizes the sophisticated Mermaid template from workflow.mmd
     for better quality diagrams, with workflow-specific diagrams as fallback.
     """
@@ -593,54 +798,79 @@ def render_kroki_mermaid_svg(workflow: Optional[Dict[str, Any]] = None) -> bytes
         mermaid = read_workflow_mermaid()
         result = render_with_kroki(mermaid, fmt="svg")
         if result:
-            logger.info("Generated sophisticated Kroki Mermaid SVG from workflow.mmd (size: %d bytes)", len(result))
+            logger.info(
+                "Generated sophisticated Kroki Mermaid SVG from workflow.mmd (size: %d bytes)",
+                len(result),
+            )
             return result
     except Exception as e:
-        logger.warning("Sophisticated Mermaid template failed (%s); trying workflow-specific", str(e))
-    
+        logger.warning(
+            "Sophisticated Mermaid template failed (%s); trying workflow-specific",
+            str(e),
+        )
+
     # Fallback to workflow-specific Mermaid if sophisticated template fails
     if workflow:
         try:
             mermaid = build_mermaid_from_workflow(workflow)
             result = render_with_kroki(mermaid, fmt="svg")
             if result:
-                logger.info("Generated workflow-specific Kroki Mermaid SVG (size: %d bytes)", len(result))
+                logger.info(
+                    "Generated workflow-specific Kroki Mermaid SVG (size: %d bytes)",
+                    len(result),
+                )
                 return result
             else:
-                logger.warning("Workflow-specific Kroki Mermaid SVG generation returned empty result")
+                logger.warning(
+                    "Workflow-specific Kroki Mermaid SVG generation returned empty result"
+                )
                 return b""
         except Exception as e:
-            logger.error("Workflow-specific Kroki Mermaid SVG generation failed: %s", str(e))
+            logger.error(
+                "Workflow-specific Kroki Mermaid SVG generation failed: %s", str(e)
+            )
             return b""
-    
+
     # If no workflow data and sophisticated template failed, return empty
     return b""
 
 
-def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optional[Dict[str, Any]] = None) -> bytes:
+def render_workflow(
+    fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optional[Dict[str, Any]] = None
+) -> bytes:
     """Render the workflow diagram in the requested format.
 
     For SVG, prioritize the sophisticated Mermaid template from workflow.mmd since it's more detailed.
     For PNG, prioritize Python PNG for guaranteed text rendering in PDFs.
     """
-    logger.info(f"render_workflow called with fmt={fmt}, workflow={workflow is not None}")
-    
+    logger.info(
+        f"render_workflow called with fmt={fmt}, workflow={workflow is not None}"
+    )
+
     # For SVG, prioritize the sophisticated Mermaid template from workflow.mmd
     if fmt == "svg":
-        logger.info("SVG format requested - prioritizing sophisticated Mermaid template from workflow.mmd")
+        logger.info(
+            "SVG format requested - prioritizing sophisticated Mermaid template from workflow.mmd"
+        )
         try:
             # First try the sophisticated Mermaid template from workflow.mmd
             mermaid = read_workflow_mermaid()
             logger.info(f"Read sophisticated Mermaid template: {len(mermaid)} chars")
             result = render_with_kroki(mermaid, fmt=fmt)
             if result:
-                logger.info("✓ Using sophisticated Mermaid template from workflow.mmd (size: %d bytes)", len(result))
+                logger.info(
+                    "✓ Using sophisticated Mermaid template from workflow.mmd (size: %d bytes)",
+                    len(result),
+                )
                 return result
             else:
                 logger.warning("Sophisticated Mermaid template returned empty result")
         except Exception as e:
-            logger.warning("Sophisticated Mermaid template failed (%s); trying workflow-specific Mermaid", str(e))
-        
+            logger.warning(
+                "Sophisticated Mermaid template failed (%s); trying workflow-specific Mermaid",
+                str(e),
+            )
+
         # If sophisticated template fails, try workflow-specific Mermaid
         if workflow:
             logger.info("Trying workflow-specific Mermaid as fallback")
@@ -649,26 +879,33 @@ def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optiona
                 logger.info(f"Built workflow-specific Mermaid: {len(mermaid)} chars")
                 result = render_with_kroki(mermaid, fmt=fmt)
                 if result:
-                    logger.info("✓ Using workflow-specific Mermaid (size: %d bytes)", len(result))
+                    logger.info(
+                        "✓ Using workflow-specific Mermaid (size: %d bytes)",
+                        len(result),
+                    )
                     return result
                 else:
                     logger.warning("Workflow-specific Mermaid returned empty result")
             except Exception as e:
-                logger.warning("Workflow-specific Mermaid failed (%s); trying Graphviz", str(e))
-        
+                logger.warning(
+                    "Workflow-specific Mermaid failed (%s); trying Graphviz", str(e)
+                )
+
         # Fallback to Graphviz for SVG
         if workflow:
             logger.info("Trying Graphviz SVG as final fallback")
             try:
                 result = render_with_graphviz(workflow, fmt=fmt)
                 if result:
-                    logger.info("✓ Using Graphviz SVG fallback (size: %d bytes)", len(result))
+                    logger.info(
+                        "✓ Using Graphviz SVG fallback (size: %d bytes)", len(result)
+                    )
                     return result
                 else:
                     logger.warning("Graphviz SVG fallback returned empty result")
             except Exception as e:
                 logger.warning("Graphviz SVG fallback failed (%s)", str(e))
-    
+
     # For PNG format with workflow data, prioritize Python PNG for guaranteed text rendering
     elif workflow and fmt == "png":
         logger.info("PNG format requested with workflow data - prioritizing Python PNG")
@@ -676,30 +913,45 @@ def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optiona
         try:
             python_png = render_simple_png_from_workflow(workflow)
             if python_png:
-                logger.info("✓ Using Python/Pillow PNG for guaranteed text rendering (size: %d bytes)", len(python_png))
+                logger.info(
+                    "✓ Using Python/Pillow PNG for guaranteed text rendering (size: %d bytes)",
+                    len(python_png),
+                )
                 return python_png
             else:
                 logger.warning("Python PNG returned empty result")
         except Exception as e:
             logger.warning("Python PNG failed (%s); trying alternatives", str(e))
-        
+
         # Try other methods only if Python PNG fails
         for method_name, method_func in [
-            ("Sophisticated Mermaid", lambda: render_with_kroki(read_workflow_mermaid(), fmt=fmt)),
-            ("Workflow-specific Mermaid", lambda: render_with_kroki(build_mermaid_from_workflow(workflow), fmt=fmt)),
-            ("Graphviz", lambda: render_with_graphviz(workflow, fmt=fmt))
+            (
+                "Sophisticated Mermaid",
+                lambda: render_with_kroki(read_workflow_mermaid(), fmt=fmt),
+            ),
+            (
+                "Workflow-specific Mermaid",
+                lambda: render_with_kroki(
+                    build_mermaid_from_workflow(workflow), fmt=fmt
+                ),
+            ),
+            ("Graphviz", lambda: render_with_graphviz(workflow, fmt=fmt)),
         ]:
             try:
                 result = method_func()
                 if result and len(result) > 1000:
-                    logger.info("✓ Using %s PNG (size: %d bytes)", method_name, len(result))
+                    logger.info(
+                        "✓ Using %s PNG (size: %d bytes)", method_name, len(result)
+                    )
                     return result
                 else:
-                    logger.warning("%s PNG returned empty or too small result", method_name)
+                    logger.warning(
+                        "%s PNG returned empty or too small result", method_name
+                    )
             except Exception as e:
                 logger.warning("%s PNG render failed (%s)", method_name, str(e))
                 continue
-            
+
     # For other formats or when no workflow data
     elif workflow:
         logger.info("Other format or no workflow data - trying Graphviz")
@@ -715,13 +967,20 @@ def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optiona
     logger.info("Trying sophisticated Mermaid template as final fallback")
     try:
         mermaid = read_workflow_mermaid()
-        logger.info(f"Read sophisticated Mermaid template for fallback: {len(mermaid)} chars")
+        logger.info(
+            f"Read sophisticated Mermaid template for fallback: {len(mermaid)} chars"
+        )
         result = render_with_kroki(mermaid, fmt=fmt)
         if result:
-            logger.info("✓ Using sophisticated Mermaid template as final fallback (size: %d bytes)", len(result))
+            logger.info(
+                "✓ Using sophisticated Mermaid template as final fallback (size: %d bytes)",
+                len(result),
+            )
             return result
         else:
-            logger.warning("Sophisticated Mermaid template fallback returned empty result")
+            logger.warning(
+                "Sophisticated Mermaid template fallback returned empty result"
+            )
     except Exception as e:
         logger.warning("Sophisticated Mermaid template fallback failed (%s)", str(e))
 
@@ -739,12 +998,17 @@ def render_workflow(fmt: Literal["svg", "png", "pdf"] = "svg", workflow: Optiona
         try:
             result = render_simple_png_from_workflow(workflow)
             if result:
-                logger.info("✓ Using pure-Python PNG as final fallback (size: %d bytes)", len(result))
+                logger.info(
+                    "✓ Using pure-Python PNG as final fallback (size: %d bytes)",
+                    len(result),
+                )
                 return result
         except Exception as e:
             logger.warning("Pure-Python PNG final fallback failed (%s)", str(e))
-    
-    logger.error("All workflow diagram generation methods failed - returning empty result")
+
+    logger.error(
+        "All workflow diagram generation methods failed - returning empty result"
+    )
     return b""
 
 
@@ -759,96 +1023,104 @@ def render_workflow_png_data_uri(workflow: Optional[Dict[str, Any]] = None) -> s
 
 def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
     """Build a simple HTML representation of the workflow diagram.
-    
+
     This function creates a pure HTML/CSS workflow diagram that should render
     reliably in WeasyPrint without external dependencies.
     """
     try:
         # Extract workflow information
-        file_type = workflow.get('file_type', 'unknown')
-        used_gatk = workflow.get('used_gatk', False)
-        used_hla = workflow.get('used_hla', False)
-        used_pypgx = workflow.get('used_pypgx', False)
-        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
-        used_pharmcat = workflow.get('used_pharmcat', False)
-        used_mtdna = workflow.get('used_mtdna', False)
-        exported_to_fhir = workflow.get('exported_to_fhir', False)
-        
+        file_type = workflow.get("file_type", "unknown")
+        used_gatk = workflow.get("used_gatk", False)
+        used_hla = workflow.get("used_hla", False)
+        used_pypgx = workflow.get("used_pypgx", False)
+        used_pypgx_bam2vcf = workflow.get("used_pypgx_bam2vcf", False)
+        used_pharmcat = workflow.get("used_pharmcat", False)
+        used_mtdna = workflow.get("used_mtdna", False)
+        exported_to_fhir = workflow.get("exported_to_fhir", False)
+
         # Build workflow steps
         steps = []
-        
+
         # Always start with Upload
-        steps.append('Upload')
-        
+        steps.append("Upload")
+
         # Add detection step
-        if file_type.lower() in ['vcf', 'vcf.gz']:
-            steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
-            steps.append(f'Detect ({file_type.upper()})')
+        if file_type.lower() in ["vcf", "vcf.gz"]:
+            steps.append("Detect (VCF)")
+        elif file_type.lower() in ["bam", "sam", "cram", "fastq"]:
+            steps.append(f"Detect ({file_type.upper()})")
         else:
-            steps.append(f'Detect ({file_type.upper()})')
-        
+            steps.append(f"Detect ({file_type.upper()})")
+
         # Add file conversion steps
-        if file_type.lower() == 'cram' and used_gatk:
-            steps.append('CRAM→BAM')
-        elif file_type.lower() == 'sam' and used_gatk:
-            steps.append('SAM→BAM')
-        elif file_type.lower() == 'fastq' and used_gatk:
-            steps.append('FASTQ→BAM')
-        
+        if file_type.lower() == "cram" and used_gatk:
+            steps.append("CRAM→BAM")
+        elif file_type.lower() == "sam" and used_gatk:
+            steps.append("SAM→BAM")
+        elif file_type.lower() == "fastq" and used_gatk:
+            steps.append("FASTQ→BAM")
+
         # Add HLA typing for alignment files
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
-            steps.append('HLA Typing')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_hla:
+            steps.append("HLA Typing")
+
         # Add PyPGx BAM2VCF conversion
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
-            steps.append('BAM→VCF')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_pypgx_bam2vcf:
+            steps.append("BAM→VCF")
+
         # Add VCF step
-        steps.append('VCF')
-        
+        steps.append("VCF")
+
         # Add processing steps
         if used_pypgx:
-            steps.append('PyPGx')
-        
+            steps.append("PyPGx")
+
         if used_mtdna:
-            steps.append('mtDNA')
-            
+            steps.append("mtDNA")
+
         if used_pharmcat:
-            steps.append('PharmCAT')
-        
+            steps.append("PharmCAT")
+
         # Add workflow diagram generation
-        steps.append('Workflow Diagram')
-            
+        steps.append("Workflow Diagram")
+
         # Add final steps
-        steps.append('Reports')
-        
+        steps.append("Reports")
+
         if exported_to_fhir:
-            steps.append('FHIR Export')
-        
+            steps.append("FHIR Export")
+
         # Create simple HTML with basic styling
         html_parts = []
-        html_parts.append('<div style="text-align: center; padding: 20px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; margin: 10px 0;">')
-        
+        html_parts.append(
+            '<div style="text-align: center; padding: 20px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; margin: 10px 0;">'
+        )
+
         for i, step in enumerate(steps):
             # Add step
-            html_parts.append(f'<span style="display: inline-block; padding: 12px 16px; border: 2px solid #2c3e50; border-radius: 8px; background: #ffffff; margin: 4px 6px; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; color: #2c3e50; text-align: center; min-width: 80px;">{step}</span>')
-            
+            html_parts.append(
+                f'<span style="display: inline-block; padding: 12px 16px; border: 2px solid #2c3e50; border-radius: 8px; background: #ffffff; margin: 4px 6px; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; color: #2c3e50; text-align: center; min-width: 80px;">{step}</span>'
+            )
+
             # Add arrow (except after last step)
             if i < len(steps) - 1:
-                html_parts.append('<span style="color: #2c3e50; font-size: 18px; font-weight: bold; margin: 0 8px; font-family: Arial, sans-serif;">→</span>')
-        
-        html_parts.append('</div>')
-        
-        return ''.join(html_parts)
-        
+                html_parts.append(
+                    '<span style="color: #2c3e50; font-size: 18px; font-weight: bold; margin: 0 8px; font-family: Arial, sans-serif;">→</span>'
+                )
+
+        html_parts.append("</div>")
+
+        return "".join(html_parts)
+
     except Exception as e:
         logger.error(f"Error building HTML workflow: {str(e)}")
         # Return a simple fallback
         return '<div style="text-align: center; padding: 20px; color: #666;">Workflow diagram could not be generated</div>'
 
 
-def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: int = 1600, height: int = 300) -> bytes:
+def render_simple_png_from_workflow(
+    workflow: Optional[Dict[str, Any]], width: int = 1600, height: int = 300
+) -> bytes:
     """Pure-Python rasterizer: draw a breadcrumb of steps to a PNG via Pillow.
 
     This avoids external services and ensures we always have an image for PDF/HTML with guaranteed text rendering.
@@ -858,16 +1130,22 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
     if workflow is None:
         workflow = {}
     file_type = str(workflow.get("file_type", "vcf")).upper()
-    used_gatk = bool(workflow.get("used_gatk", file_type in {"BAM", "CRAM", "SAM", "FASTQ"}))
-    used_hla = bool(workflow.get("used_hla", file_type in {"BAM", "CRAM", "SAM", "FASTQ"}))
+    used_gatk = bool(
+        workflow.get("used_gatk", file_type in {"BAM", "CRAM", "SAM", "FASTQ"})
+    )
+    used_hla = bool(
+        workflow.get("used_hla", file_type in {"BAM", "CRAM", "SAM", "FASTQ"})
+    )
     used_pypgx = bool(workflow.get("used_pypgx", False))
-    used_pypgx_bam2vcf = bool(workflow.get("used_pypgx_bam2vcf", file_type in {"BAM", "CRAM", "SAM", "FASTQ"}))
+    used_pypgx_bam2vcf = bool(
+        workflow.get("used_pypgx_bam2vcf", file_type in {"BAM", "CRAM", "SAM", "FASTQ"})
+    )
     used_pharmcat = bool(workflow.get("used_pharmcat", True))
     used_mtdna = bool(workflow.get("used_mtdna", False))
     exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
 
     steps = ["Upload", f"Detect ({file_type})"]
-    
+
     # File conversion steps
     if file_type == "CRAM":
         steps.append("CRAM→BAM" + (" ✔" if used_gatk else " (skipped)"))
@@ -875,29 +1153,29 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
         steps.append("SAM→BAM" + (" ✔" if used_gatk else " (skipped)"))
     elif file_type == "FASTQ":
         steps.append("FASTQ→BAM" + (" ✔" if used_gatk else " (skipped)"))
-    
+
     # HLA typing for alignment files
     if file_type in {"BAM", "CRAM", "SAM", "FASTQ"} and used_hla:
         steps.append("HLA Typing ✔")
-    
+
     # PyPGx BAM2VCF conversion
     if file_type in {"BAM", "CRAM", "SAM", "FASTQ"} and used_pypgx_bam2vcf:
         steps.append("BAM→VCF ✔")
-    
+
     steps.append("VCF")
-    
+
     # PyPGx analysis
     if used_pypgx:
         steps.append("PyPGx ✔")
-    
+
     # mtDNA analysis
     if used_mtdna:
         steps.append("mtDNA ✔")
-    
+
     # PharmCAT analysis
     if used_pharmcat:
         steps.append("PharmCAT ✔")
-    
+
     steps.append("Workflow Diagram")
     steps.append("Reports")
     if exported_to_fhir:
@@ -905,16 +1183,18 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
 
     img = Image.new("RGB", (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
-    
+
     # Try to load a better font for clearer text rendering
     font = None
     try:
         # Try to load a TrueType font for better rendering
         font_size = 18  # Larger font for better visibility
-        for font_path in ["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                         "/System/Library/Fonts/Arial.ttf",  # macOS
-                         "C:/Windows/Fonts/arial.ttf"]:      # Windows
+        for font_path in [
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/System/Library/Fonts/Arial.ttf",  # macOS
+            "C:/Windows/Fonts/arial.ttf",
+        ]:  # Windows
             try:
                 font = ImageFont.truetype(font_path, font_size)
                 break
@@ -922,7 +1202,7 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
                 continue
     except Exception:
         pass
-    
+
     if font is None:
         try:
             font = ImageFont.load_default()
@@ -940,21 +1220,23 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
         char_w = 12  # Larger character estimate for bigger text
         box_w = max(140, char_w * len(s) + 30)
         box_h = 70  # Much taller boxes
-        
+
         # Draw box with better colors for PDF visibility
-        draw.rounded_rectangle([x, y, x + box_w, y + box_h], 
-                             radius=8, 
-                             outline=(44, 62, 80),   # Darker outline
-                             fill=(245, 247, 250),   # Light background
-                             width=2)
-        
+        draw.rounded_rectangle(
+            [x, y, x + box_w, y + box_h],
+            radius=8,
+            outline=(44, 62, 80),  # Darker outline
+            fill=(245, 247, 250),  # Light background
+            width=2,
+        )
+
         # Draw text with better positioning and color
         text_x = x + (box_w - len(s) * char_w) // 2
         text_y = y + (box_h - 20) // 2
         draw.text((text_x, text_y), s, fill=(44, 62, 80), font=font)
-        
+
         x += box_w + 35
-        
+
         # Draw arrow between steps with larger size
         if i < len(steps) - 1:
             arrow_y = y + box_h // 2
@@ -962,6 +1244,7 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
             draw.text((x - 25, arrow_y - 12), "→", fill=(91, 141, 239), font=font)
 
     import io
+
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
@@ -969,90 +1252,90 @@ def render_simple_png_from_workflow(workflow: Optional[Dict[str, Any]], width: i
 
 def build_simple_text_workflow(workflow: Dict[str, Any]) -> str:
     """Build a simple text-based workflow diagram that renders reliably in WeasyPrint.
-    
+
     This function creates a plain text representation using basic HTML elements
     that should work consistently across all WeasyPrint versions.
     """
     try:
         # Extract workflow information
-        file_type = workflow.get('file_type', 'unknown')
-        used_gatk = workflow.get('used_gatk', False)
-        used_hla = workflow.get('used_hla', False)
-        used_pypgx = workflow.get('used_pypgx', False)
-        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
-        used_pharmcat = workflow.get('used_pharmcat', False)
-        used_mtdna = workflow.get('used_mtdna', False)
-        exported_to_fhir = workflow.get('exported_to_fhir', False)
-        
+        file_type = workflow.get("file_type", "unknown")
+        used_gatk = workflow.get("used_gatk", False)
+        used_hla = workflow.get("used_hla", False)
+        used_pypgx = workflow.get("used_pypgx", False)
+        used_pypgx_bam2vcf = workflow.get("used_pypgx_bam2vcf", False)
+        used_pharmcat = workflow.get("used_pharmcat", False)
+        used_mtdna = workflow.get("used_mtdna", False)
+        exported_to_fhir = workflow.get("exported_to_fhir", False)
+
         # Build workflow steps
         steps = []
-        
+
         # Always start with Upload
-        steps.append('Upload')
-        
+        steps.append("Upload")
+
         # Add detection step
-        if file_type.lower() in ['vcf', 'vcf.gz']:
-            steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
-            steps.append(f'Detect ({file_type.upper()})')
+        if file_type.lower() in ["vcf", "vcf.gz"]:
+            steps.append("Detect (VCF)")
+        elif file_type.lower() in ["bam", "sam", "cram", "fastq"]:
+            steps.append(f"Detect ({file_type.upper()})")
         else:
-            steps.append(f'Detect ({file_type.upper()})')
-        
+            steps.append(f"Detect ({file_type.upper()})")
+
         # Add file conversion steps
-        if file_type.lower() == 'cram' and used_gatk:
-            steps.append('CRAM→BAM')
-        elif file_type.lower() == 'sam' and used_gatk:
-            steps.append('SAM→BAM')
-        elif file_type.lower() == 'fastq' and used_gatk:
-            steps.append('FASTQ→BAM')
-        
+        if file_type.lower() == "cram" and used_gatk:
+            steps.append("CRAM→BAM")
+        elif file_type.lower() == "sam" and used_gatk:
+            steps.append("SAM→BAM")
+        elif file_type.lower() == "fastq" and used_gatk:
+            steps.append("FASTQ→BAM")
+
         # Add HLA typing for alignment files
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
-            steps.append('HLA Typing')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_hla:
+            steps.append("HLA Typing")
+
         # Add PyPGx BAM2VCF conversion
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
-            steps.append('BAM→VCF')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_pypgx_bam2vcf:
+            steps.append("BAM→VCF")
+
         # Add VCF step
-        steps.append('VCF')
-        
+        steps.append("VCF")
+
         # Add processing steps
         if used_pypgx:
-            steps.append('PyPGx')
-        
+            steps.append("PyPGx")
+
         if used_mtdna:
-            steps.append('mtDNA')
-            
+            steps.append("mtDNA")
+
         if used_pharmcat:
-            steps.append('PharmCAT')
-        
+            steps.append("PharmCAT")
+
         # Add workflow diagram generation
-        steps.append('Workflow Diagram')
-            
+        steps.append("Workflow Diagram")
+
         # Add final steps
-        steps.append('Reports')
-        
+        steps.append("Reports")
+
         if exported_to_fhir:
-            steps.append('FHIR Export')
-        
+            steps.append("FHIR Export")
+
         # Create simple text-based HTML using basic elements
         html_parts = []
         html_parts.append('<div class="workflow-text">')
-        html_parts.append('<h3>Workflow Summary</h3>')
-        
+        html_parts.append("<h3>Workflow Summary</h3>")
+
         for i, step in enumerate(steps):
             # Add step number and name
-            html_parts.append(f'<p><strong>{i+1}.</strong> {step}</p>')
-            
+            html_parts.append(f"<p><strong>{i+1}.</strong> {step}</p>")
+
             # Add arrow (except after last step)
             if i < len(steps) - 1:
                 html_parts.append('<p style="text-align: center; margin: 5px 0;">↓</p>')
-        
-        html_parts.append('</div>')
-        
-        return ''.join(html_parts)
-        
+
+        html_parts.append("</div>")
+
+        return "".join(html_parts)
+
     except Exception as e:
         logger.error(f"Error building text workflow: {str(e)}")
         # Return a simple fallback
@@ -1061,370 +1344,380 @@ def build_simple_text_workflow(workflow: Dict[str, Any]) -> str:
 
 def build_plain_text_workflow(workflow: Dict[str, Any]) -> str:
     """Build a plain text workflow diagram that renders reliably in WeasyPrint.
-    
+
     This function creates a plain text representation using only basic text elements
     that should work consistently across all WeasyPrint versions.
     """
     try:
         # Extract workflow information
-        file_type = workflow.get('file_type', 'unknown')
-        used_gatk = workflow.get('used_gatk', False)
-        used_hla = workflow.get('used_hla', False)
-        used_pypgx = workflow.get('used_pypgx', False)
-        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
-        used_pharmcat = workflow.get('used_pharmcat', False)
-        used_mtdna = workflow.get('used_mtdna', False)
-        exported_to_fhir = workflow.get('exported_to_fhir', False)
-        
+        file_type = workflow.get("file_type", "unknown")
+        used_gatk = workflow.get("used_gatk", False)
+        used_hla = workflow.get("used_hla", False)
+        used_pypgx = workflow.get("used_pypgx", False)
+        used_pypgx_bam2vcf = workflow.get("used_pypgx_bam2vcf", False)
+        used_pharmcat = workflow.get("used_pharmcat", False)
+        used_mtdna = workflow.get("used_mtdna", False)
+        exported_to_fhir = workflow.get("exported_to_fhir", False)
+
         # Build workflow steps
         steps = []
-        
+
         # Always start with Upload
-        steps.append('Upload')
-        
+        steps.append("Upload")
+
         # Add detection step
-        if file_type.lower() in ['vcf', 'vcf.gz']:
-            steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
-            steps.append(f'Detect ({file_type.upper()})')
+        if file_type.lower() in ["vcf", "vcf.gz"]:
+            steps.append("Detect (VCF)")
+        elif file_type.lower() in ["bam", "sam", "cram", "fastq"]:
+            steps.append(f"Detect ({file_type.upper()})")
         else:
-            steps.append(f'Detect ({file_type.upper()})')
-        
+            steps.append(f"Detect ({file_type.upper()})")
+
         # Add file conversion steps
-        if file_type.lower() == 'cram' and used_gatk:
-            steps.append('CRAM→BAM')
-        elif file_type.lower() == 'sam' and used_gatk:
-            steps.append('SAM→BAM')
-        elif file_type.lower() == 'fastq' and used_gatk:
-            steps.append('FASTQ→BAM')
-        
+        if file_type.lower() == "cram" and used_gatk:
+            steps.append("CRAM→BAM")
+        elif file_type.lower() == "sam" and used_gatk:
+            steps.append("SAM→BAM")
+        elif file_type.lower() == "fastq" and used_gatk:
+            steps.append("FASTQ→BAM")
+
         # Add HLA typing for alignment files
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
-            steps.append('HLA Typing')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_hla:
+            steps.append("HLA Typing")
+
         # Add PyPGx BAM2VCF conversion
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
-            steps.append('BAM→VCF')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_pypgx_bam2vcf:
+            steps.append("BAM→VCF")
+
         # Add VCF step
-        steps.append('VCF')
-        
+        steps.append("VCF")
+
         # Add processing steps
         if used_pypgx:
-            steps.append('PyPGx')
-        
+            steps.append("PyPGx")
+
         if used_mtdna:
-            steps.append('mtDNA')
-            
+            steps.append("mtDNA")
+
         if used_pharmcat:
-            steps.append('PharmCAT')
-        
+            steps.append("PharmCAT")
+
         # Add workflow diagram generation
-        steps.append('Workflow Diagram')
-            
+        steps.append("Workflow Diagram")
+
         # Add final steps
-        steps.append('Reports')
-        
+        steps.append("Reports")
+
         if exported_to_fhir:
-            steps.append('FHIR Export')
-        
+            steps.append("FHIR Export")
+
         # Create plain text representation
         text_parts = []
-        text_parts.append('WORKFLOW SUMMARY')
-        text_parts.append('=' * 20)
-        
+        text_parts.append("WORKFLOW SUMMARY")
+        text_parts.append("=" * 20)
+
         for i, step in enumerate(steps):
             # Add step number and name
-            text_parts.append(f'{i+1}. {step}')
-            
+            text_parts.append(f"{i+1}. {step}")
+
             # Add arrow (except after last step)
             if i < len(steps) - 1:
-                text_parts.append('   ↓')
-        
-        return '\n'.join(text_parts)
-        
+                text_parts.append("   ↓")
+
+        return "\n".join(text_parts)
+
     except Exception as e:
         logger.error(f"Error building plain text workflow: {str(e)}")
         # Return a simple fallback
-        return 'Workflow diagram could not be generated'
+        return "Workflow diagram could not be generated"
 
 
 def build_table_workflow(workflow: Dict[str, Any]) -> str:
     """Build a table-based workflow diagram that renders reliably in WeasyPrint.
-    
+
     This function creates a table representation using basic HTML table elements
     that should work consistently across all WeasyPrint versions.
     """
     try:
         # Extract workflow information
-        file_type = workflow.get('file_type', 'unknown')
-        used_gatk = workflow.get('used_gatk', False)
-        used_hla = workflow.get('used_hla', False)
-        used_pypgx = workflow.get('used_pypgx', False)
-        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
-        used_pharmcat = workflow.get('used_pharmcat', False)
-        used_mtdna = workflow.get('used_mtdna', False)
-        exported_to_fhir = workflow.get('exported_to_fhir', False)
-        
+        file_type = workflow.get("file_type", "unknown")
+        used_gatk = workflow.get("used_gatk", False)
+        used_hla = workflow.get("used_hla", False)
+        used_pypgx = workflow.get("used_pypgx", False)
+        used_pypgx_bam2vcf = workflow.get("used_pypgx_bam2vcf", False)
+        used_pharmcat = workflow.get("used_pharmcat", False)
+        used_mtdna = workflow.get("used_mtdna", False)
+        exported_to_fhir = workflow.get("exported_to_fhir", False)
+
         # Build workflow steps
         steps = []
-        
+
         # Always start with Upload
-        steps.append('Upload')
-        
+        steps.append("Upload")
+
         # Add detection step
-        if file_type.lower() in ['vcf', 'vcf.gz']:
-            steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
-            steps.append(f'Detect ({file_type.upper()})')
+        if file_type.lower() in ["vcf", "vcf.gz"]:
+            steps.append("Detect (VCF)")
+        elif file_type.lower() in ["bam", "sam", "cram", "fastq"]:
+            steps.append(f"Detect ({file_type.upper()})")
         else:
-            steps.append(f'Detect ({file_type.upper()})')
-        
+            steps.append(f"Detect ({file_type.upper()})")
+
         # Add file conversion steps
-        if file_type.lower() == 'cram' and used_gatk:
-            steps.append('CRAM→BAM')
-        elif file_type.lower() == 'sam' and used_gatk:
-            steps.append('SAM→BAM')
-        elif file_type.lower() == 'fastq' and used_gatk:
-            steps.append('FASTQ→BAM')
-        
+        if file_type.lower() == "cram" and used_gatk:
+            steps.append("CRAM→BAM")
+        elif file_type.lower() == "sam" and used_gatk:
+            steps.append("SAM→BAM")
+        elif file_type.lower() == "fastq" and used_gatk:
+            steps.append("FASTQ→BAM")
+
         # Add HLA typing for alignment files
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
-            steps.append('HLA Typing')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_hla:
+            steps.append("HLA Typing")
+
         # Add PyPGx BAM2VCF conversion
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
-            steps.append('BAM→VCF')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_pypgx_bam2vcf:
+            steps.append("BAM→VCF")
+
         # Add VCF step
-        steps.append('VCF')
-        
+        steps.append("VCF")
+
         # Add processing steps
         if used_pypgx:
-            steps.append('PyPGx')
-        
+            steps.append("PyPGx")
+
         if used_mtdna:
-            steps.append('mtDNA')
-            
+            steps.append("mtDNA")
+
         if used_pharmcat:
-            steps.append('PharmCAT')
-        
+            steps.append("PharmCAT")
+
         # Add workflow diagram generation
-        steps.append('Workflow Diagram')
-            
+        steps.append("Workflow Diagram")
+
         # Add final steps
-        steps.append('Reports')
-        
+        steps.append("Reports")
+
         if exported_to_fhir:
-            steps.append('FHIR Export')
-        
+            steps.append("FHIR Export")
+
         # Create table-based HTML
         html_parts = []
-        html_parts.append('<table class="workflow-table" style="width: 100%; border-collapse: collapse; margin: 20px 0; font-family: Arial, sans-serif;">')
-        html_parts.append('<thead>')
-        html_parts.append('<tr>')
-        html_parts.append('<th style="border: 1px solid #ddd; padding: 12px; text-align: center; background-color: #f8f9fa; font-weight: bold;">Step</th>')
-        html_parts.append('<th style="border: 1px solid #ddd; padding: 12px; text-align: center; background-color: #f8f9fa; font-weight: bold;">Description</th>')
-        html_parts.append('</tr>')
-        html_parts.append('</thead>')
-        html_parts.append('<tbody>')
-        
+        html_parts.append(
+            '<table class="workflow-table" style="width: 100%; border-collapse: collapse; margin: 20px 0; font-family: Arial, sans-serif;">'
+        )
+        html_parts.append("<thead>")
+        html_parts.append("<tr>")
+        html_parts.append(
+            '<th style="border: 1px solid #ddd; padding: 12px; text-align: center; background-color: #f8f9fa; font-weight: bold;">Step</th>'
+        )
+        html_parts.append(
+            '<th style="border: 1px solid #ddd; padding: 12px; text-align: center; background-color: #f8f9fa; font-weight: bold;">Description</th>'
+        )
+        html_parts.append("</tr>")
+        html_parts.append("</thead>")
+        html_parts.append("<tbody>")
+
         for i, step in enumerate(steps):
-            html_parts.append('<tr>')
-            html_parts.append(f'<td style="border: 1px solid #ddd; padding: 8px; text-align: center; font-weight: bold;">{i+1}</td>')
-            html_parts.append(f'<td style="border: 1px solid #ddd; padding: 8px; text-align: center;">{step}</td>')
-            html_parts.append('</tr>')
-        
-        html_parts.append('</tbody>')
-        html_parts.append('</table>')
-        
-        return ''.join(html_parts)
-        
+            html_parts.append("<tr>")
+            html_parts.append(
+                f'<td style="border: 1px solid #ddd; padding: 8px; text-align: center; font-weight: bold;">{i+1}</td>'
+            )
+            html_parts.append(
+                f'<td style="border: 1px solid #ddd; padding: 8px; text-align: center;">{step}</td>'
+            )
+            html_parts.append("</tr>")
+
+        html_parts.append("</tbody>")
+        html_parts.append("</table>")
+
+        return "".join(html_parts)
+
     except Exception as e:
         logger.error(f"Error building table workflow: {str(e)}")
         # Return a simple fallback
-        return '<p>Workflow diagram could not be generated</p>'
+        return "<p>Workflow diagram could not be generated</p>"
 
 
 def build_simple_text_workflow_v2(workflow: Dict[str, Any]) -> str:
     """Build a simple text-based workflow diagram using minimal HTML.
-    
+
     This function creates a very basic text representation using only
     the simplest HTML elements possible to avoid WeasyPrint rendering issues.
     """
     try:
         # Extract workflow information
-        file_type = workflow.get('file_type', 'unknown')
-        used_gatk = workflow.get('used_gatk', False)
-        used_hla = workflow.get('used_hla', False)
-        used_pypgx = workflow.get('used_pypgx', False)
-        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
-        used_pharmcat = workflow.get('used_pharmcat', False)
-        used_mtdna = workflow.get('used_mtdna', False)
-        exported_to_fhir = workflow.get('exported_to_fhir', False)
-        
+        file_type = workflow.get("file_type", "unknown")
+        used_gatk = workflow.get("used_gatk", False)
+        used_hla = workflow.get("used_hla", False)
+        used_pypgx = workflow.get("used_pypgx", False)
+        used_pypgx_bam2vcf = workflow.get("used_pypgx_bam2vcf", False)
+        used_pharmcat = workflow.get("used_pharmcat", False)
+        used_mtdna = workflow.get("used_mtdna", False)
+        exported_to_fhir = workflow.get("exported_to_fhir", False)
+
         # Build workflow steps
         steps = []
-        
+
         # Always start with Upload
-        steps.append('Upload')
-        
+        steps.append("Upload")
+
         # Add detection step
-        if file_type.lower() in ['vcf', 'vcf.gz']:
-            steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
-            steps.append(f'Detect ({file_type.upper()})')
+        if file_type.lower() in ["vcf", "vcf.gz"]:
+            steps.append("Detect (VCF)")
+        elif file_type.lower() in ["bam", "sam", "cram", "fastq"]:
+            steps.append(f"Detect ({file_type.upper()})")
         else:
-            steps.append(f'Detect ({file_type.upper()})')
-        
+            steps.append(f"Detect ({file_type.upper()})")
+
         # Add file conversion steps
-        if file_type.lower() == 'cram' and used_gatk:
-            steps.append('CRAM→BAM')
-        elif file_type.lower() == 'sam' and used_gatk:
-            steps.append('SAM→BAM')
-        elif file_type.lower() == 'fastq' and used_gatk:
-            steps.append('FASTQ→BAM')
-        
+        if file_type.lower() == "cram" and used_gatk:
+            steps.append("CRAM→BAM")
+        elif file_type.lower() == "sam" and used_gatk:
+            steps.append("SAM→BAM")
+        elif file_type.lower() == "fastq" and used_gatk:
+            steps.append("FASTQ→BAM")
+
         # Add HLA typing for alignment files
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
-            steps.append('HLA Typing')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_hla:
+            steps.append("HLA Typing")
+
         # Add PyPGx BAM2VCF conversion
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
-            steps.append('BAM→VCF')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_pypgx_bam2vcf:
+            steps.append("BAM→VCF")
+
         # Add VCF step
-        steps.append('VCF')
-        
+        steps.append("VCF")
+
         # Add processing steps
         if used_pypgx:
-            steps.append('PyPGx')
-        
+            steps.append("PyPGx")
+
         if used_mtdna:
-            steps.append('mtDNA')
-            
+            steps.append("mtDNA")
+
         if used_pharmcat:
-            steps.append('PharmCAT')
-        
+            steps.append("PharmCAT")
+
         # Add workflow diagram generation
-        steps.append('Workflow Diagram')
-            
+        steps.append("Workflow Diagram")
+
         # Add final steps
-        steps.append('Reports')
-        
+        steps.append("Reports")
+
         if exported_to_fhir:
-            steps.append('FHIR Export')
-        
+            steps.append("FHIR Export")
+
         # Create simple text representation with minimal HTML
         html_parts = []
-        html_parts.append('<div>')
-        html_parts.append('<h3>Workflow Summary</h3>')
-        
+        html_parts.append("<div>")
+        html_parts.append("<h3>Workflow Summary</h3>")
+
         for i, step in enumerate(steps):
             # Add step number and name
-            html_parts.append(f'<p>{i+1}. {step}</p>')
-            
+            html_parts.append(f"<p>{i+1}. {step}</p>")
+
             # Add arrow (except after last step)
             if i < len(steps) - 1:
-                html_parts.append('<p>↓</p>')
-        
-        html_parts.append('</div>')
-        
-        return ''.join(html_parts)
-        
+                html_parts.append("<p>↓</p>")
+
+        html_parts.append("</div>")
+
+        return "".join(html_parts)
+
     except Exception as e:
         logger.error(f"Error building simple text workflow v2: {str(e)}")
         # Return a simple fallback
-        return '<p>Workflow diagram could not be generated</p>'
+        return "<p>Workflow diagram could not be generated</p>"
 
 
 def build_plain_text_workflow_v2(workflow: Dict[str, Any]) -> str:
     """Build a completely plain text workflow diagram.
-    
+
     This function creates a plain text representation using only
     basic text elements to avoid any WeasyPrint rendering issues.
     """
     try:
         # Extract workflow information
-        file_type = workflow.get('file_type', 'unknown')
-        used_gatk = workflow.get('used_gatk', False)
-        used_hla = workflow.get('used_hla', False)
-        used_pypgx = workflow.get('used_pypgx', False)
-        used_pypgx_bam2vcf = workflow.get('used_pypgx_bam2vcf', False)
-        used_pharmcat = workflow.get('used_pharmcat', False)
-        used_mtdna = workflow.get('used_mtdna', False)
-        exported_to_fhir = workflow.get('exported_to_fhir', False)
-        
+        file_type = workflow.get("file_type", "unknown")
+        used_gatk = workflow.get("used_gatk", False)
+        used_hla = workflow.get("used_hla", False)
+        used_pypgx = workflow.get("used_pypgx", False)
+        used_pypgx_bam2vcf = workflow.get("used_pypgx_bam2vcf", False)
+        used_pharmcat = workflow.get("used_pharmcat", False)
+        used_mtdna = workflow.get("used_mtdna", False)
+        exported_to_fhir = workflow.get("exported_to_fhir", False)
+
         # Build workflow steps
         steps = []
-        
+
         # Always start with Upload
-        steps.append('Upload')
-        
+        steps.append("Upload")
+
         # Add detection step
-        if file_type.lower() in ['vcf', 'vcf.gz']:
-            steps.append('Detect (VCF)')
-        elif file_type.lower() in ['bam', 'sam', 'cram', 'fastq']:
-            steps.append(f'Detect ({file_type.upper()})')
+        if file_type.lower() in ["vcf", "vcf.gz"]:
+            steps.append("Detect (VCF)")
+        elif file_type.lower() in ["bam", "sam", "cram", "fastq"]:
+            steps.append(f"Detect ({file_type.upper()})")
         else:
-            steps.append(f'Detect ({file_type.upper()})')
-        
+            steps.append(f"Detect ({file_type.upper()})")
+
         # Add file conversion steps
-        if file_type.lower() == 'cram' and used_gatk:
-            steps.append('CRAM→BAM')
-        elif file_type.lower() == 'sam' and used_gatk:
-            steps.append('SAM→BAM')
-        elif file_type.lower() == 'fastq' and used_gatk:
-            steps.append('FASTQ→BAM')
-        
+        if file_type.lower() == "cram" and used_gatk:
+            steps.append("CRAM→BAM")
+        elif file_type.lower() == "sam" and used_gatk:
+            steps.append("SAM→BAM")
+        elif file_type.lower() == "fastq" and used_gatk:
+            steps.append("FASTQ→BAM")
+
         # Add HLA typing for alignment files
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_hla:
-            steps.append('HLA Typing')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_hla:
+            steps.append("HLA Typing")
+
         # Add PyPGx BAM2VCF conversion
-        if file_type.lower() in ['bam', 'cram', 'sam', 'fastq'] and used_pypgx_bam2vcf:
-            steps.append('BAM→VCF')
-        
+        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_pypgx_bam2vcf:
+            steps.append("BAM→VCF")
+
         # Add VCF step
-        steps.append('VCF')
-        
+        steps.append("VCF")
+
         # Add processing steps
         if used_pypgx:
-            steps.append('PyPGx')
-        
+            steps.append("PyPGx")
+
         if used_mtdna:
-            steps.append('mtDNA')
-            
+            steps.append("mtDNA")
+
         if used_pharmcat:
-            steps.append('PharmCAT')
-        
+            steps.append("PharmCAT")
+
         # Add workflow diagram generation
-        steps.append('Workflow Diagram')
-            
+        steps.append("Workflow Diagram")
+
         # Add final steps
-        steps.append('Reports')
-        
+        steps.append("Reports")
+
         if exported_to_fhir:
-            steps.append('FHIR Export')
-        
+            steps.append("FHIR Export")
+
         # Create plain text representation
         text_parts = []
-        text_parts.append('Workflow Summary')
-        text_parts.append('')
-        
+        text_parts.append("Workflow Summary")
+        text_parts.append("")
+
         for i, step in enumerate(steps):
             # Add step number and name
-            text_parts.append(f'{i+1}. {step}')
-            
+            text_parts.append(f"{i+1}. {step}")
+
             # Add arrow (except after last step)
             if i < len(steps) - 1:
-                text_parts.append('↓')
-                text_parts.append('')
-        
+                text_parts.append("↓")
+                text_parts.append("")
+
         # Join with newlines and wrap in a simple div
-        plain_text = '\n'.join(text_parts)
+        plain_text = "\n".join(text_parts)
         return f'<div style="font-family: monospace; white-space: pre; text-align: center; padding: 20px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px;">{plain_text}</div>'
-        
+
     except Exception as e:
         logger.error(f"Error building plain text workflow: {str(e)}")
         # Return a simple fallback
