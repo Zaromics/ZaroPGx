@@ -51,7 +51,7 @@ logger.info("Starting GATK API service with enhanced debugging")
 app = FastAPI(
     title="GATK API Wrapper",
     description="REST API wrapper around GATK for the ZaroPGx pipeline",
-    version="0.2.7"
+    version="0.2.8"
 )
 
 app.add_middleware(
