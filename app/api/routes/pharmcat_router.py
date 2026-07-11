@@ -427,4 +427,4 @@ async def delete_pharmcat_run(run_id: str, db: Session = Depends(get_db)):
 @router.get("/health")
 async def health_check():
     """Health check endpoint for PharmCAT API"""
-    return {"status": "healthy", "service": "pharmcat-api", "version": "0.2.7"}
+    return {"status": "healthy", "service": "pharmcat-api", "version": "0.2.8"}

@@ -238,7 +238,7 @@ If you prefer more control or want to customize the installation:
    ```bash
    docker compose up -d --build
    ```
-   Set `ZAROPGX_TAG` in `.env` to pin a version (default `0.2.7`) or `latest`.
+   Set `ZAROPGX_TAG` in `.env` to pin a version (default `0.2.8`) or `latest`.
    
    **Using specific environment file:** (Advanced, for multiple configurations)
    ```bash

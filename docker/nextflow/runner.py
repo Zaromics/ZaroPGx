@@ -34,7 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nextflow")
 
-app = FastAPI(title="Nextflow Pipeline Runner", version="0.2.7", description="REST API wrapper around Nextflow for the ZaroPGx pipeline")
+app = FastAPI(title="Nextflow Pipeline Runner", version="0.2.8", description="REST API wrapper around Nextflow for the ZaroPGx pipeline")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
