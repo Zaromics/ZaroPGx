@@ -2,7 +2,7 @@ FROM python:3.12
 
 LABEL maintainer="ZaroPGx (wrapper only)"
 LABEL description="PharmCAT Wrapper Service with FastAPI"
-LABEL version="3.2.0"
+LABEL version="3.3.0"
 
 WORKDIR /pharmcat
 
@@ -39,9 +39,9 @@ RUN curl https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --de
     rm -rf /var/lib/apt/lists/*
 
 # Install bcftools, htslib, and samtools from source (as per PharmCAT)
-ENV BCFTOOLS_VERSION=1.23.1
-ENV HTSLIB_VERSION=1.23.1
-ENV SAMTOOLS_VERSION=1.23.1
+ENV BCFTOOLS_VERSION=1.23.2
+ENV HTSLIB_VERSION=1.23.2
+ENV SAMTOOLS_VERSION=1.23.2
 RUN wget https://github.com/samtools/htslib/releases/download/${HTSLIB_VERSION}/htslib-${HTSLIB_VERSION}.tar.bz2 && \
     wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSION}/bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
     wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
