@@ -53,8 +53,8 @@ ENV PATH="/root/.local/bin:${PATH}"
 
 # Install htslib + bcftools from pinned release tarballs
 # (reproducible and faster than building git HEAD; matches the pharmcat container)
-ENV HTSLIB_VERSION=1.23.1
-ENV BCFTOOLS_VERSION=1.23.1
+ENV HTSLIB_VERSION=1.23.2
+ENV BCFTOOLS_VERSION=1.23.2
 RUN curl -fsSL -O https://github.com/samtools/htslib/releases/download/${HTSLIB_VERSION}/htslib-${HTSLIB_VERSION}.tar.bz2 && \
     curl -fsSL -O https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSION}/bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
     tar -xjf htslib-${HTSLIB_VERSION}.tar.bz2 && \
