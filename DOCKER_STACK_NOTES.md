@@ -2,7 +2,11 @@
 
 > Created 2026-05-28. Reconciled 2026-05-29. **Refreshed 2026-06-08** (core dependency
 > refresh + `cpic`→`zaropgx` finalization + ZaroHLA fix). **Refreshed 2026-07-11**
-> (PharmCAT 3.2.0→3.3.0; htslib/bcftools/samtools 1.23.1→1.23.2 security patch). Dev environment.
+> (PharmCAT 3.2.0→3.3.0; htslib/bcftools/samtools 1.23.1→1.23.2 security patch).
+> **Refreshed 2026-07-14** (PharmCAT 3.3.0→3.4.0 + htslib/bcftools/samtools 1.23.2→1.24,
+> adopting PharmCAT 3.4.0's newly recommended bcftools. 1.24 also drops the experimental,
+> unadopted CRAM v4 codec for security — no impact here: ZaroPGx's only CRAM→BAM step uses
+> the GATK image's own samtools, not these pinned builds). Dev environment.
 
 ## ✅ CURRENT STATE (2026-06-08)
 
@@ -11,13 +15,14 @@ Core stack rebuilt and healthy on refreshed versions (WSL-native docker):
 | Service | Image / version | Notes |
 |---|---|---|
 | `pgx_db` | **postgres:18** | Fresh DB; data volume mounted at `/var/lib/postgresql` (PG18 layout) |
-| `pgx_pharmcat` | **PharmCAT 3.3.0** | PharmVar + ClinPGx data refresh |
+| `pgx_pharmcat` | **PharmCAT 3.4.0** | PharmVar data refresh; reporter multi-phenotype fix |
 | `pgx_zarohla` | **ZaroHLA / OptiType v1.5** | Active HLA path on `:5060`; paired-end typing verified |
 | `pgx_gatk_api` | GATK 4.6.2.0 | Uses the `./reference` bind mount |
 | `pgx_app` | app | DB connects as `zaropgx_user` |
 
-Other refreshed versions: htslib/bcftools **1.23.2** (pinned release tarballs in the main
-image + the pharmcat container), PyPGx pinned to **0.26.0**.
+Other refreshed versions: htslib/bcftools **1.24** (pinned release tarballs in the main
+image + the pharmcat container; the pharmcat container also pins samtools **1.24**), PyPGx
+pinned to **0.26.0**.
 
 ## ✅ RESOLVED (this refresh)
 
