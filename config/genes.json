@@ -3,7 +3,7 @@
     "version": "0.2.8",
     "description": "ZaroPGx supported pharmacogenes",
     "last_updated": "2025-11-25",
-    "source": "PyPGx v0.26.0, PharmCAT v3.3.0, OptiType v1.5.0, mtDNA-server-2 v2.1.16",
+    "source": "PyPGx v0.26.0, PharmCAT v3.4.0, OptiType v1.5.0, mtDNA-server-2 v2.1.16",
     "total_genes": 91
   },
   "categories": {
