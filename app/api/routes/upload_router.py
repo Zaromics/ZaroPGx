@@ -84,8 +84,8 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
 REPORTS_DIR = os.environ.get("REPORT_DIR", "/data/reports")
 
-# Ensure upload directory exists
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# Not created at import time — the default is an absolute container path, so importing this
+# module off-host would create it on the host. app.main's startup_event creates it instead.
 
 # Initialize file processor
 file_processor = FileProcessor(temp_dir=UPLOAD_DIR)
