@@ -1,0 +1,32 @@
+[flake8]
+# flake8 cannot read pyproject.toml, and there is no setup.cfg or tox.ini, so its
+# config has to live in its own file. Without this it runs at pycodestyle's 79-char
+# default and flags essentially every line black formatted (2822 E501 vs 1108).
+#
+# black is unconfigured in pyproject.toml, so it uses its own default of 88.
+max-line-length = 88
+
+# E203 (whitespace before ':') fires on slices black writes as `x[1 :]`; W503 (line
+# break before binary operator) contradicts black's operator placement. W503 is
+# already in flake8's built-in default ignore set but is restated so the intent is
+# explicit. extend-ignore, NOT ignore — `ignore` would replace that default set and
+# switch on ~114 W503/W504 findings.
+extend-ignore = E203, W503
+
+# flake8's default exclude does not cover .venv, so a bare `flake8` at the repo root
+# would lint the whole virtualenv.
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    build,
+    dist,
+    node_modules,
+    reference,
+    alembic.old,
+    migrations.old,
+    docs/_build,
+    work,
+    data;C,
+    test_data;C

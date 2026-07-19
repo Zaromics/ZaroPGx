@@ -56,6 +56,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.4.2,<10.0.0",
+  "pytest-asyncio>=1.4.0,<2.0.0",
+  "pytest-cov>=7.0.0,<8.0.0",
   "black>=25.9.0,<27.0.0",
   "isort>=6.1.0,<9.0.0",
   "flake8>=7.3.0,<8.0.0",
@@ -66,6 +68,63 @@ dev = [
 # Without this, isort's default multi-line import style (grid wrap) fights
 # black's hanging-indent style, and the two tools flip-flop on every run.
 profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/ has no __init__.py, but tests/test_api_endpoints.py does `import app.main`.
+# Under pytest's default "prepend" import mode only tests/ lands on sys.path, so a
+# bare `pytest` from the repo root cannot import the app. pythonpath fixes it.
+pythonpath = ["."]
+# Every async test carries an explicit @pytest.mark.asyncio, so keep strict mode;
+# "auto" would also hijack the sync tests that drive asyncio.run() themselves.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+# tests/run_workflow_tests.py already passes --strict-markers; make a bare `pytest`
+# behave the same now that the markers are registered.
+addopts = "--strict-markers"
+markers = [
+  "asyncio: async test executed by pytest-asyncio",
+]
+# Setting norecursedirs REPLACES pytest's defaults, so they are restated here.
+# Note "_build" not "docs/_build": a pattern containing a separator must match the
+# whole path, so it would never fire.
+norecursedirs = [
+  "*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}",
+  ".venv", "reference", "test_data", "alembic.old", "migrations.old",
+  "_build", "work", "data;C", "test_data;C",
+]
+filterwarnings = ["default"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+# Third-party stubs are mostly absent (pysam, weasyprint, graphviz, ...); without
+# this the run drowns in import-untyped noise.
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_configs = true
+exclude = "^(alembic\\.old|migrations\\.old|dist|reference|docs/_build|\\.venv|work)/"
+# ADOPTION BASELINE, not a gate. Stock settings report ~658 errors across 27 files;
+# muting the annotation-quality categories below leaves ~142 in 11 files, which is
+# small enough to actually read. The survivors are attr-defined/name-defined — the
+# real-bug class. Delete one entry at a time to ratchet strictness. Do not add
+# check_untyped_defs or disallow_untyped_defs yet; nothing in app/ is annotated
+# end to end. mypy is deliberately NOT in the CI gate until these are triaged.
+disable_error_code = [
+  "arg-type",
+  "assignment",
+  "call-arg",
+  "call-overload",
+  "dict-item",
+  "index",
+  "misc",
+  "no-redef",
+  "operator",
+  "return-value",
+  "union-attr",
+  "valid-type",
+  "var-annotated",
+]
 
 [build-system]
 requires = ["setuptools>=80.9.0"]
