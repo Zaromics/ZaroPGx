@@ -23,8 +23,8 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 # Constants
 REPORT_DIR = os.environ.get("REPORT_DIR", "/data/reports")
-# Ensure reports directory exists
-os.makedirs(REPORT_DIR, exist_ok=True)
+# Not created at import time — the default is an absolute container path, so importing this
+# module off-host would create it on the host. app.main's startup_event creates it instead.
 
 
 # Background task to generate report

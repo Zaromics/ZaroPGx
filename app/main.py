@@ -76,6 +76,16 @@ from app.services.job_status_service import JobStatusService
 from app.services.workflow_service import WorkflowService
 from app.utils.workflow_client import WorkflowClient, create_workflow_client
 
+# This module logs liberally with emoji. The container's stdout is UTF-8, but a Windows host
+# console is cp1252, where a single emoji raises UnicodeEncodeError and takes down the whole
+# import — which in turn breaks the test suite and any tooling that imports the app. Degrade
+# unencodable characters instead of dying; a no-op wherever stdout is already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+    except Exception:
+        pass
+
 # Configure more detailed logging
 log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
 logging.basicConfig(
@@ -140,11 +150,9 @@ UPLOADS_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / "templates"
 
-# Create directories if they don't exist
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+# These directories are created by startup_event(), not at import time: the defaults are
+# absolute container paths, so creating them on import would litter the host filesystem
+# (C:\data, C:\tmp on Windows) merely from `import app.main`.
 
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -1616,7 +1624,7 @@ async def startup_event():
                 )
 
     # Check temp and data directories
-    for dir_path in [TEMP_DIR, DATA_DIR, REPORTS_DIR]:
+    for dir_path in [TEMP_DIR, DATA_DIR, REPORTS_DIR, UPLOADS_DIR]:
         if not os.path.exists(dir_path):
             try:
                 os.makedirs(dir_path, exist_ok=True)

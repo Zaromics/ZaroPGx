@@ -39,8 +39,23 @@ from reportlab.platypus import (
     SimpleDocTemplate,
     Spacer,
 )
-from weasyprint import CSS, HTML
-from weasyprint.text.fonts import FontConfiguration
+
+# Optional import: see the note in app/reports/generator.py. WeasyPrint's native
+# dependencies are container-only, and this module is reached from app.main via
+# upload_router, so an unguarded import breaks every import of the app off-host.
+try:
+    from weasyprint import HTML
+    from weasyprint.text.fonts import FontConfiguration
+
+    _HAS_WEASYPRINT = True
+except Exception as _weasyprint_import_error:  # optional dependency at runtime
+    HTML = None  # type: ignore
+    FontConfiguration = None  # type: ignore
+    _HAS_WEASYPRINT = False
+    logging.getLogger(__name__).warning(
+        "WeasyPrint unavailable (%s); the WeasyPrint PDF generator will be skipped.",
+        _weasyprint_import_error,
+    )
 
 # Local imports
 from app.reports.generator import (
@@ -639,6 +654,12 @@ class WeasyPrintGenerator(PDFGenerator):
     """
 
     def __init__(self):
+        # Raise here rather than at generate_pdf time: every construction site in
+        # PDFGeneratorFactory._initialize_generators already wraps this in
+        # `except ImportError`, so this is what stops the factory from announcing
+        # WeasyPrint as the active engine when it cannot actually render.
+        if not _HAS_WEASYPRINT:
+            raise ImportError("WeasyPrint is not available in this environment")
         self.name = "WeasyPrint"
         self.version = "66.0+"
 
@@ -650,6 +671,11 @@ class WeasyPrintGenerator(PDFGenerator):
     ) -> bool:
         """Generate PDF using WeasyPrint (fallback method)."""
         try:
+            # Checked up front: everything below this point is wasted work otherwise
+            # (full Jinja render plus a temp HTML file) before the engine is even reached.
+            if not _HAS_WEASYPRINT:
+                raise ImportError("WeasyPrint is not available in this environment")
+
             logger.info(f"🔄 Using {self.name} as fallback for PDF generation")
 
             # Generate proper HTML using the PDF template structure

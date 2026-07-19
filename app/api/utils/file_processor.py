@@ -54,8 +54,10 @@ class FileAnalysis:
 
 class FileProcessor:
     def __init__(self, temp_dir: str = "/tmp"):
+        # Created lazily in process_files(), not here: upload_router instantiates this at
+        # module scope, so an eager mkdir would run on import and create the absolute
+        # container path on the host.
         self.temp_dir = Path(temp_dir)
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
 
     async def analyze_file(self, file_path: str) -> FileAnalysis:
         """
@@ -932,6 +934,7 @@ class FileProcessor:
             primary_file = files[0]
 
             # Save the uploaded file to temporary location
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
             temp_file_path = self.temp_dir / f"upload_{primary_file.filename}"
 
             try:
