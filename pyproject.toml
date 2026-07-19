@@ -58,6 +58,7 @@ dev = [
   "pytest>=8.4.2,<10.0.0",
   "pytest-asyncio>=1.4.0,<2.0.0",
   "pytest-cov>=7.0.0,<8.0.0",
+  "pyyaml>=6.0.2,<7.0.0",  # tests/test_compose_contract.py
   "black>=25.9.0,<27.0.0",
   "isort>=6.1.0,<9.0.0",
   "flake8>=7.3.0,<8.0.0",
