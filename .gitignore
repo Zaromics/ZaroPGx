@@ -135,9 +135,10 @@ ENV/
 env.bak/
 venv.bak/
 
-# Docker compose yml (make changes to the example file(s) only)
-docker-compose.yml
-compose.yml
+# Docker Compose. compose.yml is TRACKED so fixes ship with `git pull`; put local
+# customization in compose.override.yml, which Compose merges automatically.
+compose.override.yml
+docker-compose.override.yml
 
 # Spyder project settings
 .spyderproject
