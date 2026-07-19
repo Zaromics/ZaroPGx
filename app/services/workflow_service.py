@@ -766,7 +766,11 @@ class WorkflowService:
             return (
                 self.db.query(WorkflowLog)
                 .filter(WorkflowLog.workflow_id == workflow_id)
-                .order_by(desc(WorkflowLog.timestamp))
+                # id breaks ties: several entries are routinely written inside one
+                # timestamp tick (a step transition logs alongside a posted entry),
+                # and ordering by timestamp alone leaves their relative order to the
+                # database. id is a monotonic integer, so this is insertion order.
+                .order_by(desc(WorkflowLog.timestamp), desc(WorkflowLog.id))
                 .limit(limit)
                 .all()
             )
