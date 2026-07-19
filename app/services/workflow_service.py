@@ -892,7 +892,10 @@ class WorkflowService:
                 workflow_id=workflow_id,
                 log_level=level,
                 message=message,
-                metadata=metadata or {},
+                # NOT `metadata=` — that is SQLAlchemy's MetaData class attribute on
+                # every declarative model, so the constructor silently shadows it with
+                # an instance attribute and the payload never reaches the column.
+                log_metadata=metadata or {},
             )
             self.db.add(log_entry)
             self.db.commit()
