@@ -202,11 +202,18 @@ If you prefer more control or want to customize the installation:
    # edit .env as needed
    ```
 
-   **Choose your Docker Compose configuration** Start with example template
+   **Docker Compose configuration** `compose.yml` is tracked in the repository, so you
+   already have it and it updates with `git pull`. Do not edit it directly — put your
+   customizations in `compose.override.yml`, which Compose merges automatically:
    ```bash
-   cp docker-compose.yml.example docker-compose.yml
+   # optional: only if you need to change service settings
+   cat > compose.override.yml <<'YAML'
+   services:
+     app:
+       ports:
+         - "9000:8000"
+   YAML
    ```
-   - edit docker-compose.yml as needed to customize service settings
 
 3. **Start services**
    

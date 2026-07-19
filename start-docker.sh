@@ -73,20 +73,22 @@ else
     echo "✅ Environment configuration found (.env)"
 fi
 
-# Check for docker-compose.yml and create from example if needed
-if [[ ! -f "docker-compose.yml" ]] && [[ ! -f "compose.yml" ]]; then
-    if [[ -f "docker-compose.yml.example" ]]; then
-        echo "📝 Creating docker-compose.yml from example..."
-        cp docker-compose.yml.example docker-compose.yml
-        echo "✅ Created docker-compose.yml"
-        echo "ℹ️  Note: Review and customize docker-compose.yml if needed"
-    else
-        echo "❌ ERROR: No docker-compose.yml or docker-compose.yml.example found!"
-        exit 1
-    fi
-else
-    echo "✅ Docker Compose configuration found"
+# compose.yml is tracked in git, so it arrives and updates with `git pull` rather than
+# being copied once and then frozen forever. Put local customization in
+# compose.override.yml, which Compose merges automatically with no extra flags.
+if [[ ! -f "compose.yml" ]]; then
+    echo "❌ ERROR: compose.yml not found. Run this from the repository root."
+    exit 1
 fi
+if [[ -f "docker-compose.yml" ]]; then
+    # Compose prefers compose.yml over docker-compose.yml, so a leftover file from the
+    # old copy-the-example flow is now silently ignored along with any edits in it.
+    echo "⚠️  A legacy docker-compose.yml is present and is NO LONGER USED."
+    echo "   compose.yml (tracked) takes precedence. If you customized the old file:"
+    echo "     mv docker-compose.yml compose.override.yml"
+    echo "   and trim it to only the settings you actually changed."
+fi
+echo "✅ Docker Compose configuration found"
 
 # Ensure data directories exist
 echo "📁 Creating data directories..."

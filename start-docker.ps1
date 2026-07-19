@@ -100,19 +100,22 @@ if (-not (Test-Path ".env")) {
     Write-Host "  [OK] Environment configuration found (.env)" -ForegroundColor Gray
 }
 
-# Check for docker-compose.yml and create from example if needed
-if (-not (Test-Path "docker-compose.yml") -and -not (Test-Path "compose.yml")) {
-    if (Test-Path "docker-compose.yml.example") {
-        Write-Host "  Creating docker-compose.yml from example..." -ForegroundColor Yellow
-        Copy-Item "docker-compose.yml.example" "docker-compose.yml"
-        Write-Host "  [OK] Created docker-compose.yml" -ForegroundColor Green
-        Write-Host "  Note: Review and customize docker-compose.yml if needed" -ForegroundColor Gray
-    } else {
-        Write-Host "  [ERROR] No docker-compose.yml or docker-compose.yml.example found!" -ForegroundColor Red
-        if ($didPush) { Pop-Location }
-        exit 1
-    }
+# compose.yml is tracked in git, so it arrives and updates with `git pull` rather than
+# being copied once and then frozen forever. Put local customization in
+# compose.override.yml, which Compose merges automatically with no extra flags.
+if (-not (Test-Path "compose.yml")) {
+    Write-Host "  [ERROR] compose.yml not found. Run this from the repository root." -ForegroundColor Red
+    if ($didPush) { Pop-Location }
+    exit 1
 } else {
+    if (Test-Path "docker-compose.yml") {
+        # Compose prefers compose.yml, so a leftover file from the old copy-the-example
+        # flow is now silently ignored along with any edits in it.
+        Write-Host "  [WARN] A legacy docker-compose.yml is present and is NO LONGER USED." -ForegroundColor Yellow
+        Write-Host "         compose.yml (tracked) takes precedence. If you customized the old file:" -ForegroundColor Yellow
+        Write-Host "           mv docker-compose.yml compose.override.yml" -ForegroundColor Yellow
+        Write-Host "         and trim it to only the settings you actually changed." -ForegroundColor Yellow
+    }
     Write-Host "  [OK] Docker Compose configuration found" -ForegroundColor Gray
 }
 
