@@ -1,0 +1,33 @@
+# Build context is this directory only (compose.yml: context: ./docker/genome-downloader),
+# and Dockerfile.downloader ends in a bare `COPY . /app/`. Every other service builds from
+# the repo root, where the top-level .dockerignore applies. Keep this context to the files
+# the image needs so stray local artifacts never get baked in or bust the layer cache.
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytest_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Docker files themselves (not needed inside the image)
+Dockerfile*
+.dockerignore
+
+# Local secrets / logs
+.env
+.env.*
+*.log

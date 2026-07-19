@@ -208,10 +208,6 @@ reference/*
 # Developer documentation
 /dev-docs/*
 
-# Sphinx docs
-/docs/getting-started.md
-/docs/developer/testing.md
-
 # Cursor rules
 .cursorrules
 .cursor/rules/*
@@ -244,4 +240,7 @@ app/pharmcat/logs.txt
 .env.bak
 docker-compose.yml.bak
 CLAUDE.md
+
+# Claude Code per-developer settings (a shared .claude/settings.json stays tracked)
+.claude/settings.local.json
 
