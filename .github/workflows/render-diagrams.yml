@@ -7,9 +7,25 @@ on:
       - '.github/workflows/render-diagrams.yml'
   workflow_dispatch: {}
 
+# Default every job to read-only; the render job opts back up to write below.
+permissions:
+  contents: read
+
+# Two quick pushes to workflow.mmd would otherwise race on the auto-commit and
+# one would be rejected as non-fast-forward. Cancelling the older run is safe:
+# it has nothing to commit the newer run will not also produce.
+concurrency:
+  group: render-diagrams-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   render:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Needed by git-auto-commit-action to push the rendered SVG/PNG. Scoped to
+    # this job so it is the only place holding a write-capable token.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,7 +36,12 @@ jobs:
           node-version: '20'
 
       - name: Install mermaid-cli
-        run: npm i -g @mermaid-js/mermaid-cli
+        # Pinned: an unpinned global install runs whatever postinstall scripts the
+        # newest release ships (mermaid-cli pulls Puppeteer/Chromium) inside a job
+        # holding contents:write. Pinning also keeps the rendered output
+        # reproducible. Bump deliberately:
+        #   npm view @mermaid-js/mermaid-cli version
+        run: npm i -g @mermaid-js/mermaid-cli@11.16.0
 
       - name: Render diagrams
         run: |
@@ -32,5 +53,3 @@ jobs:
         with:
           commit_message: 'chore: render Mermaid diagrams'
           file_pattern: app/visualizations/*.svg app/visualizations/*.png
-
-

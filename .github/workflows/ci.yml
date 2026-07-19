@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The full dependency set needs pysam, which has no wheel for every
+      # platform and is irrelevant to formatting. Install just the tools.
+      - name: Install lint tools
+        run: uv tool install black && uv tool install isort && uv tool install flake8
+
+      - name: black
+        run: uv tool run black --check app tests
+
+      - name: isort
+        run: uv tool run isort --check-only --profile black app tests
+
+      # Deliberately a narrow gate. A full flake8 run currently reports ~1900
+      # findings (mostly E501) and there are 18 genuine F821 undefined names in
+      # app/main.py and app/reports/generator.py. Those are tracked as Wave 3
+      # work in dev-notes/BACKLOG.md; add F82 to this select once they are gone,
+      # then widen further. A gate that cannot pass is a gate nobody reads.
+      - name: flake8 (syntax errors and broken asserts only)
+        run: uv tool run flake8 --select=E9,F63,F7 app tests
+
+      - name: flake8 (full, informational)
+        continue-on-error: true
+        run: uv tool run flake8 app tests
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # No Postgres service container: tests/conftest.py runs the full ORM
+      # metadata on in-memory SQLite by ATTACHing a database under each Postgres
+      # schema name. If a test ever needs real Postgres behaviour (JSONB
+      # operators, cascades), add a services: block rather than weakening this.
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: pytest
+        run: uv run pytest -q
