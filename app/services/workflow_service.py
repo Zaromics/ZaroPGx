@@ -459,8 +459,15 @@ class WorkflowService:
             ]:
                 step.completed_at = datetime.now(timezone.utc)
                 if step.started_at:
+                    # started_at is always written as aware UTC, but it comes back
+                    # naive from backends without timezone support (SQLite), and
+                    # subtracting mixed awareness raises TypeError. Normalise both
+                    # ends rather than assume the backend.
+                    started_at = step.started_at
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
                     step.duration_seconds = int(
-                        (step.completed_at - step.started_at).total_seconds()
+                        (step.completed_at - started_at).total_seconds()
                     )
 
             self.db.commit()
@@ -605,7 +612,12 @@ class WorkflowService:
                     "step_order": step.step_order,
                     "container_name": step.container_name,
                     "output_data": step.output_data,  # Include output_data for container progress
-                    "metadata": step.metadata,  # Include metadata for container progress
+                    # NOTE: there used to be a "metadata": step.metadata entry here.
+                    # WorkflowStep has no metadata column, so that expression returned
+                    # SQLAlchemy's MetaData object; WorkflowProgressCalculator gates on
+                    # isinstance(metadata, dict) and so silently skipped it every time.
+                    # Container-reported per-step progress has therefore never been
+                    # picked up from this path — containers must use output_data.
                 }
                 for step in workflow.steps
             ]
