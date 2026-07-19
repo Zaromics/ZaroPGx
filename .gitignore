@@ -51,6 +51,13 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Test sqlite DB. tests/ used to point SQLALCHEMY_DATABASE_URL at
+# sqlite:///./test.db, which is CWD-relative; conftest.py now uses an
+# in-memory database, but keep these so a stray run cannot commit one.
+test.db
+test.db-journal
+tests/test.db
+
 # Translations
 *.mo
 *.pot
@@ -195,7 +202,6 @@ reference/*
 # Development files and notes
 /dev-notes/*
 /resources/*
-/tests/*
 /scripts/dev-scripts/*
 /data/manual-runs/*
 

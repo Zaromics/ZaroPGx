@@ -412,6 +412,15 @@ async def get_workflow_logs(
     """
     try:
         workflow_service = WorkflowService(db)
+
+        # Same contract as GET /{workflow_id}/steps: an unknown workflow is a 404,
+        # not an empty list. get_workflow_logs() cannot distinguish "no such
+        # workflow" from "no logs yet".
+        if not workflow_service.get_workflow(workflow_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found"
+            )
+
         logs = workflow_service.get_workflow_logs(workflow_id, limit)
 
         return [
@@ -427,6 +436,8 @@ async def get_workflow_logs(
             for log in logs
         ]
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:

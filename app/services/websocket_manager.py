@@ -8,6 +8,7 @@ workflow progress updates and notifications.
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Set
 
@@ -48,8 +49,11 @@ class ConnectionManager:
         """
         await websocket.accept()
 
-        # Generate connection ID
-        connection_id = f"{workflow_id}_{datetime.now(timezone.utc).timestamp()}"
+        # Generate connection ID. The uuid4 suffix is load-bearing: two clients
+        # connecting to the same workflow within one timestamp tick used to receive
+        # identical IDs, so the second registration overwrote the first in
+        # connection_workflows and disconnecting either one unregistered both.
+        connection_id = f"{workflow_id}_{uuid.uuid4()}"
 
         # Register connection
         if workflow_id not in self.workflow_connections:
