@@ -12,7 +12,7 @@ from app.api.db import get_db, get_guidelines_for_gene_drug, register_report
 from app.api.models import DrugRecommendation, ReportRequest, ReportResponse
 from app.reports.fhir_client import FhirClient
 
-from ..utils.security import get_current_user, get_optional_user
+from ..utils.security import get_optional_user
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

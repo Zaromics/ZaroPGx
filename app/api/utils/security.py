@@ -2,19 +2,18 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.security.utils import get_authorization_scheme_param
 from jose import JWTError, jwt
 
-# These imports would be used in a real application
-# from app.api.models import TokenData
-# from app.api.db import get_user
-
-# Constants
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")  # In production, use env var
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# Single source for JWT settings. main.py imports these; do not re-read them there.
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+try:
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+except ValueError:
+    ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # OAuth2 scheme with auto_error=False to prevent 401s
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
@@ -42,7 +41,6 @@ class OptionalOAuth2PasswordBearer(OAuth2PasswordBearer):
 optional_oauth2_scheme = OptionalOAuth2PasswordBearer(tokenUrl="token")
 
 
-# Function to create access token
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
@@ -50,37 +48,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-# Function to validate token and get current user
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    if token is None:
-        raise credentials_exception
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        # In a real app, we would get the user from the database
-        # token_data = TokenData(username=username)
-        # user = get_user(username=token_data.username)
-        # if user is None:
-        #     raise credentials_exception
-        # return user
-        return username  # Simplified for this prototype
-    except JWTError:
-        raise credentials_exception
-
-
-# Truly optional authentication - never raises 401 errors
+# Truly optional authentication - never raises 401 errors.
+# get_current_user was deleted in Wave 2 Step 4a: nothing used it as Depends().
 async def get_optional_user(token: Optional[str] = Depends(optional_oauth2_scheme)):
     # Always return a default user in development mode
     if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
@@ -101,7 +73,6 @@ async def get_optional_user(token: Optional[str] = Depends(optional_oauth2_schem
         return "test"
 
 
-# Function to encrypt sensitive data (HIPAA compliance)
 def encrypt_data(data: str) -> str:
     """
     Encrypt sensitive patient data for HIPAA compliance.
@@ -112,7 +83,6 @@ def encrypt_data(data: str) -> str:
     return f"encrypted_{data}"
 
 
-# Function to decrypt sensitive data
 def decrypt_data(encrypted_data: str) -> str:
     """
     Decrypt encrypted patient data.

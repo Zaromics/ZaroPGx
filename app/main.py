@@ -40,10 +40,9 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from werkzeug.utils import secure_filename
 
@@ -51,7 +50,6 @@ from app.api.db import get_db
 from app.api.models import (
     JobStage,
     Token,
-    TokenData,
     WorkflowCreate,
     WorkflowStepCreate,
 )
@@ -60,7 +58,12 @@ from app.api.routes.fhir_export_router import router as fhir_export_router
 from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.workflow_router import router as workflow_router
-from app.api.utils.security import get_current_user, get_optional_user
+from app.api.utils.security import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    SECRET_KEY,
+    create_access_token,
+    get_optional_user,
+)
 from app.pharmcat import pharmcat_client
 from app.pharmcat.pharmcat_client import (
     call_pharmcat_service,
@@ -111,8 +114,9 @@ print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")
 # Load environment variables
 load_dotenv()
 
-# Security configuration. Sentinels match the values formerly shipped in tracked
-# .env templates; start-docker replaces them, and startup refuses to run on them.
+# Sentinels match values formerly shipped in tracked .env templates.
+# SECRET_KEY / ALGORITHM / ACCESS_TOKEN_EXPIRE_MINUTES are single-sourced from
+# app.api.utils.security (imported above).
 _SECRET_KEY_SENTINELS = frozenset(
     {
         "",
@@ -122,9 +126,6 @@ _SECRET_KEY_SENTINELS = frozenset(
         "supersecretkey_for_development",
     }
 )
-SECRET_KEY = os.getenv("SECRET_KEY", "")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Constants
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
@@ -205,9 +206,6 @@ app = FastAPI(
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
     version="0.2.8",
 )
-
-# OAuth2
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Set up static file serving for application static assets
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -319,59 +317,6 @@ else:
     logger.info(
         "FHIR export functionality disabled (set FHIR_EXPORT_ENABLED=true to enable)"
     )
-
-# Override and disable authentication in development mode
-if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
-    # Print warning about development mode
-    print("🔓 WARNING: RUNNING IN DEVELOPMENT MODE - AUTHENTICATION DISABLED 🔓")
-    logger.warning("Running in development mode - authentication is disabled!")
-
-    # Create a dummy authentication that never fails
-    from typing import Any, Dict, List, Optional
-
-    from fastapi import Request
-    from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
-    from fastapi.security import OAuth2
-
-    class NoAuthOAuth2(OAuth2):
-        def __init__(self, tokenUrl: str):
-            flows = OAuthFlowsModel(password={"tokenUrl": tokenUrl, "scopes": {}})
-            super().__init__(flows=flows, auto_error=False)
-
-        async def __call__(self, request: Request) -> Optional[str]:
-            return "test_dev_user"
-
-    # Replace the original OAuth2 scheme
-    from fastapi import security
-
-    from app.api.utils.security import get_current_user, oauth2_scheme
-
-    # Override the dependencies
-    async def get_current_user_override(token: str = "dummy_token"):
-        return "test_dev_user"
-
-    # Apply overrides to all routers and endpoints
-    for route in app.routes:
-        if hasattr(route, "dependencies"):
-            # Remove authentication dependencies
-            new_dependencies = []
-            for dep in route.dependencies:
-                if dep.dependency != get_current_user:
-                    new_dependencies.append(dep)
-            route.dependencies = new_dependencies
-
-    # Apply overrides to included routers
-    for router in [upload_router.router, report_router.router]:
-        router.dependencies = [
-            d for d in router.dependencies if d.dependency != get_current_user
-        ]
-        # Update route dependencies
-        for route in router.routes:
-            if hasattr(route, "dependencies"):
-                route.dependencies = [
-                    d for d in route.dependencies if d.dependency != get_current_user
-                ]
-
 
 # Simple wrapper page for API reference with a Back button
 @app.get("/api-reference", include_in_schema=False)
@@ -505,59 +450,6 @@ async def serve_report_file(
     except Exception as e:
         logger.error(f"Error reading file {file_path}: {str(e)}")
         raise HTTPException(status_code=500, detail="Error reading file")
-
-
-# JWT token functions
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    # In a real app, get user from database
-    if token_data.username != "test":  # Mock user validation
-        raise credentials_exception
-    return token_data.username
-
-
-# Optional authentication for development mode
-async def get_optional_user(token: Optional[str] = Depends(oauth2_scheme)):
-    # For development, allow requests without authentication
-    if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
-        return "test"  # Return a default user
-
-    # If not in dev mode, use the normal authentication
-    return await get_current_user(token)
-
-
-# Modify the router dependencies for development mode
-if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
-    # Override the router dependencies to use optional authentication
-    logger.info("Running in development mode - authentication is optional")
-    # Remove auth dependencies from the routers
-    upload_router.router.dependencies = []
-    report_router.router.dependencies = []
-else:
-    logger.info("Running in production mode - authentication is required")
 
 
 # Authentication endpoint
