@@ -113,7 +113,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 - **Ultrarapid Metabolizer**: Very high drug processing
 
 ## API Usage (NEEDS REVIEW)
-- **API Reference**: See https://pgx.zimerguz.net/api-reference for the standard ZaroPGx implementation's public API reference 
+- **API Reference**: See https://pgx.zaromics.com/api-reference for the standard ZaroPGx implementation's public API reference 
 
 ### REST API Endpoints
 
@@ -184,7 +184,7 @@ curl -O http://localhost:8765/reports/{patient_id}/{report_file}
 - Tool-specific references
 
 ### Data Retention
-# (NOTE: The ZaroPGx Demo Reference server at pgx.zimerguz.net is for DEMO purposes only! Do not upload your sensitive data)
+# (NOTE: The ZaroPGx Demo Reference server at pgx.zaromics.com is for DEMO purposes only! Do not upload your sensitive data)
 
 - **Uploaded Files**: Retained indefinitely (configurable)
 - **Processing Logs**: Retained for 30 days (configurable)

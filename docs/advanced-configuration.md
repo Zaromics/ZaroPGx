@@ -29,8 +29,8 @@ This document lists environment variables and configuration flags used in the Za
 
 *Reports composition and content*
 - **INCLUDE_PHARMCAT_HTML**: Include PharmCAT HTML in reports. Default: `true`.
-- **INCLUDE_PHARMCAT_JSON**: Include PharmCAT JSON output in reports. Default: `false`.
-- **INCLUDE_PHARMCAT_TSV**: Include PharmCAT calls-only TSV output in reports. Default: `false`.
+- **INCLUDE_PHARMCAT_JSON**: Include PharmCAT JSON output in reports. Default: `true` (via `.env`; delivered through app `env_file`).
+- **INCLUDE_PHARMCAT_TSV**: Include PharmCAT calls-only TSV output in reports. Default: `true` (via `.env`; delivered through app `env_file`).
 - **EXECSUM_USE_TSV**: Use TSV rather than JSON report to generate Executive Summary. Default: `false`.
 - **PDF_ENGINE**: Primary PDF engine. `weasyprint` or `reportlab`. Default: `weasyprint`.
 - **PDF_FALLBACK**: If `true`, try alternate engine on failure. Default: `true`.
@@ -52,7 +52,7 @@ This document lists environment variables and configuration flags used in the Za
 - **GATK_API_URL**: GATK wrapper API base URL. Default: `http://gatk-api:5000`.
 - **PYPGX_API_URL**: PyPGx wrapper API base URL. Default: `http://pypgx:5000`.
 - **PHARMCAT_API_URL**: PharmCAT wrapper base URL. Default: `http://pharmcat:5000`.
-- **KROKI_URL**: Kroki rendering service base URL. Default: `http://localhost:8001` (code) or `http://kroki:8000` (compose).
+- **KROKI_URL**: Kroki rendering service base URL. Compose sets `http://kroki:8000` (topology); do not set this in `.env`.
 - **FHIR_SERVER_URL**: HAPI FHIR server URL. Default: `http://fhir-server:8080/fhir`.
 
 ### Paths and storage

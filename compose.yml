@@ -15,28 +15,31 @@ services:
         condition: service_healthy
       pharmcat:
         condition: service_healthy
+    # Behavioural config (toggles, tuning, secrets) comes from .env. Compose
+    # environment: below is topology only, plus ${VAR:-default} for keys that
+    # appear in both. Requires Docker Compose >= 2.24 for path/required form.
+    env_file:
+      - path: .env
+        required: false
     environment:
+      # Topology — must not be overridable from .env (wrong hostnames break the stack)
       - DATABASE_URL=postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
       - SECRET_KEY=${SECRET_KEY}
       - PHARMCAT_API_URL=http://pharmcat:5000
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
-      - INCLUDE_PHARMCAT_HTML=true
-      - INCLUDE_PHARMCAT_JSON=true
-      - INCLUDE_PHARMCAT_TSV=true
       - GATK_API_URL=http://gatk-api:5000
       - PYPGX_API_URL=http://pypgx:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
-      - USE_NEXTFLOW=${USE_NEXTFLOW} # deprecated
-      - NEXTFLOW_RUNNER_URL=${NEXTFLOW_RUNNER_URL}
+      - NEXTFLOW_RUNNER_URL=${NEXTFLOW_RUNNER_URL:-http://nextflow:5055}
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
       - KROKI_URL=http://kroki:8000
-      - SOURCE_URL=${SOURCE_URL}
+      - SOURCE_URL=${SOURCE_URL:-https://github.com/Zaromics/ZaroPGx}
       - FHIR_EXPORT_ENABLED=${FHIR_EXPORT_ENABLED:-true}
       - PYTHONPATH=/app
       - WORKFLOW_API_BASE=http://app:8000/api/v1
       - PYTHONDONTWRITEBYTECODE=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      - EXECSUM_USE_TSV=true
+      # INCLUDE_PHARMCAT_* and EXECSUM_USE_TSV come from env_file/.env only
     volumes:
       - ./:/app
       - ./data:/data
@@ -90,7 +93,7 @@ services:
     volumes:
       - ./reference:/reference
     environment:
-      - DOWNLOAD_ON_STARTUP=true
+      - DOWNLOAD_ON_STARTUP=${DOWNLOAD_ON_STARTUP:-true}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
       interval: 10s
@@ -127,8 +130,8 @@ services:
       - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5001:5000"
     environment:
       - DATA_DIR=/data
-      - JAVA_OPTS=-Xmx4g
-      - PHARMCAT_LOG_LEVEL=DEBUG
+      - JAVA_OPTS=${JAVA_OPTS:--Xmx4g}
+      - PHARMCAT_LOG_LEVEL=${PHARMCAT_LOG_LEVEL:-DEBUG}
       - PHARMCAT_REFERENCE_DIR=/pharmcat
       - PHARMCAT_TEE=true
       - PHARMCAT_ABSENT_TO_REF=${PHARMCAT_ABSENT_TO_REF:-false}
@@ -210,7 +213,7 @@ services:
     environment:
       - REFERENCE_DIR=/reference
       - DATA_DIR=/data
-      - MAX_MEMORY=20g
+      - MAX_MEMORY=${MAX_MEMORY:-20g}
       - PYTHONPATH=/app
       - UVICORN_RELOAD_EXCLUDES=".git/*,.venv/*"
     ports:
@@ -247,10 +250,10 @@ services:
     environment:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
-      - PYPGX_MEMORY_LIMIT=7G
-      - PYPGX_MAX_PARALLEL_GENES=8
-      - PYPGX_BATCH_SIZE=4
-      - PYPGX_PHARMCAT_PREFERENCE=pharmcat  # auto|pypgx|pharmcat
+      - PYPGX_MEMORY_LIMIT=${PYPGX_MEMORY_LIMIT:-7G}
+      - PYPGX_MAX_PARALLEL_GENES=${PYPGX_MAX_PARALLEL_GENES:-8}
+      - PYPGX_BATCH_SIZE=${PYPGX_BATCH_SIZE:-4}
+      - PYPGX_PHARMCAT_PREFERENCE=${PYPGX_PHARMCAT_PREFERENCE:-pharmcat}  # auto|pypgx|pharmcat
     ports:
       - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5053:5000"
     healthcheck:

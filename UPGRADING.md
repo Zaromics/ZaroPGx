@@ -5,6 +5,20 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+### Config delivery: `.env` owns behaviour, compose owns topology
+
+The app service now declares `env_file: .env` (Compose >= 2.24). Behavioural
+toggles such as `INCLUDE_PHARMCAT_JSON` / `INCLUDE_PHARMCAT_TSV` are no longer
+hardcoded in `compose.yml`, so values in your `.env` take effect. Tracked
+profiles set those to `true` (matching the previous compose overrides).
+`KROKI_URL` was removed from the env templates — compose always uses
+`http://kroki:8000` inside the stack.
+
+**What to do:** after `git pull`, re-copy or merge the new defaults if you still
+have `INCLUDE_PHARMCAT_JSON=false` from an older profile and want the JSON/TSV
+artifacts in reports. CORS for the live reference instance is
+`pgx.zaromics.com` (replacing the retired zimerguz hostname).
+
 ### Per-install secrets; missing `DB_PASSWORD` is a hard compose failure
 
 `compose.yml` no longer falls back to `test123`. If `DB_PASSWORD` is unset,

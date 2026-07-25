@@ -149,3 +149,141 @@ def test_tracked_env_templates_ship_no_working_credentials():
         assert values.get("DB_PASSWORD", "") not in banned
         assert values.get("SECRET_KEY", "") == ""
         assert values.get("DB_PASSWORD", "") == ""
+
+
+def _env_file_keys(path: Path) -> set[str]:
+    keys: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        keys.add(line.partition("=")[0].strip())
+    return keys
+
+
+# Keys that exist only for compose interpolation / image selection, not app code.
+_COMPOSE_ONLY_ENV_KEYS = {
+    "ZAROPGX_TAG",
+    "BIND_ADDRESS",
+    "INTERNAL_BIND_ADDRESS",
+    "NETWORK_SUBNET",
+    "HAPI_FHIR_TAG",
+    "PHARMCAT_VERSION",
+    "JAVA_OPTS",
+    "DOWNLOAD_ON_STARTUP",
+    "MAX_MEMORY",
+    "PYPGX_MEMORY_LIMIT",
+    "PYPGX_MAX_PARALLEL_GENES",
+    "PYPGX_BATCH_SIZE",
+    "PYPGX_PHARMCAT_PREFERENCE",
+    "PHARMCAT_LOG_LEVEL",
+    "PHARMCAT_ABSENT_TO_REF",
+    "PHARMCAT_UNSPECIFIED_TO_REF",
+    "DB_USER",
+    "DB_PASSWORD",
+    "DB_HOST",
+    "DB_PORT",
+    "DB_NAME",
+}
+
+
+def test_app_declares_env_file(compose):
+    env_files = compose["services"]["app"].get("env_file") or []
+    assert env_files, "app must declare env_file so .env reaches the container"
+    # Compose 2.24+ long form: {path: .env, required: false}
+    normalized = []
+    for entry in env_files:
+        if isinstance(entry, dict):
+            normalized.append(entry.get("path"))
+        else:
+            normalized.append(str(entry))
+    assert ".env" in normalized
+
+
+def test_app_environment_does_not_hardcode_behavioural_keys(compose):
+    """Keys that also live in .env.example must not be bare literals in compose."""
+    example_keys = _env_file_keys(COMPOSE.parent / ".env.example")
+    offenders = []
+    for entry in _env_entries(compose["services"]["app"]):
+        if "=" not in entry:
+            continue
+        key, _, value = entry.partition("=")
+        if key not in example_keys:
+            continue
+        if value.startswith("${"):
+            continue
+        # Topology URLs are intentionally hardcoded (compose owns topology).
+        if key.endswith("_URL") or key.endswith("_PATH") or key in {
+            "PYTHONPATH",
+            "WORKFLOW_API_BASE",
+            "PYTHONDONTWRITEBYTECODE",
+            "DATABASE_URL",
+        }:
+            continue
+        offenders.append(entry)
+    assert not offenders, "behavioural keys hardcoded in app environment:\n  " + "\n  ".join(
+        offenders
+    )
+
+
+def test_include_pharmcat_json_tsv_default_true_in_profiles():
+    root = COMPOSE.parent
+    for name in (".env.example", ".env.local", ".env.production"):
+        values = {}
+        for line in (root / name).read_text(encoding="utf-8").splitlines():
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+        assert values.get("INCLUDE_PHARMCAT_JSON") == "true", name
+        assert values.get("INCLUDE_PHARMCAT_TSV") == "true", name
+        assert "KROKI_URL" not in values, f"{name} must not ship KROKI_URL"
+
+
+def test_env_example_keys_are_referenced_or_allowlisted():
+    """Every .env.example key must be used somewhere, or listed as compose-only."""
+    root = COMPOSE.parent
+    example_keys = _env_file_keys(root / ".env.example")
+    search_roots = [
+        root / "app",
+        root / "docker",
+        root / "pipelines",
+        root / "scripts",
+        root / "compose.yml",
+    ]
+    corpus_parts: list[str] = []
+    for base in search_roots:
+        if base.is_file():
+            corpus_parts.append(base.read_text(encoding="utf-8", errors="replace"))
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {
+                ".py",
+                ".sh",
+                ".ps1",
+                ".yml",
+                ".yaml",
+                ".nf",
+                ".md",
+                ".env",
+                ".txt",
+                ".cfg",
+                ".toml",
+            }:
+                continue
+            try:
+                corpus_parts.append(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+    corpus = "\n".join(corpus_parts)
+    missing = sorted(
+        k
+        for k in example_keys
+        if k not in _COMPOSE_ONLY_ENV_KEYS and k not in corpus
+    )
+    # Keys appear as themselves in .env.example; strip that file from the check
+    # by requiring a hit outside the example file — corpus already excludes it.
+    assert not missing, "orphaned .env.example keys (not referenced, not allowlisted):\n  " + "\n  ".join(
+        missing
+    )
