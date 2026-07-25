@@ -84,6 +84,7 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = "--strict-markers"
 markers = [
   "asyncio: async test executed by pytest-asyncio",
+  "e2e: full compose stack; requires Docker (excluded from default fast suite via -m 'not e2e')",
 ]
 # Setting norecursedirs REPLACES pytest's defaults, so they are restated here.
 # Note "_build" not "docs/_build": a pattern containing a separator must match the
