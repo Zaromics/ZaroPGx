@@ -124,8 +124,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data
-      # Mount reference files where PharmCAT expects them
-      - pharmcat-references:/pharmcat
+      # Reference genome cache ONLY — must not mask /pharmcat or image upgrades
+      # are frozen under the old pipeline binary. start.sh links refs into /pharmcat.
+      - pharmcat-references:/pharmcat-references
     ports:
       # FastAPI
       - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5001:5000"
@@ -133,6 +134,8 @@ services:
       - DATA_DIR=/data
       - JAVA_OPTS=${JAVA_OPTS:--Xmx4g}
       - PHARMCAT_LOG_LEVEL=${PHARMCAT_LOG_LEVEL:-DEBUG}
+      - PHARMCAT_VERSION=${PHARMCAT_VERSION:-3.4.0}
+      - PHARMCAT_REF_CACHE=/pharmcat-references
       - PHARMCAT_REFERENCE_DIR=/pharmcat
       - PHARMCAT_TEE=true
       - PHARMCAT_ABSENT_TO_REF=${PHARMCAT_ABSENT_TO_REF:-false}

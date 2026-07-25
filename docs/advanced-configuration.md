@@ -101,7 +101,10 @@ This document lists environment variables and configuration flags used in the Za
 - **PHARMCAT_PREFERRED**: In report generator, optional hint to prefer PharmCAT where both can call. Default: `false`.
 
 ### PharmCAT wrapper service
-- **PHARMCAT_VERSION**: Version for pipeline package in container build (ARG and runtime metadata).
+- **PHARMCAT_VERSION**: Version for pipeline package in container build (ARG) and runtime
+  metadata / version stamp (env). Default `3.4.0`.
+- **PHARMCAT_REF_CACHE**: Named-volume mount path for GRCh38 reference files (default
+  `/pharmcat-references`). Must not be `/pharmcat` — that path comes from the image.
 - **PHARMCAT_LOG_LEVEL**: Log level inside PharmCAT wrapper. Default: `DEBUG`.
 - **PHARMCAT_JAR_PATH**: Path to PharmCAT JAR for fallback direct execution. Default: `/pharmcat/pharmcat.jar`.
 - **PHARMCAT_REFERENCE_DIR**: PharmCAT references directory. Default: `/pharmcat`.

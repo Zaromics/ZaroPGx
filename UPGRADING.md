@@ -5,6 +5,18 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+### PharmCAT references volume no longer masks `/pharmcat`
+
+`pharmcat-references` now mounts at `/pharmcat-references` (reference genome cache
+only). The pipeline/jar always come from the image. Existing installs: `git pull` and
+`docker compose up -d --build pharmcat`. You do **not** need `down -v` for a
+`PHARMCAT_VERSION` bump anymore. Optional: recreate the volume once if you want a
+clean cache (`docker volume rm zaropgx_pharmcat-references` then `up`).
+
+`PHARMCAT_VERSION` is now passed as a runtime env var as well as a build arg, so
+`/data/versions/pharmcat.json` matches `.env`. Those version JSON files are runtime
+stamps and are gitignored.
+
 ### Full-stack e2e harness (developers / CI)
 
 Local and CI now share `./scripts/e2e.sh` / `./scripts/e2e-up.sh` against isolated
