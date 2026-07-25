@@ -95,7 +95,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 **NB: The simple bootstrap script will automatically install missing dependencies for you!**
 
 **Linux** environment preferred
-- *Docker*; *Docker Compose*; *Git* -- at minimum
+- *Docker*; *Docker Compose* (>= 2.24); *Git* -- at minimum
 - Auto-install supported via: apt, yum, dnf, pacman
 
 **Windows 10/11** requires *WSL2* installed and configured
@@ -272,7 +272,7 @@ If you prefer more control or want to customize the installation:
 
 ### REST API (Advanced and Debugging)
 
-**See the FastAPI docs on the reference instance's page: https://pgx.zaromics.net/api-reference**
+**See the FastAPI docs on the reference instance's page: https://pgx.zaromics.com/api-reference**
 
 **Upload a genomic file**
 ```bash

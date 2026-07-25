@@ -263,9 +263,9 @@ async def ensure_docs_built_on_start() -> None:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        # Production domain -- needs to be switched to use env variable instead of hardcoded
-        "https://pgx.zimerguz.net",
-        "http://pgx.zimerguz.net",  # HTTP is disabled
+        # Live reference instance
+        "https://pgx.zaromics.com",
+        "http://pgx.zaromics.com",
         # Localhost development - main app ports
         "http://localhost:8765",  # Main FastAPI app external port
         "http://localhost:8000",  # Internal app port
