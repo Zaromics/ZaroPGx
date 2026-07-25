@@ -64,12 +64,60 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      # No Postgres service container: tests/conftest.py runs the full ORM
-      # metadata on in-memory SQLite by ATTACHing a database under each Postgres
-      # schema name. If a test ever needs real Postgres behaviour (JSONB
-      # operators, cascades), add a services: block rather than weakening this.
+      # Fast suite: unit/API tests on in-memory SQLite (tests/conftest.py).
+      # Full-stack compose e2e lives in the separate `e2e` job (-m e2e).
       - name: Install dependencies
         run: uv sync --frozen --extra dev
 
       - name: pytest
-        run: uv run pytest -q
+        run: uv run pytest -q -m "not e2e"
+
+  e2e:
+    name: E2E (compose)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # actions: write required so buildx can write type=gha cache entries
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Bring up e2e stack
+        run: ./scripts/e2e-up.sh
+
+      - name: Run e2e tests
+        env:
+          ZAROPGX_E2E: "1"
+          ZAROPGX_E2E_BASE_URL: http://127.0.0.1:18765
+        run: uv run pytest -m e2e -q --tb=short
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          mkdir -p e2e-logs
+          docker compose --env-file .env.e2e -p zaropgx_e2e logs --no-color > e2e-logs/compose.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-logs
+          path: e2e-logs/
+
+      - name: Tear down
+        if: always()
+        run: ./scripts/e2e-down.sh
