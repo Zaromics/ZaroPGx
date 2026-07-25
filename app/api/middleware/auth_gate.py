@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
@@ -30,7 +31,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.api.utils.security import ALGORITHM, SECRET_KEY
+from app.api.utils.security import ACCESS_TOKEN_EXPIRE_MINUTES, ALGORITHM, SECRET_KEY
 
 logger = logging.getLogger("app.auth_gate")
 
@@ -109,8 +110,17 @@ def gate_password() -> str:
 
 
 def mint_session_token(subject: str = "gate") -> str:
-    """Mint a JWT used as both the session cookie value and a Bearer token."""
-    return jwt.encode({"sub": subject, "gate": True}, SECRET_KEY, algorithm=ALGORITHM)
+    """Mint a JWT used as both the session cookie value and a Bearer token.
+
+    Only tokens with claim gate=true unlock password mode. Ordinary /token JWTs
+    from the legacy test/test path must not.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(
+        {"sub": subject, "gate": True, "exp": expire},
+        SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
 
 
 def identity_from_headers(headers: Headers) -> Optional[str]:
@@ -142,8 +152,25 @@ def _decode_gate_token(token: str) -> Optional[str]:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
+    # Require the gate claim so allowlisted /token test/test JWTs cannot bypass
+    # ZAROPGX_AUTH_MODE=password.
+    if payload.get("gate") is not True:
+        return None
     sub = payload.get("sub")
     return str(sub) if sub else None
+
+
+def safe_next_path(candidate: Optional[str], default: str = "/") -> str:
+    """Allow only same-origin relative paths; reject protocol-relative //evil."""
+    if not candidate or not isinstance(candidate, str):
+        return default
+    if not candidate.startswith("/"):
+        return default
+    if candidate.startswith("//"):
+        return default
+    if "://" in candidate:
+        return default
+    return candidate
 
 
 def check_password(password: str) -> bool:

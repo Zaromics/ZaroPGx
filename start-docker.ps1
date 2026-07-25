@@ -123,7 +123,8 @@ function Ensure-InstallSecrets {
     if (Test-SecretSentinel -Value $secretKey) {
         $bytes = New-Object byte[] 32
         [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-        $secretKey = [Convert]::ToBase64String($bytes)
+        # Hex — not Base64 — so values stay URL-safe inside DATABASE_URL / compose.
+        $secretKey = -join ($bytes | ForEach-Object { $_.ToString("x2") })
         Set-EnvVarInFile -Key "SECRET_KEY" -Value $secretKey
         Write-Host "  [OK] Generated a per-install SECRET_KEY in .env" -ForegroundColor Green
     }
@@ -142,7 +143,7 @@ function Ensure-InstallSecrets {
         }
         $bytes = New-Object byte[] 24
         [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-        $dbPassword = [Convert]::ToBase64String($bytes)
+        $dbPassword = -join ($bytes | ForEach-Object { $_.ToString("x2") })
         Set-EnvVarInFile -Key "DB_PASSWORD" -Value $dbPassword
         Write-Host "  [OK] Generated a per-install DB_PASSWORD in .env (fresh volume)" -ForegroundColor Green
     }

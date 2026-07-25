@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -65,6 +66,7 @@ from app.api.middleware.auth_gate import (
     clear_session_cookie,
     mint_session_token,
     resolve_auth_mode,
+    safe_next_path,
     set_session_cookie,
 )
 from app.api.utils.security import (
@@ -331,6 +333,7 @@ else:
         "FHIR export functionality disabled (set FHIR_EXPORT_ENABLED=true to enable)"
     )
 
+
 # Simple wrapper page for API reference with a Back button
 @app.get("/api-reference", include_in_schema=False)
 async def api_reference() -> HTMLResponse:
@@ -414,10 +417,13 @@ _LOGIN_PAGE = """<!DOCTYPE html>
 
 @app.get("/login", include_in_schema=False)
 async def login_page(next: str = "/", error: str = "") -> HTMLResponse:
-    err_html = f'<p class="err">{error}</p>' if error else ""
-    return HTMLResponse(
-        content=_LOGIN_PAGE.format(next=next or "/", error=err_html)
+    safe_next = safe_next_path(next)
+    err_html = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    # Avoid str.format — the page CSS contains literal braces.
+    page = _LOGIN_PAGE.replace("{error}", err_html).replace(
+        "{next}", html.escape(safe_next, quote=True)
     )
+    return HTMLResponse(content=page)
 
 
 @app.post("/login", include_in_schema=False)
@@ -425,7 +431,7 @@ async def login_submit(
     password: str = Form(...),
     next: str = Form("/"),
 ) -> Response:
-    destination = next if isinstance(next, str) and next.startswith("/") else "/"
+    destination = safe_next_path(next)
     if not check_password(password):
         if resolve_auth_mode() == "password":
             return RedirectResponse(
@@ -549,7 +555,25 @@ async def serve_report_file(
 # Authentication endpoint
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    # In a real app, validate against database
+    """Issue a Bearer token.
+
+    In password mode the shared ZAROPGX_AUTH_PASSWORD is required and the JWT
+    carries gate=true so it unlocks the front door. In open/audit modes the
+    legacy test/test credentials still work for API explorers, but those JWTs
+    deliberately omit gate=true and cannot bypass password mode.
+    """
+    mode = resolve_auth_mode()
+    if mode == "password":
+        if not check_password(form_data.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        subject = form_data.username.strip() or "gate"
+        access_token = mint_session_token(subject=subject)
+        return {"access_token": access_token, "token_type": "bearer"}
+
     if form_data.username != "test" or form_data.password != "test":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

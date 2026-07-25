@@ -124,7 +124,10 @@ def test_db_password_has_no_shared_default(compose):
     assert "${DB_PASSWORD:?" in db_env
     assert "${DB_PASSWORD:?" in fhir_env
     assert "${DB_PASSWORD:?" in nextflow_env
-    assert any(e.startswith("DB_PASSWORD=") for e in _env_entries(compose["services"]["nextflow"]))
+    assert any(
+        e.startswith("DB_PASSWORD=")
+        for e in _env_entries(compose["services"]["nextflow"])
+    )
 
 
 def test_tracked_env_templates_ship_no_working_credentials():
@@ -212,17 +215,22 @@ def test_app_environment_does_not_hardcode_behavioural_keys(compose):
         if value.startswith("${"):
             continue
         # Topology URLs are intentionally hardcoded (compose owns topology).
-        if key.endswith("_URL") or key.endswith("_PATH") or key in {
-            "PYTHONPATH",
-            "WORKFLOW_API_BASE",
-            "PYTHONDONTWRITEBYTECODE",
-            "DATABASE_URL",
-        }:
+        if (
+            key.endswith("_URL")
+            or key.endswith("_PATH")
+            or key
+            in {
+                "PYTHONPATH",
+                "WORKFLOW_API_BASE",
+                "PYTHONDONTWRITEBYTECODE",
+                "DATABASE_URL",
+            }
+        ):
             continue
         offenders.append(entry)
-    assert not offenders, "behavioural keys hardcoded in app environment:\n  " + "\n  ".join(
-        offenders
-    )
+    assert (
+        not offenders
+    ), "behavioural keys hardcoded in app environment:\n  " + "\n  ".join(offenders)
 
 
 def test_include_pharmcat_json_tsv_default_true_in_profiles():
@@ -278,12 +286,36 @@ def test_env_example_keys_are_referenced_or_allowlisted():
                 continue
     corpus = "\n".join(corpus_parts)
     missing = sorted(
-        k
-        for k in example_keys
-        if k not in _COMPOSE_ONLY_ENV_KEYS and k not in corpus
+        k for k in example_keys if k not in _COMPOSE_ONLY_ENV_KEYS and k not in corpus
     )
     # Keys appear as themselves in .env.example; strip that file from the check
     # by requiring a hit outside the example file — corpus already excludes it.
-    assert not missing, "orphaned .env.example keys (not referenced, not allowlisted):\n  " + "\n  ".join(
-        missing
+    assert not missing, (
+        "orphaned .env.example keys (not referenced, not allowlisted):\n  "
+        + "\n  ".join(missing)
     )
+
+
+def test_docs_do_not_teach_bare_bind_address_zero():
+    """BIND_ADDRESS=0.0.0.0 alone is an invalid compose hostPort."""
+    root = COMPOSE.parent
+    bad = re.compile(r"(?m)^BIND_ADDRESS=0\.0\.0\.0\s*$")
+    offenders = []
+    for path in (root / "docs").rglob("*.md"):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if bad.search(text):
+            offenders.append(str(path.relative_to(root)))
+    assert not offenders, "docs still teach BIND_ADDRESS=0.0.0.0:\n  " + "\n  ".join(
+        offenders
+    )
+
+
+def test_docs_do_not_ufw_allow_internal_service_ports():
+    root = COMPOSE.parent
+    deployment = (root / "docs" / "developer" / "deployment.md").read_text(
+        encoding="utf-8"
+    )
+    for port in ("5444", "5001", "5002", "5053", "8090"):
+        assert (
+            f"ufw allow {port}" not in deployment
+        ), f"deployment.md still opens internal port {port} in the firewall"

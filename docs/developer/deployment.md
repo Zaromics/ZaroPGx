@@ -35,27 +35,21 @@ ZaroPGx can be deployed in various environments:
 
 ### Network Requirements
 
-**Ports:**
-- 8765: Main application (configurable)
-- 5444: PostgreSQL database (configurable)
-- 5001: PharmCAT service (configurable)
-- 5002: GATK API (configurable)
-- 5053: PyPGx service (configurable)
-- 8090: FHIR server (configurable)
+**Ports (defaults):**
+- 8765: Main application (the only port that normally needs to be reachable)
+- Internal services bind to `127.0.0.1` by default: PostgreSQL 5444, PharmCAT 5001,
+  GATK 5002, PyPGx 5053, FHIR 8090, etc. Prefer an SSH tunnel for remote DB access:
+  `ssh -L 5444:127.0.0.1:5444 your-server`
 
 **Firewall Configuration:**
 ```bash
-# Allow required ports
+# Allow the application port only — do not open internal service ports
 sudo ufw allow 8765/tcp
-sudo ufw allow 5444/tcp
-sudo ufw allow 5001/tcp
-sudo ufw allow 5002/tcp
-sudo ufw allow 5053/tcp
-sudo ufw allow 8090/tcp
-
-# Enable firewall
 sudo ufw enable
 ```
+
+If you set `INTERNAL_BIND_ADDRESS=0.0.0.0`, those internal services have no
+authentication of their own; understand what you are exposing.
 
 ## Environment Configuration
 
@@ -68,22 +62,25 @@ cp .env.production .env
 
 **Production environment variables:**
 ```bash
-# Security
-SECRET_KEY=your-super-secret-key-here
+# Security — leave blank and let start-docker generate, or set unique values
+SECRET_KEY=
+DB_PASSWORD=
 ZAROPGX_DEV_MODE=false
+# DEV_MODE=false does NOT enable auth. Opt in explicitly when ready:
+ZAROPGX_AUTH_MODE=open
+# ZAROPGX_AUTH_MODE=password
+# ZAROPGX_AUTH_PASSWORD=your-shared-install-password
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # Database
-POSTGRES_PASSWORD=your-secure-db-password
 DB_HOST=db
 DB_PORT=5432
 DB_NAME=zaropgx_db
 DB_USER=zaropgx_user
-DB_PASSWORD=your-secure-db-password
 
-# Application
-BIND_ADDRESS=0.0.0.0
+# Application — must be host:port (bare 0.0.0.0 is an invalid compose hostPort)
+BIND_ADDRESS=0.0.0.0:8765
 LOG_LEVEL=INFO
 AUTHOR_NAME=Powered by ZaroPGx
 SOURCE_URL=https://github.com/Zaromics/ZaroPGx
@@ -103,7 +100,6 @@ HAPI_FHIR_ENABLED=true
 
 # Performance
 MAX_CONCURRENT_WORKFLOWS=10
-MAX_UPLOAD_SIZE_BYTES=1073741824  # 1GB
 MAX_HEADER_READ_BYTES=1000000000  # 1GB
 
 # PDF Generation
@@ -112,8 +108,8 @@ PDF_FALLBACK=true
 
 # Report Options
 INCLUDE_PHARMCAT_HTML=true
-INCLUDE_PHARMCAT_JSON=false
-INCLUDE_PHARMCAT_TSV=false
+INCLUDE_PHARMCAT_JSON=true
+INCLUDE_PHARMCAT_TSV=true
 ```
 
 ### Security Configuration
@@ -123,11 +119,8 @@ INCLUDE_PHARMCAT_TSV=false
 # Generate secret key
 openssl rand -hex 32
 
-# Generate database password
-openssl rand -base64 32
-
-# Generate JWT secret
-openssl rand -hex 64
+# Generate database password (hex stays URL-safe inside DATABASE_URL)
+openssl rand -hex 24
 ```
 
 **SSL/TLS Configuration:**
