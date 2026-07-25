@@ -71,7 +71,7 @@ from app.visualizations.workflow_diagram import (
     render_workflow,
 )
 
-from ..utils.security import get_current_user, get_optional_user
+from ..utils.security import get_optional_user
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
