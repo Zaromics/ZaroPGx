@@ -39,6 +39,7 @@ services:
       - WORKFLOW_API_BASE=http://app:8000/api/v1
       - PYTHONDONTWRITEBYTECODE=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - ZAROPGX_AUTH_MODE=${ZAROPGX_AUTH_MODE:-open}
       # INCLUDE_PHARMCAT_* and EXECSUM_USE_TSV come from env_file/.env only
     volumes:
       - ./:/app

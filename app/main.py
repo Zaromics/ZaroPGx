@@ -15,6 +15,7 @@ from asyncio import Queue
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import aiohttp
 import httpx
@@ -58,6 +59,14 @@ from app.api.routes.fhir_export_router import router as fhir_export_router
 from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.workflow_router import router as workflow_router
+from app.api.middleware.auth_gate import (
+    AuthGateMiddleware,
+    check_password,
+    clear_session_cookie,
+    mint_session_token,
+    resolve_auth_mode,
+    set_session_cookie,
+)
 from app.api.utils.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     SECRET_KEY,
@@ -259,6 +268,10 @@ async def ensure_docs_built_on_start() -> None:
     _build_docs_if_missing()
 
 
+# Front-door auth gate (outermost). Default mode is open — a no-op for existing
+# installs. See app.api.middleware.auth_gate for allowlist and cookie policy.
+app.add_middleware(AuthGateMiddleware)
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -355,6 +368,87 @@ async def api_reference() -> HTMLResponse:
 </html>
         """
     return HTMLResponse(content=html)
+
+
+_LOGIN_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZaroPGx — Sign in</title>
+  <style>
+    :root { color-scheme: light; --ink: #1a2332; --muted: #5a6577; --line: #d5dbe6; --accent: #0b6e4f; }
+    body { margin: 0; min-height: 100vh; font-family: "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #e7f3ee 0%, transparent 55%),
+                  linear-gradient(180deg, #f4f7fb 0%, #e9eef5 100%);
+      color: var(--ink); display: grid; place-items: center; padding: 24px; }
+    form { width: min(380px, 100%); }
+    h1 { font-size: 1.75rem; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+    p { margin: 0 0 1.25rem; color: var(--muted); line-height: 1.45; }
+    label { display: block; font-size: 0.85rem; margin: 0.75rem 0 0.35rem; }
+    input { width: 100%; box-sizing: border-box; padding: 0.7rem 0.8rem; border: 1px solid var(--line);
+      border-radius: 6px; font-size: 1rem; background: #fff; }
+    button { margin-top: 1.1rem; width: 100%; padding: 0.75rem; border: 0; border-radius: 6px;
+      background: var(--accent); color: #fff; font-size: 1rem; cursor: pointer; }
+    button:hover { filter: brightness(1.05); }
+    .err { color: #9b1c1c; margin: 0 0 0.75rem; font-size: 0.9rem; }
+    .note { margin-top: 1rem; font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <form method="post" action="/login">
+    <h1>ZaroPGx</h1>
+    <p>Sign in with the shared install password to reach this instance.</p>
+    {error}
+    <input type="hidden" name="next" value="{next}" />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+    <button type="submit">Sign in</button>
+    <p class="note">Anyone past this gate can still open any patient report on this install.
+      There is no per-user access control yet.</p>
+  </form>
+</body>
+</html>
+"""
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page(next: str = "/", error: str = "") -> HTMLResponse:
+    err_html = f'<p class="err">{error}</p>' if error else ""
+    return HTMLResponse(
+        content=_LOGIN_PAGE.format(next=next or "/", error=err_html)
+    )
+
+
+@app.post("/login", include_in_schema=False)
+async def login_submit(
+    password: str = Form(...),
+    next: str = Form("/"),
+) -> Response:
+    destination = next if isinstance(next, str) and next.startswith("/") else "/"
+    if not check_password(password):
+        if resolve_auth_mode() == "password":
+            return RedirectResponse(
+                url=(
+                    f"/login?next={quote(destination, safe='/:?=&')}"
+                    f"&error={quote('Incorrect password')}"
+                ),
+                status_code=303,
+            )
+        # open/audit with no/wrong password: gate is not enforcing; send them on.
+        return RedirectResponse(url=destination, status_code=303)
+    token = mint_session_token()
+    response: Response = RedirectResponse(url=destination, status_code=303)
+    set_session_cookie(response, token)
+    return response
+
+
+@app.get("/logout", include_in_schema=False)
+@app.post("/logout", include_in_schema=False)
+async def logout() -> Response:
+    response: Response = RedirectResponse(url="/login", status_code=303)
+    clear_session_cookie(response)
+    return response
 
 
 # Add direct routes for status and reports
@@ -1547,6 +1641,16 @@ async def startup_event():
         logger.error(message)
         print(f"❌ {message}")
         raise RuntimeError(message)
+
+    auth_mode = resolve_auth_mode()
+    bind_address = os.getenv("BIND_ADDRESS", "8765")
+    print(f"AUTH MODE: {auth_mode} | BIND_ADDRESS: {bind_address}")
+    logger.info("Effective auth mode=%s bind_address=%s", auth_mode, bind_address)
+    if auth_mode == "password" and not os.getenv("ZAROPGX_AUTH_PASSWORD"):
+        logger.warning(
+            "ZAROPGX_AUTH_MODE=password but ZAROPGX_AUTH_PASSWORD is empty — "
+            "login will fail until a password is set."
+        )
 
     print(r"""
  _____                    ____  ______    
