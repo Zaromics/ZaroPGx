@@ -24,7 +24,6 @@ dependencies = [
   # Database
   "sqlalchemy>=2.0.43,<3.0.0",
   "psycopg[binary]>=3.1.0,<4.0.0",
-  "alembic>=1.16.4,<2.0.0",
   # Data processing - Pydantic v2 for compatibility with FastAPI
   "pandas>=3.0.3,<4.0.0",
   "pyarrow>=21.0.0,<25.0.0", # Backs pandas' PyArrow-based string dtype.
@@ -91,7 +90,7 @@ markers = [
 # whole path, so it would never fire.
 norecursedirs = [
   "*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}",
-  ".venv", "reference", "test_data", "alembic.old", "migrations.old",
+  ".venv", "reference", "test_data",
   "_build", "work", "data;C", "test_data;C",
 ]
 filterwarnings = ["default"]
@@ -104,7 +103,7 @@ files = ["app"]
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_configs = true
-exclude = "^(alembic\\.old|migrations\\.old|dist|reference|docs/_build|\\.venv|work)/"
+exclude = "^(dist|reference|docs/_build|\\.venv|work)/"
 # ADOPTION BASELINE, not a gate. Stock settings report ~658 errors across 27 files;
 # muting the annotation-quality categories below leaves ~142 in 11 files, which is
 # small enough to actually read. The survivors are attr-defined/name-defined — the

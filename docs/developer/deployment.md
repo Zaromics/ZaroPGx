@@ -396,21 +396,27 @@ find $BACKUP_DIR -name "*.sql.gz" -mtime +30 -delete
 
 ### Database Schema Management
 
-**Note:** During early development (pre-v1.0), database schema changes are managed through direct SQL file modifications rather than migrations. Alembic is installed as a dependency for future production use.
+Fresh databases are initialized from `db/init/00_complete_database_schema.sql`. PostgreSQL
+runs the mounted top-level files in `/docker-entrypoint-initdb.d` only when its data directory
+is empty.
 
-**Current approach (pre-v1.0):**
-- Schema changes are made directly to `db/init/00_complete_database_schema.sql`
-- Database is automatically initialized when PostgreSQL container starts
-- No manual migration steps required
+Existing volumes are deliberately different:
+- Restarting PostgreSQL does not re-run the initialization SQL.
+- ZaroPGx has no automatic migration runner or automatic rollback mechanism.
+- Back up the database, review the required SQL, stop application writers, and hand-run the
+  approved upgrade through the mounted `/docker-entrypoint-initdb.d` path.
 
-**Future approach (post-v1.0):**
+For example, the existing variant-length upgrade is applied explicitly with:
 ```bash
-# Run migrations (when implemented)
-docker compose exec app alembic upgrade head
-
-# Rollback migration (when implemented)
-alembic downgrade -1
+docker compose exec -T db psql \
+  -v ON_ERROR_STOP=1 \
+  -U zaropgx_user \
+  -d zaropgx_db \
+  -f /docker-entrypoint-initdb.d/migrations/02_fix_variant_column_lengths.sql
 ```
+
+Use the database name and role configured for that volume. See `db/README.md` for the full
+SQL-init-only policy and `UPGRADING.md` for release-specific recovery steps.
 
 ## Monitoring and Logging
 
