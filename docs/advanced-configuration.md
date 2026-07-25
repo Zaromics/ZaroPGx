@@ -19,7 +19,7 @@ This document lists environment variables and configuration flags used in the Za
 
 *Application configs*
 - **LOG_LEVEL**: Logging level for the app. Default: `DEBUG`.
-- **SECRET_KEY**: Secret key for auth/token signing. Required in production. Default in code: `supersecretkey`.
+- **SECRET_KEY**: Secret key for auth/token signing. Required; start-docker generates a per-install value. Empty or known placeholders refuse to start.
 - **ZAROPGX_DEV_MODE**: If `true`, disables authentication for development. Default: `true`.
 - **ALGORITHM**: JWT algorithm. Used as constant `HS256` in code.
 - **ACCESS_TOKEN_EXPIRE_MINUTES**: Token expiry minutes. Used as constant `30` in code.
@@ -68,12 +68,12 @@ This document lists environment variables and configuration flags used in the Za
 
 ### PostgreSQL Database
 - **DB_USER**: Database user. Default: `zaropgx_user` (app/db.py);
-- **DB_PASSWORD**: Database password. Default: `zaropgx_password` (app/db.py). In docker-compose init: `test123`.
+- **DB_PASSWORD**: Database password. Required when `DATABASE_URL` is unset. Compose hard-fails if unset (`${DB_PASSWORD:?...}`); start-docker generates a per-install value only when no Postgres volume exists yet.
 - **DB_HOST**: Database host. Default: `db`.
 - **DB_PORT**: Database port. Default: `5432`.
 - **DB_NAME**: Database name. Default: `zaropgx_db`.
-- **DATABASE_URL**: Full SQLAlchemy URL. If not provided, constructed from the above.
-- **POSTGRES_PASSWORD**: Postgres container password (docker-compose).
+- **DATABASE_URL**: Full SQLAlchemy URL. Preferred when set (compose always passes one); otherwise constructed from the `DB_*` parts.
+- **POSTGRES_PASSWORD**: Postgres container password — sourced from `DB_PASSWORD` in compose.
 
 ### Nextflow executor and workflow orchestration
 - **NXF_HOME**: Nextflow home/cache directory. Defaults to `/opt/nextflow` in containers or set to `/data/nextflow` for persistence in some wrappers.

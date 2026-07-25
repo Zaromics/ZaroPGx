@@ -5,6 +5,26 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+### Per-install secrets; missing `DB_PASSWORD` is a hard compose failure
+
+`compose.yml` no longer falls back to `test123`. If `DB_PASSWORD` is unset,
+`docker compose up` fails at parse time with an error that names the fix.
+Tracked `.env.local` / `.env.production` / `.env.example` ship blank `SECRET_KEY`
+and `DB_PASSWORD`; `start-docker.sh` / `start-docker.ps1` generate unique values
+into `.env` on first run.
+
+**What to do:**
+
+- Prefer `./start-docker.sh` or `./start-docker.ps1` — they create `.env` and fill
+  secrets automatically.
+- If you manage `.env` yourself, set a unique `DB_PASSWORD` and `SECRET_KEY` before
+  `docker compose up`.
+- **Existing Postgres volume:** do not invent a new `DB_PASSWORD`. Postgres only
+  applies `POSTGRES_PASSWORD` when the data directory is empty. Keep the password
+  that initialized the volume, or rotate with `ALTER USER` and then update `.env`.
+  The start scripts refuse to overwrite a blank/placeholder password when
+  `zaropgx_pgdata` (or legacy `pgx_pgdata`) already exists.
+
 ### `compose.yml` is now tracked in git
 
 Previously the compose file was gitignored and `start-docker` copied `docker-compose.yml.example`

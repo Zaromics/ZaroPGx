@@ -102,3 +102,50 @@ def test_app_port_is_operator_controlled(compose):
     assert any(
         "BIND_ADDRESS" in str(p) for p in ports
     ), "the app's host mapping must stay driven by BIND_ADDRESS"
+
+
+def _env_entries(service):
+    """Flatten compose environment (list or mapping) to a list of 'KEY=...' strings."""
+    env = service.get("environment") or {}
+    if isinstance(env, dict):
+        return [f"{k}={v}" for k, v in env.items()]
+    return [str(item) for item in env]
+
+
+def test_db_password_has_no_shared_default(compose):
+    """A missing DB_PASSWORD must hard-fail at compose parse, not silently use test123."""
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert "${DB_PASSWORD:-test123}" not in text
+    assert "${DB_PASSWORD:?" in text
+
+    db_env = " ".join(_env_entries(compose["services"]["db"]))
+    fhir_env = " ".join(_env_entries(compose["services"]["fhir-server"]))
+    nextflow_env = " ".join(_env_entries(compose["services"]["nextflow"]))
+    assert "${DB_PASSWORD:?" in db_env
+    assert "${DB_PASSWORD:?" in fhir_env
+    assert "${DB_PASSWORD:?" in nextflow_env
+    assert any(e.startswith("DB_PASSWORD=") for e in _env_entries(compose["services"]["nextflow"]))
+
+
+def test_tracked_env_templates_ship_no_working_credentials():
+    """Tracked profiles must not publish a real SECRET_KEY or DB_PASSWORD."""
+    root = COMPOSE.parent
+    banned = {
+        "test123",
+        "supersecretkey",
+        "supersecretkey_for_development",
+        "change_me",
+        "change_me_in_production",
+        "zaropgx_password",
+    }
+    for name in (".env.example", ".env.local", ".env.production"):
+        values = {}
+        for line in (root / name).read_text(encoding="utf-8").splitlines():
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+        assert values.get("SECRET_KEY", "") not in banned
+        assert values.get("DB_PASSWORD", "") not in banned
+        assert values.get("SECRET_KEY", "") == ""
+        assert values.get("DB_PASSWORD", "") == ""

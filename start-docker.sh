@@ -30,6 +30,83 @@ else
     exit 1
 fi
 
+# Rewrite KEY=value in .env in place (create the line if missing).
+_set_env_var() {
+    local key="$1"
+    local value="$2"
+    local tmp
+    tmp="$(mktemp)"
+    if [[ -f ".env" ]] && grep -qE "^${key}=" ".env"; then
+        # Avoid sed -i portability issues between GNU and BSD sed.
+        awk -v k="$key" -v v="$value" '
+            BEGIN { done = 0 }
+            $0 ~ ("^" k "=") { print k "=" v; done = 1; next }
+            { print }
+            END { if (!done) print k "=" v }
+        ' ".env" >"$tmp" && mv "$tmp" ".env"
+    else
+        printf '%s=%s\n' "$key" "$value" >>".env"
+        rm -f "$tmp"
+    fi
+}
+
+_env_value() {
+    local key="$1"
+    local line
+    line="$(grep -E "^${key}=" ".env" 2>/dev/null | tail -n 1 || true)"
+    printf '%s' "${line#${key}=}"
+}
+
+_is_secret_sentinel() {
+    case "$1" in
+        ""|change_me|change_me_in_production|supersecretkey|supersecretkey_for_development|test123)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+_pgdata_volume_exists() {
+    # compose.yml sets name: zaropgx; older start scripts also exported
+    # COMPOSE_PROJECT_NAME=pgx. Check both so we never rotate an existing volume.
+    docker volume inspect zaropgx_pgdata >/dev/null 2>&1 \
+        || docker volume inspect pgx_pgdata >/dev/null 2>&1
+}
+
+_ensure_install_secrets() {
+    if [[ ! -f ".env" ]]; then
+        echo "❌ ERROR: .env is required. DB_PASSWORD has no compose default."
+        echo "   Re-run and pick a template, or: cp .env.local .env && ./start-docker.sh"
+        exit 1
+    fi
+
+    local secret_key db_password
+    secret_key="$(_env_value SECRET_KEY)"
+    if _is_secret_sentinel "$secret_key"; then
+        secret_key="$(openssl rand -hex 32)"
+        _set_env_var SECRET_KEY "$secret_key"
+        echo "🔐 Generated a per-install SECRET_KEY in .env"
+    fi
+
+    db_password="$(_env_value DB_PASSWORD)"
+    if _is_secret_sentinel "$db_password"; then
+        if _pgdata_volume_exists; then
+            echo "⚠️  DB_PASSWORD in .env is empty or a known placeholder, but a Postgres"
+            echo "   data volume already exists. Postgres only honours POSTGRES_PASSWORD on"
+            echo "   first init, so this script will not rotate it (that would brick the stack)."
+            echo "   Put the password that initialized the volume into .env, or rotate with:"
+            echo "     docker compose exec -T db psql -U zaropgx_user -d zaropgx_db \\"
+            echo "       -c \"ALTER USER zaropgx_user WITH PASSWORD '...';\""
+            exit 1
+        fi
+        db_password="$(openssl rand -hex 24)"
+        _set_env_var DB_PASSWORD "$db_password"
+        echo "🔐 Generated a per-install DB_PASSWORD in .env (fresh volume)"
+    fi
+}
+
 # Check for .env file and create from template if needed
 if [[ ! -f ".env" ]]; then
     if [[ "$AUTO_LOCAL" == "true" ]]; then
@@ -42,7 +119,7 @@ if [[ ! -f ".env" ]]; then
         echo "   1) .env.local      (Recommended for personal/home use)"
         echo "   2) .env.production (For web-facing deployment)"
         echo "   3) .env.example    (Complete configuration with documentation)"
-        echo "   4) Skip            (Use inline defaults - not recommended)"
+        echo "   4) Abort           (compose now requires DB_PASSWORD in .env)"
         echo ""
         read -p "Select option [1-4]: " env_choice
         
@@ -52,8 +129,8 @@ if [[ ! -f ".env" ]]; then
             2) env_source=".env.production" ;;
             3) env_source=".env.example" ;;
             4) 
-                echo "⚠️  Skipping .env creation. Using inline defaults."
-                echo "ℹ️  Note: Some features may require environment configuration"
+                echo "❌ Aborted. Copy a template to .env, then re-run."
+                exit 1
                 ;;
             *) env_source=".env.local" ;;
         esac
@@ -62,16 +139,17 @@ if [[ ! -f ".env" ]]; then
     if [[ -n "$env_source" ]] && [[ -f "$env_source" ]]; then
         cp "$env_source" ".env"
         echo "✅ Created .env from $env_source"
-        if [[ "$AUTO_LOCAL" != "true" ]]; then
-            echo "ℹ️  Note: Review and customize .env as needed (especially SECRET_KEY)"
-        fi
     elif [[ -n "$env_source" ]]; then
-        echo "⚠️  WARNING: $env_source not found, using inline defaults"
+        echo "❌ ERROR: $env_source not found"
+        exit 1
     fi
     echo ""
 else
     echo "✅ Environment configuration found (.env)"
 fi
+
+_ensure_install_secrets
+echo ""
 
 # compose.yml is tracked in git, so it arrives and updates with `git pull` rather than
 # being copied once and then frozen forever. Put local customization in

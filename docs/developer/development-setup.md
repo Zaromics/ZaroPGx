@@ -70,7 +70,7 @@ DB_HOST=localhost
 DB_PORT=5444
 DB_NAME=zaropgx_db
 DB_USER=zaropgx_user
-DB_PASSWORD=test123
+DB_PASSWORD=  # set to the password in your running volume / generated .env
 
 # Services
 PHARMCAT_API_URL=http://localhost:5001
