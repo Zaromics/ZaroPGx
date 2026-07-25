@@ -5,6 +5,19 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+### Auth gate defaults to open (no behaviour change)
+
+A front-door ASGI gate is installed (`ZAROPGX_AUTH_MODE=open|audit|password`,
+default `open`). At default-open, existing installs are unchanged after
+`git pull && docker compose up`. `ZAROPGX_DEV_MODE=false` does **not** turn
+auth on — it logs a warning naming `ZAROPGX_AUTH_MODE`. To enforce the gate,
+set `ZAROPGX_AUTH_MODE=password` and `ZAROPGX_AUTH_PASSWORD` in `.env`.
+
+The gate is a shared install password (cookie `SameSite=Lax` or
+`Authorization: Bearer`). Anyone past it can still fetch any patient report;
+there is no per-user access control yet. `/api/v1/workflows/*` stays
+allowlisted so in-stack services keep working without a browser cookie.
+
 ### Config delivery: `.env` owns behaviour, compose owns topology
 
 The app service now declares `env_file: .env` (Compose >= 2.24). Behavioural

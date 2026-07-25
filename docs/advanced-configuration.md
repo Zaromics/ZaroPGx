@@ -20,7 +20,9 @@ This document lists environment variables and configuration flags used in the Za
 *Application configs*
 - **LOG_LEVEL**: Logging level for the app. Default: `DEBUG`.
 - **SECRET_KEY**: Secret key for auth/token signing. Required; start-docker generates a per-install value. Empty or known placeholders refuse to start.
-- **ZAROPGX_DEV_MODE**: If `true`, disables authentication for development. Default: `true`.
+- **ZAROPGX_DEV_MODE**: Legacy flag. `false` does **not** enable auth (logs a warning). Prefer `ZAROPGX_AUTH_MODE`. Default: `true`.
+- **ZAROPGX_AUTH_MODE**: Front-door gate mode: `open` (default, no-op), `audit` (log would-deny), or `password` (require cookie/Bearer).
+- **ZAROPGX_AUTH_PASSWORD**: Shared install password when mode is `password`. Anyone who knows it can reach every patient report on that instance.
 - **ALGORITHM**: JWT algorithm. Used as constant `HS256` in code.
 - **ACCESS_TOKEN_EXPIRE_MINUTES**: Token expiry minutes. Used as constant `30` in code.
 - **AUTHOR_NAME**: Override author shown in reports. If unset, read from `pyproject.toml` or fallback to `Zaromics Initiative`.
