@@ -110,7 +110,7 @@ jobs:
         if: failure()
         run: |
           mkdir -p e2e-logs
-          docker compose --env-file .env.e2e -p zaropgx_e2e logs --no-color > e2e-logs/compose.log || true
+          docker compose --env-file .env.e2e -p zaropgx_e2e -f compose.yml -f compose.e2e.yml logs --no-color > e2e-logs/compose.log || true
 
       - uses: actions/upload-artifact@v4
         if: failure()
