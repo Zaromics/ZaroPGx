@@ -1,12 +1,9 @@
 """
-End-to-end tests for the complete workflow monitoring system.
+API-level workflow monitoring tests (SQLite).
 
-This module contains comprehensive tests that demonstrate:
-- Complete workflow lifecycle from creation to completion
-- Real-time progress tracking and updates
-- WebSocket communication and UI updates
-- Error handling and recovery
-- Integration between all components
+Exercises workflow lifecycle, progress tracking, WebSocket hooks, and error
+handling through FastAPI TestClient against the in-memory SQLite test DB.
+Full-stack coverage lives in tests/e2e/.
 """
 
 import asyncio
@@ -25,8 +22,8 @@ from app.services.websocket_manager import ConnectionManager
 from app.services.workflow_service import WorkflowService
 
 
-class TestWorkflowEndToEnd:
-    """End-to-end tests for the complete workflow monitoring system."""
+class TestWorkflowApi:
+    """API-level workflow monitoring tests via TestClient."""
 
     @pytest.fixture
     def client(self):
