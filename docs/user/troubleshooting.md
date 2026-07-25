@@ -257,7 +257,7 @@ docker exec -it zaro-pgx-db psql -U zaropgx_user -d zaropgx_db
 
 # Reset database
 docker compose down
-docker volume rm zaro-pgx_db_data
+docker volume rm zaropgx_pgdata
 docker compose up -d --build
 ```
 
@@ -279,7 +279,7 @@ docker exec -it zaro-pgx-db psql -U zaropgx_user -d zaropgx_db -c "VACUUM ANALYZ
 
 # Reinitialize database
 docker compose down
-docker volume rm zaro-pgx_db_data
+docker volume rm zaropgx_pgdata
 docker compose up -d --build
 ```
 

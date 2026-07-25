@@ -6,7 +6,7 @@
 set -e
 
 # Configuration
-VOLUME_NAME="pgx_pgdata"
+VOLUME_NAME="zaropgx_pgdata"
 BACKUP_DIR="./db/data"
 CONTAINER_NAME="pgx_db"
 

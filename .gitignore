@@ -226,9 +226,6 @@ work/
 # Old versions kept for reference
 *.old
 *.old/*
-alembic.ini.old
-alembic.old/
-migrations.old/
 
 # FHIR data
 /data/fhir-data/h2.mv.db

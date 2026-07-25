@@ -58,9 +58,9 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 - **Genome Reference downloader**
   - Fetches reference materials including genome assemblies
   - Service Ports (Host → Container) 5050 → 5050
-- **PostgreSQL 17 DB** - (SQLAlchemy 2, Psycopg 3 & schema managed with Alembic)
+- **PostgreSQL 18 DB** - (SQLAlchemy 2, Psycopg 3; fresh schemas initialized from `db/init/00_complete_database_schema.sql`)
   - Stores data of guidelines, sample runs, workflow metadata, and generated reports, allowing for persistent and local analysis
-  - Initialization under `db/init` and `db/migrations` 
+  - Initialization SQL under `db/init`
   - Service Ports (Host → Container) 5444 → 5432
 - **GATK service** - (FastAPI wrapped)
   - Handles various conversion, haplotyping, and preprocessing operations
@@ -329,7 +329,7 @@ ZaroPGx/
 │   ├── utils/                # Utilities
 │   └── visualizations/       # Workflow diagrams and visual tools using Kroki
 ├── data/                   # Runtime data (reports, uploads, temp files)
-├── db/                     # Postgres DB initialization and migrations
+├── db/                     # PostgreSQL initialization SQL and manual upgrade guidance
 ├── docker/                 # Service Dockerfiles and service wrappers
 │   ├── gatk-api/             # GATK service FastAPI
 │   ├── genome-downloader/    # Reference genome fetcher (typically needs to only run once)
@@ -390,7 +390,7 @@ rm -rf reference/
 
 **Remove database data only:**
 ```bash
-docker volume rm pgx_pgdata pgx_fhir-data pgx_pharmcat-references
+docker volume rm zaropgx_pgdata zaropgx_fhir-data zaropgx_pharmcat-references
 ```
 
 ## Contributions are welcome and are gratefully appreciated!

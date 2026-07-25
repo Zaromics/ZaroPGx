@@ -74,3 +74,57 @@ INTERNAL_BIND_ADDRESS=0.0.0.0
 
 The app itself is unaffected — `BIND_ADDRESS` still governs it, and `BIND_ADDRESS=0.0.0.0:8765`
 still serves the LAN.
+
+## v0.2.4 → v0.2.5
+
+### Recover an existing database after the credential rename
+
+Commit `4f01a76` changed the defaults from `cpic_user`/`cpic_db` to
+`zaropgx_user`/`zaropgx_db`, but it did not rename roles or databases in existing volumes.
+PostgreSQL uses `POSTGRES_USER` and `POSTGRES_DB` only while initializing an empty data
+directory, so an existing v0.2.4 volume still has the legacy names.
+
+**Zero-risk compatibility option:** keep using the names that already exist. Set these values in
+`.env` and leave `DB_PASSWORD` equal to the password that initialized the volume:
+
+```bash
+DB_USER=cpic_user
+DB_NAME=cpic_db
+```
+
+This changes no database data or catalog objects. The names can remain in place indefinitely.
+
+**Clean hand-run rename:** use the recovery script when you want the existing volume to match the
+current defaults. The script is never called by Compose or application startup. It is
+idempotent, refuses ambiguous role/database states, and leaves an active database untouched
+rather than terminating clients.
+
+The credential rename is separate from a PostgreSQL major-version upgrade. Run these steps while
+the volume is served by the PostgreSQL major version that created it. In particular, do not attach
+a PostgreSQL 17 data directory directly to `postgres:18`; use `pg_upgrade` or dump/restore for
+that separate transition.
+
+```bash
+# 1. Start the legacy volume with names that actually exist.
+#    Keep its original DB_PASSWORD in .env.
+docker compose up -d db
+
+# 2. Take a logical backup of every database and role before changing catalog names.
+docker compose exec -T db pg_dumpall -U cpic_user \
+  > zaropgx-before-credential-rename.sql
+
+# 3. Stop known database clients. Also disconnect external SQL clients.
+docker compose stop app fhir-server nextflow
+
+# 4. Rename the role and database. Safe to run again after a partial or completed run.
+bash scripts/fix-legacy-credentials.sh
+```
+
+Then change `.env` to the current names and restart:
+
+```bash
+DB_USER=zaropgx_user
+DB_NAME=zaropgx_db
+
+docker compose up -d
+```
