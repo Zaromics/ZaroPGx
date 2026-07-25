@@ -307,6 +307,28 @@ curl -X POST http://localhost:8765/reports/generate \
   - `<file_id>_pgx_report_interactive.html`
   - Optional PharmCAT originals: `<file_id>_pgx_pharmcat.{html,json,tsv}`
 
+## Testing
+
+**Fast suite** (no Docker):
+
+```bash
+uv run pytest -q -m "not e2e"
+```
+
+On Windows, prefer the project venv if `uv run pytest` fails building pysam:
+`.venv\Scripts\python.exe -m pytest -q -m "not e2e"`.
+
+**Full-stack e2e** (Docker required; isolated project `zaropgx_e2e` on port `18765`):
+
+```bash
+./scripts/e2e.sh
+```
+
+Use Git Bash or WSL on Windows. Needs substantial Docker RAM (16 GB+ recommended).
+First run may download PharmCAT reference data and build images; subsequent runs reuse
+BuildKit cache. CI runs the same harness on every PR (separate required job). On
+failure the stack stays up and logs land in `e2e-logs/`.
+
 ## Sample Data Access
 For real-world sample data, try browsing the **Personal Genome Project**:
 - https://my.pgp-hms.org/public_genetic_data

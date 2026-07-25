@@ -177,7 +177,29 @@ volume, and record release-specific operator steps in `UPGRADING.md`.
 
 ### 3. Testing
 
-**Run tests:**
+**Fast suite** (unit/API tests; no Docker required):
+
+```bash
+# Prefer the project venv on Windows (avoids uv rebuilding pysam):
+#   .venv\Scripts\python.exe -m pytest -q -m "not e2e"
+# Unix:
+#   .venv/bin/python -m pytest -q -m "not e2e"
+uv run pytest -q -m "not e2e"
+```
+
+**Full-stack e2e** (compose project `zaropgx_e2e`, host port `18765`):
+
+```bash
+./scripts/e2e.sh                          # build/up → pytest -m e2e → down on success
+```
+
+On Windows use Git Bash or WSL for `./scripts/e2e.sh`. Give Docker Desktop enough RAM
+(16 GB+ recommended). First run may take a long time (cold image builds + PharmCAT
+reference download); health wait allows up to ~25 minutes. On failure the stack stays
+up and logs are written to `e2e-logs/compose.log`.
+
+Only the app is published on the host (`127.0.0.1:18765`); `compose.e2e.yml` clears
+other service host ports so e2e does not collide with a developer stack.
 
 ### 4. Code Quality
 
@@ -364,13 +386,14 @@ async function checkStatus(jobId) {
 
 ### Test Structure
 
-**Test organization:**
-
-**Writing tests:**
-
+- Fast suite: `tests/` excluding `@pytest.mark.e2e` — SQLite / `TestClient` unit and API tests.
+- Full-stack e2e: `tests/e2e/` — HTTP against a live compose stack (`ZAROPGX_E2E=1`).
+- CI runs the fast suite on every PR and a separate required `e2e` job with Buildx cache.
 
 ### Test Data
 
+Sample VCFs for local and e2e runs live under `test_data/` (e.g. `pharmcat.example.vcf`,
+`sample_cpic.vcf`). The full-stack e2e harness uploads `test_data/pharmcat.example.vcf`.
 
 ## Debugging
 
