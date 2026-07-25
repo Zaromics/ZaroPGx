@@ -10,6 +10,11 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("ZAROPGX_DEV_MODE", "true")
 # Ensure FHIR router is included
 os.environ.setdefault("FHIR_EXPORT_ENABLED", "true")
+os.environ.setdefault("SECRET_KEY", "pytest-secret-key-not-for-production")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+psycopg://pytest:pytest@localhost:5432/pytest",
+)
 
 
 @pytest.fixture()

@@ -61,7 +61,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-zaropgx_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-test123}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is not set - run ./start-docker.sh or set it in .env}
       POSTGRES_DB: ${DB_NAME:-zaropgx_db}
     volumes:
       # PG18+ stores data in a major-version subdir and rejects a mount at
@@ -161,7 +161,7 @@ services:
       - hapi.fhir.reuse_cached_search_results_millis=60000
       - spring.datasource.url=jdbc:postgresql://db:5432/${DB_NAME:-zaropgx_db}?currentSchema=fhir
       - spring.datasource.username=${DB_USER:-zaropgx_user}
-      - spring.datasource.password=${DB_PASSWORD:-test123}
+      - spring.datasource.password=${DB_PASSWORD:?DB_PASSWORD is not set - run ./start-docker.sh or set it in .env}
       - spring.datasource.driverClassName=org.postgresql.Driver
       - spring.jpa.properties.hibernate.dialect=ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
       - spring.jpa.hibernate.ddl-auto=update
@@ -378,6 +378,11 @@ services:
     environment:
       - NXF_HOME=/opt/nextflow
       - NXF_OPTS=-Xms1g -Xmx4g
+      - DB_USER=${DB_USER:-zaropgx_user}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is not set - run ./start-docker.sh or set it in .env}
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-zaropgx_db}
     volumes:
       - ./:/workspace
       - ./data:/data

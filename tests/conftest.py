@@ -6,6 +6,12 @@ import os
 # app.api.db read configuration at import time.
 os.environ.setdefault("ZAROPGX_DEV_MODE", "true")
 os.environ.setdefault("FHIR_EXPORT_ENABLED", "true")
+os.environ.setdefault("SECRET_KEY", "pytest-secret-key-not-for-production")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+psycopg://pytest:pytest@localhost:5432/pytest",
+)
+os.environ.setdefault("DB_PASSWORD", "pytest-db-password")
 
 import pytest
 from fastapi.testclient import TestClient

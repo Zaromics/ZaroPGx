@@ -111,8 +111,18 @@ print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")
 # Load environment variables
 load_dotenv()
 
-# Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")  # In production, use env var
+# Security configuration. Sentinels match the values formerly shipped in tracked
+# .env templates; start-docker replaces them, and startup refuses to run on them.
+_SECRET_KEY_SENTINELS = frozenset(
+    {
+        "",
+        "change_me",
+        "change_me_in_production",
+        "supersecretkey",
+        "supersecretkey_for_development",
+    }
+)
+SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -1335,10 +1345,7 @@ async def services_status(
             "enabled": True,  # App is always enabled
         },
         "database": {
-            "url": os.getenv(
-                "DATABASE_URL",
-                "postgresql+psycopg://zaropgx_user:zaropgx_password@db:5432/zaropgx_db",
-            ),
+            "url": os.getenv("DATABASE_URL", ""),
             "timeout": 5,
             "enabled": True,  # Database is always enabled
         },
@@ -1637,12 +1644,17 @@ async def startup_event():
             logger.info(f"Directory exists: {dir_path}")
             print(f"✅ Directory exists: {dir_path}")
 
-    # Check environment variables
-    required_vars = ["SECRET_KEY"]
-    for var in required_vars:
-        if not os.getenv(var):
-            logger.warning(f"Environment variable {var} is not set!")
-            print(f"⚠️ Environment variable {var} is not set!")
+    # Refuse known-weak or missing signing keys. start-docker generates a
+    # per-install SECRET_KEY into .env; do not fall back to a public default.
+    if SECRET_KEY.strip() in _SECRET_KEY_SENTINELS:
+        message = (
+            "SECRET_KEY is missing or still a tracked placeholder. "
+            "Run ./start-docker.sh (or start-docker.ps1) or set a unique "
+            "SECRET_KEY in .env, then restart the app."
+        )
+        logger.error(message)
+        print(f"❌ {message}")
+        raise RuntimeError(message)
 
     print(r"""
  _____                    ____  ______    
