@@ -142,7 +142,9 @@ def test_login_sets_cookie_and_unlocks(monkeypatch):
     monkeypatch.setenv("ZAROPGX_AUTH_MODE", "password")
     monkeypatch.setenv("ZAROPGX_AUTH_PASSWORD", "gate-secret")
     client = TestClient(app)
-    denied = client.get("/", headers={"Accept": "application/json"}, follow_redirects=False)
+    denied = client.get(
+        "/", headers={"Accept": "application/json"}, follow_redirects=False
+    )
     assert denied.status_code in {401, 303}
     login = client.post(
         "/login",
@@ -154,3 +156,90 @@ def test_login_sets_cookie_and_unlocks(monkeypatch):
     client.cookies.set(auth_gate.COOKIE_NAME, login.cookies[auth_gate.COOKIE_NAME])
     unlocked = client.get("/", follow_redirects=False)
     assert unlocked.status_code not in {401, 303}
+
+
+def test_legacy_token_jwt_does_not_bypass_password_mode(monkeypatch):
+    """Regression: allowlisted /token + test/test must not unlock the gate."""
+    from app.api.utils.security import create_access_token
+
+    monkeypatch.setenv("ZAROPGX_AUTH_MODE", "password")
+    monkeypatch.setenv("ZAROPGX_AUTH_PASSWORD", "gate-secret")
+    client = TestClient(app)
+
+    # Direct mint of a non-gate JWT (what open-mode /token still issues)
+    legacy = create_access_token(data={"sub": "test"})
+    denied = client.get(
+        "/",
+        headers={"Authorization": f"Bearer {legacy}", "Accept": "application/json"},
+        follow_redirects=False,
+    )
+    assert denied.status_code in {401, 303}
+
+    # Obtaining /token with test/test must fail in password mode
+    bad = client.post(
+        "/token",
+        data={"username": "test", "password": "test"},
+    )
+    assert bad.status_code == 401
+
+    # Correct install password via /token yields a gate JWT that unlocks
+    good = client.post(
+        "/token",
+        data={"username": "ops", "password": "gate-secret"},
+    )
+    assert good.status_code == 200
+    token = good.json()["access_token"]
+    unlocked = client.get(
+        "/",
+        headers={"Authorization": f"Bearer {token}"},
+        follow_redirects=False,
+    )
+    assert unlocked.status_code not in {401, 303}
+
+
+def test_safe_next_path_rejects_open_redirects():
+    assert auth_gate.safe_next_path("/reports/x") == "/reports/x"
+    assert auth_gate.safe_next_path("//evil.example/phish") == "/"
+    assert auth_gate.safe_next_path("https://evil.example/") == "/"
+    assert auth_gate.safe_next_path("reports") == "/"
+    assert auth_gate.safe_next_path(None) == "/"
+
+
+def test_login_page_escapes_error_and_next(monkeypatch):
+    monkeypatch.setenv("ZAROPGX_AUTH_MODE", "password")
+    monkeypatch.setenv("ZAROPGX_AUTH_PASSWORD", "gate-secret")
+    client = TestClient(app)
+    xss = client.get(
+        "/login",
+        params={"error": "<script>alert(1)</script>", "next": "//evil.example"},
+    )
+    assert xss.status_code == 200
+    body = xss.text
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
+    assert 'value="//evil.example"' not in body
+    assert 'value="/"' in body
+
+
+def test_login_submit_rejects_protocol_relative_next(monkeypatch):
+    monkeypatch.setenv("ZAROPGX_AUTH_MODE", "password")
+    monkeypatch.setenv("ZAROPGX_AUTH_PASSWORD", "gate-secret")
+    client = TestClient(app)
+    resp = client.post(
+        "/login",
+        data={"password": "gate-secret", "next": "//evil.example/phish"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+
+
+def test_gate_token_includes_exp():
+    from jose import jwt as jose_jwt
+
+    from app.api.utils.security import ALGORITHM, SECRET_KEY
+
+    token = mint_session_token()
+    payload = jose_jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    assert payload.get("gate") is True
+    assert "exp" in payload

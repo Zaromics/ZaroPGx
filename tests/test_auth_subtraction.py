@@ -28,7 +28,9 @@ def _dependency_dump(app) -> list[str]:
             call = getattr(dep, "call", None)
             if call is not None:
                 mod = getattr(call, "__module__", "")
-                name = getattr(call, "__qualname__", getattr(call, "__name__", repr(call)))
+                name = getattr(
+                    call, "__qualname__", getattr(call, "__name__", repr(call))
+                )
                 names.append(f"{mod}.{name}")
             stack.extend(getattr(dep, "dependencies", []) or [])
         for method in methods or ["*"]:
@@ -67,7 +69,9 @@ def test_optional_user_depends_are_security_module():
             if getattr(dep, "call", None) is security.get_optional_user:
                 seen += 1
             stack.extend(getattr(dep, "dependencies", []) or [])
-    assert seen >= 1, "expected at least one route to Depend on security.get_optional_user"
+    assert (
+        seen >= 1
+    ), "expected at least one route to Depend on security.get_optional_user"
 
 
 def test_route_dependencies_ignore_dev_mode_flag(monkeypatch):

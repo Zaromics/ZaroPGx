@@ -14,9 +14,23 @@ auth on — it logs a warning naming `ZAROPGX_AUTH_MODE`. To enforce the gate,
 set `ZAROPGX_AUTH_MODE=password` and `ZAROPGX_AUTH_PASSWORD` in `.env`.
 
 The gate is a shared install password (cookie `SameSite=Lax` or
-`Authorization: Bearer`). Anyone past it can still fetch any patient report;
-there is no per-user access control yet. `/api/v1/workflows/*` stays
-allowlisted so in-stack services keep working without a browser cookie.
+`Authorization: Bearer` with a `gate=true` JWT, or the raw password as Bearer).
+Anyone past it can still fetch any patient report; there is no per-user access
+control yet.
+
+**Password mode is a front door, not a full ACL.** These stay reachable without
+the install password by design for in-stack callers:
+
+- `/api/v1/workflows/*` (including WebSocket status)
+- `/health`, docs/static, `/login`, `/logout`, `/token`
+
+`/token` in password mode requires `ZAROPGX_AUTH_PASSWORD` and returns a
+`gate=true` JWT. The legacy `test`/`test` credentials still work in open/audit
+modes but those JWTs **cannot** unlock password mode.
+
+If the app is published beyond localhost (`BIND_ADDRESS=0.0.0.0:8765`), treat
+the workflow allowlist as part of your threat model until service-to-service
+credentials land.
 
 ### Config delivery: `.env` owns behaviour, compose owns topology
 
