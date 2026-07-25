@@ -1,0 +1,22 @@
+# E2E overlay: only the app is published on the host (BIND_ADDRESS → 18765).
+# Sidecars talk over the compose network; publishing their default host ports
+# collides with a developer stack or other local listeners (e.g. WSL on 5060).
+services:
+  db:
+    ports: !reset []
+  genome-downloader:
+    ports: !reset []
+  pharmcat:
+    ports: !reset []
+  pypgx:
+    ports: !reset []
+  nextflow:
+    ports: !reset []
+  zarohla:
+    ports: !reset []
+  gatk-api:
+    ports: !reset []
+  kroki:
+    ports: !reset []
+  docs:
+    ports: !reset []

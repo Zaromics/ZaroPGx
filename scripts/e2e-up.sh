@@ -8,7 +8,7 @@ cd "$ROOT"
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
-COMPOSE=(docker compose --env-file .env.e2e -p zaropgx_e2e)
+COMPOSE=(docker compose --env-file .env.e2e -p zaropgx_e2e -f compose.yml -f compose.e2e.yml)
 
 SERVICES=(db app pharmcat nextflow pypgx gatk-api genome-downloader zarohla kroki)
 
