@@ -5,6 +5,13 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+### Full-stack e2e harness (developers / CI)
+
+Local and CI now share `./scripts/e2e.sh` / `./scripts/e2e-up.sh` against isolated
+compose project `zaropgx_e2e` on host port `18765` (auth open). Fast pytest excludes
+`@pytest.mark.e2e`; the e2e job builds via Buildx with GHA cache. No action required
+for runtime installs — this is a test/CI change only.
+
 ### Auth gate defaults to open (no behaviour change)
 
 A front-door ASGI gate is installed (`ZAROPGX_AUTH_MODE=open|audit|password`,
