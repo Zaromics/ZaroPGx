@@ -73,21 +73,6 @@ async def get_optional_user(token: Optional[str] = Depends(optional_oauth2_schem
         return "test"
 
 
-def encrypt_data(data: str) -> str:
-    """
-    Encrypt sensitive patient data for HIPAA compliance.
-    """
-    # In a real application, this would use proper encryption
-    # For now, we'll just implement a placeholder
-    # Using libraries like cryptography.fernet would be appropriate
-    return f"encrypted_{data}"
-
-
-def decrypt_data(encrypted_data: str) -> str:
-    """
-    Decrypt encrypted patient data.
-    """
-    # In a real application, this would use proper decryption
-    if encrypted_data.startswith("encrypted_"):
-        return encrypted_data[10:]
-    return encrypted_data
+# encrypt_data / decrypt_data stubs removed (Wave 3): they returned
+# f"encrypted_{data}" / prefix-strip while claiming HIPAA compliance, with zero
+# callers. Real PHI encryption belongs with key management in a later security wave.

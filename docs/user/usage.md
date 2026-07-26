@@ -194,11 +194,13 @@ curl -O http://localhost:8765/reports/{patient_id}/{report_file}
 ### Data Export
 
 #### FHIR Export
+`POST /reports/{report_id}/export-to-fhir` is **retired (501)** — it previously
+posted fabricated genotypes. Use the `/fhir/*` routes (bundle preview/save from
+real PharmCAT run data) instead.
 ```bash
-curl -X POST \
-  http://localhost:8765/reports/{report_id}/export-to-fhir
+# Example: preview FHIR bundle for a PharmCAT run
+curl http://localhost:8765/fhir/export/run/{run_id}/preview
 ```
-
 #### Bulk Export
 ```bash
 # Export all reports for a patient
