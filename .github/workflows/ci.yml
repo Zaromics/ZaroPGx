@@ -19,10 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -37,27 +37,27 @@ jobs:
       - name: isort
         run: uv tool run isort --check-only --profile black app tests
 
-      # Deliberately a narrow gate. A full flake8 run currently reports ~1900
-      # findings (mostly E501) and there are 18 genuine F821 undefined names in
-      # app/main.py and app/reports/generator.py. Those are tracked as Wave 3
-      # work in dev-notes/BACKLOG.md; add F82 to this select once they are gone,
-      # then widen further. A gate that cannot pass is a gate nobody reads.
+      # Deliberately a narrow gate. Full flake8 still reports many style findings
+      # (mostly E501); keep the blocking select tight. F821 NameErrors in
+      # generator/main were cleared in Wave 3 — add F82 here once CI is ready
+      # to enforce them repo-wide.
       - name: flake8 (syntax errors and broken asserts only)
         run: uv tool run flake8 --select=E9,F63,F7 app tests
 
+      # Informational only. Use `|| true` (not continue-on-error) so a non-zero
+      # flake8 exit does not create a red ##[error] annotation on a green job.
       - name: flake8 (full, informational)
-        continue-on-error: true
-        run: uv tool run flake8 app tests
+        run: uv tool run flake8 app tests || true
 
   test:
     name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -81,13 +81,13 @@ jobs:
       contents: read
       actions: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
