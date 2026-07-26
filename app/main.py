@@ -503,15 +503,11 @@ async def serve_report_file(
     """Serve individual report files from the reports directory"""
     import mimetypes
 
-    # Construct and resolve the file path
-    try:
-        file_path = (REPORTS_DIR / patient_id / filename).resolve()
-        reports_dir = REPORTS_DIR.resolve()
-    except OSError:
-        raise HTTPException(status_code=403, detail="Invalid file path")
+    from app.api.utils.path_jail import resolve_under
 
-    # is_relative_to rejects sibling dirs that share a prefix (e.g. reports-old)
-    if not file_path.is_relative_to(reports_dir):
+    try:
+        file_path = resolve_under(REPORTS_DIR, patient_id, filename)
+    except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not file_path.exists() or not file_path.is_file():

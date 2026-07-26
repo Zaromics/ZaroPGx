@@ -1620,22 +1620,17 @@ async def download_all_reports(
     Download all reports for a patient as a ZIP file.
     """
     try:
-        # Use the same path resolution as individual file serving
+        # Use the same path jail as individual file serving
+        from app.api.utils.path_jail import resolve_under
         from app.main import REPORTS_DIR
 
-        reports_dir = REPORTS_DIR / patient_id
-
-        # Security check: ensure the path is within the reports directory
         try:
-            reports_dir = reports_dir.resolve()
-            reports_base = REPORTS_DIR.resolve()
-            if not str(reports_dir).startswith(str(reports_base)):
-                raise HTTPException(status_code=403, detail="Access denied")
-        except Exception:
-            raise HTTPException(status_code=403, detail="Invalid file path")
+            reports_dir = resolve_under(REPORTS_DIR, patient_id)
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Access denied")
 
         # Check if directory exists
-        if not reports_dir.exists():
+        if not reports_dir.exists() or not reports_dir.is_dir():
             raise HTTPException(status_code=404, detail="Reports directory not found")
 
         # Create ZIP file

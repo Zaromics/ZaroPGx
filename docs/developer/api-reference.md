@@ -166,32 +166,19 @@ Download a specific report file.
 curl -O http://localhost:8765/reports/patient_001/report.pdf
 ```
 
-#### Generate Report
+#### Generate Report (retired)
 
-Generate a report for existing analysis data.
+**Endpoint:** `POST /reports/generate` — returns **501**.
 
-**Endpoint:** `POST /reports/generate`
+Report generation runs via `POST /upload/genomic-data`. Status and file delivery:
 
-**Content-Type:** `application/json`
+- `GET /upload/status/{job_id}` / `GET /api/v1/workflows/{workflow_id}`
+- `GET /upload/reports/job/{job_id}` / `GET /upload/reports/download/{patient_id}`
+- `GET /reports/{patient_id}/{filename}`
 
-**Request Body:**
-```json
-{
-  "patient_id": "patient_001",
-  "file_id": "file_001",
-  "report_type": "comprehensive"
-}
-```
-
-**Response:**
-```json
-{
-  "report_id": "report_001",
-  "status": "generated",
-  "pdf_url": "/reports/patient_001/report.pdf",
-  "html_url": "/reports/patient_001/report.html"
-}
-```
+Also retired (**501**): `GET /reports/{id}/status`, `GET /reports/{id}/download`,
+`GET /reports/recommendations/{patient_id}`, `POST /reports/{id}/export-to-fhir`
+(use `/fhir/*` for real FHIR export).
 
 ### Workflow Endpoints
 
