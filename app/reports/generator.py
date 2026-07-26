@@ -329,6 +329,15 @@ logger.info(
 )
 
 
+def _is_uuid_like(s: str) -> bool:
+    """Return True if *s* parses as a UUID (used to detect placeholder sample IDs)."""
+    try:
+        uuid.UUID(str(s))
+        return True
+    except Exception:
+        return False
+
+
 # Environment variable helper function
 def _env_flag(name: str, default: bool = False) -> bool:
     """Helper function to read boolean environment variables."""
@@ -476,8 +485,8 @@ def generate_pdf_report(
                             key=lambda p: os.path.getmtime(p), reverse=True
                         )
                         tsv_candidates.extend(any_pharmcat)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Swallowed exception: %s", e, exc_info=True)
                 # Also probe parent directory of the report directory (the patient-level dir)
                 try:
                     parent_dir = os.path.dirname(report_dir_probe)
@@ -498,8 +507,8 @@ def generate_pdf_report(
                             key=lambda p: os.path.getmtime(p), reverse=True
                         )
                         tsv_candidates.extend(any_pharmcat_parent)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Swallowed exception: %s", e, exc_info=True)
                 tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
                 if tsv_path:
                     _diplos, _ = parse_pharmcat_tsv(tsv_path)
@@ -507,8 +516,8 @@ def generate_pdf_report(
                         logger.info(
                             f"Executive Summary TSV selected (PDF path): {tsv_path}"
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Swallowed exception: %s", e, exc_info=True)
                     # Determine file type from workflow for wild type labeling
                     inferred_file_type = "vcf"
                     if workflow and isinstance(workflow, dict):
@@ -905,9 +914,6 @@ def create_interactive_html_report(
 
     Returns:
     """
-    # Local import to avoid circular import
-    from app.reports.pdf_generators import generate_pdf_report_dual_lane
-
     try:
         logger.info(
             f"Generating interactive HTML report for patient {patient_id}, report {report_id}"
@@ -951,8 +957,8 @@ def create_interactive_html_report(
                 header_txt_candidates.extend(
                     glob.glob(os.path.join(patient_dir, "*.header.txt"))
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Swallowed exception: %s", e, exc_info=True)
             # Filter to existing and pick newest by mtime
             existing = [p for p in header_txt_candidates if os.path.exists(p)]
             if existing:
@@ -1019,8 +1025,8 @@ def create_interactive_html_report(
                 if png_bytes:
                     b64 = base64.b64encode(png_bytes).decode("ascii")
                     workflow_png_data_uri = f"data:image/png;base64,{b64}"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Swallowed exception: %s", e, exc_info=True)
         if not workflow_png_url and not workflow_png_data_uri:
             # Try inline SVG as a last renderer option
             try:
@@ -1069,13 +1075,6 @@ def create_interactive_html_report(
         }
 
         # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
-        def _is_uuid_like(s: str) -> bool:
-            try:
-                uuid.UUID(str(s))
-                return True
-            except Exception:
-                return False
-
         display_sample = report_data.get("sample_identifier") or report_data.get(
             "patient_id"
         )
@@ -1097,8 +1096,15 @@ def create_interactive_html_report(
                             candidates.append(base)
                 if candidates:
                     display_sample = candidates[0]
-            except Exception:
-                pass
+                    logger.info(
+                        f"Derived display_sample_id from PharmCAT filenames: {display_sample}"
+                    )
+            except Exception as e:
+                logger.debug(
+                    "Interactive display_sample_id derivation failed: %s",
+                    e,
+                    exc_info=True,
+                )
         report_data["display_sample_id"] = display_sample
 
         # Load and render the HTML template
@@ -1584,8 +1590,8 @@ def _build_canonical_diplotypes(
                         logger.debug(
                             f"Assigned 'Likely Wild Type' to {row.get('gene')} (diplotype: {diplotype_str}, file_type: {file_type})"
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Swallowed exception: %s", e, exc_info=True)
             canonical_rows.append(row)
         else:
             # Placeholder row for genes without results
@@ -1855,15 +1861,6 @@ def generate_report(
                 # Create minimal data structure to prevent crashes
                 data = {"genes": [], "drugRecommendations": [], "file_type": "unknown"}
 
-    # Enrich with PyPGx-only genes (not present in PharmCAT) if available
-    try:
-        # Determine report directory based on provided output_dir and patient id (if known later)
-        # We'll append later once we compute report_dir, but we can attempt a global pattern too
-        # Prefer per-patient directory lookup once we know patient_id (set below), so we postpone
-        pass
-    except Exception:
-        pass
-
     # Map recommendations to template-compatible format
     raw_recs = data.get("drugRecommendations", [])
     logger.info(f"DEBUG - Raw drugRecommendations count: {len(raw_recs)}")
@@ -1942,8 +1939,8 @@ def generate_report(
                 tsv_candidates.extend(
                     glob.glob(os.path.join(report_dir_probe, "*_pgx_pharmcat.tsv"))
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Swallowed exception: %s", e, exc_info=True)
             try:
                 any_report_tsv = glob.glob(
                     os.path.join(report_dir_probe, "*.pharmcat.tsv")
@@ -1952,8 +1949,8 @@ def generate_report(
                 if any_report_tsv:
                     any_report_tsv.sort(key=lambda p: os.path.getmtime(p), reverse=True)
                     tsv_candidates.extend(any_report_tsv)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Swallowed exception: %s", e, exc_info=True)
             # Base directory candidates (where reports often land before subdir creation)
             try:
                 tsv_candidates.append(
@@ -1973,16 +1970,16 @@ def generate_report(
                         key=lambda p: os.path.getmtime(p), reverse=True
                     )
                     tsv_candidates.extend(any_report_tsv_base)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Swallowed exception: %s", e, exc_info=True)
             # Pick first existing in order
             tsv_path = next((p for p in tsv_candidates if os.path.exists(p)), None)
             if tsv_path:
                 diplos, _recs = parse_pharmcat_tsv(tsv_path)
                 try:
                     logger.info(f"Executive Summary TSV selected: {tsv_path}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Swallowed exception: %s", e, exc_info=True)
                 for row in diplos:
                     # Get phenotype, applying wild type logic if needed
                     # Fallback to source diplotype if recommendation lookup diplotype is empty
@@ -2103,8 +2100,8 @@ def generate_report(
         if display_sample:
             template_data["sample_identifier"] = display_sample
             template_data["display_sample_id"] = display_sample
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Swallowed exception: %s", e, exc_info=True)
 
     logger.info(f"Template data prepared with {len(template_data)} fields")
     logger.info(f"Template data keys: {list(template_data.keys())}")
@@ -2145,8 +2142,8 @@ def generate_report(
             for p in glob.glob(os.path.join(report_dir, "*.header.txt")):
                 if p not in header_txt_candidates:
                     header_txt_candidates.append(p)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
         # Pick the first existing candidate (prefer exact match if present)
         selected = None
         for cand in header_txt_candidates:
@@ -2664,8 +2661,10 @@ def generate_report(
                 logger.info(
                     f"Executive Summary rows (TSV): {len(execsum_rows_from_tsv) if execsum_rows_from_tsv else 0}; Using TSV: {EXECSUM_USE_TSV}"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Executive Summary row count log failed: %s", e, exc_info=True
+                )
             # Inject display sample id for WeasyPrint HTML template
             try:
                 display_sample = (
@@ -2701,10 +2700,13 @@ def generate_report(
                             )
                     except Exception as e:
                         logger.debug(
-                            f"Display sample derivation from files failed: {e}"
+                            f"Display sample derivation from files failed: {e}",
+                            exc_info=True,
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Display sample id injection failed: %s", e, exc_info=True
+                )
 
             # Add debug information for troubleshooting
             try:
@@ -2974,6 +2976,11 @@ def generate_report(
                     if PDF_FALLBACK:
                         logger.info("🔄 Attempting ReportLab fallback...")
                         try:
+                            # Lazy import avoids circular import with pdf_generators
+                            from app.reports.pdf_generators import (
+                                generate_pdf_report_dual_lane,
+                            )
+
                             result = generate_pdf_report_dual_lane(
                                 template_data=template_data,
                                 output_path=pdf_path,
@@ -2995,6 +3002,9 @@ def generate_report(
 
             elif PDF_ENGINE == "reportlab":
                 try:
+                    # Lazy import avoids circular import with pdf_generators
+                    from app.reports.pdf_generators import generate_pdf_report_dual_lane
+
                     result = generate_pdf_report_dual_lane(
                         template_data=template_data,
                         output_path=pdf_path,

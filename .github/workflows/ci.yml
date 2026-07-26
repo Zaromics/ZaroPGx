@@ -104,7 +104,7 @@ jobs:
         env:
           ZAROPGX_E2E: "1"
           ZAROPGX_E2E_BASE_URL: http://127.0.0.1:18765
-        run: uv run pytest -m e2e -q --tb=short
+        run: uv run pytest -m e2e -q --tb=short --zaropgx-e2e
 
       - name: Dump logs on failure
         if: failure()

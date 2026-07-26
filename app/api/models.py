@@ -429,11 +429,12 @@ class DrugRecommendation(BaseModel):
     gene: str = Field(..., description="Gene relevant to the drug")
     guideline: str = Field(..., description="Guideline source (e.g., CPIC)")
     recommendation: str = Field(..., description="Specific recommendation text")
-    classification: str = Field(
-        ..., description="Recommendation strength (e.g., 'Strong', 'Moderate')"
+    classification: Optional[str] = Field(
+        None,
+        description="Recommendation strength when known (e.g., 'Strong', 'Moderate'); omit rather than invent",
     )
     literature_references: Optional[List[str]] = Field(
-        None, description="Supporting literature references"
+        None, description="Supporting literature references when known; omit rather than invent"
     )
 
 

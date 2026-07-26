@@ -75,6 +75,13 @@ function exportToFhir() {
         })
     })
     .then(function(response) {
+        if (response.status === 501) {
+            return response.json().then(function(body) {
+                var detail = (body && body.detail) ? body.detail :
+                    'This push-to-EHR path is retired. Use /fhir/* export/save routes instead.';
+                throw new Error(detail);
+            });
+        }
         if (!response.ok) {
             throw new Error('Export failed: ' + response.statusText);
         }
