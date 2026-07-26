@@ -2,12 +2,16 @@
 Workflow Progress Calculator
 
 Centralized progress calculation system for ZaroPGx workflows based on workflow_logic.md.
-This module provides a single source of truth for workflow progress percentage and stage mapping.
+This module provides a single source of truth for workflow progress percentage.
+
+Stage / step vocabulary (enum, step→stage map, display names) lives in
+``app.services.workflow_stages`` — import ``WorkflowStage`` from there (re-exported
+here for existing call sites).
 
 The progress calculation follows the workflow stages defined in updated workflow_logic.md:
 - 1-9% - ANALYSIS: File info and Header inspection
 - 10-19% - GATK: Conversion to BAM from SAM/CRAM (skip if n/a)
-- 20-34% - HLA: OptiType/ZaroHLA step (skip if n/a)
+- 20-34% - HLA / OptiType: ZaroHLA step (skip if n/a)
 - 35-49% - GATK: Conversion to BAM from FASTQ (skip if n/a)
 - 50-64% - PYPGX: PyPGx main step (skip if n/a)
 - 65-74% - PYPGX: PyPGx bam2vcf conversion step (skip if n/a)
@@ -16,28 +20,20 @@ The progress calculation follows the workflow stages defined in updated workflow
 - 95-99% - REPORT: Generating PDF and HTML reports
 - 100% - COMPLETE: Processing complete!
 
-Note: File uploading has its own progress bar and is no longer a workflow stage.
+Note: File uploading has its own progress bar; ``WorkflowStage.UPLOAD`` is soft only.
 """
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
+from app.services.workflow_stages import (
+    WorkflowStage,
+    normalize_step_name,
+    stage_from_step,
+)
+
 logger = logging.getLogger(__name__)
-
-
-class WorkflowStage(str, Enum):
-    """Workflow stages as defined in workflow_logic.md"""
-
-    UPLOADING = "uploading"
-    ANALYSIS = "analysis"
-    GATK = "gatk"
-    HLA = "hla"
-    PYPGX = "pypgx"
-    PHARMCAT = "pharmcat"
-    REPORT = "report"
-    COMPLETED = "completed"
 
 
 @dataclass
@@ -131,7 +127,7 @@ class WorkflowProgressCalculator:
         """
         if not steps:
             return ProgressInfo(
-                stage=WorkflowStage.UPLOADING,
+                stage=WorkflowStage.UPLOAD,
                 progress_percentage=0,
                 message="Starting workflow",
             )
@@ -297,7 +293,7 @@ class WorkflowProgressCalculator:
         max_achieved_progress = 0
         for step in steps:
             if step.get("status") == "completed":
-                step_name = step.get("step_name")
+                step_name = normalize_step_name(step.get("step_name") or "")
                 if step_name in step_progress_mapping:
                     _, step_max = step_progress_mapping[step_name]
                     max_achieved_progress = max(max_achieved_progress, step_max)
@@ -305,7 +301,7 @@ class WorkflowProgressCalculator:
         # Find the current running step and use its container progress
         for step in steps:
             if step.get("status") == "running":
-                current_step_name = step.get("step_name")
+                current_step_name = normalize_step_name(step.get("step_name") or "")
                 container_progress = self._extract_container_progress(
                     step, current_stage
                 )
@@ -369,21 +365,8 @@ class WorkflowProgressCalculator:
     def _map_step_name_to_stage(
         self, step_name: str, workflow_config: Optional[Dict] = None
     ) -> WorkflowStage:
-        """Map step name to workflow stage."""
-        step_mapping = {
-            "header_analysis": WorkflowStage.ANALYSIS,
-            "gatk_cram_sam_to_bam": WorkflowStage.GATK,
-            "gatk_alignment": WorkflowStage.GATK,
-            "hla_typing": WorkflowStage.HLA,
-            "pypgx_analysis": WorkflowStage.PYPGX,
-            "pypgx_bam2vcf": WorkflowStage.PYPGX,
-            "pharmcat_analysis": WorkflowStage.PHARMCAT,
-            "diagram_generation": WorkflowStage.REPORT,
-            "report_generation": WorkflowStage.REPORT,
-            "completed": WorkflowStage.COMPLETED,
-        }
-
-        return step_mapping.get(step_name, WorkflowStage.ANALYSIS)
+        """Map step name to workflow stage via shared vocabulary."""
+        return stage_from_step(step_name or "")
 
     def _get_current_step_name(
         self, current_stage: WorkflowStage, steps: List[Dict]
@@ -405,7 +388,7 @@ class WorkflowProgressCalculator:
             if step.get("status") == "running":
                 step_name = step.get("step_name", "")
                 if self._map_step_name_to_stage(step_name) == current_stage:
-                    return step_name
+                    return normalize_step_name(step_name) or step_name
 
         # If no running step found, return the default step name for the stage
         return stage_to_step_mapping.get(current_stage, "unknown")
@@ -431,7 +414,7 @@ class WorkflowProgressCalculator:
         base_message = stage_def.get("message", "Processing...")
 
         # Add stage-specific details
-        if stage == WorkflowStage.UPLOADING:
+        if stage == WorkflowStage.UPLOAD:
             return f"{base_message} - {len(steps)} steps remaining"
         elif stage == WorkflowStage.ANALYSIS:
             return f"{base_message} - Inspecting file headers"
