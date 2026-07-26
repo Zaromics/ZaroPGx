@@ -1,6 +1,7 @@
 """Shared pytest fixtures for the ZaroPGx test suite."""
 
 import os
+import sys
 
 # Environment has to be set before any `app.*` module is imported: app.main and
 # app.api.db read configuration at import time.
@@ -22,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.db import Base, get_db
 from app.services.websocket_manager import ConnectionManager
 from app.services.workflow_service import WorkflowService
+from tests.e2e.harness import apply_e2e_env, e2e_requested, vacuous_e2e_failure
 
 # Postgres schemas the ORM models are qualified with. SQLite has no CREATE
 # SCHEMA, but an ATTACHed database occupies the same namespace, so attaching an
@@ -30,8 +32,48 @@ from app.services.workflow_service import WorkflowService
 _PG_SCHEMAS = ("user_data", "job_monitoring")
 
 
+def pytest_addoption(parser):
+    # Must live in the top-level tests/conftest.py — nested conftests cannot
+    # register CLI options.
+    parser.addoption(
+        "--zaropgx-e2e",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable full-stack e2e (equivalent to ZAROPGX_E2E=1). Prefer this over "
+            "relying on shell export alone — Git Bash often does not pass env to "
+            "Win32 python.exe."
+        ),
+    )
+
+
+def pytest_configure(config):
+    apply_e2e_env(
+        os.environ,
+        cli_flag=bool(config.getoption("--zaropgx-e2e")),
+    )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Fail vacuous green runs when e2e was explicitly requested."""
+    requested = e2e_requested(
+        os.environ,
+        cli_flag=bool(session.config.getoption("--zaropgx-e2e", default=False)),
+    )
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    passed = len(reporter.stats.get("passed", [])) if reporter else 0
+    if vacuous_e2e_failure(requested=requested, passed=passed, exitstatus=exitstatus):
+        sys.stderr.write(
+            "ERROR: e2e was requested (ZAROPGX_E2E=1 or --zaropgx-e2e) but 0 tests "
+            "passed - likely all skipped because the enable flag never reached "
+            "pytest. Re-run with: pytest -m e2e --zaropgx-e2e\n"
+        )
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
 def _running_e2e(request: pytest.FixtureRequest) -> bool:
-    if os.environ.get("ZAROPGX_E2E") == "1":
+    if e2e_requested(os.environ):
         return True
     if request.node.get_closest_marker("e2e") is not None:
         return True
@@ -41,8 +83,8 @@ def _running_e2e(request: pytest.FixtureRequest) -> bool:
 
 @pytest.fixture(scope="session")
 def engine():
-    # Session-scoped: detect via env set by e2e scripts / CI before pytest
-    if os.environ.get("ZAROPGX_E2E") == "1":
+    # Session-scoped: detect via env set by e2e scripts / CI / --zaropgx-e2e
+    if e2e_requested(os.environ):
         yield None
         return
 

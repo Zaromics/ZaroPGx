@@ -370,10 +370,11 @@ ZaroPGx/
 - The app consistently generates its own reports (PDF + interactive HTML)
 - When available, original PharmCAT reports are copied with normalized names (`<file_id>_pgx_pharmcat.*`)
 
-## FHIR Export (Optional) (projected v0.3)
+## FHIR Export (Optional)
 
 - HAPI FHIR server is bundled and exposed at `http://localhost:8090`
-- Report export endpoint: `POST /reports/{report_id}/export-to-fhir`
+- Bundle generation / preview / save: `/fhir/*` (`fhir_export_router`)
+- `POST /reports/{report_id}/export-to-fhir` returns **501** (retired; previously posted fabricated genotypes)
 
 ## Dependency Management
 

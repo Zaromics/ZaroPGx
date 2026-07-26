@@ -15,8 +15,11 @@ else
   PYTEST=(uv run pytest)
 fi
 
+# --zaropgx-e2e is required on Windows/Git Bash: shell `export` often does not
+# reach Win32 python.exe, which previously caused a silent skip + exit 0.
 set +e
-"${PYTEST[@]}" -m e2e -q --tb=short
+env ZAROPGX_E2E=1 ZAROPGX_E2E_BASE_URL="$ZAROPGX_E2E_BASE_URL" \
+  "${PYTEST[@]}" -m e2e -q --tb=short --zaropgx-e2e
 status=$?
 set -e
 if [[ "$status" -eq 0 ]]; then
