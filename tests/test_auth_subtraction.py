@@ -39,16 +39,16 @@ def _dependency_dump(app) -> list[str]:
 
 
 def test_secret_key_is_single_sourced():
-    from app.api.utils import security
     from app import main
+    from app.api.utils import security
 
     assert main.SECRET_KEY is security.SECRET_KEY
     assert main.ACCESS_TOKEN_EXPIRE_MINUTES == security.ACCESS_TOKEN_EXPIRE_MINUTES
 
 
 def test_get_current_user_is_gone():
-    from app.api.utils import security
     from app import main
+    from app.api.utils import security
 
     assert not hasattr(security, "get_current_user")
     assert not hasattr(main, "get_current_user")
