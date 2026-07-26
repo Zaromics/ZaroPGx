@@ -276,7 +276,7 @@ erDiagram
 ### Docker Compose Structure
 
 ```yaml
-see `docker-compose.yml.example`
+see `compose.yml`
 ```
 
 ### Network Architecture

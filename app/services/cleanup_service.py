@@ -33,14 +33,10 @@ class CleanupService:
         self.reports_dir = Path("/data/reports")
         self.uploads_dir = Path("/data/uploads")
 
-        # Ensure directories exist
-        for directory in [
-            self.data_dir,
-            self.temp_dir,
-            self.reports_dir,
-            self.uploads_dir,
-        ]:
-            directory.mkdir(parents=True, exist_ok=True)
+        # Deliberately does NOT create these directories. This class is instantiated at
+        # module scope (see the bottom of this file), so creating them here would happen on
+        # import — littering the host with C:\data and C:\tmp off-container. app.main's
+        # startup_event creates them, and every method here tolerates a missing directory.
 
     def cleanup_workflow_files(
         self,

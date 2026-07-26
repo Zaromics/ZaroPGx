@@ -58,9 +58,9 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 - **Genome Reference downloader**
   - Fetches reference materials including genome assemblies
   - Service Ports (Host → Container) 5050 → 5050
-- **PostgreSQL 17 DB** - (SQLAlchemy 2, Psycopg 3 & schema managed with Alembic)
+- **PostgreSQL 18 DB** - (SQLAlchemy 2, Psycopg 3; fresh schemas initialized from `db/init/00_complete_database_schema.sql`)
   - Stores data of guidelines, sample runs, workflow metadata, and generated reports, allowing for persistent and local analysis
-  - Initialization under `db/init` and `db/migrations` 
+  - Initialization SQL under `db/init`
   - Service Ports (Host → Container) 5444 → 5432
 - **GATK service** - (FastAPI wrapped)
   - Handles various conversion, haplotyping, and preprocessing operations
@@ -95,7 +95,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 **NB: The simple bootstrap script will automatically install missing dependencies for you!**
 
 **Linux** environment preferred
-- *Docker*; *Docker Compose*; *Git* -- at minimum
+- *Docker*; *Docker Compose* (>= 2.24); *Git* -- at minimum
 - Auto-install supported via: apt, yum, dnf, pacman
 
 **Windows 10/11** requires *WSL2* installed and configured
@@ -202,11 +202,18 @@ If you prefer more control or want to customize the installation:
    # edit .env as needed
    ```
 
-   **Choose your Docker Compose configuration** Start with example template
+   **Docker Compose configuration** `compose.yml` is tracked in the repository, so you
+   already have it and it updates with `git pull`. Do not edit it directly — put your
+   customizations in `compose.override.yml`, which Compose merges automatically:
    ```bash
-   cp docker-compose.yml.example docker-compose.yml
+   # optional: only if you need to change service settings
+   cat > compose.override.yml <<'YAML'
+   services:
+     app:
+       ports:
+         - "9000:8000"
+   YAML
    ```
-   - edit docker-compose.yml as needed to customize service settings
 
 3. **Start services**
    
@@ -265,7 +272,7 @@ If you prefer more control or want to customize the installation:
 
 ### REST API (Advanced and Debugging)
 
-**See the FastAPI docs on the reference instance's page: https://pgx.zaromics.net/api-reference**
+**See the FastAPI docs on the reference instance's page: https://pgx.zaromics.com/api-reference**
 
 **Upload a genomic file**
 ```bash
@@ -300,6 +307,28 @@ curl -X POST http://localhost:8765/reports/generate \
   - `<file_id>_pgx_report_interactive.html`
   - Optional PharmCAT originals: `<file_id>_pgx_pharmcat.{html,json,tsv}`
 
+## Testing
+
+**Fast suite** (no Docker):
+
+```bash
+uv run pytest -q -m "not e2e"
+```
+
+On Windows, prefer the project venv if `uv run pytest` fails building pysam:
+`.venv\Scripts\python.exe -m pytest -q -m "not e2e"`.
+
+**Full-stack e2e** (Docker required; isolated project `zaropgx_e2e` on port `18765`):
+
+```bash
+./scripts/e2e.sh
+```
+
+Use Git Bash or WSL on Windows. Needs substantial Docker RAM (16 GB+ recommended).
+First run may download PharmCAT reference data and build images; subsequent runs reuse
+BuildKit cache. CI runs the same harness on every PR (separate required job). On
+failure the stack stays up and logs land in `e2e-logs/`.
+
 ## Sample Data Access
 For real-world sample data, try browsing the **Personal Genome Project**:
 - https://my.pgp-hms.org/public_genetic_data
@@ -322,7 +351,7 @@ ZaroPGx/
 │   ├── utils/                # Utilities
 │   └── visualizations/       # Workflow diagrams and visual tools using Kroki
 ├── data/                   # Runtime data (reports, uploads, temp files)
-├── db/                     # Postgres DB initialization and migrations
+├── db/                     # PostgreSQL initialization SQL and manual upgrade guidance
 ├── docker/                 # Service Dockerfiles and service wrappers
 │   ├── gatk-api/             # GATK service FastAPI
 │   ├── genome-downloader/    # Reference genome fetcher (typically needs to only run once)
@@ -383,7 +412,7 @@ rm -rf reference/
 
 **Remove database data only:**
 ```bash
-docker volume rm pgx_pgdata pgx_fhir-data pgx_pharmcat-references
+docker volume rm zaropgx_pgdata zaropgx_fhir-data zaropgx_pharmcat-references
 ```
 
 ## Contributions are welcome and are gratefully appreciated!

@@ -7,11 +7,32 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from weasyprint import CSS, HTML
-from weasyprint.text.fonts import FontConfiguration  # type: ignore
+
+# Optional import: WeasyPrint needs native Pango/GObject libraries that are present in the
+# container but not on a bare host. Importing it at module scope makes `import app.main`
+# (and therefore the whole test suite) fail outside Docker. Guard it the way pysam is
+# guarded in app/api/utils/file_processor.py; generate_pdf_from_html already branches on
+# FontConfiguration being falsy.
+try:
+    from weasyprint import CSS, HTML
+    from weasyprint.text.fonts import FontConfiguration  # type: ignore
+
+    _HAS_WEASYPRINT = True
+except Exception as _weasyprint_import_error:  # optional dependency at runtime
+    CSS = None  # type: ignore
+    HTML = None  # type: ignore
+    FontConfiguration = None  # type: ignore
+    _HAS_WEASYPRINT = False
+    # Loud on purpose: inside the container this import is expected to succeed, and a silent
+    # failure would just downgrade every PDF to ReportLab with nobody noticing.
+    logging.getLogger(__name__).warning(
+        "WeasyPrint unavailable (%s); PDF generation will fall back to ReportLab. "
+        "Inside the container this indicates missing Pango/GObject libraries.",
+        _weasyprint_import_error,
+    )
 
 from app.core.version_manager import get_all_versions, get_versions_dict
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
@@ -364,8 +385,27 @@ if not weasyprint_logger.handlers:
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
 
+
+def activity_score_num(value: Any) -> Optional[float]:
+    """Coerce activity scores to float for templates (PyPGx may leave strings)."""
+    if value is None or value is False:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text or text.lower() in {"n/a", "na", "none", "null", "unknown", "-"}:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
 # Initialize Jinja2 environment
 env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+env.filters["activity_score_num"] = activity_score_num
 
 
 # Custom exceptions
@@ -663,6 +703,11 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
         html_content: HTML content to convert
         output_path: Path to save the PDF
     """
+    if not _HAS_WEASYPRINT:
+        raise ImportError(
+            "WeasyPrint is not available in this environment; "
+            "set PDF_ENGINE=reportlab or run inside the app container."
+        )
     try:
         # Load CSS if it exists and configure fonts
         stylesheets = []
@@ -2473,6 +2518,7 @@ def generate_report(
                 ),
                 autoescape=select_autoescape(["html", "xml"]),
             )
+            env.filters["activity_score_num"] = activity_score_num
             template = env.get_template("report_template.html")
             logger.info("HTML template loaded successfully")
 

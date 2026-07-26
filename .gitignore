@@ -51,6 +51,13 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Test sqlite DB. tests/ used to point SQLALCHEMY_DATABASE_URL at
+# sqlite:///./test.db, which is CWD-relative; conftest.py now uses an
+# in-memory database, but keep these so a stray run cannot commit one.
+test.db
+test.db-journal
+tests/test.db
+
 # Translations
 *.mo
 *.pot
@@ -70,6 +77,8 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+# Agent design/plan scratch — local only, not for the public repo
+docs/superpowers/
 
 # PyBuilder
 .pybuilder/
@@ -121,6 +130,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.e2e
 .venv
 env/
 venv/
@@ -128,9 +138,10 @@ ENV/
 env.bak/
 venv.bak/
 
-# Docker compose yml (make changes to the example file(s) only)
-docker-compose.yml
-compose.yml
+# Docker Compose. compose.yml is TRACKED so fixes ship with `git pull`; put local
+# customization in compose.override.yml, which Compose merges automatically.
+compose.override.yml
+docker-compose.override.yml
 
 # Spyder project settings
 .spyderproject
@@ -167,6 +178,10 @@ cython_debug/
 /data/uploads/
 /data/reports/
 /data/temp/
+# Runtime version stamps written by container start scripts into the ./data bind mount.
+# Keep data/versions/about.md tracked; ignore the generated JSON manifests.
+/data/versions/*.json
+
 
 /scripts/example-workflow-usage.sh
 /scripts/test_cancel_endpoints.py
@@ -195,16 +210,11 @@ reference/*
 # Development files and notes
 /dev-notes/*
 /resources/*
-/tests/*
 /scripts/dev-scripts/*
 /data/manual-runs/*
 
 # Developer documentation
 /dev-docs/*
-
-# Sphinx docs
-/docs/getting-started.md
-/docs/developer/testing.md
 
 # Cursor rules
 .cursorrules
@@ -223,13 +233,6 @@ work/
 # Old versions kept for reference
 *.old
 *.old/*
-alembic.ini.old
-alembic.old/
-migrations.old/
-
-# Stargazer stub is still lingering, need to figure out how to remove the stale scaffold file
-stargazer.zip
-stargazer.zip/
 
 # FHIR data
 /data/fhir-data/h2.mv.db
@@ -242,4 +245,7 @@ app/pharmcat/logs.txt
 .env.bak
 docker-compose.yml.bak
 CLAUDE.md
+
+# Claude Code per-developer settings (a shared .claude/settings.json stays tracked)
+.claude/settings.local.json
 

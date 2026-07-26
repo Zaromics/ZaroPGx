@@ -12,7 +12,7 @@ from app.api.db import get_db, get_guidelines_for_gene_drug, register_report
 from app.api.models import DrugRecommendation, ReportRequest, ReportResponse
 from app.reports.fhir_client import FhirClient
 
-from ..utils.security import get_current_user, get_optional_user
+from ..utils.security import get_optional_user
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,8 +23,8 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 # Constants
 REPORT_DIR = os.environ.get("REPORT_DIR", "/data/reports")
-# Ensure reports directory exists
-os.makedirs(REPORT_DIR, exist_ok=True)
+# Not created at import time — the default is an absolute container path, so importing this
+# module off-host would create it on the host. app.main's startup_event creates it instead.
 
 
 # Background task to generate report

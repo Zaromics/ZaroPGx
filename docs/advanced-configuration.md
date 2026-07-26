@@ -19,8 +19,10 @@ This document lists environment variables and configuration flags used in the Za
 
 *Application configs*
 - **LOG_LEVEL**: Logging level for the app. Default: `DEBUG`.
-- **SECRET_KEY**: Secret key for auth/token signing. Required in production. Default in code: `supersecretkey`.
-- **ZAROPGX_DEV_MODE**: If `true`, disables authentication for development. Default: `true`.
+- **SECRET_KEY**: Secret key for auth/token signing. Required; start-docker generates a per-install value. Empty or known placeholders refuse to start.
+- **ZAROPGX_DEV_MODE**: Legacy flag. `false` does **not** enable auth (logs a warning). Prefer `ZAROPGX_AUTH_MODE`. Default: `true`.
+- **ZAROPGX_AUTH_MODE**: Front-door gate mode: `open` (default, no-op), `audit` (log would-deny), or `password` (require cookie/Bearer).
+- **ZAROPGX_AUTH_PASSWORD**: Shared install password when mode is `password`. Anyone who knows it can reach every patient report on that instance.
 - **ALGORITHM**: JWT algorithm. Used as constant `HS256` in code.
 - **ACCESS_TOKEN_EXPIRE_MINUTES**: Token expiry minutes. Used as constant `30` in code.
 - **AUTHOR_NAME**: Override author shown in reports. If unset, read from `pyproject.toml` or fallback to `Zaromics Initiative`.
@@ -29,8 +31,8 @@ This document lists environment variables and configuration flags used in the Za
 
 *Reports composition and content*
 - **INCLUDE_PHARMCAT_HTML**: Include PharmCAT HTML in reports. Default: `true`.
-- **INCLUDE_PHARMCAT_JSON**: Include PharmCAT JSON output in reports. Default: `false`.
-- **INCLUDE_PHARMCAT_TSV**: Include PharmCAT calls-only TSV output in reports. Default: `false`.
+- **INCLUDE_PHARMCAT_JSON**: Include PharmCAT JSON output in reports. Default: `true` (via `.env`; delivered through app `env_file`).
+- **INCLUDE_PHARMCAT_TSV**: Include PharmCAT calls-only TSV output in reports. Default: `true` (via `.env`; delivered through app `env_file`).
 - **EXECSUM_USE_TSV**: Use TSV rather than JSON report to generate Executive Summary. Default: `false`.
 - **PDF_ENGINE**: Primary PDF engine. `weasyprint` or `reportlab`. Default: `weasyprint`.
 - **PDF_FALLBACK**: If `true`, try alternate engine on failure. Default: `true`.
@@ -52,7 +54,7 @@ This document lists environment variables and configuration flags used in the Za
 - **GATK_API_URL**: GATK wrapper API base URL. Default: `http://gatk-api:5000`.
 - **PYPGX_API_URL**: PyPGx wrapper API base URL. Default: `http://pypgx:5000`.
 - **PHARMCAT_API_URL**: PharmCAT wrapper base URL. Default: `http://pharmcat:5000`.
-- **KROKI_URL**: Kroki rendering service base URL. Default: `http://localhost:8001` (code) or `http://kroki:8000` (compose).
+- **KROKI_URL**: Kroki rendering service base URL. Compose sets `http://kroki:8000` (topology); do not set this in `.env`.
 - **FHIR_SERVER_URL**: HAPI FHIR server URL. Default: `http://fhir-server:8080/fhir`.
 
 ### Paths and storage
@@ -68,12 +70,12 @@ This document lists environment variables and configuration flags used in the Za
 
 ### PostgreSQL Database
 - **DB_USER**: Database user. Default: `zaropgx_user` (app/db.py);
-- **DB_PASSWORD**: Database password. Default: `zaropgx_password` (app/db.py). In docker-compose init: `test123`.
+- **DB_PASSWORD**: Database password. Required when `DATABASE_URL` is unset. Compose hard-fails if unset (`${DB_PASSWORD:?...}`); start-docker generates a per-install value only when no Postgres volume exists yet.
 - **DB_HOST**: Database host. Default: `db`.
 - **DB_PORT**: Database port. Default: `5432`.
 - **DB_NAME**: Database name. Default: `zaropgx_db`.
-- **DATABASE_URL**: Full SQLAlchemy URL. If not provided, constructed from the above.
-- **POSTGRES_PASSWORD**: Postgres container password (docker-compose).
+- **DATABASE_URL**: Full SQLAlchemy URL. Preferred when set (compose always passes one); otherwise constructed from the `DB_*` parts.
+- **POSTGRES_PASSWORD**: Postgres container password — sourced from `DB_PASSWORD` in compose.
 
 ### Nextflow executor and workflow orchestration
 - **NXF_HOME**: Nextflow home/cache directory. Defaults to `/opt/nextflow` in containers or set to `/data/nextflow` for persistence in some wrappers.
@@ -99,7 +101,10 @@ This document lists environment variables and configuration flags used in the Za
 - **PHARMCAT_PREFERRED**: In report generator, optional hint to prefer PharmCAT where both can call. Default: `false`.
 
 ### PharmCAT wrapper service
-- **PHARMCAT_VERSION**: Version for pipeline package in container build (ARG and runtime metadata).
+- **PHARMCAT_VERSION**: Version for pipeline package in container build (ARG) and runtime
+  metadata / version stamp (env). Default `3.4.0`.
+- **PHARMCAT_REF_CACHE**: Named-volume mount path for GRCh38 reference files (default
+  `/pharmcat-references`). Must not be `/pharmcat` — that path comes from the image.
 - **PHARMCAT_LOG_LEVEL**: Log level inside PharmCAT wrapper. Default: `DEBUG`.
 - **PHARMCAT_JAR_PATH**: Path to PharmCAT JAR for fallback direct execution. Default: `/pharmcat/pharmcat.jar`.
 - **PHARMCAT_REFERENCE_DIR**: PharmCAT references directory. Default: `/pharmcat`.

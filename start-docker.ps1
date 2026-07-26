@@ -56,6 +56,99 @@ if ($scriptDir -and (Test-Path $scriptDir)) {
     $didPush = $true
 }
 
+function Set-EnvVarInFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+    $lines = @()
+    if (Test-Path ".env") {
+        $lines = Get-Content -LiteralPath ".env"
+    }
+    $done = $false
+    $updated = foreach ($line in $lines) {
+        if ($line -match "^$([regex]::Escape($Key))=") {
+            $done = $true
+            "$Key=$Value"
+        } else {
+            $line
+        }
+    }
+    if (-not $done) {
+        $updated = @($updated) + "$Key=$Value"
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines((Join-Path (Get-Location) ".env"), @($updated), $utf8NoBom)
+}
+
+function Get-EnvVarFromFile {
+    param([Parameter(Mandatory = $true)][string]$Key)
+    if (-not (Test-Path ".env")) { return "" }
+    $match = Get-Content -LiteralPath ".env" |
+        Where-Object { $_ -match "^$([regex]::Escape($Key))=" } |
+        Select-Object -Last 1
+    if (-not $match) { return "" }
+    return $match.Substring($Key.Length + 1)
+}
+
+function Test-SecretSentinel {
+    param([AllowEmptyString()][string]$Value)
+    $sentinels = @(
+        "",
+        "change_me",
+        "change_me_in_production",
+        "supersecretkey",
+        "supersecretkey_for_development",
+        "test123"
+    )
+    return $sentinels -contains $Value
+}
+
+function Test-PgdataVolumeExists {
+    docker volume inspect zaropgx_pgdata 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { return $true }
+    docker volume inspect pgx_pgdata 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-InstallSecrets {
+    if (-not (Test-Path ".env")) {
+        Write-Host "  [ERROR] .env is required. DB_PASSWORD has no compose default." -ForegroundColor Red
+        Write-Host "          Re-run and pick a template, or: Copy-Item .env.local .env" -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+
+    $secretKey = Get-EnvVarFromFile -Key "SECRET_KEY"
+    if (Test-SecretSentinel -Value $secretKey) {
+        $bytes = New-Object byte[] 32
+        [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+        # Hex — not Base64 — so values stay URL-safe inside DATABASE_URL / compose.
+        $secretKey = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+        Set-EnvVarInFile -Key "SECRET_KEY" -Value $secretKey
+        Write-Host "  [OK] Generated a per-install SECRET_KEY in .env" -ForegroundColor Green
+    }
+
+    $dbPassword = Get-EnvVarFromFile -Key "DB_PASSWORD"
+    if (Test-SecretSentinel -Value $dbPassword) {
+        if (Test-PgdataVolumeExists) {
+            Write-Host "  [WARN] DB_PASSWORD in .env is empty or a known placeholder, but a Postgres" -ForegroundColor Yellow
+            Write-Host "         data volume already exists. Postgres only honours POSTGRES_PASSWORD on" -ForegroundColor Yellow
+            Write-Host "         first init, so this script will not rotate it (that would brick the stack)." -ForegroundColor Yellow
+            Write-Host "         Put the password that initialized the volume into .env, or rotate with:" -ForegroundColor Yellow
+            Write-Host "           docker compose exec -T db psql -U zaropgx_user -d zaropgx_db \" -ForegroundColor Yellow
+            Write-Host "             -c `"ALTER USER zaropgx_user WITH PASSWORD '...';`"" -ForegroundColor Yellow
+            if ($didPush) { Pop-Location }
+            exit 1
+        }
+        $bytes = New-Object byte[] 24
+        [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+        $dbPassword = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+        Set-EnvVarInFile -Key "DB_PASSWORD" -Value $dbPassword
+        Write-Host "  [OK] Generated a per-install DB_PASSWORD in .env (fresh volume)" -ForegroundColor Green
+    }
+}
+
 # Check for .env file and create from template if needed
 if (-not (Test-Path ".env")) {
     if ($AutoLocal) {
@@ -68,7 +161,7 @@ if (-not (Test-Path ".env")) {
         Write-Host "    1) .env.local      (Recommended for personal/home use)" -ForegroundColor Cyan
         Write-Host "    2) .env.production (For web-facing deployment)" -ForegroundColor Cyan
         Write-Host "    3) .env.example    (Complete configuration with documentation)" -ForegroundColor Cyan
-        Write-Host "    4) Skip             (Use inline defaults - not recommended)" -ForegroundColor Gray
+        Write-Host "    4) Abort           (compose now requires DB_PASSWORD in .env)" -ForegroundColor Gray
         Write-Host ""
         
         $envChoice = Read-Host "Select option [1-4]"
@@ -78,9 +171,10 @@ if (-not (Test-Path ".env")) {
             "1" { $envSource = ".env.local" }
             "2" { $envSource = ".env.production" }
             "3" { $envSource = ".env.example" }
-            "4" { 
-                Write-Host "  Skipping .env creation. Using inline defaults." -ForegroundColor Yellow
-                Write-Host "  Note: Some features may require environment configuration" -ForegroundColor Gray
+            "4" {
+                Write-Host "  [ERROR] Aborted. Copy a template to .env, then re-run." -ForegroundColor Red
+                if ($didPush) { Pop-Location }
+                exit 1
             }
             default { $envSource = ".env.local" }
         }
@@ -89,30 +183,35 @@ if (-not (Test-Path ".env")) {
     if ($envSource -and (Test-Path $envSource)) {
         Copy-Item $envSource ".env"
         Write-Host "  [OK] Created .env from $envSource" -ForegroundColor Green
-        if (-not $AutoLocal) {
-            Write-Host "  Note: Review and customize .env as needed (especially SECRET_KEY)" -ForegroundColor Gray
-        }
     } elseif ($envSource) {
-        Write-Host "  [WARNING] $envSource not found, using inline defaults" -ForegroundColor Yellow
+        Write-Host "  [ERROR] $envSource not found" -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit 1
     }
     Write-Host ""
 } else {
     Write-Host "  [OK] Environment configuration found (.env)" -ForegroundColor Gray
 }
 
-# Check for docker-compose.yml and create from example if needed
-if (-not (Test-Path "docker-compose.yml") -and -not (Test-Path "compose.yml")) {
-    if (Test-Path "docker-compose.yml.example") {
-        Write-Host "  Creating docker-compose.yml from example..." -ForegroundColor Yellow
-        Copy-Item "docker-compose.yml.example" "docker-compose.yml"
-        Write-Host "  [OK] Created docker-compose.yml" -ForegroundColor Green
-        Write-Host "  Note: Review and customize docker-compose.yml if needed" -ForegroundColor Gray
-    } else {
-        Write-Host "  [ERROR] No docker-compose.yml or docker-compose.yml.example found!" -ForegroundColor Red
-        if ($didPush) { Pop-Location }
-        exit 1
-    }
+Ensure-InstallSecrets
+Write-Host ""
+
+# compose.yml is tracked in git, so it arrives and updates with `git pull` rather than
+# being copied once and then frozen forever. Put local customization in
+# compose.override.yml, which Compose merges automatically with no extra flags.
+if (-not (Test-Path "compose.yml")) {
+    Write-Host "  [ERROR] compose.yml not found. Run this from the repository root." -ForegroundColor Red
+    if ($didPush) { Pop-Location }
+    exit 1
 } else {
+    if (Test-Path "docker-compose.yml") {
+        # Compose prefers compose.yml, so a leftover file from the old copy-the-example
+        # flow is now silently ignored along with any edits in it.
+        Write-Host "  [WARN] A legacy docker-compose.yml is present and is NO LONGER USED." -ForegroundColor Yellow
+        Write-Host "         compose.yml (tracked) takes precedence. If you customized the old file:" -ForegroundColor Yellow
+        Write-Host "           mv docker-compose.yml compose.override.yml" -ForegroundColor Yellow
+        Write-Host "         and trim it to only the settings you actually changed." -ForegroundColor Yellow
+    }
     Write-Host "  [OK] Docker Compose configuration found" -ForegroundColor Gray
 }
 
