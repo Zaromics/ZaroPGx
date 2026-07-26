@@ -7,12 +7,8 @@ import pytest
 @pytest.fixture(scope="session")
 def e2e_base_url() -> str:
     if os.environ.get("ZAROPGX_E2E") != "1":
-        pytest.skip(
-            "Set ZAROPGX_E2E=1 and bring the stack up via scripts/e2e-up.sh"
-        )
-    return os.environ.get("ZAROPGX_E2E_BASE_URL", "http://127.0.0.1:18765").rstrip(
-        "/"
-    )
+        pytest.skip("Set ZAROPGX_E2E=1 and bring the stack up via scripts/e2e-up.sh")
+    return os.environ.get("ZAROPGX_E2E_BASE_URL", "http://127.0.0.1:18765").rstrip("/")
 
 
 @pytest.fixture(scope="session")

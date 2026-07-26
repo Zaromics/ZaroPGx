@@ -883,7 +883,7 @@
                             <td class="exec-summary-diplotype{% if (r.rec_lookup_diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = (r.rec_lookup_diplotype or '') %}{% if '/' in diplo %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
                             <td class="exec-summary-phenotype">
                                 {% set ph = r.rec_lookup_phenotype or '' %}
-                                {% set asv = r.rec_lookup_activity_score %}
+                                {% set asv = r.rec_lookup_activity_score|activity_score_num %}
                                 <span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>
                                 {% if asv is not none %}
                                     {% set s = asv if asv >= 0 else 0 %}
@@ -921,8 +921,9 @@
                             <td class="exec-summary-diplotype{% if (d.diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = d.diplotype or '' %}{% if '/' in diplo %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
                             <td class="exec-summary-phenotype">
                                 <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">{{ d.phenotype or 'Unknown' }}</span>
-                                {% if d.activity_score is not none %}
-                                    {% set s = d.activity_score if d.activity_score >= 0 else 0 %}
+                                {% set s = d.activity_score|activity_score_num %}
+                                {% if s is not none %}
+                                    {% set s = s if s >= 0 else 0 %}
                                     {% if s == 0 %}
                                         {% set tier = 0 %}
                                     {% elif s <= 0.25 %}

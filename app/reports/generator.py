@@ -7,7 +7,7 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -385,8 +385,27 @@ if not weasyprint_logger.handlers:
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
 
+
+def activity_score_num(value: Any) -> Optional[float]:
+    """Coerce activity scores to float for templates (PyPGx may leave strings)."""
+    if value is None or value is False:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text or text.lower() in {"n/a", "na", "none", "null", "unknown", "-"}:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
 # Initialize Jinja2 environment
 env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+env.filters["activity_score_num"] = activity_score_num
 
 
 # Custom exceptions
@@ -2499,6 +2518,7 @@ def generate_report(
                 ),
                 autoescape=select_autoescape(["html", "xml"]),
             )
+            env.filters["activity_score_num"] = activity_score_num
             template = env.get_template("report_template.html")
             logger.info("HTML template loaded successfully")
 
