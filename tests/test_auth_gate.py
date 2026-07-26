@@ -7,6 +7,7 @@ a newly added route fails CI instead of shipping unprotected.
 from __future__ import annotations
 
 import os
+
 import pytest
 from fastapi.testclient import TestClient
 

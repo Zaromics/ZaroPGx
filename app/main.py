@@ -49,6 +49,15 @@ from sqlalchemy.orm import Session
 from werkzeug.utils import secure_filename
 
 from app.api.db import get_db
+from app.api.middleware.auth_gate import (
+    AuthGateMiddleware,
+    check_password,
+    clear_session_cookie,
+    mint_session_token,
+    resolve_auth_mode,
+    safe_next_path,
+    set_session_cookie,
+)
 from app.api.models import (
     JobStage,
     Token,
@@ -60,15 +69,6 @@ from app.api.routes.fhir_export_router import router as fhir_export_router
 from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.workflow_router import router as workflow_router
-from app.api.middleware.auth_gate import (
-    AuthGateMiddleware,
-    check_password,
-    clear_session_cookie,
-    mint_session_token,
-    resolve_auth_mode,
-    safe_next_path,
-    set_session_cookie,
-)
 from app.api.utils.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     SECRET_KEY,
