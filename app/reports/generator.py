@@ -2704,9 +2704,7 @@ def generate_report(
                             exc_info=True,
                         )
             except Exception as e:
-                logger.debug(
-                    "Display sample id injection failed: %s", e, exc_info=True
-                )
+                logger.debug("Display sample id injection failed: %s", e, exc_info=True)
 
             # Add debug information for troubleshooting
             try:

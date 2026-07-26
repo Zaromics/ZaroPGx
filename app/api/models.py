@@ -434,7 +434,8 @@ class DrugRecommendation(BaseModel):
         description="Recommendation strength when known (e.g., 'Strong', 'Moderate'); omit rather than invent",
     )
     literature_references: Optional[List[str]] = Field(
-        None, description="Supporting literature references when known; omit rather than invent"
+        None,
+        description="Supporting literature references when known; omit rather than invent",
     )
 
 
