@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 # Third-party imports
+import psycopg
 from dotenv import load_dotenv
 
 # SQLAlchemy 2.0 imports
@@ -33,19 +34,24 @@ from .models import LogLevel, StepStatus, WorkflowStatus
 # Load environment variables
 load_dotenv()
 
-# Get database connection parameters from environment variables
+# Prefer a complete URL when compose (or the operator) already assembled one.
+# Fall back to DB_* parts only when DATABASE_URL is unset.
 DB_USER = os.getenv("DB_USER", "zaropgx_user")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "zaropgx_password")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "zaropgx_db")
 
-# Assemble database URL with psycopg3
-import psycopg
-
-DATABASE_URL = (
-    f"postgresql+psycopg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    if not DB_PASSWORD:
+        raise RuntimeError(
+            "DATABASE_URL is unset and DB_PASSWORD is empty. "
+            "Run ./start-docker.sh (or start-docker.ps1) or set DB_PASSWORD in .env."
+        )
+    DATABASE_URL = (
+        f"postgresql+psycopg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    )
 
 # Create SQLAlchemy engine with PostgreSQL 17 and psycopg3 optimizations
 engine = create_engine(

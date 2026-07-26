@@ -15,28 +15,32 @@ services:
         condition: service_healthy
       pharmcat:
         condition: service_healthy
+    # Behavioural config (toggles, tuning, secrets) comes from .env. Compose
+    # environment: below is topology only, plus ${VAR:-default} for keys that
+    # appear in both. Requires Docker Compose >= 2.24 for path/required form.
+    env_file:
+      - path: .env
+        required: false
     environment:
+      # Topology — must not be overridable from .env (wrong hostnames break the stack)
       - DATABASE_URL=postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
       - SECRET_KEY=${SECRET_KEY}
       - PHARMCAT_API_URL=http://pharmcat:5000
       - PHARMCAT_JAR_PATH=/pharmcat/pharmcat.jar
-      - INCLUDE_PHARMCAT_HTML=true
-      - INCLUDE_PHARMCAT_JSON=true
-      - INCLUDE_PHARMCAT_TSV=true
       - GATK_API_URL=http://gatk-api:5000
       - PYPGX_API_URL=http://pypgx:5000
       - GENOME_DOWNLOADER_API_URL=http://genome-downloader:5050
-      - USE_NEXTFLOW=${USE_NEXTFLOW} # deprecated
-      - NEXTFLOW_RUNNER_URL=${NEXTFLOW_RUNNER_URL}
+      - NEXTFLOW_RUNNER_URL=${NEXTFLOW_RUNNER_URL:-http://nextflow:5055}
       - FHIR_SERVER_URL=http://fhir-server:8080/fhir
       - KROKI_URL=http://kroki:8000
-      - SOURCE_URL=${SOURCE_URL}
+      - SOURCE_URL=${SOURCE_URL:-https://github.com/Zaromics/ZaroPGx}
       - FHIR_EXPORT_ENABLED=${FHIR_EXPORT_ENABLED:-true}
       - PYTHONPATH=/app
       - WORKFLOW_API_BASE=http://app:8000/api/v1
       - PYTHONDONTWRITEBYTECODE=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      - EXECSUM_USE_TSV=true
+      - ZAROPGX_AUTH_MODE=${ZAROPGX_AUTH_MODE:-open}
+      # INCLUDE_PHARMCAT_* and EXECSUM_USE_TSV come from env_file/.env only
     volumes:
       - ./:/app
       - ./data:/data
@@ -61,7 +65,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-zaropgx_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-test123}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is not set - run ./start-docker.sh or set it in .env}
       POSTGRES_DB: ${DB_NAME:-zaropgx_db}
     volumes:
       # PG18+ stores data in a major-version subdir and rejects a mount at
@@ -69,7 +73,7 @@ services:
       - pgdata:/var/lib/postgresql
       - ./db/init:/docker-entrypoint-initdb.d
     ports:
-      - "5444:5432"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5444:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-zaropgx_user} -d ${DB_NAME:-zaropgx_db}"]
       interval: 10s
@@ -90,7 +94,7 @@ services:
     volumes:
       - ./reference:/reference
     environment:
-      - DOWNLOAD_ON_STARTUP=true
+      - DOWNLOAD_ON_STARTUP=${DOWNLOAD_ON_STARTUP:-true}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
       interval: 10s
@@ -103,7 +107,7 @@ services:
           cpus: '1.0'
           memory: 2G
     ports:
-      - "5050:5050"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5050:5050"
     networks:
       - pgx-network
 
@@ -120,15 +124,18 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data
-      # Mount reference files where PharmCAT expects them
-      - pharmcat-references:/pharmcat
+      # Reference genome cache ONLY — must not mask /pharmcat or image upgrades
+      # are frozen under the old pipeline binary. start.sh links refs into /pharmcat.
+      - pharmcat-references:/pharmcat-references
     ports:
       # FastAPI
-      - "5001:5000"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5001:5000"
     environment:
       - DATA_DIR=/data
-      - JAVA_OPTS=-Xmx4g
-      - PHARMCAT_LOG_LEVEL=DEBUG
+      - JAVA_OPTS=${JAVA_OPTS:--Xmx4g}
+      - PHARMCAT_LOG_LEVEL=${PHARMCAT_LOG_LEVEL:-DEBUG}
+      - PHARMCAT_VERSION=${PHARMCAT_VERSION:-3.4.0}
+      - PHARMCAT_REF_CACHE=/pharmcat-references
       - PHARMCAT_REFERENCE_DIR=/pharmcat
       - PHARMCAT_TEE=true
       - PHARMCAT_ABSENT_TO_REF=${PHARMCAT_ABSENT_TO_REF:-false}
@@ -154,14 +161,14 @@ services:
     container_name: pgx_fhir_server
     restart: unless-stopped
     ports:
-      - "8090:8080"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:8090:8080"
     environment:
       - hapi.fhir.allow_external_references=true
       - hapi.fhir.allow_multiple_delete=true
       - hapi.fhir.reuse_cached_search_results_millis=60000
       - spring.datasource.url=jdbc:postgresql://db:5432/${DB_NAME:-zaropgx_db}?currentSchema=fhir
       - spring.datasource.username=${DB_USER:-zaropgx_user}
-      - spring.datasource.password=${DB_PASSWORD:-test123}
+      - spring.datasource.password=${DB_PASSWORD:?DB_PASSWORD is not set - run ./start-docker.sh or set it in .env}
       - spring.datasource.driverClassName=org.postgresql.Driver
       - spring.jpa.properties.hibernate.dialect=ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
       - spring.jpa.hibernate.ddl-auto=update
@@ -210,11 +217,11 @@ services:
     environment:
       - REFERENCE_DIR=/reference
       - DATA_DIR=/data
-      - MAX_MEMORY=20g
+      - MAX_MEMORY=${MAX_MEMORY:-20g}
       - PYTHONPATH=/app
       - UVICORN_RELOAD_EXCLUDES=".git/*,.venv/*"
     ports:
-      - "5002:5000"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5002:5000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -247,12 +254,12 @@ services:
     environment:
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
-      - PYPGX_MEMORY_LIMIT=7G
-      - PYPGX_MAX_PARALLEL_GENES=8
-      - PYPGX_BATCH_SIZE=4
-      - PYPGX_PHARMCAT_PREFERENCE=pharmcat  # auto|pypgx|pharmcat
+      - PYPGX_MEMORY_LIMIT=${PYPGX_MEMORY_LIMIT:-7G}
+      - PYPGX_MAX_PARALLEL_GENES=${PYPGX_MAX_PARALLEL_GENES:-8}
+      - PYPGX_BATCH_SIZE=${PYPGX_BATCH_SIZE:-4}
+      - PYPGX_PHARMCAT_PREFERENCE=${PYPGX_PHARMCAT_PREFERENCE:-pharmcat}  # auto|pypgx|pharmcat
     ports:
-      - "5053:5000"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5053:5000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -285,7 +292,7 @@ services:
     volumes:
       - ./data:/data
     ports:
-      - "5060:5000"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5060:5000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -336,7 +343,7 @@ services:
     depends_on:
       - mermaid
     ports:
-      - "8001:8000"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:8001:8000"
     environment:
       - KROKI_SAFE_MODE=false
       - KROKI_MAX_DURATION=30000
@@ -378,6 +385,11 @@ services:
     environment:
       - NXF_HOME=/opt/nextflow
       - NXF_OPTS=-Xms1g -Xmx4g
+      - DB_USER=${DB_USER:-zaropgx_user}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is not set - run ./start-docker.sh or set it in .env}
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-zaropgx_db}
     volumes:
       - ./:/workspace
       - ./data:/data
@@ -386,8 +398,11 @@ services:
       # Allow Nextflow to launch docker tasks when using -profile docker
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /workspace
-    ports:
-      - "5055:5055"
+    # Deliberately NOT published to the host: runner.py's POST /run is unauthenticated and
+    # this service bind-mounts /var/run/docker.sock, so a host mapping is remote code
+    # execution. The app reaches it as http://nextflow:5055 over the compose network.
+    expose:
+      - "5055"
     networks:
       - pgx-network
 
@@ -405,7 +420,7 @@ services:
     volumes:
       - ./docs:/docs
     ports:
-      - "5070:8000"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5070:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000"]
       interval: 10s

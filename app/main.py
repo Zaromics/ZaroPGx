@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ from asyncio import Queue
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import aiohttp
 import httpx
@@ -40,18 +42,25 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from werkzeug.utils import secure_filename
 
 from app.api.db import get_db
+from app.api.middleware.auth_gate import (
+    AuthGateMiddleware,
+    check_password,
+    clear_session_cookie,
+    mint_session_token,
+    resolve_auth_mode,
+    safe_next_path,
+    set_session_cookie,
+)
 from app.api.models import (
     JobStage,
     Token,
-    TokenData,
     WorkflowCreate,
     WorkflowStepCreate,
 )
@@ -60,7 +69,12 @@ from app.api.routes.fhir_export_router import router as fhir_export_router
 from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.workflow_router import router as workflow_router
-from app.api.utils.security import get_current_user, get_optional_user
+from app.api.utils.security import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    SECRET_KEY,
+    create_access_token,
+    get_optional_user,
+)
 from app.pharmcat import pharmcat_client
 from app.pharmcat.pharmcat_client import (
     call_pharmcat_service,
@@ -75,6 +89,16 @@ from app.services.cleanup_service import cleanup_service
 from app.services.job_status_service import JobStatusService
 from app.services.workflow_service import WorkflowService
 from app.utils.workflow_client import WorkflowClient, create_workflow_client
+
+# This module logs liberally with emoji. The container's stdout is UTF-8, but a Windows host
+# console is cp1252, where a single emoji raises UnicodeEncodeError and takes down the whole
+# import — which in turn breaks the test suite and any tooling that imports the app. Degrade
+# unencodable characters instead of dying; a no-op wherever stdout is already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+    except Exception:
+        pass
 
 # Configure more detailed logging
 log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
@@ -101,10 +125,18 @@ print(f"PYPGX SERVICE URL: {os.getenv('PYPGX_API_URL', 'http://pypgx:5000')}")
 # Load environment variables
 load_dotenv()
 
-# Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")  # In production, use env var
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# Sentinels match values formerly shipped in tracked .env templates.
+# SECRET_KEY / ALGORITHM / ACCESS_TOKEN_EXPIRE_MINUTES are single-sourced from
+# app.api.utils.security (imported above).
+_SECRET_KEY_SENTINELS = frozenset(
+    {
+        "",
+        "change_me",
+        "change_me_in_production",
+        "supersecretkey",
+        "supersecretkey_for_development",
+    }
+)
 
 # Constants
 GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
@@ -140,11 +172,9 @@ UPLOADS_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / "templates"
 
-# Create directories if they don't exist
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+# These directories are created by startup_event(), not at import time: the defaults are
+# absolute container paths, so creating them on import would litter the host filesystem
+# (C:\data, C:\tmp on Windows) merely from `import app.main`.
 
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -187,9 +217,6 @@ app = FastAPI(
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
     version="0.2.8",
 )
-
-# OAuth2
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Set up static file serving for application static assets
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -243,13 +270,17 @@ async def ensure_docs_built_on_start() -> None:
     _build_docs_if_missing()
 
 
+# Front-door auth gate (outermost). Default mode is open — a no-op for existing
+# installs. See app.api.middleware.auth_gate for allowlist and cookie policy.
+app.add_middleware(AuthGateMiddleware)
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        # Production domain -- needs to be switched to use env variable instead of hardcoded
-        "https://pgx.zimerguz.net",
-        "http://pgx.zimerguz.net",  # HTTP is disabled
+        # Live reference instance
+        "https://pgx.zaromics.com",
+        "http://pgx.zaromics.com",
         # Localhost development - main app ports
         "http://localhost:8765",  # Main FastAPI app external port
         "http://localhost:8000",  # Internal app port
@@ -302,58 +333,6 @@ else:
         "FHIR export functionality disabled (set FHIR_EXPORT_ENABLED=true to enable)"
     )
 
-# Override and disable authentication in development mode
-if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
-    # Print warning about development mode
-    print("🔓 WARNING: RUNNING IN DEVELOPMENT MODE - AUTHENTICATION DISABLED 🔓")
-    logger.warning("Running in development mode - authentication is disabled!")
-
-    # Create a dummy authentication that never fails
-    from typing import Any, Dict, List, Optional
-
-    from fastapi import Request
-    from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
-    from fastapi.security import OAuth2
-
-    class NoAuthOAuth2(OAuth2):
-        def __init__(self, tokenUrl: str):
-            flows = OAuthFlowsModel(password={"tokenUrl": tokenUrl, "scopes": {}})
-            super().__init__(flows=flows, auto_error=False)
-
-        async def __call__(self, request: Request) -> Optional[str]:
-            return "test_dev_user"
-
-    # Replace the original OAuth2 scheme
-    from fastapi import security
-
-    from app.api.utils.security import get_current_user, oauth2_scheme
-
-    # Override the dependencies
-    async def get_current_user_override(token: str = "dummy_token"):
-        return "test_dev_user"
-
-    # Apply overrides to all routers and endpoints
-    for route in app.routes:
-        if hasattr(route, "dependencies"):
-            # Remove authentication dependencies
-            new_dependencies = []
-            for dep in route.dependencies:
-                if dep.dependency != get_current_user:
-                    new_dependencies.append(dep)
-            route.dependencies = new_dependencies
-
-    # Apply overrides to included routers
-    for router in [upload_router.router, report_router.router]:
-        router.dependencies = [
-            d for d in router.dependencies if d.dependency != get_current_user
-        ]
-        # Update route dependencies
-        for route in router.routes:
-            if hasattr(route, "dependencies"):
-                route.dependencies = [
-                    d for d in route.dependencies if d.dependency != get_current_user
-                ]
-
 
 # Simple wrapper page for API reference with a Back button
 @app.get("/api-reference", include_in_schema=False)
@@ -392,6 +371,90 @@ async def api_reference() -> HTMLResponse:
 </html>
         """
     return HTMLResponse(content=html)
+
+
+_LOGIN_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZaroPGx — Sign in</title>
+  <style>
+    :root { color-scheme: light; --ink: #1a2332; --muted: #5a6577; --line: #d5dbe6; --accent: #0b6e4f; }
+    body { margin: 0; min-height: 100vh; font-family: "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #e7f3ee 0%, transparent 55%),
+                  linear-gradient(180deg, #f4f7fb 0%, #e9eef5 100%);
+      color: var(--ink); display: grid; place-items: center; padding: 24px; }
+    form { width: min(380px, 100%); }
+    h1 { font-size: 1.75rem; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+    p { margin: 0 0 1.25rem; color: var(--muted); line-height: 1.45; }
+    label { display: block; font-size: 0.85rem; margin: 0.75rem 0 0.35rem; }
+    input { width: 100%; box-sizing: border-box; padding: 0.7rem 0.8rem; border: 1px solid var(--line);
+      border-radius: 6px; font-size: 1rem; background: #fff; }
+    button { margin-top: 1.1rem; width: 100%; padding: 0.75rem; border: 0; border-radius: 6px;
+      background: var(--accent); color: #fff; font-size: 1rem; cursor: pointer; }
+    button:hover { filter: brightness(1.05); }
+    .err { color: #9b1c1c; margin: 0 0 0.75rem; font-size: 0.9rem; }
+    .note { margin-top: 1rem; font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <form method="post" action="/login">
+    <h1>ZaroPGx</h1>
+    <p>Sign in with the shared install password to reach this instance.</p>
+    {error}
+    <input type="hidden" name="next" value="{next}" />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+    <button type="submit">Sign in</button>
+    <p class="note">Anyone past this gate can still open any patient report on this install.
+      There is no per-user access control yet.</p>
+  </form>
+</body>
+</html>
+"""
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page(next: str = "/", error: str = "") -> HTMLResponse:
+    safe_next = safe_next_path(next)
+    err_html = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    # Avoid str.format — the page CSS contains literal braces.
+    page = _LOGIN_PAGE.replace("{error}", err_html).replace(
+        "{next}", html.escape(safe_next, quote=True)
+    )
+    return HTMLResponse(content=page)
+
+
+@app.post("/login", include_in_schema=False)
+async def login_submit(
+    password: str = Form(...),
+    next: str = Form("/"),
+) -> Response:
+    destination = safe_next_path(next)
+    if not check_password(password):
+        if resolve_auth_mode() == "password":
+            return RedirectResponse(
+                url=(
+                    f"/login?next={quote(destination, safe='/:?=&')}"
+                    f"&error={quote('Incorrect password')}"
+                ),
+                status_code=303,
+            )
+        # open/audit with no/wrong password: gate is not enforcing; send them on.
+        return RedirectResponse(url=destination, status_code=303)
+    token = mint_session_token()
+    response: Response = RedirectResponse(url=destination, status_code=303)
+    set_session_cookie(response, token)
+    return response
+
+
+@app.get("/logout", include_in_schema=False)
+@app.post("/logout", include_in_schema=False)
+async def logout() -> Response:
+    response: Response = RedirectResponse(url="/login", status_code=303)
+    clear_session_cookie(response)
+    return response
 
 
 # Add direct routes for status and reports
@@ -489,63 +552,28 @@ async def serve_report_file(
         raise HTTPException(status_code=500, detail="Error reading file")
 
 
-# JWT token functions
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    # In a real app, get user from database
-    if token_data.username != "test":  # Mock user validation
-        raise credentials_exception
-    return token_data.username
-
-
-# Optional authentication for development mode
-async def get_optional_user(token: Optional[str] = Depends(oauth2_scheme)):
-    # For development, allow requests without authentication
-    if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
-        return "test"  # Return a default user
-
-    # If not in dev mode, use the normal authentication
-    return await get_current_user(token)
-
-
-# Modify the router dependencies for development mode
-if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
-    # Override the router dependencies to use optional authentication
-    logger.info("Running in development mode - authentication is optional")
-    # Remove auth dependencies from the routers
-    upload_router.router.dependencies = []
-    report_router.router.dependencies = []
-else:
-    logger.info("Running in production mode - authentication is required")
-
-
 # Authentication endpoint
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    # In a real app, validate against database
+    """Issue a Bearer token.
+
+    In password mode the shared ZAROPGX_AUTH_PASSWORD is required and the JWT
+    carries gate=true so it unlocks the front door. In open/audit modes the
+    legacy test/test credentials still work for API explorers, but those JWTs
+    deliberately omit gate=true and cannot bypass password mode.
+    """
+    mode = resolve_auth_mode()
+    if mode == "password":
+        if not check_password(form_data.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        subject = form_data.username.strip() or "gate"
+        access_token = mint_session_token(subject=subject)
+        return {"access_token": access_token, "token_type": "bearer"}
+
     if form_data.username != "test" or form_data.password != "test":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1327,10 +1355,7 @@ async def services_status(
             "enabled": True,  # App is always enabled
         },
         "database": {
-            "url": os.getenv(
-                "DATABASE_URL",
-                "postgresql+psycopg://zaropgx_user:zaropgx_password@db:5432/zaropgx_db",
-            ),
+            "url": os.getenv("DATABASE_URL", ""),
             "timeout": 5,
             "enabled": True,  # Database is always enabled
         },
@@ -1616,7 +1641,7 @@ async def startup_event():
                 )
 
     # Check temp and data directories
-    for dir_path in [TEMP_DIR, DATA_DIR, REPORTS_DIR]:
+    for dir_path in [TEMP_DIR, DATA_DIR, REPORTS_DIR, UPLOADS_DIR]:
         if not os.path.exists(dir_path):
             try:
                 os.makedirs(dir_path, exist_ok=True)
@@ -1629,12 +1654,27 @@ async def startup_event():
             logger.info(f"Directory exists: {dir_path}")
             print(f"✅ Directory exists: {dir_path}")
 
-    # Check environment variables
-    required_vars = ["SECRET_KEY"]
-    for var in required_vars:
-        if not os.getenv(var):
-            logger.warning(f"Environment variable {var} is not set!")
-            print(f"⚠️ Environment variable {var} is not set!")
+    # Refuse known-weak or missing signing keys. start-docker generates a
+    # per-install SECRET_KEY into .env; do not fall back to a public default.
+    if SECRET_KEY.strip() in _SECRET_KEY_SENTINELS:
+        message = (
+            "SECRET_KEY is missing or still a tracked placeholder. "
+            "Run ./start-docker.sh (or start-docker.ps1) or set a unique "
+            "SECRET_KEY in .env, then restart the app."
+        )
+        logger.error(message)
+        print(f"❌ {message}")
+        raise RuntimeError(message)
+
+    auth_mode = resolve_auth_mode()
+    bind_address = os.getenv("BIND_ADDRESS", "8765")
+    print(f"AUTH MODE: {auth_mode} | BIND_ADDRESS: {bind_address}")
+    logger.info("Effective auth mode=%s bind_address=%s", auth_mode, bind_address)
+    if auth_mode == "password" and not os.getenv("ZAROPGX_AUTH_PASSWORD"):
+        logger.warning(
+            "ZAROPGX_AUTH_MODE=password but ZAROPGX_AUTH_PASSWORD is empty — "
+            "login will fail until a password is set."
+        )
 
     print(r"""
  _____                    ____  ______    

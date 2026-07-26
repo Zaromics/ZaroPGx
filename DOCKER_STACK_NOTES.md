@@ -66,8 +66,13 @@ docker compose up -d --wait --no-deps gatk-api   # reuses ./reference, skips gen
 
 Reports/uploads (`./data`) and the genome (`./reference`) are **bind mounts → survive
 `down -v`**. PharmCAT re-downloads the GRCh38 reference (~8 min) on first start after the
-`pharmcat-references` volume is wiped. The volume also shadows `/pharmcat`, so it **must**
-be wiped for a PharmCAT version bump to actually take effect.
+`pharmcat-references` volume is wiped.
+
+The volume is mounted at `/pharmcat-references` (cache only). `start.sh` symlinks
+`reference.fna.bgz*` into `/pharmcat/` from the image. It no longer masks `/pharmcat`,
+so a PharmCAT version bump takes effect on image rebuild **without** wiping the volume.
+Wipe `pharmcat-references` only when you intentionally want to re-fetch the GRCh38
+reference (or reclaim disk).
 
 ## Note on Docker engines
 

@@ -26,13 +26,22 @@ from typing import Dict, List, Optional, Union
 from app.api.utils.file_utils import has_index_file, is_compressed_file
 
 # Third-party imports (optional dependencies)
+# pysam is optional here the same way it is in file_processor.py: importing this module
+# must not kill the process. The VCF/BCF path falls back to `bcftools view -h` (see
+# inspect_header) and the SAM/BAM/CRAM path returns an error dict its caller handles.
 try:
     import pysam  # type: ignore
-except ImportError:
+
+    _HAS_PYSAM = True
+# Broad: a broken libhts link surfaces as OSError, not ImportError.
+except Exception:
+    pysam = None  # type: ignore
+    _HAS_PYSAM = False
     print(
-        "Error: pysam not installed. Install with: pip install pysam, or build it from source."
+        "Warning: pysam not installed; header inspection will fall back to bcftools. "
+        "Install with: pip install pysam, or build it from source.",
+        file=sys.stderr,
     )
-    sys.exit(1)
 
 try:
     from Bio import SeqIO
@@ -278,7 +287,14 @@ def inspect_header(
         return normalized
 
     elif file_format in (".bam", ".sam", ".cram"):
+        if not _HAS_PYSAM:
+            # Unlike the VCF/BCF branch above there is no bcftools fallback here, and the
+            # normalization below would otherwise return a well-formed header with empty
+            # sequences and no error key — i.e. an unreadable file looking like a valid one.
+            return {"error": "pysam is required to inspect SAM/BAM/CRAM headers"}
         res = inspector._inspect_sam_bam_cram(filepath)
+        if isinstance(res, dict) and "error" in res:
+            return {"error": res["error"]}
         header = res.get("header_dict") if isinstance(res, dict) else None
         sequences = []
         programs = []

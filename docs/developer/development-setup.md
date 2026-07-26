@@ -70,7 +70,7 @@ DB_HOST=localhost
 DB_PORT=5444
 DB_NAME=zaropgx_db
 DB_USER=zaropgx_user
-DB_PASSWORD=test123
+DB_PASSWORD=  # set to the password in your running volume / generated .env
 
 # Services
 PHARMCAT_API_URL=http://localhost:5001
@@ -153,25 +153,53 @@ uvicorn app.main:app --reload
 
 ### 2. Database Schema Changes
 
-**Note:** During early development (pre-v1.0), database schema changes are managed through direct SQL modifications rather than Alembic migrations.
+Fresh schemas are defined in `db/init/00_complete_database_schema.sql`. PostgreSQL executes
+the mounted initialization SQL only for an empty data directory; restarting a container with
+an existing volume does not apply edits to that file.
 
-**Current approach (pre-v1.0):**
-- Make schema changes directly in `db/init/00_complete_database_schema.sql`
-- Restart the PostgreSQL container to apply changes
-- No migration files or commands needed
+For an existing volume that must retain data:
+1. Back up the database.
+2. Put the reviewed, purpose-specific SQL under `db/init/migrations/`.
+3. Stop services that write to the database.
+4. Hand-run that SQL through the mounted `/docker-entrypoint-initdb.d` path.
 
-**Future approach (post-v1.0):**
+For example:
 ```bash
-# Run migrations (when implemented)
-docker compose exec app alembic upgrade head
-
-# Create new migration (when implemented)
-docker compose exec app alembic revision --autogenerate -m "Description"
+docker compose exec -T db psql \
+  -v ON_ERROR_STOP=1 \
+  -U zaropgx_user \
+  -d zaropgx_db \
+  -f /docker-entrypoint-initdb.d/migrations/02_fix_variant_column_lengths.sql
 ```
+
+No automatic migration runner exists. Use the role and database configured for the target
+volume, and record release-specific operator steps in `UPGRADING.md`.
 
 ### 3. Testing
 
-**Run tests:**
+**Fast suite** (unit/API tests; no Docker required):
+
+```bash
+# Prefer the project venv on Windows (avoids uv rebuilding pysam):
+#   .venv\Scripts\python.exe -m pytest -q -m "not e2e"
+# Unix:
+#   .venv/bin/python -m pytest -q -m "not e2e"
+uv run pytest -q -m "not e2e"
+```
+
+**Full-stack e2e** (compose project `zaropgx_e2e`, host port `18765`):
+
+```bash
+./scripts/e2e.sh                          # build/up → pytest -m e2e → down on success
+```
+
+On Windows use Git Bash or WSL for `./scripts/e2e.sh`. Give Docker Desktop enough RAM
+(16 GB+ recommended). First run may take a long time (cold image builds + PharmCAT
+reference download); health wait allows up to ~25 minutes. On failure the stack stays
+up and logs are written to `e2e-logs/compose.log`.
+
+Only the app is published on the host (`127.0.0.1:18765`); `compose.e2e.yml` clears
+other service host ports so e2e does not collide with a developer stack.
 
 ### 4. Code Quality
 
@@ -271,15 +299,12 @@ class NewServiceClient:
 - `user_data`: User and patient data
 - `reports`: Generated reports metadata
 
-**Adding new tables (current approach):**
-1. Add SQL DDL to `db/init/00_complete_database_schema.sql`
-2. Restart PostgreSQL container to apply changes
-
-**Adding new tables (future approach - post-v1.0):**
-1. Create SQLAlchemy model in `app/api/models.py`
-2. Generate migration: `alembic revision --autogenerate`
-3. Review migration file
-4. Apply migration: `alembic upgrade head`
+**Adding new tables:**
+1. Create the SQLAlchemy model in `app/api/models.py`.
+2. Add matching SQL DDL to `db/init/00_complete_database_schema.sql` so fresh databases have
+   the complete current schema.
+3. If existing volumes must retain data, prepare and review a separate manual upgrade under
+   `db/init/migrations/`, back up the database, and hand-run it with `psql`.
 
 **Example model:**
 ```python
@@ -295,19 +320,20 @@ class NewTable(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 ```
 
-### Database Schema Management (Post-v1.0)
+### Existing-Volume Schema Upgrades
 
-**Migration workflow (future - post-v1.0):**
-1. Modify SQLAlchemy models
-2. Generate migration: `alembic revision --autogenerate -m "Description"`
-3. Review generated migration
-4. Apply migration: `alembic upgrade head`
-5. Test migration with sample data
-
-**Rollback migration (future - post-v1.0):**
+Manual upgrade SQL is never discovered or run at application startup. Apply only the reviewed
+file named by the relevant release instructions:
 ```bash
-alembic downgrade -1
+docker compose exec -T db psql \
+  -v ON_ERROR_STOP=1 \
+  -U zaropgx_user \
+  -d zaropgx_db \
+  -f /docker-entrypoint-initdb.d/migrations/02_fix_variant_column_lengths.sql
 ```
+
+Verify the changed schema after the command completes. There is no generated rollback; restore
+the pre-upgrade backup if the reviewed upgrade cannot be corrected safely.
 
 ## Frontend Development
 
@@ -360,13 +386,14 @@ async function checkStatus(jobId) {
 
 ### Test Structure
 
-**Test organization:**
-
-**Writing tests:**
-
+- Fast suite: `tests/` excluding `@pytest.mark.e2e` — SQLite / `TestClient` unit and API tests.
+- Full-stack e2e: `tests/e2e/` — HTTP against a live compose stack (`ZAROPGX_E2E=1`).
+- CI runs the fast suite on every PR and a separate required `e2e` job with Buildx cache.
 
 ### Test Data
 
+Sample VCFs for local and e2e runs live under `test_data/` (e.g. `pharmcat.example.vcf`,
+`sample_cpic.vcf`). The full-stack e2e harness uploads `test_data/pharmcat.example.vcf`.
 
 ## Debugging
 
