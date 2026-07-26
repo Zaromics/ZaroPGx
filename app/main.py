@@ -810,7 +810,6 @@ async def call_variants(
             pass
 
 
-
 # Cleanup endpoints
 @app.post("/api/cleanup/workflow/{workflow_id}")
 async def cleanup_workflow_files(workflow_id: str, patient_id: Optional[str] = None):
@@ -845,6 +844,7 @@ async def get_cleanup_status():
     except Exception as e:
         logger.error(f"Failed to get cleanup status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # Legacy GATK test endpoint removed - use proper test endpoints in services
 

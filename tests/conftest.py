@@ -63,9 +63,7 @@ def pytest_sessionfinish(session, exitstatus):
     )
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
     passed = len(reporter.stats.get("passed", [])) if reporter else 0
-    if vacuous_e2e_failure(
-        requested=requested, passed=passed, exitstatus=exitstatus
-    ):
+    if vacuous_e2e_failure(requested=requested, passed=passed, exitstatus=exitstatus):
         sys.stderr.write(
             "ERROR: e2e was requested (ZAROPGX_E2E=1 or --zaropgx-e2e) but 0 tests "
             "passed - likely all skipped because the enable flag never reached "
