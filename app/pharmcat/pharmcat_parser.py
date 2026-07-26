@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 # ZaroPGx imports
 from app.api.db import DATABASE_URL, get_db
+from app.pharmcat.report_json import detect_format, iter_gene_blocks
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -434,104 +435,37 @@ class PharmCATParser:
     def _parse_genes(self, genes_data: Dict[str, Any], run_id: str) -> None:
         """Parse genes data and load into database.
 
-        Handles two PharmCAT JSON formats:
-        1. Nested: genes -> source (CPIC/DPWG) -> gene_symbol -> gene_data
-        2. Flat: genes -> gene_symbol -> gene_data (gene_data contains 'geneSymbol' field)
+        Handles nested (genes→CPIC/DPWG→symbol) and flat (genes→symbol) shapes via
+        ``app.pharmcat.report_json``.
         """
         gene_count = 0
         diplotype_count = 0
 
         logger.info(
-            f"Parsing genes data for run {run_id}. Top-level keys: {list(genes_data.keys()) if genes_data else 'None'}"
+            "Parsing genes data for run %s. format=%s top-level keys: %s",
+            run_id,
+            detect_format(genes_data),
+            list(genes_data.keys()) if genes_data else "None",
         )
 
-        # Detect format: check if first value looks like gene data (has 'geneSymbol' or 'sourceDiplotypes')
-        # or if it's a nested structure (contains gene symbols as keys)
-        is_flat_format = False
-        if genes_data:
-            first_key = next(iter(genes_data.keys()))
-            first_value = genes_data.get(first_key, {})
-            if isinstance(first_value, dict):
-                # If it has gene-specific fields, it's flat format
-                if (
-                    "geneSymbol" in first_value
-                    or "sourceDiplotypes" in first_value
-                    or "alleleDefinitionVersion" in first_value
-                ):
-                    is_flat_format = True
-                    logger.info(
-                        f"Detected FLAT PharmCAT format (genes -> gene_symbol -> gene_data)"
-                    )
-                else:
-                    logger.info(
-                        f"Detected NESTED PharmCAT format (genes -> source -> gene_symbol -> gene_data)"
-                    )
+        for block in iter_gene_blocks(genes_data):
+            gene_count += 1
+            self._store_gene_data(
+                block.gene_symbol, block.gene_data, block.source, run_id
+            )
 
-        if is_flat_format:
-            # Flat format: genes -> gene_symbol -> gene_data
-            for gene_symbol, gene_data in genes_data.items():
-                if not isinstance(gene_data, dict):
-                    logger.warning(
-                        "Skipping gene '%s' with unexpected type %s",
-                        gene_symbol,
-                        type(gene_data).__name__,
-                    )
-                    continue
-
-                # Determine source from gene_data if available
-                source = gene_data.get("phenotypeSource", "CPIC")
-
-                gene_count += 1
-                self._store_gene_data(gene_symbol, gene_data, source, run_id)
-
-                # Count diplotypes
-                source_diplotypes = gene_data.get("sourceDiplotypes", [])
-                diplotype_count += len(source_diplotypes)
-                self._parse_diplotypes(source_diplotypes, run_id, gene_symbol)
-                self._parse_related_drugs(
-                    gene_data.get("relatedDrugs", []), run_id, gene_symbol
-                )
-                self._parse_messages(gene_data.get("messages", []), run_id, gene_symbol)
-                self._parse_variants(gene_data.get("variants", []), run_id, gene_symbol)
-        else:
-            # Nested format: genes -> source -> gene_symbol -> gene_data
-            for source, genes in genes_data.items():
-                if not isinstance(genes, dict):
-                    logger.warning(
-                        "Skipping genes block for source '%s' with unexpected type %s",
-                        source,
-                        type(genes).__name__,
-                    )
-                    continue
-
-                logger.info(f"Processing source '{source}' with {len(genes)} genes")
-
-                for gene_symbol, gene_data in genes.items():
-                    if not isinstance(gene_data, dict):
-                        logger.warning(
-                            "Skipping gene '%s' in source '%s' with unexpected type %s",
-                            gene_symbol,
-                            source,
-                            type(gene_data).__name__,
-                        )
-                        continue
-
-                    gene_count += 1
-                    self._store_gene_data(gene_symbol, gene_data, source, run_id)
-
-                    # Count diplotypes
-                    source_diplotypes = gene_data.get("sourceDiplotypes", [])
-                    diplotype_count += len(source_diplotypes)
-                    self._parse_diplotypes(source_diplotypes, run_id, gene_symbol)
-                    self._parse_related_drugs(
-                        gene_data.get("relatedDrugs", []), run_id, gene_symbol
-                    )
-                    self._parse_messages(
-                        gene_data.get("messages", []), run_id, gene_symbol
-                    )
-                    self._parse_variants(
-                        gene_data.get("variants", []), run_id, gene_symbol
-                    )
+            source_diplotypes = block.gene_data.get("sourceDiplotypes", [])
+            diplotype_count += len(source_diplotypes)
+            self._parse_diplotypes(source_diplotypes, run_id, block.gene_symbol)
+            self._parse_related_drugs(
+                block.gene_data.get("relatedDrugs", []), run_id, block.gene_symbol
+            )
+            self._parse_messages(
+                block.gene_data.get("messages", []), run_id, block.gene_symbol
+            )
+            self._parse_variants(
+                block.gene_data.get("variants", []), run_id, block.gene_symbol
+            )
 
         logger.info(
             f"Completed parsing {gene_count} genes with {diplotype_count} diplotypes for run {run_id}"
