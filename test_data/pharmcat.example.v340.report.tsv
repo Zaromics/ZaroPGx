@@ -1,0 +1,20 @@
+PharmCAT 3.4.0
+Gene	Source Diplotype	Phenotype	Activity Score	Haplotype 1	Haplotype 1 Function	Haplotype 1 Activity Value	Haplotype 2	Haplotype 2 Function	Haplotype 2 Activity Value	Outside Call	Match Score	Missing positions	Recommendation Lookup Diplotype	Recommendation Lookup Phenotype	Recommendation Lookup Activity Score
+RYR1	Reference/Reference	Uncertain Susceptibility		Reference	Normal function		Reference	Normal function		no	626	yes	Reference/Reference	Uncertain Susceptibility	
+VKORC1	rs9923231 reference (C)/rs9923231 reference (C)			rs9923231 reference (C)	null		rs9923231 reference (C)	null		no	2	no	rs9923231 reference (C)/rs9923231 reference (C)		
+G6PD	B (reference)/B (reference)	Normal		B (reference)	IV/Normal		B (reference)	IV/Normal		no	342	no	B (reference)/B (reference)	Normal	
+TPMT	*1/*1	Normal Metabolizer		*1	Normal function		*1	Normal function		no	86	yes	*1/*1	Normal Metabolizer	
+UGT1A1	*1/*1	Normal Metabolizer		*1	Normal function		*1	Normal function		no	8	no	*1/*1	Normal Metabolizer	
+CYP4F2	*1/*1			*1	null		*1	null		no	28	yes	*1/*1		
+CYP2C19	*38/*38	Normal Metabolizer		*38	Normal function		*38	Normal function		no	68	yes	*38/*38	Normal Metabolizer	
+CYP3A4	*1/*1	Normal Metabolizer		*1	Normal function		*1	Normal function		no	84	yes	*1/*1	Normal Metabolizer	
+CYP3A5	*1/*1	Normal Metabolizer		*1	Normal function		*1	Normal function		no	10	yes	*1/*1	Normal Metabolizer	
+CYP2C9	*1/*1	Normal Metabolizer	2.0	*1	Normal function	1.0	*1	Normal function	1.0	no	160	yes	*1/*1	Normal Metabolizer	2.0
+SLCO1B1	*1/*1	Normal Function		*1	Normal function		*1	Normal function		no	56	yes	*1/*1	Normal Function	
+CYP2B6	*1/*1	Normal Metabolizer		*1	Normal function		*1	Normal function		no	94	yes	*1/*1	Normal Metabolizer	
+DPYD	Reference/Reference	Normal Metabolizer	2.0	Reference	Normal function	1.0	Reference	Normal function	1.0	no	166	no	Reference/Reference	Normal Metabolizer	2.0
+CACNA1S	Reference/Reference	Uncertain Susceptibility		Reference	Normal function		Reference	Normal function		no	4	no	Reference/Reference	Uncertain Susceptibility	
+NUDT15	*1/*1	Normal Metabolizer		*1	Normal function		*1	Normal function		no	34	yes	*1/*1	Normal Metabolizer	
+IFNL3	rs12979860 reference (C)/rs12979860 reference (C)			rs12979860 reference (C)	null		rs12979860 reference (C)	null		no	2	no	rs12979860 reference (C)/rs12979860 reference (C)		
+CFTR	ivacaftor non-responsive CFTR sequence/ivacaftor non-responsive CFTR sequence	ivacaftor non-responsive in CF patients		ivacaftor non-responsive CFTR sequence	ivacaftor non-responsive		ivacaftor non-responsive CFTR sequence	ivacaftor non-responsive		no	78	yes	ivacaftor non-responsive CFTR sequence/ivacaftor non-responsive CFTR sequence	ivacaftor non-responsive in CF patients	
+ABCG2	rs2231142 reference (G)/rs2231142 reference (G)	Normal Function		rs2231142 reference (G)	Normal function		rs2231142 reference (G)	Normal function		no	2	no	rs2231142 reference (G)/rs2231142 reference (G)	Normal Function	

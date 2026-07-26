@@ -1,0 +1,2673 @@
+{
+  "title": "pharmcat.example",
+  "timestamp": "2024-11-12T00:03:19.135Z",
+  "pharmcatVersion": "v2.15.4-20-g7f763d7c",
+  "dataVersion": "2024-11-06-02-36",
+  "genes": {
+    "CPIC": {
+      "ABCG2": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "CPIC",
+        "geneSymbol": "ABCG2",
+        "chr": "chr4",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [],
+        "relatedDrugs": [
+          {
+            "name": "rosuvastatin",
+            "id": "PA134308647"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "ABCG2",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "rs2231142 reference (G)/rs2231142 reference (G)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "rs2231142 reference (G)": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "ABCG2",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "rs2231142 reference (G)/rs2231142 reference (G)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "rs2231142 reference (G)": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "ABCG2",
+            "chromosome": "chr4",
+            "position": 88131171,
+            "dbSnpId": "rs2231142",
+            "call": "G/G",
+            "alleles": [
+              "rs2231142 variant (T)"
+            ],
+            "phased": false,
+            "wildtypeAllele": "G",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "CYP2C19": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "CPIC",
+        "geneSymbol": "CYP2C19",
+        "chr": "chr10",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "reference-allele",
+            "version": null,
+            "matches": null,
+            "exception_type": "note",
+            "message": "The CYP2C19 *38 allele assignment is characterized by the absence of variants at the positions that are included in the underlying allele definitions."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "abrocitinib",
+            "id": "PA166272921"
+          },
+          {
+            "name": "amitriptyline",
+            "id": "PA448385"
+          },
+          {
+            "name": "belzutifan",
+            "id": "PA166268761"
+          },
+          {
+            "name": "brivaracetam",
+            "id": "PA166153491"
+          },
+          {
+            "name": "carisoprodol",
+            "id": "PA448809"
+          },
+          {
+            "name": "citalopram",
+            "id": "PA449015"
+          },
+          {
+            "name": "clobazam",
+            "id": "PA10888"
+          },
+          {
+            "name": "clomipramine",
+            "id": "PA449048"
+          },
+          {
+            "name": "clopidogrel",
+            "id": "PA449053"
+          },
+          {
+            "name": "dexlansoprazole",
+            "id": "PA166110257"
+          },
+          {
+            "name": "diazepam",
+            "id": "PA449283"
+          },
+          {
+            "name": "doxepin",
+            "id": "PA449409"
+          },
+          {
+            "name": "escitalopram",
+            "id": "PA10074"
+          },
+          {
+            "name": "esomeprazole",
+            "id": "PA10075"
+          },
+          {
+            "name": "flibanserin",
+            "id": "PA166153431"
+          },
+          {
+            "name": "fosphenytoin",
+            "id": "PA164746820"
+          },
+          {
+            "name": "imipramine",
+            "id": "PA449969"
+          },
+          {
+            "name": "lansoprazole",
+            "id": "PA450180"
+          },
+          {
+            "name": "mavacamten",
+            "id": "PA166272922"
+          },
+          {
+            "name": "omeprazole",
+            "id": "PA450704"
+          },
+          {
+            "name": "pantoprazole",
+            "id": "PA450774"
+          },
+          {
+            "name": "rabeprazole",
+            "id": "PA451216"
+          },
+          {
+            "name": "sertraline",
+            "id": "PA451333"
+          },
+          {
+            "name": "trimipramine",
+            "id": "PA451791"
+          },
+          {
+            "name": "voriconazole",
+            "id": "PA10233"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "CYP2C19",
+            "phenotypes": [
+              "Normal Metabolizer"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Metabolizer"
+            ],
+            "label": "*38/*38",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "*38": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "CYP2C19",
+            "phenotypes": [
+              "Normal Metabolizer"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Metabolizer"
+            ],
+            "label": "*38/*38",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "*38": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94761900,
+            "dbSnpId": "rs12248560",
+            "call": "C/C",
+            "alleles": [
+              "*1",
+              "*4",
+              "*17"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762706,
+            "dbSnpId": "rs28399504",
+            "call": "A/A",
+            "alleles": [
+              "*1",
+              "*4"
+            ],
+            "phased": false,
+            "wildtypeAllele": "A",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762712,
+            "dbSnpId": "rs367543002",
+            "call": "C/C",
+            "alleles": [
+              "*1",
+              "*34"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762715,
+            "dbSnpId": "rs367543003",
+            "call": "T/T",
+            "alleles": [
+              "*1",
+              "*34"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762755,
+            "dbSnpId": "rs55752064",
+            "call": "T/T",
+            "alleles": [
+              "*1",
+              "*14"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "CYP2D6": {
+        "alleleDefinitionVersion": null,
+        "alleleDefinitionSource": "UNKNOWN",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "CPIC",
+        "geneSymbol": "CYP2D6",
+        "chr": null,
+        "phased": false,
+        "effectivelyPhased": false,
+        "callSource": "OUTSIDE",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "pcat-outside-call",
+            "version": "1",
+            "matches": {
+              "gene": null,
+              "hapsCalled": [],
+              "hapsMissing": [],
+              "variantsMissing": [],
+              "variant": null,
+              "dips": [],
+              "drugs": []
+            },
+            "exception_type": "",
+            "message": "This comes from an outside data source which does not supply position-level detail.  For specific disclaimers and limitations, see the original genotyping source."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "acetaminophen / caffeine / dihydrocodeine",
+            "id": "PA166246281"
+          },
+          {
+            "name": "amitriptyline",
+            "id": "PA448385"
+          },
+          {
+            "name": "amoxapine",
+            "id": "PA448405"
+          },
+          {
+            "name": "amphetamine",
+            "id": "PA448408"
+          },
+          {
+            "name": "aripiprazole",
+            "id": "PA10026"
+          },
+          {
+            "name": "aripiprazole lauroxil",
+            "id": "PA166161216"
+          },
+          {
+            "name": "atomoxetine",
+            "id": "PA134688071"
+          },
+          {
+            "name": "brexpiprazole",
+            "id": "PA166160053"
+          },
+          {
+            "name": "carvedilol",
+            "id": "PA448817"
+          },
+          {
+            "name": "cevimeline",
+            "id": "PA164754754"
+          },
+          {
+            "name": "clomipramine",
+            "id": "PA449048"
+          },
+          {
+            "name": "clozapine",
+            "id": "PA449061"
+          },
+          {
+            "name": "codeine",
+            "id": "PA449088"
+          },
+          {
+            "name": "darifenacin",
+            "id": "PA164774901"
+          },
+          {
+            "name": "desipramine",
+            "id": "PA449233"
+          },
+          {
+            "name": "deutetrabenazine",
+            "id": "PA166169881"
+          },
+          {
+            "name": "dextromethorphan / quinidine",
+            "id": "PA166175998"
+          },
+          {
+            "name": "dextromethorphan hydrobromide / bupropion hydrochloride",
+            "id": "PA166278341"
+          },
+          {
+            "name": "donepezil",
+            "id": "PA449394"
+          },
+          {
+            "name": "doxepin",
+            "id": "PA449409"
+          },
+          {
+            "name": "eliglustat",
+            "id": "PA166123486"
+          },
+          {
+            "name": "fesoterodine",
+            "id": "PA165958376"
+          },
+          {
+            "name": "fluoxetine",
+            "id": "PA449673"
+          },
+          {
+            "name": "fluvoxamine",
+            "id": "PA449690"
+          },
+          {
+            "name": "galantamine",
+            "id": "PA449726"
+          },
+          {
+            "name": "gefitinib",
+            "id": "PA131301952"
+          },
+          {
+            "name": "hydrocodone",
+            "id": "PA449900"
+          },
+          {
+            "name": "iloperidone",
+            "id": "PA161199368"
+          },
+          {
+            "name": "imipramine",
+            "id": "PA449969"
+          },
+          {
+            "name": "lofexidine",
+            "id": "PA164744510"
+          },
+          {
+            "name": "meclizine",
+            "id": "PA450338"
+          },
+          {
+            "name": "metoclopramide",
+            "id": "PA450475"
+          },
+          {
+            "name": "metoprolol",
+            "id": "PA450480"
+          },
+          {
+            "name": "mirabegron",
+            "id": "PA166177513"
+          },
+          {
+            "name": "nebivolol",
+            "id": "PA151958426"
+          },
+          {
+            "name": "nortriptyline",
+            "id": "PA450657"
+          },
+          {
+            "name": "oliceridine",
+            "id": "PA166223601"
+          },
+          {
+            "name": "ondansetron",
+            "id": "PA450705"
+          },
+          {
+            "name": "paroxetine",
+            "id": "PA450801"
+          },
+          {
+            "name": "perphenazine",
+            "id": "PA450882"
+          },
+          {
+            "name": "pimozide",
+            "id": "PA450965"
+          },
+          {
+            "name": "pitolisant",
+            "id": "PA166185163"
+          },
+          {
+            "name": "propafenone",
+            "id": "PA451131"
+          },
+          {
+            "name": "propranolol",
+            "id": "PA451145"
+          },
+          {
+            "name": "protriptyline",
+            "id": "PA451168"
+          },
+          {
+            "name": "risperidone",
+            "id": "PA451257"
+          },
+          {
+            "name": "tamoxifen",
+            "id": "PA451581"
+          },
+          {
+            "name": "tamsulosin",
+            "id": "PA451583"
+          },
+          {
+            "name": "tetrabenazine",
+            "id": "PA140222719"
+          },
+          {
+            "name": "thioridazine",
+            "id": "PA451666"
+          },
+          {
+            "name": "tolterodine",
+            "id": "PA164746757"
+          },
+          {
+            "name": "tramadol",
+            "id": "PA451735"
+          },
+          {
+            "name": "trimipramine",
+            "id": "PA451791"
+          },
+          {
+            "name": "tropisetron",
+            "id": "PA161925594"
+          },
+          {
+            "name": "valbenazine",
+            "id": "PA166170051"
+          },
+          {
+            "name": "venlafaxine",
+            "id": "PA451866"
+          },
+          {
+            "name": "viloxazine",
+            "id": "PA166251581"
+          },
+          {
+            "name": "vortioxetine",
+            "id": "PA166122595"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2D6",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "1.0"
+            },
+            "allele2": {
+              "gene": "CYP2D6",
+              "name": "*3",
+              "function": "No function",
+              "reference": false,
+              "activityValue": "0.0"
+            },
+            "gene": "CYP2D6",
+            "phenotypes": [
+              "Intermediate Metabolizer"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": "1.0",
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "1.0"
+            ],
+            "label": "*1/*3",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {}
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2D6",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "1.0"
+            },
+            "allele2": {
+              "gene": "CYP2D6",
+              "name": "*3",
+              "function": "No function",
+              "reference": false,
+              "activityValue": "0.0"
+            },
+            "gene": "CYP2D6",
+            "phenotypes": [
+              "Intermediate Metabolizer"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": "1.0",
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "1.0"
+            ],
+            "label": "*1/*3",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {}
+          }
+        ],
+        "variants": [],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "SLCO1B1": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "CPIC",
+        "geneSymbol": "SLCO1B1",
+        "chr": "chr12",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "SLCO1B1-drug text",
+            "version": "1",
+            "matches": {
+              "gene": "SLCO1B1",
+              "hapsCalled": [],
+              "hapsMissing": [],
+              "variantsMissing": [],
+              "variant": null,
+              "dips": [],
+              "drugs": [
+                "simvastatin",
+                "rosuvastatin",
+                "pravastatin",
+                "pitavastatin",
+                "lovastatin",
+                "fluvastatin",
+                "atorvastatin"
+              ]
+            },
+            "exception_type": "note",
+            "message": "The SLCO1B1 genotype (star nomenclature) will be displayed if determinable with the provided VCF based on the SLCO1B1 star allele definition published by CPIC and recommendations are provided based on the genotype.<br><br>In case no genotype can be determined, recommendations are based on the rs4149056 genotype alone as per guideline. The minor C allele at rs4149056 defines SLCO1B1*5."
+          },
+          {
+            "rule_name": "reference-allele",
+            "version": null,
+            "matches": null,
+            "exception_type": "note",
+            "message": "The SLCO1B1 *1 allele assignment is characterized by the absence of variants at the positions that are included in the underlying allele definitions."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "atorvastatin",
+            "id": "PA448500"
+          },
+          {
+            "name": "elagolix",
+            "id": "PA166182348"
+          },
+          {
+            "name": "fluvastatin",
+            "id": "PA449688"
+          },
+          {
+            "name": "lovastatin",
+            "id": "PA450272"
+          },
+          {
+            "name": "pitavastatin",
+            "id": "PA142650384"
+          },
+          {
+            "name": "pravastatin",
+            "id": "PA451089"
+          },
+          {
+            "name": "rosuvastatin",
+            "id": "PA134308647"
+          },
+          {
+            "name": "simvastatin",
+            "id": "PA451363"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "SLCO1B1",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "*1/*1",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "*1": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "SLCO1B1",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "*1/*1",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "*1": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21172734,
+            "dbSnpId": "rs139257324",
+            "call": "C/C",
+            "alleles": [
+              "*33"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21172776,
+            "dbSnpId": "rs373327528",
+            "call": "G/G",
+            "alleles": [
+              "*23"
+            ],
+            "phased": false,
+            "wildtypeAllele": "G",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21172782,
+            "dbSnpId": "rs56101265",
+            "call": "T/T",
+            "alleles": [
+              "*2",
+              "*12"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21174595,
+            "dbSnpId": "rs56061388",
+            "call": "T/T",
+            "alleles": [
+              "*3",
+              "*13"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21176804,
+            "dbSnpId": "rs2306283",
+            "call": "A/A",
+            "alleles": [
+              "*14",
+              "*15",
+              "*20",
+              "*24",
+              "*25",
+              "*27",
+              "*28",
+              "*29",
+              "*30",
+              "*31",
+              "*32",
+              "*33",
+              "*37",
+              "*39",
+              "*42",
+              "*43",
+              "*44",
+              "*46",
+              "*47"
+            ],
+            "phased": false,
+            "wildtypeAllele": "A",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "VKORC1": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": null,
+        "phenotypeSource": "CPIC",
+        "geneSymbol": "VKORC1",
+        "chr": "chr16",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "VKORC1 reverse complement footnote",
+            "version": "1",
+            "matches": {
+              "gene": "VKORC1",
+              "hapsCalled": [],
+              "hapsMissing": [],
+              "variantsMissing": [],
+              "variant": null,
+              "dips": [],
+              "drugs": []
+            },
+            "exception_type": "footnote",
+            "message": "The VKORC1 gene is on the negative chromosomal strand, all genotype calls for VKORC1 in this report refer to the positive chromosomal strand.  Therefore, genotype calls are complemented from gene bases."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "warfarin",
+            "id": "PA451906"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": null,
+              "reference": true,
+              "activityValue": null
+            },
+            "allele2": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": null,
+              "reference": true,
+              "activityValue": null
+            },
+            "gene": "VKORC1",
+            "phenotypes": [],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [],
+            "label": "rs9923231 reference (C)/rs9923231 reference (C)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "rs9923231 reference (C)": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": null,
+              "reference": true,
+              "activityValue": null
+            },
+            "allele2": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": null,
+              "reference": true,
+              "activityValue": null
+            },
+            "gene": "VKORC1",
+            "phenotypes": [],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [],
+            "label": "rs9923231 reference (C)/rs9923231 reference (C)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "CPIC",
+            "diplotypeKey": {
+              "rs9923231 reference (C)": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "VKORC1",
+            "chromosome": "chr16",
+            "position": 31096368,
+            "dbSnpId": "rs9923231",
+            "call": "C/C",
+            "alleles": [
+              "rs9923231 variant (T)"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      }
+    },
+    "DPWG": {
+      "ABCG2": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "DPWG",
+        "geneSymbol": "ABCG2",
+        "chr": "chr4",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [],
+        "relatedDrugs": [
+          {
+            "name": "allopurinol",
+            "id": "PA448320"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "ABCG2",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "rs2231142 reference (G)/rs2231142 reference (G)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "rs2231142 reference (G)": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "ABCG2",
+              "name": "rs2231142 reference (G)",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "ABCG2",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "rs2231142 reference (G)/rs2231142 reference (G)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "rs2231142 reference (G)": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "ABCG2",
+            "chromosome": "chr4",
+            "position": 88131171,
+            "dbSnpId": "rs2231142",
+            "call": "G/G",
+            "alleles": [
+              "rs2231142 variant (T)"
+            ],
+            "phased": false,
+            "wildtypeAllele": "G",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "CYP2C19": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "DPWG",
+        "geneSymbol": "CYP2C19",
+        "chr": "chr10",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "reference-allele",
+            "version": null,
+            "matches": null,
+            "exception_type": "note",
+            "message": "The CYP2C19 *38 allele assignment is characterized by the absence of variants at the positions that are included in the underlying allele definitions."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "citalopram",
+            "id": "PA449015"
+          },
+          {
+            "name": "clomipramine",
+            "id": "PA449048"
+          },
+          {
+            "name": "clopidogrel",
+            "id": "PA449053"
+          },
+          {
+            "name": "escitalopram",
+            "id": "PA10074"
+          },
+          {
+            "name": "imipramine",
+            "id": "PA449969"
+          },
+          {
+            "name": "lansoprazole",
+            "id": "PA450180"
+          },
+          {
+            "name": "omeprazole",
+            "id": "PA450704"
+          },
+          {
+            "name": "pantoprazole",
+            "id": "PA450774"
+          },
+          {
+            "name": "sertraline",
+            "id": "PA451333"
+          },
+          {
+            "name": "voriconazole",
+            "id": "PA10233"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Unassigned function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Unassigned function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "CYP2C19",
+            "phenotypes": [
+              "n/a"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "n/a"
+            ],
+            "label": "*38/*38",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "*38": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Unassigned function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "CYP2C19",
+              "name": "*38",
+              "function": "Unassigned function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "CYP2C19",
+            "phenotypes": [
+              "n/a"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "n/a"
+            ],
+            "label": "*38/*38",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "*38": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94761900,
+            "dbSnpId": "rs12248560",
+            "call": "C/C",
+            "alleles": [
+              "*1",
+              "*4",
+              "*17"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762706,
+            "dbSnpId": "rs28399504",
+            "call": "A/A",
+            "alleles": [
+              "*1",
+              "*4"
+            ],
+            "phased": false,
+            "wildtypeAllele": "A",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762712,
+            "dbSnpId": "rs367543002",
+            "call": "C/C",
+            "alleles": [
+              "*1",
+              "*34"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762715,
+            "dbSnpId": "rs367543003",
+            "call": "T/T",
+            "alleles": [
+              "*1",
+              "*34"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "CYP2C19",
+            "chromosome": "chr10",
+            "position": 94762755,
+            "dbSnpId": "rs55752064",
+            "call": "T/T",
+            "alleles": [
+              "*1",
+              "*14"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "CYP2D6": {
+        "alleleDefinitionVersion": null,
+        "alleleDefinitionSource": "UNKNOWN",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "DPWG",
+        "geneSymbol": "CYP2D6",
+        "chr": null,
+        "phased": false,
+        "effectivelyPhased": false,
+        "callSource": "OUTSIDE",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "pcat-outside-call",
+            "version": "1",
+            "matches": {
+              "gene": null,
+              "hapsCalled": [],
+              "hapsMissing": [],
+              "variantsMissing": [],
+              "variant": null,
+              "dips": [],
+              "drugs": []
+            },
+            "exception_type": "",
+            "message": "This comes from an outside data source which does not supply position-level detail.  For specific disclaimers and limitations, see the original genotyping source."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "amitriptyline",
+            "id": "PA448385"
+          },
+          {
+            "name": "aripiprazole",
+            "id": "PA10026"
+          },
+          {
+            "name": "atomoxetine",
+            "id": "PA134688071"
+          },
+          {
+            "name": "brexpiprazole",
+            "id": "PA166160053"
+          },
+          {
+            "name": "clomipramine",
+            "id": "PA449048"
+          },
+          {
+            "name": "codeine",
+            "id": "PA449088"
+          },
+          {
+            "name": "doxepin",
+            "id": "PA449409"
+          },
+          {
+            "name": "eliglustat",
+            "id": "PA166123486"
+          },
+          {
+            "name": "flecainide",
+            "id": "PA449646"
+          },
+          {
+            "name": "haloperidol",
+            "id": "PA449841"
+          },
+          {
+            "name": "imipramine",
+            "id": "PA449969"
+          },
+          {
+            "name": "metoprolol",
+            "id": "PA450480"
+          },
+          {
+            "name": "nortriptyline",
+            "id": "PA450657"
+          },
+          {
+            "name": "paroxetine",
+            "id": "PA450801"
+          },
+          {
+            "name": "pimozide",
+            "id": "PA450965"
+          },
+          {
+            "name": "propafenone",
+            "id": "PA451131"
+          },
+          {
+            "name": "risperidone",
+            "id": "PA451257"
+          },
+          {
+            "name": "tamoxifen",
+            "id": "PA451581"
+          },
+          {
+            "name": "tramadol",
+            "id": "PA451735"
+          },
+          {
+            "name": "venlafaxine",
+            "id": "PA451866"
+          },
+          {
+            "name": "zuclopenthixol",
+            "id": "PA452629"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2D6",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "1.0"
+            },
+            "allele2": {
+              "gene": "CYP2D6",
+              "name": "*3",
+              "function": "No function",
+              "reference": false,
+              "activityValue": "0.0"
+            },
+            "gene": "CYP2D6",
+            "phenotypes": [
+              "Intermediate Metabolizer"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": "1.0",
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "1.0"
+            ],
+            "label": "*1/*3",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {}
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "CYP2D6",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "1.0"
+            },
+            "allele2": {
+              "gene": "CYP2D6",
+              "name": "*3",
+              "function": "No function",
+              "reference": false,
+              "activityValue": "0.0"
+            },
+            "gene": "CYP2D6",
+            "phenotypes": [
+              "Intermediate Metabolizer"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": "1.0",
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "1.0"
+            ],
+            "label": "*1/*3",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {}
+          }
+        ],
+        "variants": [],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "SLCO1B1": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "DPWG",
+        "geneSymbol": "SLCO1B1",
+        "chr": "chr12",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "SLCO1B1-drug text",
+            "version": "1",
+            "matches": {
+              "gene": "SLCO1B1",
+              "hapsCalled": [],
+              "hapsMissing": [],
+              "variantsMissing": [],
+              "variant": null,
+              "dips": [],
+              "drugs": [
+                "simvastatin",
+                "rosuvastatin",
+                "pravastatin",
+                "pitavastatin",
+                "lovastatin",
+                "fluvastatin",
+                "atorvastatin"
+              ]
+            },
+            "exception_type": "note",
+            "message": "The SLCO1B1 genotype (star nomenclature) will be displayed if determinable with the provided VCF based on the SLCO1B1 star allele definition published by CPIC and recommendations are provided based on the genotype.<br><br>In case no genotype can be determined, recommendations are based on the rs4149056 genotype alone as per guideline. The minor C allele at rs4149056 defines SLCO1B1*5."
+          },
+          {
+            "rule_name": "reference-allele",
+            "version": null,
+            "matches": null,
+            "exception_type": "note",
+            "message": "The SLCO1B1 *1 allele assignment is characterized by the absence of variants at the positions that are included in the underlying allele definitions."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "atorvastatin",
+            "id": "PA448500"
+          },
+          {
+            "name": "simvastatin",
+            "id": "PA451363"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "SLCO1B1",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "*1/*1",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "*1": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "SLCO1B1",
+              "name": "*1",
+              "function": "Normal function",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "SLCO1B1",
+            "phenotypes": [
+              "Normal Function"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "Normal Function"
+            ],
+            "label": "*1/*1",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "*1": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21172734,
+            "dbSnpId": "rs139257324",
+            "call": "C/C",
+            "alleles": [
+              "*33"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21172776,
+            "dbSnpId": "rs373327528",
+            "call": "G/G",
+            "alleles": [
+              "*23"
+            ],
+            "phased": false,
+            "wildtypeAllele": "G",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21172782,
+            "dbSnpId": "rs56101265",
+            "call": "T/T",
+            "alleles": [
+              "*2",
+              "*12"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21174595,
+            "dbSnpId": "rs56061388",
+            "call": "T/T",
+            "alleles": [
+              "*3",
+              "*13"
+            ],
+            "phased": false,
+            "wildtypeAllele": "T",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          },
+          {
+            "gene": "SLCO1B1",
+            "chromosome": "chr12",
+            "position": 21176804,
+            "dbSnpId": "rs2306283",
+            "call": "A/A",
+            "alleles": [
+              "*14",
+              "*15",
+              "*20",
+              "*24",
+              "*25",
+              "*27",
+              "*28",
+              "*29",
+              "*30",
+              "*31",
+              "*32",
+              "*33",
+              "*37",
+              "*39",
+              "*42",
+              "*43",
+              "*44",
+              "*46",
+              "*47"
+            ],
+            "phased": false,
+            "wildtypeAllele": "A",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      },
+      "VKORC1": {
+        "alleleDefinitionVersion": "2024-11-06-02-36",
+        "alleleDefinitionSource": "PHARMGKB",
+        "phenotypeVersion": "2024-11-06-02-36",
+        "phenotypeSource": "DPWG",
+        "geneSymbol": "VKORC1",
+        "chr": "chr16",
+        "phased": false,
+        "effectivelyPhased": true,
+        "callSource": "MATCHER",
+        "uncalledHaplotypes": [],
+        "messages": [
+          {
+            "rule_name": "VKORC1 reverse complement footnote",
+            "version": "1",
+            "matches": {
+              "gene": "VKORC1",
+              "hapsCalled": [],
+              "hapsMissing": [],
+              "variantsMissing": [],
+              "variant": null,
+              "dips": [],
+              "drugs": []
+            },
+            "exception_type": "footnote",
+            "message": "The VKORC1 gene is on the negative chromosomal strand, all genotype calls for VKORC1 in this report refer to the positive chromosomal strand.  Therefore, genotype calls are complemented from gene bases."
+          }
+        ],
+        "relatedDrugs": [
+          {
+            "name": "acenocoumarol",
+            "id": "PA452632"
+          },
+          {
+            "name": "phenprocoumon",
+            "id": "PA450921"
+          },
+          {
+            "name": "warfarin",
+            "id": "PA451906"
+          }
+        ],
+        "sourceDiplotypes": [
+          {
+            "allele1": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": "Normal coumarin sensitivity",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": "Normal coumarin sensitivity",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "VKORC1",
+            "phenotypes": [
+              "-1639 GG"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "-1639 GG"
+            ],
+            "label": "rs9923231 reference (C)/rs9923231 reference (C)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "rs9923231 reference (C)": 2.0
+            }
+          }
+        ],
+        "matcherComponentHaplotypes": [],
+        "matcherHomozygousComponentHaplotypes": [],
+        "recommendationDiplotypes": [
+          {
+            "allele1": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": "Normal coumarin sensitivity",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "allele2": {
+              "gene": "VKORC1",
+              "name": "rs9923231 reference (C)",
+              "function": "Normal coumarin sensitivity",
+              "reference": true,
+              "activityValue": "n/a"
+            },
+            "gene": "VKORC1",
+            "phenotypes": [
+              "-1639 GG"
+            ],
+            "outsidePhenotype": false,
+            "outsidePhenotypeMismatch": null,
+            "activityScore": null,
+            "outsideActivityScore": false,
+            "outsideActivityScoreMismatch": null,
+            "variant": null,
+            "lookupKey": [
+              "-1639 GG"
+            ],
+            "label": "rs9923231 reference (C)/rs9923231 reference (C)",
+            "inferred": false,
+            "combination": false,
+            "phenotypeDataSource": "DPWG",
+            "diplotypeKey": {
+              "rs9923231 reference (C)": 2.0
+            }
+          }
+        ],
+        "variants": [
+          {
+            "gene": "VKORC1",
+            "chromosome": "chr16",
+            "position": 31096368,
+            "dbSnpId": "rs9923231",
+            "call": "C/C",
+            "alleles": [
+              "rs9923231 variant (T)"
+            ],
+            "phased": false,
+            "wildtypeAllele": "C",
+            "hasUndocumentedVariations": false,
+            "warnings": []
+          }
+        ],
+        "variantsOfInterest": [],
+        "hasUndocumentedVariations": false,
+        "treatUndocumentedVariationsAsReference": false
+      }
+    }
+  },
+  "drugs": {
+    "CPIC Guideline Annotation": {
+      "abacavir": {
+        "name": "abacavir",
+        "id": "PA448004",
+        "source": "CPIC_GUIDELINE",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/guidelineAnnotation/PA166104997"
+        ],
+        "citations": [
+          {
+            "pmid": "22378157",
+            "title": "Clinical pharmacogenetics implementation consortium guidelines for HLA-B genotype and abacavir dosing.",
+            "journal": "Clinical pharmacology and therapeutics",
+            "year": 2012,
+            "_sameAs": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3374459"
+          },
+          {
+            "pmid": "24561393",
+            "title": "Clinical Pharmacogenetics Implementation Consortium Guidelines for HLA-B Genotype and Abacavir Dosing: 2014 update.",
+            "journal": "Clinical pharmacology and therapeutics",
+            "year": 2014,
+            "_sameAs": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3994233"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166104997",
+            "name": "Annotation of CPIC Guideline for abacavir and HLA-B",
+            "source": "CPIC_GUIDELINE",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/guidelineAnnotation/PA166104997",
+            "annotations": [
+              {
+                "implications": [
+                  "HLA-B: Significantly increased risk of abacavir hypersensitivity"
+                ],
+                "drugRecommendation": "Abacavir is not recommended",
+                "classification": "Strong",
+                "activityScore": {},
+                "population": "general",
+                "genotypes": [
+                  {
+                    "diplotypes": [
+                      {
+                        "allele1": {
+                          "gene": "HLA-B",
+                          "name": "*15:02",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "allele2": {
+                          "gene": "HLA-B",
+                          "name": "*57:01",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "gene": "HLA-B",
+                        "phenotypes": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "outsidePhenotype": false,
+                        "outsidePhenotypeMismatch": null,
+                        "activityScore": null,
+                        "outsideActivityScore": false,
+                        "outsideActivityScoreMismatch": null,
+                        "variant": null,
+                        "lookupKey": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "label": "*15:02/*57:01",
+                        "inferred": false,
+                        "combination": false,
+                        "phenotypeDataSource": "CPIC",
+                        "diplotypeKey": {}
+                      }
+                    ]
+                  }
+                ],
+                "messages": [],
+                "highlightedVariants": [],
+                "dosingInformation": false,
+                "alternateDrugAvailable": true,
+                "otherPrescribingGuidance": false,
+                "phenotypes": {
+                  "HLA-B": "*57:01 positive"
+                },
+                "lookupKey": {
+                  "HLA-B": "*57:01 positive"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "allopurinol": {
+        "name": "allopurinol",
+        "id": "PA448320",
+        "source": "CPIC_GUIDELINE",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/guidelineAnnotation/PA166105003"
+        ],
+        "citations": [
+          {
+            "pmid": "23232549",
+            "title": "Clinical Pharmacogenetics Implementation Consortium guidelines for human leukocyte antigen-B genotype and allopurinol dosing.",
+            "journal": "Clinical pharmacology and therapeutics",
+            "year": 2013,
+            "_sameAs": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3564416"
+          },
+          {
+            "pmid": "26094938",
+            "title": "Clinical Pharmacogenetics Implementation Consortium (CPIC) guidelines for human leukocyte antigen B (HLA-B) genotype and allopurinol dosing: 2015 update.",
+            "journal": "Clinical pharmacology and therapeutics",
+            "year": 2016,
+            "_sameAs": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4675696"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166105003",
+            "name": "Annotation of CPIC Guideline for allopurinol and HLA-B",
+            "source": "CPIC_GUIDELINE",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/guidelineAnnotation/PA166105003",
+            "annotations": [
+              {
+                "implications": [
+                  "HLA-B: Low or reduced risk of allopurinol-induced SCAR"
+                ],
+                "drugRecommendation": "Use allopurinol per standard dosing guidelines",
+                "classification": "Strong",
+                "activityScore": {},
+                "population": "general",
+                "genotypes": [
+                  {
+                    "diplotypes": [
+                      {
+                        "allele1": {
+                          "gene": "HLA-B",
+                          "name": "*15:02",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "allele2": {
+                          "gene": "HLA-B",
+                          "name": "*57:01",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "gene": "HLA-B",
+                        "phenotypes": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "outsidePhenotype": false,
+                        "outsidePhenotypeMismatch": null,
+                        "activityScore": null,
+                        "outsideActivityScore": false,
+                        "outsideActivityScoreMismatch": null,
+                        "variant": null,
+                        "lookupKey": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "label": "*15:02/*57:01",
+                        "inferred": false,
+                        "combination": false,
+                        "phenotypeDataSource": "CPIC",
+                        "diplotypeKey": {}
+                      }
+                    ]
+                  }
+                ],
+                "messages": [],
+                "highlightedVariants": [],
+                "dosingInformation": false,
+                "alternateDrugAvailable": false,
+                "otherPrescribingGuidance": false,
+                "phenotypes": {
+                  "HLA-B": "*58:01 negative"
+                },
+                "lookupKey": {
+                  "HLA-B": "*58:01 negative"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "DPWG Guideline Annotation": {
+      "abacavir": {
+        "name": "abacavir",
+        "id": "PA448004",
+        "source": "DPWG_GUIDELINE",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/guidelineAnnotation/PA166104991"
+        ],
+        "citations": [
+          {
+            "pmid": "21412232",
+            "title": "Pharmacogenetics: from bench to byte--an update of guidelines.",
+            "journal": "Clinical pharmacology and therapeutics",
+            "year": 2011,
+            "_sameAs": "https://www.ncbi.nlm.nih.gov/pubmed/21412232"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166104991",
+            "name": "Annotation of DPWG Guideline for abacavir and HLA-B",
+            "source": "DPWG_GUIDELINE",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/guidelineAnnotation/PA166104991",
+            "annotations": [
+              {
+                "implications": [
+                  "HLA-B*57:01-positive patients have a strongly increased risk of a hypersensitivity reaction to abacavir. 48% of the HLA-B*57:01-positive patients develop a severe and potentially life-threatening hypersensitivity reaction to abacavir"
+                ],
+                "drugRecommendation": "Abacavir is contra-indicated for HLA-B*57:01-positive patients.\n<ol>\n<li>Avoid abacavir.</li>\n</ol>",
+                "classification": "Unspecified",
+                "activityScore": {},
+                "population": null,
+                "genotypes": [
+                  {
+                    "diplotypes": [
+                      {
+                        "allele1": {
+                          "gene": "HLA-B",
+                          "name": "*15:02",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "allele2": {
+                          "gene": "HLA-B",
+                          "name": "*57:01",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "gene": "HLA-B",
+                        "phenotypes": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "outsidePhenotype": false,
+                        "outsidePhenotypeMismatch": null,
+                        "activityScore": null,
+                        "outsideActivityScore": false,
+                        "outsideActivityScoreMismatch": null,
+                        "variant": null,
+                        "lookupKey": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "label": "*15:02/*57:01",
+                        "inferred": false,
+                        "combination": false,
+                        "phenotypeDataSource": "DPWG",
+                        "diplotypeKey": {}
+                      }
+                    ]
+                  }
+                ],
+                "messages": [],
+                "highlightedVariants": [],
+                "dosingInformation": false,
+                "alternateDrugAvailable": true,
+                "otherPrescribingGuidance": false,
+                "phenotypes": {
+                  "HLA-B": "*57:01 positive"
+                },
+                "lookupKey": {
+                  "HLA-B": "*57:01 positive"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "acenocoumarol": {
+        "name": "acenocoumarol",
+        "id": "PA452632",
+        "source": "DPWG_GUIDELINE",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/guidelineAnnotation/PA166104938"
+        ],
+        "citations": [
+          {
+            "pmid": "21412232",
+            "title": "Pharmacogenetics: from bench to byte--an update of guidelines.",
+            "journal": "Clinical pharmacology and therapeutics",
+            "year": 2011,
+            "_sameAs": "https://www.ncbi.nlm.nih.gov/pubmed/21412232"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166104938",
+            "name": "Annotation of DPWG Guideline for acenocoumarol and VKORC1",
+            "source": "DPWG_GUIDELINE",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/guidelineAnnotation/PA166104938",
+            "annotations": [
+              {
+                "implications": [
+                  "The guideline does not provide a description of the impact of the -1639 GG genotype on acenocoumarol."
+                ],
+                "drugRecommendation": "The guideline does not provide a recommendation for acenocoumarol in patients with the VKORC1 rs9923231 CC genotype (-1639 GG genotype).",
+                "classification": "No recommendation",
+                "activityScore": {},
+                "population": null,
+                "genotypes": [
+                  {
+                    "diplotypes": [
+                      {
+                        "allele1": {
+                          "gene": "VKORC1",
+                          "name": "rs9923231 reference (C)",
+                          "function": "Normal coumarin sensitivity",
+                          "reference": true,
+                          "activityValue": "n/a"
+                        },
+                        "allele2": {
+                          "gene": "VKORC1",
+                          "name": "rs9923231 reference (C)",
+                          "function": "Normal coumarin sensitivity",
+                          "reference": true,
+                          "activityValue": "n/a"
+                        },
+                        "gene": "VKORC1",
+                        "phenotypes": [
+                          "-1639 GG"
+                        ],
+                        "outsidePhenotype": false,
+                        "outsidePhenotypeMismatch": null,
+                        "activityScore": null,
+                        "outsideActivityScore": false,
+                        "outsideActivityScoreMismatch": null,
+                        "variant": null,
+                        "lookupKey": [
+                          "-1639 GG"
+                        ],
+                        "label": "rs9923231 reference (C)/rs9923231 reference (C)",
+                        "inferred": false,
+                        "combination": false,
+                        "phenotypeDataSource": "DPWG",
+                        "diplotypeKey": {
+                          "rs9923231 reference (C)": 2.0
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "messages": [],
+                "highlightedVariants": [],
+                "dosingInformation": false,
+                "alternateDrugAvailable": false,
+                "otherPrescribingGuidance": false,
+                "phenotypes": {
+                  "VKORC1": "-1639 GG"
+                },
+                "lookupKey": {
+                  "VKORC1": "-1639 GG"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "FDA Label Annotation": {
+      "abacavir": {
+        "name": "abacavir",
+        "id": "PA448004",
+        "source": "FDA_LABEL",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/labelAnnotation/PA166104833"
+        ],
+        "citations": [
+          {
+            "pmid": null,
+            "title": "Drugs@FDA: Drug Product ZIAGEN (abacavir sulfate), NDA020977, ViiV Healthcare Company",
+            "journal": null,
+            "year": -1,
+            "_sameAs": "https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&varApplNo=020977"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166104833",
+            "name": "Annotation of FDA Label for abacavir and HLA-B",
+            "source": "FDA_LABEL",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/labelAnnotation/PA166104833",
+            "annotations": [
+              {
+                "implications": [],
+                "drugRecommendation": "&quot;All patients should be screened for the HLA-B*5701 allele prior to initiating therapy with ZIAGEN [abacavir] or reinitiation of therapy with ZIAGEN, unless patients have a previously documented HLA-B*5701 allele assessment...ZIAGEN [abacavir] is contraindicated in patients: who have the HLA-B*5701 allele.&quot; See label for more information.",
+                "classification": "Unspecified",
+                "activityScore": {},
+                "population": null,
+                "genotypes": [
+                  {
+                    "diplotypes": [
+                      {
+                        "allele1": {
+                          "gene": "HLA-B",
+                          "name": "*15:02",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "allele2": {
+                          "gene": "HLA-B",
+                          "name": "*57:01",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "gene": "HLA-B",
+                        "phenotypes": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "outsidePhenotype": false,
+                        "outsidePhenotypeMismatch": null,
+                        "activityScore": null,
+                        "outsideActivityScore": false,
+                        "outsideActivityScoreMismatch": null,
+                        "variant": null,
+                        "lookupKey": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "label": "*15:02/*57:01",
+                        "inferred": false,
+                        "combination": false,
+                        "phenotypeDataSource": "CPIC",
+                        "diplotypeKey": {}
+                      }
+                    ]
+                  }
+                ],
+                "messages": [],
+                "highlightedVariants": [],
+                "dosingInformation": false,
+                "alternateDrugAvailable": true,
+                "otherPrescribingGuidance": false,
+                "phenotypes": {
+                  "HLA-B": "*57:01 positive"
+                },
+                "lookupKey": {
+                  "HLA-B": "*57:01 positive"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "abrocitinib": {
+        "name": "abrocitinib",
+        "id": "PA166272921",
+        "source": "FDA_LABEL",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/labelAnnotation/PA166272961"
+        ],
+        "citations": [
+          {
+            "pmid": null,
+            "title": "Drugs@FDA: Drug Product Cibinqo (abrocitinib), NDA213871, Pfizer Laboratories Div Pfizer Inc",
+            "journal": null,
+            "year": -1,
+            "_sameAs": "https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&varApplNo=213871"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166272961",
+            "name": "Annotation of FDA Label for abrocitinib and CYP2C19",
+            "source": "FDA_LABEL",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/labelAnnotation/PA166272961",
+            "annotations": []
+          }
+        ]
+      }
+    },
+    "FDA PGx Association": {
+      "abacavir": {
+        "name": "abacavir",
+        "id": "PA448004",
+        "source": "FDA_ASSOC",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/fdaPgxAssociations#PA166329541"
+        ],
+        "citations": [
+          {
+            "pmid": null,
+            "title": "FDA Table of Pharmacogenetic Associations",
+            "journal": null,
+            "year": -1,
+            "_sameAs": "https://www.fda.gov/medical-devices/precision-medicine/table-pharmacogenetic-associations"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166329541",
+            "name": "FDA PGx Association [Pharmacogenetic Associations for which the Data Support Therapeutic Management Recommendations]: Abacavir - HLA-B",
+            "source": "FDA_ASSOC",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/fdaPgxAssociations#PA166329541",
+            "annotations": [
+              {
+                "implications": [],
+                "drugRecommendation": "&quot;Results in higher adverse reaction risk (hypersensitivity reactions). Do not use abacavir in patients positive for HLA-B*57:01.&quot;",
+                "classification": "Unspecified",
+                "activityScore": {},
+                "population": "Affected subgroup: HLA-B*57:01 allele positive",
+                "genotypes": [
+                  {
+                    "diplotypes": [
+                      {
+                        "allele1": {
+                          "gene": "HLA-B",
+                          "name": "*15:02",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "allele2": {
+                          "gene": "HLA-B",
+                          "name": "*57:01",
+                          "function": null,
+                          "reference": false,
+                          "activityValue": null
+                        },
+                        "gene": "HLA-B",
+                        "phenotypes": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "outsidePhenotype": false,
+                        "outsidePhenotypeMismatch": null,
+                        "activityScore": null,
+                        "outsideActivityScore": false,
+                        "outsideActivityScoreMismatch": null,
+                        "variant": null,
+                        "lookupKey": [
+                          "*15:02 positive",
+                          "*57:01 positive",
+                          "*58:01 negative"
+                        ],
+                        "label": "*15:02/*57:01",
+                        "inferred": false,
+                        "combination": false,
+                        "phenotypeDataSource": "CPIC",
+                        "diplotypeKey": {}
+                      }
+                    ]
+                  }
+                ],
+                "messages": [],
+                "highlightedVariants": [],
+                "dosingInformation": false,
+                "alternateDrugAvailable": true,
+                "otherPrescribingGuidance": false,
+                "phenotypes": {
+                  "HLA-B": "*57:01 positive"
+                },
+                "lookupKey": {
+                  "HLA-B": "*57:01 positive"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "abrocitinib": {
+        "name": "abrocitinib",
+        "id": "PA166272921",
+        "source": "FDA_ASSOC",
+        "version": "2024-11-06-02-36",
+        "messages": [],
+        "variants": [],
+        "urls": [
+          "https://www.pharmgkb.org/fdaPgxAssociations#PA166329542"
+        ],
+        "citations": [
+          {
+            "pmid": null,
+            "title": "FDA Table of Pharmacogenetic Associations",
+            "journal": null,
+            "year": -1,
+            "_sameAs": "https://www.fda.gov/medical-devices/precision-medicine/table-pharmacogenetic-associations"
+          }
+        ],
+        "guidelines": [
+          {
+            "id": "PA166329542",
+            "name": "FDA PGx Association [Pharmacogenetic Associations for which the Data Support Therapeutic Management Recommendations]: Abrocitinib - CYP2C19",
+            "source": "FDA_ASSOC",
+            "version": "2024-11-06-02-36",
+            "url": "https://www.pharmgkb.org/fdaPgxAssociations#PA166329542",
+            "annotations": []
+          }
+        ]
+      }
+    }
+  },
+  "messages": []
+}
