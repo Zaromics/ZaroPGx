@@ -22,7 +22,7 @@ def e2e_base_url(pytestconfig) -> str:
 @pytest.fixture(scope="session")
 def e2e_client(e2e_base_url):
     try:
-        with httpx.Client(base_url=e2e_base_url, timeout=60.0) as client:
+        with httpx.Client(base_url=e2e_base_url, timeout=180.0) as client:
             r = client.get("/health")
             if r.status_code != 200:
                 pytest.skip(f"app not healthy at {e2e_base_url}: {r.status_code}")

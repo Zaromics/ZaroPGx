@@ -38,11 +38,10 @@ jobs:
         run: uv tool run isort --check-only --profile black app tests
 
       # Deliberately a narrow gate. Full flake8 still reports many style findings
-      # (mostly E501); keep the blocking select tight. F821 NameErrors in
-      # generator/main were cleared in Wave 3 — add F82 here once CI is ready
-      # to enforce them repo-wide.
-      - name: flake8 (syntax errors and broken asserts only)
-        run: uv tool run flake8 --select=E9,F63,F7 app tests
+      # (mostly E501); keep the blocking select tight. F821 NameErrors cleared in
+      # Wave 3 — F82 is now part of the blocking gate.
+      - name: flake8 (syntax errors, broken asserts, undefined names)
+        run: uv tool run flake8 --select=E9,F63,F7,F82 app tests
 
       # Informational only. Use `|| true` (not continue-on-error) so a non-zero
       # flake8 exit does not create a red ##[error] annotation on a green job.

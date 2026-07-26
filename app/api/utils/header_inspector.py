@@ -56,15 +56,6 @@ DEFAULT_MAX_BYTES = int(os.getenv("MAX_HEADER_READ_BYTES", str(1_000_000_000)))
 DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 
 
-# TODO: refactor duplicate code -- see file_utils.py
-def _has_index_file(path: Path) -> bool:
-    index_extensions = [".tbi", ".csi", ".bai", ".fai", ".crai"]
-    for ext in index_extensions:
-        if (path.parent / f"{path.stem}{ext}").exists():
-            return True
-    return False
-
-
 def inspect_header(
     filepath: str, max_bytes: Optional[int] = None, timeout_sec: Optional[int] = None
 ) -> Dict:
@@ -574,7 +565,7 @@ class GenomicHeaderInspector:
                     with self._open_file(filepath) as f:
                         line_count = sum(1 for _ in f)
                         result["estimated_records"] = line_count // 4
-                except:
+                except OSError:
                     result["estimated_records"] = "unknown"
 
             return result

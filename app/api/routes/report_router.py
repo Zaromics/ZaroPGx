@@ -1,14 +1,12 @@
 import logging
 import os
-import uuid
-from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.db import get_db, get_guidelines_for_gene_drug, register_report
-from app.api.models import DrugRecommendation, ReportRequest, ReportResponse
+from app.api.db import get_db, get_guidelines_for_gene_drug
+from app.api.models import DrugRecommendation
 
 from ..utils.security import get_optional_user
 
@@ -19,279 +17,57 @@ logger = logging.getLogger(__name__)
 # Initialize router
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-# Constants
-REPORT_DIR = os.environ.get("REPORT_DIR", "/data/reports")
-# Not created at import time — the default is an absolute container path, so importing this
-# module off-host would create it on the host. app.main's startup_event creates it instead.
+_RETIRED_REPORT_STUB_DETAIL = (
+    "This /reports stub is retired. Real report generation and delivery live under "
+    "/upload (e.g. POST /upload/genomic-data, GET /upload/reports/job/{job_id}, "
+    "GET /upload/reports/download/{patient_id}) and GET /reports/{patient_id}/{filename}."
+)
 
 
-# Background task to generate report
-def generate_report_background(
-    patient_id: str, file_id: str, report_type: str, report_id: str, db: Session
-):
-    try:
-        logger.info(
-            f"🚀 Starting report generation for patient {patient_id}, file {file_id}"
-        )
-        logger.info(f"📋 Report type: {report_type}, Report ID: {report_id}")
-
-        logger.info(
-            f"Generating {report_type} report for patient {patient_id}, file {file_id}"
-        )
-
-        # Try multiple path resolution strategies
-        pharmcat_data_dir = None
-
-        # Strategy 1: Use environment variable if set
-        if os.getenv("PHARMCAT_DATA_DIR"):
-            pharmcat_data_dir = os.getenv("PHARMCAT_DATA_DIR")
-
-        # Strategy 2: Look relative to current working directory
-        if not pharmcat_data_dir or not os.path.exists(pharmcat_data_dir):
-            pharmcat_data_dir = os.path.join(
-                os.getcwd(), "data", "pharmcat_final_results"
-            )
-
-        # Strategy 3: Look relative to this file
-        if not os.path.exists(pharmcat_data_dir):
-            project_root = os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            )
-            pharmcat_data_dir = os.path.join(
-                project_root, "data", "pharmcat_final_results"
-            )
-
-        # Strategy 4
-        if not os.path.exists(pharmcat_data_dir):
-            docker_paths = ["/data/reports"]
-            for path in docker_paths:
-                if os.path.exists(path):
-                    pharmcat_data_dir = path
-                    break
-
-        logger.info(f"Using PharmCAT data directory: {pharmcat_data_dir}")
-        logger.info(f"Directory exists: {os.path.exists(pharmcat_data_dir)}")
-
-        if os.path.exists(pharmcat_data_dir):
-            files = os.listdir(pharmcat_data_dir)
-            logger.info(f"Files in PharmCAT directory: {files}")
-
-        # Check if PharmCAT results exist for this patient/sample
-        sample_files = [
-            f"{patient_id}.mm2.sortdup.bqsr.hc.report.json",
-            f"{patient_id}.mm2.sortdup.bqsr.hc.report.tsv",
-            f"{patient_id}.mm2.sortdup.bqsr.hc.phenotype.json",
-        ]
-
-        pharmcat_json_path = None
-        pharmcat_tsv_path = None
-
-        for filename in sample_files:
-            file_path = os.path.join(pharmcat_data_dir, filename)
-            if os.path.exists(file_path):
-                if filename.endswith(".json") and "report" in filename:
-                    pharmcat_json_path = file_path
-                elif filename.endswith(".tsv"):
-                    pharmcat_tsv_path = file_path
-                logger.info(f"Found PharmCAT file: {filename}")
-
-        if not pharmcat_json_path or not pharmcat_tsv_path:
-            logger.warning(f"No PharmCAT results found for patient {patient_id}.")
-            # Do not fall back to mock data if PharmCAT results are not found
-            diplotypes = []
-        else:
-            # Load PharmCAT data
-            logger.info("Loading PharmCAT results")
-            import pandas as pd
-
-            # Load TSV data
-            df = pd.read_csv(pharmcat_tsv_path, sep="\t", skiprows=1)
-
-            # Convert to diplotypes format
-            diplotypes = []
-            for _, row in df.iterrows():
-                if pd.notna(row["Gene"]) and pd.notna(row["Source Diplotype"]):
-                    diplotypes.append(
-                        {
-                            "gene": row["Gene"],
-                            "diplotype": row["Source Diplotype"],
-                            "phenotype": (
-                                row["Phenotype"]
-                                if pd.notna(row["Phenotype"])
-                                else "Unknown"
-                            ),
-                            "activity_score": (
-                                row["Activity Score"]
-                                if pd.notna(row["Activity Score"])
-                                else None
-                            ),
-                        }
-                    )
-
-            logger.info(f"Loaded {len(diplotypes)} real pharmacogenomic findings")
-
-        # Get drug recommendations based on diplotypes
-        recommendations = []
-        for diplotype in diplotypes:
-            gene = diplotype["gene"]
-            # Get drugs that have guidelines for this gene
-            drug_guidelines = get_guidelines_for_gene_drug(db, gene, None)
-            for guideline in drug_guidelines:
-                recommendations.append(
-                    DrugRecommendation(
-                        drug=guideline.drug,
-                        gene=gene,
-                        guideline=f"CPIC Guideline for {gene} and {guideline.drug}",
-                        recommendation=guideline.recommendation,
-                        # Do not invent evidence strength / PMIDs — cpic.guidelines has neither
-                        classification=None,
-                        literature_references=None,
-                    )
-                )
-
-        # Generate PDF report using dual-lane system
-        report_path = os.path.join(REPORT_DIR, f"{report_id}.pdf")
-        from app.reports.pdf_generators import generate_pdf_report_dual_lane
-
-        # Prepare template data for dual-lane PDF generation
-        template_data = {
-            "patient_id": patient_id,
-            "report_id": report_id,
-            "diplotypes": diplotypes,
-            "recommendations": recommendations,
-        }
-
-        # Use dual-lane PDF generation system
-        preferred_generator = os.environ.get("PDF_ENGINE", "weasyprint").lower()
-        if preferred_generator not in ["weasyprint", "reportlab"]:
-            preferred_generator = "weasyprint"  # Default fallback
-
-        result = generate_pdf_report_dual_lane(
-            template_data=template_data,
-            output_path=report_path,
-            workflow_diagram=None,  # No workflow diagram for this simple report
-            preferred_generator=preferred_generator,  # Use configured engine preference
-        )
-
-        if result["success"]:
-            logger.info(
-                f"✓ PDF generated successfully using {result['generator_used']}"
-            )
-            if result["fallback_used"]:
-                logger.info("⚠ Fallback generator was used")
-        else:
-            logger.error(f"✗ Dual-lane PDF generation failed: {result['error']}")
-            raise Exception(f"PDF generation failed: {result['error']}")
-
-        # Register report in database
-        register_report(db, patient_id, report_type, report_path)
-
-        logger.info(f"Report generation complete: {report_path}")
-    except Exception as e:
-        logger.error(f"Error generating report: {str(e)}")
-        # Update status in database to failed
-
-
-@router.post("/generate", response_model=ReportResponse)
+@router.post("/generate")
 async def generate_report(
-    request: ReportRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
     current_user: str = Depends(get_optional_user),
 ):
     """
-    Generate a pharmacogenomic report for a patient based on their genetic data.
+    Retired stub. Report generation runs via the upload/Nextflow pipeline, not this route.
     """
-    try:
-        # Check if patient and file exist
-        # This would be implemented with db queries
-        # For now, assume they exist
-
-        # Generate report ID
-        report_id = str(uuid.uuid4())
-
-        # Schedule background task to generate report
-        background_tasks.add_task(
-            generate_report_background,
-            request.patient_id,
-            request.file_id,
-            request.report_type,
-            report_id,
-            db,
-        )
-
-        # Return response
-        return ReportResponse(
-            report_id=report_id,
-            patient_id=request.patient_id,
-            created_at=datetime.now(timezone.utc),
-            report_url=f"/reports/{report_id}/download",
-            report_type=request.report_type,
-        )
-    except Exception as e:
-        logger.error(f"Error initiating report generation: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Error generating report: {str(e)}"
-        )
+    raise HTTPException(status_code=501, detail=_RETIRED_REPORT_STUB_DETAIL)
 
 
 @router.get("/{report_id}/status")
 async def get_report_status(
     report_id: str,
-    db: Session = Depends(get_db),
     current_user: str = Depends(get_optional_user),
 ):
     """
-    Check the status of a report generation request.
+    Retired stub. Previously always returned status "completed" with no DB lookup.
     """
-    try:
-        # Query report status from database
-        # This would be implemented with a db query
-        # For now, return mock data
-        return {
-            "report_id": report_id,
-            "status": "completed",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "download_url": f"/reports/{report_id}/download",
-        }
-    except Exception as e:
-        logger.error(f"Error getting report status: {str(e)}")
-        raise HTTPException(status_code=404, detail="Report not found")
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            f"GET /reports/{report_id}/status is retired (it always claimed "
+            f"'completed'). Use GET /upload/status/{{job_id}} or "
+            f"GET /api/v1/workflows/{{workflow_id}} instead. {_RETIRED_REPORT_STUB_DETAIL}"
+        ),
+    )
 
 
 @router.get("/{report_id}/download")
 async def download_report(
     report_id: str,
-    db: Session = Depends(get_db),
     current_user: str = Depends(get_optional_user),
 ):
     """
-    Download a generated pharmacogenomic report.
+    Retired stub. Previously returned a JSON pointer to an unserved /static/reports path.
     """
-    try:
-        # Get report path from database
-        # This would be implemented with a db query
-        # For now, use a fixed path
-        report_path = os.path.join(REPORT_DIR, f"{report_id}.pdf")
-
-        # Check if report exists
-        if not os.path.exists(report_path):
-            raise HTTPException(
-                status_code=404, detail="Report not found or still processing"
-            )
-
-        # In a real implementation, this would return the file
-        # For now, return a mock response
-        return {
-            "file_url": f"/static/reports/{report_id}.pdf",
-            "content_type": "application/pdf",
-            "filename": f"pgx_report_{report_id}.pdf",
-        }
-    except Exception as e:
-        logger.error(f"Error downloading report: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Error downloading report: {str(e)}"
-        )
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            f"GET /reports/{report_id}/download is retired. Use "
+            f"GET /upload/reports/download/{{patient_id}} or "
+            f"GET /reports/{{patient_id}}/{{filename}}. {_RETIRED_REPORT_STUB_DETAIL}"
+        ),
+    )
 
 
 @router.get("/recommendations/{patient_id}", response_model=List[DrugRecommendation])

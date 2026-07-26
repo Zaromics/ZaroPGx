@@ -41,6 +41,78 @@ from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 
 logger = logging.getLogger(__name__)
 
+# Strong refs for fire-and-forget broadcast tasks (loop only keeps weak refs).
+_background_tasks: set[asyncio.Task] = set()
+# Main app loop — used when sync WorkflowService methods run off the event-loop thread.
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def remember_event_loop(loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    """Record the running asyncio loop for thread-safe broadcast scheduling."""
+    global _main_loop
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+    _main_loop = loop
+
+
+def _on_background_task_done(task: asyncio.Task) -> None:
+    _background_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(
+            "Background workflow broadcast task failed: %s",
+            exc,
+            exc_info=exc,
+        )
+
+
+def schedule_coroutine(coro) -> None:
+    """
+    Schedule a coroutine from sync or async context.
+
+    Holds a strong Task reference so the event loop cannot GC mid-flight, and
+    logs exceptions from done callbacks. When called from a worker thread with
+    no running loop, uses run_coroutine_threadsafe against the remembered main loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        remember_event_loop(loop)
+        task = loop.create_task(coro)
+        _background_tasks.add(task)
+        task.add_done_callback(_on_background_task_done)
+        return
+
+    if _main_loop is not None and _main_loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, _main_loop)
+
+        def _on_future_done(fut: asyncio.Future) -> None:
+            try:
+                fut.result()
+            except Exception as e:
+                logger.error(
+                    "Background workflow broadcast failed (thread-safe): %s",
+                    e,
+                    exc_info=True,
+                )
+
+        future.add_done_callback(_on_future_done)
+        return
+
+    logger.error(
+        "Cannot schedule workflow broadcast: no running event loop "
+        "(call remember_event_loop at app startup)"
+    )
+    coro.close()
+
 
 class WorkflowService:
     """
@@ -263,8 +335,7 @@ class WorkflowService:
 
             # Broadcast workflow update via WebSocket
             try:
-                # Schedule the broadcast task for execution
-                asyncio.create_task(
+                schedule_coroutine(
                     self._broadcast_workflow_update(
                         str(workflow.id),
                         {
@@ -493,7 +564,7 @@ class WorkflowService:
             # Broadcast step update via WebSocket
             try:
                 # Schedule the broadcast task for execution
-                asyncio.create_task(
+                schedule_coroutine(
                     self._broadcast_step_update(
                         str(workflow_id),
                         step_name,
@@ -532,7 +603,7 @@ class WorkflowService:
                     )
                     if workflow:
                         # Schedule workflow progress broadcast
-                        asyncio.create_task(
+                        schedule_coroutine(
                             self._broadcast_workflow_update(
                                 str(workflow_id),
                                 {
@@ -707,7 +778,7 @@ class WorkflowService:
             # Broadcast log update via WebSocket
             try:
                 # Schedule the broadcast task for execution
-                asyncio.create_task(
+                schedule_coroutine(
                     self._broadcast_log_update(
                         str(workflow_id),
                         {
@@ -862,7 +933,7 @@ class WorkflowService:
 
                 # Broadcast final workflow completion update
                 try:
-                    asyncio.create_task(
+                    schedule_coroutine(
                         self._broadcast_workflow_update(
                             str(workflow_id),
                             {

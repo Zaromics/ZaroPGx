@@ -501,48 +501,27 @@ async def serve_report_file(
     patient_id: str, filename: str, current_user: str = Depends(get_optional_user)
 ):
     """Serve individual report files from the reports directory"""
-    import os
-    from pathlib import Path
+    import mimetypes
 
-    # Construct the file path
-    file_path = REPORTS_DIR / patient_id / filename
-
-    # Security check: ensure the path is within the reports directory
+    # Construct and resolve the file path
     try:
-        file_path = file_path.resolve()
+        file_path = (REPORTS_DIR / patient_id / filename).resolve()
         reports_dir = REPORTS_DIR.resolve()
-        if not str(file_path).startswith(str(reports_dir)):
-            raise HTTPException(status_code=403, detail="Access denied")
-    except Exception:
+    except OSError:
         raise HTTPException(status_code=403, detail="Invalid file path")
 
-    # Check if file exists
+    # is_relative_to rejects sibling dirs that share a prefix (e.g. reports-old)
+    if not file_path.is_relative_to(reports_dir):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Determine content type based on file extension
-    content_type = "application/octet-stream"
-    if filename.endswith(".html"):
-        content_type = "text/html"
-    elif filename.endswith(".pdf"):
-        content_type = "application/pdf"
-    elif filename.endswith(".json"):
-        content_type = "application/json"
-    elif filename.endswith(".tsv"):
-        content_type = "text/tab-separated-values"
-    elif filename.endswith(".svg"):
-        content_type = "image/svg+xml"
-    elif filename.endswith(".png"):
-        content_type = "image/png"
-
-    # Read and return the file
-    try:
-        with open(file_path, "rb") as f:
-            content = f.read()
-        return Response(content=content, media_type=content_type)
-    except Exception as e:
-        logger.error(f"Error reading file {file_path}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error reading file")
+    media_type, _ = mimetypes.guess_type(str(file_path))
+    return FileResponse(
+        path=file_path,
+        media_type=media_type or "application/octet-stream",
+    )
 
 
 # Authentication endpoint
@@ -750,15 +729,6 @@ async def start_genome_download():
 # Legacy job-status endpoint removed - use workflow monitoring system instead
 
 
-async def handle_pgx_report(vcf_path, sample_id=None):
-    """
-    Process a VCF file through the PGx pipeline and return the report
-    """
-    # This would be similar to the background process but synchronous and returning the report paths
-    # Implement as needed
-    pass
-
-
 @app.post("/api/variant-call")
 async def call_variants(
     file: UploadFile = File(...),
@@ -806,8 +776,10 @@ async def call_variants(
         try:
             if "files" in locals() and "file" in files:
                 files["file"].close()
-        except:
-            pass
+        except Exception:
+            logger.debug(
+                "Failed closing temp upload handle after variant-call", exc_info=True
+            )
 
 
 # Cleanup endpoints
@@ -1193,6 +1165,12 @@ async def startup_event():
     """Check if required services are ready before starting the app"""
     print("=================== STARTING ZaroPGx ===================")
     logger.info("Starting ZaroPGx application")
+
+    # Remember the main loop so sync WorkflowService methods can schedule
+    # WebSocket broadcasts via run_coroutine_threadsafe when off-loop.
+    from app.services.workflow_service import remember_event_loop
+
+    remember_event_loop()
 
     # Ensure database is properly initialized
     try:

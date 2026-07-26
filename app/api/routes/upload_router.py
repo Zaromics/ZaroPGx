@@ -2,7 +2,6 @@
 Upload Router - Nextflow-Only Processing
 
 This module handles genomic data uploads and processes them exclusively through Nextflow.
-Legacy direct processing has been moved to legacy_processing.py as a backup.
 """
 
 import asyncio
@@ -63,7 +62,7 @@ from app.api.utils.header_inspector import (
 from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
-from app.services.workflow_service import WorkflowService
+from app.services.workflow_service import WorkflowService, schedule_coroutine
 from app.visualizations.workflow_diagram import (
     render_kroki_mermaid_svg,
     render_simple_png_from_workflow,
@@ -105,7 +104,7 @@ INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
 
-# Always use Nextflow for processing (legacy direct processing moved to legacy_processing.py)
+# Always use Nextflow for processing
 USE_NEXTFLOW = True
 
 # Log the configuration for debugging
@@ -233,6 +232,7 @@ async def handle_final_stages_progression(
         sample_identifier = None
         if "sample_identifier" in metadata:
             sample_identifier = metadata["sample_identifier"]
+        header_sample_identifier = metadata.get("header_sample_identifier")
 
         # Use the outdir directly as the patient directory (it's already /data/reports/{patient_id})
         patient_dir = Path(outdir)
@@ -282,15 +282,8 @@ async def handle_final_stages_progression(
                 alt_dir_names = []
                 if sample_identifier and str(sample_identifier).strip():
                     alt_dir_names.append(str(sample_identifier).strip())
-                try:
-                    if "header_sample_identifier" in locals() and locals().get(
-                        "header_sample_identifier"
-                    ):
-                        alt_dir_names.append(
-                            str(locals().get("header_sample_identifier"))
-                        )
-                except Exception:
-                    pass
+                if header_sample_identifier and str(header_sample_identifier).strip():
+                    alt_dir_names.append(str(header_sample_identifier).strip())
                 if sample_base:
                     alt_dir_names.append(sample_base)
                 # Deduplicate while preserving order
@@ -564,16 +557,17 @@ async def handle_final_stages_progression(
             logger.info("Continuing without workflow diagrams...")
 
         # Determine effective Sample Identifier for reports
-        header_sample_identifier_for_reports = (
-            locals().get("header_sample_identifier") or None
-        )
         effective_sample_identifier_reports = (
             (
                 str(sample_identifier).strip()
                 if (sample_identifier and str(sample_identifier).strip())
                 else None
             )
-            or header_sample_identifier_for_reports
+            or (
+                str(header_sample_identifier).strip()
+                if (header_sample_identifier and str(header_sample_identifier).strip())
+                else None
+            )
             or patient_id
         )
 
@@ -646,7 +640,7 @@ async def handle_final_stages_progression(
 
         # Broadcast workflow completion with report URLs
         try:
-            asyncio.create_task(
+            schedule_coroutine(
                 workflow_service._broadcast_workflow_update(
                     str(workflow_id),
                     {
@@ -1024,6 +1018,28 @@ async def process_file_nextflow_background(
                 if (sample_identifier and str(sample_identifier).strip())
                 else None
             ) or header_sample_identifier
+
+            # Persist sample IDs so final-stage report generation can read them
+            # without relying on locals() across coroutine boundaries.
+            if workflow_id:
+                try:
+                    workflow_obj = workflow_service.get_workflow(workflow_id)
+                    if workflow_obj:
+                        meta = dict(workflow_obj.workflow_metadata or {})
+                        if header_sample_identifier:
+                            meta["header_sample_identifier"] = header_sample_identifier
+                        if effective_sample_identifier:
+                            meta["sample_identifier"] = effective_sample_identifier
+                        workflow_service.update_workflow(
+                            workflow_id, WorkflowUpdate(metadata=meta)
+                        )
+                except Exception as meta_err:
+                    logger.debug(
+                        "Could not persist sample identifiers on workflow %s: %s",
+                        workflow_id,
+                        meta_err,
+                        exc_info=True,
+                    )
 
             payload = {
                 "input": file_path,

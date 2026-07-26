@@ -595,8 +595,12 @@ async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
         logger.error(f"WebSocket error for workflow {workflow_id}: {e}")
         try:
             await websocket.close(code=1011, reason="Internal server error")
-        except:
-            pass
+        except Exception:
+            logger.debug(
+                "Failed closing WebSocket after error for workflow %s",
+                workflow_id,
+                exc_info=True,
+            )
     finally:
         # Clean up connection
         if connection_id:

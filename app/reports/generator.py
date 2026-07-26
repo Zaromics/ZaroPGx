@@ -821,8 +821,12 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
             logger.info(
                 f"Created fallback text file at {output_path.replace('.pdf', '.txt')}"
             )
-        except:
-            pass
+        except OSError as fallback_err:
+            logger.debug(
+                "Failed to write PDF fallback text file: %s",
+                fallback_err,
+                exc_info=True,
+            )
         raise
 
 

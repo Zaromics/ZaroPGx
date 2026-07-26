@@ -292,12 +292,8 @@ curl http://localhost:8765/status/<file_id>
 curl http://localhost:8765/reports/<file_id>
 ```
 
-**Generate a report** (API-only utility endpoint):
-```bash
-curl -X POST http://localhost:8765/reports/generate \
-  -H "Content-Type: application/json" \
-  -d '{"patient_id":"1","file_id":"1","report_type":"comprehensive"}'
-```
+**Generate a report:** use `POST /upload/genomic-data` (the standalone
+`POST /reports/generate` stub returns **501**).
 
 ### Notes
 
