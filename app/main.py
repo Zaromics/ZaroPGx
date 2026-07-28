@@ -59,12 +59,10 @@ from app.api.middleware.auth_gate import (
     set_session_cookie,
 )
 from app.api.models import (
-    JobStage,
     Token,
 )
 from app.api.routes import report_router, upload_router
 from app.api.routes.fhir_export_router import router as fhir_export_router
-from app.api.routes.monitoring import router as monitoring_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.workflow_router import router as workflow_router
 from app.api.utils.security import (
@@ -80,7 +78,6 @@ from app.reports.generator import (
     generate_report,
 )
 from app.services.cleanup_service import cleanup_service
-from app.services.job_status_service import JobStatusService
 from app.services.workflow_service import WorkflowService
 
 # This module logs liberally with emoji. The container's stdout is UTF-8, but a Windows host
@@ -313,7 +310,6 @@ app.add_middleware(
 # Include routers
 app.include_router(upload_router.router)
 app.include_router(report_router.router)
-app.include_router(monitoring_router)
 app.include_router(workflow_router)
 app.include_router(pharmcat_router)
 
