@@ -6,7 +6,6 @@ This service provides a centralized interface for:
 - Tracking workflow step execution
 - Managing workflow progress and status
 - Logging workflow events
-- Integration with existing JobStatusService
 """
 
 import asyncio

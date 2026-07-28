@@ -117,71 +117,6 @@ CREATE TABLE reports.patient_reports (
 );
 
 -- ============================================================================
--- JOB_MONITORING SCHEMA - Workflow and job tracking
--- ============================================================================
-CREATE SCHEMA IF NOT EXISTS job_monitoring;
-
--- Main job status table
-CREATE TABLE job_monitoring.jobs (
-    job_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    patient_id UUID REFERENCES user_data.patients(patient_id),
-    file_id UUID REFERENCES user_data.genetic_data(data_id),
-    status VARCHAR(50) NOT NULL CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
-    stage VARCHAR(50) NOT NULL CHECK (stage IN (
-        'upload_start', 'header_inspection', 'upload_complete',
-        'gatk_conversion', 'hla_typing', 'fastq_conversion',
-        'pypgx_analysis', 'pypgx_bam2vcf', 'pharmcat_analysis',
-        'workflow_diagram', 'report_generation', 'complete',
-        'upload', 'analysis', 'gatk', 'pypgx', 'pharmcat', 'report'
-    )),
-    progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
-    message TEXT,
-    error_message TEXT,
-    job_metadata JSONB DEFAULT '{}',
-    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP WITH TIME ZONE,
-    timeout_at TIMESTAMP WITH TIME ZONE,
-    retry_count INTEGER DEFAULT 0,
-    max_retries INTEGER DEFAULT 3,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Job stage history
-CREATE TABLE job_monitoring.job_stages (
-    stage_id SERIAL PRIMARY KEY,
-    job_id UUID REFERENCES job_monitoring.jobs(job_id) ON DELETE CASCADE,
-    stage VARCHAR(50) NOT NULL,
-    status VARCHAR(50) NOT NULL CHECK (status IN ('started', 'completed', 'failed', 'skipped')),
-    progress INTEGER DEFAULT 0,
-    message TEXT,
-    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP WITH TIME ZONE,
-    duration_ms INTEGER,
-    stage_metadata JSONB DEFAULT '{}',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Job events
-CREATE TABLE job_monitoring.job_events (
-    event_id SERIAL PRIMARY KEY,
-    job_id UUID REFERENCES job_monitoring.jobs(job_id) ON DELETE CASCADE,
-    event_type VARCHAR(50) NOT NULL,
-    message TEXT NOT NULL,
-    event_metadata JSONB DEFAULT '{}',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Job dependencies
-CREATE TABLE job_monitoring.job_dependencies (
-    dependency_id SERIAL PRIMARY KEY,
-    job_id UUID REFERENCES job_monitoring.jobs(job_id) ON DELETE CASCADE,
-    depends_on_job_id UUID REFERENCES job_monitoring.jobs(job_id) ON DELETE CASCADE,
-    dependency_type VARCHAR(50) DEFAULT 'sequential',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- ============================================================================
 -- WORKFLOW MONITORING SCHEMA - Enhanced workflow tracking system
 -- ============================================================================
 
@@ -405,14 +340,6 @@ CREATE INDEX idx_patient_alleles_patient_id ON user_data.patient_alleles(patient
 CREATE INDEX idx_patient_alleles_gene_id ON user_data.patient_alleles(gene_id);
 CREATE INDEX idx_patient_reports_patient_id ON reports.patient_reports(patient_id);
 
--- Job monitoring indexes
-CREATE INDEX idx_jobs_status ON job_monitoring.jobs(status);
-CREATE INDEX idx_jobs_stage ON job_monitoring.jobs(stage);
-CREATE INDEX idx_jobs_created_at ON job_monitoring.jobs(created_at);
-CREATE INDEX idx_job_stages_job_id ON job_monitoring.job_stages(job_id);
-CREATE INDEX idx_job_events_job_id ON job_monitoring.job_events(job_id);
-CREATE INDEX idx_job_dependencies_job_id ON job_monitoring.job_dependencies(job_id);
-
 -- PharmCAT schema indexes
 CREATE INDEX idx_pharmcat_results_run_id ON pharmcat.results(run_id);
 CREATE INDEX idx_pharmcat_results_timestamp ON pharmcat.results(run_timestamp);
@@ -544,14 +471,12 @@ VALUES
 GRANT USAGE ON SCHEMA cpic TO zaropgx_user;
 GRANT USAGE ON SCHEMA user_data TO zaropgx_user;
 GRANT USAGE ON SCHEMA reports TO zaropgx_user;
-GRANT USAGE ON SCHEMA job_monitoring TO zaropgx_user;
 GRANT USAGE ON SCHEMA fhir TO zaropgx_user;
 GRANT USAGE ON SCHEMA pharmcat TO zaropgx_user;
 
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cpic TO zaropgx_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA user_data TO zaropgx_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA reports TO zaropgx_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA job_monitoring TO zaropgx_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA fhir TO zaropgx_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA pharmcat TO zaropgx_user;
 GRANT ALL PRIVILEGES ON TABLE genomic_file_headers TO zaropgx_user;
@@ -559,7 +484,6 @@ GRANT ALL PRIVILEGES ON TABLE gene_groups TO zaropgx_user;
 GRANT ALL PRIVILEGES ON TABLE gene_group_members TO zaropgx_user;
 
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA cpic TO zaropgx_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA job_monitoring TO zaropgx_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA pharmcat TO zaropgx_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO zaropgx_user;
 
@@ -569,12 +493,10 @@ GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA pharmcat TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON TABLES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA user_data GRANT ALL ON TABLES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA reports GRANT ALL ON TABLES TO zaropgx_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON TABLES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL ON TABLES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON TABLES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA cpic GRANT ALL ON SEQUENCES TO zaropgx_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA job_monitoring GRANT ALL ON SEQUENCES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON SEQUENCES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO zaropgx_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pharmcat GRANT ALL ON FUNCTIONS TO zaropgx_user;
@@ -604,7 +526,6 @@ $$ LANGUAGE plpgsql;
 COMMENT ON SCHEMA cpic IS 'CPIC pharmacogenomic guidelines and reference data';
 COMMENT ON SCHEMA user_data IS 'Patient and genetic data (HIPAA-compliant)';
 COMMENT ON SCHEMA reports IS 'Generated reports and analysis outputs';
-COMMENT ON SCHEMA job_monitoring IS 'Workflow and job tracking system';
 COMMENT ON SCHEMA fhir IS 'HAPI FHIR server tables';
 COMMENT ON SCHEMA pharmcat IS 'PharmCAT analysis results and pharmacogenomic data';
 COMMENT ON TABLE genomic_file_headers IS 'Stores parsed header information from genomic files (BAM, VCF, etc.)';

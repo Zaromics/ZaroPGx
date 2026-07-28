@@ -29,7 +29,7 @@ from tests.e2e.harness import apply_e2e_env, e2e_requested, vacuous_e2e_failure
 # SCHEMA, but an ATTACHed database occupies the same namespace, so attaching an
 # in-memory database under each schema name lets Base.metadata.create_all()
 # build the whole metadata unchanged -- no per-table allowlist to keep in sync.
-_PG_SCHEMAS = ("user_data", "job_monitoring")
+_PG_SCHEMAS = ("user_data",)
 
 
 def pytest_addoption(parser):

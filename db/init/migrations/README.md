@@ -24,5 +24,6 @@ docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -f /docker-entrypoint-
 
 ## Migration Files
 
-...
+- `02_fix_variant_column_lengths.sql` — widen variant columns
+- `03_drop_job_monitoring.sql` — hand-run drop of unused `job_monitoring` schema (CASCADE)
 

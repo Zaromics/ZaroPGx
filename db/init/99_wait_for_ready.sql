@@ -7,14 +7,14 @@ DECLARE
     schema_count INTEGER;
 BEGIN
     SELECT COUNT(*) INTO schema_count
-    FROM information_schema.schemata 
-    WHERE schema_name IN ('cpic', 'user_data', 'reports', 'job_monitoring', 'fhir');
-    
-    IF schema_count < 5 THEN
-        RAISE EXCEPTION 'Not all required schemas were created. Found % schemas, expected 5.', schema_count;
+    FROM information_schema.schemata
+    WHERE schema_name IN ('cpic', 'user_data', 'reports', 'fhir');
+
+    IF schema_count < 4 THEN
+        RAISE EXCEPTION 'Not all required schemas were created. Found % schemas, expected 4.', schema_count;
     END IF;
-    
-    RAISE NOTICE 'All required schemas verified: cpic, user_data, reports, job_monitoring, fhir';
+
+    RAISE NOTICE 'All required schemas verified: cpic, user_data, reports, fhir';
 END $$;
 
 -- Verify permissions are set correctly
