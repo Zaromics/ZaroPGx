@@ -31,7 +31,7 @@ from pydantic import BaseModel
 # Import shared workflow client for integration
 import sys
 sys.path.append('/workflow-client')
-from workflow_client import WorkflowClient, create_workflow_client  # pyright: ignore[reportMissingImports]
+from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 
 # Set up more verbose logging with both file and console handlers
 logging.basicConfig(
@@ -231,7 +231,7 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
         workflow_client = None
         if workflow_id:
             try:
-                workflow_client = WorkflowClient(workflow_id=workflow_id, step_name="gatk_variant_calling")
+                workflow_client = JobClient(job_id=workflow_id, step_name="gatk_variant_calling")
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 workflow_client = None
@@ -802,10 +802,10 @@ async def variant_call(
         workflow_client = None
         if workflow_id:
             try:
-                workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
                 
                 # Check if workflow has been cancelled before starting
-                if await workflow_client.is_workflow_cancelled():
+                if await workflow_client.is_job_cancelled():
                     logger.info(f"Workflow {workflow_id} is cancelled, aborting GATK processing")
                     return {"success": False, "error": "Workflow has been cancelled"}
                 
@@ -1164,7 +1164,7 @@ async def align_fastq(
         workflow_client = None
         if workflow_id:
             try:
-                workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
                 await workflow_client.start_step(f"Starting FASTQ alignment for {file.filename}")
                 await workflow_client.log_progress(f"Aligning {file.filename} to {reference_genome}", {
                     "filename": file.filename,
@@ -1248,7 +1248,7 @@ async def cram_to_bam(
         workflow_client = None
         if workflow_id:
             try:
-                workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
                 await workflow_client.start_step(f"Starting CRAM to BAM conversion for {file.filename}")
                 await workflow_client.log_progress(f"Converting {file.filename} to BAM", {
                     "filename": file.filename,
@@ -1330,7 +1330,7 @@ async def sam_to_bam(
         workflow_client = None
         if workflow_id:
             try:
-                workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
                 await workflow_client.start_step(f"Starting SAM to BAM conversion for {file.filename}")
                 await workflow_client.log_progress(f"Converting {file.filename} to BAM", {
                     "filename": file.filename,

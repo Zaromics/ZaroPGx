@@ -50,7 +50,7 @@ except ImportError:
 # Import shared workflow client for integration
 import sys
 sys.path.append('/workflow-client')
-from workflow_client import WorkflowClient, create_workflow_client  # pyright: ignore[reportMissingImports]
+from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 
 # Configure logging
 logging.basicConfig(
@@ -269,10 +269,10 @@ async def process_genotype(
         workflow_client = None
         if workflow_id:
             try:
-                workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
                 
                 # Check if workflow has been cancelled before starting
-                if await workflow_client.is_workflow_cancelled():
+                if await workflow_client.is_job_cancelled():
                     logger.info(f"Workflow {workflow_id} is cancelled, aborting PharmCAT processing")
                     return {"success": False, "error": "Workflow has been cancelled"}
                 

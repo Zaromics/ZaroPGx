@@ -1,8 +1,8 @@
 """
-Workflow API Client Library
+Job API Client Library
 
 This module provides a client library for containers to communicate with the
-workflow monitoring system. It supports both Python and shell script usage.
+job monitoring system. It supports both Python and shell script usage.
 """
 
 import asyncio
@@ -17,37 +17,37 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-class WorkflowClient:
+class JobClient:
     """
-    Client for communicating with the workflow monitoring API.
+    Client for communicating with the job monitoring API.
 
     This client provides methods for:
-    - Updating workflow step status
-    - Logging workflow events
+    - Updating job step status
+    - Logging job events
     - Reporting progress and errors
     - Retry logic and error handling
     """
 
     def __init__(
-        self, base_url: str = None, workflow_id: str = None, step_name: str = None
+        self, base_url: str = None, job_id: str = None, step_name: str = None
     ):
         """
-        Initialize the workflow client.
+        Initialize the job client.
 
         Args:
-            base_url: Base URL for the workflow API (defaults to environment variable)
-            workflow_id: Workflow ID to track (defaults to environment variable)
+            base_url: Base URL for the job API (defaults to environment variable)
+            job_id: Job ID to track (defaults to environment variable)
             step_name: Step name for this client (defaults to environment variable)
         """
         self.base_url = base_url or os.getenv(
-            "WORKFLOW_API_BASE", "http://app:8000/api/v1"
+            "JOB_API_BASE", "http://app:8000/api/v1"
         )
-        self.workflow_id = workflow_id or os.getenv("WORKFLOW_ID")
+        self.job_id = job_id or os.getenv("JOB_ID")
         self.step_name = step_name or os.getenv("STEP_NAME")
 
-        if not self.workflow_id:
+        if not self.job_id:
             raise ValueError(
-                "Workflow ID must be provided either as parameter or WORKFLOW_ID environment variable"
+                "Job ID must be provided either as parameter or JOB_ID environment variable"
             )
 
         if not self.step_name:
@@ -131,7 +131,7 @@ class WorkflowClient:
         error_details: Dict[str, Any] = None,
     ) -> bool:
         """
-        Update the status of a workflow step.
+        Update the status of a job step.
 
         Args:
             status: New step status (pending, running, completed, failed, skipped)
@@ -153,7 +153,7 @@ class WorkflowClient:
                 data["message"] = message
 
             await self._make_request(
-                "PUT", f"/workflows/{self.workflow_id}/steps/{self.step_name}", data
+                "PUT", f"/jobs/{self.job_id}/steps/{self.step_name}", data
             )
 
             logger.info(f"Updated step {self.step_name} status to {status}")
@@ -167,7 +167,7 @@ class WorkflowClient:
         self, level: str, message: str, metadata: Dict[str, Any] = None
     ) -> bool:
         """
-        Log an event for the workflow.
+        Log an event for the job.
 
         Args:
             level: Log level (debug, info, warn, error)
@@ -186,7 +186,7 @@ class WorkflowClient:
             }
 
             await self._make_request(
-                "POST", f"/workflows/{self.workflow_id}/logs", data
+                "POST", f"/jobs/{self.job_id}/logs", data
             )
 
             logger.info(f"Logged {level} event: {message}")
@@ -310,74 +310,74 @@ class WorkflowClient:
         """
         return await self.log_event("debug", message, metadata)
 
-    async def get_workflow_status(self) -> Optional[Dict[str, Any]]:
+    async def get_job_status(self) -> Optional[Dict[str, Any]]:
         """
-        Get current workflow status.
+        Get current job status.
 
         Returns:
-            Workflow status data or None if failed
+            Job status data or None if failed
         """
         try:
-            return await self._make_request("GET", f"/workflows/{self.workflow_id}")
+            return await self._make_request("GET", f"/jobs/{self.job_id}")
         except Exception as e:
-            logger.error(f"Failed to get workflow status: {e}")
+            logger.error(f"Failed to get job status: {e}")
             return None
 
-    async def get_workflow_progress(self) -> Optional[Dict[str, Any]]:
+    async def get_job_progress(self) -> Optional[Dict[str, Any]]:
         """
-        Get workflow progress information.
+        Get job progress information.
 
         Returns:
             Progress data or None if failed
         """
         try:
             return await self._make_request(
-                "GET", f"/workflows/{self.workflow_id}/progress"
+                "GET", f"/jobs/{self.job_id}/progress"
             )
         except Exception as e:
-            logger.error(f"Failed to get workflow progress: {e}")
+            logger.error(f"Failed to get job progress: {e}")
             return None
 
-    async def is_workflow_cancelled(self) -> bool:
+    async def is_job_cancelled(self) -> bool:
         """
-        Check if the workflow has been cancelled.
+        Check if the job has been cancelled.
 
         This method should be called before starting any processing to ensure
-        the workflow hasn't been cancelled by the user.
+        the job hasn't been cancelled by the user.
 
         Uses HTTP API to communicate with the main app.
 
         Returns:
-            True if workflow is cancelled, False otherwise
+            True if job is cancelled, False otherwise
         """
         try:
-            # Use HTTP API to check workflow status
-            status_data = await self.get_workflow_status()
+            # Use HTTP API to check job status
+            status_data = await self.get_job_status()
             if status_data:
-                workflow_status = status_data.get("status", "").lower()
-                return workflow_status == "cancelled"
+                job_status = status_data.get("status", "").lower()
+                return job_status == "cancelled"
             return False
         except Exception as e:
-            logger.warning(f"Could not check workflow cancellation status: {e}")
+            logger.warning(f"Could not check job cancellation status: {e}")
             # Fail safe - don't block processing if we can't check status
             return False
 
 
 # Convenience functions for non-async usage
-def create_workflow_client(
-    workflow_id: str = None, step_name: str = None
-) -> WorkflowClient:
+def create_job_client(
+    job_id: str = None, step_name: str = None
+) -> JobClient:
     """
-    Create a workflow client (synchronous wrapper).
+    Create a job client (synchronous wrapper).
 
     Args:
-        workflow_id: Workflow ID
+        job_id: Job ID
         step_name: Step name
 
     Returns:
-        WorkflowClient instance
+        JobClient instance
     """
-    return WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+    return JobClient(job_id=job_id, step_name=step_name)
 
 
 def run_async(coro):
@@ -400,7 +400,7 @@ def run_async(coro):
 
 # Synchronous wrapper functions
 def update_step_status_sync(
-    workflow_id: str,
+    job_id: str,
     step_name: str,
     status: str,
     message: str = None,
@@ -410,8 +410,8 @@ def update_step_status_sync(
     """Synchronous wrapper for update_step_status."""
 
     async def _update():
-        async with WorkflowClient(
-            workflow_id=workflow_id, step_name=step_name
+        async with JobClient(
+            job_id=job_id, step_name=step_name
         ) as client:
             return await client.update_step_status(
                 status, message, output_data, error_details
@@ -421,7 +421,7 @@ def update_step_status_sync(
 
 
 def log_event_sync(
-    workflow_id: str,
+    job_id: str,
     step_name: str,
     level: str,
     message: str,
@@ -430,43 +430,43 @@ def log_event_sync(
     """Synchronous wrapper for log_event."""
 
     async def _log():
-        async with WorkflowClient(
-            workflow_id=workflow_id, step_name=step_name
+        async with JobClient(
+            job_id=job_id, step_name=step_name
         ) as client:
             return await client.log_event(level, message, metadata)
 
     return run_async(_log())
 
 
-def start_step_sync(workflow_id: str, step_name: str, message: str = None) -> bool:
+def start_step_sync(job_id: str, step_name: str, message: str = None) -> bool:
     """Synchronous wrapper for start_step."""
-    return update_step_status_sync(workflow_id, step_name, "running", message)
+    return update_step_status_sync(job_id, step_name, "running", message)
 
 
 def complete_step_sync(
-    workflow_id: str,
+    job_id: str,
     step_name: str,
     message: str = None,
     output_data: Dict[str, Any] = None,
 ) -> bool:
     """Synchronous wrapper for complete_step."""
     return update_step_status_sync(
-        workflow_id, step_name, "completed", message, output_data
+        job_id, step_name, "completed", message, output_data
     )
 
 
 def fail_step_sync(
-    workflow_id: str,
+    job_id: str,
     step_name: str,
     error_message: str,
     error_details: Dict[str, Any] = None,
 ) -> bool:
     """Synchronous wrapper for fail_step."""
     return update_step_status_sync(
-        workflow_id, step_name, "failed", error_message, error_details=error_details
+        job_id, step_name, "failed", error_message, error_details=error_details
     )
 
 
-def skip_step_sync(workflow_id: str, step_name: str, reason: str = None) -> bool:
+def skip_step_sync(job_id: str, step_name: str, reason: str = None) -> bool:
     """Synchronous wrapper for skip_step."""
-    return update_step_status_sync(workflow_id, step_name, "skipped", reason)
+    return update_step_status_sync(job_id, step_name, "skipped", reason)

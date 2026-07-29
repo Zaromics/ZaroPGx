@@ -36,7 +36,7 @@ services:
       - SOURCE_URL=${SOURCE_URL:-https://github.com/Zaromics/ZaroPGx}
       - FHIR_EXPORT_ENABLED=${FHIR_EXPORT_ENABLED:-true}
       - PYTHONPATH=/app
-      - WORKFLOW_API_BASE=http://app:8000/api/v1
+      - JOB_API_BASE=http://app:8000/api/v1
       - PYTHONDONTWRITEBYTECODE=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - ZAROPGX_AUTH_MODE=${ZAROPGX_AUTH_MODE:-open}
@@ -288,7 +288,7 @@ services:
     restart: unless-stopped
     environment:
       - DATA_DIR=/data
-      - WORKFLOW_API_BASE=http://app:8000/api/v1
+      - JOB_API_BASE=http://app:8000/api/v1
     volumes:
       - ./data:/data
     ports:

@@ -112,17 +112,17 @@ async def run(request: NextflowRunRequest):
             )
             engine = create_engine(database_url, connect_args={"connect_timeout": 5})
             
-            # Query workflow status directly
+            # Query job status directly
             with Session(engine) as db:
-                query = text("SELECT status FROM workflows WHERE id = :workflow_id")
-                result = db.execute(query, {"workflow_id": request.workflow_id}).fetchone()
+                query = text("SELECT status FROM jobs WHERE id = :job_id")
+                result = db.execute(query, {"job_id": request.workflow_id}).fetchone()
                 
                 if result and result[0].lower() == "cancelled":
-                    logger.info(f"Workflow {request.workflow_id} is cancelled, aborting Nextflow pipeline")
-                    return {"success": False, "error": "Workflow has been cancelled"}
+                    logger.info(f"Job {request.workflow_id} is cancelled, aborting Nextflow pipeline")
+                    return {"success": False, "error": "Job has been cancelled"}
                     
         except Exception as e:
-            logger.warning(f"Could not check workflow cancellation status: {e}")
+            logger.warning(f"Could not check job cancellation status: {e}")
             # Continue execution if we can't check status
 
     # Create job tracking entry for process monitoring
@@ -188,11 +188,11 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
         if sample_identifier and str(sample_identifier).strip():
             cmd.extend(['--sample_identifier', str(sample_identifier).strip()])
         
-        # Set environment variables for workflow_id passing to individual containers
+        # Set environment variables for job_id passing to individual containers
         env = os.environ.copy()
         if workflow_id:
-            env['WORKFLOW_ID'] = workflow_id
-            env['WORKFLOW_API_BASE'] = 'http://app:8000/api/v1'
+            env['JOB_ID'] = workflow_id
+            env['JOB_API_BASE'] = 'http://app:8000/api/v1'
 
         os.makedirs(outdir, exist_ok=True)
         

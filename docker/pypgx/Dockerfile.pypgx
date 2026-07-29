@@ -43,7 +43,7 @@ WORKDIR /app
 # Copy the wrapper script and workflow client
 COPY docker/pypgx/pypgx_wrapper.py /app/
 COPY docker/pypgx/setup_pypgx.sh /app/
-COPY app/utils/workflow_client.py /workflow-client/
+COPY app/utils/job_client.py /workflow-client/
 
 # Make the setup script executable
 RUN chmod +x /app/setup_pypgx.sh

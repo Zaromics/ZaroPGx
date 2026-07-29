@@ -29,7 +29,7 @@ from pydantic import BaseModel
 # Import shared workflow client for integration
 import sys
 sys.path.append('/workflow-client')
-from workflow_client import WorkflowClient, create_workflow_client  # pyright: ignore[reportMissingImports]
+from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 
 # Gene Configuration Management
 class GeneConfig:
@@ -239,7 +239,7 @@ async def process_gene_batch_parallel(
     # Check for cancellation before starting batch processing
     if workflow_client:
         try:
-            if await workflow_client.is_workflow_cancelled():
+            if await workflow_client.is_job_cancelled():
                 logger.info(f"Workflow {workflow_id} is cancelled, aborting batch processing")
                 return {"cancelled": True, "message": "Workflow has been cancelled"}
         except Exception as e:
@@ -274,7 +274,7 @@ async def process_gene_batch_parallel(
             # Check for cancellation before processing each result
             if workflow_client:
                 try:
-                    if await workflow_client.is_workflow_cancelled():
+                    if await workflow_client.is_job_cancelled():
                         logger.info(f"Workflow {workflow_id} is cancelled, stopping batch processing")
                         # Cancel remaining futures
                         for f in future_to_gene:
@@ -459,7 +459,7 @@ async def create_input_vcf(
     workflow_client = None
     if workflow_id:
         try:
-            workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+            workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
             await workflow_client.start_step(f"Starting BAM to VCF conversion for {file.filename}")
             await workflow_client.log_progress(f"Converting {file.filename} to VCF", {
                 "filename": file.filename,
@@ -668,10 +668,10 @@ async def genotype(
     workflow_client = None
     if workflow_id:
         try:
-            workflow_client = WorkflowClient(workflow_id=workflow_id, step_name=step_name)
+            workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
             
             # Check if workflow has been cancelled before starting
-            if await workflow_client.is_workflow_cancelled():
+            if await workflow_client.is_job_cancelled():
                 logger.info(f"Workflow {workflow_id} is cancelled, aborting PyPGx processing")
                 return {"success": False, "error": "Workflow has been cancelled"}
             

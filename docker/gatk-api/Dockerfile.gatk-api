@@ -43,7 +43,7 @@ ENV PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
 
 # Copy the API script and workflow client
 COPY docker/gatk-api/gatk_api.py /app/
-COPY app/utils/workflow_client.py /workflow-client/
+COPY app/utils/job_client.py /workflow-client/
 
 # Expose the API port
 EXPOSE 5000

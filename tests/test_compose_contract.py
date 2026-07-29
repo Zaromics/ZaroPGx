@@ -221,7 +221,7 @@ def test_app_environment_does_not_hardcode_behavioural_keys(compose):
             or key
             in {
                 "PYTHONPATH",
-                "WORKFLOW_API_BASE",
+                "JOB_API_BASE",
                 "PYTHONDONTWRITEBYTECODE",
                 "DATABASE_URL",
             }

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 import sys
 
 sys.path.append('/workflow-client')
-from workflow_client import WorkflowClient
+from job_client import JobClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("zarohla")
@@ -81,14 +81,14 @@ async def call_hla(
     workflow_client = None
     if workflow_id:
         try:
-            workflow_client = WorkflowClient(workflow_id, step_name)
-            if await workflow_client.is_workflow_cancelled():
+            workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
+            if await workflow_client.is_job_cancelled():
                 logger.info(f"Workflow {workflow_id} is cancelled, aborting ZaroHLA processing")
                 return {"success": False, "error": "Workflow has been cancelled"}
                 
             await workflow_client.start_step("Starting HLA typing")
         except Exception as e:
-            logger.warning(f"Failed to initialize WorkflowClient: {e}")
+            logger.warning(f"Failed to initialize JobClient: {e}")
             
     job_id = str(uuid.uuid4())
     job_dir = TEMP_DIR / job_id

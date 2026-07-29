@@ -176,7 +176,7 @@ RUN uv pip install --system \
 # Copy the wrapper script, start script, and workflow client
 COPY docker/pharmcat/pharmcat.py /app/
 COPY docker/pharmcat/start.sh /start.sh
-COPY app/utils/workflow_client.py /workflow-client/
+COPY app/utils/job_client.py /workflow-client/
 RUN chmod +x /start.sh
 
 # Create data directory and set up volume

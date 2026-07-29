@@ -27,7 +27,7 @@ WORKDIR /app
 
 # Copy application code
 COPY docker/zarohla/app.py .
-COPY app/utils/workflow_client.py /workflow-client/
+COPY app/utils/job_client.py /workflow-client/
 
 # Create /data directory for uploads/results and set permissions
 RUN mkdir -p /data && chown -R zarouser:zarouser /app /data /workflow-client
