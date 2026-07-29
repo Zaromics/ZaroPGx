@@ -1133,10 +1133,6 @@ async def upload_genomic_data(
     Currently only hg38/GRCh38 reference genome is fully supported.
     """
     try:
-        # Generate unique identifiers
-        file_id = str(uuid.uuid4())
-        patient_id = str(uuid.uuid4())
-
         # Process uploaded files
         result = await file_processor.process_files(
             files,
@@ -1150,8 +1146,10 @@ async def upload_genomic_data(
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])
 
-        # Create patient record
-        patient_identifier = sample_identifier if sample_identifier else patient_id
+        # Create patient record (DB assigns actual_patient_id; no client-side ID pre-mint)
+        patient_identifier = (
+            sample_identifier if sample_identifier else str(uuid.uuid4())
+        )
         actual_patient_id = create_patient(db, patient_identifier)
 
         # Register genetic data
@@ -1342,7 +1340,7 @@ async def upload_genomic_data(
         )
 
         logger.info(
-            f"Upload successful for patient {patient_id}, workflow {job.id}"
+            f"Upload successful for patient {actual_patient_id}, job {job.id}"
         )
         return response
 

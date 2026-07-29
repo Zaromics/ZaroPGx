@@ -73,7 +73,7 @@ class TestWebSocketIntegration:
         sent_message = json.loads(call_args)
 
         assert sent_message["type"] == "workflow_update"
-        assert sent_message["workflow_id"] == workflow_id
+        assert sent_message["job_id"] == workflow_id
         assert sent_message["data"] == message["data"]
         assert "timestamp" in sent_message
 
@@ -103,7 +103,7 @@ class TestWebSocketIntegration:
         # step message in a "workflow_update" envelope; the browser client
         # unwraps it at workflow-monitor.js:260-263.
         assert sent_message["type"] == "workflow_update"
-        assert sent_message["workflow_id"] == workflow_id
+        assert sent_message["job_id"] == workflow_id
         inner = sent_message["data"]
         assert inner["type"] == "step_update"
         assert inner["step_name"] == "test_step"
@@ -134,7 +134,7 @@ class TestWebSocketIntegration:
         sent_message = json.loads(call_args)
 
         assert sent_message["type"] == "workflow_update"
-        assert sent_message["workflow_id"] == workflow_id
+        assert sent_message["job_id"] == workflow_id
         inner = sent_message["data"]
         assert inner["type"] == "log_update"
         assert inner["data"] == log_message
@@ -163,7 +163,7 @@ class TestWebSocketIntegration:
         sent_message = json.loads(call_args)
 
         assert sent_message["type"] == "workflow_update"
-        assert sent_message["workflow_id"] == workflow_id
+        assert sent_message["job_id"] == workflow_id
         inner = sent_message["data"]
         assert inner["type"] == "error_notification"
         assert inner["error_message"] == error_message
@@ -188,7 +188,7 @@ class TestWebSocketIntegration:
         sent_message = json.loads(call_args)
 
         assert sent_message["type"] == "workflow_update"
-        assert sent_message["workflow_id"] == workflow_id
+        assert sent_message["job_id"] == workflow_id
         assert sent_message["data"]["type"] == "heartbeat"
         assert "timestamp" in sent_message
 

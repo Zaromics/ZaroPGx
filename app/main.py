@@ -1324,26 +1324,27 @@ async def check_reports(job_id: str):
             db = next(get_db())
             job_service = JobService(db)
 
-            # Try to find workflow by job_id
-            workflow = job_service.get_job_by_name(f"job_{job_id}")
+            # Look up run-instance Job by id (path param may be job UUID)
+            from app.api.models import JobStatus, JobUpdate
+
+            job = job_service.get_job(job_id)
             job_data = {"status": "unknown", "complete": False}
 
-            if workflow:
+            if job:
                 job_data = {
-                    "status": workflow.status,  # status is already a string from database
-                    "complete": workflow.status in ["completed", "failed"],
-                    "workflow_id": str(workflow.id),
+                    "status": job.status,  # status is already a string from database
+                    "complete": job.status in ["completed", "failed"],
+                    "job_id": str(job.id),
                 }
 
-                # Update workflow status if reports exist
-                if pdf_exists or html_exists and workflow.status != "completed":
-                    job_service.update_job_status(
-                        workflow.id,
-                        "completed",
-                        "Analysis completed successfully (from check-reports)",
+                # Update job status if reports exist
+                if pdf_exists or html_exists and job.status != "completed":
+                    job_service.update_job(
+                        job.id,
+                        JobUpdate(status=JobStatus.COMPLETED),
                     )
                     logger.info(
-                        f"Updated workflow status for job {job_id} to completed"
+                        f"Updated job status for job {job_id} to completed"
                     )
         except Exception as e:
             logger.warning(f"Could not check workflow status for job {job_id}: {e}")
@@ -1392,23 +1393,23 @@ async def trigger_completion(job_id: str):
             db = next(get_db())
             job_service = JobService(db)
 
-            # Try to find workflow by job_id
-            workflow = job_service.get_job_by_name(f"job_{job_id}")
+            from app.api.models import JobStatus, JobUpdate
 
-            if workflow:
-                job_service.update_job_status(
-                    workflow.id,
-                    "completed",
-                    "Analysis completed successfully (manual trigger)",
+            job = job_service.get_job(job_id)
+
+            if job:
+                job_service.update_job(
+                    job.id,
+                    JobUpdate(status=JobStatus.COMPLETED),
                 )
                 logger.info(
-                    f"Manual trigger for job {job_id} - Workflow status updated to completed"
+                    f"Manual trigger for job {job_id} - Job status updated to completed"
                 )
             else:
-                logger.warning(f"Manual trigger for job {job_id} - No workflow found")
+                logger.warning(f"Manual trigger for job {job_id} - No job found")
         except Exception as e:
             logger.error(
-                f"Manual trigger for job {job_id} - Error updating workflow: {e}"
+                f"Manual trigger for job {job_id} - Error updating job: {e}"
             )
     else:
         logger.error(

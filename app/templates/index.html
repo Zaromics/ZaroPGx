@@ -2447,7 +2447,7 @@
             if (typeof WorkflowMonitor !== 'undefined') {
                 console.log('Creating new WorkflowMonitor instance for jobId:', jobId);
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/api/v1/workflows/${jobId}/ws`;
+                const wsUrl = `${protocol}//${window.location.host}/api/v1/jobs/${jobId}/ws`;
                 console.log('WebSocket URL will be:', wsUrl);
                 
                 try {
@@ -2499,7 +2499,7 @@
                         }
                         
                         // Show results window with completion data (now includes report URLs)
-                        if (data && data.workflow_id) {
+                        if (data && (data.job_id || data.workflow_id)) {
                             // Extract patient_id from report URLs
                             let patient_id = data.patient_id;
                             if (!patient_id && data.pdf_report_url) {
@@ -2511,7 +2511,7 @@
                             
                             // Create a data object that matches what showResults expects
                             const resultsData = {
-                                job_id: data.workflow_id,
+                                job_id: data.job_id || data.workflow_id,
                                 patient_id: patient_id,
                                 pdf_report_url: data.pdf_report_url,
                                 interactive_html_report_url: data.interactive_html_report_url,
@@ -2691,7 +2691,7 @@
             // Cancel workflow on backend if we have a workflow ID
             if (currentWorkflowId) {
                 try {
-                    const response = await fetch(`/api/v1/workflows/${currentWorkflowId}/cancel`, {
+                    const response = await fetch(`/api/v1/jobs/${currentWorkflowId}/cancel`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'

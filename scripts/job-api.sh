@@ -1,10 +1,10 @@
 #!/bin/bash
-# Workflow API utilities for vanilla containers
-# This script provides shell functions for communicating with the workflow monitoring API
+# Job API utilities for vanilla containers
+# This script provides shell functions for communicating with the job monitoring API
 
 # Configuration
-WORKFLOW_API_BASE=${WORKFLOW_API_BASE:-"http://app:8000/api/v1"}
-WORKFLOW_ID=${WORKFLOW_ID}
+JOB_API_BASE=${JOB_API_BASE:-"http://app:8000/api/v1"}
+JOB_ID=${JOB_ID}
 STEP_NAME=${STEP_NAME}
 
 # Colors for output
@@ -33,8 +33,8 @@ log_success() {
 
 # Check if required environment variables are set
 check_environment() {
-    if [ -z "$WORKFLOW_ID" ]; then
-        log_error "WORKFLOW_ID environment variable is required"
+    if [ -z "$JOB_ID" ]; then
+        log_error "JOB_ID environment variable is required"
         return 1
     fi
     
@@ -54,7 +54,7 @@ make_request() {
     local max_retries=${4:-3}
     local retry_delay=${5:-1}
     
-    local url="${WORKFLOW_API_BASE}${endpoint}"
+    local url="${JOB_API_BASE}${endpoint}"
     local attempt=1
     
     while [ $attempt -le $max_retries ]; do
@@ -123,7 +123,7 @@ update_step_status() {
     
     data="${data}}"
     
-    if make_request "PUT" "/workflows/${WORKFLOW_ID}/steps/${STEP_NAME}" "$data"; then
+    if make_request "PUT" "/jobs/${JOB_ID}/steps/${STEP_NAME}" "$data"; then
         log_success "Updated step $STEP_NAME status to $status"
         return 0
     else
@@ -132,8 +132,8 @@ update_step_status() {
     fi
 }
 
-# Log workflow event
-log_workflow_event() {
+# Log job event
+log_job_event() {
     local level=$1
     local message=$2
     local metadata=$3
@@ -152,7 +152,7 @@ log_workflow_event() {
     
     data="${data}}"
     
-    if make_request "POST" "/workflows/${WORKFLOW_ID}/logs" "$data"; then
+    if make_request "POST" "/jobs/${JOB_ID}/logs" "$data"; then
         log_info "Logged $level event: $message"
         return 0
     else
@@ -187,54 +187,54 @@ skip_step() {
 log_progress() {
     local message=$1
     local metadata=$2
-    log_workflow_event "info" "$message" "$metadata"
+    log_job_event "info" "$message" "$metadata"
 }
 
 log_warning() {
     local message=$1
     local metadata=$2
-    log_workflow_event "warn" "$message" "$metadata"
+    log_job_event "warn" "$message" "$metadata"
 }
 
-log_error() {
+log_error_event() {
     local message=$1
     local metadata=$2
-    log_workflow_event "error" "$message" "$metadata"
+    log_job_event "error" "$message" "$metadata"
 }
 
 log_debug() {
     local message=$1
     local metadata=$2
-    log_workflow_event "debug" "$message" "$metadata"
+    log_job_event "debug" "$message" "$metadata"
 }
 
-# Get workflow status
-get_workflow_status() {
+# Get job status
+get_job_status() {
     if ! check_environment; then
         return 1
     fi
     
-    make_request "GET" "/workflows/${WORKFLOW_ID}"
+    make_request "GET" "/jobs/${JOB_ID}"
 }
 
-# Get workflow progress
-get_workflow_progress() {
+# Get job progress
+get_job_progress() {
     if ! check_environment; then
         return 1
     fi
     
-    make_request "GET" "/workflows/${WORKFLOW_ID}/progress"
+    make_request "GET" "/jobs/${JOB_ID}/progress"
 }
 
 # Example usage function
 show_usage() {
-    echo "Workflow API Shell Script"
-    echo "Usage: source workflow-api.sh"
+    echo "Job API Shell Script"
+    echo "Usage: source job-api.sh"
     echo ""
     echo "Environment Variables:"
-    echo "  WORKFLOW_ID    - ID of the workflow to track"
+    echo "  JOB_ID         - ID of the job (run instance) to track"
     echo "  STEP_NAME      - Name of the step being executed"
-    echo "  WORKFLOW_API_BASE - Base URL for the workflow API (default: http://app:8000/api/v1)"
+    echo "  JOB_API_BASE   - Base URL for the job API (default: http://app:8000/api/v1)"
     echo ""
     echo "Available Functions:"
     echo "  start_step [message]                    - Mark step as started"
@@ -243,13 +243,13 @@ show_usage() {
     echo "  skip_step [reason]                      - Mark step as skipped"
     echo "  log_progress <message> [metadata]       - Log progress information"
     echo "  log_warning <message> [metadata]        - Log warning"
-    echo "  log_error <message> [metadata]          - Log error"
+    echo "  log_error_event <message> [metadata]    - Log error"
     echo "  log_debug <message> [metadata]          - Log debug information"
-    echo "  get_workflow_status                     - Get workflow status"
-    echo "  get_workflow_progress                   - Get workflow progress"
+    echo "  get_job_status                          - Get job status"
+    echo "  get_job_progress                        - Get job progress"
     echo ""
     echo "Example:"
-    echo "  source workflow-api.sh"
+    echo "  source job-api.sh"
     echo "  start_step 'Processing file'"
     echo "  log_progress 'File processed successfully'"
     echo "  complete_step 'File processing completed' '{\"files_processed\": 1}'"

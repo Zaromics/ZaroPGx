@@ -166,7 +166,7 @@ class WorkflowMonitor {
     getWebSocketUrl() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.host;
-        return `${protocol}//${host}/api/v1/workflows/${this.workflowId}/ws`;
+        return `${protocol}//${host}/api/v1/jobs/${this.workflowId}/ws`;
     }
     
     /**
@@ -339,8 +339,9 @@ class WorkflowMonitor {
     handleWorkflowUpdate(data) {
         console.log('WorkflowMonitor: Workflow update received:', data);
         console.log('WorkflowMonitor: Data keys:', Object.keys(data));
+        const jobId = data.job_id || data.workflow_id;
         console.log('WorkflowMonitor: Data values:', {
-            workflow_id: data.workflow_id,
+            job_id: jobId,
             status: data.status,
             progress_percentage: data.progress_percentage,
             current_step: data.current_step,
@@ -348,7 +349,7 @@ class WorkflowMonitor {
         });
         this.logger.debug('Workflow update received');
         
-        if (data.workflow_id) {
+        if (jobId) {
             this.workflow = { ...this.workflow, ...data };
             this.workflowStatus = data.status || this.workflowStatus;
             this.currentProgress = data.progress_percentage || this.currentProgress;
@@ -368,7 +369,7 @@ class WorkflowMonitor {
                 this.callbacks.onComplete(data);
             }
         } else {
-            console.warn('WorkflowMonitor: No workflow_id in data:', data);
+            console.warn('WorkflowMonitor: No job_id in data:', data);
         }
     }
     

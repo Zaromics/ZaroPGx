@@ -127,16 +127,16 @@ def test_password_mode_openapi_enumeration(monkeypatch):
     )
 
 
-def test_allowlist_covers_workflows_and_health():
+def test_allowlist_covers_jobs_and_health():
     assert is_allowlisted("/health")
-    assert is_allowlisted("/api/v1/workflows")
-    assert is_allowlisted("/api/v1/workflows/abc/steps")
+    assert is_allowlisted("/api/v1/jobs")
+    assert is_allowlisted("/api/v1/jobs/abc/steps")
     assert is_allowlisted("/static/favicon.png")
     assert not is_allowlisted("/upload/genomic-data")
     assert not is_allowlisted("/")
     # Sanity: declared constants are used
     assert "/health" in ALLOWLIST_EXACT
-    assert any(p.startswith("/api/v1/workflows") for p in ALLOWLIST_PREFIXES)
+    assert any(p.startswith("/api/v1/jobs") for p in ALLOWLIST_PREFIXES)
 
 
 def test_login_sets_cookie_and_unlocks(monkeypatch):

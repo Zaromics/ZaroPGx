@@ -52,7 +52,7 @@ def test_openapi_contains_core_paths(client):
     assert "/fhir/export/run/{run_id}" in paths
 
     # Workflow API
-    assert "/api/v1/workflows/{workflow_id}" in paths
+    assert "/api/v1/jobs/{job_id}" in paths
 
 
 def test_openapi_upload_uses_files_field_name(client):
@@ -119,12 +119,12 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
         lambda db, patient_id, file_type, file_path, is_supplementary: uuid.uuid4(),
     )
 
-    # ---- stub out workflow service ----
-    class _FakeWorkflow:
-        def __init__(self, workflow_id):
-            self.id = workflow_id
+    # ---- stub out job service ----
+    class _FakeJob:
+        def __init__(self, job_id):
+            self.id = job_id
             self.status = "running"
-            self.workflow_metadata = {}
+            self.job_metadata = {}
             self.data_id = str(uuid.uuid4())
 
     class _FakeStep:
@@ -136,16 +136,16 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
             self.output_data = {}
             self.metadata = {}
 
-    class _FakeWorkflowService:
+    class _FakeJobService:
         def __init__(self, db):
-            self._workflow_id = str(uuid.uuid4())
-            self._workflow = _FakeWorkflow(self._workflow_id)
+            self._job_id = str(uuid.uuid4())
+            self._job = _FakeJob(self._job_id)
             self._steps = []
 
-        def create_workflow(self, workflow_create):
-            return self._workflow
+        def create_job(self, job_create):
+            return self._job
 
-        def add_workflow_step(self, workflow_id, step_create):
+        def add_job_step(self, job_id, step_create):
             self._steps.append(
                 _FakeStep(
                     step_create.step_name,
@@ -154,22 +154,22 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
                 )
             )
 
-        def update_workflow(self, workflow_id, workflow_update):
-            self._workflow.status = "running"
-            return self._workflow
+        def update_job(self, job_id, job_update):
+            self._job.status = "running"
+            return self._job
 
-        def get_workflow(self, workflow_id):
-            if str(workflow_id) != str(self._workflow.id):
+        def get_job(self, job_id):
+            if str(job_id) != str(self._job.id):
                 return None
-            return self._workflow
+            return self._job
 
-        def get_workflow_steps(self, workflow_id):
+        def get_job_steps(self, job_id):
             return self._steps
 
-        def get_workflow_logs(self, workflow_id):
+        def get_job_logs(self, job_id):
             return []
 
-    monkeypatch.setattr(upload_router, "WorkflowService", _FakeWorkflowService)
+    monkeypatch.setattr(upload_router, "JobService", _FakeJobService)
 
     # ---- stub out progress calculator used by /upload/status/{job_id} (indirectly) ----
     class _FakeProgressCalc:
@@ -238,7 +238,7 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
     import app.main as main
 
     def _fake_get_db():
-        # The upload endpoint passes this into our fake WorkflowService but we don't use it.
+        # The upload endpoint passes this into our fake JobService but we don't use it.
         yield object()
 
     # monkeypatch.setitem so the previous entry (conftest's SQLite override) is

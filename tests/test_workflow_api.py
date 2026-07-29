@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from app.api.db import get_db
 from app.main import app
 from app.services.websocket_manager import ConnectionManager
-from app.services.workflow_service import WorkflowService
+from app.services.job_service import JobService
 
 
 class TestWorkflowApi:
@@ -36,7 +36,7 @@ class TestWorkflowApi:
         return ConnectionManager()
 
     @pytest.mark.xfail(
-        reason="get_workflow_progress() derives progress_percentage from "
+        reason="get_job_progress() derives progress_percentage from "
         "WorkflowProgressCalculator's fixed pipeline stage vocabulary "
         "(analysis/gatk/pypgx/pharmcat/report), not from completed_steps vs "
         "total_steps, so synthetic step names score 0%. Unifying the two "
@@ -53,9 +53,9 @@ class TestWorkflowApi:
             "created_by": "test_user",
         }
 
-        create_response = client.post("/api/v1/workflows", json=workflow_data)
+        create_response = client.post("/api/v1/jobs", json=workflow_data)
         assert create_response.status_code == 201
-        workflow_id = create_response.json()["id"]
+        job_id = create_response.json()["id"]
 
         # Step 2: Add workflow steps
         steps = [
@@ -78,13 +78,13 @@ class TestWorkflowApi:
 
         for step_data in steps:
             step_response = client.post(
-                f"/api/v1/workflows/{workflow_id}/steps", json=step_data
+                f"/api/v1/jobs/{job_id}/steps", json=step_data
             )
             assert step_response.status_code == 201
 
         # Step 3: Start the workflow
         update_response = client.put(
-            f"/api/v1/workflows/{workflow_id}", json={"status": "running"}
+            f"/api/v1/jobs/{job_id}", json={"status": "running"}
         )
         assert update_response.status_code == 200
         assert update_response.json()["status"] == "running"
@@ -117,27 +117,27 @@ class TestWorkflowApi:
             # is a 422.
             body = {k: v for k, v in update_data.items() if k != "step_name"}
             step_response = client.put(
-                f"/api/v1/workflows/{workflow_id}/steps/{update_data['step_name']}",
+                f"/api/v1/jobs/{job_id}/steps/{update_data['step_name']}",
                 json=body,
             )
             assert step_response.status_code == 200
 
         # Step 5: Complete the workflow
         final_update = client.put(
-            f"/api/v1/workflows/{workflow_id}", json={"status": "completed"}
+            f"/api/v1/jobs/{job_id}", json={"status": "completed"}
         )
         assert final_update.status_code == 200
         assert final_update.json()["status"] == "completed"
 
         # Step 6: Verify final state
-        final_response = client.get(f"/api/v1/workflows/{workflow_id}")
+        final_response = client.get(f"/api/v1/jobs/{job_id}")
         assert final_response.status_code == 200
         final_data = final_response.json()
         assert final_data["status"] == "completed"
         assert final_data["completed_steps"] == 3
 
         # Step 7: Verify progress
-        progress_response = client.get(f"/api/v1/workflows/{workflow_id}/progress")
+        progress_response = client.get(f"/api/v1/jobs/{job_id}/progress")
         assert progress_response.status_code == 200
         progress_data = progress_response.json()
         assert progress_data["progress_percentage"] == 100.0
@@ -147,8 +147,8 @@ class TestWorkflowApi:
         """Test workflow with comprehensive logging."""
         # Create workflow
         workflow_data = {"name": "Logging Test Workflow", "total_steps": 2}
-        create_response = client.post("/api/v1/workflows", json=workflow_data)
-        workflow_id = create_response.json()["id"]
+        create_response = client.post("/api/v1/jobs", json=workflow_data)
+        job_id = create_response.json()["id"]
 
         # Add steps
         steps = [
@@ -156,7 +156,7 @@ class TestWorkflowApi:
             {"step_name": "step2", "step_order": 2},
         ]
         for step_data in steps:
-            client.post(f"/api/v1/workflows/{workflow_id}/steps", json=step_data)
+            client.post(f"/api/v1/jobs/{job_id}/steps", json=step_data)
 
         # Add various log entries
         log_entries = [
@@ -185,12 +185,12 @@ class TestWorkflowApi:
 
         for log_data in log_entries:
             log_response = client.post(
-                f"/api/v1/workflows/{workflow_id}/logs", json=log_data
+                f"/api/v1/jobs/{job_id}/logs", json=log_data
             )
             assert log_response.status_code == 201
 
         # Retrieve logs
-        logs_response = client.get(f"/api/v1/workflows/{workflow_id}/logs")
+        logs_response = client.get(f"/api/v1/jobs/{job_id}/logs")
         assert logs_response.status_code == 200
         logs_data = logs_response.json()
         # The service writes its own log entries (workflow creation, step
@@ -211,8 +211,8 @@ class TestWorkflowApi:
         """Test workflow error handling and recovery."""
         # Create workflow
         workflow_data = {"name": "Error Test Workflow", "total_steps": 2}
-        create_response = client.post("/api/v1/workflows", json=workflow_data)
-        workflow_id = create_response.json()["id"]
+        create_response = client.post("/api/v1/jobs", json=workflow_data)
+        job_id = create_response.json()["id"]
 
         # Add steps
         steps = [
@@ -220,35 +220,35 @@ class TestWorkflowApi:
             {"step_name": "step2", "step_order": 2},
         ]
         for step_data in steps:
-            client.post(f"/api/v1/workflows/{workflow_id}/steps", json=step_data)
+            client.post(f"/api/v1/jobs/{job_id}/steps", json=step_data)
 
         # Start workflow
-        client.put(f"/api/v1/workflows/{workflow_id}", json={"status": "running"})
+        client.put(f"/api/v1/jobs/{job_id}", json={"status": "running"})
 
         # Complete first step
         client.put(
-            f"/api/v1/workflows/{workflow_id}/steps/step1", json={"status": "completed"}
+            f"/api/v1/jobs/{job_id}/steps/step1", json={"status": "completed"}
         )
 
         # Fail second step
         error_details = {"error_code": "E001", "error_message": "Processing failed"}
         fail_response = client.put(
-            f"/api/v1/workflows/{workflow_id}/steps/step2",
+            f"/api/v1/jobs/{job_id}/steps/step2",
             json={"status": "failed", "error_details": error_details},
         )
         assert fail_response.status_code == 200
 
         # Mark workflow as failed
-        client.put(f"/api/v1/workflows/{workflow_id}", json={"status": "failed"})
+        client.put(f"/api/v1/jobs/{job_id}", json={"status": "failed"})
 
         # Verify final state
-        final_response = client.get(f"/api/v1/workflows/{workflow_id}")
+        final_response = client.get(f"/api/v1/jobs/{job_id}")
         assert final_response.status_code == 200
         final_data = final_response.json()
         assert final_data["status"] == "failed"
 
         # Verify progress shows failure
-        progress_response = client.get(f"/api/v1/workflows/{workflow_id}/progress")
+        progress_response = client.get(f"/api/v1/jobs/{job_id}/progress")
         assert progress_response.status_code == 200
         progress_data = progress_response.json()
         assert progress_data["status"] == "failed"
@@ -264,11 +264,11 @@ class TestWorkflowApi:
         mock_websocket1.send_text = AsyncMock()
         mock_websocket2.send_text = AsyncMock()
 
-        workflow_id = str(uuid.uuid4())
+        job_id = str(uuid.uuid4())
 
         # Connect multiple clients
-        connection_id1 = await connection_manager.connect(mock_websocket1, workflow_id)
-        connection_id2 = await connection_manager.connect(mock_websocket2, workflow_id)
+        connection_id1 = await connection_manager.connect(mock_websocket1, job_id)
+        connection_id2 = await connection_manager.connect(mock_websocket2, job_id)
 
         # Simulate workflow progress updates
         progress_updates = [
@@ -279,7 +279,7 @@ class TestWorkflowApi:
         ]
 
         for update in progress_updates:
-            await connection_manager.send_workflow_update(workflow_id, update)
+            await connection_manager.send_workflow_update(job_id, update)
             await asyncio.sleep(0.1)  # Small delay to simulate real-time updates
 
         # Verify all clients received all updates
@@ -291,7 +291,7 @@ class TestWorkflowApi:
         for i, call in enumerate(calls):
             message = json.loads(call[0][0])
             assert message["type"] == "workflow_update"
-            assert message["workflow_id"] == workflow_id
+            assert message["job_id"] == job_id
             assert message["data"] == progress_updates[i]
 
     @pytest.mark.asyncio
@@ -301,8 +301,8 @@ class TestWorkflowApi:
         mock_websocket.accept = AsyncMock()
         mock_websocket.send_text = AsyncMock()
 
-        workflow_id = str(uuid.uuid4())
-        connection_id = await connection_manager.connect(mock_websocket, workflow_id)
+        job_id = str(uuid.uuid4())
+        connection_id = await connection_manager.connect(mock_websocket, job_id)
 
         # Simulate step updates
         step_updates = [
@@ -330,7 +330,7 @@ class TestWorkflowApi:
 
         for update in step_updates:
             await connection_manager.send_step_update(
-                workflow_id, update["step_name"], update
+                job_id, update["step_name"], update
             )
             await asyncio.sleep(0.1)
 
@@ -343,7 +343,7 @@ class TestWorkflowApi:
             message = json.loads(call[0][0])
             assert message["type"] == "workflow_update"
             assert message["data"]["type"] == "step_update"
-            assert message["workflow_id"] == workflow_id
+            assert message["job_id"] == job_id
             assert message["data"]["step_name"] == step_updates[i]["step_name"]
             assert message["data"]["data"] == step_updates[i]
 
@@ -354,8 +354,8 @@ class TestWorkflowApi:
         mock_websocket.accept = AsyncMock()
         mock_websocket.send_text = AsyncMock()
 
-        workflow_id = str(uuid.uuid4())
-        connection_id = await connection_manager.connect(mock_websocket, workflow_id)
+        job_id = str(uuid.uuid4())
+        connection_id = await connection_manager.connect(mock_websocket, job_id)
 
         # Simulate log streaming
         log_entries = [
@@ -392,7 +392,7 @@ class TestWorkflowApi:
         ]
 
         for log_entry in log_entries:
-            await connection_manager.send_log_update(workflow_id, log_entry)
+            await connection_manager.send_log_update(job_id, log_entry)
             await asyncio.sleep(0.1)
 
         # Verify all log entries were sent
@@ -404,15 +404,15 @@ class TestWorkflowApi:
             message = json.loads(call[0][0])
             assert message["type"] == "workflow_update"
             assert message["data"]["type"] == "log_update"
-            assert message["workflow_id"] == workflow_id
+            assert message["job_id"] == job_id
             assert message["data"]["data"] == log_entries[i]
 
     def test_workflow_deletion_cascade(self, client):
         """Test that workflow deletion cascades to steps and logs."""
         # Create workflow with steps and logs
         workflow_data = {"name": "Cascade Test Workflow", "total_steps": 2}
-        create_response = client.post("/api/v1/workflows", json=workflow_data)
-        workflow_id = create_response.json()["id"]
+        create_response = client.post("/api/v1/jobs", json=workflow_data)
+        job_id = create_response.json()["id"]
 
         # Add steps
         steps = [
@@ -420,7 +420,7 @@ class TestWorkflowApi:
             {"step_name": "step2", "step_order": 2},
         ]
         for step_data in steps:
-            client.post(f"/api/v1/workflows/{workflow_id}/steps", json=step_data)
+            client.post(f"/api/v1/jobs/{job_id}/steps", json=step_data)
 
         # Add logs
         log_entries = [
@@ -428,78 +428,78 @@ class TestWorkflowApi:
             {"step_name": "step2", "log_level": "info", "message": "Test log 2"},
         ]
         for log_data in log_entries:
-            client.post(f"/api/v1/workflows/{workflow_id}/logs", json=log_data)
+            client.post(f"/api/v1/jobs/{job_id}/logs", json=log_data)
 
         # Verify workflow exists
-        get_response = client.get(f"/api/v1/workflows/{workflow_id}")
+        get_response = client.get(f"/api/v1/jobs/{job_id}")
         assert get_response.status_code == 200
 
         # Verify steps exist
-        steps_response = client.get(f"/api/v1/workflows/{workflow_id}/steps")
+        steps_response = client.get(f"/api/v1/jobs/{job_id}/steps")
         assert steps_response.status_code == 200
         assert len(steps_response.json()) == 2
 
         # Verify logs exist
-        logs_response = client.get(f"/api/v1/workflows/{workflow_id}/logs")
+        logs_response = client.get(f"/api/v1/jobs/{job_id}/logs")
         assert logs_response.status_code == 200
         assert len(logs_response.json()) >= 2
 
         # Delete workflow
-        delete_response = client.delete(f"/api/v1/workflows/{workflow_id}")
+        delete_response = client.delete(f"/api/v1/jobs/{job_id}")
         assert delete_response.status_code == 204
 
         # Verify workflow is deleted
-        get_response = client.get(f"/api/v1/workflows/{workflow_id}")
+        get_response = client.get(f"/api/v1/jobs/{job_id}")
         assert get_response.status_code == 404
 
         # Verify steps are deleted (cascade)
-        steps_response = client.get(f"/api/v1/workflows/{workflow_id}/steps")
+        steps_response = client.get(f"/api/v1/jobs/{job_id}/steps")
         assert steps_response.status_code == 404
 
         # Verify logs are deleted (cascade)
-        logs_response = client.get(f"/api/v1/workflows/{workflow_id}/logs")
+        logs_response = client.get(f"/api/v1/jobs/{job_id}/logs")
         assert logs_response.status_code == 404
 
     def test_concurrent_workflow_operations(self, client):
         """Test concurrent operations on multiple workflows."""
         # Create multiple workflows
-        workflow_ids = []
+        job_ids = []
         for i in range(3):
             workflow_data = {
                 "name": f"Concurrent Test Workflow {i+1}",
                 "total_steps": 2,
             }
-            create_response = client.post("/api/v1/workflows", json=workflow_data)
-            workflow_ids.append(create_response.json()["id"])
+            create_response = client.post("/api/v1/jobs", json=workflow_data)
+            job_ids.append(create_response.json()["id"])
 
         # Add steps to all workflows concurrently
-        for workflow_id in workflow_ids:
+        for job_id in job_ids:
             steps = [
                 {"step_name": "step1", "step_order": 1},
                 {"step_name": "step2", "step_order": 2},
             ]
             for step_data in steps:
-                client.post(f"/api/v1/workflows/{workflow_id}/steps", json=step_data)
+                client.post(f"/api/v1/jobs/{job_id}/steps", json=step_data)
 
         # Start all workflows
-        for workflow_id in workflow_ids:
-            client.put(f"/api/v1/workflows/{workflow_id}", json={"status": "running"})
+        for job_id in job_ids:
+            client.put(f"/api/v1/jobs/{job_id}", json={"status": "running"})
 
         # Complete steps in all workflows
-        for workflow_id in workflow_ids:
+        for job_id in job_ids:
             client.put(
-                f"/api/v1/workflows/{workflow_id}/steps/step1",
+                f"/api/v1/jobs/{job_id}/steps/step1",
                 json={"status": "completed"},
             )
             client.put(
-                f"/api/v1/workflows/{workflow_id}/steps/step2",
+                f"/api/v1/jobs/{job_id}/steps/step2",
                 json={"status": "completed"},
             )
-            client.put(f"/api/v1/workflows/{workflow_id}", json={"status": "completed"})
+            client.put(f"/api/v1/jobs/{job_id}", json={"status": "completed"})
 
         # Verify all workflows are completed
-        for workflow_id in workflow_ids:
-            response = client.get(f"/api/v1/workflows/{workflow_id}")
+        for job_id in job_ids:
+            response = client.get(f"/api/v1/jobs/{job_id}")
             assert response.status_code == 200
             assert response.json()["status"] == "completed"
 
@@ -517,12 +517,12 @@ class TestWorkflowApi:
             },
         }
 
-        create_response = client.post("/api/v1/workflows", json=workflow_data)
+        create_response = client.post("/api/v1/jobs", json=workflow_data)
         assert create_response.status_code == 201
-        workflow_id = create_response.json()["id"]
+        job_id = create_response.json()["id"]
 
         # Verify metadata is stored
-        get_response = client.get(f"/api/v1/workflows/{workflow_id}")
+        get_response = client.get(f"/api/v1/jobs/{job_id}")
         assert get_response.status_code == 200
         stored_metadata = get_response.json()["metadata"]
         assert stored_metadata["priority"] == "high"
@@ -542,12 +542,12 @@ class TestWorkflowApi:
         }
 
         update_response = client.put(
-            f"/api/v1/workflows/{workflow_id}", json=update_data
+            f"/api/v1/jobs/{job_id}", json=update_data
         )
         assert update_response.status_code == 200
 
         # Verify metadata is updated
-        get_response = client.get(f"/api/v1/workflows/{workflow_id}")
+        get_response = client.get(f"/api/v1/jobs/{job_id}")
         assert get_response.status_code == 200
         updated_metadata = get_response.json()["metadata"]
         assert updated_metadata["priority"] == "low"

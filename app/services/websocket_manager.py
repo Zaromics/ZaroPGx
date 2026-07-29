@@ -110,7 +110,7 @@ class ConnectionManager:
         # Create message with timestamp
         full_message = {
             "type": "workflow_update",
-            "workflow_id": workflow_id,
+            "job_id": workflow_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "data": message,
         }
@@ -150,7 +150,7 @@ class ConnectionManager:
         """
         step_message = {
             "type": "step_update",
-            "workflow_id": workflow_id,
+            "job_id": workflow_id,
             "step_name": step_name,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "data": message,
@@ -168,7 +168,7 @@ class ConnectionManager:
         """
         log_update = {
             "type": "log_update",
-            "workflow_id": workflow_id,
+            "job_id": workflow_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "data": log_message,
         }
@@ -188,7 +188,7 @@ class ConnectionManager:
         """
         error_notification = {
             "type": "error_notification",
-            "workflow_id": workflow_id,
+            "job_id": workflow_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "error_message": error_message,
             "error_details": error_details or {},
@@ -205,7 +205,7 @@ class ConnectionManager:
         """
         heartbeat = {
             "type": "heartbeat",
-            "workflow_id": workflow_id,
+            "job_id": workflow_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -285,8 +285,8 @@ class ConnectionManager:
         """
         cancellation_message = {
             "type": "workflow_cancelled",
-            "workflow_id": workflow_id,
-            "message": "Workflow has been cancelled by user",
+            "job_id": workflow_id,
+            "message": "Job has been cancelled by user",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "cancelled",
         }
