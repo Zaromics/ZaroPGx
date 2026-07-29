@@ -22,7 +22,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.db import Base, get_db
 from app.services.websocket_manager import ConnectionManager
-from app.services.workflow_service import WorkflowService
+from app.services.job_service import JobService
 from tests.e2e.harness import apply_e2e_env, e2e_requested, vacuous_e2e_failure
 
 # Postgres schemas the ORM models are qualified with. SQLite has no CREATE
@@ -180,8 +180,8 @@ def client(override_db_dependency):
 
 
 @pytest.fixture
-def workflow_service(db_session):
-    return WorkflowService(db_session)
+def job_service(db_session):
+    return JobService(db_session)
 
 
 @pytest.fixture

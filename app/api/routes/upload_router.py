@@ -45,13 +45,13 @@ from app.api.models import (
     StepStatus,
     UploadResponse,
     VCFHeaderInfo,
-    WorkflowCreate,
+    JobCreate,
     WorkflowInfo,
-    WorkflowLogCreate,
-    WorkflowStatus,
-    WorkflowStepCreate,
-    WorkflowStepUpdate,
-    WorkflowUpdate,
+    JobLogCreate,
+    JobStatus,
+    JobStepCreate,
+    JobStepUpdate,
+    JobUpdate,
 )
 from app.api.utils.file_processor import FileProcessor
 from app.api.utils.header_inspector import (
@@ -62,7 +62,7 @@ from app.api.utils.header_inspector import (
 from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
-from app.services.workflow_service import WorkflowService, schedule_coroutine
+from app.services.job_service import JobService, schedule_coroutine
 from app.visualizations.workflow_diagram import (
     render_kroki_mermaid_svg,
     render_simple_png_from_workflow,
@@ -115,7 +115,7 @@ logger.info(
 # Progress calculation is now handled by WorkflowProgressCalculator
 
 
-async def delayed_cleanup_on_cancellation(workflow_id: str, workflow_metadata: dict):
+async def delayed_cleanup_on_cancellation(workflow_id: str, job_metadata: dict):
     """
     Perform delayed cleanup when app container detects cancellation.
 
@@ -124,14 +124,14 @@ async def delayed_cleanup_on_cancellation(workflow_id: str, workflow_metadata: d
 
     Args:
         workflow_id: The workflow ID that was cancelled
-        workflow_metadata: Workflow metadata containing file paths
+        job_metadata: Workflow metadata containing file paths
     """
 
     try:
         # Wait a short period to ensure any in-progress operations complete
         await asyncio.sleep(2.0)
 
-        patient_id = workflow_metadata.get("patient_id")
+        patient_id = job_metadata.get("patient_id")
         if not patient_id:
             logger.warning(
                 f"No patient_id found in workflow metadata for delayed cleanup of {workflow_id}"
@@ -147,10 +147,10 @@ async def delayed_cleanup_on_cancellation(workflow_id: str, workflow_metadata: d
         ]
 
         # Add any additional paths from metadata
-        if "output_directory" in workflow_metadata:
-            cleanup_paths.append(workflow_metadata["output_directory"])
-        if "temp_directory" in workflow_metadata:
-            cleanup_paths.append(workflow_metadata["temp_directory"])
+        if "output_directory" in job_metadata:
+            cleanup_paths.append(job_metadata["output_directory"])
+        if "temp_directory" in job_metadata:
+            cleanup_paths.append(job_metadata["temp_directory"])
 
         # Clean up each path
         for path_str in cleanup_paths:
@@ -174,52 +174,52 @@ async def delayed_cleanup_on_cancellation(workflow_id: str, workflow_metadata: d
 
 
 async def handle_final_stages_progression(
-    workflow_service: WorkflowService, workflow_id: str, outdir: str
+    job_service: JobService, workflow_id: str, outdir: str
 ):
     """
     Handle the final stages of workflow progression after Nextflow completion.
 
     Args:
-        workflow_service: Workflow service instance
+        job_service: Workflow service instance
         workflow_id: The workflow ID
         outdir: Output directory path
     """
     try:
         # Check for cancellation before starting
-        workflow = workflow_service.get_workflow(workflow_id)
-        if workflow and workflow.status == "cancelled":
+        job = job_service.get_job(workflow_id)
+        if job and job.status == "cancelled":
             logger.info(
                 f"Workflow {workflow_id} was cancelled before report generation"
             )
             # Schedule delayed cleanup to ensure any partial files are removed
             task = asyncio.create_task(
-                delayed_cleanup_on_cancellation(workflow_id, workflow.workflow_metadata)
+                delayed_cleanup_on_cancellation(workflow_id, job.job_metadata)
             )
             # Add a name for easier debugging
             task.set_name(f"delayed_cleanup_{workflow_id}")
             return
 
         # Send initial progress update
-        step_update = WorkflowStepUpdate(
+        step_update = JobStepUpdate(
             status=StepStatus.RUNNING, output_data={"progress_percent": 0}
         )
-        workflow_service.update_workflow_step(
+        job_service.update_job_step(
             workflow_id, "report_generation", step_update
         )
 
-        log_data = WorkflowLogCreate(
+        log_data = JobLogCreate(
             step_name="report_generation",
             log_level=LogLevel.INFO,
             message="Generating final reports from Nextflow output",
         )
-        workflow_service.log_workflow_event(workflow_id, log_data)
+        job_service.log_job_event(workflow_id, log_data)
 
         # Get workflow metadata to extract patient and data information
-        workflow = workflow_service.get_workflow(workflow_id)
-        if not workflow:
+        job = job_service.get_job(workflow_id)
+        if not job:
             raise RuntimeError(f"Workflow {workflow_id} not found")
 
-        metadata = workflow.workflow_metadata or {}
+        metadata = job.job_metadata or {}
         patient_id = metadata.get("patient_id")
         data_id = metadata.get("data_id")
         workflow_config = metadata.get("workflow", {})
@@ -346,14 +346,14 @@ async def handle_final_stages_progression(
                         from app.pharmcat.pharmcat_parser import load_pharmcat_file
 
                         try:
-                            # Pass the workflow_service's database session to ensure consistency
+                            # Pass the job_service's database session to ensure consistency
                             pharmcat_run_id = load_pharmcat_file(
-                                pharmcat_json_file, workflow_service.db
+                                pharmcat_json_file, job_service.db
                             )
 
                             if pharmcat_run_id:
                                 # Link PharmCAT run to workflow
-                                workflow_service.link_pharmcat_run(
+                                job_service.link_pharmcat_run(
                                     workflow_id, pharmcat_run_id
                                 )
                                 logger.info(
@@ -457,10 +457,10 @@ async def handle_final_stages_progression(
                 logger.warning(f"Failed TSV fallback for PharmCAT parsing: {e}")
 
         # Update progress: Diagram generation (35% of report generation)
-        step_update = WorkflowStepUpdate(
+        step_update = JobStepUpdate(
             status=StepStatus.RUNNING, output_data={"progress_percent": 35}
         )
-        workflow_service.update_workflow_step(
+        job_service.update_job_step(
             workflow_id, "report_generation", step_update
         )
 
@@ -595,10 +595,10 @@ async def handle_final_stages_progression(
         )
 
         # Update progress: Reports generated (100% of report generation)
-        step_update = WorkflowStepUpdate(
+        step_update = JobStepUpdate(
             status=StepStatus.RUNNING, output_data={"progress_percent": 100}
         )
-        workflow_service.update_workflow_step(
+        job_service.update_job_step(
             workflow_id, "report_generation", step_update
         )
 
@@ -622,26 +622,26 @@ async def handle_final_stages_progression(
         updated_metadata["reports"] = response_data
 
         # Update the workflow with the new metadata
-        workflow_update = WorkflowUpdate(metadata=updated_metadata)
-        workflow_service.update_workflow(workflow_id, workflow_update)
+        workflow_update = JobUpdate(metadata=updated_metadata)
+        job_service.update_job(workflow_id, workflow_update)
 
         # Complete the report generation step
-        step_update = WorkflowStepUpdate(
+        step_update = JobStepUpdate(
             status=StepStatus.COMPLETED,
             output_data={"reports": response_data, "progress_percent": 100},
         )
-        workflow_service.update_workflow_step(
+        job_service.update_job_step(
             workflow_id, "report_generation", step_update
         )
 
         # Complete the workflow
-        workflow_update = WorkflowUpdate(status=WorkflowStatus.COMPLETED)
-        workflow_service.update_workflow(workflow_id, workflow_update)
+        workflow_update = JobUpdate(status=JobStatus.COMPLETED)
+        job_service.update_job(workflow_id, workflow_update)
 
         # Broadcast workflow completion with report URLs
         try:
             schedule_coroutine(
-                workflow_service._broadcast_workflow_update(
+                job_service._broadcast_job_update(
                     str(workflow_id),
                     {
                         "workflow_id": str(workflow_id),
@@ -669,12 +669,12 @@ async def handle_final_stages_progression(
         except Exception as e:
             logger.error(f"Failed to broadcast workflow completion with reports: {e}")
 
-        log_data = WorkflowLogCreate(
+        log_data = JobLogCreate(
             step_name="workflow_completion",
             log_level=LogLevel.INFO,
             message="Workflow completed successfully with reports generated",
         )
-        workflow_service.log_workflow_event(workflow_id, log_data)
+        job_service.log_job_event(workflow_id, log_data)
 
         logger.info(
             f"Workflow {workflow_id} completed successfully with reports generated"
@@ -685,19 +685,19 @@ async def handle_final_stages_progression(
         logger.error(
             f"Error in final stages progression for workflow {workflow_id}: {e}"
         )
-        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
-        workflow_service.update_workflow(workflow_id, workflow_update)
+        workflow_update = JobUpdate(status=JobStatus.FAILED)
+        job_service.update_job(workflow_id, workflow_update)
 
-        log_data = WorkflowLogCreate(
+        log_data = JobLogCreate(
             step_name=None,
             log_level=LogLevel.ERROR,
             message=f"Error in final stages: {str(e)}",
         )
-        workflow_service.log_workflow_event(workflow_id, log_data)
+        job_service.log_job_event(workflow_id, log_data)
 
 
 async def wait_for_nextflow_completion(
-    workflow_service: WorkflowService,
+    job_service: JobService,
     workflow_id: str,
     nextflow_url: str,
     job_key: str,
@@ -711,7 +711,7 @@ async def wait_for_nextflow_completion(
     progress calculation based on step status updates from the containers.
 
     Args:
-        workflow_service: Workflow service instance
+        job_service: Workflow service instance
         workflow_id: The workflow ID
         nextflow_url: Nextflow runner URL
         job_key: Nextflow job key
@@ -721,18 +721,18 @@ async def wait_for_nextflow_completion(
         logger.info(f"Waiting for Nextflow completion for workflow {workflow_id}")
 
         # Log that Nextflow execution has started
-        log_data = WorkflowLogCreate(
+        log_data = JobLogCreate(
             step_name="nextflow_executor",
             log_level=LogLevel.INFO,
             message="Nextflow pipeline started - individual containers will report progress",
         )
-        workflow_service.log_workflow_event(workflow_id, log_data)
+        job_service.log_job_event(workflow_id, log_data)
 
         while True:
             try:
                 # Check if workflow has been cancelled
-                workflow = workflow_service.get_workflow(workflow_id)
-                if workflow and workflow.status == "cancelled":
+                job = job_service.get_job(workflow_id)
+                if job and job.status == "cancelled":
                     logger.info(
                         f"Workflow {workflow_id} was cancelled, stopping Nextflow monitoring"
                     )
@@ -750,28 +750,28 @@ async def wait_for_nextflow_completion(
                     # Only log significant status changes to avoid spam
                     # Only log when status changes or when it's a final status
                     if status in ["completed", "failed", "cancelled"]:
-                        log_data = WorkflowLogCreate(
+                        log_data = JobLogCreate(
                             step_name="nextflow_executor",
                             log_level=LogLevel.INFO,
                             message=f"Nextflow executor: {message}",
                         )
-                        workflow_service.log_workflow_event(workflow_id, log_data)
+                        job_service.log_job_event(workflow_id, log_data)
 
                     # Check if completed
                     if status_data.get("status") == "completed":
                         logger.info(f"Nextflow job {job_key} completed successfully")
 
                         # Log that Nextflow execution completed
-                        log_data = WorkflowLogCreate(
+                        log_data = JobLogCreate(
                             step_name="nextflow_executor",
                             log_level=LogLevel.INFO,
                             message="Nextflow pipeline completed - proceeding to report generation",
                         )
-                        workflow_service.log_workflow_event(workflow_id, log_data)
+                        job_service.log_job_event(workflow_id, log_data)
 
                         # Handle final stages (report generation)
                         await handle_final_stages_progression(
-                            workflow_service, workflow_id, outdir
+                            job_service, workflow_id, outdir
                         )
                         break
                     elif status_data.get("status") == "failed":
@@ -779,15 +779,15 @@ async def wait_for_nextflow_completion(
                         logger.error(f"Nextflow job {job_key} failed: {error_msg}")
 
                         # Update workflow status to failed
-                        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
-                        workflow_service.update_workflow(workflow_id, workflow_update)
+                        workflow_update = JobUpdate(status=JobStatus.FAILED)
+                        job_service.update_job(workflow_id, workflow_update)
 
-                        log_data = WorkflowLogCreate(
+                        log_data = JobLogCreate(
                             step_name=None,
                             log_level=LogLevel.ERROR,
                             message=f"Nextflow job failed: {error_msg}",
                         )
-                        workflow_service.log_workflow_event(workflow_id, log_data)
+                        job_service.log_job_event(workflow_id, log_data)
                         break
                     elif status_data.get("status") == "cancelled":
                         logger.info(f"Nextflow job {job_key} was cancelled")
@@ -802,15 +802,15 @@ async def wait_for_nextflow_completion(
 
     except Exception as e:
         logger.error(f"Error waiting for Nextflow completion: {e}")
-        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
-        workflow_service.update_workflow(workflow_id, workflow_update)
+        workflow_update = JobUpdate(status=JobStatus.FAILED)
+        job_service.update_job(workflow_id, workflow_update)
 
-        log_data = WorkflowLogCreate(
+        log_data = JobLogCreate(
             step_name=None,
             log_level=LogLevel.ERROR,
             message=f"Error waiting for completion: {str(e)}",
         )
-        workflow_service.log_workflow_event(workflow_id, log_data)
+        job_service.log_job_event(workflow_id, log_data)
 
 
 async def process_file_nextflow_background_with_db(
@@ -869,25 +869,25 @@ async def process_file_nextflow_background(
         sample_identifier: Optional sample identifier
         workflow_id: Optional workflow ID for tracking
     """
-    workflow_service = WorkflowService(db)
+    job_service = JobService(db)
 
     try:
         # Get the workflow if workflow_id is provided
         if workflow_id:
-            workflow_obj = workflow_service.get_workflow(workflow_id)
-            if not workflow_obj:
+            job_obj = job_service.get_job(workflow_id)
+            if not job_obj:
                 logger.error(f"Workflow {workflow_id} not found")
                 return
 
             # Check for cancellation before starting
-            if workflow_obj.status == "cancelled":
+            if job_obj.status == "cancelled":
                 logger.info(
                     f"Workflow {workflow_id} was cancelled before processing started"
                 )
                 # Schedule delayed cleanup to ensure any partial files are removed
                 task = asyncio.create_task(
                     delayed_cleanup_on_cancellation(
-                        workflow_id, workflow_obj.workflow_metadata
+                        workflow_id, job_obj.job_metadata
                     )
                 )
                 # Add a name for easier debugging
@@ -898,8 +898,8 @@ async def process_file_nextflow_background(
             return
 
         # Update header analysis step
-        step_update = WorkflowStepUpdate(status=StepStatus.RUNNING)
-        workflow_service.update_workflow_step(
+        step_update = JobStepUpdate(status=StepStatus.RUNNING)
+        job_service.update_job_step(
             workflow_id, "header_analysis", step_update
         )
 
@@ -943,39 +943,39 @@ async def process_file_nextflow_background(
                 header_sample_identifier = None
 
             # Complete header analysis step
-            step_update = WorkflowStepUpdate(
+            step_update = JobStepUpdate(
                 status=StepStatus.COMPLETED,
                 output_data={"header_record_id": header_record_id},
             )
-            workflow_service.update_workflow_step(
+            job_service.update_job_step(
                 workflow_id, "header_analysis", step_update
             )
 
-            log_data = WorkflowLogCreate(
+            log_data = JobLogCreate(
                 step_name="header_analysis",
                 log_level=LogLevel.INFO,
                 message="Header analysis completed successfully",
             )
-            workflow_service.log_workflow_event(workflow_id, log_data)
+            job_service.log_job_event(workflow_id, log_data)
 
         except Exception as e:
             logger.error(f"Header analysis failed: {e}")
-            step_update = WorkflowStepUpdate(
+            step_update = JobStepUpdate(
                 status=StepStatus.FAILED, error_details={"error": str(e)}
             )
-            workflow_service.update_workflow_step(
+            job_service.update_job_step(
                 workflow_id, "header_analysis", step_update
             )
 
-            workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
-            workflow_service.update_workflow(workflow_id, workflow_update)
+            workflow_update = JobUpdate(status=JobStatus.FAILED)
+            job_service.update_job(workflow_id, workflow_update)
 
-            log_data = WorkflowLogCreate(
+            log_data = JobLogCreate(
                 step_name="header_analysis",
                 log_level=LogLevel.ERROR,
                 message=f"Header analysis failed: {str(e)}",
             )
-            workflow_service.log_workflow_event(workflow_id, log_data)
+            job_service.log_job_event(workflow_id, log_data)
             return
 
         # Submit to Nextflow
@@ -1023,15 +1023,15 @@ async def process_file_nextflow_background(
             # without relying on locals() across coroutine boundaries.
             if workflow_id:
                 try:
-                    workflow_obj = workflow_service.get_workflow(workflow_id)
-                    if workflow_obj:
-                        meta = dict(workflow_obj.workflow_metadata or {})
+                    job_obj = job_service.get_job(workflow_id)
+                    if job_obj:
+                        meta = dict(job_obj.job_metadata or {})
                         if header_sample_identifier:
                             meta["header_sample_identifier"] = header_sample_identifier
                         if effective_sample_identifier:
                             meta["sample_identifier"] = effective_sample_identifier
-                        workflow_service.update_workflow(
-                            workflow_id, WorkflowUpdate(metadata=meta)
+                        job_service.update_job(
+                            workflow_id, JobUpdate(metadata=meta)
                         )
                 except Exception as meta_err:
                     logger.debug(
@@ -1072,7 +1072,7 @@ async def process_file_nextflow_background(
 
             # Wait for completion
             await wait_for_nextflow_completion(
-                workflow_service,
+                job_service,
                 workflow_id,
                 nextflow_url,
                 job_key,
@@ -1081,28 +1081,28 @@ async def process_file_nextflow_background(
 
         except Exception as e:
             logger.error(f"Nextflow execution failed: {e}")
-            workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
-            workflow_service.update_workflow(workflow_id, workflow_update)
+            workflow_update = JobUpdate(status=JobStatus.FAILED)
+            job_service.update_job(workflow_id, workflow_update)
 
-            log_data = WorkflowLogCreate(
+            log_data = JobLogCreate(
                 step_name=None,
                 log_level=LogLevel.ERROR,
                 message=f"Nextflow execution failed: {str(e)}",
             )
-            workflow_service.log_workflow_event(workflow_id, log_data)
+            job_service.log_job_event(workflow_id, log_data)
             return
 
     except Exception as e:
         logger.error(f"Error in Nextflow background processing: {e}")
-        workflow_update = WorkflowUpdate(status=WorkflowStatus.FAILED)
-        workflow_service.update_workflow(workflow_id, workflow_update)
+        workflow_update = JobUpdate(status=JobStatus.FAILED)
+        job_service.update_job(workflow_id, workflow_update)
 
-        log_data = WorkflowLogCreate(
+        log_data = JobLogCreate(
             step_name=None,
             log_level=LogLevel.ERROR,
             message=f"Background processing error: {str(e)}",
         )
-        workflow_service.log_workflow_event(workflow_id, log_data)
+        job_service.log_job_event(workflow_id, log_data)
 
 
 @router.post("/genomic-data", response_model=UploadResponse)
@@ -1166,9 +1166,9 @@ async def upload_genomic_data(
         )
 
         # Create workflow
-        workflow_service = WorkflowService(db)
-        workflow = workflow_service.create_workflow(
-            WorkflowCreate(
+        job_service = JobService(db)
+        job = job_service.create_job(
+            JobCreate(
                 name=f"Genomic Analysis - {sample_identifier or 'Unknown Sample'}",
                 description=f"Pharmacogenomic analysis workflow for {file_analysis.file_type.value} file",
                 total_steps=5,  # header_analysis, hla_typing, pypgx_analysis, pharmcat_analysis, report_generation
@@ -1200,9 +1200,9 @@ async def upload_genomic_data(
         step_order = 1
 
         # Add header analysis step (file upload progress is handled by frontend)
-        workflow_service.add_workflow_step(
-            workflow.id,
-            WorkflowStepCreate(
+        job_service.add_job_step(
+            job.id,
+            JobStepCreate(
                 step_name="header_analysis",
                 step_order=step_order,
                 container_name="header_inspector",
@@ -1212,9 +1212,9 @@ async def upload_genomic_data(
 
         # Add HLA typing step only if workflow needs it AND user hasn't disabled it
         if result["workflow"].get("needs_hla", False):
-            workflow_service.add_workflow_step(
-                workflow.id,
-                WorkflowStepCreate(
+            job_service.add_job_step(
+                job.id,
+                JobStepCreate(
                     step_name="hla_typing",
                     step_order=step_order,
                     container_name="zarohla",
@@ -1224,9 +1224,9 @@ async def upload_genomic_data(
 
         # Add PyPGx BAM→VCF conversion step only if workflow needs it AND user hasn't disabled it
         if result["workflow"].get("needs_pypgx_bam2vcf", False):
-            workflow_service.add_workflow_step(
-                workflow.id,
-                WorkflowStepCreate(
+            job_service.add_job_step(
+                job.id,
+                JobStepCreate(
                     step_name="pypgx_bam2vcf",
                     step_order=step_order,
                     container_name="pypgx",
@@ -1236,9 +1236,9 @@ async def upload_genomic_data(
 
         # Add PyPGx analysis step only if workflow needs it AND user hasn't disabled it
         if result["workflow"].get("needs_pypgx", False):
-            workflow_service.add_workflow_step(
-                workflow.id,
-                WorkflowStepCreate(
+            job_service.add_job_step(
+                job.id,
+                JobStepCreate(
                     step_name="pypgx_analysis",
                     step_order=step_order,
                     container_name="pypgx",
@@ -1247,9 +1247,9 @@ async def upload_genomic_data(
             step_order += 1
 
         # Always add PharmCAT analysis step (required for core functionality)
-        workflow_service.add_workflow_step(
-            workflow.id,
-            WorkflowStepCreate(
+        job_service.add_job_step(
+            job.id,
+            JobStepCreate(
                 step_name="pharmcat_analysis",
                 step_order=step_order,
                 container_name="pharmcat",
@@ -1261,9 +1261,9 @@ async def upload_genomic_data(
         if result["workflow"].get(
             "needs_report", True
         ):  # Reports are available by default
-            workflow_service.add_workflow_step(
-                workflow.id,
-                WorkflowStepCreate(
+            job_service.add_job_step(
+                job.id,
+                JobStepCreate(
                     step_name="report_generation",
                     step_order=step_order,
                     container_name="report_generator",
@@ -1272,8 +1272,8 @@ async def upload_genomic_data(
             step_order += 1
 
         # Start the workflow
-        workflow_service.update_workflow(
-            workflow.id, WorkflowUpdate(status=WorkflowStatus.RUNNING)
+        job_service.update_job(
+            job.id, JobUpdate(status=JobStatus.RUNNING)
         )
 
         # Schedule background processing: Always use Nextflow
@@ -1288,7 +1288,7 @@ async def upload_genomic_data(
                 if (sample_identifier and sample_identifier.strip())
                 else None
             ),
-            str(workflow.id),  # Pass workflow ID
+            str(job.id),  # Pass workflow ID
         )
 
         # Convert dataclass to Pydantic model
@@ -1324,7 +1324,7 @@ async def upload_genomic_data(
         response = UploadResponse(
             file_id=str(data_id),  # Use data_id as file_id for backward compatibility
             job_id=str(
-                workflow.id
+                job.id
             ),  # Use workflow ID as job_id for backward compatibility
             file_type=result["workflow"]["file_type"],
             status="processing",
@@ -1342,7 +1342,7 @@ async def upload_genomic_data(
         )
 
         logger.info(
-            f"Upload successful for patient {patient_id}, workflow {workflow.id}"
+            f"Upload successful for patient {patient_id}, workflow {job.id}"
         )
         return response
 
@@ -1358,15 +1358,15 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
     This endpoint works with both job_id and workflow_id for backward compatibility.
     """
     try:
-        workflow_service = WorkflowService(db)
+        job_service = JobService(db)
 
         # Try to get workflow by ID
-        workflow = workflow_service.get_workflow(job_id)
-        if not workflow:
+        job = job_service.get_job(job_id)
+        if not job:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         # Get workflow steps
-        steps = workflow_service.get_workflow_steps(job_id)
+        steps = job_service.get_job_steps(job_id)
 
         # Convert steps to dictionary format for progress calculator
         steps_dict = [
@@ -1382,7 +1382,7 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         ]
 
         # Get workflow metadata for configuration
-        metadata = workflow.workflow_metadata or {}
+        metadata = job.job_metadata or {}
         workflow_config = metadata.get("workflow", {})
 
         # Calculate progress using centralized calculator
@@ -1395,12 +1395,12 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         current_stage = progress_info.stage.value
 
         # Get workflow logs
-        logs = workflow_service.get_workflow_logs(job_id)
+        logs = job_service.get_job_logs(job_id)
         latest_message = progress_info.message
 
         # Extract report URLs from metadata for completed workflows
         report_urls = {}
-        if workflow.status == "completed" and metadata.get("reports"):
+        if job.status == "completed" and metadata.get("reports"):
             reports = metadata["reports"]
             logger.info(
                 f"Found report data in workflow metadata: {list(reports.keys())}"
@@ -1431,12 +1431,12 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         # Create response
         response = {
             "job_id": job_id,
-            "status": workflow.status,  # status is already a string from database
+            "status": job.status,  # status is already a string from database
             "progress": progress,
             "message": latest_message,
             "current_stage": current_stage,
             "data": {
-                "workflow_id": workflow.id,
+                "workflow_id": job.id,
                 "patient_id": metadata.get("patient_id"),
                 "data_id": metadata.get("data_id"),
                 "steps": [
@@ -1533,37 +1533,37 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
     Get the report URLs for a completed job.
     """
     try:
-        workflow_service = WorkflowService(db)
+        job_service = JobService(db)
 
         # First try to get workflow by ID (in case job_id is actually a workflow_id)
-        workflow = workflow_service.get_workflow(job_id)
+        job = job_service.get_job(job_id)
 
         # If not found by ID, try to find by name pattern
-        if not workflow:
-            # Look for workflow with name containing the job_id
+        if not job:
+            # Look for job with name containing the job_id
             from sqlalchemy import and_
 
-            from app.api.db import Workflow
+            from app.api.db import Job
 
-            workflow = (
-                db.query(Workflow)
+            job = (
+                db.query(Job)
                 .filter(
                     and_(
-                        Workflow.name.contains(job_id),
-                        Workflow.status == WorkflowStatus.COMPLETED,
+                        Job.name.contains(job_id),
+                        Job.status == JobStatus.COMPLETED,
                     )
                 )
                 .first()
             )
 
-        if not workflow:
+        if not job:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if workflow.status != WorkflowStatus.COMPLETED:
+        if job.status != JobStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Workflow not completed")
 
         # Get report URLs from metadata
-        metadata = workflow.workflow_metadata or {}
+        metadata = job.job_metadata or {}
         reports = metadata.get("reports", {})
 
         # If no reports in metadata, try to construct URLs from patient_id
@@ -1598,7 +1598,7 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
 
         return {
             "job_id": job_id,
-            "workflow_id": str(workflow.id),
+            "workflow_id": str(job.id),
             "status": "completed",
             "reports": reports,
         }

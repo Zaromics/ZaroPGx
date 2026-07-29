@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union
 from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session
 
-from app.api.db import Workflow
+from app.api.db import Job
 from app.pharmcat.pharmcat_parser import PharmCATParser, get_pharmcat_summary
 
 logger = logging.getLogger(__name__)
@@ -47,15 +47,15 @@ class PharmCATDataService:
             workflow_uuid = uuid.UUID(str(workflow_id))
 
             # Get workflow to find associated PharmCAT run
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_uuid).first()
+            job = (
+                self.db.query(Job).filter(Job.id == workflow_uuid).first()
             )
-            if not workflow:
+            if not job:
                 logger.warning(f"Workflow {workflow_id} not found")
                 return None
 
             # Look for PharmCAT run_id in workflow metadata
-            metadata = workflow.workflow_metadata or {}
+            metadata = job.job_metadata or {}
             pharmcat_run_id = metadata.get("pharmcat_run_id")
 
             logger.info(
@@ -528,19 +528,19 @@ class PharmCATDataService:
             True if successful, False otherwise
         """
         try:
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job = (
+                self.db.query(Job).filter(Job.id == workflow_id).first()
             )
-            if not workflow:
+            if not job:
                 logger.error(f"Workflow {workflow_id} not found")
                 return False
 
             # Update workflow metadata
-            metadata = workflow.workflow_metadata or {}
+            metadata = job.job_metadata or {}
             metadata["pharmcat_run_id"] = pharmcat_run_id
             metadata["pharmcat_linked_at"] = datetime.now(timezone.utc).isoformat()
 
-            workflow.workflow_metadata = metadata
+            job.job_metadata = metadata
             self.db.commit()
 
             logger.info(
@@ -566,13 +566,13 @@ class PharmCATDataService:
             Dict containing PharmCAT summary data, or None if not found
         """
         try:
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job = (
+                self.db.query(Job).filter(Job.id == workflow_id).first()
             )
-            if not workflow:
+            if not job:
                 return None
 
-            metadata = workflow.workflow_metadata or {}
+            metadata = job.job_metadata or {}
             pharmcat_run_id = metadata.get("pharmcat_run_id")
 
             if not pharmcat_run_id:

@@ -64,7 +64,7 @@ from app.api.models import (
 from app.api.routes import report_router, upload_router
 from app.api.routes.fhir_export_router import router as fhir_export_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
-from app.api.routes.workflow_router import router as workflow_router
+from app.api.routes.job_router import router as job_router
 from app.api.utils.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     SECRET_KEY,
@@ -78,7 +78,7 @@ from app.reports.generator import (
     generate_report,
 )
 from app.services.cleanup_service import cleanup_service
-from app.services.workflow_service import WorkflowService
+from app.services.job_service import JobService
 
 # This module logs liberally with emoji. The container's stdout is UTF-8, but a Windows host
 # console is cp1252, where a single emoji raises UnicodeEncodeError and takes down the whole
@@ -310,7 +310,7 @@ app.add_middleware(
 # Include routers
 app.include_router(upload_router.router)
 app.include_router(report_router.router)
-app.include_router(workflow_router)
+app.include_router(job_router)
 app.include_router(pharmcat_router)
 
 # Conditionally include FHIR export router (enabled by default)
@@ -1160,7 +1160,7 @@ async def startup_event():
 
     # Remember the main loop so sync WorkflowService methods can schedule
     # WebSocket broadcasts via run_coroutine_threadsafe when off-loop.
-    from app.services.workflow_service import remember_event_loop
+    from app.services.job_service import remember_event_loop
 
     remember_event_loop()
 
@@ -1318,14 +1318,14 @@ async def check_reports(job_id: str):
             from sqlalchemy.orm import Session
 
             from app.api.db import get_db
-            from app.services.workflow_service import WorkflowService
+            from app.services.job_service import JobService
 
             # Get database session
             db = next(get_db())
-            workflow_service = WorkflowService(db)
+            job_service = JobService(db)
 
             # Try to find workflow by job_id
-            workflow = workflow_service.get_workflow_by_name(f"job_{job_id}")
+            workflow = job_service.get_job_by_name(f"job_{job_id}")
             job_data = {"status": "unknown", "complete": False}
 
             if workflow:
@@ -1337,7 +1337,7 @@ async def check_reports(job_id: str):
 
                 # Update workflow status if reports exist
                 if pdf_exists or html_exists and workflow.status != "completed":
-                    workflow_service.update_workflow_status(
+                    job_service.update_job_status(
                         workflow.id,
                         "completed",
                         "Analysis completed successfully (from check-reports)",
@@ -1386,17 +1386,17 @@ async def trigger_completion(job_id: str):
     if pdf_exists or html_exists:
         try:
             from app.api.db import get_db
-            from app.services.workflow_service import WorkflowService
+            from app.services.job_service import JobService
 
             # Get database session
             db = next(get_db())
-            workflow_service = WorkflowService(db)
+            job_service = JobService(db)
 
             # Try to find workflow by job_id
-            workflow = workflow_service.get_workflow_by_name(f"job_{job_id}")
+            workflow = job_service.get_job_by_name(f"job_{job_id}")
 
             if workflow:
-                workflow_service.update_workflow_status(
+                job_service.update_job_status(
                     workflow.id,
                     "completed",
                     "Analysis completed successfully (manual trigger)",

@@ -1,11 +1,11 @@
 """
-Workflow Service for centralized workflow management and orchestration.
+Job Service for centralized job management and orchestration.
 
 This service provides a centralized interface for:
-- Creating and managing workflows
-- Tracking workflow step execution
-- Managing workflow progress and status
-- Logging workflow events
+- Creating and managing jobs
+- Tracking job step execution
+- Managing job progress and status
+- Logging job events
 """
 
 import asyncio
@@ -18,20 +18,20 @@ from sqlalchemy import and_, desc, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.db import Workflow, WorkflowLog, WorkflowStep
+from app.api.db import Job, JobLog, JobStep
 from app.api.models import (
     LogLevel,
     StepStatus,
-    WorkflowCreate,
-    WorkflowLogCreate,
-    WorkflowLogResponse,
-    WorkflowProgressResponse,
-    WorkflowResponse,
-    WorkflowStatus,
-    WorkflowStepCreate,
-    WorkflowStepResponse,
-    WorkflowStepUpdate,
-    WorkflowUpdate,
+    JobCreate,
+    JobLogCreate,
+    JobLogResponse,
+    JobProgressResponse,
+    JobResponse,
+    JobStatus,
+    JobStepCreate,
+    JobStepResponse,
+    JobStepUpdate,
+    JobUpdate,
 )
 from app.services.cleanup_service import cleanup_service
 from app.services.pharmcat_data_service import PharmCATDataService
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Strong refs for fire-and-forget broadcast tasks (loop only keeps weak refs).
 _background_tasks: set[asyncio.Task] = set()
-# Main app loop — used when sync WorkflowService methods run off the event-loop thread.
+# Main app loop — used when sync JobService methods run off the event-loop thread.
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
@@ -113,12 +113,12 @@ def schedule_coroutine(coro) -> None:
     coro.close()
 
 
-class WorkflowService:
+class JobService:
     """
     Service for managing workflows and their execution.
 
     This service provides comprehensive workflow management including:
-    - Workflow lifecycle management
+    - Job lifecycle management
     - Step orchestration and tracking
     - Progress calculation and monitoring
     - Error handling and retry logic
@@ -128,54 +128,54 @@ class WorkflowService:
     def __init__(self, db: Session):
         self.db = db
 
-    async def _broadcast_workflow_update(
-        self, workflow_id: str, message: Dict[str, Any]
+    async def _broadcast_job_update(
+        self, job_id: str, message: Dict[str, Any]
     ):
         """Broadcast workflow update to WebSocket connections."""
         try:
-            logger.info(f"Broadcasting workflow update for {workflow_id}: {message}")
-            await connection_manager.send_workflow_update(str(workflow_id), message)
-            logger.info(f"Successfully broadcasted workflow update for {workflow_id}")
+            logger.info(f"Broadcasting workflow update for {job_id}: {message}")
+            await connection_manager.send_workflow_update(str(job_id), message)
+            logger.info(f"Successfully broadcasted workflow update for {job_id}")
         except Exception as e:
             logger.error(f"Failed to broadcast workflow update: {e}")
 
     async def _broadcast_step_update(
-        self, workflow_id: str, step_name: str, message: Dict[str, Any]
+        self, job_id: str, step_name: str, message: Dict[str, Any]
     ):
         """Broadcast step update to WebSocket connections."""
         try:
             logger.info(
-                f"Broadcasting step update for {workflow_id}/{step_name}: {message}"
+                f"Broadcasting step update for {job_id}/{step_name}: {message}"
             )
             await connection_manager.send_step_update(
-                str(workflow_id), step_name, message
+                str(job_id), step_name, message
             )
             logger.info(
-                f"Successfully broadcasted step update for {workflow_id}/{step_name}"
+                f"Successfully broadcasted step update for {job_id}/{step_name}"
             )
         except Exception as e:
             logger.error(f"Failed to broadcast step update: {e}")
 
     async def _broadcast_log_update(
-        self, workflow_id: str, log_message: Dict[str, Any]
+        self, job_id: str, log_message: Dict[str, Any]
     ):
         """Broadcast log update to WebSocket connections."""
         try:
-            logger.info(f"Broadcasting log update for {workflow_id}: {log_message}")
-            await connection_manager.send_log_update(str(workflow_id), log_message)
-            logger.info(f"Successfully broadcasted log update for {workflow_id}")
+            logger.info(f"Broadcasting log update for {job_id}: {log_message}")
+            await connection_manager.send_log_update(str(job_id), log_message)
+            logger.info(f"Successfully broadcasted log update for {job_id}")
         except Exception as e:
             logger.error(f"Failed to broadcast log update: {e}")
 
-    def create_workflow(self, workflow_data: WorkflowCreate) -> Workflow:
+    def create_job(self, job_data: JobCreate) -> Job:
         """
-        Create a new workflow.
+        Create a new job.
 
         Args:
-            workflow_data: Workflow creation data
+            job_data: Job creation data
 
         Returns:
-            Created Workflow object
+            Created Job object
 
         Raises:
             ValueError: If invalid parameters are provided
@@ -183,34 +183,34 @@ class WorkflowService:
         """
         try:
             # Input validation
-            if not workflow_data.name or not workflow_data.name.strip():
-                raise ValueError("Workflow name is required")
+            if not job_data.name or not job_data.name.strip():
+                raise ValueError("Job name is required")
 
             # Create the workflow
-            workflow = Workflow(
-                name=workflow_data.name.strip(),
-                description=workflow_data.description,
-                status=WorkflowStatus.PENDING,
-                total_steps=workflow_data.total_steps,
+            job = Job(
+                name=job_data.name.strip(),
+                description=job_data.description,
+                status=JobStatus.PENDING,
+                total_steps=job_data.total_steps,
                 completed_steps=0,
-                workflow_metadata=workflow_data.metadata,
-                created_by=workflow_data.created_by,
+                job_metadata=job_data.metadata,
+                created_by=job_data.created_by,
             )
 
-            self.db.add(workflow)
+            self.db.add(job)
             self.db.commit()
-            self.db.refresh(workflow)
+            self.db.refresh(job)
 
             # Log workflow creation
-            self._log_workflow_event(
-                workflow.id,
+            self._log_job_event(
+                job.id,
                 LogLevel.INFO,
-                f"Workflow '{workflow.name}' created successfully",
-                {"workflow_id": str(workflow.id)},
+                f"Job '{job.name}' created successfully",
+                {"job_id": str(job.id)},
             )
 
-            logger.info(f"Created workflow {workflow.id}: {workflow.name}")
-            return workflow
+            logger.info(f"Created workflow {job.id}: {job.name}")
+            return job
 
         except (ValueError, RuntimeError):
             raise
@@ -223,29 +223,29 @@ class WorkflowService:
             logger.error(f"Unexpected error creating workflow: {str(e)}")
             raise RuntimeError(f"Failed to create workflow: {str(e)}")
 
-    def get_workflow(self, workflow_id: Union[str, uuid.UUID]) -> Optional[Workflow]:
+    def get_job(self, job_id: Union[str, uuid.UUID]) -> Optional[Job]:
         """
         Get workflow by ID.
 
         Args:
-            workflow_id: Workflow ID to retrieve
+            job_id: Job ID to retrieve
 
         Returns:
-            Workflow object or None if not found
+            Job object or None if not found
 
         Raises:
-            ValueError: If invalid workflow_id format
+            ValueError: If invalid job_id format
             RuntimeError: If database operation fails
         """
         try:
-            # Convert workflow_id to UUID if needed
-            if isinstance(workflow_id, str):
+            # Convert job_id to UUID if needed
+            if isinstance(job_id, str):
                 try:
-                    workflow_id = uuid.UUID(workflow_id)
+                    job_id = uuid.UUID(job_id)
                 except ValueError:
-                    raise ValueError(f"Invalid workflow_id format: {workflow_id}")
+                    raise ValueError(f"Invalid job_id format: {job_id}")
 
-            return self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            return self.db.query(Job).filter(Job.id == job_id).first()
 
         except (ValueError, RuntimeError):
             raise
@@ -256,70 +256,70 @@ class WorkflowService:
             logger.error(f"Unexpected error getting workflow: {str(e)}")
             raise RuntimeError(f"Failed to get workflow: {str(e)}")
 
-    def update_workflow(
-        self, workflow_id: Union[str, uuid.UUID], update_data: WorkflowUpdate
-    ) -> Optional[Workflow]:
+    def update_job(
+        self, job_id: Union[str, uuid.UUID], update_data: JobUpdate
+    ) -> Optional[Job]:
         """
-        Update workflow.
+        Update job.
 
         Args:
-            workflow_id: Workflow ID to update
+            job_id: Job ID to update
             update_data: Update data
 
         Returns:
-            Updated Workflow object or None if not found
+            Updated Job object or None if not found
 
         Raises:
             ValueError: If invalid parameters
             RuntimeError: If database operation fails
         """
         try:
-            # Convert workflow_id to UUID if needed
-            if isinstance(workflow_id, str):
+            # Convert job_id to UUID if needed
+            if isinstance(job_id, str):
                 try:
-                    workflow_id = uuid.UUID(workflow_id)
+                    job_id = uuid.UUID(job_id)
                 except ValueError:
-                    raise ValueError(f"Invalid workflow_id format: {workflow_id}")
+                    raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the workflow
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).first()
             )
-            if not workflow:
+            if not job:
                 return None
 
             # Update fields
             if update_data.name is not None:
-                workflow.name = update_data.name.strip()
+                job.name = update_data.name.strip()
             if update_data.description is not None:
-                workflow.description = update_data.description
+                job.description = update_data.description
             if update_data.status is not None:
-                workflow.status = update_data.status
+                job.status = update_data.status
             if update_data.total_steps is not None:
-                workflow.total_steps = update_data.total_steps
+                job.total_steps = update_data.total_steps
             if update_data.completed_steps is not None:
-                workflow.completed_steps = update_data.completed_steps
+                job.completed_steps = update_data.completed_steps
             if update_data.metadata is not None:
-                workflow.workflow_metadata = update_data.metadata
+                job.job_metadata = update_data.metadata
 
             # Update timing fields based on status
-            if update_data.status == WorkflowStatus.RUNNING and not workflow.started_at:
-                workflow.started_at = datetime.now(timezone.utc)
+            if update_data.status == JobStatus.RUNNING and not job.started_at:
+                job.started_at = datetime.now(timezone.utc)
             elif update_data.status in [
-                WorkflowStatus.COMPLETED,
-                WorkflowStatus.FAILED,
-                WorkflowStatus.CANCELLED,
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
             ]:
-                workflow.completed_at = datetime.now(timezone.utc)
+                job.completed_at = datetime.now(timezone.utc)
 
             self.db.commit()
-            self.db.refresh(workflow)
+            self.db.refresh(job)
 
             # Log workflow update
-            self._log_workflow_event(
-                workflow.id,
+            self._log_job_event(
+                job.id,
                 LogLevel.INFO,
-                f"Workflow updated: {update_data.status if update_data.status else 'fields updated'}",
+                f"Job updated: {update_data.status if update_data.status else 'fields updated'}",
                 {
                     "updated_fields": [
                         k
@@ -330,18 +330,18 @@ class WorkflowService:
             )
 
             # Get proper progress calculation using WorkflowProgressCalculator
-            progress_response = self.get_workflow_progress(workflow.id)
+            progress_response = self.get_job_progress(job.id)
 
             # Broadcast workflow update via WebSocket
             try:
                 schedule_coroutine(
-                    self._broadcast_workflow_update(
-                        str(workflow.id),
+                    self._broadcast_job_update(
+                        str(job.id),
                         {
-                            "workflow_id": str(workflow.id),
-                            "status": workflow.status,
-                            "total_steps": workflow.total_steps,
-                            "completed_steps": workflow.completed_steps,
+                            "job_id": str(job.id),
+                            "status": job.status,
+                            "total_steps": job.total_steps,
+                            "completed_steps": job.completed_steps,
                             "progress_percentage": (
                                 progress_response.progress_percentage
                                 if progress_response
@@ -358,13 +358,13 @@ class WorkflowService:
                                 else "Processing..."
                             ),
                             "started_at": (
-                                workflow.started_at.isoformat()
-                                if workflow.started_at
+                                job.started_at.isoformat()
+                                if job.started_at
                                 else None
                             ),
                             "completed_at": (
-                                workflow.completed_at.isoformat()
-                                if workflow.completed_at
+                                job.completed_at.isoformat()
+                                if job.completed_at
                                 else None
                             ),
                         },
@@ -373,8 +373,8 @@ class WorkflowService:
             except Exception as e:
                 logger.error(f"Failed to schedule workflow update broadcast: {e}")
 
-            logger.info(f"Updated workflow {workflow.id}")
-            return workflow
+            logger.info(f"Updated workflow {job.id}")
+            return job
 
         except (ValueError, RuntimeError):
             raise
@@ -387,41 +387,41 @@ class WorkflowService:
             logger.error(f"Unexpected error updating workflow: {str(e)}")
             raise RuntimeError(f"Failed to update workflow: {str(e)}")
 
-    def add_workflow_step(
-        self, workflow_id: Union[str, uuid.UUID], step_data: WorkflowStepCreate
-    ) -> Optional[WorkflowStep]:
+    def add_job_step(
+        self, job_id: Union[str, uuid.UUID], step_data: JobStepCreate
+    ) -> Optional[JobStep]:
         """
-        Add a step to a workflow.
+        Add a step to a job.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
             step_data: Step creation data
 
         Returns:
-            Created WorkflowStep object or None if workflow not found
+            Created JobStep object or None if workflow not found
 
         Raises:
             ValueError: If invalid parameters
             RuntimeError: If database operation fails
         """
         try:
-            # Convert workflow_id to UUID if needed
-            if isinstance(workflow_id, str):
+            # Convert job_id to UUID if needed
+            if isinstance(job_id, str):
                 try:
-                    workflow_id = uuid.UUID(workflow_id)
+                    job_id = uuid.UUID(job_id)
                 except ValueError:
-                    raise ValueError(f"Invalid workflow_id format: {workflow_id}")
+                    raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the workflow
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).first()
             )
-            if not workflow:
+            if not job:
                 return None
 
             # Create the step
-            step = WorkflowStep(
-                workflow_id=workflow_id,
+            step = JobStep(
+                job_id=job_id,
                 step_name=step_data.step_name,
                 step_order=step_data.step_order,
                 container_name=step_data.container_name,
@@ -433,14 +433,14 @@ class WorkflowService:
             self.db.refresh(step)
 
             # Log step creation
-            self._log_workflow_event(
-                workflow_id,
+            self._log_job_event(
+                job_id,
                 LogLevel.INFO,
                 f"Step '{step_data.step_name}' added to workflow",
                 {"step_id": str(step.id), "step_order": step_data.step_order},
             )
 
-            logger.info(f"Added step {step.id} to workflow {workflow_id}")
+            logger.info(f"Added step {step.id} to workflow {job_id}")
             return step
 
         except (ValueError, RuntimeError):
@@ -454,42 +454,42 @@ class WorkflowService:
             logger.error(f"Unexpected error adding workflow step: {str(e)}")
             raise RuntimeError(f"Failed to add workflow step: {str(e)}")
 
-    def update_workflow_step(
+    def update_job_step(
         self,
-        workflow_id: Union[str, uuid.UUID],
+        job_id: Union[str, uuid.UUID],
         step_name: str,
-        update_data: WorkflowStepUpdate,
-    ) -> Optional[WorkflowStep]:
+        update_data: JobStepUpdate,
+    ) -> Optional[JobStep]:
         """
         Update a workflow step.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
             step_name: Step name to update
             update_data: Update data
 
         Returns:
-            Updated WorkflowStep object or None if not found
+            Updated JobStep object or None if not found
 
         Raises:
             ValueError: If invalid parameters
             RuntimeError: If database operation fails
         """
         try:
-            # Convert workflow_id to UUID if needed
-            if isinstance(workflow_id, str):
+            # Convert job_id to UUID if needed
+            if isinstance(job_id, str):
                 try:
-                    workflow_id = uuid.UUID(workflow_id)
+                    job_id = uuid.UUID(job_id)
                 except ValueError:
-                    raise ValueError(f"Invalid workflow_id format: {workflow_id}")
+                    raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the step
             step = (
-                self.db.query(WorkflowStep)
+                self.db.query(JobStep)
                 .filter(
                     and_(
-                        WorkflowStep.workflow_id == workflow_id,
-                        WorkflowStep.step_name == step_name,
+                        JobStep.job_id == job_id,
+                        JobStep.step_name == step_name,
                     )
                 )
                 .first()
@@ -512,8 +512,8 @@ class WorkflowService:
 
             # Log message if provided
             if update_data.message is not None:
-                self._log_workflow_event(
-                    workflow_id,
+                self._log_job_event(
+                    job_id,
                     "info",
                     update_data.message,
                     {"step_status": step.status, "step_name": step_name},
@@ -544,8 +544,8 @@ class WorkflowService:
             self.db.refresh(step)
 
             # Log step update
-            self._log_workflow_event(
-                workflow_id,
+            self._log_job_event(
+                job_id,
                 LogLevel.INFO,
                 f"Step '{step_name}' updated: {update_data.status if update_data.status else 'fields updated'}",
                 {
@@ -558,14 +558,14 @@ class WorkflowService:
 
             # Update workflow progress if step completed
             if update_data.status == StepStatus.COMPLETED:
-                self._update_workflow_progress(workflow_id)
+                self._update_job_progress(job_id)
 
             # Broadcast step update via WebSocket
             try:
                 # Schedule the broadcast task for execution
                 schedule_coroutine(
                     self._broadcast_step_update(
-                        str(workflow_id),
+                        str(job_id),
                         step_name,
                         {
                             "step_name": step_name,
@@ -592,35 +592,35 @@ class WorkflowService:
             # Also broadcast workflow progress update for any step status change
             try:
                 # Get updated progress information
-                progress_response = self.get_workflow_progress(workflow_id)
+                progress_response = self.get_job_progress(job_id)
                 if progress_response:
                     # Get workflow object for additional data
-                    workflow = (
-                        self.db.query(Workflow)
-                        .filter(Workflow.id == workflow_id)
+                    job = (
+                        self.db.query(Job)
+                        .filter(Job.id == job_id)
                         .first()
                     )
-                    if workflow:
+                    if job:
                         # Schedule workflow progress broadcast
                         schedule_coroutine(
-                            self._broadcast_workflow_update(
-                                str(workflow_id),
+                            self._broadcast_job_update(
+                                str(job_id),
                                 {
-                                    "workflow_id": str(workflow_id),
-                                    "status": workflow.status,
-                                    "total_steps": workflow.total_steps,
-                                    "completed_steps": workflow.completed_steps,
+                                    "job_id": str(job_id),
+                                    "status": job.status,
+                                    "total_steps": job.total_steps,
+                                    "completed_steps": job.completed_steps,
                                     "progress_percentage": progress_response.progress_percentage,
                                     "current_step": progress_response.current_step,
                                     "message": progress_response.message,
                                     "started_at": (
-                                        workflow.started_at.isoformat()
-                                        if workflow.started_at
+                                        job.started_at.isoformat()
+                                        if job.started_at
                                         else None
                                     ),
                                     "completed_at": (
-                                        workflow.completed_at.isoformat()
-                                        if workflow.completed_at
+                                        job.completed_at.isoformat()
+                                        if job.completed_at
                                         else None
                                     ),
                                 },
@@ -629,7 +629,7 @@ class WorkflowService:
             except Exception as e:
                 logger.error(f"Failed to schedule workflow progress broadcast: {e}")
 
-            logger.info(f"Updated step {step.id} in workflow {workflow_id}")
+            logger.info(f"Updated step {step.id} in workflow {job_id}")
             return step
 
         except (ValueError, RuntimeError):
@@ -643,35 +643,35 @@ class WorkflowService:
             logger.error(f"Unexpected error updating workflow step: {str(e)}")
             raise RuntimeError(f"Failed to update workflow step: {str(e)}")
 
-    def get_workflow_progress(
-        self, workflow_id: Union[str, uuid.UUID]
-    ) -> Optional[WorkflowProgressResponse]:
+    def get_job_progress(
+        self, job_id: Union[str, uuid.UUID]
+    ) -> Optional[JobProgressResponse]:
         """
         Get workflow progress information.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
 
         Returns:
-            WorkflowProgressResponse or None if workflow not found
+            JobProgressResponse or None if workflow not found
 
         Raises:
-            ValueError: If invalid workflow_id format
+            ValueError: If invalid job_id format
             RuntimeError: If database operation fails
         """
         try:
-            # Convert workflow_id to UUID if needed
-            if isinstance(workflow_id, str):
+            # Convert job_id to UUID if needed
+            if isinstance(job_id, str):
                 try:
-                    workflow_id = uuid.UUID(workflow_id)
+                    job_id = uuid.UUID(job_id)
                 except ValueError:
-                    raise ValueError(f"Invalid workflow_id format: {workflow_id}")
+                    raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the workflow
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).first()
             )
-            if not workflow:
+            if not job:
                 return None
 
             # Convert steps to dictionary format for progress calculator
@@ -683,44 +683,44 @@ class WorkflowService:
                     "container_name": step.container_name,
                     "output_data": step.output_data,  # Include output_data for container progress
                     # NOTE: there used to be a "metadata": step.metadata entry here.
-                    # WorkflowStep has no metadata column, so that expression returned
+                    # JobStep has no metadata column, so that expression returned
                     # SQLAlchemy's MetaData object; WorkflowProgressCalculator gates on
                     # isinstance(metadata, dict) and so silently skipped it every time.
                     # Container-reported per-step progress has therefore never been
                     # picked up from this path — containers must use output_data.
                 }
-                for step in workflow.steps
+                for step in job.steps
             ]
 
             # Get workflow metadata for configuration
             workflow_config = (
-                workflow.workflow_metadata.get("workflow", {})
-                if workflow.workflow_metadata
+                job.job_metadata.get("workflow", {})
+                if job.job_metadata
                 else {}
             )
 
             # Calculate progress using centralized calculator
             progress_calculator = WorkflowProgressCalculator()
             progress_info = progress_calculator.calculate_progress_from_steps(
-                steps_dict, workflow_config, str(workflow.id)
+                steps_dict, workflow_config, str(job.id)
             )
 
             # Calculate estimated completion
             estimated_completion = None
-            if workflow.started_at and workflow.status == WorkflowStatus.RUNNING:
+            if job.started_at and job.status == JobStatus.RUNNING:
                 # Simple estimation based on current progress
                 if progress_info.progress_percentage > 0:
-                    elapsed = datetime.now(timezone.utc) - workflow.started_at
+                    elapsed = datetime.now(timezone.utc) - job.started_at
                     estimated_total = elapsed / (
                         progress_info.progress_percentage / 100
                     )
-                    estimated_completion = workflow.started_at + estimated_total
+                    estimated_completion = job.started_at + estimated_total
 
-            return WorkflowProgressResponse(
-                workflow_id=str(workflow.id),
-                status=WorkflowStatus(workflow.status),
-                total_steps=workflow.total_steps or 0,
-                completed_steps=workflow.completed_steps or 0,
+            return JobProgressResponse(
+                job_id=str(job.id),
+                status=JobStatus(job.status),
+                total_steps=job.total_steps or 0,
+                completed_steps=job.completed_steps or 0,
                 progress_percentage=round(progress_info.progress_percentage, 2),
                 current_step=progress_info.current_step_name or progress_info.stage,
                 estimated_completion=estimated_completion,
@@ -736,34 +736,34 @@ class WorkflowService:
             logger.error(f"Unexpected error getting workflow progress: {str(e)}")
             raise RuntimeError(f"Failed to get workflow progress: {str(e)}")
 
-    def log_workflow_event(
-        self, workflow_id: Union[str, uuid.UUID], log_data: WorkflowLogCreate
-    ) -> WorkflowLog:
+    def log_job_event(
+        self, job_id: Union[str, uuid.UUID], log_data: JobLogCreate
+    ) -> JobLog:
         """
         Log a workflow event.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
             log_data: Log data
 
         Returns:
-            Created WorkflowLog object
+            Created JobLog object
 
         Raises:
             ValueError: If invalid parameters
             RuntimeError: If database operation fails
         """
         try:
-            # Convert workflow_id to UUID if needed
-            if isinstance(workflow_id, str):
+            # Convert job_id to UUID if needed
+            if isinstance(job_id, str):
                 try:
-                    workflow_id = uuid.UUID(workflow_id)
+                    job_id = uuid.UUID(job_id)
                 except ValueError:
-                    raise ValueError(f"Invalid workflow_id format: {workflow_id}")
+                    raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Create the log entry
-            log_entry = WorkflowLog(
-                workflow_id=workflow_id,
+            log_entry = JobLog(
+                job_id=job_id,
                 step_name=log_data.step_name,
                 log_level=log_data.log_level,
                 message=log_data.message,
@@ -779,7 +779,7 @@ class WorkflowService:
                 # Schedule the broadcast task for execution
                 schedule_coroutine(
                     self._broadcast_log_update(
-                        str(workflow_id),
+                        str(job_id),
                         {
                             "step_name": log_entry.step_name,
                             "log_level": log_entry.log_level,
@@ -793,7 +793,7 @@ class WorkflowService:
                 logger.error(f"Failed to schedule log update broadcast: {e}")
 
             logger.info(
-                f"Logged event for workflow {workflow_id}: {log_data.log_level} - {log_data.message}"
+                f"Logged event for workflow {job_id}: {log_data.log_level} - {log_data.message}"
             )
             return log_entry
 
@@ -808,39 +808,39 @@ class WorkflowService:
             logger.error(f"Unexpected error logging workflow event: {str(e)}")
             raise RuntimeError(f"Failed to log workflow event: {str(e)}")
 
-    def get_workflow_logs(
-        self, workflow_id: Union[str, uuid.UUID], limit: int = 100
-    ) -> List[WorkflowLog]:
+    def get_job_logs(
+        self, job_id: Union[str, uuid.UUID], limit: int = 100
+    ) -> List[JobLog]:
         """
         Get workflow logs.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
             limit: Maximum number of logs to return
 
         Returns:
-            List of WorkflowLog objects
+            List of JobLog objects
 
         Raises:
             ValueError: If invalid parameters
             RuntimeError: If database operation fails
         """
         try:
-            # Convert workflow_id to UUID if needed
-            if isinstance(workflow_id, str):
+            # Convert job_id to UUID if needed
+            if isinstance(job_id, str):
                 try:
-                    workflow_id = uuid.UUID(workflow_id)
+                    job_id = uuid.UUID(job_id)
                 except ValueError:
-                    raise ValueError(f"Invalid workflow_id format: {workflow_id}")
+                    raise ValueError(f"Invalid job_id format: {job_id}")
 
             return (
-                self.db.query(WorkflowLog)
-                .filter(WorkflowLog.workflow_id == workflow_id)
+                self.db.query(JobLog)
+                .filter(JobLog.job_id == job_id)
                 # id breaks ties: several entries are routinely written inside one
                 # timestamp tick (a step transition logs alongside a posted entry),
                 # and ordering by timestamp alone leaves their relative order to the
                 # database. id is a monotonic integer, so this is insertion order.
-                .order_by(desc(WorkflowLog.timestamp), desc(WorkflowLog.id))
+                .order_by(desc(JobLog.timestamp), desc(JobLog.id))
                 .limit(limit)
                 .all()
             )
@@ -854,46 +854,46 @@ class WorkflowService:
             logger.error(f"Unexpected error getting workflow logs: {str(e)}")
             raise RuntimeError(f"Failed to get workflow logs: {str(e)}")
 
-    def _update_workflow_progress(self, workflow_id: uuid.UUID) -> None:
+    def _update_job_progress(self, job_id: uuid.UUID) -> None:
         """Update workflow progress based on completed steps."""
         try:
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).first()
             )
-            if not workflow:
+            if not job:
                 return
 
             # Count completed steps
             completed_steps = (
-                self.db.query(WorkflowStep)
+                self.db.query(JobStep)
                 .filter(
                     and_(
-                        WorkflowStep.workflow_id == workflow_id,
-                        WorkflowStep.status == StepStatus.COMPLETED,
+                        JobStep.job_id == job_id,
+                        JobStep.status == StepStatus.COMPLETED,
                     )
                 )
                 .count()
             )
 
             # Update workflow
-            workflow.completed_steps = completed_steps
+            job.completed_steps = completed_steps
 
             # Get progress information to check if workflow should be completed
-            progress_response = self.get_workflow_progress(workflow_id)
+            progress_response = self.get_job_progress(job_id)
 
             # Check if workflow should be completed based on progress percentage
             if progress_response and progress_response.progress_percentage >= 100:
-                workflow.status = WorkflowStatus.COMPLETED
-                workflow.completed_at = datetime.now(timezone.utc)
+                job.status = JobStatus.COMPLETED
+                job.completed_at = datetime.now(timezone.utc)
 
                 # Log workflow completion
-                self._log_workflow_event(
-                    workflow_id,
+                self._log_job_event(
+                    job_id,
                     LogLevel.INFO,
-                    "Workflow completed successfully with reports generated",
+                    "Job completed successfully with reports generated",
                     {
                         "completed_steps": completed_steps,
-                        "total_steps": workflow.total_steps,
+                        "total_steps": job.total_steps,
                     },
                 )
 
@@ -902,55 +902,55 @@ class WorkflowService:
                     # Extract patient_id from workflow metadata if available
                     patient_id = None
                     if (
-                        hasattr(workflow, "workflow_metadata")
-                        and workflow.workflow_metadata
+                        hasattr(job, "job_metadata")
+                        and job.job_metadata
                     ):
-                        patient_id = workflow.workflow_metadata.get("patient_id")
+                        patient_id = job.job_metadata.get("patient_id")
 
                     # Clean up workflow-specific temporary files
                     cleanup_result = cleanup_service.cleanup_workflow_files(
-                        workflow_id=str(workflow_id), patient_id=patient_id
+                        workflow_id=str(job_id), patient_id=patient_id
                     )
 
                     # Log cleanup results
                     if cleanup_result.get("success", False):
                         logger.info(
-                            f"Workflow cleanup completed for {workflow_id}: "
+                            f"Job cleanup completed for {job_id}: "
                             f"{cleanup_result['total_items_cleaned']} items, "
                             f"{cleanup_result['total_size_cleaned']} bytes cleaned"
                         )
                     else:
                         logger.warning(
-                            f"Workflow cleanup had issues for {workflow_id}: "
+                            f"Job cleanup had issues for {job_id}: "
                             f"{len(cleanup_result.get('failed_paths', []))} failed paths"
                         )
 
                 except Exception as e:
                     logger.error(
-                        f"Failed to cleanup temporary files for workflow {workflow_id}: {e}"
+                        f"Failed to cleanup temporary files for workflow {job_id}: {e}"
                     )
 
                 # Broadcast final workflow completion update
                 try:
                     schedule_coroutine(
-                        self._broadcast_workflow_update(
-                            str(workflow_id),
+                        self._broadcast_job_update(
+                            str(job_id),
                             {
-                                "workflow_id": str(workflow_id),
-                                "status": workflow.status,
-                                "total_steps": workflow.total_steps,
-                                "completed_steps": workflow.completed_steps,
+                                "job_id": str(job_id),
+                                "status": job.status,
+                                "total_steps": job.total_steps,
+                                "completed_steps": job.completed_steps,
                                 "progress_percentage": 100,
                                 "current_step": "completed",
                                 "message": "Processing complete! - All processing finished",
                                 "started_at": (
-                                    workflow.started_at.isoformat()
-                                    if workflow.started_at
+                                    job.started_at.isoformat()
+                                    if job.started_at
                                     else None
                                 ),
                                 "completed_at": (
-                                    workflow.completed_at.isoformat()
-                                    if workflow.completed_at
+                                    job.completed_at.isoformat()
+                                    if job.completed_at
                                     else None
                                 ),
                             },
@@ -965,17 +965,17 @@ class WorkflowService:
             self.db.rollback()
             logger.error(f"Failed to update workflow progress: {str(e)}")
 
-    def _log_workflow_event(
+    def _log_job_event(
         self,
-        workflow_id: uuid.UUID,
+        job_id: uuid.UUID,
         level: str,
         message: str,
         metadata: Dict[str, Any] = None,
     ) -> None:
         """Log a workflow event (internal method)."""
         try:
-            log_entry = WorkflowLog(
-                workflow_id=workflow_id,
+            log_entry = JobLog(
+                job_id=job_id,
                 log_level=level,
                 message=message,
                 # NOT `metadata=` — that is SQLAlchemy's MetaData class attribute on
@@ -989,65 +989,65 @@ class WorkflowService:
             logger.error(f"Failed to log workflow event: {str(e)}")
             # Don't fail the main operation if logging fails
 
-    def get_workflow_steps(
-        self, workflow_id: Union[str, uuid.UUID]
-    ) -> List[WorkflowStepResponse]:
+    def get_job_steps(
+        self, job_id: Union[str, uuid.UUID]
+    ) -> List[JobStepResponse]:
         """
-        Get all steps for a workflow.
+        Get all steps for a job.
 
         Args:
-            workflow_id: ID of the workflow
+            job_id: ID of the workflow
 
         Returns:
             List of workflow step responses
         """
         try:
-            workflow_id = uuid.UUID(str(workflow_id))
+            job_id = uuid.UUID(str(job_id))
 
             steps = (
-                self.db.query(WorkflowStep)
-                .filter(WorkflowStep.workflow_id == workflow_id)
-                .order_by(WorkflowStep.step_order)
+                self.db.query(JobStep)
+                .filter(JobStep.job_id == job_id)
+                .order_by(JobStep.step_order)
                 .all()
             )
 
-            return [WorkflowStepResponse.model_validate(step) for step in steps]
+            return [JobStepResponse.model_validate(step) for step in steps]
 
         except Exception as e:
             logger.error(f"Failed to get workflow steps: {str(e)}")
             return []
 
-    def link_pharmcat_run(self, workflow_id: str, pharmcat_run_id: str) -> bool:
+    def link_pharmcat_run(self, job_id: str, pharmcat_run_id: str) -> bool:
         """
-        Link a PharmCAT run to a workflow.
+        Link a PharmCAT run to a job.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
             pharmcat_run_id: PharmCAT run ID
 
         Returns:
             True if successful, False otherwise
         """
         try:
-            workflow_id = uuid.UUID(str(workflow_id))
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job_id = uuid.UUID(str(job_id))
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).first()
             )
 
-            if not workflow:
-                logger.error(f"Workflow {workflow_id} not found")
+            if not job:
+                logger.error(f"Job {job_id} not found")
                 return False
 
             # Update workflow metadata with PharmCAT run ID
-            metadata = workflow.workflow_metadata or {}
+            metadata = job.job_metadata or {}
             metadata["pharmcat_run_id"] = pharmcat_run_id
             metadata["pharmcat_linked_at"] = datetime.now(timezone.utc).isoformat()
 
-            workflow.workflow_metadata = metadata
+            job.job_metadata = metadata
             self.db.commit()
 
             logger.info(
-                f"Successfully linked PharmCAT run {pharmcat_run_id} to workflow {workflow_id}"
+                f"Successfully linked PharmCAT run {pharmcat_run_id} to workflow {job_id}"
             )
             return True
 
@@ -1056,47 +1056,47 @@ class WorkflowService:
             self.db.rollback()
             return False
 
-    def get_pharmcat_run_id(self, workflow_id: str) -> Optional[str]:
+    def get_pharmcat_run_id(self, job_id: str) -> Optional[str]:
         """
-        Get the PharmCAT run ID for a workflow.
+        Get the PharmCAT run ID for a job.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
 
         Returns:
             PharmCAT run ID if found, None otherwise
         """
         try:
-            workflow_id = uuid.UUID(str(workflow_id))
-            workflow = (
-                self.db.query(Workflow).filter(Workflow.id == workflow_id).first()
+            job_id = uuid.UUID(str(job_id))
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).first()
             )
 
-            if not workflow:
+            if not job:
                 return None
 
-            metadata = workflow.workflow_metadata or {}
+            metadata = job.job_metadata or {}
             return metadata.get("pharmcat_run_id")
 
         except Exception as e:
             logger.error(
-                f"Error getting PharmCAT run ID for workflow {workflow_id}: {e}"
+                f"Error getting PharmCAT run ID for workflow {job_id}: {e}"
             )
             return None
 
-    def get_pharmcat_data(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+    def get_pharmcat_data(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get PharmCAT data for a workflow.
+        Get PharmCAT data for a job.
 
         Args:
-            workflow_id: Workflow ID
+            job_id: Job ID
 
         Returns:
             Dict containing normalized PharmCAT data, or None if not found
         """
         try:
             pharmcat_service = PharmCATDataService(self.db)
-            return pharmcat_service.get_pharmcat_data_for_workflow(workflow_id)
+            return pharmcat_service.get_pharmcat_data_for_workflow(job_id)
         except Exception as e:
-            logger.error(f"Error getting PharmCAT data for workflow {workflow_id}: {e}")
+            logger.error(f"Error getting PharmCAT data for workflow {job_id}: {e}")
             return None

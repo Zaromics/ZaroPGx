@@ -58,7 +58,7 @@ ALLOWLIST_EXACT = frozenset(
 ALLOWLIST_PREFIXES = (
     "/static/",
     "/documentation/",
-    "/api/v1/workflows/",
+    "/api/v1/jobs/",
 )
 
 
@@ -93,7 +93,7 @@ def is_allowlisted(path: str) -> bool:
     for prefix in ALLOWLIST_PREFIXES:
         if path.startswith(prefix):
             return True
-    if path == "/api/v1/workflows":
+    if path == "/api/v1/jobs":
         return True
     return False
 

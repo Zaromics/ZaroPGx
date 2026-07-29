@@ -42,7 +42,7 @@ async def get_report_status(
         detail=(
             f"GET /reports/{report_id}/status is retired (it always claimed "
             f"'completed'). Use GET /upload/status/{{job_id}} or "
-            f"GET /api/v1/workflows/{{workflow_id}} instead. {_RETIRED_REPORT_STUB_DETAIL}"
+            f"GET /api/v1/jobs/{{job_id}} instead. {_RETIRED_REPORT_STUB_DETAIL}"
         ),
     )
 
