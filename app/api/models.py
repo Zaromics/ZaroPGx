@@ -272,12 +272,12 @@ class ReportResponse(BaseModel):
 
 
 # ============================================================================
-# NEW WORKFLOW MONITORING MODELS - Enhanced workflow tracking system
+# JOB INSTANCE MODELS - Run-instance tracking (137a)
 # ============================================================================
 
 
-class WorkflowStatus(str, Enum):
-    """Workflow status enumeration"""
+class JobStatus(str, Enum):
+    """Job (run instance) lifecycle status enumeration"""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -305,68 +305,66 @@ class LogLevel(str, Enum):
     ERROR = "error"
 
 
-class WorkflowCreate(BaseModel):
-    """Model for creating a new workflow"""
+class JobCreate(BaseModel):
+    """Model for creating a new job (run instance)"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    name: str = Field(..., description="Workflow name")
-    description: Optional[str] = Field(None, description="Workflow description")
+    name: str = Field(..., description="Job name")
+    description: Optional[str] = Field(None, description="Job description")
     total_steps: Optional[int] = Field(
-        None, description="Total number of steps in the workflow"
+        None, description="Total number of steps in the job"
     )
     metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Workflow metadata"
+        default_factory=dict, description="Job metadata"
     )
-    created_by: Optional[str] = Field(None, description="User who created the workflow")
+    created_by: Optional[str] = Field(None, description="User who created the job")
 
 
-class WorkflowUpdate(BaseModel):
-    """Model for updating a workflow"""
+class JobUpdate(BaseModel):
+    """Model for updating a job"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    name: Optional[str] = Field(None, description="Workflow name")
-    description: Optional[str] = Field(None, description="Workflow description")
-    status: Optional[WorkflowStatus] = Field(None, description="Workflow status")
+    name: Optional[str] = Field(None, description="Job name")
+    description: Optional[str] = Field(None, description="Job description")
+    status: Optional[JobStatus] = Field(None, description="Job status")
     total_steps: Optional[int] = Field(None, description="Total number of steps")
     completed_steps: Optional[int] = Field(
         None, description="Number of completed steps"
     )
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Workflow metadata")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Job metadata")
 
 
-class WorkflowResponse(BaseModel):
-    """Model for workflow responses"""
+class JobResponse(BaseModel):
+    """Model for job responses"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    id: str = Field(..., description="Workflow ID")
-    name: str = Field(..., description="Workflow name")
-    description: Optional[str] = Field(None, description="Workflow description")
-    status: WorkflowStatus = Field(..., description="Workflow status")
-    created_at: datetime = Field(..., description="When the workflow was created")
-    started_at: Optional[datetime] = Field(
-        None, description="When the workflow started"
-    )
+    id: str = Field(..., description="Job ID (run instance)")
+    name: str = Field(..., description="Job name")
+    description: Optional[str] = Field(None, description="Job description")
+    status: JobStatus = Field(..., description="Job status")
+    created_at: datetime = Field(..., description="When the job was created")
+    started_at: Optional[datetime] = Field(None, description="When the job started")
     completed_at: Optional[datetime] = Field(
-        None, description="When the workflow completed"
+        None, description="When the job completed"
     )
     total_steps: Optional[int] = Field(None, description="Total number of steps")
     completed_steps: Optional[int] = Field(
         None, description="Number of completed steps"
     )
-    metadata: Dict[str, Any] = Field(..., description="Workflow metadata")
-    created_by: Optional[str] = Field(None, description="User who created the workflow")
+    metadata: Dict[str, Any] = Field(..., description="Job metadata")
+    created_by: Optional[str] = Field(None, description="User who created the job")
 
 
-class WorkflowStepCreate(BaseModel):
-    """Model for creating a workflow step"""
+class JobStepCreate(BaseModel):
+    """Model for creating a job step"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     step_name: str = Field(..., description="Step name")
-    step_order: int = Field(..., description="Step order in the workflow")
+    step_order: int = Field(..., description="Step order in the job")
     container_name: Optional[str] = Field(
         None, description="Container that will execute this step"
     )
@@ -375,8 +373,8 @@ class WorkflowStepCreate(BaseModel):
     )
 
 
-class WorkflowStepUpdate(BaseModel):
-    """Model for updating a workflow step"""
+class JobStepUpdate(BaseModel):
+    """Model for updating a job step"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
@@ -390,8 +388,8 @@ class WorkflowStepUpdate(BaseModel):
     retry_count: Optional[int] = Field(None, description="Number of retries")
 
 
-class WorkflowStepResponse(BaseModel):
-    """Model for workflow step responses"""
+class JobStepResponse(BaseModel):
+    """Model for job step responses"""
 
     model_config = ConfigDict(
         str_strip_whitespace=True,
@@ -400,7 +398,7 @@ class WorkflowStepResponse(BaseModel):
     )
 
     id: str = Field(..., description="Step ID")
-    workflow_id: str = Field(..., description="Workflow ID")
+    job_id: str = Field(..., description="Job ID")
     step_name: str = Field(..., description="Step name")
     step_order: int = Field(..., description="Step order")
     status: StepStatus = Field(..., description="Step status")
@@ -416,15 +414,15 @@ class WorkflowStepResponse(BaseModel):
     error_details: Dict[str, Any] = Field(..., description="Error details")
     retry_count: int = Field(..., description="Number of retries")
 
-    @field_validator("id", "workflow_id", mode="before")
+    @field_validator("id", "job_id", mode="before")
     @classmethod
     def _coerce_uuid_to_str(cls, v):
         # ORM primary keys are UUID objects; coerce to str for the str-typed fields
         return str(v) if v is not None else v
 
 
-class WorkflowLogCreate(BaseModel):
-    """Model for creating a workflow log entry"""
+class JobLogCreate(BaseModel):
+    """Model for creating a job log entry"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
@@ -434,13 +432,13 @@ class WorkflowLogCreate(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Log metadata")
 
 
-class WorkflowLogResponse(BaseModel):
-    """Model for workflow log responses"""
+class JobLogResponse(BaseModel):
+    """Model for job log responses"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     id: int = Field(..., description="Log ID")
-    workflow_id: str = Field(..., description="Workflow ID")
+    job_id: str = Field(..., description="Job ID")
     step_name: Optional[str] = Field(None, description="Step name")
     log_level: LogLevel = Field(..., description="Log level")
     message: str = Field(..., description="Log message")
@@ -448,13 +446,13 @@ class WorkflowLogResponse(BaseModel):
     timestamp: datetime = Field(..., description="When the log was created")
 
 
-class WorkflowProgressResponse(BaseModel):
-    """Model for workflow progress responses"""
+class JobProgressResponse(BaseModel):
+    """Model for job progress responses"""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    workflow_id: str = Field(..., description="Workflow ID")
-    status: WorkflowStatus = Field(..., description="Workflow status")
+    job_id: str = Field(..., description="Job ID")
+    status: JobStatus = Field(..., description="Job status")
     total_steps: int = Field(..., description="Total number of steps")
     completed_steps: int = Field(..., description="Number of completed steps")
     progress_percentage: float = Field(

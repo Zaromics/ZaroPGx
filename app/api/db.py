@@ -29,7 +29,7 @@ from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy.sql import sqltypes
 
 # Import enum classes for proper type handling
-from .models import LogLevel, StepStatus, WorkflowStatus
+from .models import JobStatus, LogLevel, StepStatus
 
 # Load environment variables
 load_dotenv()
@@ -119,29 +119,29 @@ class GeneticData(Base):
 
 
 # ============================================================================
-# WORKFLOW MONITORING MODELS - Enhanced workflow tracking system
+# JOB INSTANCE MODELS - Run-instance tracking (137a)
 # ============================================================================
 
 
-class Workflow(Base):
-    """SQLAlchemy model for workflows table - Primary workflow orchestration"""
+class Job(Base):
+    """SQLAlchemy model for jobs table - Primary job (run instance) orchestration"""
 
-    __tablename__ = "workflows"
+    __tablename__ = "jobs"
 
     # Primary key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Basic workflow information
+    # Basic job information
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     status = Column(
         Enum(
-            WorkflowStatus,
-            name="workflow_status_enum",
+            JobStatus,
+            name="job_status_enum",
             values_callable=lambda obj: [e.value for e in obj],
         ),
         nullable=False,
-        default=WorkflowStatus.PENDING,
+        default=JobStatus.PENDING,
     )
     created_by = Column(String, nullable=True)
 
@@ -157,28 +157,28 @@ class Workflow(Base):
     completed_steps = Column(Integer, nullable=True, default=0)
 
     # Metadata and relationships
-    workflow_metadata = Column(JSON, default=dict)
+    job_metadata = Column(JSON, default=dict)
     steps = relationship(
-        "WorkflowStep", back_populates="workflow", cascade="all, delete-orphan"
+        "JobStep", back_populates="job", cascade="all, delete-orphan"
     )
     logs = relationship(
-        "WorkflowLog", back_populates="workflow", cascade="all, delete-orphan"
+        "JobLog", back_populates="job", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
-        return f"Workflow(id={self.id}, name={self.name}, status={self.status})"
+        return f"Job(id={self.id}, name={self.name}, status={self.status})"
 
 
-class WorkflowStep(Base):
-    """SQLAlchemy model for workflow_steps table - Individual step tracking"""
+class JobStep(Base):
+    """SQLAlchemy model for job_steps table - Individual step tracking"""
 
-    __tablename__ = "workflow_steps"
+    __tablename__ = "job_steps"
 
     # Primary key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Foreign key to workflow
-    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+    # Foreign key to job
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False)
 
     # Step information
     step_name = Column(String, nullable=False)
@@ -205,22 +205,22 @@ class WorkflowStep(Base):
     retry_count = Column(Integer, default=0)
 
     # Relationships
-    workflow = relationship("Workflow", back_populates="steps")
+    job = relationship("Job", back_populates="steps")
 
     def __repr__(self) -> str:
-        return f"WorkflowStep(id={self.id}, step_name={self.step_name}, status={self.status})"
+        return f"JobStep(id={self.id}, step_name={self.step_name}, status={self.status})"
 
 
-class WorkflowLog(Base):
-    """SQLAlchemy model for workflow_logs table - Execution logs for debugging"""
+class JobLog(Base):
+    """SQLAlchemy model for job_logs table - Execution logs for debugging"""
 
-    __tablename__ = "workflow_logs"
+    __tablename__ = "job_logs"
 
     # Primary key
     id = Column(Integer, primary_key=True)
 
-    # Foreign key to workflow
-    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+    # Foreign key to job
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False)
 
     # Log information
     step_name = Column(String, nullable=True)
@@ -240,10 +240,10 @@ class WorkflowLog(Base):
     )
 
     # Relationships
-    workflow = relationship("Workflow", back_populates="logs")
+    job = relationship("Job", back_populates="logs")
 
     def __repr__(self) -> str:
-        return f"WorkflowLog(id={self.id}, level={self.log_level}, message={self.message[:50]}...)"
+        return f"JobLog(id={self.id}, level={self.log_level}, message={self.message[:50]}...)"
 
 
 # Dependency to get DB session using modern FastAPI pattern

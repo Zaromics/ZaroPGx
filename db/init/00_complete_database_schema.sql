@@ -117,7 +117,7 @@ CREATE TABLE reports.patient_reports (
 );
 
 -- ============================================================================
--- WORKFLOW MONITORING SCHEMA - Enhanced workflow tracking system
+-- JOB INSTANCE SCHEMA - Run-instance tracking (tables defined near end of file)
 -- ============================================================================
 
 -- ============================================================================
@@ -607,16 +607,16 @@ COMMENT ON VIEW pharmcat.drug_recommendations_summary IS 'Summary view of drug r
 COMMENT ON VIEW pharmcat.gene_analysis_summary IS 'Summary view of gene analysis results with counts';
 
 -- ============================================================================
--- WORKFLOW MONITORING TABLES
+-- JOB INSTANCE TABLES (run orchestration)
 -- ============================================================================
 
--- Create enums for workflow monitoring system
-CREATE TYPE workflow_status_enum AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
+-- Create enums for job instance system
+CREATE TYPE job_status_enum AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
 CREATE TYPE step_status_enum AS ENUM ('pending', 'running', 'completed', 'failed', 'skipped');
 CREATE TYPE log_level_enum AS ENUM ('debug', 'info', 'warn', 'error');
 
--- Primary workflow orchestration
-CREATE TABLE workflows (
+-- Primary job orchestration (run instance)
+CREATE TABLE jobs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR NOT NULL,
     description TEXT,
@@ -626,15 +626,14 @@ CREATE TABLE workflows (
     completed_at TIMESTAMPTZ,
     total_steps INTEGER,
     completed_steps INTEGER,
-    workflow_metadata JSONB,
+    job_metadata JSONB,
     created_by VARCHAR,
-    CONSTRAINT workflows_status_check CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled'))
+    CONSTRAINT jobs_status_check CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled'))
 );
 
--- Individual step tracking
-CREATE TABLE workflow_steps (
+CREATE TABLE job_steps (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workflow_id UUID REFERENCES workflows(id) ON DELETE CASCADE,
+    job_id UUID REFERENCES jobs(id) ON DELETE CASCADE,
     step_name VARCHAR NOT NULL,
     step_order INTEGER NOT NULL,
     status VARCHAR DEFAULT 'pending',
@@ -645,36 +644,32 @@ CREATE TABLE workflow_steps (
     output_data JSONB,
     error_details JSONB,
     retry_count INTEGER DEFAULT 0,
-    UNIQUE(workflow_id, step_name),
-    CONSTRAINT workflow_steps_status_check CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped'))
+    UNIQUE(job_id, step_name),
+    CONSTRAINT job_steps_status_check CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped'))
 );
 
--- Execution logs for debugging
-CREATE TABLE workflow_logs (
+CREATE TABLE job_logs (
     id BIGSERIAL PRIMARY KEY,
-    workflow_id UUID REFERENCES workflows(id) ON DELETE CASCADE,
+    job_id UUID REFERENCES jobs(id) ON DELETE CASCADE,
     step_name VARCHAR,
-    log_level VARCHAR DEFAULT 'info',
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    log_level VARCHAR NOT NULL DEFAULT 'info',
     message TEXT NOT NULL,
     log_metadata JSONB,
-    timestamp TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT workflow_logs_level_check CHECK (log_level IN ('debug', 'info', 'warn', 'error'))
+    CONSTRAINT job_logs_level_check CHECK (log_level IN ('debug', 'info', 'warn', 'error'))
 );
 
--- Create indexes for performance
-CREATE INDEX idx_workflows_status ON workflows(status);
-CREATE INDEX idx_workflows_created_at ON workflows(created_at);
-CREATE INDEX idx_workflow_steps_workflow_id ON workflow_steps(workflow_id);
-CREATE INDEX idx_workflow_steps_step_order ON workflow_steps(workflow_id, step_order);
-CREATE INDEX idx_workflow_logs_workflow_id ON workflow_logs(workflow_id);
-CREATE INDEX idx_workflow_logs_timestamp ON workflow_logs(timestamp);
+CREATE INDEX idx_jobs_status ON jobs(status);
+CREATE INDEX idx_jobs_created_at ON jobs(created_at);
+CREATE INDEX idx_job_steps_job_id ON job_steps(job_id);
+CREATE INDEX idx_job_steps_step_order ON job_steps(job_id, step_order);
+CREATE INDEX idx_job_logs_job_id ON job_logs(job_id);
+CREATE INDEX idx_job_logs_timestamp ON job_logs(timestamp);
 
--- Grant permissions
-GRANT ALL PRIVILEGES ON TABLE workflows TO zaropgx_user;
-GRANT ALL PRIVILEGES ON TABLE workflow_steps TO zaropgx_user;
-GRANT ALL PRIVILEGES ON TABLE workflow_logs TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE jobs TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE job_steps TO zaropgx_user;
+GRANT ALL PRIVILEGES ON TABLE job_logs TO zaropgx_user;
 
--- Comments for documentation
-COMMENT ON TABLE workflows IS 'Primary workflow orchestration table for enhanced monitoring system';
-COMMENT ON TABLE workflow_steps IS 'Individual step tracking within workflows';
-COMMENT ON TABLE workflow_logs IS 'Execution logs for debugging and monitoring workflows';
+COMMENT ON TABLE jobs IS 'Run instance (Job) — one pipeline execution';
+COMMENT ON TABLE job_steps IS 'Individual step tracking within jobs';
+COMMENT ON TABLE job_logs IS 'Execution logs for debugging and monitoring jobs';
