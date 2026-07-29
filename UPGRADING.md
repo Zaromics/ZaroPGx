@@ -40,7 +40,7 @@ control yet.
 **Password mode is a front door, not a full ACL.** These stay reachable without
 the install password by design for in-stack callers:
 
-- `/api/v1/workflows/*` (including WebSocket status)
+- `/api/v1/jobs/*` (including WebSocket status)
 - `/health`, docs/static, `/login`, `/logout`, `/token`
 
 `/token` in password mode requires `ZAROPGX_AUTH_PASSWORD` and returns a
@@ -48,7 +48,7 @@ the install password by design for in-stack callers:
 modes but those JWTs **cannot** unlock password mode.
 
 If the app is published beyond localhost (`BIND_ADDRESS=0.0.0.0:8765`), treat
-the workflow allowlist as part of your threat model until service-to-service
+the jobs allowlist as part of your threat model until service-to-service
 credentials land.
 
 ### Config delivery: `.env` owns behaviour, compose owns topology

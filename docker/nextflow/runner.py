@@ -16,7 +16,7 @@ from typing import Dict, Optional
 import requests
 from fastapi import FastAPI, HTTPException, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -277,7 +277,8 @@ def get_all_jobs():
     }
 
 class CancelRequest(BaseModel):
-    workflow_id: str
+    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
+    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
     patient_id: str
     action: str
 

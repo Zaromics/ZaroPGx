@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 import sys
 
 sys.path.append('/workflow-client')
@@ -25,7 +25,8 @@ TEMP_DIR = DATA_DIR / 'temp'
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 class CancelRequest(BaseModel):
-    workflow_id: str
+    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
+    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
     patient_id: str
     action: str
 

@@ -704,6 +704,7 @@ async def cancel_container_job(container: dict, patient_id: str, job_id: str):
 
         payload = {
             "job_id": job_id,
+            "workflow_id": job_id,  # dual-key for one-release transition
             "patient_id": patient_id,
             "action": "cancel",
         }

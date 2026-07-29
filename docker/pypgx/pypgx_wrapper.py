@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 # Import shared workflow client for integration
 import sys
@@ -326,7 +326,8 @@ SUPPORTED_GENES = gene_config.get_supported_genes()
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 class CancelRequest(BaseModel):
-    workflow_id: str
+    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
+    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
     patient_id: str
     action: str
 

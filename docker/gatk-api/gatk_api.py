@@ -26,7 +26,7 @@ import asyncio
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 # Import shared workflow client for integration
 import sys
@@ -109,7 +109,8 @@ jobs = {}  # job_id -> job_info
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 class CancelRequest(BaseModel):
-    workflow_id: str
+    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
+    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
     patient_id: str
     action: str
 
