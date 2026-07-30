@@ -8,10 +8,16 @@ from fastapi.testclient import TestClient
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
 
 
-def test_workflows_prefix_gone(client: TestClient):
-    assert client.get("/api/v1/workflows").status_code == 404
+def test_workflows_prefix_is_recipe_not_instance(client: TestClient):
+    """137b: /api/v1/workflows is recipe catalog; instance routes stay on /jobs."""
+    r = client.get("/api/v1/workflows")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, list)
+    assert any(item.get("workflow_type") == "genomic_analysis" for item in body)
+
     fake = "00000000-0000-0000-0000-000000000001"
-    assert client.get(f"/api/v1/workflows/{fake}").status_code == 404
+    # No instance progress under /workflows
     assert client.get(f"/api/v1/workflows/{fake}/progress").status_code == 404
 
 
