@@ -129,37 +129,59 @@ class FileAnalysis(BaseModel):
     validation_errors: Optional[List[str]] = None
 
 
-class WorkflowInfo(BaseModel):
-    """
-    Model representing the workflow configuration for processing a genomic file.
-    """
+class WorkflowOptions(BaseModel):
+    """Typed job/upload workflow toggles (137b)."""
 
-    # Processing requirements
-    # needs_liftover: bool = False
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     needs_gatk: bool = False
     needs_alignment: bool = False
     needs_pypgx: bool = False
     needs_pypgx_bam2vcf: bool = False
+    needs_hla: bool = False
+    needs_report: bool = True
     needs_conversion: bool = False
-
-    # File processing flags
     is_provisional: bool = False
-
-    # Original file info
-    original_file_type: Optional[str] = None
-    original_file_id: Optional[str] = None
-    using_original_file: bool = False
-
-    # Reference genome info
-    requested_reference: Optional[str] = None
-
-    # Support status
     unsupported: bool = False
     unsupported_reason: Optional[str] = None
+    requested_reference: Optional[str] = None
+    recommendations: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
 
-    # Messages
-    recommendations: List[str] = []
-    warnings: List[str] = []
+
+class ResolvedStep(BaseModel):
+    """A step resolved from a recipe given options."""
+
+    step_name: str
+    step_order: int
+    container_name: Optional[str] = None
+
+
+class WorkflowStepTemplate(BaseModel):
+    """API shape for a recipe step template."""
+
+    step_name: str
+    container_name: str
+    when: Optional[str] = None  # None=always; else WorkflowOptions field name
+
+
+class WorkflowRecipeResponse(BaseModel):
+    """API shape for a workflow recipe (read-only registry)."""
+
+    workflow_type: str
+    display_name: str
+    description: str = ""
+    step_templates: List[WorkflowStepTemplate] = Field(default_factory=list)
+    option_fields: List[str] = Field(default_factory=list)
+
+
+class WorkflowInfo(BaseModel):
+    """Upload response workflow payload: recipe key + options (137b)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    workflow_type: str = "genomic_analysis"
+    options: WorkflowOptions = Field(default_factory=WorkflowOptions)
 
 
 class UploadResponse(BaseModel):
@@ -312,6 +334,8 @@ class JobCreate(BaseModel):
 
     name: str = Field(..., description="Job name")
     description: Optional[str] = Field(None, description="Job description")
+    workflow_type: str = Field(..., description="Recipe key from workflow registry")
+    options: WorkflowOptions = Field(default_factory=WorkflowOptions)
     total_steps: Optional[int] = Field(
         None, description="Total number of steps in the job"
     )
@@ -356,6 +380,8 @@ class JobResponse(BaseModel):
     )
     metadata: Dict[str, Any] = Field(..., description="Job metadata")
     created_by: Optional[str] = Field(None, description="User who created the job")
+    workflow_type: Optional[str] = None
+    workflow_snapshot: Optional[Dict[str, Any]] = None
 
 
 class JobStepCreate(BaseModel):
