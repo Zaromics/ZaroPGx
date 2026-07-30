@@ -158,6 +158,8 @@ class Job(Base):
 
     # Metadata and relationships
     job_metadata = Column(JSON, default=dict)
+    workflow_type = Column(String, nullable=True, index=True)
+    workflow_snapshot = Column(JSON, nullable=True)
     steps = relationship(
         "JobStep", back_populates="job", cascade="all, delete-orphan"
     )

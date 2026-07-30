@@ -627,6 +627,8 @@ CREATE TABLE jobs (
     total_steps INTEGER,
     completed_steps INTEGER,
     job_metadata JSONB,
+    workflow_type VARCHAR,
+    workflow_snapshot JSONB,
     created_by VARCHAR,
     CONSTRAINT jobs_status_check CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled'))
 );
@@ -661,6 +663,7 @@ CREATE TABLE job_logs (
 
 CREATE INDEX idx_jobs_status ON jobs(status);
 CREATE INDEX idx_jobs_created_at ON jobs(created_at);
+CREATE INDEX idx_jobs_workflow_type ON jobs(workflow_type);
 CREATE INDEX idx_job_steps_job_id ON job_steps(job_id);
 CREATE INDEX idx_job_steps_step_order ON job_steps(job_id, step_order);
 CREATE INDEX idx_job_logs_job_id ON job_logs(job_id);
