@@ -41,6 +41,7 @@ control yet.
 the install password by design for in-stack callers:
 
 - `/api/v1/jobs/*` (including WebSocket status)
+- `/api/v1/workflows` and `/api/v1/workflows/*` — read-only **recipe catalog** (not the old instance/progress API under `/workflows`)
 - `/health`, docs/static, `/login`, `/logout`, `/token`
 
 `/token` in password mode requires `ZAROPGX_AUTH_PASSWORD` and returns a

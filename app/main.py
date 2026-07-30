@@ -65,6 +65,7 @@ from app.api.routes import report_router, upload_router
 from app.api.routes.fhir_export_router import router as fhir_export_router
 from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.job_router import router as job_router
+from app.api.routes.workflow_recipe_router import router as workflow_recipe_router
 from app.api.utils.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     SECRET_KEY,
@@ -310,6 +311,7 @@ app.add_middleware(
 # Include routers
 app.include_router(upload_router.router)
 app.include_router(report_router.router)
+app.include_router(workflow_recipe_router)
 app.include_router(job_router)
 app.include_router(pharmcat_router)
 

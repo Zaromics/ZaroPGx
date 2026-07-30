@@ -59,6 +59,7 @@ ALLOWLIST_PREFIXES = (
     "/static/",
     "/documentation/",
     "/api/v1/jobs/",
+    "/api/v1/workflows/",
 )
 
 
@@ -93,7 +94,7 @@ def is_allowlisted(path: str) -> bool:
     for prefix in ALLOWLIST_PREFIXES:
         if path.startswith(prefix):
             return True
-    if path == "/api/v1/jobs":
+    if path == "/api/v1/jobs" or path == "/api/v1/workflows":
         return True
     return False
 
