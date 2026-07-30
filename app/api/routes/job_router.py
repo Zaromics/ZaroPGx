@@ -72,6 +72,8 @@ async def create_job(job_data: JobCreate, db: Session = Depends(get_db)):
             completed_steps=job.completed_steps,
             metadata=job.job_metadata,
             created_by=job.created_by,
+            workflow_type=job.workflow_type,
+            workflow_snapshot=job.workflow_snapshot,
         )
 
     except ValueError as e:
@@ -112,6 +114,8 @@ async def get_job(job_id: str, db: Session = Depends(get_db)):
             completed_steps=job.completed_steps,
             metadata=job.job_metadata,
             created_by=job.created_by,
+            workflow_type=job.workflow_type,
+            workflow_snapshot=job.workflow_snapshot,
         )
 
     except HTTPException:
@@ -156,6 +160,8 @@ async def update_job(
             completed_steps=job.completed_steps,
             metadata=job.job_metadata,
             created_by=job.created_by,
+            workflow_type=job.workflow_type,
+            workflow_snapshot=job.workflow_snapshot,
         )
 
     except HTTPException:
@@ -847,6 +853,9 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
             started_at=updated_job.started_at,
             completed_at=updated_job.completed_at,
             metadata=updated_job.job_metadata,
+            created_by=updated_job.created_by,
+            workflow_type=updated_job.workflow_type,
+            workflow_snapshot=updated_job.workflow_snapshot,
         )
 
     except HTTPException:

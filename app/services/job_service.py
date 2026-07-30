@@ -32,11 +32,17 @@ from app.api.models import (
     JobStepResponse,
     JobStepUpdate,
     JobUpdate,
+    WorkflowOptions,
 )
 from app.services.cleanup_service import cleanup_service
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.services.websocket_manager import connection_manager
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
+from app.services.workflow_registry import (
+    build_snapshot,
+    get_recipe,
+    resolve_steps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -182,26 +188,42 @@ class JobService:
             RuntimeError: If database operation fails
         """
         try:
-            # Input validation
             if not job_data.name or not job_data.name.strip():
                 raise ValueError("Job name is required")
+            if not job_data.workflow_type or not job_data.workflow_type.strip():
+                raise ValueError("workflow_type is required")
+            if get_recipe(job_data.workflow_type) is None:
+                raise ValueError(f"Unknown workflow_type: {job_data.workflow_type}")
 
-            # Create the workflow
+            options = job_data.options or WorkflowOptions()
+            resolved = resolve_steps(job_data.workflow_type, options)
+            snapshot = build_snapshot(job_data.workflow_type, options, resolved)
+
+            metadata = dict(job_data.metadata or {})
+            metadata["workflow_type"] = job_data.workflow_type
+            metadata["workflow"] = options.model_dump()
+
             job = Job(
                 name=job_data.name.strip(),
                 description=job_data.description,
                 status=JobStatus.PENDING,
-                total_steps=job_data.total_steps,
+                total_steps=len(resolved),
                 completed_steps=0,
-                job_metadata=job_data.metadata,
+                job_metadata=metadata,
                 created_by=job_data.created_by,
+                workflow_type=job_data.workflow_type,
+                workflow_snapshot=snapshot,
+            )
+            self.db.add(job)
+            self.db.flush()
+
+            self.mint_steps_from_recipe(
+                job.id, job_data.workflow_type, options, commit=False
             )
 
-            self.db.add(job)
             self.db.commit()
             self.db.refresh(job)
 
-            # Log workflow creation
             self._log_job_event(
                 job.id,
                 LogLevel.INFO,
@@ -213,6 +235,7 @@ class JobService:
             return job
 
         except (ValueError, RuntimeError):
+            self.db.rollback()
             raise
         except SQLAlchemyError as e:
             self.db.rollback()
@@ -222,6 +245,32 @@ class JobService:
             self.db.rollback()
             logger.error(f"Unexpected error creating workflow: {str(e)}")
             raise RuntimeError(f"Failed to create workflow: {str(e)}")
+
+    def mint_steps_from_recipe(
+        self,
+        job_id: Union[str, uuid.UUID],
+        workflow_type: str,
+        options: WorkflowOptions,
+        commit: bool = True,
+    ) -> List[JobStep]:
+        """Mint JobStep rows from a workflow recipe. Default commits; use commit=False
+        when the caller owns the surrounding transaction (e.g. create_job)."""
+        resolved = resolve_steps(workflow_type, options)
+        minted: List[JobStep] = []
+        for step in resolved:
+            created = self.add_job_step(
+                job_id,
+                JobStepCreate(
+                    step_name=step.step_name,
+                    step_order=step.step_order,
+                    container_name=step.container_name,
+                ),
+                commit=commit,
+            )
+            if created is None:
+                raise ValueError(f"Job not found: {job_id}")
+            minted.append(created)
+        return minted
 
     def get_job(self, job_id: Union[str, uuid.UUID]) -> Optional[Job]:
         """
@@ -388,7 +437,10 @@ class JobService:
             raise RuntimeError(f"Failed to update workflow: {str(e)}")
 
     def add_job_step(
-        self, job_id: Union[str, uuid.UUID], step_data: JobStepCreate
+        self,
+        job_id: Union[str, uuid.UUID],
+        step_data: JobStepCreate,
+        commit: bool = True,
     ) -> Optional[JobStep]:
         """
         Add a step to a job.
@@ -396,6 +448,7 @@ class JobService:
         Args:
             job_id: Job ID
             step_data: Step creation data
+            commit: If False, flush only so the caller can commit atomically
 
         Returns:
             Created JobStep object or None if workflow not found
@@ -429,16 +482,17 @@ class JobService:
             )
 
             self.db.add(step)
-            self.db.commit()
-            self.db.refresh(step)
-
-            # Log step creation
-            self._log_job_event(
-                job_id,
-                LogLevel.INFO,
-                f"Step '{step_data.step_name}' added to workflow",
-                {"step_id": str(step.id), "step_order": step_data.step_order},
-            )
+            if commit:
+                self.db.commit()
+                self.db.refresh(step)
+                self._log_job_event(
+                    job_id,
+                    LogLevel.INFO,
+                    f"Step '{step_data.step_name}' added to workflow",
+                    {"step_id": str(step.id), "step_order": step_data.step_order},
+                )
+            else:
+                self.db.flush()
 
             logger.info(f"Added step {step.id} to workflow {job_id}")
             return step

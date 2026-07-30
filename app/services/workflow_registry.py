@@ -82,3 +82,13 @@ def resolve_steps(workflow_type: str, options: WorkflowOptions) -> List[Resolved
         )
         order += 1
     return resolved
+
+
+def build_snapshot(
+    workflow_type: str, options: WorkflowOptions, steps: List[ResolvedStep]
+) -> dict:
+    return {
+        "workflow_type": workflow_type,
+        "options": options.model_dump(),
+        "resolved_steps": [s.model_dump() for s in steps],
+    }
