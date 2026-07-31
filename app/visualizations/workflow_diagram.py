@@ -82,6 +82,24 @@ def try_read_static_asset(preferred: str = "svg") -> tuple[str, bytes] | None:
     return None
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _kroki_timeout_seconds() -> float:
+    """HTTP timeout for Kroki posts. Override with KROKI_TIMEOUT (seconds)."""
+    raw = (os.environ.get("KROKI_TIMEOUT") or "30").strip()
+    try:
+        timeout = float(raw)
+    except ValueError:
+        logger.warning("Invalid KROKI_TIMEOUT=%r; using 30s", raw)
+        return 30.0
+    return max(0.5, timeout)
+
+
 def render_with_kroki(
     mermaid_source: str,
     fmt: Literal["svg", "png", "pdf"] = "svg",
@@ -96,7 +114,14 @@ def render_with_kroki(
 
     Returns:
         bytes of rendered image
+
+    Raises:
+        RuntimeError: when KROKI_ENABLED is false (callers should fall back)
+        requests exceptions / HTTP errors from Kroki
     """
+    if not _env_flag("KROKI_ENABLED", True):
+        raise RuntimeError("Kroki disabled via KROKI_ENABLED")
+
     # Get base URL, handling empty strings properly
     env_kroki_url = os.environ.get("KROKI_URL", "").strip()
     if kroki_url:
@@ -131,9 +156,10 @@ def render_with_kroki(
     prepared_source = _ensure_font_init(mermaid_source)
 
     headers = {"Content-Type": "text/plain; charset=utf-8"}
-    logger.info("Rendering Mermaid via Kroki: %s", url)
+    timeout = _kroki_timeout_seconds()
+    logger.info("Rendering Mermaid via Kroki: %s (timeout=%ss)", url, timeout)
     resp = requests.post(
-        url, data=prepared_source.encode("utf-8"), headers=headers, timeout=30
+        url, data=prepared_source.encode("utf-8"), headers=headers, timeout=timeout
     )
     resp.raise_for_status()
     return resp.content

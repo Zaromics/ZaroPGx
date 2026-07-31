@@ -2,6 +2,12 @@
 # Sidecars talk over the compose network; publishing their default host ports
 # collides with a developer stack or other local listeners (e.g. WSL on 5060).
 services:
+  app:
+    environment:
+      # Skip Kroki Mermaid in e2e (Graphviz/Pillow still produce diagrams).
+      # Prevents sync Chromium renders from starving /health and GET /jobs.
+      - KROKI_ENABLED=false
+      - KROKI_TIMEOUT=5
   db:
     ports: !reset []
   genome-downloader:

@@ -179,6 +179,20 @@ async def handle_final_stages_progression(
     """
     Handle the final stages of workflow progression after Nextflow completion.
 
+    Runs the sync report/diagram work in a worker thread so Kroki ``requests``
+    calls cannot block the uvicorn event loop (health + GET /jobs stay responsive).
+    """
+    await asyncio.to_thread(
+        _handle_final_stages_progression_sync, job_service, workflow_id, outdir
+    )
+
+
+def _handle_final_stages_progression_sync(
+    job_service: JobService, workflow_id: str, outdir: str
+):
+    """
+    Sync implementation of final-stage report generation (may block on Kroki/IO).
+
     Args:
         job_service: Workflow service instance
         workflow_id: The workflow ID
@@ -191,12 +205,10 @@ async def handle_final_stages_progression(
             logger.info(
                 f"Workflow {workflow_id} was cancelled before report generation"
             )
-            # Schedule delayed cleanup to ensure any partial files are removed
-            task = asyncio.create_task(
+            # Thread-safe schedule onto the main event loop
+            schedule_coroutine(
                 delayed_cleanup_on_cancellation(workflow_id, job.job_metadata)
             )
-            # Add a name for easier debugging
-            task.set_name(f"delayed_cleanup_{workflow_id}")
             return
 
         # Send initial progress update
@@ -738,8 +750,10 @@ async def wait_for_nextflow_completion(
                     )
                     break
 
-                # Check Nextflow job status
-                response = requests.get(f"{nextflow_url}/status/{job_key}", timeout=30)
+                # Check Nextflow job status (off the event loop)
+                response = await asyncio.to_thread(
+                    requests.get, f"{nextflow_url}/status/{job_key}", timeout=30
+                )
                 if response.status_code == 200:
                     status_data = response.json()
 
