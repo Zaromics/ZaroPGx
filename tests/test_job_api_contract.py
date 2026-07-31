@@ -1,4 +1,4 @@
-"""137a: instance stack is Job under /api/v1/jobs; /workflows gone."""
+"""137a/137b: Job instance API under /api/v1/jobs; /api/v1/workflows is recipe catalog."""
 
 import importlib.util
 from pathlib import Path

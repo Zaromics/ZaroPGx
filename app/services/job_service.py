@@ -201,7 +201,12 @@ class JobService:
 
             metadata = dict(job_data.metadata or {})
             metadata["workflow_type"] = job_data.workflow_type
-            metadata["workflow"] = options.model_dump()
+            workflow_meta = options.model_dump()
+            # Keep file_type for diagram/progress consumers (not a WorkflowOptions field)
+            fa = metadata.get("file_analysis") or {}
+            if fa.get("file_type"):
+                workflow_meta["file_type"] = fa["file_type"]
+            metadata["workflow"] = workflow_meta
 
             job = Job(
                 name=job_data.name.strip(),
@@ -218,7 +223,11 @@ class JobService:
             self.db.flush()
 
             self.mint_steps_from_recipe(
-                job.id, job_data.workflow_type, options, commit=False
+                job.id,
+                job_data.workflow_type,
+                options,
+                commit=False,
+                resolved=resolved,
             )
 
             self.db.commit()
@@ -252,12 +261,18 @@ class JobService:
         workflow_type: str,
         options: WorkflowOptions,
         commit: bool = True,
+        resolved: Optional[List] = None,
     ) -> List[JobStep]:
         """Mint JobStep rows from a workflow recipe. Default commits; use commit=False
-        when the caller owns the surrounding transaction (e.g. create_job)."""
-        resolved = resolve_steps(workflow_type, options)
+        when the caller owns the surrounding transaction (e.g. create_job).
+        Pass resolved steps to avoid a second resolve_steps call."""
+        steps = (
+            resolved
+            if resolved is not None
+            else resolve_steps(workflow_type, options)
+        )
         minted: List[JobStep] = []
-        for step in resolved:
+        for step in steps:
             created = self.add_job_step(
                 job_id,
                 JobStepCreate(

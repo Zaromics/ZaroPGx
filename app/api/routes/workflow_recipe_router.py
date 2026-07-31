@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.models import WorkflowRecipeResponse  # define to match API
 from app.services.workflow_registry import get_recipe, list_recipes
 
 router = APIRouter(prefix="/api/v1/workflows", tags=["workflows"])

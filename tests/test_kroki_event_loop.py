@@ -46,8 +46,8 @@ def test_handle_final_stages_runs_sync_body_in_thread(monkeypatch):
 
     called = {}
 
-    def fake_sync(job_service, workflow_id, outdir):
-        called["args"] = (job_service, workflow_id, outdir)
+    def fake_sync(workflow_id, outdir):
+        called["args"] = (workflow_id, outdir)
 
     async def fake_to_thread(func, *args):
         called["func"] = func
@@ -58,4 +58,4 @@ def test_handle_final_stages_runs_sync_body_in_thread(monkeypatch):
 
     asyncio.run(ur.handle_final_stages_progression("svc", "wid", "/out"))
     assert called["func"] is fake_sync
-    assert called["args"] == ("svc", "wid", "/out")
+    assert called["args"] == ("wid", "/out")

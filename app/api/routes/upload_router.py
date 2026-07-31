@@ -181,23 +181,24 @@ async def handle_final_stages_progression(
 
     Runs the sync report/diagram work in a worker thread so Kroki ``requests``
     calls cannot block the uvicorn event loop (health + GET /jobs stay responsive).
+    Uses a fresh DB session in the worker (SQLAlchemy sessions are not thread-safe).
     """
+    # job_service is unused here — kept for call-site compatibility
     await asyncio.to_thread(
-        _handle_final_stages_progression_sync, job_service, workflow_id, outdir
+        _handle_final_stages_progression_sync, workflow_id, outdir
     )
 
 
-def _handle_final_stages_progression_sync(
-    job_service: JobService, workflow_id: str, outdir: str
-):
+def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
     """
     Sync implementation of final-stage report generation (may block on Kroki/IO).
 
-    Args:
-        job_service: Workflow service instance
-        workflow_id: The workflow ID
-        outdir: Output directory path
+    Opens its own SessionLocal so work is safe under asyncio.to_thread.
     """
+    from app.api.db import SessionLocal
+
+    db = SessionLocal()
+    job_service = JobService(db)
     try:
         # Check for cancellation before starting
         job = job_service.get_job(workflow_id)
@@ -482,7 +483,8 @@ def _handle_final_stages_progression_sync(
 
             # Determine workflow configuration based on the data
             workflow_config_diagram = {
-                "file_type": workflow_config.get("file_type", "vcf"),
+                "file_type": workflow_config.get("file_type")
+                or file_analysis.get("file_type", "vcf"),
                 "used_gatk": workflow_config.get("needs_gatk", False),
                 "used_hla": workflow_config.get("needs_hla", False),
                 "used_pypgx": workflow_config.get("needs_pypgx", False),
@@ -706,6 +708,8 @@ def _handle_final_stages_progression_sync(
             message=f"Error in final stages: {str(e)}",
         )
         job_service.log_job_event(workflow_id, log_data)
+    finally:
+        db.close()
 
 
 async def wait_for_nextflow_completion(
