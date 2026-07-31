@@ -47,9 +47,9 @@ from app.api.models import (
     VCFHeaderInfo,
     JobCreate,
     WorkflowInfo,
+    WorkflowOptions,
     JobLogCreate,
     JobStatus,
-    JobStepCreate,
     JobStepUpdate,
     JobUpdate,
 )
@@ -1163,19 +1163,39 @@ async def upload_genomic_data(
             False,  # is_supplementary (boolean)
         )
 
-        # Create workflow
+        # Create workflow (steps minted from recipe registry via create_job)
+        wf = result["workflow"]
+        options = WorkflowOptions(
+            needs_gatk=wf.get("needs_gatk", False),
+            needs_alignment=wf.get("needs_alignment", False),
+            needs_pypgx=wf.get("needs_pypgx", False),
+            needs_pypgx_bam2vcf=wf.get("needs_pypgx_bam2vcf", False),
+            needs_hla=wf.get("needs_hla", False),
+            needs_report=wf.get("needs_report", True),
+            needs_conversion=wf.get("needs_conversion", False),
+            is_provisional=wf.get("is_provisional", False),
+            unsupported=wf.get("unsupported", False),
+            unsupported_reason=wf.get("unsupported_reason"),
+            requested_reference=(
+                wf.get("requested_reference")
+                or wf.get("reference")
+                or wf.get("reference_genome")
+            ),
+            recommendations=list(wf.get("recommendations") or []),
+            warnings=list(wf.get("warnings") or []),
+        )
+
         job_service = JobService(db)
         job = job_service.create_job(
             JobCreate(
                 name=f"Genomic Analysis - {sample_identifier or 'Unknown Sample'}",
                 description=f"Pharmacogenomic analysis workflow for {file_analysis.file_type.value} file",
-                total_steps=5,  # header_analysis, hla_typing, pypgx_analysis, pharmcat_analysis, report_generation
+                workflow_type="genomic_analysis",
+                options=options,
                 metadata={
                     "patient_id": actual_patient_id,
                     "data_id": data_id,
-                    "workflow_type": "genomic_analysis",
                     "file_paths": result["file_paths"],
-                    "workflow": result["workflow"],
                     "file_analysis": {
                         "file_type": file_analysis.file_type.value,
                         "is_compressed": file_analysis.is_compressed,
@@ -1190,84 +1210,10 @@ async def upload_genomic_data(
                             else None
                         ),
                     },
+                    # workflow_type / workflow dual-write happens inside create_job
                 },
             )
         )
-
-        # Create workflow steps based on service toggle states
-        step_order = 1
-
-        # Add header analysis step (file upload progress is handled by frontend)
-        job_service.add_job_step(
-            job.id,
-            JobStepCreate(
-                step_name="header_analysis",
-                step_order=step_order,
-                container_name="header_inspector",
-            ),
-        )
-        step_order += 1
-
-        # Add HLA typing step only if workflow needs it AND user hasn't disabled it
-        if result["workflow"].get("needs_hla", False):
-            job_service.add_job_step(
-                job.id,
-                JobStepCreate(
-                    step_name="hla_typing",
-                    step_order=step_order,
-                    container_name="zarohla",
-                ),
-            )
-            step_order += 1
-
-        # Add PyPGx BAM→VCF conversion step only if workflow needs it AND user hasn't disabled it
-        if result["workflow"].get("needs_pypgx_bam2vcf", False):
-            job_service.add_job_step(
-                job.id,
-                JobStepCreate(
-                    step_name="pypgx_bam2vcf",
-                    step_order=step_order,
-                    container_name="pypgx",
-                ),
-            )
-            step_order += 1
-
-        # Add PyPGx analysis step only if workflow needs it AND user hasn't disabled it
-        if result["workflow"].get("needs_pypgx", False):
-            job_service.add_job_step(
-                job.id,
-                JobStepCreate(
-                    step_name="pypgx_analysis",
-                    step_order=step_order,
-                    container_name="pypgx",
-                ),
-            )
-            step_order += 1
-
-        # Always add PharmCAT analysis step (required for core functionality)
-        job_service.add_job_step(
-            job.id,
-            JobStepCreate(
-                step_name="pharmcat_analysis",
-                step_order=step_order,
-                container_name="pharmcat",
-            ),
-        )
-        step_order += 1
-
-        # Add report generation step only if workflow needs it AND user hasn't disabled it
-        if result["workflow"].get(
-            "needs_report", True
-        ):  # Reports are available by default
-            job_service.add_job_step(
-                job.id,
-                JobStepCreate(
-                    step_name="report_generation",
-                    step_order=step_order,
-                    container_name="report_generator",
-                ),
-            )
-            step_order += 1
 
         # Start the workflow
         job_service.update_job(
@@ -1304,18 +1250,10 @@ async def upload_genomic_data(
                 variant_count=file_analysis.vcf_info.variant_count,
             )
 
-        # Create workflow info (include recommendations/warnings for UI display)
+        # Create workflow info (nested options for UI / clients)
         workflow_info = WorkflowInfo(
-            workflow_type=result["workflow"]["workflow_type"],
-            file_type=FileType(result["workflow"]["file_type"]),
-            needs_alignment=result["workflow"].get("needs_alignment", False),
-            needs_gatk=result["workflow"].get("needs_gatk", False),
-            needs_pypgx=result["workflow"].get("needs_pypgx", False),
-            needs_pharmcat=result["workflow"].get("needs_pharmcat", True),
-            reference_genome=result["workflow"].get("reference", "hg38"),
-            is_provisional=result["workflow"].get("is_provisional", False),
-            recommendations=result["workflow"].get("recommendations", []),
-            warnings=result["workflow"].get("warnings", []),
+            workflow_type="genomic_analysis",
+            options=options,
         )
 
         # Create response

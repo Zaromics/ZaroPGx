@@ -136,6 +136,8 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
             self.output_data = {}
             self.metadata = {}
 
+    created_job_payloads = []
+
     class _FakeJobService:
         def __init__(self, db):
             self._job_id = str(uuid.uuid4())
@@ -143,6 +145,7 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
             self._steps = []
 
         def create_job(self, job_create):
+            created_job_payloads.append(job_create)
             return self._job
 
         def add_job_step(self, job_id, step_create):
@@ -169,7 +172,16 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
         def get_job_logs(self, job_id):
             return []
 
-    monkeypatch.setattr(upload_router, "JobService", _FakeJobService)
+    # Capture the service instance so we can assert add_job_step was not used.
+    fake_services = []
+    _OrigFake = _FakeJobService
+
+    class _TrackingFakeJobService(_OrigFake):
+        def __init__(self, db):
+            super().__init__(db)
+            fake_services.append(self)
+
+    monkeypatch.setattr(upload_router, "JobService", _TrackingFakeJobService)
 
     # ---- stub out progress calculator used by /upload/status/{job_id} (indirectly) ----
     class _FakeProgressCalc:
@@ -263,3 +275,19 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
     assert payload.get("file_type") == "vcf"
     assert payload.get("status") in {"processing", "uploaded"}
     assert "message" in payload
+
+    # 137b: upload mints via JobCreate(workflow_type, options); no inline add_job_step
+    assert len(created_job_payloads) == 1
+    job_create = created_job_payloads[0]
+    assert job_create.workflow_type == "genomic_analysis"
+    assert job_create.options is not None
+    assert job_create.options.requested_reference == "hg38"
+    assert job_create.options.needs_report is True
+    assert fake_services and fake_services[0]._steps == []
+
+    workflow = payload.get("workflow")
+    assert workflow is not None
+    assert workflow.get("workflow_type") == "genomic_analysis"
+    assert "options" in workflow
+    assert workflow["options"]["requested_reference"] == "hg38"
+    assert "needs_gatk" not in workflow  # nested, not flattened

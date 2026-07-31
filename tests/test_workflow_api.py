@@ -47,6 +47,7 @@ class TestWorkflowApi:
         """Test complete workflow lifecycle from creation to completion."""
         # Step 1: Create a workflow
         workflow_data = {
+            "workflow_type": "genomic_analysis",
             "name": "End-to-End Test Workflow",
             "description": "A comprehensive test workflow",
             "total_steps": 3,
@@ -146,7 +147,7 @@ class TestWorkflowApi:
     def test_workflow_with_logging(self, client):
         """Test workflow with comprehensive logging."""
         # Create workflow
-        workflow_data = {"name": "Logging Test Workflow", "total_steps": 2}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Logging Test Workflow", "total_steps": 2}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -210,7 +211,7 @@ class TestWorkflowApi:
     def test_workflow_error_handling(self, client):
         """Test workflow error handling and recovery."""
         # Create workflow
-        workflow_data = {"name": "Error Test Workflow", "total_steps": 2}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Error Test Workflow", "total_steps": 2}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -410,7 +411,7 @@ class TestWorkflowApi:
     def test_workflow_deletion_cascade(self, client):
         """Test that workflow deletion cascades to steps and logs."""
         # Create workflow with steps and logs
-        workflow_data = {"name": "Cascade Test Workflow", "total_steps": 2}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Cascade Test Workflow", "total_steps": 2}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -434,10 +435,10 @@ class TestWorkflowApi:
         get_response = client.get(f"/api/v1/jobs/{job_id}")
         assert get_response.status_code == 200
 
-        # Verify steps exist
+        # Verify steps exist (recipe mint + any manually added steps)
         steps_response = client.get(f"/api/v1/jobs/{job_id}/steps")
         assert steps_response.status_code == 200
-        assert len(steps_response.json()) == 2
+        assert len(steps_response.json()) >= 2
 
         # Verify logs exist
         logs_response = client.get(f"/api/v1/jobs/{job_id}/logs")
@@ -466,6 +467,7 @@ class TestWorkflowApi:
         job_ids = []
         for i in range(3):
             workflow_data = {
+                "workflow_type": "genomic_analysis",
                 "name": f"Concurrent Test Workflow {i+1}",
                 "total_steps": 2,
             }
@@ -507,6 +509,7 @@ class TestWorkflowApi:
         """Test workflow metadata handling and persistence."""
         # Create workflow with metadata
         workflow_data = {
+            "workflow_type": "genomic_analysis",
             "name": "Metadata Test Workflow",
             "description": "A workflow with metadata",
             "metadata": {

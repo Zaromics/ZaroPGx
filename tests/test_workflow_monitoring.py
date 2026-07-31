@@ -45,6 +45,7 @@ class TestJobService:
     def test_create_job_success(self, job_service):
         """Test successful workflow creation."""
         workflow_data = JobCreate(
+            workflow_type="genomic_analysis",
             name="Test Workflow",
             description="A test workflow",
             total_steps=3,
@@ -65,6 +66,7 @@ class TestJobService:
     def test_create_job_invalid_name(self, job_service):
         """Test workflow creation with invalid name."""
         workflow_data = JobCreate(
+            workflow_type="genomic_analysis",
             name="", description="A test workflow"  # Empty name should fail
         )
 
@@ -75,6 +77,7 @@ class TestJobService:
         """Test successful workflow retrieval."""
         # Create a workflow first
         workflow_data = JobCreate(
+            workflow_type="genomic_analysis",
             name="Test Workflow", description="A test workflow"
         )
         created_workflow = job_service.create_job(workflow_data)
@@ -97,6 +100,7 @@ class TestJobService:
         """Test successful workflow update."""
         # Create a workflow first
         workflow_data = JobCreate(
+            workflow_type="genomic_analysis",
             name="Test Workflow", description="A test workflow"
         )
         created_workflow = job_service.create_job(workflow_data)
@@ -118,6 +122,7 @@ class TestJobService:
         """Test successful workflow step addition."""
         # Create a workflow first
         workflow_data = JobCreate(
+            workflow_type="genomic_analysis",
             name="Test Workflow", description="A test workflow"
         )
         created_workflow = job_service.create_job(workflow_data)
@@ -137,7 +142,8 @@ class TestJobService:
     def test_update_job_step_success(self, job_service):
         """Test successful workflow step update."""
         # Create a workflow and step first
-        workflow_data = JobCreate(name="Test Workflow")
+        workflow_data = JobCreate(
+            workflow_type="genomic_analysis", name="Test Workflow")
         created_workflow = job_service.create_job(workflow_data)
 
         step_data = JobStepCreate(step_name="test_step", step_order=1)
@@ -166,7 +172,8 @@ class TestJobService:
     def test_get_job_progress_success(self, job_service):
         """Test successful workflow progress retrieval."""
         # Create a workflow with steps
-        workflow_data = JobCreate(name="Test Workflow", total_steps=2)
+        workflow_data = JobCreate(
+            workflow_type="genomic_analysis", name="Test Workflow", total_steps=2)
         created_workflow = job_service.create_job(workflow_data)
 
         # Add steps
@@ -191,7 +198,8 @@ class TestJobService:
     def test_log_job_event_success(self, job_service):
         """Test successful workflow event logging."""
         # Create a workflow first
-        workflow_data = JobCreate(name="Test Workflow")
+        workflow_data = JobCreate(
+            workflow_type="genomic_analysis", name="Test Workflow")
         created_workflow = job_service.create_job(workflow_data)
 
         # Log an event
@@ -286,6 +294,7 @@ class TestWorkflowAPI:
     def test_create_job_endpoint(self, client):
         """Test POST /api/v1/jobs endpoint."""
         workflow_data = {
+            "workflow_type": "genomic_analysis",
             "name": "Test Workflow",
             "description": "A test workflow",
             "total_steps": 3,
@@ -306,7 +315,7 @@ class TestWorkflowAPI:
     def test_get_job_endpoint(self, client):
         """Test GET /api/v1/jobs/{job_id} endpoint."""
         # Create a workflow first
-        workflow_data = {"name": "Test Workflow", "description": "A test workflow"}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow", "description": "A test workflow"}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -329,7 +338,7 @@ class TestWorkflowAPI:
     def test_update_job_endpoint(self, client):
         """Test PUT /api/v1/jobs/{job_id} endpoint."""
         # Create a workflow first
-        workflow_data = {"name": "Test Workflow"}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow"}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -345,7 +354,7 @@ class TestWorkflowAPI:
     def test_add_job_step_endpoint(self, client):
         """Test POST /api/v1/jobs/{job_id}/steps endpoint."""
         # Create a workflow first
-        workflow_data = {"name": "Test Workflow"}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow"}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -367,7 +376,7 @@ class TestWorkflowAPI:
     def test_update_job_step_endpoint(self, client):
         """Test PUT /api/v1/jobs/{job_id}/steps/{step_name} endpoint."""
         # Create a workflow and step first
-        workflow_data = {"name": "Test Workflow"}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow"}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -387,7 +396,7 @@ class TestWorkflowAPI:
     def test_get_job_progress_endpoint(self, client):
         """Test GET /api/v1/jobs/{job_id}/progress endpoint."""
         # Create a workflow first
-        workflow_data = {"name": "Test Workflow", "total_steps": 2}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow", "total_steps": 2}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -397,14 +406,15 @@ class TestWorkflowAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["job_id"] == job_id
-        assert data["total_steps"] == 2
+        # create_job mints from recipe (default options → header + pharmcat + report)
+        assert data["total_steps"] == 3
         assert data["completed_steps"] == 0
         assert data["progress_percentage"] == 0.0
 
     def test_log_job_event_endpoint(self, client):
         """Test POST /api/v1/jobs/{job_id}/logs endpoint."""
         # Create a workflow first
-        workflow_data = {"name": "Test Workflow"}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow"}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -428,7 +438,7 @@ class TestWorkflowAPI:
     def test_get_job_logs_endpoint(self, client):
         """Test GET /api/v1/jobs/{job_id}/logs endpoint."""
         # Create a workflow first
-        workflow_data = {"name": "Test Workflow"}
+        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow"}
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -458,6 +468,7 @@ class TestJobModels:
         """Test JobCreate model validation."""
         # Valid data
         workflow_data = JobCreate(
+            workflow_type="genomic_analysis",
             name="Test Workflow",
             description="A test workflow",
             total_steps=3,
