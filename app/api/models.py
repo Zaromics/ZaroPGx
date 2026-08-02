@@ -185,7 +185,7 @@ class WorkflowInfo(BaseModel):
 
 
 class UploadResponse(BaseModel):
-    file_id: str
+    data_id: str  # was file_id; = genetic_data.data_id
     job_id: str
     file_type: str
     status: str
@@ -196,7 +196,7 @@ class UploadResponse(BaseModel):
 
 
 class ProcessingStatus(BaseModel):
-    file_id: str
+    data_id: str  # was file_id; = genetic_data.data_id
     job_id: str
     status: str
     progress: int = Field(ge=0, le=100, description="Progress percentage from 0 to 100")
@@ -207,7 +207,7 @@ class ProcessingStatus(BaseModel):
 
 
 class GeneticDataStatus(BaseModel):
-    file_id: str
+    data_id: str  # was file_id; = genetic_data.data_id
     job_id: str
     file_type: FileType
     status: ProcessingStatus
@@ -248,7 +248,7 @@ class AlleleCallResult(BaseModel):
     """Model for complete allele calling results"""
 
     patient_id: str = Field(..., description="Patient identifier")
-    file_id: str = Field(..., description="File identifier")
+    data_id: str = Field(..., description="Genetic data identifier (= genetic_data.data_id)")
     job_id: str
     diplotypes: List[Diplotype] = Field(..., description="List of diplotype calls")
     created_at: datetime = Field(..., description="When the results were generated")
@@ -275,7 +275,7 @@ class ReportRequest(BaseModel):
     """Model for report generation requests"""
 
     patient_id: str = Field(..., description="Patient identifier")
-    file_id: str = Field(..., description="File identifier")
+    data_id: str = Field(..., description="Genetic data identifier (= genetic_data.data_id)")
     job_id: str
     report_type: str = Field("comprehensive", description="Type of report to generate")
     include_drugs: Optional[List[str]] = Field(
@@ -286,7 +286,9 @@ class ReportRequest(BaseModel):
 class ReportResponse(BaseModel):
     """Model for report generation responses"""
 
-    report_id: str = Field(..., description="Unique report identifier")
+    report_id: str = Field(
+        ..., description="Display report id (= job_id); not DB patient_reports.report_id"
+    )
     patient_id: str = Field(..., description="Patient identifier")
     created_at: datetime = Field(..., description="When the report was created")
     report_url: str = Field(..., description="URL to access the generated report")

@@ -36,7 +36,7 @@ def _concrete_path(path_template: str) -> str:
     """Fill OpenAPI path params with placeholders for probing."""
     out = path_template
     for token in (
-        "{file_id}",
+        "{data_id}",
         "{job_id}",
         "{patient_id}",
         "{filename}",

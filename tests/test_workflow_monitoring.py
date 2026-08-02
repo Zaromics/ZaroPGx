@@ -232,8 +232,8 @@ class TestConnectionManager:
         )
 
         assert connection_id is not None
-        assert job_id in connection_manager.workflow_connections
-        assert mock_websocket in connection_manager.workflow_connections[job_id]
+        assert job_id in connection_manager.job_connections
+        assert mock_websocket in connection_manager.job_connections[job_id]
         mock_websocket.accept.assert_called_once()
 
     def test_disconnect_success(self, connection_manager):
@@ -249,11 +249,11 @@ class TestConnectionManager:
         # Disconnect
         connection_manager.disconnect(mock_websocket, connection_id)
 
-        assert job_id not in connection_manager.workflow_connections
-        assert connection_id not in connection_manager.connection_workflows
+        assert job_id not in connection_manager.job_connections
+        assert connection_id not in connection_manager.connection_jobs
 
     @pytest.mark.asyncio
-    async def test_send_workflow_update_success(self, connection_manager):
+    async def test_send_job_update_success(self, connection_manager):
         """Test successful workflow update sending."""
         mock_websocket = AsyncMock()
 
@@ -261,12 +261,12 @@ class TestConnectionManager:
         connection_id = await connection_manager.connect(mock_websocket, job_id)
 
         message = {"type": "test", "data": "test_data"}
-        await connection_manager.send_workflow_update(job_id, message)
+        await connection_manager.send_job_update(job_id, message)
 
         mock_websocket.send_text.assert_called_once()
         call_args = mock_websocket.send_text.call_args[0][0]
         sent_message = json.loads(call_args)
-        assert sent_message["type"] == "workflow_update"
+        assert sent_message["type"] == "job_update"
         assert sent_message["job_id"] == job_id
         assert sent_message["data"] == message
 

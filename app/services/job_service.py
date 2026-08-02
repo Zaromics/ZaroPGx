@@ -140,7 +140,7 @@ class JobService:
         """Broadcast workflow update to WebSocket connections."""
         try:
             logger.info(f"Broadcasting workflow update for {job_id}: {message}")
-            await connection_manager.send_workflow_update(str(job_id), message)
+            await connection_manager.send_job_update(str(job_id), message)
             logger.info(f"Successfully broadcasted workflow update for {job_id}")
         except Exception as e:
             logger.error(f"Failed to broadcast workflow update: {e}")
@@ -977,8 +977,8 @@ class JobService:
                         patient_id = job.job_metadata.get("patient_id")
 
                     # Clean up workflow-specific temporary files
-                    cleanup_result = cleanup_service.cleanup_workflow_files(
-                        workflow_id=str(job_id), patient_id=patient_id
+                    cleanup_result = cleanup_service.cleanup_job_files(
+                        job_id=str(job_id), patient_id=patient_id
                     )
 
                     # Log cleanup results

@@ -280,7 +280,7 @@ class TestWorkflowApi:
         ]
 
         for update in progress_updates:
-            await connection_manager.send_workflow_update(job_id, update)
+            await connection_manager.send_job_update(job_id, update)
             await asyncio.sleep(0.1)  # Small delay to simulate real-time updates
 
         # Verify all clients received all updates
@@ -291,7 +291,7 @@ class TestWorkflowApi:
         calls = mock_websocket1.send_text.call_args_list
         for i, call in enumerate(calls):
             message = json.loads(call[0][0])
-            assert message["type"] == "workflow_update"
+            assert message["type"] == "job_update"
             assert message["job_id"] == job_id
             assert message["data"] == progress_updates[i]
 
@@ -342,7 +342,7 @@ class TestWorkflowApi:
         calls = mock_websocket.send_text.call_args_list
         for i, call in enumerate(calls):
             message = json.loads(call[0][0])
-            assert message["type"] == "workflow_update"
+            assert message["type"] == "job_update"
             assert message["data"]["type"] == "step_update"
             assert message["job_id"] == job_id
             assert message["data"]["step_name"] == step_updates[i]["step_name"]
@@ -403,7 +403,7 @@ class TestWorkflowApi:
         calls = mock_websocket.send_text.call_args_list
         for i, call in enumerate(calls):
             message = json.loads(call[0][0])
-            assert message["type"] == "workflow_update"
+            assert message["type"] == "job_update"
             assert message["data"]["type"] == "log_update"
             assert message["job_id"] == job_id
             assert message["data"]["data"] == log_entries[i]

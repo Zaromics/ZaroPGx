@@ -1276,10 +1276,8 @@ async def upload_genomic_data(
 
         # Create response
         response = UploadResponse(
-            file_id=str(data_id),  # Use data_id as file_id for backward compatibility
-            job_id=str(
-                job.id
-            ),  # Use workflow ID as job_id for backward compatibility
+            data_id=str(data_id),
+            job_id=str(job.id),
             file_type=result["workflow"]["file_type"],
             status="processing",
             message="Files uploaded successfully. Processing started.",
@@ -1305,11 +1303,33 @@ async def upload_genomic_data(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
+async def get_upload_status_by_data_id(data_id: str, db: Session):
+    """
+    Look up the most recent job whose job_metadata["data_id"] matches, then
+    return the same status assembly as get_upload_status(job_id).
+    """
+    from app.api.db import Job
+
+    jobs = db.query(Job).order_by(Job.created_at.desc()).all()
+    matched_job_id = None
+    for job in jobs:
+        meta = job.job_metadata or {}
+        if str(meta.get("data_id", "")) == str(data_id):
+            matched_job_id = str(job.id)
+            break
+
+    if not matched_job_id:
+        raise HTTPException(status_code=404, detail="No job found for data_id")
+
+    return await get_upload_status(matched_job_id, db)
+
+
 @router.get("/status/{job_id}")
 async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
     """
     Get the processing status of a job using the new monitoring system.
-    This endpoint works with both job_id and workflow_id for backward compatibility.
+    Canonical status path is by job_id; /status/{data_id} on main looks up via
+    get_upload_status_by_data_id.
     """
     try:
         job_service = JobService(db)

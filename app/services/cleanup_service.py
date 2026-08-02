@@ -38,17 +38,17 @@ class CleanupService:
         # import — littering the host with C:\data and C:\tmp off-container. app.main's
         # startup_event creates them, and every method here tolerates a missing directory.
 
-    def cleanup_workflow_files(
+    def cleanup_job_files(
         self,
-        workflow_id: str,
+        job_id: str,
         patient_id: Optional[str] = None,
         additional_paths: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        Clean up temporary files for a specific workflow.
+        Clean up temporary files for a specific job.
 
         Args:
-            workflow_id: The workflow ID to clean up
+            job_id: The job ID to clean up
             patient_id: Optional patient ID for patient-specific cleanup
             additional_paths: Additional paths to clean up
 
@@ -56,7 +56,7 @@ class CleanupService:
             Dictionary with cleanup results and statistics
         """
         cleanup_stats = {
-            "workflow_id": workflow_id,
+            "job_id": job_id,
             "patient_id": patient_id,
             "cleaned_paths": [],
             "failed_paths": [],
@@ -66,7 +66,7 @@ class CleanupService:
         }
 
         try:
-            # Define cleanup paths based on workflow and patient ID
+            # Define cleanup paths based on job and patient ID
             cleanup_paths = []
 
             # Patient-specific paths
@@ -74,21 +74,24 @@ class CleanupService:
                 cleanup_paths.extend(
                     [
                         f"/data/temp/{patient_id}",
-                        f"/data/temp/{workflow_id}",
+                        f"/data/temp/{job_id}",
                         f"/data/uploads/{patient_id}",
                         f"/data/results/{patient_id}",
-                        f"/data/results/{workflow_id}",
+                        f"/data/results/{job_id}",
+                        # Nested report dir (writers switch in Task 3); flat legacy leftover
+                        f"/data/reports/{patient_id}/{job_id}",
+                        f"/data/reports/{patient_id}",
                     ]
                 )
 
-            # Workflow-specific paths
+            # Job-specific paths
             cleanup_paths.extend(
                 [
-                    f"/tmp/pharmcat/{workflow_id}",
-                    f"/tmp/gatk_temp/{workflow_id}",
-                    f"/tmp/pypgx/{workflow_id}",
-                    f"/tmp/zarohla/{workflow_id}",
-                    f"/data/temp/{workflow_id}",
+                    f"/tmp/pharmcat/{job_id}",
+                    f"/tmp/gatk_temp/{job_id}",
+                    f"/tmp/pypgx/{job_id}",
+                    f"/tmp/zarohla/{job_id}",
+                    f"/data/temp/{job_id}",
                 ]
             )
 
@@ -115,7 +118,7 @@ class CleanupService:
                         cleanup_stats["total_items_cleaned"] += 1
 
                         logger.info(
-                            f"Cleaned up workflow {workflow_id}: {path} ({size} bytes)"
+                            f"Cleaned up job {job_id}: {path} ({size} bytes)"
                         )
                     else:
                         logger.debug(f"Path does not exist, skipping: {path}")
@@ -130,7 +133,7 @@ class CleanupService:
             cleanup_stats["success"] = len(cleanup_stats["failed_paths"]) == 0
 
             logger.info(
-                f"Workflow cleanup completed for {workflow_id}: "
+                f"Job cleanup completed for {job_id}: "
                 f"{cleanup_stats['total_items_cleaned']} items, "
                 f"{cleanup_stats['total_size_cleaned']} bytes"
             )
@@ -138,7 +141,7 @@ class CleanupService:
             return cleanup_stats
 
         except Exception as e:
-            logger.error(f"Error during workflow cleanup for {workflow_id}: {e}")
+            logger.error(f"Error during job cleanup for {job_id}: {e}")
             cleanup_stats["error"] = str(e)
             cleanup_stats["success"] = False
             return cleanup_stats

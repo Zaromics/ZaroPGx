@@ -449,14 +449,14 @@ async def logout() -> Response:
 
 
 # Add direct routes for status and reports
-@app.get("/status/{file_id}")
+@app.get("/status/{data_id}")
 async def get_status(
-    file_id: str,
+    data_id: str,
     db: Session = Depends(get_db),
     current_user: str = Depends(get_optional_user),
 ):
-    """Forward to upload_router status endpoint"""
-    return await upload_router.get_upload_status(file_id, db)
+    """Status by genetic-data id. Prefer /upload/status/{job_id} for run progress."""
+    return await upload_router.get_upload_status_by_data_id(data_id, db)
 
 
 # Generic report file serving route removed - now handled by specific endpoints
@@ -777,16 +777,16 @@ async def call_variants(
 
 
 # Cleanup endpoints
-@app.post("/api/cleanup/workflow/{workflow_id}")
-async def cleanup_workflow_files(workflow_id: str, patient_id: Optional[str] = None):
-    """Clean up temporary files for a specific workflow."""
+@app.post("/api/cleanup/job/{job_id}")
+async def cleanup_job_files(job_id: str, patient_id: Optional[str] = None):
+    """Clean up temporary files for a specific job."""
     try:
-        result = cleanup_service.cleanup_workflow_files(
-            workflow_id=workflow_id, patient_id=patient_id
+        result = cleanup_service.cleanup_job_files(
+            job_id=job_id, patient_id=patient_id
         )
         return JSONResponse(content=result)
     except Exception as e:
-        logger.error(f"Failed to cleanup workflow {workflow_id}: {e}")
+        logger.error(f"Failed to cleanup job {job_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -257,13 +257,13 @@ class WorkflowMonitor {
                 case 'initial_status':
                     this.handleInitialStatus(data.data);
                     break;
-                case 'workflow_update':
+                case 'job_update':
                     // Check if this is a progress update or a nested message
                     if (data.data && data.data.type) {
                         // This is a nested message (step_update, log_update, etc.)
                         this.handleNestedMessage(data.data);
                     } else {
-                        // This is a direct workflow progress update
+                        // This is a direct job progress update
                         this.handleWorkflowUpdate(data.data);
                     }
                     break;
@@ -322,8 +322,8 @@ class WorkflowMonitor {
             case 'log_update':
                 this.handleLogUpdate(data.data || data);
                 break;
-            case 'workflow_update':
-                // Handle nested workflow updates (progress updates)
+            case 'job_update':
+                // Handle nested job updates (progress updates)
                 this.handleWorkflowUpdate(data.data || data);
                 break;
             default:

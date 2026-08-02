@@ -45,8 +45,8 @@ class TestWebSocketIntegration:
         connection_id = await connection_manager.connect(mock_websocket, workflow_id)
 
         assert connection_id is not None
-        assert workflow_id in connection_manager.workflow_connections
-        assert mock_websocket in connection_manager.workflow_connections[workflow_id]
+        assert workflow_id in connection_manager.job_connections
+        assert mock_websocket in connection_manager.job_connections[workflow_id]
         mock_websocket.accept.assert_called_once()
 
     @pytest.mark.asyncio
@@ -61,18 +61,18 @@ class TestWebSocketIntegration:
 
         # Send a workflow update
         message = {
-            "type": "workflow_update",
+            "type": "job_update",
             "data": {"status": "running", "progress_percentage": 50.0},
         }
 
-        await connection_manager.send_workflow_update(workflow_id, message["data"])
+        await connection_manager.send_job_update(workflow_id, message["data"])
 
         # Verify message was sent
         mock_websocket.send_text.assert_called_once()
         call_args = mock_websocket.send_text.call_args[0][0]
         sent_message = json.loads(call_args)
 
-        assert sent_message["type"] == "workflow_update"
+        assert sent_message["type"] == "job_update"
         assert sent_message["job_id"] == workflow_id
         assert sent_message["data"] == message["data"]
         assert "timestamp" in sent_message
@@ -99,10 +99,10 @@ class TestWebSocketIntegration:
         call_args = mock_websocket.send_text.call_args[0][0]
         sent_message = json.loads(call_args)
 
-        # send_step_update delegates to send_workflow_update, which wraps the
-        # step message in a "workflow_update" envelope; the browser client
+        # send_step_update delegates to send_job_update, which wraps the
+        # step message in a "job_update" envelope; the browser client
         # unwraps it at workflow-monitor.js:260-263.
-        assert sent_message["type"] == "workflow_update"
+        assert sent_message["type"] == "job_update"
         assert sent_message["job_id"] == workflow_id
         inner = sent_message["data"]
         assert inner["type"] == "step_update"
@@ -133,7 +133,7 @@ class TestWebSocketIntegration:
         call_args = mock_websocket.send_text.call_args[0][0]
         sent_message = json.loads(call_args)
 
-        assert sent_message["type"] == "workflow_update"
+        assert sent_message["type"] == "job_update"
         assert sent_message["job_id"] == workflow_id
         inner = sent_message["data"]
         assert inner["type"] == "log_update"
@@ -162,7 +162,7 @@ class TestWebSocketIntegration:
         call_args = mock_websocket.send_text.call_args[0][0]
         sent_message = json.loads(call_args)
 
-        assert sent_message["type"] == "workflow_update"
+        assert sent_message["type"] == "job_update"
         assert sent_message["job_id"] == workflow_id
         inner = sent_message["data"]
         assert inner["type"] == "error_notification"
@@ -187,7 +187,7 @@ class TestWebSocketIntegration:
         call_args = mock_websocket.send_text.call_args[0][0]
         sent_message = json.loads(call_args)
 
-        assert sent_message["type"] == "workflow_update"
+        assert sent_message["type"] == "job_update"
         assert sent_message["job_id"] == workflow_id
         assert sent_message["data"]["type"] == "heartbeat"
         assert "timestamp" in sent_message
@@ -202,15 +202,15 @@ class TestWebSocketIntegration:
         connection_id = await connection_manager.connect(mock_websocket, workflow_id)
 
         # Verify connection exists
-        assert workflow_id in connection_manager.workflow_connections
-        assert connection_id in connection_manager.connection_workflows
+        assert workflow_id in connection_manager.job_connections
+        assert connection_id in connection_manager.connection_jobs
 
         # Disconnect
         connection_manager.disconnect(mock_websocket, connection_id)
 
         # Verify connection is removed
-        assert workflow_id not in connection_manager.workflow_connections
-        assert connection_id not in connection_manager.connection_workflows
+        assert workflow_id not in connection_manager.job_connections
+        assert connection_id not in connection_manager.connection_jobs
 
     @pytest.mark.asyncio
     async def test_websocket_multiple_connections(self, connection_manager):
@@ -230,11 +230,11 @@ class TestWebSocketIntegration:
 
         # Verify both connections exist
         assert connection_id1 != connection_id2
-        assert len(connection_manager.workflow_connections[workflow_id]) == 2
+        assert len(connection_manager.job_connections[workflow_id]) == 2
 
         # Send a message to all connections
         message = {"type": "test", "data": "test_data"}
-        await connection_manager.send_workflow_update(workflow_id, message)
+        await connection_manager.send_job_update(workflow_id, message)
 
         # Verify both websockets received the message
         assert mock_websocket1.send_text.call_count == 1
@@ -264,10 +264,10 @@ class TestWebSocketIntegration:
 
         # Send a message (should handle the exception gracefully)
         message = {"type": "test", "data": "test_data"}
-        await connection_manager.send_workflow_update(workflow_id, message)
+        await connection_manager.send_job_update(workflow_id, message)
 
         # Verify the connection is cleaned up after send failure
-        assert workflow_id not in connection_manager.workflow_connections
+        assert workflow_id not in connection_manager.job_connections
 
     def test_connection_count_tracking(self, connection_manager):
         """Test connection count tracking."""
