@@ -90,3 +90,10 @@ def test_identity_map_hit_not_unmapped():
     )
     assert "rs2231142 reference (G)" in dip
     assert unmapped == []
+
+
+def test_pharmcat_dockerfile_copies_lexicon_assets():
+    df = Path("docker/pharmcat/Dockerfile").read_text(encoding="utf-8")
+    assert "allele_translate.py" in df
+    assert "allele_map_pypgx_to_pharmcat.json" in df
+    assert "/lexicon-lib/" in df

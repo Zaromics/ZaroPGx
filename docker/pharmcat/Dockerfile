@@ -177,6 +177,9 @@ RUN uv pip install --system \
 COPY docker/pharmcat/pharmcat.py /app/
 COPY docker/pharmcat/start.sh /start.sh
 COPY app/utils/job_client.py /job-client/
+COPY app/utils/allele_translate.py /lexicon-lib/allele_translate.py
+COPY lexicon/allele_map_pypgx_to_pharmcat.json /lexicon/allele_map_pypgx_to_pharmcat.json
+ENV ALLELE_MAP_JSON=/lexicon/allele_map_pypgx_to_pharmcat.json
 RUN chmod +x /start.sh
 
 # Create data directory and set up volume

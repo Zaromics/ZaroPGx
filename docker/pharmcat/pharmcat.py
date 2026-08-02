@@ -63,6 +63,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pharmcat")
 
+
+def _translate_uploaded_outside_tsv(outside_path: str) -> None:
+    """Best-effort synonym-gene rewrite; never raise into the request handler."""
+    try:
+        import sys
+
+        if "/lexicon-lib" not in sys.path:
+            sys.path.insert(0, "/lexicon-lib")
+        # Repo / test layout fallback
+        repo_utils = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "app",
+            "utils",
+        )
+        if os.path.isdir(repo_utils) and repo_utils not in sys.path:
+            sys.path.insert(0, repo_utils)
+        from allele_translate import translate_outside_tsv_file
+
+        translate_outside_tsv_file(outside_path)
+        logger.info("Applied PyPGx→PharmCAT synonym translation to %s", outside_path)
+    except Exception as e:
+        logger.warning(
+            "Outside-call synonym translation skipped for %s: %s", outside_path, e
+        )
+
 # Log pysam availability after logger is defined
 if not PYSAM_AVAILABLE:
     logger.warning("pysam not available - VCF sample extraction will use bcftools fallback")
@@ -360,6 +385,7 @@ async def process_genotype(
                         content = await outside_tsv.read()
                         f.write(content)
                     logger.info(f"Saved uploaded outside call TSV to {outside_path}")
+                    _translate_uploaded_outside_tsv(outside_path)
                 else:
                     outside_path = None
                     logger.info("No outside calls file provided or override enabled")

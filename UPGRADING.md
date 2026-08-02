@@ -5,6 +5,9 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+- Lexicon wiring (66/125/42a): PharmCAT image ships allele translator + map;
+  rebuild `pharmcat` so uploaded outside-call TSVs get ABCG2/IFNL3/VKORC1 synonym rewrite.
+
 ### 137c naming hard-cuts (developers / API clients)
 
 - Upload/status JSON field `file_id` → `data_id` (same UUID as `genetic_data.data_id`).
