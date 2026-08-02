@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 # Import shared workflow client for integration
 import sys
-sys.path.append('/workflow-client')
+sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 
 # Gene Configuration Management

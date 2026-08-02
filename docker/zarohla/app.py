@@ -12,7 +12,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 import sys
 
-sys.path.append('/workflow-client')
+sys.path.append('/job-client')
 from job_client import JobClient
 
 logging.basicConfig(level=logging.INFO)

@@ -122,7 +122,7 @@ async def run(request: NextflowRunRequest):
             logger.warning(f"Could not check job cancellation status: {e}")
             # Continue execution if we can't check status
 
-    # Create job tracking entry for process monitoring
+    # job_key identifies a Nextflow runner process; distinct from ORM jobs.id / API job_id (137c).
     job_key = f"{request.patient_id}_{report_id}"
     running_jobs[job_key] = {
         "job_id": job_id,

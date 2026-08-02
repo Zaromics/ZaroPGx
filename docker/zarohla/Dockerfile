@@ -27,10 +27,10 @@ WORKDIR /app
 
 # Copy application code
 COPY docker/zarohla/app.py .
-COPY app/utils/job_client.py /workflow-client/
+COPY app/utils/job_client.py /job-client/
 
 # Create /data directory for uploads/results and set permissions
-RUN mkdir -p /data && chown -R zarouser:zarouser /app /data /workflow-client
+RUN mkdir -p /data && chown -R zarouser:zarouser /app /data /job-client
 
 # Matplotlib (imported by OptiType) needs a writable config dir; zarouser has no home
 ENV HOME=/tmp

@@ -51,3 +51,17 @@ def test_generator_report_id_equals_job_id():
     text = Path("app/reports/generator.py").read_text(encoding="utf-8")
     assert "report_id = str(job_id)" in text
     assert 'patient_info.get("report_id"' not in text
+
+
+def test_dockerfiles_use_job_client_mount():
+    dockerfiles = [
+        Path("docker/gatk-api/Dockerfile.gatk-api"),
+        Path("docker/pharmcat/Dockerfile"),
+        Path("docker/pypgx/Dockerfile.pypgx"),
+        Path("docker/zarohla/Dockerfile"),
+        Path("docker/nextflow/Dockerfile.nextflow"),
+    ]
+    for df in dockerfiles:
+        text = df.read_text(encoding="utf-8")
+        assert "/job-client" in text, df
+        assert "/workflow-client" not in text, df

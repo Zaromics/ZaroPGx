@@ -30,7 +30,7 @@ from pydantic import BaseModel
 
 # Import shared workflow client for integration
 import sys
-sys.path.append('/workflow-client')
+sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 
 # Set up more verbose logging with both file and console handlers
@@ -102,7 +102,7 @@ REFERENCE_PATHS = {
     'grch38': os.path.join(REFERENCE_DIR, 'hg38', 'Homo_sapiens_assembly38.fasta')  # symlink
 }
 
-# Job queue to track running variant calling jobs
+# In-memory GATK run tracker only — not the ORM Job /api/v1/jobs entity (137c).
 jobs = {}  # job_id -> job_info
 
 # Store running processes by workflow_id for cancellation
