@@ -676,42 +676,6 @@ async def health_check():
     return {"status": "healthy", "timestamp": str(datetime.now(timezone.utc))}
 
 
-@app.get("/api/genome-download-status")
-async def genome_download_status():
-    """Proxy endpoint to get genome download status"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{os.getenv('GENOME_DOWNLOADER_API_URL', 'http://genome-downloader:5050')}/status",
-                timeout=5.0,
-            ) as response:
-                return await response.json()
-    except Exception as e:
-        logger.error(f"Error fetching genome download status: {str(e)}")
-        return {
-            "in_progress": False,
-            "completed": False,
-            "error": str(e),
-            "genomes": {},
-            "overall_progress": 0,
-        }
-
-
-@app.post("/api/start-genome-download")
-async def start_genome_download():
-    """Proxy endpoint to start genome download"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{os.getenv('GENOME_DOWNLOADER_API_URL', 'http://genome-downloader:5050')}/start-download",
-                timeout=5.0,
-            ) as response:
-                return await response.json()
-    except Exception as e:
-        logger.error(f"Error starting genome download: {str(e)}")
-        return {"status": "error", "error": str(e)}
-
-
 # Legacy call_gatk_variants function removed - replaced by GATK API service
 
 # Legacy process_file_in_background function removed - replaced by process_file_background in upload_router.py
