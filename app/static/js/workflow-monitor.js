@@ -133,25 +133,39 @@ class WorkflowMonitor {
      */
     async refreshProgress() {
         try {
-            const response = await fetch(`${this.config.baseUrl}/api/v1/upload/status/${this.workflowId}`);
+            const response = await fetch(
+                `${this.config.baseUrl}/api/v1/jobs/${this.workflowId}/progress`
+            );
             if (response.ok) {
                 const data = await response.json();
                 this.logger.debug('Progress refresh received data:', data);
-                
+
                 // Update progress if we got new data
                 if (data.progress_percentage !== undefined) {
                     this.currentProgress = data.progress_percentage;
                     this.workflowStatus = data.status;
-                    
+
                     // Trigger progress callback to update UI
                     this.callbacks.onProgress(data.progress_percentage, data);
-                    
+
                     // Check if completed while tab was hidden
                     if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
                         this.isCompleted = true;
                         this.callbacks.onComplete(data);
                     }
                 }
+            } else {
+                let detail = '';
+                try {
+                    detail = (await response.text()).slice(0, 200);
+                } catch (_) {
+                    /* ignore body read errors */
+                }
+                this.logger.warn(
+                    'Progress refresh non-OK:',
+                    response.status,
+                    detail
+                );
             }
         } catch (error) {
             this.logger.warn('Progress refresh failed:', error);
