@@ -248,7 +248,9 @@ class AlleleCallResult(BaseModel):
     """Model for complete allele calling results"""
 
     patient_id: str = Field(..., description="Patient identifier")
-    data_id: str = Field(..., description="Genetic data identifier (= genetic_data.data_id)")
+    data_id: str = Field(
+        ..., description="Genetic data identifier (= genetic_data.data_id)"
+    )
     job_id: str
     diplotypes: List[Diplotype] = Field(..., description="List of diplotype calls")
     created_at: datetime = Field(..., description="When the results were generated")
@@ -275,7 +277,9 @@ class ReportRequest(BaseModel):
     """Model for report generation requests"""
 
     patient_id: str = Field(..., description="Patient identifier")
-    data_id: str = Field(..., description="Genetic data identifier (= genetic_data.data_id)")
+    data_id: str = Field(
+        ..., description="Genetic data identifier (= genetic_data.data_id)"
+    )
     job_id: str
     report_type: str = Field("comprehensive", description="Type of report to generate")
     include_drugs: Optional[List[str]] = Field(
@@ -287,7 +291,8 @@ class ReportResponse(BaseModel):
     """Model for report generation responses"""
 
     report_id: str = Field(
-        ..., description="Display report id (= job_id); not DB patient_reports.report_id"
+        ...,
+        description="Display report id (= job_id); not DB patient_reports.report_id",
     )
     patient_id: str = Field(..., description="Patient identifier")
     created_at: datetime = Field(..., description="When the report was created")
@@ -341,9 +346,7 @@ class JobCreate(BaseModel):
     total_steps: Optional[int] = Field(
         None, description="Total number of steps in the job"
     )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Job metadata"
-    )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Job metadata")
     created_by: Optional[str] = Field(None, description="User who created the job")
 
 
@@ -373,9 +376,7 @@ class JobResponse(BaseModel):
     status: JobStatus = Field(..., description="Job status")
     created_at: datetime = Field(..., description="When the job was created")
     started_at: Optional[datetime] = Field(None, description="When the job started")
-    completed_at: Optional[datetime] = Field(
-        None, description="When the job completed"
-    )
+    completed_at: Optional[datetime] = Field(None, description="When the job completed")
     total_steps: Optional[int] = Field(None, description="Total number of steps")
     completed_steps: Optional[int] = Field(
         None, description="Number of completed steps"

@@ -47,9 +47,7 @@ class PharmCATDataService:
             workflow_uuid = uuid.UUID(str(workflow_id))
 
             # Get workflow to find associated PharmCAT run
-            job = (
-                self.db.query(Job).filter(Job.id == workflow_uuid).first()
-            )
+            job = self.db.query(Job).filter(Job.id == workflow_uuid).first()
             if not job:
                 logger.warning(f"Workflow {workflow_id} not found")
                 return None
@@ -528,9 +526,7 @@ class PharmCATDataService:
             True if successful, False otherwise
         """
         try:
-            job = (
-                self.db.query(Job).filter(Job.id == workflow_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == workflow_id).first()
             if not job:
                 logger.error(f"Workflow {workflow_id} not found")
                 return False
@@ -566,9 +562,7 @@ class PharmCATDataService:
             Dict containing PharmCAT summary data, or None if not found
         """
         try:
-            job = (
-                self.db.query(Job).filter(Job.id == workflow_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == workflow_id).first()
             if not job:
                 return None
 

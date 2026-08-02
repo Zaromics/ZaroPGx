@@ -230,9 +230,7 @@ class ConnectionManager:
         Returns:
             Total number of active connections
         """
-        return sum(
-            len(connections) for connections in self.job_connections.values()
-        )
+        return sum(len(connections) for connections in self.job_connections.values())
 
     async def broadcast_system_message(self, message: str, message_type: str = "info"):
         """

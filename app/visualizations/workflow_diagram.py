@@ -785,7 +785,12 @@ def _render_graphviz_diagram(
     e("Normalize", "WorkflowDiagram", active=True)
     n("Generate", "Generate Reports\n(app/reports/generator.py)", active=True)
     e("WorkflowDiagram", "Generate", active=True)
-    n("ReportsDir", "Write to /data/reports/:patient_id/:job_id/", active=True, shape="folder")
+    n(
+        "ReportsDir",
+        "Write to /data/reports/:patient_id/:job_id/",
+        active=True,
+        shape="folder",
+    )
     e("Generate", "ReportsDir", active=True)
 
     if exported_to_fhir:

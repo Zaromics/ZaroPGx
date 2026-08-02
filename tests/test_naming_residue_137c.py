@@ -1,4 +1,5 @@
 """137c naming residue contracts — hard-cut file_id→data_id, cleanup, WS."""
+
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,7 @@ def test_main_status_path_uses_data_id():
 def test_cleanup_path_is_job_not_workflow():
     text = Path("app/main.py").read_text(encoding="utf-8")
     assert '@app.post("/api/cleanup/job/{job_id}")' in text
-    assert '/api/cleanup/workflow/' not in text
+    assert "/api/cleanup/workflow/" not in text
 
 
 def test_websocket_envelope_type_is_job_update():

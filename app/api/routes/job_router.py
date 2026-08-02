@@ -39,8 +39,8 @@ from app.api.models import (
     JobStepUpdate,
     JobUpdate,
 )
-from app.services.websocket_manager import connection_manager
 from app.services.job_service import JobService
+from app.services.websocket_manager import connection_manager
 
 logger = logging.getLogger(__name__)
 
@@ -303,9 +303,7 @@ async def update_job_step(
     """
     try:
         job_service = JobService(db)
-        step = job_service.update_job_step(
-            job_id, step_name, update_data
-        )
+        step = job_service.update_job_step(job_id, step_name, update_data)
 
         if not step:
             raise HTTPException(
@@ -408,9 +406,7 @@ async def log_job_event(
 
 
 @router.get("/{job_id}/logs", response_model=List[JobLogResponse])
-async def get_job_logs(
-    job_id: str, limit: int = 100, db: Session = Depends(get_db)
-):
+async def get_job_logs(job_id: str, limit: int = 100, db: Session = Depends(get_db)):
     """
     Get workflow logs.
 
@@ -483,9 +479,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             job = job_service.get_job(job_id)
 
             if job:
-                logger.info(
-                    f"Job found: {job.name} (status: {job.status})"
-                )
+                logger.info(f"Job found: {job.name} (status: {job.status})")
 
                 # Get proper progress calculation using WorkflowProgressCalculator
                 progress_response = job_service.get_job_progress(job_id)
@@ -516,9 +510,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         job.started_at.isoformat() if job.started_at else None
                     ),
                     "completed_at": (
-                        job.completed_at.isoformat()
-                        if job.completed_at
-                        else None
+                        job.completed_at.isoformat() if job.completed_at else None
                     ),
                 }
 
@@ -535,9 +527,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 return
 
         except Exception as e:
-            logger.error(
-                f"Error in WebSocket endpoint for job {job_id}: {str(e)}"
-            )
+            logger.error(f"Error in WebSocket endpoint for job {job_id}: {str(e)}")
             await websocket.send_text(
                 json.dumps(
                     {"type": "error", "message": f"Internal server error: {str(e)}"}
@@ -587,14 +577,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 logger.info(f"WebSocket disconnected for job {job_id}")
                 break
             except json.JSONDecodeError:
-                logger.warning(
-                    f"Invalid JSON received from WebSocket for job {job_id}"
-                )
+                logger.warning(f"Invalid JSON received from WebSocket for job {job_id}")
                 continue
             except Exception as e:
-                logger.error(
-                    f"Error handling WebSocket message for job {job_id}: {e}"
-                )
+                logger.error(f"Error handling WebSocket message for job {job_id}: {e}")
                 continue
 
     except Exception as e:
@@ -630,9 +616,7 @@ async def cancel_nextflow_job(job_id: str, job_metadata: dict):
         data_id = job_metadata.get("data_id")
 
         if not patient_id:
-            logger.warning(
-                f"No patient_id found in workflow metadata for {job_id}"
-            )
+            logger.warning(f"No patient_id found in workflow metadata for {job_id}")
             return
 
         # Construct job key (same format as used in Nextflow runner)
@@ -719,9 +703,7 @@ async def cancel_container_job(container: dict, patient_id: str, job_id: str):
         if response.status_code == 200:
             logger.info(f"Successfully cancelled job in {container['name']}")
         elif response.status_code == 404:
-            logger.info(
-                f"No running job found in {container['name']} for job {job_id}"
-            )
+            logger.info(f"No running job found in {container['name']} for job {job_id}")
         else:
             logger.warning(
                 f"Cancel request to {container['name']} returned {response.status_code}: {response.text}"
@@ -768,9 +750,7 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
         # Prepare cancellation metadata
         from app.api.models import JobStatus
 
-        cancellation_metadata = (
-            job.job_metadata.copy() if job.job_metadata else {}
-        )
+        cancellation_metadata = job.job_metadata.copy() if job.job_metadata else {}
         cancellation_metadata["cancelled"] = True
         cancellation_metadata["cancelled_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -780,20 +760,14 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
         # Cancel Nextflow job (orchestrator) first
         try:
             await cancel_nextflow_job(job_id, job.job_metadata)
-            logger.info(
-                f"Successfully cancelled Nextflow job for job {job_id}"
-            )
+            logger.info(f"Successfully cancelled Nextflow job for job {job_id}")
         except Exception as e:
-            logger.warning(
-                f"Failed to cancel Nextflow job for job {job_id}: {e}"
-            )
+            logger.warning(f"Failed to cancel Nextflow job for job {job_id}: {e}")
 
         # Cancel individual container jobs
         try:
             await cancel_container_jobs(job_id, job.job_metadata)
-            logger.info(
-                f"Successfully cancelled container jobs for job {job_id}"
-            )
+            logger.info(f"Successfully cancelled container jobs for job {job_id}")
         except Exception as e:
             logger.warning(
                 f"Failed to cancel some container jobs for job {job_id}: {e}"
@@ -809,18 +783,16 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
         job_update = JobUpdate(
             status=JobStatus.CANCELLED, metadata=cancellation_metadata
         )
-        updated_job = job_service.update_job(
-            job_id, job_update
-        )
+        updated_job = job_service.update_job(job_id, job_update)
 
-        if not updated_workflow:
+        if not updated_job:
             # Even if DB update fails, processes are already stopped
             logger.error(
                 f"Failed to update database status for job {job_id}, but processes are stopped"
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update workflow status, but processes have been stopped",
+                detail="Failed to update job status, but processes have been stopped",
             )
 
         # Log the cancellation

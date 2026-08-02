@@ -20,8 +20,6 @@ from sqlalchemy.orm import Session
 
 from app.api.db import Job, JobLog, JobStep
 from app.api.models import (
-    LogLevel,
-    StepStatus,
     JobCreate,
     JobLogCreate,
     JobLogResponse,
@@ -32,6 +30,8 @@ from app.api.models import (
     JobStepResponse,
     JobStepUpdate,
     JobUpdate,
+    LogLevel,
+    StepStatus,
     WorkflowOptions,
 )
 from app.services.cleanup_service import cleanup_service
@@ -134,9 +134,7 @@ class JobService:
     def __init__(self, db: Session):
         self.db = db
 
-    async def _broadcast_job_update(
-        self, job_id: str, message: Dict[str, Any]
-    ):
+    async def _broadcast_job_update(self, job_id: str, message: Dict[str, Any]):
         """Broadcast workflow update to WebSocket connections."""
         try:
             logger.info(f"Broadcasting workflow update for {job_id}: {message}")
@@ -150,21 +148,15 @@ class JobService:
     ):
         """Broadcast step update to WebSocket connections."""
         try:
-            logger.info(
-                f"Broadcasting step update for {job_id}/{step_name}: {message}"
-            )
-            await connection_manager.send_step_update(
-                str(job_id), step_name, message
-            )
+            logger.info(f"Broadcasting step update for {job_id}/{step_name}: {message}")
+            await connection_manager.send_step_update(str(job_id), step_name, message)
             logger.info(
                 f"Successfully broadcasted step update for {job_id}/{step_name}"
             )
         except Exception as e:
             logger.error(f"Failed to broadcast step update: {e}")
 
-    async def _broadcast_log_update(
-        self, job_id: str, log_message: Dict[str, Any]
-    ):
+    async def _broadcast_log_update(self, job_id: str, log_message: Dict[str, Any]):
         """Broadcast log update to WebSocket connections."""
         try:
             logger.info(f"Broadcasting log update for {job_id}: {log_message}")
@@ -267,9 +259,7 @@ class JobService:
         when the caller owns the surrounding transaction (e.g. create_job).
         Pass resolved steps to avoid a second resolve_steps call."""
         steps = (
-            resolved
-            if resolved is not None
-            else resolve_steps(workflow_type, options)
+            resolved if resolved is not None else resolve_steps(workflow_type, options)
         )
         minted: List[JobStep] = []
         for step in steps:
@@ -346,9 +336,7 @@ class JobService:
                     raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the workflow
-            job = (
-                self.db.query(Job).filter(Job.id == job_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == job_id).first()
             if not job:
                 return None
 
@@ -422,9 +410,7 @@ class JobService:
                                 else "Processing..."
                             ),
                             "started_at": (
-                                job.started_at.isoformat()
-                                if job.started_at
-                                else None
+                                job.started_at.isoformat() if job.started_at else None
                             ),
                             "completed_at": (
                                 job.completed_at.isoformat()
@@ -481,9 +467,7 @@ class JobService:
                     raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the workflow
-            job = (
-                self.db.query(Job).filter(Job.id == job_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == job_id).first()
             if not job:
                 return None
 
@@ -664,11 +648,7 @@ class JobService:
                 progress_response = self.get_job_progress(job_id)
                 if progress_response:
                     # Get workflow object for additional data
-                    job = (
-                        self.db.query(Job)
-                        .filter(Job.id == job_id)
-                        .first()
-                    )
+                    job = self.db.query(Job).filter(Job.id == job_id).first()
                     if job:
                         # Schedule workflow progress broadcast
                         schedule_coroutine(
@@ -737,9 +717,7 @@ class JobService:
                     raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the workflow
-            job = (
-                self.db.query(Job).filter(Job.id == job_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == job_id).first()
             if not job:
                 return None
 
@@ -763,9 +741,7 @@ class JobService:
 
             # Get workflow metadata for configuration
             workflow_config = (
-                job.job_metadata.get("workflow", {})
-                if job.job_metadata
-                else {}
+                job.job_metadata.get("workflow", {}) if job.job_metadata else {}
             )
 
             # Calculate progress using centralized calculator
@@ -926,9 +902,7 @@ class JobService:
     def _update_job_progress(self, job_id: uuid.UUID) -> None:
         """Update workflow progress based on completed steps."""
         try:
-            job = (
-                self.db.query(Job).filter(Job.id == job_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == job_id).first()
             if not job:
                 return
 
@@ -970,10 +944,7 @@ class JobService:
                 try:
                     # Extract patient_id from workflow metadata if available
                     patient_id = None
-                    if (
-                        hasattr(job, "job_metadata")
-                        and job.job_metadata
-                    ):
+                    if hasattr(job, "job_metadata") and job.job_metadata:
                         patient_id = job.job_metadata.get("patient_id")
 
                     # Clean up workflow-specific temporary files
@@ -1058,9 +1029,7 @@ class JobService:
             logger.error(f"Failed to log workflow event: {str(e)}")
             # Don't fail the main operation if logging fails
 
-    def get_job_steps(
-        self, job_id: Union[str, uuid.UUID]
-    ) -> List[JobStepResponse]:
+    def get_job_steps(self, job_id: Union[str, uuid.UUID]) -> List[JobStepResponse]:
         """
         Get all steps for a job.
 
@@ -1099,9 +1068,7 @@ class JobService:
         """
         try:
             job_id = uuid.UUID(str(job_id))
-            job = (
-                self.db.query(Job).filter(Job.id == job_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == job_id).first()
 
             if not job:
                 logger.error(f"Job {job_id} not found")
@@ -1137,9 +1104,7 @@ class JobService:
         """
         try:
             job_id = uuid.UUID(str(job_id))
-            job = (
-                self.db.query(Job).filter(Job.id == job_id).first()
-            )
+            job = self.db.query(Job).filter(Job.id == job_id).first()
 
             if not job:
                 return None
@@ -1148,9 +1113,7 @@ class JobService:
             return metadata.get("pharmcat_run_id")
 
         except Exception as e:
-            logger.error(
-                f"Error getting PharmCAT run ID for workflow {job_id}: {e}"
-            )
+            logger.error(f"Error getting PharmCAT run ID for workflow {job_id}: {e}")
             return None
 
     def get_pharmcat_data(self, job_id: str) -> Optional[Dict[str, Any]]:

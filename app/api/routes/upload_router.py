@@ -41,17 +41,17 @@ from app.api.db import (
 from app.api.models import FileAnalysis as PydanticFileAnalysis
 from app.api.models import (
     FileType,
-    LogLevel,
-    StepStatus,
-    UploadResponse,
-    VCFHeaderInfo,
     JobCreate,
-    WorkflowInfo,
-    WorkflowOptions,
     JobLogCreate,
     JobStatus,
     JobStepUpdate,
     JobUpdate,
+    LogLevel,
+    StepStatus,
+    UploadResponse,
+    VCFHeaderInfo,
+    WorkflowInfo,
+    WorkflowOptions,
 )
 from app.api.utils.file_processor import FileProcessor
 from app.api.utils.header_inspector import (
@@ -61,8 +61,8 @@ from app.api.utils.header_inspector import (
 )
 from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
-from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.services.job_service import JobService, schedule_coroutine
+from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.visualizations.workflow_diagram import (
     render_kroki_mermaid_svg,
     render_simple_png_from_workflow,
@@ -185,9 +185,7 @@ async def handle_final_stages_progression(
     Uses a fresh DB session in the worker (SQLAlchemy sessions are not thread-safe).
     """
     # job_service is unused here — kept for call-site compatibility
-    await asyncio.to_thread(
-        _handle_final_stages_progression_sync, job_id, outdir
-    )
+    await asyncio.to_thread(_handle_final_stages_progression_sync, job_id, outdir)
 
 
 def _handle_final_stages_progression_sync(job_id: str, outdir: str):
@@ -204,9 +202,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         # Check for cancellation before starting
         job = job_service.get_job(job_id)
         if job and job.status == "cancelled":
-            logger.info(
-                f"Job {job_id} was cancelled before report generation"
-            )
+            logger.info(f"Job {job_id} was cancelled before report generation")
             # Thread-safe schedule onto the main event loop
             schedule_coroutine(
                 delayed_cleanup_on_cancellation(job_id, job.job_metadata)
@@ -217,9 +213,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         step_update = JobStepUpdate(
             status=StepStatus.RUNNING, output_data={"progress_percent": 0}
         )
-        job_service.update_job_step(
-            job_id, "report_generation", step_update
-        )
+        job_service.update_job_step(job_id, "report_generation", step_update)
 
         log_data = JobLogCreate(
             step_name="report_generation",
@@ -242,7 +236,6 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         if not patient_id or not data_id:
             raise RuntimeError(f"Missing patient_id or data_id in workflow metadata")
 
-
         # Extract sample identifier from workflow metadata
         sample_identifier = None
         if "sample_identifier" in metadata:
@@ -256,9 +249,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
 
         # Set up all output paths in the nested job directory (filenames use job_id)
         pdf_report_path = patient_dir / f"{job_id}_pgx_report.pdf"
-        interactive_html_path = (
-            patient_dir / f"{job_id}_pgx_report_interactive.html"
-        )
+        interactive_html_path = patient_dir / f"{job_id}_pgx_report_interactive.html"
         pharmcat_html_path = patient_dir / f"{job_id}_pgx_pharmcat.html"
         pharmcat_json_path = patient_dir / f"{job_id}_pgx_pharmcat.json"
         pharmcat_tsv_path = patient_dir / f"{job_id}_pgx_pharmcat.tsv"
@@ -377,9 +368,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
 
                             if pharmcat_run_id:
                                 # Link PharmCAT run to workflow
-                                job_service.link_pharmcat_run(
-                                    job_id, pharmcat_run_id
-                                )
+                                job_service.link_pharmcat_run(job_id, pharmcat_run_id)
                                 logger.info(
                                     f"Successfully linked PharmCAT run {pharmcat_run_id} to job {job_id}"
                                 )
@@ -484,9 +473,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         step_update = JobStepUpdate(
             status=StepStatus.RUNNING, output_data={"progress_percent": 35}
         )
-        job_service.update_job_step(
-            job_id, "report_generation", step_update
-        )
+        job_service.update_job_step(job_id, "report_generation", step_update)
 
         # Generate workflow diagrams for this sample
         logger.info("=== WORKFLOW DIAGRAM GENERATION START ===")
@@ -623,9 +610,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         step_update = JobStepUpdate(
             status=StepStatus.RUNNING, output_data={"progress_percent": 100}
         )
-        job_service.update_job_step(
-            job_id, "report_generation", step_update
-        )
+        job_service.update_job_step(job_id, "report_generation", step_update)
 
         # Log report generation completion
         logger.info(f"Report generation completed for job {job_id}")
@@ -655,9 +640,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
             status=StepStatus.COMPLETED,
             output_data={"reports": response_data, "progress_percent": 100},
         )
-        job_service.update_job_step(
-            job_id, "report_generation", step_update
-        )
+        job_service.update_job_step(job_id, "report_generation", step_update)
 
         # Complete the workflow
         workflow_update = JobUpdate(status=JobStatus.COMPLETED)
@@ -701,15 +684,11 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         )
         job_service.log_job_event(job_id, log_data)
 
-        logger.info(
-            f"Job {job_id} completed successfully with reports generated"
-        )
+        logger.info(f"Job {job_id} completed successfully with reports generated")
         logger.info(f"Generated reports: {list(response_data.keys())}")
 
     except Exception as e:
-        logger.error(
-            f"Error in final stages progression for job {job_id}: {e}"
-        )
+        logger.error(f"Error in final stages progression for job {job_id}: {e}")
         workflow_update = JobUpdate(status=JobStatus.FAILED)
         job_service.update_job(job_id, workflow_update)
 
@@ -910,14 +889,10 @@ async def process_file_nextflow_background(
 
             # Check for cancellation before starting
             if job_obj.status == "cancelled":
-                logger.info(
-                    f"Job {job_id} was cancelled before processing started"
-                )
+                logger.info(f"Job {job_id} was cancelled before processing started")
                 # Schedule delayed cleanup to ensure any partial files are removed
                 task = asyncio.create_task(
-                    delayed_cleanup_on_cancellation(
-                        job_id, job_obj.job_metadata
-                    )
+                    delayed_cleanup_on_cancellation(job_id, job_obj.job_metadata)
                 )
                 # Add a name for easier debugging
                 task.set_name(f"delayed_cleanup_{job_id}")
@@ -928,9 +903,7 @@ async def process_file_nextflow_background(
 
         # Update header analysis step
         step_update = JobStepUpdate(status=StepStatus.RUNNING)
-        job_service.update_job_step(
-            job_id, "header_analysis", step_update
-        )
+        job_service.update_job_step(job_id, "header_analysis", step_update)
 
         # Inspect file header
         try:
@@ -978,9 +951,7 @@ async def process_file_nextflow_background(
                 status=StepStatus.COMPLETED,
                 output_data={"header_record_id": header_record_id},
             )
-            job_service.update_job_step(
-                job_id, "header_analysis", step_update
-            )
+            job_service.update_job_step(job_id, "header_analysis", step_update)
 
             log_data = JobLogCreate(
                 step_name="header_analysis",
@@ -994,9 +965,7 @@ async def process_file_nextflow_background(
             step_update = JobStepUpdate(
                 status=StepStatus.FAILED, error_details={"error": str(e)}
             )
-            job_service.update_job_step(
-                job_id, "header_analysis", step_update
-            )
+            job_service.update_job_step(job_id, "header_analysis", step_update)
 
             workflow_update = JobUpdate(status=JobStatus.FAILED)
             job_service.update_job(job_id, workflow_update)
@@ -1063,9 +1032,7 @@ async def process_file_nextflow_background(
                             meta["header_sample_identifier"] = header_sample_identifier
                         if effective_sample_identifier:
                             meta["sample_identifier"] = effective_sample_identifier
-                        job_service.update_job(
-                            job_id, JobUpdate(metadata=meta)
-                        )
+                        job_service.update_job(job_id, JobUpdate(metadata=meta))
                 except Exception as meta_err:
                     logger.debug(
                         "Could not persist sample identifiers on job %s: %s",
@@ -1248,9 +1215,7 @@ async def upload_genomic_data(
         )
 
         # Start the workflow
-        job_service.update_job(
-            job.id, JobUpdate(status=JobStatus.RUNNING)
-        )
+        job_service.update_job(job.id, JobUpdate(status=JobStatus.RUNNING))
 
         # Schedule background processing: Always use Nextflow
         background_tasks.add_task(
@@ -1307,9 +1272,7 @@ async def upload_genomic_data(
             workflow=workflow_info,
         )
 
-        logger.info(
-            f"Upload successful for patient {actual_patient_id}, job {job.id}"
-        )
+        logger.info(f"Upload successful for patient {actual_patient_id}, job {job.id}")
         return response
 
     except Exception as e:

@@ -20,14 +20,14 @@ import pytest
 # Import the modules to test
 from app.api.db import Job, JobLog, JobStep
 from app.api.models import (
-    LogLevel,
-    StepStatus,
     JobCreate,
     JobLogCreate,
     JobStatus,
     JobStepCreate,
     JobStepUpdate,
     JobUpdate,
+    LogLevel,
+    StepStatus,
 )
 from app.services.job_service import JobService
 
@@ -67,7 +67,8 @@ class TestJobService:
         """Test workflow creation with invalid name."""
         workflow_data = JobCreate(
             workflow_type="genomic_analysis",
-            name="", description="A test workflow"  # Empty name should fail
+            name="",
+            description="A test workflow",  # Empty name should fail
         )
 
         with pytest.raises(ValueError, match="Job name is required"):
@@ -78,7 +79,8 @@ class TestJobService:
         # Create a workflow first
         workflow_data = JobCreate(
             workflow_type="genomic_analysis",
-            name="Test Workflow", description="A test workflow"
+            name="Test Workflow",
+            description="A test workflow",
         )
         created_workflow = job_service.create_job(workflow_data)
 
@@ -101,17 +103,14 @@ class TestJobService:
         # Create a workflow first
         workflow_data = JobCreate(
             workflow_type="genomic_analysis",
-            name="Test Workflow", description="A test workflow"
+            name="Test Workflow",
+            description="A test workflow",
         )
         created_workflow = job_service.create_job(workflow_data)
 
         # Update it
-        update_data = JobUpdate(
-            name="Updated Workflow", status=JobStatus.RUNNING
-        )
-        updated_workflow = job_service.update_job(
-            created_workflow.id, update_data
-        )
+        update_data = JobUpdate(name="Updated Workflow", status=JobStatus.RUNNING)
+        updated_workflow = job_service.update_job(created_workflow.id, update_data)
 
         assert updated_workflow is not None
         assert updated_workflow.name == "Updated Workflow"
@@ -123,7 +122,8 @@ class TestJobService:
         # Create a workflow first
         workflow_data = JobCreate(
             workflow_type="genomic_analysis",
-            name="Test Workflow", description="A test workflow"
+            name="Test Workflow",
+            description="A test workflow",
         )
         created_workflow = job_service.create_job(workflow_data)
 
@@ -143,13 +143,12 @@ class TestJobService:
         """Test successful workflow step update."""
         # Create a workflow and step first
         workflow_data = JobCreate(
-            workflow_type="genomic_analysis", name="Test Workflow")
+            workflow_type="genomic_analysis", name="Test Workflow"
+        )
         created_workflow = job_service.create_job(workflow_data)
 
         step_data = JobStepCreate(step_name="test_step", step_order=1)
-        created_step = job_service.add_job_step(
-            created_workflow.id, step_data
-        )
+        created_step = job_service.add_job_step(created_workflow.id, step_data)
 
         # Update the step
         update_data = JobStepUpdate(status=StepStatus.RUNNING)
@@ -173,7 +172,8 @@ class TestJobService:
         """Test successful workflow progress retrieval."""
         # Create a workflow with steps
         workflow_data = JobCreate(
-            workflow_type="genomic_analysis", name="Test Workflow", total_steps=2)
+            workflow_type="genomic_analysis", name="Test Workflow", total_steps=2
+        )
         created_workflow = job_service.create_job(workflow_data)
 
         # Add steps
@@ -199,7 +199,8 @@ class TestJobService:
         """Test successful workflow event logging."""
         # Create a workflow first
         workflow_data = JobCreate(
-            workflow_type="genomic_analysis", name="Test Workflow")
+            workflow_type="genomic_analysis", name="Test Workflow"
+        )
         created_workflow = job_service.create_job(workflow_data)
 
         # Log an event
@@ -227,9 +228,7 @@ class TestConnectionManager:
         mock_websocket = AsyncMock()
 
         job_id = str(uuid.uuid4())
-        connection_id = asyncio.run(
-            connection_manager.connect(mock_websocket, job_id)
-        )
+        connection_id = asyncio.run(connection_manager.connect(mock_websocket, job_id))
 
         assert connection_id is not None
         assert job_id in connection_manager.job_connections
@@ -242,9 +241,7 @@ class TestConnectionManager:
         job_id = str(uuid.uuid4())
 
         # Connect first
-        connection_id = asyncio.run(
-            connection_manager.connect(mock_websocket, job_id)
-        )
+        connection_id = asyncio.run(connection_manager.connect(mock_websocket, job_id))
 
         # Disconnect
         connection_manager.disconnect(mock_websocket, connection_id)
@@ -315,7 +312,11 @@ class TestWorkflowAPI:
     def test_get_job_endpoint(self, client):
         """Test GET /api/v1/jobs/{job_id} endpoint."""
         # Create a workflow first
-        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow", "description": "A test workflow"}
+        workflow_data = {
+            "workflow_type": "genomic_analysis",
+            "name": "Test Workflow",
+            "description": "A test workflow",
+        }
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -396,7 +397,11 @@ class TestWorkflowAPI:
     def test_get_job_progress_endpoint(self, client):
         """Test GET /api/v1/jobs/{job_id}/progress endpoint."""
         # Create a workflow first
-        workflow_data = {"workflow_type": "genomic_analysis", "name": "Test Workflow", "total_steps": 2}
+        workflow_data = {
+            "workflow_type": "genomic_analysis",
+            "name": "Test Workflow",
+            "total_steps": 2,
+        }
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 

@@ -117,9 +117,7 @@ class CleanupService:
                         cleanup_stats["total_size_cleaned"] += size
                         cleanup_stats["total_items_cleaned"] += 1
 
-                        logger.info(
-                            f"Cleaned up job {job_id}: {path} ({size} bytes)"
-                        )
+                        logger.info(f"Cleaned up job {job_id}: {path} ({size} bytes)")
                     else:
                         logger.debug(f"Path does not exist, skipping: {path}")
 

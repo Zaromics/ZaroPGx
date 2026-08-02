@@ -18,8 +18,8 @@ from fastapi.testclient import TestClient
 
 from app.api.db import get_db
 from app.main import app
-from app.services.websocket_manager import ConnectionManager
 from app.services.job_service import JobService
+from app.services.websocket_manager import ConnectionManager
 
 
 class TestWorkflowApi:
@@ -78,9 +78,7 @@ class TestWorkflowApi:
         ]
 
         for step_data in steps:
-            step_response = client.post(
-                f"/api/v1/jobs/{job_id}/steps", json=step_data
-            )
+            step_response = client.post(f"/api/v1/jobs/{job_id}/steps", json=step_data)
             assert step_response.status_code == 201
 
         # Step 3: Start the workflow
@@ -147,7 +145,11 @@ class TestWorkflowApi:
     def test_workflow_with_logging(self, client):
         """Test workflow with comprehensive logging."""
         # Create workflow
-        workflow_data = {"workflow_type": "genomic_analysis", "name": "Logging Test Workflow", "total_steps": 2}
+        workflow_data = {
+            "workflow_type": "genomic_analysis",
+            "name": "Logging Test Workflow",
+            "total_steps": 2,
+        }
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -185,9 +187,7 @@ class TestWorkflowApi:
         ]
 
         for log_data in log_entries:
-            log_response = client.post(
-                f"/api/v1/jobs/{job_id}/logs", json=log_data
-            )
+            log_response = client.post(f"/api/v1/jobs/{job_id}/logs", json=log_data)
             assert log_response.status_code == 201
 
         # Retrieve logs
@@ -211,7 +211,11 @@ class TestWorkflowApi:
     def test_workflow_error_handling(self, client):
         """Test workflow error handling and recovery."""
         # Create workflow
-        workflow_data = {"workflow_type": "genomic_analysis", "name": "Error Test Workflow", "total_steps": 2}
+        workflow_data = {
+            "workflow_type": "genomic_analysis",
+            "name": "Error Test Workflow",
+            "total_steps": 2,
+        }
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -227,9 +231,7 @@ class TestWorkflowApi:
         client.put(f"/api/v1/jobs/{job_id}", json={"status": "running"})
 
         # Complete first step
-        client.put(
-            f"/api/v1/jobs/{job_id}/steps/step1", json={"status": "completed"}
-        )
+        client.put(f"/api/v1/jobs/{job_id}/steps/step1", json={"status": "completed"})
 
         # Fail second step
         error_details = {"error_code": "E001", "error_message": "Processing failed"}
@@ -411,7 +413,11 @@ class TestWorkflowApi:
     def test_workflow_deletion_cascade(self, client):
         """Test that workflow deletion cascades to steps and logs."""
         # Create workflow with steps and logs
-        workflow_data = {"workflow_type": "genomic_analysis", "name": "Cascade Test Workflow", "total_steps": 2}
+        workflow_data = {
+            "workflow_type": "genomic_analysis",
+            "name": "Cascade Test Workflow",
+            "total_steps": 2,
+        }
         create_response = client.post("/api/v1/jobs", json=workflow_data)
         job_id = create_response.json()["id"]
 
@@ -544,9 +550,7 @@ class TestWorkflowApi:
             }
         }
 
-        update_response = client.put(
-            f"/api/v1/jobs/{job_id}", json=update_data
-        )
+        update_response = client.put(f"/api/v1/jobs/{job_id}", json=update_data)
         assert update_response.status_code == 200
 
         # Verify metadata is updated

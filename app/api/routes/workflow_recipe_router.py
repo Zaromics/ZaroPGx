@@ -32,5 +32,7 @@ async def list_workflow_recipes():
 async def get_workflow_recipe(workflow_type: str):
     recipe = get_recipe(workflow_type)
     if recipe is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown workflow_type")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown workflow_type"
+        )
     return _to_response(recipe)

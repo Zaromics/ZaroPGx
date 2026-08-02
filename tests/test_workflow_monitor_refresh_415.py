@@ -1,4 +1,5 @@
 """415 — workflow-monitor refreshProgress must poll Job progress API."""
+
 from pathlib import Path
 
 MONITOR = Path("app/static/js/workflow-monitor.js")
@@ -19,7 +20,11 @@ def test_refresh_progress_warns_on_non_ok():
     assert "Progress refresh failed:" in text or "Progress refresh non-OK" in text
     # Prefer an explicit non-OK branch (else after if response.ok)
     start = text.index("async refreshProgress()")
-    end = text.index("\n    async ", start + 1) if "\n    async " in text[start + 1 :] else start + 800
+    end = (
+        text.index("\n    async ", start + 1)
+        if "\n    async " in text[start + 1 :]
+        else start + 800
+    )
     block = text[start:end]
     assert "if (response.ok)" in block
     assert "else" in block or "response.status" in block

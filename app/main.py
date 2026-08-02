@@ -63,8 +63,8 @@ from app.api.models import (
 )
 from app.api.routes import report_router, upload_router
 from app.api.routes.fhir_export_router import router as fhir_export_router
-from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.job_router import router as job_router
+from app.api.routes.pharmcat_router import router as pharmcat_router
 from app.api.routes.workflow_recipe_router import router as workflow_recipe_router
 from app.api.utils.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -781,9 +781,7 @@ async def call_variants(
 async def cleanup_job_files(job_id: str, patient_id: Optional[str] = None):
     """Clean up temporary files for a specific job."""
     try:
-        result = cleanup_service.cleanup_job_files(
-            job_id=job_id, patient_id=patient_id
-        )
+        result = cleanup_service.cleanup_job_files(job_id=job_id, patient_id=patient_id)
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Failed to cleanup job {job_id}: {e}")
@@ -1364,9 +1362,7 @@ async def check_reports(job_id: str):
                         job.id,
                         JobUpdate(status=JobStatus.COMPLETED),
                     )
-                    logger.info(
-                        f"Updated job status for job {job_id} to completed"
-                    )
+                    logger.info(f"Updated job status for job {job_id} to completed")
         except Exception as e:
             logger.warning(f"Could not check workflow status for job {job_id}: {e}")
             job_data = {"status": "unknown", "complete": False}
@@ -1464,9 +1460,7 @@ async def trigger_completion(job_id: str):
             else:
                 logger.warning(f"Manual trigger for job {job_id} - No job found")
         except Exception as e:
-            logger.error(
-                f"Manual trigger for job {job_id} - Error updating job: {e}"
-            )
+            logger.error(f"Manual trigger for job {job_id} - Error updating job: {e}")
     else:
         logger.error(
             f"Manual trigger for job {job_id} - No reports found at expected locations"

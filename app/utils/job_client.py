@@ -28,9 +28,7 @@ class JobClient:
     - Retry logic and error handling
     """
 
-    def __init__(
-        self, base_url: str = None, job_id: str = None, step_name: str = None
-    ):
+    def __init__(self, base_url: str = None, job_id: str = None, step_name: str = None):
         """
         Initialize the job client.
 
@@ -39,9 +37,7 @@ class JobClient:
             job_id: Job ID to track (defaults to environment variable)
             step_name: Step name for this client (defaults to environment variable)
         """
-        self.base_url = base_url or os.getenv(
-            "JOB_API_BASE", "http://app:8000/api/v1"
-        )
+        self.base_url = base_url or os.getenv("JOB_API_BASE", "http://app:8000/api/v1")
         self.job_id = job_id or os.getenv("JOB_ID")
         self.step_name = step_name or os.getenv("STEP_NAME")
 
@@ -185,9 +181,7 @@ class JobClient:
                 "metadata": metadata or {},
             }
 
-            await self._make_request(
-                "POST", f"/jobs/{self.job_id}/logs", data
-            )
+            await self._make_request("POST", f"/jobs/{self.job_id}/logs", data)
 
             logger.info(f"Logged {level} event: {message}")
             return True
@@ -331,9 +325,7 @@ class JobClient:
             Progress data or None if failed
         """
         try:
-            return await self._make_request(
-                "GET", f"/jobs/{self.job_id}/progress"
-            )
+            return await self._make_request("GET", f"/jobs/{self.job_id}/progress")
         except Exception as e:
             logger.error(f"Failed to get job progress: {e}")
             return None
@@ -364,9 +356,7 @@ class JobClient:
 
 
 # Convenience functions for non-async usage
-def create_job_client(
-    job_id: str = None, step_name: str = None
-) -> JobClient:
+def create_job_client(job_id: str = None, step_name: str = None) -> JobClient:
     """
     Create a job client (synchronous wrapper).
 
@@ -410,9 +400,7 @@ def update_step_status_sync(
     """Synchronous wrapper for update_step_status."""
 
     async def _update():
-        async with JobClient(
-            job_id=job_id, step_name=step_name
-        ) as client:
+        async with JobClient(job_id=job_id, step_name=step_name) as client:
             return await client.update_step_status(
                 status, message, output_data, error_details
             )
@@ -430,9 +418,7 @@ def log_event_sync(
     """Synchronous wrapper for log_event."""
 
     async def _log():
-        async with JobClient(
-            job_id=job_id, step_name=step_name
-        ) as client:
+        async with JobClient(job_id=job_id, step_name=step_name) as client:
             return await client.log_event(level, message, metadata)
 
     return run_async(_log())
@@ -450,9 +436,7 @@ def complete_step_sync(
     output_data: Dict[str, Any] = None,
 ) -> bool:
     """Synchronous wrapper for complete_step."""
-    return update_step_status_sync(
-        job_id, step_name, "completed", message, output_data
-    )
+    return update_step_status_sync(job_id, step_name, "completed", message, output_data)
 
 
 def fail_step_sync(

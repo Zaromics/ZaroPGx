@@ -1,4 +1,5 @@
 """58/102 — progress skip renormalization."""
+
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 
 

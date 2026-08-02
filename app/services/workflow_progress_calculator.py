@@ -136,7 +136,9 @@ class WorkflowProgressCalculator:
         lo, hi = band
         return max(0, hi - lo)
 
-    def _planned_steps_from_config(self, workflow_config: Optional[Dict] = None) -> List[str]:
+    def _planned_steps_from_config(
+        self, workflow_config: Optional[Dict] = None
+    ) -> List[str]:
         cfg = workflow_config or {}
         fa = cfg.get("file_analysis") or {}
         file_type = str(fa.get("file_type") or cfg.get("file_type") or "").lower()
@@ -159,9 +161,7 @@ class WorkflowProgressCalculator:
             planned.append("pypgx_analysis")
         if needs_bam2vcf:
             planned.append("pypgx_bam2vcf")
-        planned.extend(
-            ["pharmcat_analysis", "diagram_generation", "report_generation"]
-        )
+        planned.extend(["pharmcat_analysis", "diagram_generation", "report_generation"])
         return planned
 
     def _active_ordered_steps(

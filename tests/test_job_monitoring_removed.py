@@ -32,8 +32,8 @@ def test_job_status_service_module_gone():
 
 def test_legacy_monitoring_only_symbols_gone():
     """Assert 138-only monitoring symbols stay gone; 137a Job symbols may exist."""
-    import app.api.models as models
     import app.api.db as db
+    import app.api.models as models
 
     # 138 monitoring-era Pydantic (distinct from 137a JobCreate/Update/Status/Response)
     for name in (

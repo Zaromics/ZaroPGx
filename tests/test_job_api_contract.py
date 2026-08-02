@@ -93,9 +93,9 @@ def test_container_cancel_models_are_job_id_only():
     for rel in _CANCEL_SOURCES:
         text = (root / rel).read_text(encoding="utf-8")
         assert "class CancelRequest" in text
-        assert 'AliasChoices("job_id", "workflow_id")' not in text, (
-            f"{rel} must drop dual-accept AliasChoices"
-        )
+        assert (
+            'AliasChoices("job_id", "workflow_id")' not in text
+        ), f"{rel} must drop dual-accept AliasChoices"
         # Field must be named job_id (not workflow_id with alias)
         assert re.search(r"job_id:\s*str", text), f"{rel} CancelRequest.job_id missing"
 

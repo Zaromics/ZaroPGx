@@ -160,12 +160,8 @@ class Job(Base):
     job_metadata = Column(JSON, default=dict)
     workflow_type = Column(String, nullable=True, index=True)
     workflow_snapshot = Column(JSON, nullable=True)
-    steps = relationship(
-        "JobStep", back_populates="job", cascade="all, delete-orphan"
-    )
-    logs = relationship(
-        "JobLog", back_populates="job", cascade="all, delete-orphan"
-    )
+    steps = relationship("JobStep", back_populates="job", cascade="all, delete-orphan")
+    logs = relationship("JobLog", back_populates="job", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"Job(id={self.id}, name={self.name}, status={self.status})"
@@ -210,7 +206,9 @@ class JobStep(Base):
     job = relationship("Job", back_populates="steps")
 
     def __repr__(self) -> str:
-        return f"JobStep(id={self.id}, step_name={self.step_name}, status={self.status})"
+        return (
+            f"JobStep(id={self.id}, step_name={self.step_name}, status={self.status})"
+        )
 
 
 class JobLog(Base):

@@ -12,7 +12,7 @@ def test_workflow_registry_module_present():
 
 
 def test_registry_lists_genomic_analysis():
-    from app.services.workflow_registry import list_recipes, get_recipe
+    from app.services.workflow_registry import get_recipe, list_recipes
 
     recipes = list_recipes()
     assert any(r.workflow_type == "genomic_analysis" for r in recipes)
@@ -94,8 +94,9 @@ def test_job_orm_has_workflow_type_and_snapshot():
 
 
 def test_job_create_requires_workflow_type():
-    from app.api.models import JobCreate
     from pydantic import ValidationError
+
+    from app.api.models import JobCreate
 
     with pytest.raises(ValidationError):
         JobCreate(name="x")  # missing workflow_type

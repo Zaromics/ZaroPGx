@@ -2045,7 +2045,9 @@ def generate_report(
         "patient": patient_info or {},
         "patient_id": patient_info.get("id", "unknown") if patient_info else "unknown",
         "report_id": (
-            str(job_id) if job_id else (patient_info.get("id", "unknown") if patient_info else "unknown")
+            str(job_id)
+            if job_id
+            else (patient_info.get("id", "unknown") if patient_info else "unknown")
         ),
         "report_date": datetime.now().strftime("%Y-%m-%d"),
         "genes": data.get("genes", []),
