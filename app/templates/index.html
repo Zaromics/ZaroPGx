@@ -1658,8 +1658,8 @@
                 window.isVcfFile = true;
                 
                 // Start progress tracking
-                if (window.GenomeDownloadProgress && window.GenomeDownloadProgress.startProgressTracking) {
-                    window.GenomeDownloadProgress.startProgressTracking();
+                if (window.uploadProgressManager && typeof window.uploadProgressManager.startProgressTracking === 'function') {
+                    window.uploadProgressManager.startProgressTracking();
                 }
                 
                 // Make the request to the same endpoint used for regular uploads
