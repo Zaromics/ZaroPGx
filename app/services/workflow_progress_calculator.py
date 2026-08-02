@@ -104,6 +104,112 @@ class WorkflowProgressCalculator:
         },
     }
 
+    STEP_BASE_BANDS: Dict[str, Tuple[int, int]] = {
+        "header_analysis": (1, 9),
+        "gatk_cram_sam_to_bam": (10, 19),
+        "hla_typing": (20, 34),
+        "gatk_alignment": (35, 49),
+        "pypgx_analysis": (50, 64),
+        "pypgx_bam2vcf": (65, 74),
+        "pharmcat_analysis": (75, 89),
+        "diagram_generation": (90, 94),
+        "report_generation": (90, 100),
+    }
+
+    CANONICAL_STEP_ORDER: List[str] = [
+        "header_analysis",
+        "gatk_cram_sam_to_bam",
+        "hla_typing",
+        "gatk_alignment",
+        "pypgx_analysis",
+        "pypgx_bam2vcf",
+        "pharmcat_analysis",
+        "diagram_generation",
+        "report_generation",
+    ]
+
+    @staticmethod
+    def _base_weight(step_name: str) -> int:
+        band = WorkflowProgressCalculator.STEP_BASE_BANDS.get(step_name)
+        if not band:
+            return 0
+        lo, hi = band
+        return max(0, hi - lo)
+
+    def _planned_steps_from_config(self, workflow_config: Optional[Dict] = None) -> List[str]:
+        cfg = workflow_config or {}
+        fa = cfg.get("file_analysis") or {}
+        file_type = str(fa.get("file_type") or cfg.get("file_type") or "").lower()
+        is_vcf = file_type in {"vcf", "vcf.gz", "bcf", "bcf.gz"}
+        needs_gatk = bool(cfg.get("needs_gatk", False))
+        needs_hla = bool(cfg.get("needs_hla", False))
+        needs_pypgx = bool(cfg.get("needs_pypgx", True))
+        default_bam2vcf = bool(needs_pypgx and not is_vcf)
+        needs_bam2vcf = bool(cfg.get("needs_pypgx_bam2vcf", default_bam2vcf))
+
+        planned: List[str] = ["header_analysis"]
+        if needs_gatk:
+            if file_type in {"cram", "sam"}:
+                planned.append("gatk_cram_sam_to_bam")
+            if file_type in {"fastq", "fq", "fastq.gz", "fq.gz"}:
+                planned.append("gatk_alignment")
+        if needs_hla:
+            planned.append("hla_typing")
+        if needs_pypgx:
+            planned.append("pypgx_analysis")
+        if needs_bam2vcf:
+            planned.append("pypgx_bam2vcf")
+        planned.extend(
+            ["pharmcat_analysis", "diagram_generation", "report_generation"]
+        )
+        return planned
+
+    def _active_ordered_steps(
+        self, steps: List[Dict], workflow_config: Optional[Dict] = None
+    ) -> List[str]:
+        from_job = []
+        for step in steps or []:
+            name = normalize_step_name(step.get("step_name") or "")
+            if name and name not in from_job and name in self.STEP_BASE_BANDS:
+                from_job.append(name)
+        planned = self._planned_steps_from_config(workflow_config)
+        union = set(from_job) | set(planned)
+        return [s for s in self.CANONICAL_STEP_ORDER if s in union]
+
+    def _renormalized_ranges(
+        self, active_steps: List[str]
+    ) -> Dict[str, Tuple[int, int]]:
+        if not active_steps:
+            return {}
+        weights = [self._base_weight(s) for s in active_steps]
+        total = sum(weights)
+        if total <= 0:
+            return {}
+        raw = [w * 100.0 / total for w in weights]
+        floors = [int(x) for x in raw]
+        remainders = sorted(
+            ((raw[i] - floors[i], i) for i in range(len(active_steps))),
+            key=lambda t: (-t[0], t[1]),
+        )
+        need = 100 - sum(floors)
+        widths = floors[:]
+        for k in range(need):
+            widths[remainders[k][1]] += 1
+        ranges: Dict[str, Tuple[int, int]] = {}
+        start = 0
+        for step, width in zip(active_steps, widths):
+            if width <= 0:
+                continue
+            end = start + width - 1
+            ranges[step] = (start, end)
+            start = end + 1
+        if ranges and active_steps:
+            last = active_steps[-1]
+            if last in ranges:
+                rmin, _ = ranges[last]
+                ranges[last] = (rmin, 100)
+        return ranges
+
     def __init__(self):
         """Initialize the progress calculator."""
         self.logger = logging.getLogger(__name__)
@@ -258,70 +364,38 @@ class WorkflowProgressCalculator:
         if report_completed:
             return 100
 
-        # Determine if this is a VCF-based workflow (no bam2vcf conversion needed)
-        is_vcf_workflow = self._is_vcf_workflow(workflow_config)
+        active = self._active_ordered_steps(steps, workflow_config)
+        ranges = self._renormalized_ranges(active)
+        if not ranges:
+            return 0
 
-        # Map step names to their progress ranges based on workflow_logic.md
-        # For VCF workflows, pypgx_analysis uses the full PyPGx range (50-74%)
-        step_progress_mapping = {
-            "header_analysis": (
-                1,
-                9,
-            ),  # 1-9%: ANALYSIS - File info and Header inspection
-            "gatk_cram_sam_to_bam": (10, 19),  # 10-19%: GATK - CRAM/SAM→BAM conversion
-            "gatk_alignment": (35, 49),  # 35-49%: GATK - FASTQ→BAM alignment
-            "hla_typing": (20, 34),  # 20-34%: HLA - OptiType/ZaroHLA step
-            "pypgx_analysis": (
-                (50, 74) if is_vcf_workflow else (50, 64)
-            ),  # Full range for VCF, split for BAM. NOT WORKING! NEEDS FIXING.
-            "pypgx_bam2vcf": (
-                65,
-                74,
-            ),  # 65-74%: PYPGX - bam2vcf conversion (only for non-VCF)
-            "pharmcat_analysis": (75, 89),  # 75-89%: PHARMCAT - PharmCAT step
-            "diagram_generation": (
-                90,
-                94,
-            ),  # 90-94%: REPORT - Workflow diagram generation
-            "report_generation": (
-                90,
-                100,
-            ),  # 90-100%: REPORT - PDF/HTML report generation
-        }
-
-        # Find the highest progress achieved by any completed step
         max_achieved_progress = 0
         for step in steps:
             if step.get("status") == "completed":
                 step_name = normalize_step_name(step.get("step_name") or "")
-                if step_name in step_progress_mapping:
-                    _, step_max = step_progress_mapping[step_name]
-                    max_achieved_progress = max(max_achieved_progress, step_max)
+                if step_name in ranges:
+                    _, rmax = ranges[step_name]
+                    max_achieved_progress = max(max_achieved_progress, rmax)
 
-        # Find the current running step and use its container progress
         for step in steps:
             if step.get("status") == "running":
                 current_step_name = normalize_step_name(step.get("step_name") or "")
+                if current_step_name not in ranges:
+                    continue
+
+                rmin, rmax = ranges[current_step_name]
                 container_progress = self._extract_container_progress(
                     step, current_stage
                 )
 
-                if (
-                    container_progress is not None
-                    and current_step_name in step_progress_mapping
-                ):
-                    step_min, step_max = step_progress_mapping[current_step_name]
-                    # Map container progress (0-100%) to the step's overall range
-                    mapped_progress = step_min + (container_progress / 100.0) * (
-                        step_max - step_min
-                    )
-                    return max(max_achieved_progress, int(mapped_progress))
-                elif current_step_name in step_progress_mapping:
-                    # No container progress, use step minimum
-                    step_min, _ = step_progress_mapping[current_step_name]
-                    return max(max_achieved_progress, step_min)
+                if container_progress is not None:
+                    width = rmax - rmin + 1
+                    mapped = rmin + int((container_progress / 100.0) * width)
+                    if mapped > rmax:
+                        mapped = rmax
+                    return max(max_achieved_progress, mapped)
+                return max(max_achieved_progress, rmin)
 
-        # No running step, return highest achieved progress
         return max_achieved_progress
 
     def _extract_container_progress(
