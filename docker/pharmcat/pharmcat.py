@@ -129,11 +129,11 @@ def register_process(workflow_id: str, pid: int, process_info: Dict[str, Any] = 
     }
     logger.info(f"Registered process {pid} for workflow {workflow_id}")
 
-def unregister_process(workflow_id: str):
+def unregister_process(job_id: str):
     """Unregister a process when it completes normally."""
     if job_id in running_processes:
         del running_processes[job_id]
-        logger.info(f"Unregistered process for workflow {workflow_id}")
+        logger.info(f"Unregistered process for job {job_id}")
 
 def extract_sample_id_from_vcf(vcf_path: str) -> Optional[str]:
     """
@@ -1099,7 +1099,7 @@ async def cancel_workflow_job(request: CancelRequest):
             # Remove from registry
             del running_processes[job_id]
         else:
-            logger.warning(f"No running process found for workflow {workflow_id}")
+            logger.warning(f"No running process found for job {job_id}")
         
         return {
             "success": True,

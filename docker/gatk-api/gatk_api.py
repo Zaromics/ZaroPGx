@@ -122,11 +122,11 @@ def register_process(workflow_id: str, pid: int, process_info: Dict[str, Any] = 
     }
     logger.info(f"Registered process {pid} for workflow {workflow_id}")
 
-def unregister_process(workflow_id: str):
+def unregister_process(job_id: str):
     """Unregister a process when it completes normally."""
     if job_id in running_processes:
         del running_processes[job_id]
-        logger.info(f"Unregistered process for workflow {workflow_id}")
+        logger.info(f"Unregistered process for job {job_id}")
 
 # Job status tracking
 JOB_STATUS_PENDING = "pending"
