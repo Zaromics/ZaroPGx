@@ -71,7 +71,7 @@ def test_translate_outside_tsv_file_inplace(tmp_path: Path):
     p.write_text("ABCG2\tReference/rs2231142\t\t\n", encoding="utf-8")
     at.translate_outside_tsv_file(p, FIXTURE_MAP)
     assert (
-        p.read_text(encoding="utf-8").strip()
+        p.read_text(encoding="utf-8").rstrip("\r\n")
         == "ABCG2\trs2231142 reference (G)/rs2231142 variant (T)\t\t"
     )
 
