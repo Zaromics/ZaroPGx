@@ -8,7 +8,6 @@ import pytest
 
 from app.utils import allele_translate as at
 
-
 FIXTURE_MAP = {
     "ABCG2": {
         "Reference": "rs2231142 reference (G)",
@@ -38,9 +37,7 @@ def test_translate_haplotype_found_and_absent():
 
 
 def test_translate_diplotype_abcg2():
-    dip, unmapped = at.translate_diplotype(
-        "ABCG2", "Reference/rs2231142", FIXTURE_MAP
-    )
+    dip, unmapped = at.translate_diplotype("ABCG2", "Reference/rs2231142", FIXTURE_MAP)
     assert dip == "rs2231142 reference (G)/rs2231142 variant (T)"
     assert unmapped == []
 
@@ -77,9 +74,7 @@ def test_translate_outside_tsv_file_inplace(tmp_path: Path):
 
 
 def test_unmapped_haplotype_passthrough():
-    dip, unmapped = at.translate_diplotype(
-        "ABCG2", "Reference/WEIRD", FIXTURE_MAP
-    )
+    dip, unmapped = at.translate_diplotype("ABCG2", "Reference/WEIRD", FIXTURE_MAP)
     assert dip == "rs2231142 reference (G)/WEIRD"
     assert unmapped == ["WEIRD"]
 
