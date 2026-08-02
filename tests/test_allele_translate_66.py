@@ -92,3 +92,19 @@ def test_pharmcat_dockerfile_copies_lexicon_assets():
     assert "allele_translate.py" in df
     assert "allele_map_pypgx_to_pharmcat.json" in df
     assert "/lexicon-lib/" in df
+
+
+def test_repo_lexicon_candidate_skips_container_layout(tmp_path: Path):
+    """Container copy is /lexicon-lib/allele_translate.py — must not use parents[2]."""
+    container_mod = tmp_path / "lexicon-lib" / "allele_translate.py"
+    container_mod.parent.mkdir(parents=True)
+    container_mod.write_text("# stub\n", encoding="utf-8")
+    assert at._repo_lexicon_candidate(container_mod) is None
+
+
+def test_repo_lexicon_candidate_resolves_app_utils_layout(tmp_path: Path):
+    mod = tmp_path / "app" / "utils" / "allele_translate.py"
+    mod.parent.mkdir(parents=True)
+    mod.write_text("# stub\n", encoding="utf-8")
+    expected = tmp_path / "lexicon" / "allele_map_pypgx_to_pharmcat.json"
+    assert at._repo_lexicon_candidate(mod) == expected

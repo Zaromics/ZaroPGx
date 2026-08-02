@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 _MAP_NAME = "allele_map_pypgx_to_pharmcat.json"
 
 SYNONYM_GENES = frozenset({"ABCG2", "IFNL3", "VKORC1"})
@@ -27,14 +26,29 @@ def _clean_token(token: str) -> str:
     return t
 
 
+def _repo_lexicon_candidate(module_file: Path | None = None) -> Path | None:
+    """Return <repo>/lexicon/<map> when this module lives at app/utils/.
+
+    PharmCAT image copies this file to /lexicon-lib/allele_translate.py — that
+    path has no app/utils parents, so never index parents[2] at import time.
+    """
+    here = (module_file or Path(__file__)).resolve()
+    if here.parent.name != "utils" or here.parent.parent.name != "app":
+        return None
+    if len(here.parents) < 3:
+        return None
+    return here.parents[2] / "lexicon" / _MAP_NAME
+
+
 def resolve_map_path() -> Path:
     env = os.environ.get("ALLELE_MAP_JSON", "").strip()
     if env:
         return Path(env)
-    candidates = [
-        REPO_ROOT / "lexicon" / _MAP_NAME,
-        Path("/lexicon") / _MAP_NAME,
-    ]
+    candidates: List[Path] = []
+    repo_map = _repo_lexicon_candidate()
+    if repo_map is not None:
+        candidates.append(repo_map)
+    candidates.append(Path("/lexicon") / _MAP_NAME)
     for c in candidates:
         if c.exists():
             return c
