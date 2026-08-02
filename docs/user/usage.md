@@ -128,7 +128,7 @@ curl -X POST \
 
 #### Check Analysis Status
 ```bash
-curl http://localhost:8765/status/{job_id}
+curl http://localhost:8765/status/{data_id}
 ```
 
 #### Get Report URLs
@@ -138,7 +138,7 @@ curl http://localhost:8765/reports/{job_id}
 
 #### Download Reports
 ```bash
-curl -O http://localhost:8765/reports/{patient_id}/{report_file}
+curl -O http://localhost:8765/reports/{patient_id}/{job_id}/{report_file}
 ```
 
 ### API Response Format
@@ -146,10 +146,11 @@ curl -O http://localhost:8765/reports/{patient_id}/{report_file}
 ```json
 {
   "job_id": "uuid-string",
+  "data_id": "uuid-string",
   "status": "completed",
   "progress": 100,
-  "pdf_report_url": "/reports/patient_id/report.pdf",
-  "html_report_url": "/reports/patient_id/report.html",
+  "pdf_report_url": "/reports/patient_id/job_id/job_id_pgx_report.pdf",
+  "html_report_url": "/reports/patient_id/job_id/job_id_pgx_report_interactive.html",
   "diplotypes": {
     "CYP2D6": "*1/*2",
     "CYP2C19": "*1/*1"
@@ -173,8 +174,8 @@ curl -O http://localhost:8765/reports/{patient_id}/{report_file}
 - Temporary processing files
 - Index files (.bai, .crai, .csi, .tbi)
 
-**Reports Directory**: `/data/reports/{patient_id}/`
-- Generated reports (PDF, HTML)
+**Reports Directory**: `/data/reports/{patient_id}/{job_id}/`
+- Generated reports (PDF, HTML); display `report_id` = `job_id`
 - Raw analysis outputs
 - Intermediate processing files
 

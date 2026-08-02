@@ -29,8 +29,8 @@ flowchart TD
     PCAT --> PCOutputs["report.json<br/>report.html<br/>report.tsv<br/>match.json<br/>phenotype.json"]
     PCOutputs --> Normalize["Normalize results<br/>(pharmcat_client.normalize_...)"]
     Normalize --> Generate["Generate reports<br/>(app/reports/generator.py)"]
-    Generate --> ReportsDir[/Write to /data/reports/<report_id>/]
-    ReportsDir --> Serve["Serve at /reports/* (StaticFiles)"]
+    Generate --> ReportsDir[/Write to /data/reports/<patient_id>/<job_id>/]
+    ReportsDir --> Serve["Serve at /reports/<patient_id>/<job_id>/* (StaticFiles)"]
     Serve --> ExportDec{Export to FHIR?}
     ExportDec -->|No| Done((Complete))
   end
@@ -51,7 +51,7 @@ flowchart TD
   end
 
   %% Progress tracking
-  UploadEndpoints -. updates .-> JobStatus["/progress/<job_id><br/>/job-status/<job_id>"]
+  UploadEndpoints -. updates .-> JobStatus["/status/<data_id><br/>/api/v1/jobs/<job_id>"]
 
   classDef app fill:#e7f0ff,stroke:#5b8def,stroke-width:1px;
   classDef svc fill:#f8f1ff,stroke:#9b59b6,stroke-width:1px;
@@ -65,4 +65,6 @@ Notes
 - Upload endpoints include `POST /upload-vcf` (in `app/main.py`) and `POST /upload/genomic-data` (in `app/api/routes/upload_router.py`).
 - Variant calling for BAM/SAM/CRAM goes through the GATK API. Direct VCFs skip this step.
 - PharmCAT can be invoked via the API container or directly via the JAR; results are normalized and rendered to HTML/PDF (including an interactive HTML report).
+- Report artifacts are nested at `/data/reports/{patient_id}/{job_id}/`; display `report_id` equals `job_id`.
+- Status by genetic data uses `GET /status/{data_id}`; job WS envelope type is `job_update`.
 - FHIR export creates `Patient`, `Observation`(s), and a `DiagnosticReport` referencing the rendered reports.

@@ -87,7 +87,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 - Shared data: `./data` → `/data`
 - Reference data: `./reference` → `/reference`
-- Reports: `/data/reports/<file_id>/` (per‑job directory)
+- Reports: `/data/reports/<patient_id>/<job_id>/` (nested per‑job directory)
 
 ## Requirements
 <u>Software</u>
@@ -282,14 +282,14 @@ curl -X POST \
   http://localhost:8765/upload/genomic-data
 ```
 
-**Check processing status:**
+**Check processing status** (by `data_id` from the upload response; same UUID as `genetic_data.data_id`):
 ```bash
-curl http://localhost:8765/status/<file_id>
+curl http://localhost:8765/status/<data_id>
 ```
 
-**Get report URLs** (PDF/HTML interactive/PharmCAT original reports):
+**Get report URLs** (PDF/HTML interactive/PharmCAT original reports; path uses `job_id`):
 ```bash
-curl http://localhost:8765/reports/<file_id>
+curl http://localhost:8765/reports/<job_id>
 ```
 
 **Generate a report:** use `POST /upload/genomic-data` (the standalone
@@ -298,10 +298,13 @@ curl http://localhost:8765/reports/<file_id>
 ### Notes
 
 - Development mode disables authentication by default (`ZAROPGX_DEV_MODE=true`); tokens are not required.
-- Reports are written to `/data/reports/<file_id>/` with filenames:
-  - `<file_id>_pgx_report.pdf`
-  - `<file_id>_pgx_report_interactive.html`
-  - Optional PharmCAT originals: `<file_id>_pgx_pharmcat.{html,json,tsv}`
+- Upload/status JSON uses `data_id` (not `file_id`). Cancel payloads use `job_id` only.
+- Recipe catalog `GET /api/v1/workflows` is unchanged (recipes, not job instances).
+- Reports are written to `/data/reports/<patient_id>/<job_id>/` with filenames:
+  - `<job_id>_pgx_report.pdf`
+  - `<job_id>_pgx_report_interactive.html`
+  - Optional PharmCAT originals: `<job_id>_pgx_pharmcat.{html,json,tsv}`
+  - Display `report_id` in templates equals `job_id`
 
 ## Testing
 
@@ -362,9 +365,10 @@ ZaroPGx/
 
 ## Report Handling
 
-- Each run writes a per‑job directory: `/data/reports/<file_id>/`
+- Each run writes a nested per‑job directory: `/data/reports/<patient_id>/<job_id>/`
 - The app consistently generates its own reports (PDF + interactive HTML)
-- When available, original PharmCAT reports are copied with normalized names (`<file_id>_pgx_pharmcat.*`)
+- When available, original PharmCAT reports are copied with normalized names (`<job_id>_pgx_pharmcat.*`)
+- Served under `/reports/<patient_id>/<job_id>/…`
 
 ## FHIR Export (Optional)
 

@@ -59,13 +59,14 @@ curl -X POST \
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "patient_id": "550e8400-e29b-41d4-a716-446655440001",
-  "file_id": "550e8400-e29b-41d4-a716-446655440002",
+  "data_id": "550e8400-e29b-41d4-a716-446655440002",
   "status": "uploaded",
   "message": "Files uploaded successfully",
-  "workflow_id": "550e8400-e29b-41d4-a716-446655440003"
+  "file_type": "vcf"
 }
 ```
+
+`data_id` is the genetic-data UUID (formerly `file_id`). Use it with `GET /status/{data_id}`. Job progress and cancel use `job_id` under `/api/v1/jobs/...`. The recipe catalog at `/api/v1/workflows` is unchanged (recipes, not job instances).
 
 **Status Codes:**
 - `200`: Upload successful
@@ -77,14 +78,15 @@ curl -X POST \
 
 Get the processing status of an uploaded file.
 
-**Endpoint:** `GET /upload/status/{job_id}`
+**Endpoint:** `GET /status/{data_id}` (also `GET /upload/status/{job_id}` for job-scoped status)
 
 **Parameters:**
-- `job_id` (path): Job identifier
+- `data_id` (path): Genetic data identifier (= `genetic_data.data_id`; was `file_id`)
 
 **Response:**
 ```json
 {
+  "data_id": "550e8400-e29b-41d4-a716-446655440002",
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "processing",
   "progress": 45,
@@ -126,11 +128,11 @@ Get URLs for generated reports.
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",
   "reports": {
-    "pdf_report_url": "/reports/patient_001/report.pdf",
-    "html_report_url": "/reports/patient_001/report.html",
-    "pharmcat_html_url": "/reports/patient_001/pharmcat.html",
-    "pharmcat_json_url": "/reports/patient_001/pharmcat.json",
-    "pharmcat_tsv_url": "/reports/patient_001/pharmcat.tsv"
+    "pdf_report_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_report.pdf",
+    "html_report_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_report_interactive.html",
+    "pharmcat_html_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_pharmcat.html",
+    "pharmcat_json_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_pharmcat.json",
+    "pharmcat_tsv_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_pharmcat.tsv"
   },
   "diplotypes": {
     "CYP2D6": "*1/*2",
@@ -148,22 +150,27 @@ Get URLs for generated reports.
 }
 ```
 
+Artifacts live on disk at `/data/reports/{patient_id}/{job_id}/`. Display `report_id` in templates equals `job_id`.
+
 #### Download Report
 
 Download a specific report file.
 
 **Endpoint:** `GET /reports/{patient_id}/{filename}`
 
+Nested layout examples use `{patient_id}/{job_id}/{filename}` under the same route
+(`filename` may include the job subdirectory path).
+
 **Parameters:**
 - `patient_id` (path): Patient identifier
-- `filename` (path): Report filename
+- `filename` (path): Report filename (or `{job_id}/{filename}`)
 
 **Response:**
 - File content with appropriate Content-Type header
 
 **Example:**
 ```bash
-curl -O http://localhost:8765/reports/patient_001/report.pdf
+curl -O http://localhost:8765/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_report.pdf
 ```
 
 #### Generate Report (retired)
@@ -172,29 +179,38 @@ curl -O http://localhost:8765/reports/patient_001/report.pdf
 
 Report generation runs via `POST /upload/genomic-data`. Status and file delivery:
 
-- `GET /upload/status/{job_id}` / `GET /api/v1/workflows/{workflow_id}`
+- `GET /status/{data_id}` / `GET /upload/status/{job_id}` / `GET /api/v1/jobs/{job_id}`
 - `GET /upload/reports/job/{job_id}` / `GET /upload/reports/download/{patient_id}`
-- `GET /reports/{patient_id}/{filename}`
+- `GET /reports/{patient_id}/{filename}` (nested `{patient_id}/{job_id}/…`)
+- Recipe catalog: `GET /api/v1/workflows` (unchanged; not job-instance status)
 
 Also retired (**501**): `GET /reports/{id}/status`, `GET /reports/{id}/download`,
 `GET /reports/recommendations/{patient_id}`, `POST /reports/{id}/export-to-fhir`
 (use `/fhir/*` for real FHIR export).
 
+Cleanup: `POST /api/cleanup/job/{job_id}` (the old `/api/cleanup/workflow/...` path is removed).
+
 ### Workflow Endpoints
+
+> **Note (137c):** Job-instance progress, cancel, logs, and WebSocket live under
+> `/api/v1/jobs/{job_id}`. The recipe catalog remains at `/api/v1/workflows`
+> (unchanged). Container cancel payloads accept `job_id` only (no `workflow_id`
+> dual-accept). Legacy `/workflows/{workflow_id}` paths below are historical
+> examples; prefer `/api/v1/jobs/...`.
 
 #### Get Workflow Status
 
 Get detailed workflow status and progress.
 
-**Endpoint:** `GET /workflows/{workflow_id}`
+**Endpoint:** `GET /api/v1/jobs/{job_id}` (preferred) / historical `GET /workflows/{workflow_id}`
 
 **Parameters:**
-- `workflow_id` (path): Workflow identifier
+- `job_id` (path): Job identifier
 
 **Response:**
 ```json
 {
-  "workflow_id": "550e8400-e29b-41d4-a716-446655440000",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "processing",
   "progress": 65,
   "current_stage": "pharmcat_analysis",
@@ -224,37 +240,40 @@ Get detailed workflow status and progress.
   "metadata": {
     "file_type": "VCF",
     "reference_genome": "hg38",
-    "sample_identifier": "patient_001"
+    "sample_identifier": "patient_001",
+    "data_id": "550e8400-e29b-41d4-a716-446655440002"
   }
 }
 ```
 
-#### Cancel Workflow
+#### Cancel Job
 
-Cancel a running workflow.
+Cancel a running job.
 
-**Endpoint:** `POST /workflows/{workflow_id}/cancel`
+**Endpoint:** `POST /api/v1/jobs/{job_id}/cancel`
 
 **Parameters:**
-- `workflow_id` (path): Workflow identifier
+- `job_id` (path): Job identifier
+
+Container cancel JSON payloads use `job_id` only (no `workflow_id` alias).
 
 **Response:**
 ```json
 {
-  "workflow_id": "550e8400-e29b-41d4-a716-446655440000",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "cancelled",
-  "message": "Workflow cancelled successfully"
+  "message": "Job cancelled successfully"
 }
 ```
 
-#### Get Workflow Logs
+#### Get Job Logs
 
-Get logs for a specific workflow.
+Get logs for a specific job.
 
-**Endpoint:** `GET /workflows/{workflow_id}/logs`
+**Endpoint:** `GET /api/v1/jobs/{job_id}/logs`
 
 **Parameters:**
-- `workflow_id` (path): Workflow identifier
+- `job_id` (path): Job identifier
 - `level` (query, optional): Log level filter (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - `container` (query, optional): Container filter
 - `limit` (query, optional): Maximum number of logs (default: 100)
@@ -262,7 +281,7 @@ Get logs for a specific workflow.
 **Response:**
 ```json
 {
-  "workflow_id": "550e8400-e29b-41d4-a716-446655440000",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "logs": [
     {
       "timestamp": "2024-01-15T10:00:00Z",
@@ -408,19 +427,19 @@ Get system information and configuration.
 ```json
 {
   "job_id": "string",
-  "patient_id": "string",
-  "file_id": "string",
+  "data_id": "string",
+  "file_type": "string",
   "status": "string",
-  "message": "string",
-  "workflow_id": "string"
+  "message": "string"
 }
 ```
 
-### Workflow Status
+### Job Status
 
 ```json
 {
-  "workflow_id": "string",
+  "job_id": "string",
+  "data_id": "string",
   "status": "string",
   "progress": "number",
   "current_stage": "string",
@@ -511,20 +530,22 @@ X-RateLimit-Reset: 1642248000
 
 ### Real-time Updates
 
-Connect to WebSocket for real-time workflow updates:
+Connect to WebSocket for real-time job updates:
 
-**Endpoint:** `ws://localhost:8765/ws/workflows/{workflow_id}`
+**Endpoint:** `ws://localhost:8765/api/v1/jobs/{job_id}/ws`
 
 **Message Format:**
 ```json
 {
-  "type": "progress_update",
-  "workflow_id": "string",
+  "type": "job_update",
+  "job_id": "string",
   "progress": "number",
   "stage": "string",
   "message": "string"
 }
 ```
+
+Envelope `type` is `job_update` (was `workflow_update`).
 
 ## SDK Examples
 

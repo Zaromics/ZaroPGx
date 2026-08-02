@@ -5,6 +5,16 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+### 137c naming hard-cuts (developers / API clients)
+
+- Upload/status JSON field `file_id` → `data_id` (same UUID as `genetic_data.data_id`).
+- Cancel payloads: `job_id` only (no `workflow_id` dual-accept).
+- Cleanup: `POST /api/cleanup/job/{job_id}` (old `/api/cleanup/workflow/...` removed).
+- WebSocket envelope type: `job_update` (was `workflow_update`).
+- Report artifacts: `/data/reports/{patient_id}/{job_id}/`; display `report_id` = `job_id`.
+- Container JobClient mount: `/job-client` (rebuild images).
+No DB migration. Local stacks: rebuild containers; old flat report dirs are not migrated.
+
 ### PharmCAT references volume no longer masks `/pharmcat`
 
 `pharmcat-references` now mounts at `/pharmcat-references` (reference genome cache

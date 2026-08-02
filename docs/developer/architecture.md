@@ -83,11 +83,12 @@ graph TB
 - Authentication and authorization
 
 **Key Modules:**
-- `app/api/`: API routes and models
-- `app/services/`: Background processing
-- `app/reports/`: Report generation
+- `app/api/`: API routes and models (`data_id` on upload/status; jobs under `/api/v1/jobs`)
+- `app/services/`: Background processing (WebSocket envelope type `job_update`)
+- `app/reports/`: Report generation (artifacts at `/data/reports/{patient_id}/{job_id}/`; display `report_id` = `job_id`)
 - `app/pharmcat/`: PharmCAT integration
 - `app/core/`: Core utilities
+- `app/utils/job_client.py`: Shared JobClient (containers mount at `/job-client`)
 
 ### PostgreSQL Database (`db`)
 

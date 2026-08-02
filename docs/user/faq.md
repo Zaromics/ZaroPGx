@@ -142,7 +142,7 @@ In theory, it is possible, however, a large-scale persistent deployment is not b
 
 Data is stored locally in Docker volumes:
 - **Uploaded files**: `/data/uploads/`
-- **Analysis results**: `/data/reports/`
+- **Analysis results**: `/data/reports/{patient_id}/{job_id}/` (nested per job; display `report_id` = `job_id`)
 - **Reference data**: `/reference/`
 - **Database**: PostgreSQL container
 
