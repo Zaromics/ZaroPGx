@@ -1308,9 +1308,28 @@ async def check_reports(job_id: str):
         # Define reports directory
         reports_dir = REPORTS_DIR
 
+        # Prefer nested /data/reports/{patient_id}/{job_id}/ when job metadata has patient_id
+        patient_id = None
+        try:
+            from app.api.db import get_db
+            from app.services.job_service import JobService
+
+            db = next(get_db())
+            job_service = JobService(db)
+            job = job_service.get_job(job_id)
+            if job and job.job_metadata:
+                patient_id = job.job_metadata.get("patient_id")
+        except Exception:
+            patient_id = None
+
+        if patient_id:
+            job_reports_dir = reports_dir / str(patient_id) / str(job_id)
+        else:
+            job_reports_dir = reports_dir / str(job_id)
+
         # Check for report files
-        pdf_path = reports_dir / f"{job_id}_pgx_report.pdf"
-        html_path = reports_dir / f"{job_id}_pgx_report.html"
+        pdf_path = job_reports_dir / f"{job_id}_pgx_report.pdf"
+        html_path = job_reports_dir / f"{job_id}_pgx_report.html"
 
         pdf_exists = pdf_path.exists()
         html_exists = html_path.exists()
@@ -1352,17 +1371,30 @@ async def check_reports(job_id: str):
             logger.warning(f"Could not check workflow status for job {job_id}: {e}")
             job_data = {"status": "unknown", "complete": False}
 
+        if patient_id:
+            pdf_url = (
+                f"/reports/{patient_id}/{job_id}/{job_id}_pgx_report.pdf"
+                if pdf_exists
+                else None
+            )
+            html_url = (
+                f"/reports/{patient_id}/{job_id}/{job_id}_pgx_report.html"
+                if html_exists
+                else None
+            )
+        else:
+            pdf_url = f"/reports/{job_id}_pgx_report.pdf" if pdf_exists else None
+            html_url = f"/reports/{job_id}_pgx_report.html" if html_exists else None
+
         return {
             "job_id": job_id,
             "reports": {
                 "pdf_exists": pdf_exists,
                 "pdf_path": str(pdf_path) if pdf_exists else None,
-                "pdf_url": f"/reports/{job_id}_pgx_report.pdf" if pdf_exists else None,
+                "pdf_url": pdf_url,
                 "html_exists": html_exists,
                 "html_path": str(html_path) if html_exists else None,
-                "html_url": (
-                    f"/reports/{job_id}_pgx_report.html" if html_exists else None
-                ),
+                "html_url": html_url,
             },
             "job_status": job_data,
             "instructions": "To check your report, click on the PDF or HTML URL link.",
@@ -1378,9 +1410,31 @@ async def trigger_completion(job_id: str):
     A troubleshooting endpoint to manually trigger completion flow and provide direct report links.
     This is a backup method when the SSE progress monitor fails to notify the frontend.
     """
-    # Check if reports exist
-    pdf_path = f"/data/reports/{job_id}_pgx_report.pdf"
-    html_path = f"/data/reports/{job_id}_pgx_report.html"
+    # Prefer nested /data/reports/{patient_id}/{job_id}/ when job metadata has patient_id
+    patient_id = None
+    try:
+        from app.api.db import get_db
+        from app.services.job_service import JobService
+
+        db = next(get_db())
+        job_service = JobService(db)
+        job = job_service.get_job(job_id)
+        if job and job.job_metadata:
+            patient_id = job.job_metadata.get("patient_id")
+    except Exception:
+        patient_id = None
+
+    if patient_id:
+        job_reports_dir = Path(f"/data/reports/{patient_id}/{job_id}")
+        pdf_path = str(job_reports_dir / f"{job_id}_pgx_report.pdf")
+        html_path = str(job_reports_dir / f"{job_id}_pgx_report.html")
+        pdf_href = f"/reports/{patient_id}/{job_id}/{job_id}_pgx_report.pdf"
+        html_href = f"/reports/{patient_id}/{job_id}/{job_id}_pgx_report.html"
+    else:
+        pdf_path = f"/data/reports/{job_id}_pgx_report.pdf"
+        html_path = f"/data/reports/{job_id}_pgx_report.html"
+        pdf_href = f"/reports/{job_id}_pgx_report.pdf"
+        html_href = f"/reports/{job_id}_pgx_report.html"
 
     pdf_exists = os.path.exists(pdf_path)
     html_exists = os.path.exists(html_path)
@@ -1447,11 +1501,11 @@ async def trigger_completion(job_id: str):
                     
                     <div class="report-link">
                         <h4>Direct Report Links:</h4>
-                        {"<a href='/reports/" + job_id + "_pgx_report.pdf' class='btn btn-primary' target='_blank'>View PDF Report</a>" if pdf_exists else "<span class='text-danger'>PDF report not found</span>"}
+                        {"<a href='" + pdf_href + "' class='btn btn-primary' target='_blank'>View PDF Report</a>" if pdf_exists else "<span class='text-danger'>PDF report not found</span>"}
                     </div>
                     
                     <div class="report-link">
-                        {"<a href='/reports/" + job_id + "_pgx_report.html' class='btn btn-info' target='_blank'>View HTML Report</a>" if html_exists else "<span class='text-danger'>HTML report not found</span>"}
+                        {"<a href='" + html_href + "' class='btn btn-info' target='_blank'>View HTML Report</a>" if html_exists else "<span class='text-danger'>HTML report not found</span>"}
                     </div>
                 </div>
             </div>
@@ -1483,13 +1537,31 @@ async def reprocess_report(report_id: str):
     """
     Reprocess an existing report by re-running PharmCAT analysis with the updated parser.
     This is primarily for testing parser changes.
+    Path param is treated as job_id (display report_id = job_id).
     """
     try:
-        logger.info(f"Reprocessing report {report_id}")
+        job_id = report_id
+        logger.info(f"Reprocessing report {job_id}")
 
-        # Find the VCF file for the given report ID
-        report_dir = Path(f"/data/reports/{report_id}")
-        uploads_dir = Path(f"/data/uploads/{report_id}")
+        # Resolve patient_id from job metadata when available for nested layout
+        patient_id = None
+        try:
+            from app.api.db import get_db
+            from app.services.job_service import JobService
+
+            db = next(get_db())
+            job_service = JobService(db)
+            job = job_service.get_job(job_id)
+            if job and job.job_metadata:
+                patient_id = job.job_metadata.get("patient_id")
+        except Exception:
+            patient_id = None
+
+        if patient_id:
+            report_dir = Path(f"/data/reports/{patient_id}/{job_id}")
+        else:
+            report_dir = Path(f"/data/reports/{job_id}")
+        uploads_dir = Path(f"/data/uploads/{patient_id or job_id}")
 
         # Look for VCF files in both directories
         vcf_files = []
@@ -1501,10 +1573,10 @@ async def reprocess_report(report_id: str):
 
         if not vcf_files:
             # If no VCF files found, return an error
-            logger.error(f"No VCF files found for report {report_id}")
+            logger.error(f"No VCF files found for report {job_id}")
             return {
                 "success": False,
-                "message": f"No VCF files found for report {report_id}",
+                "message": f"No VCF files found for report {job_id}",
             }
 
         # Use the first VCF file found
@@ -1517,7 +1589,7 @@ async def reprocess_report(report_id: str):
         # Check if the analysis was successful
         if not results.get("success", False):
             logger.error(
-                f"PharmCAT analysis failed for report {report_id}: {results.get('message', 'Unknown error')}"
+                f"PharmCAT analysis failed for report {job_id}: {results.get('message', 'Unknown error')}"
             )
             return {
                 "success": False,
@@ -1527,19 +1599,23 @@ async def reprocess_report(report_id: str):
         # Generate reports using the updated results
         from app.reports.generator import generate_report
 
-        # Create patient info dictionary
+        # Create patient info dictionary (pass data_id explicitly, not report_id alias)
+        resolved_patient_id = patient_id or f"patient_{job_id}"
         patient_info = {
-            "id": f"patient_{report_id}",
-            "report_id": report_id,
-            "name": f"Patient {report_id}",
+            "id": resolved_patient_id,
+            "data_id": job_id,
+            "name": f"Patient {resolved_patient_id}",
             "age": "N/A",
             "sex": "N/A",
             "encounter_date": datetime.now().strftime("%Y-%m-%d"),
         }
 
-        # Generate report files
+        # Generate report files under nested outdir when patient_id known
         report_paths = generate_report(
-            results, f"/data/reports/{report_id}", patient_info
+            results,
+            str(report_dir),
+            patient_info,
+            job_id=job_id,
         )
 
         # Return the results with report paths
@@ -1547,7 +1623,7 @@ async def reprocess_report(report_id: str):
             "success": True,
             "message": "Report reprocessed successfully",
             "data": {
-                "report_id": report_id,
+                "report_id": job_id,
                 "report_paths": report_paths,
                 "genes": results.get("data", {}).get("genes", []),
                 "drugRecommendations": results.get("data", {}).get(

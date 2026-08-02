@@ -138,9 +138,10 @@ async def delayed_cleanup_on_cancellation(workflow_id: str, job_metadata: dict):
             )
             return
 
-        # Define cleanup paths
+        # Define cleanup paths (nested job outdir + legacy flat patient dir)
         cleanup_paths = [
-            f"/data/reports/{patient_id}",  # Main output directory
+            f"/data/reports/{patient_id}/{workflow_id}",  # Nested job outdir
+            f"/data/reports/{patient_id}",  # Legacy flat patient dir
             f"/data/temp/{patient_id}",  # Temporary files
             f"/data/uploads/{patient_id}",  # Uploaded files
             f"/data/results/{patient_id}",  # Results directory
@@ -241,25 +242,28 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
         if not patient_id or not data_id:
             raise RuntimeError(f"Missing patient_id or data_id in workflow metadata")
 
+        # Task 4 renames remaining workflow_id locals; identity contract uses job_id now
+        job_id = workflow_id
+
         # Extract sample identifier from workflow metadata
         sample_identifier = None
         if "sample_identifier" in metadata:
             sample_identifier = metadata["sample_identifier"]
         header_sample_identifier = metadata.get("header_sample_identifier")
 
-        # Use the outdir directly as the patient directory (it's already /data/reports/{patient_id})
+        # outdir is /data/reports/{patient_id}/{job_id}
         patient_dir = Path(outdir)
         patient_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using patient directory: {patient_dir}")
 
-        # Set up all output paths in the patient directory
-        pdf_report_path = patient_dir / f"{patient_id}_pgx_report.pdf"
+        # Set up all output paths in the nested job directory (filenames use job_id)
+        pdf_report_path = patient_dir / f"{job_id}_pgx_report.pdf"
         interactive_html_path = (
-            patient_dir / f"{patient_id}_pgx_report_interactive.html"
+            patient_dir / f"{job_id}_pgx_report_interactive.html"
         )
-        pharmcat_html_path = patient_dir / f"{patient_id}_pgx_pharmcat.html"
-        pharmcat_json_path = patient_dir / f"{patient_id}_pgx_pharmcat.json"
-        pharmcat_tsv_path = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
+        pharmcat_html_path = patient_dir / f"{job_id}_pgx_pharmcat.html"
+        pharmcat_json_path = patient_dir / f"{job_id}_pgx_pharmcat.json"
+        pharmcat_tsv_path = patient_dir / f"{job_id}_pgx_pharmcat.tsv"
 
         # Check for existing PharmCAT outputs in the patient directory
         logger.info(f"Looking for PharmCAT files in: {patient_dir}")
@@ -277,7 +281,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
             )
 
             # Log the actual files found for debugging
-            pharmcat_pattern = f"{patient_id}_pgx_pharmcat.*"
+            pharmcat_pattern = f"{job_id}_pgx_pharmcat.*"
             pharmcat_files = list(patient_dir.glob(pharmcat_pattern))
             logger.info(f"Found PharmCAT files: {pharmcat_files}")
 
@@ -308,8 +312,17 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
                     alt_dir = reports_root / alt_name
                     if not alt_dir.exists():
                         continue
-                    # Candidate source files (by patient_id and by alt_name)
+                    # Candidate source files (by job_id, patient_id, and by alt_name)
                     src_candidates = [
+                        (
+                            alt_dir / f"{job_id}_pgx_pharmcat.html",
+                            pharmcat_html_path,
+                        ),
+                        (
+                            alt_dir / f"{job_id}_pgx_pharmcat.json",
+                            pharmcat_json_path,
+                        ),
+                        (alt_dir / f"{job_id}_pgx_pharmcat.tsv", pharmcat_tsv_path),
                         (
                             alt_dir / f"{patient_id}_pgx_pharmcat.html",
                             pharmcat_html_path,
@@ -347,7 +360,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
         pharmcat_data = {"genes": [], "drugRecommendations": []}
 
         # Look for PharmCAT JSON results
-        pharmcat_json_file = patient_dir / f"{patient_id}_pgx_pharmcat.json"
+        pharmcat_json_file = patient_dir / f"{job_id}_pgx_pharmcat.json"
         pharmcat_run_id = None
 
         if pharmcat_json_file.exists():
@@ -409,7 +422,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
         # If JSON is missing or empty, try TSV fallback for simpler extraction
         if not pharmcat_data.get("genes"):
             try:
-                pharmcat_tsv_file = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
+                pharmcat_tsv_file = patient_dir / f"{job_id}_pgx_pharmcat.tsv"
                 if pharmcat_tsv_file.exists():
                     from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
 
@@ -500,7 +513,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
             try:
                 svg_bytes = render_with_graphviz(workflow_config_diagram, fmt="svg")
                 if svg_bytes:
-                    svg_path = patient_dir / f"{patient_id}_workflow.svg"
+                    svg_path = patient_dir / f"{job_id}_workflow.svg"
                     with open(svg_path, "wb") as f_out:
                         f_out.write(svg_bytes)
                     logger.info(
@@ -523,7 +536,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
                 )
                 if kroki_svg_bytes:
                     kroki_svg_path = (
-                        patient_dir / f"{patient_id}_workflow_kroki_mermaid.svg"
+                        patient_dir / f"{job_id}_workflow_kroki_mermaid.svg"
                     )
                     with open(kroki_svg_path, "wb") as f_out:
                         f_out.write(kroki_svg_bytes)
@@ -548,7 +561,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
                     logger.info("PNG generation failed, trying Python fallback...")
                     png_bytes = render_simple_png_from_workflow(workflow_config_diagram)
                 if png_bytes:
-                    png_path = patient_dir / f"{patient_id}_workflow.png"
+                    png_path = patient_dir / f"{job_id}_workflow.png"
                     with open(png_path, "wb") as f_out:
                         f_out.write(png_bytes)
                     logger.info(
@@ -598,13 +611,13 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
 
         response_data = generate_report(
             pharmcat_results={"data": pharmcat_data},
-            output_dir=str(patient_dir),
+            output_dir=str(patient_dir),  # already nested outdir
             patient_info={
                 "id": patient_id,
-                "report_id": data_id,
+                "data_id": data_id,
                 "sample_identifier": effective_sample_identifier_reports,
             },
-            workflow_id=workflow_id,
+            job_id=job_id,
             db_session=db_session,
         )
 
@@ -936,8 +949,10 @@ async def process_file_nextflow_background(
                 raw_header = extract_raw_header_text(file_path)
                 if raw_header is not None:
                     filtered_header = filter_header_to_canonical_contigs(raw_header)
-                    patient_dir = Path(os.getenv("REPORT_DIR", "/data/reports")) / str(
-                        patient_id
+                    patient_dir = (
+                        Path(os.getenv("REPORT_DIR", "/data/reports"))
+                        / str(patient_id)
+                        / str(workflow_id)
                     )
                     patient_dir.mkdir(parents=True, exist_ok=True)
                     header_txt_path = patient_dir / f"{data_id}.header.txt"
@@ -1037,6 +1052,9 @@ async def process_file_nextflow_background(
                 else None
             ) or header_sample_identifier
 
+            # Display / path identity: report_id = job_id (137c)
+            job_id = workflow_id
+
             # Persist sample IDs so final-stage report generation can read them
             # without relying on locals() across coroutine boundaries.
             if workflow_id:
@@ -1063,15 +1081,15 @@ async def process_file_nextflow_background(
                 "input": file_path,
                 "input_type": input_type,
                 "patient_id": patient_id,
-                "report_id": patient_id,  # Use patient_id as report_id
+                "report_id": str(job_id),  # display report_id = job_id
                 "reference": reference,
-                "outdir": f"/data/reports/{patient_id}",
-                "job_id": patient_id,
+                "outdir": f"/data/reports/{patient_id}/{job_id}",
+                "job_id": str(job_id),  # NOT patient_id
                 "skip_hla": skip_hla,
                 "skip_pypgx": skip_pypgx,
                 "skip_gatk": skip_gatk,
                 "skip_report": skip_report,
-                "workflow_id": workflow_id,
+                "workflow_id": str(job_id),  # removed in Task 4 → job_id field only on request model
                 "sample_identifier": effective_sample_identifier,
             }
 
@@ -1094,7 +1112,7 @@ async def process_file_nextflow_background(
                 workflow_id,
                 nextflow_url,
                 job_key,
-                job_data.get("outdir", f"/data/reports/{patient_id}"),
+                job_data.get("outdir", f"/data/reports/{patient_id}/{job_id}"),
             )
 
         except Exception as e:
@@ -1540,34 +1558,34 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
         metadata = job.job_metadata or {}
         reports = metadata.get("reports", {})
 
-        # If no reports in metadata, try to construct URLs from patient_id
+        # If no reports in metadata, try to construct URLs from patient_id + job_id
         if not reports:
             patient_id = metadata.get("patient_id")
             if patient_id:
-                # Construct basic report URLs based on standard naming convention
+                # Construct basic report URLs based on nested naming convention
                 reports = {
-                    "pdf_report_url": f"/reports/{patient_id}/{patient_id}_pgx_report.pdf",
-                    "html_report_url": f"/reports/{patient_id}/{patient_id}_pgx_report_interactive.html",
+                    "pdf_report_url": f"/reports/{patient_id}/{job_id}/{job_id}_pgx_report.pdf",
+                    "html_report_url": f"/reports/{patient_id}/{job_id}/{job_id}_pgx_report_interactive.html",
                 }
 
                 # Check if PharmCAT reports exist and add them
-                patient_dir = Path(REPORTS_DIR) / patient_id
+                patient_dir = Path(REPORTS_DIR) / patient_id / str(job.id)
                 if patient_dir.exists():
-                    pharmcat_html = patient_dir / f"{patient_id}_pgx_pharmcat.html"
-                    pharmcat_json = patient_dir / f"{patient_id}_pgx_pharmcat.json"
-                    pharmcat_tsv = patient_dir / f"{patient_id}_pgx_pharmcat.tsv"
+                    pharmcat_html = patient_dir / f"{job.id}_pgx_pharmcat.html"
+                    pharmcat_json = patient_dir / f"{job.id}_pgx_pharmcat.json"
+                    pharmcat_tsv = patient_dir / f"{job.id}_pgx_pharmcat.tsv"
 
                     if pharmcat_html.exists():
                         reports["pharmcat_html_report_url"] = (
-                            f"/reports/{patient_id}/{pharmcat_html.name}"
+                            f"/reports/{patient_id}/{job.id}/{pharmcat_html.name}"
                         )
                     if pharmcat_json.exists():
                         reports["pharmcat_json_report_url"] = (
-                            f"/reports/{patient_id}/{pharmcat_json.name}"
+                            f"/reports/{patient_id}/{job.id}/{pharmcat_json.name}"
                         )
                     if pharmcat_tsv.exists():
                         reports["pharmcat_tsv_report_url"] = (
-                            f"/reports/{patient_id}/{pharmcat_tsv.name}"
+                            f"/reports/{patient_id}/{job.id}/{pharmcat_tsv.name}"
                         )
 
         return {

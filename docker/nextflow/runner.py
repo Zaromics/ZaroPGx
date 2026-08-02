@@ -79,10 +79,10 @@ async def run(request: NextflowRunRequest):
     if not request.input or not request.input_type or not request.patient_id:
         raise HTTPException(status_code=400, detail="Missing required params: input, input_type, patient_id")
 
-    # Set defaults
-    report_id = request.report_id or request.patient_id
-    outdir = request.outdir or f"/data/reports/{request.patient_id}"
-    job_id = request.job_id or request.patient_id
+    # Set defaults (display report_id = job_id; nest under patient/job)
+    report_id = request.report_id or request.workflow_id or request.patient_id
+    outdir = request.outdir or f"/data/reports/{request.patient_id}/{report_id}"
+    job_id = request.job_id or request.workflow_id or request.patient_id
 
     # Nextflow is the executor, not a workflow step
     # Individual containers report their own progress
@@ -139,7 +139,8 @@ async def run(request: NextflowRunRequest):
             request.input,
             outdir,
             f"/data/temp/{request.patient_id}",
-            f"/data/reports/{request.patient_id}"
+            f"/data/reports/{request.patient_id}/{report_id}",
+            f"/data/reports/{request.patient_id}",
         ]
     }
 

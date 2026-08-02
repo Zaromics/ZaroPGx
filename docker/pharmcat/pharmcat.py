@@ -499,9 +499,14 @@ async def process_genotype(
                 # Prepare per-job report directory before execution to support tee'd logs
                 reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
                 reports_dir.mkdir(parents=True, exist_ok=True)
-                # IMPORTANT: Use patient_id for directory naming to match downstream expectations
-                dir_name = str(patient_id) if patient_id else base_name
-                patient_dir = reports_dir / dir_name
+                # Nest under /data/reports/{patient_id}/{job_id}/ when possible (137c)
+                job_dir_id = workflow_id or report_id
+                if patient_id and job_dir_id:
+                    patient_dir = reports_dir / str(patient_id) / str(job_dir_id)
+                elif patient_id:
+                    patient_dir = reports_dir / str(patient_id)
+                else:
+                    patient_dir = reports_dir / base_name
                 patient_dir.mkdir(parents=True, exist_ok=True)
 
                 # Determine tee behavior and log path
@@ -559,7 +564,15 @@ async def process_genotype(
                                 cleanup_paths_local = [
                                     working_dir,
                                     file_path,
-                                    f"/data/reports/{patient_id}" if patient_id else None
+                                    (
+                                        f"/data/reports/{patient_id}/{job_dir_id}"
+                                        if patient_id and job_dir_id
+                                        else (
+                                            f"/data/reports/{patient_id}"
+                                            if patient_id
+                                            else None
+                                        )
+                                    ),
                                 ]
                                 cleanup_paths_local = [p for p in cleanup_paths_local if p is not None]
                                 register_process(workflow_identifier, process_local.pid, {
@@ -745,19 +758,30 @@ async def process_genotype(
                 else:
                     logger.warning("No TSV report found - this may indicate the Reporter module didn't run or TSV generation failed")
                 
-                # Create report directory if it doesn't exist
+                # Create nested report directory: /data/reports/{patient_id}/{job_id}/
                 reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
                 reports_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Create a patient-specific directory for this job
-                patient_dir = reports_dir / base_name
+
+                job_dir_id = workflow_id or report_id
+                if patient_id and job_dir_id:
+                    patient_dir = reports_dir / str(patient_id) / str(job_dir_id)
+                elif patient_id:
+                    patient_dir = reports_dir / str(patient_id)
+                else:
+                    patient_dir = reports_dir / base_name
                 patient_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Created patient-specific directory: {patient_dir}")
-                
+
+                # Filenames use job_id when available (display report_id = job_id)
+                name_base = (
+                    str(job_dir_id)
+                    if job_dir_id
+                    else (str(patient_id) if patient_id else base_name)
+                )
+
                 # Copy PharmCAT HTML report to patient directory if available
                 if report_html_file:
                     # Save with pharmcat-specific filename to avoid colliding with our own HTML report
-                    name_base = str(patient_id) if patient_id else base_name
                     dest_html_path = patient_dir / f"{name_base}_pgx_pharmcat.html"
                     src_html_path = Path(temp_dir) / report_html_file
                     
@@ -769,7 +793,6 @@ async def process_genotype(
                 
                 # Copy PharmCAT TSV report to /data/reports if available
                 if report_tsv_file:
-                    name_base = str(patient_id) if patient_id else base_name
                     dest_tsv_path = patient_dir / f"{name_base}_pgx_pharmcat.tsv"
                     src_tsv_path = Path(temp_dir) / report_tsv_file
                     
@@ -831,7 +854,6 @@ async def process_genotype(
                 # Copy the report.json file to reports directory for inspection
                 if report_json_file:
                     # Save with pharmcat-specific filename to avoid colliding with our own JSON export
-                    name_base = str(patient_id) if patient_id else base_name
                     dest_json_path = patient_dir / f"{name_base}_pgx_pharmcat.json"
                     src_json_path = Path(temp_dir) / report_json_file
                     
@@ -866,8 +888,8 @@ async def process_genotype(
                 
                 # Always create a permanent copy of the raw report.json in the patient directory
                 # Try a more direct approach to ensure the file is created
-                # Keep raw report named with patient_id for consistency
-                raw_name_base = str(patient_id) if patient_id else base_name
+                # Keep raw report named with job_id/patient_id for consistency
+                raw_name_base = name_base
                 raw_report_path = patient_dir / f"{raw_name_base}_raw_report.json"
                 try:
                     with open(raw_report_path, 'w') as f:
@@ -884,7 +906,7 @@ async def process_genotype(
                 
                 # Create a standard JSON report in the patient directory
                 try:
-                    standard_name_base = str(patient_id) if patient_id else base_name
+                    standard_name_base = name_base
                     standard_json_path = patient_dir / f"{standard_name_base}_pgx_report.json"
                     with open(standard_json_path, 'w') as f:
                         json.dump(report_data, f, indent=2)

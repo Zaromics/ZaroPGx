@@ -40,3 +40,14 @@ def test_websocket_envelope_type_is_job_update():
     assert '"type": "job_update"' in text
     assert '"type": "workflow_update"' not in text
     assert "async def send_job_update" in text
+
+
+def test_upload_outdir_nests_patient_and_job():
+    text = Path("app/api/routes/upload_router.py").read_text(encoding="utf-8")
+    assert 'f"/data/reports/{patient_id}/{job_id}"' in text
+
+
+def test_generator_report_id_equals_job_id():
+    text = Path("app/reports/generator.py").read_text(encoding="utf-8")
+    assert "report_id = str(job_id)" in text
+    assert 'patient_info.get("report_id"' not in text

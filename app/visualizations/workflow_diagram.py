@@ -317,7 +317,7 @@ def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
         '  Outputs --> Normalize["Normalize results<br/>(pharmcat_client.normalize_...)"]',
         "  Normalize --> WorkflowDiagram[Generate Workflow Diagram<br/>Visual representation]:::analysis",
         '  WorkflowDiagram --> Generate["Generate Reports<br/>(app/reports/generator.py)"]:::active',
-        "  Generate --> ReportsDir[/Write to /data/reports/:report_id/]:::io",
+        "  Generate --> ReportsDir[/Write to /data/reports/:patient_id/:job_id/]:::io",
         '  ReportsDir --> Serve["Serve at /reports/*"]',
         "end",
         "",
@@ -785,7 +785,7 @@ def _render_graphviz_diagram(
     e("Normalize", "WorkflowDiagram", active=True)
     n("Generate", "Generate Reports\n(app/reports/generator.py)", active=True)
     e("WorkflowDiagram", "Generate", active=True)
-    n("ReportsDir", "Write to /data/reports/:report_id/", active=True, shape="folder")
+    n("ReportsDir", "Write to /data/reports/:patient_id/:job_id/", active=True, shape="folder")
     e("Generate", "ReportsDir", active=True)
 
     if exported_to_fhir:
