@@ -83,3 +83,63 @@ def test_vcf_complete_is_100():
     ]
     info = calc.calculate_progress_from_steps(steps, _vcf_config())
     assert info.progress_percentage == 100
+
+
+def test_bam_includes_bam2vcf_not_alignment():
+    calc = WorkflowProgressCalculator()
+    cfg = {
+        "needs_gatk": False,
+        "needs_hla": False,
+        "needs_pypgx": True,
+        "needs_pypgx_bam2vcf": True,
+        "file_analysis": {"file_type": "bam"},
+    }
+    planned = calc._planned_steps_from_config(cfg)
+    assert "gatk_alignment" not in planned
+    assert "pypgx_bam2vcf" in planned
+    assert planned.index("pypgx_analysis") < planned.index("pypgx_bam2vcf")
+
+
+def test_fastq_includes_gatk_alignment_when_needs_gatk():
+    calc = WorkflowProgressCalculator()
+    cfg = {
+        "needs_gatk": True,
+        "needs_hla": True,
+        "needs_pypgx": True,
+        "file_analysis": {"file_type": "fastq"},
+    }
+    planned = calc._planned_steps_from_config(cfg)
+    assert "gatk_alignment" in planned
+    assert "hla_typing" in planned
+    assert "pypgx_bam2vcf" in planned  # default for non-vcf
+    ranges = calc._renormalized_ranges(planned)
+    assert ranges["report_generation"][1] == 100
+    # Heavier base-weight steps get wider or equal ranges than lighter ones
+    w = lambda a, b: b - a + 1
+    assert w(*ranges["pypgx_analysis"]) >= w(*ranges["header_analysis"])
+
+
+def test_no_decrease_with_workflow_id():
+    calc = WorkflowProgressCalculator()
+    cfg = _vcf_config()
+    steps_high = [
+        {"step_name": "header_analysis", "status": "completed", "step_order": 1},
+        {
+            "step_name": "pypgx_analysis",
+            "status": "running",
+            "step_order": 2,
+            "output_data": {"progress_percent": 80},
+        },
+    ]
+    steps_low = [
+        {"step_name": "header_analysis", "status": "completed", "step_order": 1},
+        {
+            "step_name": "pypgx_analysis",
+            "status": "running",
+            "step_order": 2,
+            "output_data": {"progress_percent": 10},
+        },
+    ]
+    high = calc.calculate_progress_from_steps(steps_high, cfg, workflow_id="job-58")
+    low = calc.calculate_progress_from_steps(steps_low, cfg, workflow_id="job-58")
+    assert low.progress_percentage >= high.progress_percentage
