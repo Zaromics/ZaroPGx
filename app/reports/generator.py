@@ -995,11 +995,12 @@ def create_interactive_html_report(
             workflow_kroki_svg_inline = ""
 
         try:
-            # Prefer a pre-rendered PNG served by the app
-            # Use patient_id for the workflow.png filename to match the directory structure
+            # Prefer a pre-rendered PNG served by the app (nested patient/job layout)
             png_path_local = os.path.join(report_dir, f"{report_id}_workflow.png")
             if os.path.exists(png_path_local):
-                workflow_png_url = f"/reports/{patient_id}/{patient_id}_workflow.png"
+                workflow_png_url = (
+                    f"/reports/{patient_id}/{report_id}/{report_id}_workflow.png"
+                )
         except Exception:
             workflow_png_url = ""
         if not workflow_png_url:
@@ -1012,7 +1013,7 @@ def create_interactive_html_report(
                     ) as f_out:
                         f_out.write(png_bytes)
                     workflow_png_url = (
-                        f"/reports/{patient_id}/{patient_id}_workflow.png"
+                        f"/reports/{patient_id}/{report_id}/{report_id}_workflow.png"
                     )
             except Exception:
                 workflow_png_url = ""
