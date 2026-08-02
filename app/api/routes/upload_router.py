@@ -115,7 +115,7 @@ logger.info(
 # Progress calculation is now handled by WorkflowProgressCalculator
 
 
-async def delayed_cleanup_on_cancellation(workflow_id: str, job_metadata: dict):
+async def delayed_cleanup_on_cancellation(job_id: str, job_metadata: dict):
     """
     Perform delayed cleanup when app container detects cancellation.
 
@@ -123,7 +123,7 @@ async def delayed_cleanup_on_cancellation(workflow_id: str, job_metadata: dict):
     complete, then cleans up the reports directory and other files.
 
     Args:
-        workflow_id: The workflow ID that was cancelled
+        job_id: The workflow ID that was cancelled
         job_metadata: Workflow metadata containing file paths
     """
 
@@ -134,13 +134,13 @@ async def delayed_cleanup_on_cancellation(workflow_id: str, job_metadata: dict):
         patient_id = job_metadata.get("patient_id")
         if not patient_id:
             logger.warning(
-                f"No patient_id found in workflow metadata for delayed cleanup of {workflow_id}"
+                f"No patient_id found in workflow metadata for delayed cleanup of job {job_id}"
             )
             return
 
         # Define cleanup paths (nested job outdir + legacy flat patient dir)
         cleanup_paths = [
-            f"/data/reports/{patient_id}/{workflow_id}",  # Nested job outdir
+            f"/data/reports/{patient_id}/{job_id}",  # Nested job outdir
             f"/data/reports/{patient_id}",  # Legacy flat patient dir
             f"/data/temp/{patient_id}",  # Temporary files
             f"/data/uploads/{patient_id}",  # Uploaded files
@@ -168,14 +168,14 @@ async def delayed_cleanup_on_cancellation(workflow_id: str, job_metadata: dict):
             except Exception as e:
                 logger.warning(f"Delayed cleanup: Failed to remove {path_str}: {e}")
 
-        logger.info(f"Delayed cleanup completed for cancelled workflow {workflow_id}")
+        logger.info(f"Delayed cleanup completed for cancelled job {job_id}")
 
     except Exception as e:
-        logger.error(f"Error during delayed cleanup of workflow {workflow_id}: {e}")
+        logger.error(f"Error during delayed cleanup of job {job_id}: {e}")
 
 
 async def handle_final_stages_progression(
-    job_service: JobService, workflow_id: str, outdir: str
+    job_service: JobService, job_id: str, outdir: str
 ):
     """
     Handle the final stages of workflow progression after Nextflow completion.
@@ -186,11 +186,11 @@ async def handle_final_stages_progression(
     """
     # job_service is unused here — kept for call-site compatibility
     await asyncio.to_thread(
-        _handle_final_stages_progression_sync, workflow_id, outdir
+        _handle_final_stages_progression_sync, job_id, outdir
     )
 
 
-def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
+def _handle_final_stages_progression_sync(job_id: str, outdir: str):
     """
     Sync implementation of final-stage report generation (may block on Kroki/IO).
 
@@ -202,14 +202,14 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
     job_service = JobService(db)
     try:
         # Check for cancellation before starting
-        job = job_service.get_job(workflow_id)
+        job = job_service.get_job(job_id)
         if job and job.status == "cancelled":
             logger.info(
-                f"Workflow {workflow_id} was cancelled before report generation"
+                f"Job {job_id} was cancelled before report generation"
             )
             # Thread-safe schedule onto the main event loop
             schedule_coroutine(
-                delayed_cleanup_on_cancellation(workflow_id, job.job_metadata)
+                delayed_cleanup_on_cancellation(job_id, job.job_metadata)
             )
             return
 
@@ -218,7 +218,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
             status=StepStatus.RUNNING, output_data={"progress_percent": 0}
         )
         job_service.update_job_step(
-            workflow_id, "report_generation", step_update
+            job_id, "report_generation", step_update
         )
 
         log_data = JobLogCreate(
@@ -226,12 +226,12 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
             log_level=LogLevel.INFO,
             message="Generating final reports from Nextflow output",
         )
-        job_service.log_job_event(workflow_id, log_data)
+        job_service.log_job_event(job_id, log_data)
 
         # Get workflow metadata to extract patient and data information
-        job = job_service.get_job(workflow_id)
+        job = job_service.get_job(job_id)
         if not job:
-            raise RuntimeError(f"Workflow {workflow_id} not found")
+            raise RuntimeError(f"Job {job_id} not found")
 
         metadata = job.job_metadata or {}
         patient_id = metadata.get("patient_id")
@@ -242,8 +242,6 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
         if not patient_id or not data_id:
             raise RuntimeError(f"Missing patient_id or data_id in workflow metadata")
 
-        # Task 4 renames remaining workflow_id locals; identity contract uses job_id now
-        job_id = workflow_id
 
         # Extract sample identifier from workflow metadata
         sample_identifier = None
@@ -380,10 +378,10 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
                             if pharmcat_run_id:
                                 # Link PharmCAT run to workflow
                                 job_service.link_pharmcat_run(
-                                    workflow_id, pharmcat_run_id
+                                    job_id, pharmcat_run_id
                                 )
                                 logger.info(
-                                    f"Successfully linked PharmCAT run {pharmcat_run_id} to workflow {workflow_id}"
+                                    f"Successfully linked PharmCAT run {pharmcat_run_id} to job {job_id}"
                                 )
                             else:
                                 logger.warning(
@@ -487,7 +485,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
             status=StepStatus.RUNNING, output_data={"progress_percent": 35}
         )
         job_service.update_job_step(
-            workflow_id, "report_generation", step_update
+            job_id, "report_generation", step_update
         )
 
         # Generate workflow diagrams for this sample
@@ -626,11 +624,11 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
             status=StepStatus.RUNNING, output_data={"progress_percent": 100}
         )
         job_service.update_job_step(
-            workflow_id, "report_generation", step_update
+            job_id, "report_generation", step_update
         )
 
         # Log report generation completion
-        logger.info(f"Report generation completed for workflow {workflow_id}")
+        logger.info(f"Report generation completed for job {job_id}")
         logger.info(f"Generated reports: {[k for k, v in response_data.items() if v]}")
 
         # Add provisional flag if the workflow was marked as provisional
@@ -650,7 +648,7 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
 
         # Update the workflow with the new metadata
         workflow_update = JobUpdate(metadata=updated_metadata)
-        job_service.update_job(workflow_id, workflow_update)
+        job_service.update_job(job_id, workflow_update)
 
         # Complete the report generation step
         step_update = JobStepUpdate(
@@ -658,20 +656,20 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
             output_data={"reports": response_data, "progress_percent": 100},
         )
         job_service.update_job_step(
-            workflow_id, "report_generation", step_update
+            job_id, "report_generation", step_update
         )
 
         # Complete the workflow
         workflow_update = JobUpdate(status=JobStatus.COMPLETED)
-        job_service.update_job(workflow_id, workflow_update)
+        job_service.update_job(job_id, workflow_update)
 
         # Broadcast workflow completion with report URLs
         try:
             schedule_coroutine(
                 job_service._broadcast_job_update(
-                    str(workflow_id),
+                    str(job_id),
                     {
-                        "workflow_id": str(workflow_id),
+                        "job_id": str(job_id),
                         "status": "completed",
                         "progress_percentage": 100,
                         "current_step": "completed",
@@ -694,40 +692,40 @@ def _handle_final_stages_progression_sync(workflow_id: str, outdir: str):
                 )
             )
         except Exception as e:
-            logger.error(f"Failed to broadcast workflow completion with reports: {e}")
+            logger.error(f"Failed to broadcast job completion with reports: {e}")
 
         log_data = JobLogCreate(
             step_name="workflow_completion",
             log_level=LogLevel.INFO,
             message="Workflow completed successfully with reports generated",
         )
-        job_service.log_job_event(workflow_id, log_data)
+        job_service.log_job_event(job_id, log_data)
 
         logger.info(
-            f"Workflow {workflow_id} completed successfully with reports generated"
+            f"Job {job_id} completed successfully with reports generated"
         )
         logger.info(f"Generated reports: {list(response_data.keys())}")
 
     except Exception as e:
         logger.error(
-            f"Error in final stages progression for workflow {workflow_id}: {e}"
+            f"Error in final stages progression for job {job_id}: {e}"
         )
         workflow_update = JobUpdate(status=JobStatus.FAILED)
-        job_service.update_job(workflow_id, workflow_update)
+        job_service.update_job(job_id, workflow_update)
 
         log_data = JobLogCreate(
             step_name=None,
             log_level=LogLevel.ERROR,
             message=f"Error in final stages: {str(e)}",
         )
-        job_service.log_job_event(workflow_id, log_data)
+        job_service.log_job_event(job_id, log_data)
     finally:
         db.close()
 
 
 async def wait_for_nextflow_completion(
     job_service: JobService,
-    workflow_id: str,
+    job_id: str,
     nextflow_url: str,
     job_key: str,
     outdir: str,
@@ -741,13 +739,13 @@ async def wait_for_nextflow_completion(
 
     Args:
         job_service: Workflow service instance
-        workflow_id: The workflow ID
+        job_id: The workflow ID
         nextflow_url: Nextflow runner URL
         job_key: Nextflow job key
         outdir: Output directory path
     """
     try:
-        logger.info(f"Waiting for Nextflow completion for workflow {workflow_id}")
+        logger.info(f"Waiting for Nextflow completion for job {job_id}")
 
         # Log that Nextflow execution has started
         log_data = JobLogCreate(
@@ -755,15 +753,15 @@ async def wait_for_nextflow_completion(
             log_level=LogLevel.INFO,
             message="Nextflow pipeline started - individual containers will report progress",
         )
-        job_service.log_job_event(workflow_id, log_data)
+        job_service.log_job_event(job_id, log_data)
 
         while True:
             try:
                 # Check if workflow has been cancelled
-                job = job_service.get_job(workflow_id)
+                job = job_service.get_job(job_id)
                 if job and job.status == "cancelled":
                     logger.info(
-                        f"Workflow {workflow_id} was cancelled, stopping Nextflow monitoring"
+                        f"Job {job_id} was cancelled, stopping Nextflow monitoring"
                     )
                     break
 
@@ -786,7 +784,7 @@ async def wait_for_nextflow_completion(
                             log_level=LogLevel.INFO,
                             message=f"Nextflow executor: {message}",
                         )
-                        job_service.log_job_event(workflow_id, log_data)
+                        job_service.log_job_event(job_id, log_data)
 
                     # Check if completed
                     if status_data.get("status") == "completed":
@@ -798,11 +796,11 @@ async def wait_for_nextflow_completion(
                             log_level=LogLevel.INFO,
                             message="Nextflow pipeline completed - proceeding to report generation",
                         )
-                        job_service.log_job_event(workflow_id, log_data)
+                        job_service.log_job_event(job_id, log_data)
 
                         # Handle final stages (report generation)
                         await handle_final_stages_progression(
-                            job_service, workflow_id, outdir
+                            job_service, job_id, outdir
                         )
                         break
                     elif status_data.get("status") == "failed":
@@ -811,14 +809,14 @@ async def wait_for_nextflow_completion(
 
                         # Update workflow status to failed
                         workflow_update = JobUpdate(status=JobStatus.FAILED)
-                        job_service.update_job(workflow_id, workflow_update)
+                        job_service.update_job(job_id, workflow_update)
 
                         log_data = JobLogCreate(
                             step_name=None,
                             log_level=LogLevel.ERROR,
                             message=f"Nextflow job failed: {error_msg}",
                         )
-                        job_service.log_job_event(workflow_id, log_data)
+                        job_service.log_job_event(job_id, log_data)
                         break
                     elif status_data.get("status") == "cancelled":
                         logger.info(f"Nextflow job {job_key} was cancelled")
@@ -834,14 +832,14 @@ async def wait_for_nextflow_completion(
     except Exception as e:
         logger.error(f"Error waiting for Nextflow completion: {e}")
         workflow_update = JobUpdate(status=JobStatus.FAILED)
-        job_service.update_job(workflow_id, workflow_update)
+        job_service.update_job(job_id, workflow_update)
 
         log_data = JobLogCreate(
             step_name=None,
             log_level=LogLevel.ERROR,
             message=f"Error waiting for completion: {str(e)}",
         )
-        job_service.log_job_event(workflow_id, log_data)
+        job_service.log_job_event(job_id, log_data)
 
 
 async def process_file_nextflow_background_with_db(
@@ -850,7 +848,7 @@ async def process_file_nextflow_background_with_db(
     data_id: str,
     workflow: dict,
     sample_identifier: Optional[str] = None,
-    workflow_id: Optional[str] = None,
+    job_id: Optional[str] = None,
 ):
     """
     WRAPPER FUNCTION: Creates database session and delegates to core implementation.
@@ -864,12 +862,12 @@ async def process_file_nextflow_background_with_db(
         data_id: Genetic data record ID
         workflow: Workflow configuration dictionary
         sample_identifier: Optional sample identifier
-        workflow_id: Optional workflow ID for tracking
+        job_id: Optional workflow ID for tracking
     """
     db = SessionLocal()
     try:
         await process_file_nextflow_background(
-            file_path, patient_id, data_id, workflow, db, sample_identifier, workflow_id
+            file_path, patient_id, data_id, workflow, db, sample_identifier, job_id
         )
     finally:
         db.close()
@@ -882,7 +880,7 @@ async def process_file_nextflow_background(
     workflow: dict,
     db: Session,
     sample_identifier: Optional[str] = None,
-    workflow_id: Optional[str] = None,
+    job_id: Optional[str] = None,
 ):
     """
     CORE IMPLEMENTATION: Execute the PGx pipeline via the Nextflow runner service.
@@ -898,40 +896,40 @@ async def process_file_nextflow_background(
         workflow: Workflow configuration dictionary
         db: Database session (must be provided)
         sample_identifier: Optional sample identifier
-        workflow_id: Optional workflow ID for tracking
+        job_id: Optional workflow ID for tracking
     """
     job_service = JobService(db)
 
     try:
-        # Get the workflow if workflow_id is provided
-        if workflow_id:
-            job_obj = job_service.get_job(workflow_id)
+        # Get the workflow if job_id is provided
+        if job_id:
+            job_obj = job_service.get_job(job_id)
             if not job_obj:
-                logger.error(f"Workflow {workflow_id} not found")
+                logger.error(f"Job {job_id} not found")
                 return
 
             # Check for cancellation before starting
             if job_obj.status == "cancelled":
                 logger.info(
-                    f"Workflow {workflow_id} was cancelled before processing started"
+                    f"Job {job_id} was cancelled before processing started"
                 )
                 # Schedule delayed cleanup to ensure any partial files are removed
                 task = asyncio.create_task(
                     delayed_cleanup_on_cancellation(
-                        workflow_id, job_obj.job_metadata
+                        job_id, job_obj.job_metadata
                     )
                 )
                 # Add a name for easier debugging
-                task.set_name(f"delayed_cleanup_{workflow_id}")
+                task.set_name(f"delayed_cleanup_{job_id}")
                 return
         else:
-            logger.error("No workflow_id provided for background processing")
+            logger.error("No job_id provided for background processing")
             return
 
         # Update header analysis step
         step_update = JobStepUpdate(status=StepStatus.RUNNING)
         job_service.update_job_step(
-            workflow_id, "header_analysis", step_update
+            job_id, "header_analysis", step_update
         )
 
         # Inspect file header
@@ -952,7 +950,7 @@ async def process_file_nextflow_background(
                     patient_dir = (
                         Path(os.getenv("REPORT_DIR", "/data/reports"))
                         / str(patient_id)
-                        / str(workflow_id)
+                        / str(job_id)
                     )
                     patient_dir.mkdir(parents=True, exist_ok=True)
                     header_txt_path = patient_dir / f"{data_id}.header.txt"
@@ -981,7 +979,7 @@ async def process_file_nextflow_background(
                 output_data={"header_record_id": header_record_id},
             )
             job_service.update_job_step(
-                workflow_id, "header_analysis", step_update
+                job_id, "header_analysis", step_update
             )
 
             log_data = JobLogCreate(
@@ -989,7 +987,7 @@ async def process_file_nextflow_background(
                 log_level=LogLevel.INFO,
                 message="Header analysis completed successfully",
             )
-            job_service.log_job_event(workflow_id, log_data)
+            job_service.log_job_event(job_id, log_data)
 
         except Exception as e:
             logger.error(f"Header analysis failed: {e}")
@@ -997,18 +995,18 @@ async def process_file_nextflow_background(
                 status=StepStatus.FAILED, error_details={"error": str(e)}
             )
             job_service.update_job_step(
-                workflow_id, "header_analysis", step_update
+                job_id, "header_analysis", step_update
             )
 
             workflow_update = JobUpdate(status=JobStatus.FAILED)
-            job_service.update_job(workflow_id, workflow_update)
+            job_service.update_job(job_id, workflow_update)
 
             log_data = JobLogCreate(
                 step_name="header_analysis",
                 log_level=LogLevel.ERROR,
                 message=f"Header analysis failed: {str(e)}",
             )
-            job_service.log_job_event(workflow_id, log_data)
+            job_service.log_job_event(job_id, log_data)
             return
 
         # Submit to Nextflow
@@ -1053,13 +1051,12 @@ async def process_file_nextflow_background(
             ) or header_sample_identifier
 
             # Display / path identity: report_id = job_id (137c)
-            job_id = workflow_id
 
             # Persist sample IDs so final-stage report generation can read them
             # without relying on locals() across coroutine boundaries.
-            if workflow_id:
+            if job_id:
                 try:
-                    job_obj = job_service.get_job(workflow_id)
+                    job_obj = job_service.get_job(job_id)
                     if job_obj:
                         meta = dict(job_obj.job_metadata or {})
                         if header_sample_identifier:
@@ -1067,12 +1064,12 @@ async def process_file_nextflow_background(
                         if effective_sample_identifier:
                             meta["sample_identifier"] = effective_sample_identifier
                         job_service.update_job(
-                            workflow_id, JobUpdate(metadata=meta)
+                            job_id, JobUpdate(metadata=meta)
                         )
                 except Exception as meta_err:
                     logger.debug(
-                        "Could not persist sample identifiers on workflow %s: %s",
-                        workflow_id,
+                        "Could not persist sample identifiers on job %s: %s",
+                        job_id,
                         meta_err,
                         exc_info=True,
                     )
@@ -1089,7 +1086,6 @@ async def process_file_nextflow_background(
                 "skip_pypgx": skip_pypgx,
                 "skip_gatk": skip_gatk,
                 "skip_report": skip_report,
-                "workflow_id": str(job_id),  # removed in Task 4 → job_id field only on request model
                 "sample_identifier": effective_sample_identifier,
             }
 
@@ -1104,12 +1100,12 @@ async def process_file_nextflow_background(
             if not job_key:
                 raise RuntimeError("No job key returned from Nextflow")
 
-            logger.info(f"Submitted Nextflow job {job_key} for workflow {workflow_id}")
+            logger.info(f"Submitted Nextflow job {job_key} for job {job_id}")
 
             # Wait for completion
             await wait_for_nextflow_completion(
                 job_service,
-                workflow_id,
+                job_id,
                 nextflow_url,
                 job_key,
                 job_data.get("outdir", f"/data/reports/{patient_id}/{job_id}"),
@@ -1118,27 +1114,27 @@ async def process_file_nextflow_background(
         except Exception as e:
             logger.error(f"Nextflow execution failed: {e}")
             workflow_update = JobUpdate(status=JobStatus.FAILED)
-            job_service.update_job(workflow_id, workflow_update)
+            job_service.update_job(job_id, workflow_update)
 
             log_data = JobLogCreate(
                 step_name=None,
                 log_level=LogLevel.ERROR,
                 message=f"Nextflow execution failed: {str(e)}",
             )
-            job_service.log_job_event(workflow_id, log_data)
+            job_service.log_job_event(job_id, log_data)
             return
 
     except Exception as e:
         logger.error(f"Error in Nextflow background processing: {e}")
         workflow_update = JobUpdate(status=JobStatus.FAILED)
-        job_service.update_job(workflow_id, workflow_update)
+        job_service.update_job(job_id, workflow_update)
 
         log_data = JobLogCreate(
             step_name=None,
             log_level=LogLevel.ERROR,
             message=f"Background processing error: {str(e)}",
         )
-        job_service.log_job_event(workflow_id, log_data)
+        job_service.log_job_event(job_id, log_data)
 
 
 @router.post("/genomic-data", response_model=UploadResponse)
@@ -1428,7 +1424,7 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
             "message": latest_message,
             "current_stage": current_stage,
             "data": {
-                "workflow_id": job.id,
+                "job_id": job.id,
                 "patient_id": metadata.get("patient_id"),
                 "data_id": metadata.get("data_id"),
                 "steps": [
@@ -1527,7 +1523,7 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
     try:
         job_service = JobService(db)
 
-        # First try to get workflow by ID (in case job_id is actually a workflow_id)
+        # First try to get workflow by ID (in case job_id is actually a job_id)
         job = job_service.get_job(job_id)
 
         # If not found by ID, try to find by name pattern
@@ -1590,7 +1586,7 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
 
         return {
             "job_id": job_id,
-            "workflow_id": str(job.id),
+            "job_id": str(job.id),
             "status": "completed",
             "reports": reports,
         }

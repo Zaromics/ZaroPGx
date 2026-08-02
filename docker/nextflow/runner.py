@@ -16,7 +16,7 @@ from typing import Dict, Optional
 import requests
 from fastapi import FastAPI, HTTPException, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -69,7 +69,6 @@ class NextflowRunRequest(BaseModel):
     job_id: Optional[str] = None
     skip_hla: str = "false"
     skip_pypgx: str = "false"
-    workflow_id: Optional[str] = None
     sample_identifier: Optional[str] = None
 
 @app.post("/run")
@@ -80,16 +79,14 @@ async def run(request: NextflowRunRequest):
         raise HTTPException(status_code=400, detail="Missing required params: input, input_type, patient_id")
 
     # Set defaults (display report_id = job_id; nest under patient/job)
-    report_id = request.report_id or request.workflow_id or request.patient_id
+    report_id = request.report_id or request.job_id or request.patient_id
     outdir = request.outdir or f"/data/reports/{request.patient_id}/{report_id}"
-    job_id = request.job_id or request.workflow_id or request.patient_id
+    job_id = request.job_id or request.patient_id
 
     # Nextflow is the executor, not a workflow step
     # Individual containers report their own progress
-    workflow_client = None
-    
     # Check if workflow has been cancelled before starting
-    if request.workflow_id:
+    if request.job_id:
         try:
             # Use direct database query for better performance
 
@@ -115,10 +112,10 @@ async def run(request: NextflowRunRequest):
             # Query job status directly
             with Session(engine) as db:
                 query = text("SELECT status FROM jobs WHERE id = :job_id")
-                result = db.execute(query, {"job_id": request.workflow_id}).fetchone()
+                result = db.execute(query, {"job_id": request.job_id}).fetchone()
                 
                 if result and result[0].lower() == "cancelled":
-                    logger.info(f"Job {request.workflow_id} is cancelled, aborting Nextflow pipeline")
+                    logger.info(f"Job {request.job_id} is cancelled, aborting Nextflow pipeline")
                     return {"success": False, "error": "Job has been cancelled"}
                     
         except Exception as e:
@@ -131,7 +128,6 @@ async def run(request: NextflowRunRequest):
         "job_id": job_id,
         "patient_id": request.patient_id,
         "report_id": report_id,
-        "workflow_id": request.workflow_id,
         "status": "starting",
         "start_time": datetime.now(timezone.utc).isoformat(),
         "message": "Initializing Nextflow pipeline",
@@ -147,7 +143,7 @@ async def run(request: NextflowRunRequest):
     # Start Nextflow in a separate thread
     thread = threading.Thread(
         target=run_nextflow_job, 
-        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.workflow_id, request.sample_identifier)
+        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier)
     )
     thread.daemon = True
     thread.start()
@@ -160,7 +156,7 @@ async def run(request: NextflowRunRequest):
         "message": "Nextflow job started"
     }
 
-def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', workflow_id: Optional[str] = None, sample_identifier: Optional[str] = None):
+def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None):
     """Run Nextflow job in background thread. Nextflow orchestrates individual containers that report their own progress."""
     try:
         # Update job status
@@ -191,8 +187,8 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
         
         # Set environment variables for job_id passing to individual containers
         env = os.environ.copy()
-        if workflow_id:
-            env['JOB_ID'] = workflow_id
+        if job_id:
+            env['JOB_ID'] = job_id
             env['JOB_API_BASE'] = 'http://app:8000/api/v1'
 
         os.makedirs(outdir, exist_ok=True)
@@ -278,8 +274,7 @@ def get_all_jobs():
     }
 
 class CancelRequest(BaseModel):
-    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
-    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
+    job_id: str
     patient_id: str
     action: str
 
@@ -296,10 +291,10 @@ async def cancel_workflow_job(request: CancelRequest):
     4. Return success/failure status
     """
     try:
-        workflow_id = request.workflow_id
+        job_id = request.job_id
         patient_id = request.patient_id
         
-        logger.info(f"Cancelling workflow {workflow_id} for patient {patient_id}")
+        logger.info(f"Cancelling job {job_id} for patient {patient_id}")
         
         # Find and terminate processes
         terminated_count = 0
@@ -307,9 +302,10 @@ async def cancel_workflow_job(request: CancelRequest):
         # Method 1: Check our stored job registry
         job_found = False
         for job_key, job in running_jobs.items():
-            if (job.get("patient_id") == patient_id or 
-                job.get("workflow_id") == workflow_id or
-                workflow_id in job_key or
+            if (job.get("patient_id") == patient_id or
+                job.get("job_id") == job_id or
+                job.get("workflow_id") == job_id or
+                job_id in job_key or
                 patient_id in job_key):
                 
                 job_found = True
@@ -357,9 +353,10 @@ async def cancel_workflow_job(request: CancelRequest):
         
         # Clean up specific tracked file paths from jobs
         for job_key, job in running_jobs.items():
-            if (job.get("patient_id") == patient_id or 
-                job.get("workflow_id") == workflow_id or
-                workflow_id in job_key or
+            if (job.get("patient_id") == patient_id or
+                job.get("job_id") == job_id or
+                job.get("workflow_id") == job_id or
+                job_id in job_key or
                 patient_id in job_key):
                 
                 # Clean up job-specific files
@@ -377,19 +374,19 @@ async def cancel_workflow_job(request: CancelRequest):
                         logger.warning(f"Failed to cleanup {path}: {e}")
         
         if not job_found:
-            logger.warning(f"No running jobs found for workflow {workflow_id} and patient {patient_id}")
+            logger.warning(f"No running jobs found for job {job_id} and patient {patient_id}")
         
         return {
             "success": True,
-            "message": f"Cancelled workflow {workflow_id}",
+            "message": f"Cancelled job {job_id}",
             "terminated_processes": terminated_count,
-            "workflow_id": workflow_id,
+            "job_id": job_id,
             "patient_id": patient_id
         }
         
     except Exception as e:
-        logger.error(f"Error cancelling workflow {request.workflow_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to cancel workflow: {str(e)}")
+        logger.error(f"Error cancelling job {request.job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel job: {str(e)}")
 
 
 @app.post("/cleanup")

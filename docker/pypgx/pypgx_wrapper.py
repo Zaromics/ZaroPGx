@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel
 
 # Import shared workflow client for integration
 import sys
@@ -227,7 +227,7 @@ async def process_gene_batch_parallel(
     reference_genome: str,
     max_workers: int = None,
     workflow_id: str = None,
-    workflow_client = None
+    job_client = None
 ) -> Dict[str, Any]:
     """Process a batch of genes in parallel using ThreadPoolExecutor"""
     if max_workers is None:
@@ -237,9 +237,9 @@ async def process_gene_batch_parallel(
     logger.info(f"Processing {len(genes)} genes in parallel with {max_workers} workers")
     
     # Check for cancellation before starting batch processing
-    if workflow_client:
+    if job_client:
         try:
-            if await workflow_client.is_job_cancelled():
+            if await job_client.is_job_cancelled():
                 logger.info(f"Workflow {workflow_id} is cancelled, aborting batch processing")
                 return {"cancelled": True, "message": "Workflow has been cancelled"}
         except Exception as e:
@@ -272,9 +272,9 @@ async def process_gene_batch_parallel(
         # Collect results as they complete
         for future in as_completed(future_to_gene):
             # Check for cancellation before processing each result
-            if workflow_client:
+            if job_client:
                 try:
-                    if await workflow_client.is_job_cancelled():
+                    if await job_client.is_job_cancelled():
                         logger.info(f"Workflow {workflow_id} is cancelled, stopping batch processing")
                         # Cancel remaining futures
                         for f in future_to_gene:
@@ -326,8 +326,7 @@ SUPPORTED_GENES = gene_config.get_supported_genes()
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 class CancelRequest(BaseModel):
-    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
-    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
+    job_id: str
     patient_id: str
     action: str
 
@@ -457,18 +456,18 @@ async def create_input_vcf(
         raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} is not supported. Use hg19/GRCh37 or hg38/GRCh38.")
 
     # Initialize workflow client if workflow_id is provided
-    workflow_client = None
+    job_client = None
     if workflow_id:
         try:
-            workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
-            await workflow_client.start_step(f"Starting BAM to VCF conversion for {file.filename}")
-            await workflow_client.log_progress(f"Converting {file.filename} to VCF", {
+            job_client = JobClient(job_id=workflow_id, step_name=step_name)
+            await job_client.start_step(f"Starting BAM to VCF conversion for {file.filename}")
+            await job_client.log_progress(f"Converting {file.filename} to VCF", {
                 "filename": file.filename,
                 "reference_genome": reference_genome
             })
         except Exception as e:
             logger.warning(f"Failed to initialize workflow client: {e}")
-            workflow_client = None
+            job_client = None
 
     # Normalize to GRCh37/GRCh38 wording for PyPGx
     pypgx_assembly = "GRCh37" if reference_genome in ("hg19", "GRCh37") else "GRCh38"
@@ -489,18 +488,18 @@ async def create_input_vcf(
 
         res = run_pypgx_create_input_vcf(str(input_path), str(output_vcf_gz), pypgx_assembly)
         if not res.get("success"):
-            if workflow_client:
-                await workflow_client.log_progress(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}", {"error": res.get("error")})
-                await workflow_client.complete_step(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}")
+            if job_client:
+                await job_client.log_progress(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}", {"error": res.get("error")})
+                await job_client.complete_step(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}")
             raise HTTPException(status_code=500, detail=res.get("error", "PyPGx create-input-vcf failed"))
 
         # Update workflow with success
-        if workflow_client:
-            await workflow_client.log_progress(f"BAM to VCF conversion completed successfully", {
+        if job_client:
+            await job_client.log_progress(f"BAM to VCF conversion completed successfully", {
                 "vcf_path": str(output_vcf_gz),
                 "assembly": pypgx_assembly
             })
-            await workflow_client.complete_step("BAM to VCF conversion completed successfully")
+            await job_client.complete_step("BAM to VCF conversion completed successfully")
 
         payload: Dict[str, Any] = {
             "success": True,
@@ -520,9 +519,9 @@ async def create_input_vcf(
         raise
     except Exception as e:
         logger.exception("Error creating VCF from alignment with PyPGx")
-        if workflow_client:
-            await workflow_client.log_progress(f"BAM to VCF conversion failed: {str(e)}", {"error": str(e)})
-            await workflow_client.complete_step(f"BAM to VCF conversion failed: {str(e)}")
+        if job_client:
+            await job_client.log_progress(f"BAM to VCF conversion failed: {str(e)}", {"error": str(e)})
+            await job_client.complete_step(f"BAM to VCF conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating VCF from alignment with PyPGx: {str(e)}")
 
 def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly: str) -> Dict[str, Any]:
@@ -666,25 +665,25 @@ async def genotype(
     
     
     # Initialize workflow client if workflow_id is provided
-    workflow_client = None
+    job_client = None
     if workflow_id:
         try:
-            workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
+            job_client = JobClient(job_id=workflow_id, step_name=step_name)
             
             # Check if workflow has been cancelled before starting
-            if await workflow_client.is_job_cancelled():
+            if await job_client.is_job_cancelled():
                 logger.info(f"Workflow {workflow_id} is cancelled, aborting PyPGx processing")
                 return {"success": False, "error": "Workflow has been cancelled"}
             
-            await workflow_client.start_step(f"Starting PyPGx analysis for {len(requested_genes)} genes")
-            await workflow_client.log_progress(f"Processing {file.filename} with PyPGx", {
+            await job_client.start_step(f"Starting PyPGx analysis for {len(requested_genes)} genes")
+            await job_client.log_progress(f"Processing {file.filename} with PyPGx", {
                 "genes": requested_genes,
                 "reference_genome": reference_genome,
                 "file_size_gb": 0  # Will be updated after file is saved
             })
         except Exception as e:
             logger.warning(f"Failed to initialize workflow client: {e}")
-            workflow_client = None
+            job_client = None
     
     try:
         # Save the uploaded VCF file
@@ -701,8 +700,8 @@ async def genotype(
         logger.info(f"File size: {file_size_gb:.2f}GB, Available memory: {memory_info['available_gb']:.2f}GB")
         
         # Update workflow with file information
-        if workflow_client:
-            await workflow_client.log_progress(f"File uploaded: {file_size_gb:.2f}GB", {
+        if job_client:
+            await job_client.log_progress(f"File uploaded: {file_size_gb:.2f}GB", {
                 "file_size_gb": file_size_gb,
                 "available_memory_gb": memory_info['available_gb'],
                 "total_genes": len(requested_genes)
@@ -731,8 +730,8 @@ async def genotype(
             logger.info(f"BATCH_START: batch={batch_idx + 1}, total_batches={len(gene_batches)}, genes_in_batch={len(gene_batch)}, total_genes={total_genes}")
             
             # Log batch start for progress tracking
-            if workflow_client:
-                await workflow_client.log_progress(f"Processing batch {batch_idx + 1}/{len(gene_batches)}: {', '.join(gene_batch)}", {
+            if job_client:
+                await job_client.log_progress(f"Processing batch {batch_idx + 1}/{len(gene_batches)}: {', '.join(gene_batch)}", {
                     "batch_index": batch_idx + 1,
                     "total_batches": len(gene_batches),
                     "genes_in_batch": gene_batch
@@ -747,7 +746,7 @@ async def genotype(
                     pypgx_assembly,
                     max_workers=min(len(gene_batch), PYPGX_MAX_PARALLEL_GENES),
                     workflow_id=workflow_id,
-                    workflow_client=workflow_client
+                    job_client=job_client
                 )
                 
                 # Check if batch processing was cancelled
@@ -775,8 +774,8 @@ async def genotype(
                 logger.info(f"BATCH_COMPLETE: batch={batch_idx + 1}, duration={batch_duration:.2f}s, genes_completed={genes_completed}/{total_genes}, progress={progress_percent}%")
                 
                 # Update workflow with batch completion
-                if workflow_client:
-                    await workflow_client.log_progress(f"Completed batch {batch_idx + 1}/{len(gene_batches)} in {batch_duration:.2f}s", {
+                if job_client:
+                    await job_client.log_progress(f"Completed batch {batch_idx + 1}/{len(gene_batches)} in {batch_duration:.2f}s", {
                         "batch_index": batch_idx + 1,
                         "duration_seconds": batch_duration,
                         "genes_completed": genes_completed,
@@ -785,7 +784,7 @@ async def genotype(
                     })
                     
                     # Update the step with progress information for proper mapping
-                    await workflow_client.update_step_status(
+                    await job_client.update_step_status(
                         "running",
                         f"Completed batch {batch_idx + 1}/{len(gene_batches)} in {batch_duration:.2f}s",
                         output_data={"progress_percent": progress_percent}
@@ -799,8 +798,8 @@ async def genotype(
                     aggregated["success"] = False
                 
                 # Log error to workflow
-                if workflow_client:
-                    await workflow_client.log_error(f"Error processing batch {batch_idx + 1}: {str(e)}", {
+                if job_client:
+                    await job_client.log_error(f"Error processing batch {batch_idx + 1}: {str(e)}", {
                         "batch_index": batch_idx + 1,
                         "genes_in_batch": gene_batch,
                         "error": str(e)
@@ -838,16 +837,16 @@ async def genotype(
         except Exception:
             logger.warning("Failed to persist aggregated PyPGx results file")
         # Complete workflow step
-        if workflow_client:
+        if job_client:
             if aggregated["success"]:
-                await workflow_client.complete_step(f"PyPGx analysis completed successfully for {len(requested_genes)} genes", {
+                await job_client.complete_step(f"PyPGx analysis completed successfully for {len(requested_genes)} genes", {
                     "total_genes": len(requested_genes),
                     "successful_genes": len([r for r in aggregated["results"].values() if r.get("success", False)]),
                     "failed_genes": len([r for r in aggregated["results"].values() if not r.get("success", False)]),
                     "output_file": aggregated.get("output_file", "")
                 })
             else:
-                await workflow_client.fail_step(f"PyPGx analysis failed: {aggregated.get('error', 'Unknown error')}", {
+                await job_client.fail_step(f"PyPGx analysis failed: {aggregated.get('error', 'Unknown error')}", {
                     "error": aggregated.get("error", "Unknown error"),
                     "total_genes": len(requested_genes)
                 })
@@ -858,8 +857,8 @@ async def genotype(
         logger.exception("Error processing VCF with PyPGx")
         
         # Log error to workflow
-        if workflow_client:
-            await workflow_client.fail_step(f"PyPGx analysis failed: {str(e)}", {
+        if job_client:
+            await job_client.fail_step(f"PyPGx analysis failed: {str(e)}", {
                 "error": str(e),
                 "total_genes": len(requested_genes)
             })
@@ -1043,10 +1042,10 @@ async def cancel_workflow_job(request: CancelRequest):
     4. Return success/failure status
     """
     try:
-        workflow_id = request.workflow_id
+        job_id = request.job_id
         patient_id = request.patient_id
         
-        logger.info(f"Cancelling workflow {workflow_id} for patient {patient_id}")
+        logger.info(f"Cancelling job {job_id} for patient {patient_id}")
         logger.info(f"Current running processes: {len(running_processes)}")
         logger.info(f"Process keys: {list(running_processes.keys())}")
         
@@ -1056,10 +1055,10 @@ async def cancel_workflow_job(request: CancelRequest):
         # Check our stored process registry for all processes with this workflow_id
         processes_to_terminate = []
         for process_key, process_info in running_processes.items():
-            if process_key.startswith(workflow_id):
+            if process_key.startswith(job_id):
                 processes_to_terminate.append((process_key, process_info))
         
-        logger.info(f"Found {len(processes_to_terminate)} processes to terminate for workflow {workflow_id}")
+        logger.info(f"Found {len(processes_to_terminate)} processes to terminate for job {job_id}")
         
         if processes_to_terminate:
             for process_key, process_info in processes_to_terminate:
@@ -1111,19 +1110,19 @@ async def cancel_workflow_job(request: CancelRequest):
                 # Remove from registry
                 del running_processes[process_key]
         else:
-            logger.warning(f"No running processes found for workflow {workflow_id}")
+            logger.warning(f"No running processes found for job {job_id}")
         
         return {
             "success": True,
-            "message": f"Cancelled workflow {workflow_id}",
+            "message": f"Cancelled job {job_id}",
             "terminated_processes": terminated_count,
-            "workflow_id": workflow_id,
+            "job_id": job_id,
             "patient_id": patient_id
         }
         
     except Exception as e:
-        logger.error(f"Error cancelling workflow {request.workflow_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to cancel workflow: {str(e)}")
+        logger.error(f"Error cancelling job {request.job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel job: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("pypgx_wrapper:app", host="0.0.0.0", port=5000, reload=True) 

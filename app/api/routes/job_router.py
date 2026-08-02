@@ -477,7 +477,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         # Send initial workflow status
         try:
             db = next(get_db())
-            logger.info(f"Database connection established for workflow {job_id}")
+            logger.info(f"Database connection established for job {job_id}")
 
             job_service = JobService(db)
             job = job_service.get_job(job_id)
@@ -525,7 +525,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 await websocket.send_text(
                     json.dumps({"type": "initial_status", "data": initial_message})
                 )
-                logger.info(f"Initial status sent for workflow {job_id}")
+                logger.info(f"Initial status sent for job {job_id}")
             else:
                 logger.warning(f"Job not found: {job_id}")
                 await websocket.send_text(
@@ -536,7 +536,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
         except Exception as e:
             logger.error(
-                f"Error in WebSocket endpoint for workflow {job_id}: {str(e)}"
+                f"Error in WebSocket endpoint for job {job_id}: {str(e)}"
             )
             await websocket.send_text(
                 json.dumps(
@@ -584,21 +584,21 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     continue
 
             except WebSocketDisconnect:
-                logger.info(f"WebSocket disconnected for workflow {job_id}")
+                logger.info(f"WebSocket disconnected for job {job_id}")
                 break
             except json.JSONDecodeError:
                 logger.warning(
-                    f"Invalid JSON received from WebSocket for workflow {job_id}"
+                    f"Invalid JSON received from WebSocket for job {job_id}"
                 )
                 continue
             except Exception as e:
                 logger.error(
-                    f"Error handling WebSocket message for workflow {job_id}: {e}"
+                    f"Error handling WebSocket message for job {job_id}: {e}"
                 )
                 continue
 
     except Exception as e:
-        logger.error(f"WebSocket error for workflow {job_id}: {e}")
+        logger.error(f"WebSocket error for job {job_id}: {e}")
         try:
             await websocket.close(code=1011, reason="Internal server error")
         except Exception:
@@ -656,7 +656,7 @@ async def cancel_nextflow_job(job_id: str, job_metadata: dict):
             )
 
     except Exception as e:
-        logger.error(f"Error cancelling Nextflow job for workflow {job_id}: {e}")
+        logger.error(f"Error cancelling Nextflow job for job {job_id}: {e}")
         raise
 
 
@@ -710,7 +710,6 @@ async def cancel_container_job(container: dict, patient_id: str, job_id: str):
 
         payload = {
             "job_id": job_id,
-            "workflow_id": job_id,  # dual-key for one-release transition
             "patient_id": patient_id,
             "action": "cancel",
         }
@@ -721,7 +720,7 @@ async def cancel_container_job(container: dict, patient_id: str, job_id: str):
             logger.info(f"Successfully cancelled job in {container['name']}")
         elif response.status_code == 404:
             logger.info(
-                f"No running job found in {container['name']} for workflow {job_id}"
+                f"No running job found in {container['name']} for job {job_id}"
             )
         else:
             logger.warning(
@@ -776,28 +775,28 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
         cancellation_metadata["cancelled_at"] = datetime.now(timezone.utc).isoformat()
 
         # STEP 1: Immediately stop all running processes
-        logger.info(f"Stopping all processes for workflow {job_id}")
+        logger.info(f"Stopping all processes for job {job_id}")
 
         # Cancel Nextflow job (orchestrator) first
         try:
             await cancel_nextflow_job(job_id, job.job_metadata)
             logger.info(
-                f"Successfully cancelled Nextflow job for workflow {job_id}"
+                f"Successfully cancelled Nextflow job for job {job_id}"
             )
         except Exception as e:
             logger.warning(
-                f"Failed to cancel Nextflow job for workflow {job_id}: {e}"
+                f"Failed to cancel Nextflow job for job {job_id}: {e}"
             )
 
         # Cancel individual container jobs
         try:
             await cancel_container_jobs(job_id, job.job_metadata)
             logger.info(
-                f"Successfully cancelled container jobs for workflow {job_id}"
+                f"Successfully cancelled container jobs for job {job_id}"
             )
         except Exception as e:
             logger.warning(
-                f"Failed to cancel some container jobs for workflow {job_id}: {e}"
+                f"Failed to cancel some container jobs for job {job_id}: {e}"
             )
 
         # Note: File cleanup is handled by individual containers when they detect cancellation
@@ -805,7 +804,7 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
 
         # STEP 2: Update database status AFTER processes are stopped
         # This ensures no new processes can start (they check DB status)
-        logger.info(f"Updating database status to cancelled for workflow {job_id}")
+        logger.info(f"Updating database status to cancelled for job {job_id}")
 
         job_update = JobUpdate(
             status=JobStatus.CANCELLED, metadata=cancellation_metadata
@@ -817,7 +816,7 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
         if not updated_workflow:
             # Even if DB update fails, processes are already stopped
             logger.error(
-                f"Failed to update database status for workflow {job_id}, but processes are stopped"
+                f"Failed to update database status for job {job_id}, but processes are stopped"
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

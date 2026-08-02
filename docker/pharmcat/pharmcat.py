@@ -37,7 +37,7 @@ from typing import Dict, Any, Optional
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel
 
 # Import pysam for VCF sample extraction
 try:
@@ -116,8 +116,7 @@ processing_status = {
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 class CancelRequest(BaseModel):
-    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
-    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
+    job_id: str
     patient_id: str
     action: str
 
@@ -132,8 +131,8 @@ def register_process(workflow_id: str, pid: int, process_info: Dict[str, Any] = 
 
 def unregister_process(workflow_id: str):
     """Unregister a process when it completes normally."""
-    if workflow_id in running_processes:
-        del running_processes[workflow_id]
+    if job_id in running_processes:
+        del running_processes[job_id]
         logger.info(f"Unregistered process for workflow {workflow_id}")
 
 def extract_sample_id_from_vcf(vcf_path: str) -> Optional[str]:
@@ -267,24 +266,24 @@ async def process_genotype(
             raise HTTPException(status_code=400, detail="File must be a VCF (.vcf or .vcf.gz or .vcf.bgz)")
         
         # Initialize workflow client if workflow_id is provided
-        workflow_client = None
+        job_client = None
         if workflow_id:
             try:
-                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
+                job_client = JobClient(job_id=workflow_id, step_name=step_name)
                 
                 # Check if workflow has been cancelled before starting
-                if await workflow_client.is_job_cancelled():
+                if await job_client.is_job_cancelled():
                     logger.info(f"Workflow {workflow_id} is cancelled, aborting PharmCAT processing")
                     return {"success": False, "error": "Workflow has been cancelled"}
                 
-                await workflow_client.start_step(f"Starting PharmCAT analysis for {file.filename}")
-                await workflow_client.log_progress(f"Processing {file.filename} with PharmCAT", {
+                await job_client.start_step(f"Starting PharmCAT analysis for {file.filename}")
+                await job_client.log_progress(f"Processing {file.filename} with PharmCAT", {
                     "filename": file.filename,
                     "file_size": 0  # Will be updated after file is saved
                 })
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
-                workflow_client = None
+                job_client = None
         
         # Save file to temporary directory
         file_path = os.path.join(TEMP_DIR, file.filename)
@@ -301,9 +300,9 @@ async def process_genotype(
         logger.info(f"File permissions: {oct(os.stat(file_path).st_mode)}")
         
         # Update workflow with file information
-        if workflow_client:
+        if job_client:
             file_size = os.path.getsize(file_path)
-            await workflow_client.log_progress(f"File uploaded: {file_size} bytes", {
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
                 "file_size_bytes": file_size,
                 "file_path": file_path
             })
@@ -392,14 +391,14 @@ async def process_genotype(
                 })
                 
                 # Update workflow with processing start
-                if workflow_client:
-                    await workflow_client.log_progress("Starting PharmCAT pipeline", {
+                if job_client:
+                    await job_client.log_progress("Starting PharmCAT pipeline", {
                         "base_name": base_name,
                         "vcf_path": vcf_path
                     })
                     
                     # Update step with progress for proper mapping
-                    await workflow_client.update_step_status(
+                    await job_client.update_step_status(
                         "running",
                         "Starting PharmCAT pipeline",
                         output_data={"progress_percent": 10}
@@ -531,14 +530,14 @@ async def process_genotype(
                 })
                 
                 # Update workflow with execution start
-                if workflow_client:
-                    await workflow_client.log_progress("Executing PharmCAT pipeline", {
+                if job_client:
+                    await job_client.log_progress("Executing PharmCAT pipeline", {
                         "command": " ".join(pharmcat_cmd),
                         "timeout_seconds": 300
                     })
                     
                     # Update step with progress for proper mapping
-                    await workflow_client.update_step_status(
+                    await job_client.update_step_status(
                         "running",
                         "Executing PharmCAT pipeline",
                         output_data={"progress_percent": 30}
@@ -633,15 +632,15 @@ async def process_genotype(
                     })
                     
                     # Update workflow with execution success
-                    if workflow_client:
-                        await workflow_client.log_progress("PharmCAT pipeline completed successfully", {
+                    if job_client:
+                        await job_client.log_progress("PharmCAT pipeline completed successfully", {
                             "stdout_length": stdout_length,
                             "stderr_length": stderr_length,
                             "tee_log_path": tee_log_path
                         })
                         
                         # Update step with progress for proper mapping
-                        await workflow_client.update_step_status(
+                        await job_client.update_step_status(
                             "running",
                             "PharmCAT completed, processing results...",
                             output_data={"progress_percent": 70}
@@ -661,8 +660,8 @@ async def process_genotype(
                     })
                     
                     # Update workflow with timeout error
-                    if workflow_client:
-                        await workflow_client.fail_step(error_msg, {
+                    if job_client:
+                        await job_client.fail_step(error_msg, {
                             "error_type": "timeout",
                             "timeout_seconds": 300
                         })
@@ -686,8 +685,8 @@ async def process_genotype(
                     })
                     
                     # Update workflow with process error
-                    if workflow_client:
-                        await workflow_client.fail_step(error_msg, {
+                    if job_client:
+                        await job_client.fail_step(error_msg, {
                             "error_type": "process_error",
                             "return_code": e.returncode,
                             "stdout": e.stdout,
@@ -729,8 +728,8 @@ async def process_genotype(
                     logger.error(f"Available files: {actual_files}")
                     
                     # Update workflow with missing files error
-                    if workflow_client:
-                        await workflow_client.fail_step("Required PharmCAT output files not found", {
+                    if job_client:
+                        await job_client.fail_step("Required PharmCAT output files not found", {
                             "error_type": "missing_output_files",
                             "available_files": actual_files
                         })
@@ -924,8 +923,8 @@ async def process_genotype(
                 })
                 
                 # Complete workflow step
-                if workflow_client:
-                    await workflow_client.complete_step(f"PharmCAT analysis completed successfully", {
+                if job_client:
+                    await job_client.complete_step(f"PharmCAT analysis completed successfully", {
                         "total_genes": len(report_data.get("genes", [])),
                         "total_drugs": len(report_data.get("drugs", [])),
                         "output_files": {
@@ -977,8 +976,8 @@ async def process_genotype(
             logger.error(f"PharmCAT process error: {e.stderr}")
             
             # Update workflow with process error
-            if workflow_client:
-                await workflow_client.fail_step(f"PharmCAT process error: {e.stderr}", {
+            if job_client:
+                await job_client.fail_step(f"PharmCAT process error: {e.stderr}", {
                     "error_type": "process_error",
                     "return_code": e.returncode,
                     "stdout": e.stdout,
@@ -992,8 +991,8 @@ async def process_genotype(
             logger.error(traceback.format_exc())
             
             # Update workflow with general error
-            if workflow_client:
-                await workflow_client.fail_step(f"Error running PharmCAT: {str(e)}", {
+            if job_client:
+                await job_client.fail_step(f"Error running PharmCAT: {str(e)}", {
                     "error_type": "general_error",
                     "error": str(e),
                     "traceback": traceback.format_exc()
@@ -1006,8 +1005,8 @@ async def process_genotype(
         logger.error(traceback.format_exc())
         
         # Update workflow with request error
-        if workflow_client:
-            await workflow_client.fail_step(f"Error processing request: {str(e)}", {
+        if job_client:
+            await job_client.fail_step(f"Error processing request: {str(e)}", {
                 "error_type": "request_error",
                 "error": str(e)
             })
@@ -1061,24 +1060,24 @@ async def cancel_workflow_job(request: CancelRequest):
     4. Return success/failure status
     """
     try:
-        workflow_id = request.workflow_id
+        job_id = request.job_id
         patient_id = request.patient_id
         
-        logger.info(f"Cancelling workflow {workflow_id} for patient {patient_id}")
+        logger.info(f"Cancelling job {job_id} for patient {patient_id}")
         
         # Find and terminate processes
         terminated_count = 0
         
         # Check our stored process registry
-        if workflow_id in running_processes:
-            process_info = running_processes[workflow_id]
+        if job_id in running_processes:
+            process_info = running_processes[job_id]
             pid = process_info.get("pid")
             
             if pid and psutil.pid_exists(pid):
                 try:
                     process = psutil.Process(pid)
                     process.terminate()
-                    logger.info(f"Terminated process {pid} for workflow {workflow_id}")
+                    logger.info(f"Terminated process {pid} for job {job_id}")
                     terminated_count += 1
                 except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                     logger.warning(f"Could not terminate process {pid}: {e}")
@@ -1098,21 +1097,21 @@ async def cancel_workflow_job(request: CancelRequest):
                     logger.warning(f"Failed to cleanup {path}: {e}")
             
             # Remove from registry
-            del running_processes[workflow_id]
+            del running_processes[job_id]
         else:
             logger.warning(f"No running process found for workflow {workflow_id}")
         
         return {
             "success": True,
-            "message": f"Cancelled workflow {workflow_id}",
+            "message": f"Cancelled job {job_id}",
             "terminated_processes": terminated_count,
-            "workflow_id": workflow_id,
+            "job_id": job_id,
             "patient_id": patient_id
         }
         
     except Exception as e:
-        logger.error(f"Error cancelling workflow {request.workflow_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to cancel workflow: {str(e)}")
+        logger.error(f"Error cancelling job {request.job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel job: {str(e)}")
 
 if __name__ == '__main__':
     # Start the FastAPI app

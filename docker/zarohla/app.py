@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel
 import sys
 
 sys.path.append('/workflow-client')
@@ -25,8 +25,7 @@ TEMP_DIR = DATA_DIR / 'temp'
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 class CancelRequest(BaseModel):
-    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
-    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
+    job_id: str
     patient_id: str
     action: str
 
@@ -41,13 +40,13 @@ def health():
 
 @app.post("/cancel")
 async def cancel_workflow_job(request: CancelRequest):
-    workflow_id = request.workflow_id
+    job_id = request.job_id
     patient_id = request.patient_id
     
-    logger.info(f"Cancelling workflow {workflow_id} for patient {patient_id}")
+    logger.info(f"Cancelling job {job_id} for patient {patient_id}")
     
-    if workflow_id in running_processes:
-        process_info = running_processes[workflow_id]
+    if job_id in running_processes:
+        process_info = running_processes[job_id]
         pid = process_info.get("pid")
         
         if pid and psutil.pid_exists(pid):
@@ -56,13 +55,13 @@ async def cancel_workflow_job(request: CancelRequest):
                 for child in process.children(recursive=True):
                     child.kill()
                 process.kill()
-                logger.info(f"Terminated process {pid} for workflow {workflow_id}")
+                logger.info(f"Terminated process {pid} for job {job_id}")
             except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                 logger.warning(f"Could not terminate process {pid}: {e}")
                 
-        del running_processes[workflow_id]
+        del running_processes[job_id]
         
-    return {"status": "success", "message": f"Cancellation processed for {workflow_id}"}
+    return {"status": "success", "message": f"Cancellation processed for {job_id}"}
 
 
 @app.post("/call-hla")
@@ -79,15 +78,15 @@ async def call_hla(
     step_name: Optional[str] = Form("zarohla")
 ) -> Dict[str, Any]:
     
-    workflow_client = None
+    job_client = None
     if workflow_id:
         try:
-            workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
-            if await workflow_client.is_job_cancelled():
+            job_client = JobClient(job_id=workflow_id, step_name=step_name)
+            if await job_client.is_job_cancelled():
                 logger.info(f"Workflow {workflow_id} is cancelled, aborting ZaroHLA processing")
                 return {"success": False, "error": "Workflow has been cancelled"}
                 
-            await workflow_client.start_step("Starting HLA typing")
+            await job_client.start_step("Starting HLA typing")
         except Exception as e:
             logger.warning(f"Failed to initialize JobClient: {e}")
             
@@ -111,8 +110,8 @@ async def call_hla(
             with open(input_path, "wb") as f: f.write(await file.read())
             
             if input_path.name.lower().endswith(".bam") or input_path.name.lower().endswith(".sam") or input_path.name.lower().endswith(".cram"):
-                if workflow_client:
-                    await workflow_client.log_progress(f"Converting BAM to FASTQ using samtools")
+                if job_client:
+                    await job_client.log_progress(f"Converting BAM to FASTQ using samtools")
                 
                 f1_path = job_dir / "read1.fq"
                 f2_path = job_dir / "read2.fq"
@@ -135,8 +134,8 @@ async def call_hla(
         else:
             raise HTTPException(status_code=400, detail="Must provide either 'file' or 'file1' and 'file2'")
             
-        if workflow_client:
-            await workflow_client.log_progress(f"Running OptiType on {f1_path.name}")
+        if job_client:
+            await job_client.log_progress(f"Running OptiType on {f1_path.name}")
             
         cmd = ["optitype", "run", "-i", str(f1_path)]
         if f2_path and os.path.exists(f2_path) and os.path.getsize(f2_path) > 0:
@@ -155,17 +154,17 @@ async def call_hla(
         if workflow_id and workflow_id not in running_processes:
             raise Exception("Process cancelled by user")
             
-        if workflow_id in running_processes:
-            del running_processes[workflow_id]
+        if job_id in running_processes:
+            del running_processes[job_id]
             
         if process.returncode != 0:
             logger.error(f"OptiType failed: {stderr.decode()}")
-            if workflow_client:
-                await workflow_client.fail_step("OptiType execution failed", {"error": stderr.decode()})
+            if job_client:
+                await job_client.fail_step("OptiType execution failed", {"error": stderr.decode()})
             raise HTTPException(status_code=500, detail=f"OptiType failed: {stderr.decode()}")
             
-        if workflow_client:
-            await workflow_client.log_progress("Parsing OptiType results")
+        if job_client:
+            await job_client.log_progress("Parsing OptiType results")
             
         results = {}
         # OptiType v1.5 writes into a timestamped subdir (outdir/<ts>/<ts>_result.tsv)
@@ -184,18 +183,18 @@ async def call_hla(
                 
         results = {k: v for k, v in results.items() if v}
         
-        if workflow_client:
-            await workflow_client.complete_step("HLA typing completed successfully", {"results": results})
+        if job_client:
+            await job_client.complete_step("HLA typing completed successfully", {"results": results})
             
         return {"status": "success", "results": results}
         
     except Exception as e:
         logger.error(f"Error in HLA typing: {str(e)}")
-        if workflow_client:
-            await workflow_client.fail_step("HLA typing failed", {"error": str(e)})
+        if job_client:
+            await job_client.fail_step("HLA typing failed", {"error": str(e)})
             
         if workflow_id and workflow_id in running_processes:
-            del running_processes[workflow_id]
+            del running_processes[job_id]
             
         raise HTTPException(status_code=500, detail=str(e))
     finally:

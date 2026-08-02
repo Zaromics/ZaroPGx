@@ -26,7 +26,7 @@ import asyncio
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel
 
 # Import shared workflow client for integration
 import sys
@@ -109,8 +109,7 @@ jobs = {}  # job_id -> job_info
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 class CancelRequest(BaseModel):
-    # Dual-accept: callers may send job_id (preferred) or legacy workflow_id.
-    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
+    job_id: str
     patient_id: str
     action: str
 
@@ -125,8 +124,8 @@ def register_process(workflow_id: str, pid: int, process_info: Dict[str, Any] = 
 
 def unregister_process(workflow_id: str):
     """Unregister a process when it completes normally."""
-    if workflow_id in running_processes:
-        del running_processes[workflow_id]
+    if job_id in running_processes:
+        del running_processes[job_id]
         logger.info(f"Unregistered process for workflow {workflow_id}")
 
 # Job status tracking
@@ -229,13 +228,13 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
     """Run GATK HaplotypeCaller with dynamic memory allocation based on input file size."""
     try:
         # Initialize workflow client if workflow_id is provided
-        workflow_client = None
+        job_client = None
         if workflow_id:
             try:
-                workflow_client = JobClient(job_id=workflow_id, step_name="gatk_variant_calling")
+                job_client = JobClient(job_id=workflow_id, step_name="gatk_variant_calling")
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
-                workflow_client = None
+                job_client = None
         # Check file size and customize memory settings
         file_size = os.path.getsize(input_path)
         file_size_gb = file_size / (1024 * 1024 * 1024)
@@ -483,9 +482,9 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                                             message=f"Processing chromosome {current_chromosome} {memory_info}")
                             
                             # Update workflow step with progress for proper mapping
-                            if workflow_id and workflow_client:
+                            if workflow_id and job_client:
                                 try:
-                                    await workflow_client.update_step_status(
+                                    await job_client.update_step_status(
                                         "running",
                                         f"Processing chromosome {current_chromosome} {memory_info}",
                                         output_data={"progress_percent": progress}
@@ -510,9 +509,9 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                                             message=f"GATK Progress: {gatk_progress:.1f}% {memory_info}")
                             
                             # Update workflow step with progress for proper mapping
-                            if workflow_id and workflow_client:
+                            if workflow_id and job_client:
                                 try:
-                                    await workflow_client.update_step_status(
+                                    await job_client.update_step_status(
                                         "running",
                                         f"GATK Progress: {gatk_progress:.1f}% {memory_info}",
                                         output_data={"progress_percent": int(progress)}
@@ -800,25 +799,25 @@ async def variant_call(
         logger.info(f"Job {job_id}: Request received - File: {file.filename}, Reference: {reference_genome}, Regions: {regions}")
 
         # Initialize workflow client if workflow_id is provided
-        workflow_client = None
+        job_client = None
         if workflow_id:
             try:
-                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
+                job_client = JobClient(job_id=workflow_id, step_name=step_name)
                 
                 # Check if workflow has been cancelled before starting
-                if await workflow_client.is_job_cancelled():
+                if await job_client.is_job_cancelled():
                     logger.info(f"Workflow {workflow_id} is cancelled, aborting GATK processing")
                     return {"success": False, "error": "Workflow has been cancelled"}
                 
-                await workflow_client.start_step(f"Starting GATK variant calling for {file.filename}")
-                await workflow_client.log_progress(f"Processing {file.filename} with GATK", {
+                await job_client.start_step(f"Starting GATK variant calling for {file.filename}")
+                await job_client.log_progress(f"Processing {file.filename} with GATK", {
                     "filename": file.filename,
                     "reference_genome": reference_genome,
                     "regions": regions
                 })
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
-                workflow_client = None
+                job_client = None
 
         # Save uploaded file to a temporary directory
         filename = file.filename
@@ -833,9 +832,9 @@ async def variant_call(
         logger.info(f"Job {job_id}: Saved uploaded file to {input_path}")
         
         # Update workflow with file information
-        if workflow_client:
+        if job_client:
             file_size = os.path.getsize(input_path)
-            await workflow_client.log_progress(f"File uploaded: {file_size} bytes", {
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
                 "file_size_bytes": file_size,
                 "input_path": input_path
             })
@@ -843,8 +842,8 @@ async def variant_call(
         # Check if file exists
         if not os.path.exists(input_path):
             logger.error(f"Job {job_id}: Failed to save uploaded file to {input_path}")
-            if workflow_client:
-                await workflow_client.fail_step(f"Failed to save uploaded file to {input_path}", {
+            if job_client:
+                await job_client.fail_step(f"Failed to save uploaded file to {input_path}", {
                     "error_type": "file_save_error",
                     "input_path": input_path
                 })
@@ -882,7 +881,7 @@ async def variant_call(
             "output_file": None,
             "reference_genome": reference_genome,
             "regions": regions,
-            "workflow_id": workflow_id,
+            "job_id": job_id,
             "patient_id": patient_id,
             "created_at": time.time(),
             "updated_at": time.time()
@@ -899,8 +898,8 @@ async def variant_call(
                              output_file=input_path)
             
             # Complete workflow step for VCF files
-            if workflow_client:
-                await workflow_client.complete_step("File already contains variants", {
+            if job_client:
+                await job_client.complete_step("File already contains variants", {
                     "file_type": file_ext,
                     "output_file": input_path
                 })
@@ -917,8 +916,8 @@ async def variant_call(
             logger.info(f"Job {job_id}: Starting processing for {file_ext} file")
             
             # Update workflow with processing start
-            if workflow_client:
-                await workflow_client.log_progress(f"Starting variant calling for {file_ext} file", {
+            if job_client:
+                await job_client.log_progress(f"Starting variant calling for {file_ext} file", {
                     "file_type": file_ext,
                     "reference_genome": reference_genome,
                     "regions": regions
@@ -960,8 +959,8 @@ async def variant_call(
 
         else:
             logger.error(f"Job {job_id}: Unsupported file format: {file_ext}")
-            if workflow_client:
-                await workflow_client.fail_step(f"Unsupported file format: {file_ext}", {
+            if job_client:
+                await job_client.fail_step(f"Unsupported file format: {file_ext}", {
                     "error_type": "unsupported_format",
                     "file_ext": file_ext
                 })
@@ -969,8 +968,8 @@ async def variant_call(
 
     except Exception as e:
         logger.exception(f"Unexpected error in variant-call endpoint: {str(e)}")
-        if workflow_client:
-            await workflow_client.fail_step(f"Unexpected error: {str(e)}", {
+        if job_client:
+            await job_client.fail_step(f"Unexpected error: {str(e)}", {
                 "error_type": "unexpected_error",
                 "error_message": str(e)
             })
@@ -1162,18 +1161,18 @@ async def align_fastq(
     """
     try:
         # Initialize workflow client if workflow_id is provided
-        workflow_client = None
+        job_client = None
         if workflow_id:
             try:
-                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
-                await workflow_client.start_step(f"Starting FASTQ alignment for {file.filename}")
-                await workflow_client.log_progress(f"Aligning {file.filename} to {reference_genome}", {
+                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                await job_client.start_step(f"Starting FASTQ alignment for {file.filename}")
+                await job_client.log_progress(f"Aligning {file.filename} to {reference_genome}", {
                     "filename": file.filename,
                     "reference_genome": reference_genome
                 })
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
-                workflow_client = None
+                job_client = None
 
         # Get reference path
         reference_path = REFERENCE_PATHS.get(reference_genome)
@@ -1192,9 +1191,9 @@ async def align_fastq(
         logger.info(f"Job {job_id}: Saved FASTQ file to {input_path}")
         
         # Update workflow with file information
-        if workflow_client:
+        if job_client:
             file_size = os.path.getsize(input_path)
-            await workflow_client.log_progress(f"File uploaded: {file_size} bytes", {
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
                 "file_size_bytes": file_size,
                 "input_path": input_path
             })
@@ -1210,12 +1209,12 @@ async def align_fastq(
         logger.info(f"Job {job_id}: Created mock BAM file at {output_bam}")
         
         # Update workflow with completion
-        if workflow_client:
-            await workflow_client.log_progress(f"FASTQ alignment completed", {
+        if job_client:
+            await job_client.log_progress(f"FASTQ alignment completed", {
                 "output_bam": output_bam,
                 "reference_genome": reference_genome
             })
-            await workflow_client.complete_step("FASTQ alignment completed successfully")
+            await job_client.complete_step("FASTQ alignment completed successfully")
 
         return {
             "success": True,
@@ -1227,9 +1226,9 @@ async def align_fastq(
         
     except Exception as e:
         logger.error(f"Error in FASTQ alignment: {e}")
-        if workflow_client:
-            await workflow_client.log_progress(f"FASTQ alignment failed: {str(e)}", {"error": str(e)})
-            await workflow_client.complete_step(f"FASTQ alignment failed: {str(e)}")
+        if job_client:
+            await job_client.log_progress(f"FASTQ alignment failed: {str(e)}", {"error": str(e)})
+            await job_client.complete_step(f"FASTQ alignment failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"FASTQ alignment failed: {str(e)}")
 
 @app.post("/cram-to-bam")
@@ -1246,18 +1245,18 @@ async def cram_to_bam(
     """
     try:
         # Initialize workflow client if workflow_id is provided
-        workflow_client = None
+        job_client = None
         if workflow_id:
             try:
-                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
-                await workflow_client.start_step(f"Starting CRAM to BAM conversion for {file.filename}")
-                await workflow_client.log_progress(f"Converting {file.filename} to BAM", {
+                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                await job_client.start_step(f"Starting CRAM to BAM conversion for {file.filename}")
+                await job_client.log_progress(f"Converting {file.filename} to BAM", {
                     "filename": file.filename,
                     "reference_genome": reference_genome
                 })
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
-                workflow_client = None
+                job_client = None
 
         # Get reference path
         reference_path = REFERENCE_PATHS.get(reference_genome)
@@ -1277,9 +1276,9 @@ async def cram_to_bam(
         logger.info(f"Job {job_id}: Saved CRAM file to {input_path}")
         
         # Update workflow with file information
-        if workflow_client:
+        if job_client:
             file_size = os.path.getsize(input_path)
-            await workflow_client.log_progress(f"File uploaded: {file_size} bytes", {
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
                 "file_size_bytes": file_size,
                 "input_path": input_path
             })
@@ -1292,12 +1291,12 @@ async def cram_to_bam(
         logger.info(f"Job {job_id}: Created mock BAM file at {output_bam}")
         
         # Update workflow with completion
-        if workflow_client:
-            await workflow_client.log_progress(f"CRAM to BAM conversion completed", {
+        if job_client:
+            await job_client.log_progress(f"CRAM to BAM conversion completed", {
                 "output_bam": output_bam,
                 "reference_genome": reference_genome
             })
-            await workflow_client.complete_step("CRAM to BAM conversion completed successfully")
+            await job_client.complete_step("CRAM to BAM conversion completed successfully")
 
         return {
             "success": True,
@@ -1309,9 +1308,9 @@ async def cram_to_bam(
         
     except Exception as e:
         logger.error(f"Error in CRAM to BAM conversion: {e}")
-        if workflow_client:
-            await workflow_client.log_progress(f"CRAM to BAM conversion failed: {str(e)}", {"error": str(e)})
-            await workflow_client.complete_step(f"CRAM to BAM conversion failed: {str(e)}")
+        if job_client:
+            await job_client.log_progress(f"CRAM to BAM conversion failed: {str(e)}", {"error": str(e)})
+            await job_client.complete_step(f"CRAM to BAM conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"CRAM to BAM conversion failed: {str(e)}")
 
 @app.post("/sam-to-bam")
@@ -1328,18 +1327,18 @@ async def sam_to_bam(
     """
     try:
         # Initialize workflow client if workflow_id is provided
-        workflow_client = None
+        job_client = None
         if workflow_id:
             try:
-                workflow_client = JobClient(job_id=workflow_id, step_name=step_name)
-                await workflow_client.start_step(f"Starting SAM to BAM conversion for {file.filename}")
-                await workflow_client.log_progress(f"Converting {file.filename} to BAM", {
+                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                await job_client.start_step(f"Starting SAM to BAM conversion for {file.filename}")
+                await job_client.log_progress(f"Converting {file.filename} to BAM", {
                     "filename": file.filename,
                     "reference_genome": reference_genome
                 })
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
-                workflow_client = None
+                job_client = None
 
         # Save uploaded file
         job_id = str(uuid.uuid4())
@@ -1354,9 +1353,9 @@ async def sam_to_bam(
         logger.info(f"Job {job_id}: Saved SAM file to {input_path}")
         
         # Update workflow with file information
-        if workflow_client:
+        if job_client:
             file_size = os.path.getsize(input_path)
-            await workflow_client.log_progress(f"File uploaded: {file_size} bytes", {
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
                 "file_size_bytes": file_size,
                 "input_path": input_path
             })
@@ -1369,12 +1368,12 @@ async def sam_to_bam(
         logger.info(f"Job {job_id}: Created mock BAM file at {output_bam}")
         
         # Update workflow with completion
-        if workflow_client:
-            await workflow_client.log_progress(f"SAM to BAM conversion completed", {
+        if job_client:
+            await job_client.log_progress(f"SAM to BAM conversion completed", {
                 "output_bam": output_bam,
                 "reference_genome": reference_genome
             })
-            await workflow_client.complete_step("SAM to BAM conversion completed successfully")
+            await job_client.complete_step("SAM to BAM conversion completed successfully")
 
         return {
             "success": True,
@@ -1386,9 +1385,9 @@ async def sam_to_bam(
         
     except Exception as e:
         logger.error(f"Error in SAM to BAM conversion: {e}")
-        if workflow_client:
-            await workflow_client.log_progress(f"SAM to BAM conversion failed: {str(e)}", {"error": str(e)})
-            await workflow_client.complete_step(f"SAM to BAM conversion failed: {str(e)}")
+        if job_client:
+            await job_client.log_progress(f"SAM to BAM conversion failed: {str(e)}", {"error": str(e)})
+            await job_client.complete_step(f"SAM to BAM conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"SAM to BAM conversion failed: {str(e)}")
 
 @app.post("/cancel")
@@ -1404,43 +1403,43 @@ async def cancel_workflow_job(request: CancelRequest):
     4. Return success/failure status
     """
     try:
-        workflow_id = request.workflow_id
+        job_id = request.job_id
         patient_id = request.patient_id
         
-        logger.info(f"Cancelling workflow {workflow_id} for patient {patient_id}")
+        logger.info(f"Cancelling job {job_id} for patient {patient_id}")
         
         # Find and terminate processes
         terminated_count = 0
         
         # Method 1: Check our stored process registry
-        if workflow_id in running_processes:
-            process_info = running_processes[workflow_id]
+        if job_id in running_processes:
+            process_info = running_processes[job_id]
             pid = process_info.get("pid")
             
             if pid and psutil.pid_exists(pid):
                 try:
                     process = psutil.Process(pid)
                     process.terminate()
-                    logger.info(f"Terminated process {pid} for workflow {workflow_id}")
+                    logger.info(f"Terminated process {pid} for job {job_id}")
                     terminated_count += 1
                 except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                     logger.warning(f"Could not terminate process {pid}: {e}")
             
             # Remove from registry
-            del running_processes[workflow_id]
+            del running_processes[job_id]
         
         # Use existing jobs dictionary to find and cancel jobs
         jobs_cancelled = 0
-        for job_id, job in jobs.items():
-            if (job.get("workflow_id") == workflow_id or 
-                patient_id in job.get("input_file", "") or 
+        for gatk_job_id, job in jobs.items():
+            if (job.get("workflow_id") == job_id or
+                patient_id in job.get("input_file", "") or
                 patient_id in job.get("output_file", "")):
-                
+
                 # Mark job as cancelled
                 job["status"] = "cancelled"
                 job["message"] = "Job cancelled by user"
                 jobs_cancelled += 1
-                logger.info(f"Cancelled job {job_id}")
+                logger.info(f"Cancelled job {gatk_job_id}")
                 
                 # Clean up job-specific files
                 cleanup_paths = []
@@ -1462,19 +1461,19 @@ async def cancel_workflow_job(request: CancelRequest):
                         logger.warning(f"Failed to cleanup {path}: {e}")
         
         if jobs_cancelled == 0:
-            logger.warning(f"No jobs found for workflow {workflow_id} and patient {patient_id}")
+            logger.warning(f"No jobs found for job {job_id} and patient {patient_id}")
         
         return {
             "success": True,
-            "message": f"Cancelled workflow {workflow_id}",
+            "message": f"Cancelled job {job_id}",
             "terminated_processes": terminated_count,
-            "workflow_id": workflow_id,
+            "job_id": job_id,
             "patient_id": patient_id
         }
         
     except Exception as e:
-        logger.error(f"Error cancelling workflow {request.workflow_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to cancel workflow: {str(e)}")
+        logger.error(f"Error cancelling job {request.job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel job: {str(e)}")
 
 if __name__ == '__main__':
     # Make sure GATK is installed and verify reference genomes
