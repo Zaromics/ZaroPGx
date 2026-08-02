@@ -271,7 +271,7 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
     payload = resp.json()
 
     assert "job_id" in payload
-    assert "file_id" in payload
+    assert "data_id" in payload
     assert payload.get("file_type") == "vcf"
     assert payload.get("status") in {"processing", "uploaded"}
     assert "message" in payload

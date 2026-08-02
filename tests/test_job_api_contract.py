@@ -1,11 +1,12 @@
 """137a/137b: Job instance API under /api/v1/jobs; /api/v1/workflows is recipe catalog."""
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 
 def test_workflows_prefix_is_recipe_not_instance(client: TestClient):
@@ -60,9 +61,9 @@ def test_job_client_module_present():
     assert importlib.util.find_spec("app.utils.workflow_client") is None
 
 
-# Mirror of container CancelRequest dual-accept contract (gatk/pypgx/pharmcat/zarohla/nextflow).
+# Mirror of container CancelRequest hard-cut (137c): job_id only.
 class _CancelRequestContract(BaseModel):
-    workflow_id: str = Field(..., validation_alias=AliasChoices("job_id", "workflow_id"))
+    job_id: str
     patient_id: str
     action: str
 
@@ -76,35 +77,32 @@ _CANCEL_SOURCES = [
 ]
 
 
-def test_cancel_request_dual_accepts_job_id_or_workflow_id():
-    """Containers must accept job_id (preferred) or legacy workflow_id."""
-    via_job = _CancelRequestContract(
-        job_id="abc", patient_id="p1", action="cancel"
-    )
-    via_wf = _CancelRequestContract(
-        workflow_id="abc", patient_id="p1", action="cancel"
-    )
-    assert via_job.workflow_id == "abc"
-    assert via_wf.workflow_id == "abc"
-
+def test_cancel_request_requires_job_id():
+    ok = _CancelRequestContract(job_id="abc", patient_id="p1", action="cancel")
+    assert ok.job_id == "abc"
     with pytest.raises(ValidationError):
-        _CancelRequestContract(patient_id="p1", action="cancel")
-
-
-def test_container_cancel_models_use_alias_choices():
-    root = Path(__file__).resolve().parent.parent
-    for rel in _CANCEL_SOURCES:
-        text = (root / rel).read_text(encoding="utf-8")
-        assert "AliasChoices" in text, f"{rel} missing AliasChoices"
-        assert 'AliasChoices("job_id", "workflow_id")' in text, (
-            f"{rel} CancelRequest must dual-accept job_id|workflow_id"
+        _CancelRequestContract(patient_id="p1", action="cancel")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        _CancelRequestContract(
+            workflow_id="abc", patient_id="p1", action="cancel"  # type: ignore[call-arg]
         )
 
 
-def test_job_router_cancel_payload_sends_job_id():
+def test_container_cancel_models_are_job_id_only():
+    root = Path(__file__).resolve().parent.parent
+    for rel in _CANCEL_SOURCES:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "class CancelRequest" in text
+        assert 'AliasChoices("job_id", "workflow_id")' not in text, (
+            f"{rel} must drop dual-accept AliasChoices"
+        )
+        # Field must be named job_id (not workflow_id with alias)
+        assert re.search(r"job_id:\s*str", text), f"{rel} CancelRequest.job_id missing"
+
+
+def test_job_router_cancel_payload_sends_job_id_only():
     text = (
-        Path(__file__).resolve().parent.parent
-        / "app/api/routes/job_router.py"
+        Path(__file__).resolve().parent.parent / "app/api/routes/job_router.py"
     ).read_text(encoding="utf-8")
     assert '"job_id": job_id' in text
-    assert '"workflow_id": job_id' in text  # dual-key transition
+    assert '"workflow_id": job_id' not in text
