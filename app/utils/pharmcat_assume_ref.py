@@ -25,9 +25,7 @@ def resolve_assume_ref_flags(
     env_unspecified: Boolish,
 ) -> tuple[bool, bool]:
     absent = (
-        parse_bool(form_absent)
-        if form_absent is not None
-        else parse_bool(env_absent)
+        parse_bool(form_absent) if form_absent is not None else parse_bool(env_absent)
     )
     unspecified = (
         parse_bool(form_unspecified)

@@ -1036,7 +1036,9 @@ async def process_file_nextflow_background(
                         if effective_sample_identifier:
                             meta["sample_identifier"] = effective_sample_identifier
                         eff_absent = bool(meta.get("pharmcat_absent_to_ref", False))
-                        eff_unspec = bool(meta.get("pharmcat_unspecified_to_ref", False))
+                        eff_unspec = bool(
+                            meta.get("pharmcat_unspecified_to_ref", False)
+                        )
                         job_service.update_job(job_id, JobUpdate(metadata=meta))
                 except Exception as meta_err:
                     logger.debug(

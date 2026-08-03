@@ -1,8 +1,8 @@
 from app.utils.pharmcat_assume_ref import (
-    parse_bool,
-    resolve_assume_ref_flags,
-    pharmcat_cli_ref_flags,
     methodology_assume_ref_paragraph,
+    parse_bool,
+    pharmcat_cli_ref_flags,
+    resolve_assume_ref_flags,
 )
 
 

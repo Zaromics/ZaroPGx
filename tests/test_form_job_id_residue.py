@@ -14,7 +14,9 @@ def test_container_forms_use_job_id_not_workflow_id():
     for path in (GATK, PHARMCAT, PYPGX, ZAROHLA):
         text = path.read_text(encoding="utf-8")
         assert "workflow_id: Optional[str] = Form(" not in text, path
-        assert "job_id: Optional[str] = Form(" in text or "job_id: str = Form(" in text, path
+        assert (
+            "job_id: Optional[str] = Form(" in text or "job_id: str = Form(" in text
+        ), path
 
 
 def test_gatk_variant_call_has_single_job_pk_form_not_dual():
