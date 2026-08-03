@@ -224,14 +224,14 @@ def update_job_status(job_id, status, progress=None, message=None, output_file=N
     # Log the update
     logger.info(f"Job {job_id}: Status updated to {status}, Progress: {progress}%, Message: {message}")
 
-async def run_variant_calling(job_id, input_path, output_path, reference_path, regions=None, workflow_id=None, patient_id=None):
+async def run_variant_calling(local_job_id, input_path, output_path, reference_path, regions=None, zaro_job_id=None, patient_id=None):
     """Run GATK HaplotypeCaller with dynamic memory allocation based on input file size."""
     try:
-        # Initialize workflow client if workflow_id is provided
+        # Initialize job client if Zaro Job PK is provided
         job_client = None
-        if workflow_id:
+        if zaro_job_id:
             try:
-                job_client = JobClient(job_id=workflow_id, step_name="gatk_variant_calling")
+                job_client = JobClient(job_id=zaro_job_id, step_name="gatk_variant_calling")
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
@@ -245,7 +245,7 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
             total_memory_gb = total_memory_bytes / (1024 * 1024 * 1024)
             
             # Log memory information
-            logger.info(f"Job {job_id}: System memory - Total: {total_memory_gb:.2f}GB, File size: {file_size_gb:.2f}GB")
+            logger.info(f"Job {local_job_id}: System memory - Total: {total_memory_gb:.2f}GB, File size: {file_size_gb:.2f}GB")
             
             # For very large files (> 2GB), use 70% of available memory
             # For smaller files, use default MAX_MEMORY
@@ -254,18 +254,18 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                 memory_to_use = min(int(total_memory_gb * 0.7), 
                                    int(MAX_MEMORY.replace('g', '')) if MAX_MEMORY.endswith('g') else int(MAX_MEMORY))
                 java_options = f"-Xms{memory_to_use}G -Xmx{memory_to_use}G -XX:ParallelGCThreads=2 -XX:+UseG1GC"
-                logger.info(f"Job {job_id}: Large file detected, using {memory_to_use}g memory for Java")
+                logger.info(f"Job {local_job_id}: Large file detected, using {memory_to_use}g memory for Java")
             else:
                 # Use standard memory settings
                 java_options = f"-Xms20G -Xmx20G -XX:ParallelGCThreads=2"
-                logger.info(f"Job {job_id}: Using standard memory setting {MAX_MEMORY}")
+                logger.info(f"Job {local_job_id}: Using standard memory setting {MAX_MEMORY}")
         except Exception as mem_error:
             # Fall back to default if we can't get memory info
-            logger.warning(f"Job {job_id}: Failed to get system memory info: {str(mem_error)}. Using default {MAX_MEMORY}")
+            logger.warning(f"Job {local_job_id}: Failed to get system memory info: {str(mem_error)}. Using default {MAX_MEMORY}")
             java_options = f"-Xms20G -Xmx20G -XX:ParallelGCThreads=2"
                 
         # Update job status
-        update_job_status(job_id, JOB_STATUS_RUNNING, progress=30, 
+        update_job_status(local_job_id, JOB_STATUS_RUNNING, progress=30, 
                          message="Running GATK HaplotypeCaller for variant calling")
         
         # Define regions argument if provided
@@ -322,13 +322,13 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                 exclude_arg = ""
                 if excluded_contigs:
                     exclude_arg = " ".join([f"-XL {contig}" for contig in excluded_contigs])
-                    logger.info(f"Job {job_id}: Excluding contigs: {', '.join(excluded_contigs)}")
+                    logger.info(f"Job {local_job_id}: Excluding contigs: {', '.join(excluded_contigs)}")
                 
                 # Set up the command
                 cmd = f"gatk --java-options '{java_options}' HaplotypeCaller -R {reference_path} -I {input_path} -O {output_path} {regions_arg} {exclude_arg} --verbosity INFO"
                 
                 # Log the command being run
-                logger.info(f"Job {job_id}: Running GATK command (attempt {attempt+1}/{max_retries+1}): {cmd}")
+                logger.info(f"Job {local_job_id}: Running GATK command (attempt {attempt+1}/{max_retries+1}): {cmd}")
                 
                 # Prepare the subprocess
                 process = subprocess.Popen(
@@ -342,11 +342,11 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                 )
                 
                 # Register process for cancellation if we have workflow context
-                if workflow_id:
+                if zaro_job_id:
                     # Track specific file paths for cleanup
                     cleanup_paths = [input_path, output_path]
-                    register_process(workflow_id, process.pid, {
-                        "job_id": job_id,
+                    register_process(zaro_job_id, process.pid, {
+                        "job_id": local_job_id,
                         "patient_id": patient_id,
                         "cleanup_paths": cleanup_paths
                     })
@@ -366,11 +366,11 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                     if os.path.exists(fai_path):
                         with open(fai_path, 'r') as f:
                             chromosomes_expected = [line.split()[0] for line in f]
-                            logger.info(f"Job {job_id}: Found {len(chromosomes_expected)} chromosomes in reference: {', '.join(chromosomes_expected[:5])}...")
+                            logger.info(f"Job {local_job_id}: Found {len(chromosomes_expected)} chromosomes in reference: {', '.join(chromosomes_expected[:5])}...")
                     else:
-                        logger.warning(f"Job {job_id}: Reference index file not found at {fai_path}")
+                        logger.warning(f"Job {local_job_id}: Reference index file not found at {fai_path}")
                 except Exception as e:
-                    logger.warning(f"Job {job_id}: Could not determine chromosome list: {str(e)}")
+                    logger.warning(f"Job {local_job_id}: Could not determine chromosome list: {str(e)}")
                 
                 # Function to update progress based on chromosome position
                 def update_progress_by_chromosome(chrom):
@@ -433,20 +433,20 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                                 pass
                         return java_mem / (1024 * 1024)  # Return in MB
                     except Exception as e:
-                        logger.debug(f"Job {job_id}: Could not get GATK memory usage: {str(e)}")
+                        logger.debug(f"Job {local_job_id}: Could not get GATK memory usage: {str(e)}")
                         return None
                 
                 # Process output line by line
                 for line in iter(process.stdout.readline, ''):
                     # Log the GATK output
-                    logger.debug(f"Job {job_id}: GATK output: {line.strip()}")
+                    logger.debug(f"Job {local_job_id}: GATK output: {line.strip()}")
                     
                     # Check for contig not present errors
                     contig_not_present_match = re.search(r'Contig\s+(\S+)\s+not\s+present', line)
                     if contig_not_present_match:
                         missing_contig = contig_not_present_match.group(1)
                         contig_error = f"Contig {missing_contig} not present in reference"
-                        logger.warning(f"Job {job_id}: {contig_error}")
+                        logger.warning(f"Job {local_job_id}: {contig_error}")
                         
                         # Add to excluded contigs for next attempt
                         if missing_contig not in excluded_contigs:
@@ -465,7 +465,7 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                         if chrom_match:
                             new_chromosome = chrom_match.group(0)
                             if new_chromosome != current_chromosome:
-                                logger.info(f"Job {job_id}: GATK processing chromosome: {new_chromosome}")
+                                logger.info(f"Job {local_job_id}: GATK processing chromosome: {new_chromosome}")
                                 current_chromosome = new_chromosome
                                 if new_chromosome not in chromosomes_processed:
                                     chromosomes_processed.append(new_chromosome)
@@ -478,11 +478,11 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                             memory_info = f"({int(memory_usage)}MB used)" if memory_usage else ""
                             
                             # Update job status
-                            update_job_status(job_id, JOB_STATUS_RUNNING, progress=progress,
+                            update_job_status(local_job_id, JOB_STATUS_RUNNING, progress=progress,
                                             message=f"Processing chromosome {current_chromosome} {memory_info}")
                             
                             # Update workflow step with progress for proper mapping
-                            if workflow_id and job_client:
+                            if zaro_job_id and job_client:
                                 try:
                                     await job_client.update_step_status(
                                         "running",
@@ -505,11 +505,11 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                             memory_usage = get_gatk_memory_usage()
                             memory_info = f"({int(memory_usage)}MB used)" if memory_usage else ""
                             
-                            update_job_status(job_id, JOB_STATUS_RUNNING, progress=int(progress),
+                            update_job_status(local_job_id, JOB_STATUS_RUNNING, progress=int(progress),
                                             message=f"GATK Progress: {gatk_progress:.1f}% {memory_info}")
                             
                             # Update workflow step with progress for proper mapping
-                            if workflow_id and job_client:
+                            if zaro_job_id and job_client:
                                 try:
                                     await job_client.update_step_status(
                                         "running",
@@ -521,7 +521,7 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                     
                     # Check for errors
                     elif 'ERROR' in line:
-                        logger.error(f"Job {job_id}: GATK error: {line.strip()}")
+                        logger.error(f"Job {local_job_id}: GATK error: {line.strip()}")
                     
                     # Periodically update memory usage even without progress update
                     elif line.strip() and random.random() < 0.1:  # 10% chance to update on any output line
@@ -534,19 +534,19 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                             else:
                                 progress = 30  # Default starting progress
                             
-                            update_job_status(job_id, JOB_STATUS_RUNNING, progress=progress,
+                            update_job_status(local_job_id, JOB_STATUS_RUNNING, progress=progress,
                                             message=f"Running GATK HaplotypeCaller ({int(memory_usage)}MB used)")
                 
                 # Wait for process to complete and get return code
                 return_code = process.wait()
                 
                 # Unregister process when done
-                if workflow_id:
-                    unregister_process(workflow_id)
+                if zaro_job_id:
+                    unregister_process(zaro_job_id)
                 
                 # If we had a contig error but the process exited with a non-zero code, retry
                 if return_code != 0 and contig_error and attempt < max_retries:
-                    logger.warning(f"Job {job_id}: GATK failed with contig error. Will retry excluding: {', '.join(excluded_contigs)}")
+                    logger.warning(f"Job {local_job_id}: GATK failed with contig error. Will retry excluding: {', '.join(excluded_contigs)}")
                     continue  # Try again with excluded contigs
                 
                 # If we reach here, either the process succeeded, or it failed without a contig error
@@ -554,7 +554,7 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                     raise subprocess.CalledProcessError(return_code, cmd)
                 
                 # Command completed successfully
-                logger.info(f"Job {job_id}: GATK command completed successfully")
+                logger.info(f"Job {local_job_id}: GATK command completed successfully")
                 
                 # Update non-human contigs excluded list
                 non_human_contigs["excluded"] = excluded_contigs.copy()
@@ -582,7 +582,7 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                     raise Exception(f"GATK completed but output file not found: {output_path}")
                 
                 # Update job status
-                update_job_status(job_id, JOB_STATUS_COMPLETED, progress=100, 
+                update_job_status(local_job_id, JOB_STATUS_COMPLETED, progress=100, 
                                 message=f"Variant calling complete{' (excluded: ' + ', '.join(excluded_contigs) + ')' if excluded_contigs else ''}",
                                 output_file=output_path,
                                 extras=extras_data)
@@ -593,9 +593,9 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                 # If this was our last attempt, raise the error
                 if attempt == max_retries:
                     error_message = f"GATK command failed with exit code {e.returncode}"
-                    logger.error(f"Job {job_id}: {error_message}")
+                    logger.error(f"Job {local_job_id}: {error_message}")
                     
-                    update_job_status(job_id, JOB_STATUS_ERROR, progress=100, 
+                    update_job_status(local_job_id, JOB_STATUS_ERROR, progress=100, 
                                     message="GATK variant calling failed",
                                     error=error_message)
                     return None
@@ -617,16 +617,16 @@ async def run_variant_calling(job_id, input_path, output_path, reference_path, r
                                         if contig_type not in non_human_contigs["identified_types"]:
                                             non_human_contigs["identified_types"].append(contig_type)
                                             
-                                logger.info(f"Job {job_id}: Proactively excluding viral contig {viral_contig} for retry")
+                                logger.info(f"Job {local_job_id}: Proactively excluding viral contig {viral_contig} for retry")
                     
-                    logger.warning(f"Job {job_id}: GATK attempt {attempt+1} failed, will retry excluding {len(excluded_contigs)} contigs")
+                    logger.warning(f"Job {local_job_id}: GATK attempt {attempt+1} failed, will retry excluding {len(excluded_contigs)} contigs")
                     continue
         
     except Exception as e:
         error_message = f"Error running GATK HaplotypeCaller: {str(e)}"
-        logger.exception(f"Job {job_id}: {error_message}")
+        logger.exception(f"Job {local_job_id}: {error_message}")
         
-        update_job_status(job_id, JOB_STATUS_ERROR, progress=100, 
+        update_job_status(local_job_id, JOB_STATUS_ERROR, progress=100, 
                          message="GATK variant calling failed",
                          error=error_message)
         return None
@@ -772,9 +772,8 @@ async def variant_call(
     file: UploadFile = File(...),
     reference_genome: str = Form("hg38"),
     regions: Optional[str] = Form(None),
-    job_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),  # Zaro Job PK for JobClient
     test_mode: bool = Form(False),
-    workflow_id: Optional[str] = Form(None),
     patient_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("gatk_variant_calling")
 ):
@@ -785,28 +784,25 @@ async def variant_call(
     that can be used to check the status of the job.
     """
     try:
-        # Get or create job_id
-        if job_id:
-            logger.info(f"Using provided job_id: {job_id}")
-        else:
-            job_id = str(uuid.uuid4())
-            logger.info(f"Generated new job_id: {job_id}")
+        local_job_id = str(uuid.uuid4())
+        logger.info(f"Generated local GATK call id: {local_job_id}")
+        zaro_job_id = job_id  # Form value; may be None
 
         if file.filename == '':
             logger.error("No filename specified in request")
             raise HTTPException(status_code=400, detail="No filename specified")
 
-        logger.info(f"Job {job_id}: Request received - File: {file.filename}, Reference: {reference_genome}, Regions: {regions}")
+        logger.info(f"Job {local_job_id}: Request received - File: {file.filename}, Reference: {reference_genome}, Regions: {regions}")
 
-        # Initialize workflow client if workflow_id is provided
+        # Initialize job client if Zaro Job PK is provided
         job_client = None
-        if workflow_id:
+        if zaro_job_id:
             try:
-                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                job_client = JobClient(job_id=zaro_job_id, step_name=step_name)
                 
-                # Check if workflow has been cancelled before starting
+                # Check if job has been cancelled before starting
                 if await job_client.is_job_cancelled():
-                    logger.info(f"Workflow {workflow_id} is cancelled, aborting GATK processing")
+                    logger.info(f"Job {zaro_job_id} is cancelled, aborting GATK processing")
                     return {"success": False, "error": "Workflow has been cancelled"}
                 
                 await job_client.start_step(f"Starting GATK variant calling for {file.filename}")
@@ -825,11 +821,11 @@ async def variant_call(
         input_path = os.path.join(input_dir, filename)
         output_path = os.path.join(input_dir, f"{os.path.splitext(filename)[0]}.vcf")
 
-        logger.info(f"Job {job_id}: Saving file to {input_path}")
+        logger.info(f"Job {local_job_id}: Saving file to {input_path}")
         with open(input_path, "wb") as f:
             content = await file.read()
             f.write(content)
-        logger.info(f"Job {job_id}: Saved uploaded file to {input_path}")
+        logger.info(f"Job {local_job_id}: Saved uploaded file to {input_path}")
         
         # Update workflow with file information
         if job_client:
@@ -841,7 +837,7 @@ async def variant_call(
         
         # Check if file exists
         if not os.path.exists(input_path):
-            logger.error(f"Job {job_id}: Failed to save uploaded file to {input_path}")
+            logger.error(f"Job {local_job_id}: Failed to save uploaded file to {input_path}")
             if job_client:
                 await job_client.fail_step(f"Failed to save uploaded file to {input_path}", {
                     "error_type": "file_save_error",
@@ -851,29 +847,29 @@ async def variant_call(
         
         # Log file details
         file_size = os.path.getsize(input_path)
-        logger.info(f"Job {job_id}: File saved: {input_path}, size: {file_size} bytes")
+        logger.info(f"Job {local_job_id}: File saved: {input_path}, size: {file_size} bytes")
         
         # Auto-detect reference genome for all genomic file types
         file_ext = os.path.splitext(filename)[1].lower()
         if file_ext in ['.bam', '.cram', '.sam', '.vcf', '.vcf.gz']:
             detected_reference = detect_reference(input_path, default_reference=reference_genome)
             if detected_reference != reference_genome:
-                logger.warning(f"Job {job_id}: Detected reference ({detected_reference}) differs from specified reference ({reference_genome})")
-                logger.warning(f"Job {job_id}: Using detected reference: {detected_reference}")
+                logger.warning(f"Job {local_job_id}: Detected reference ({detected_reference}) differs from specified reference ({reference_genome})")
+                logger.warning(f"Job {local_job_id}: Using detected reference: {detected_reference}")
                 reference_genome = detected_reference
 
         # Validate reference genome
         if reference_genome not in REFERENCE_PATHS:
-            logger.error(f"Job {job_id}: Unsupported reference genome: {reference_genome}")
+            logger.error(f"Job {local_job_id}: Unsupported reference genome: {reference_genome}")
             raise HTTPException(status_code=400, detail=f"Unsupported reference genome: {reference_genome}")
 
         reference_path = REFERENCE_PATHS[reference_genome]
         if not os.path.exists(reference_path):
-            logger.error(f"Job {job_id}: Reference genome file not found: {reference_path}")
+            logger.error(f"Job {local_job_id}: Reference genome file not found: {reference_path}")
             raise HTTPException(status_code=500, detail=f"Reference genome file not found: {reference_path}")
 
         # Initialize job info
-        jobs[job_id] = {
+        jobs[local_job_id] = {
             "status": JOB_STATUS_PENDING,
             "progress": 0,
             "message": "Job initialized",
@@ -881,7 +877,7 @@ async def variant_call(
             "output_file": None,
             "reference_genome": reference_genome,
             "regions": regions,
-            "job_id": job_id,
+            "job_id": local_job_id,
             "patient_id": patient_id,
             "created_at": time.time(),
             "updated_at": time.time()
@@ -892,8 +888,8 @@ async def variant_call(
 
         if file_ext in ['.vcf', '.vcf.gz']:
             # If it's already a VCF, just return the path
-            logger.info(f"Job {job_id}: File is already a VCF, returning directly")
-            update_job_status(job_id, JOB_STATUS_COMPLETED, progress=100, 
+            logger.info(f"Job {local_job_id}: File is already a VCF, returning directly")
+            update_job_status(local_job_id, JOB_STATUS_COMPLETED, progress=100, 
                              message="File already contains variants",
                              output_file=input_path)
             
@@ -905,7 +901,7 @@ async def variant_call(
                 })
             
             return {
-                "job_id": job_id,
+                "job_id": local_job_id,
                 "status": JOB_STATUS_COMPLETED,
                 "progress": 100,
                 "message": "File already contains variants",
@@ -913,7 +909,7 @@ async def variant_call(
             }
 
         elif file_ext in ['.bam', '.cram', '.sam']:
-            logger.info(f"Job {job_id}: Starting processing for {file_ext} file")
+            logger.info(f"Job {local_job_id}: Starting processing for {file_ext} file")
             
             # Update workflow with processing start
             if job_client:
@@ -926,24 +922,24 @@ async def variant_call(
             # For BAM files, create an index first
             if file_ext == '.bam':
                 # Update status to indexing first
-                update_job_status(job_id, JOB_STATUS_PENDING, progress=5, 
+                update_job_status(local_job_id, JOB_STATUS_PENDING, progress=5, 
                                  message="Starting BAM file indexing")
                 
                 # Start the processing in a background thread
                 threading.Thread(
                     target=process_bam_file,
-                    args=(job_id, input_path, output_path, reference_path, regions, workflow_id, patient_id),
+                    args=(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id, patient_id),
                     daemon=True
                 ).start()
             else:
                 # For other formats, start variant calling directly
-                update_job_status(job_id, JOB_STATUS_PENDING, progress=5, 
+                update_job_status(local_job_id, JOB_STATUS_PENDING, progress=5, 
                                  message=f"Starting variant calling for {file_ext} file")
                 
                 # Start variant calling in a background thread
                 import asyncio
                 def run_async_variant_calling():
-                    asyncio.run(run_variant_calling(job_id, input_path, output_path, reference_path, regions, workflow_id, patient_id))
+                    asyncio.run(run_variant_calling(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id, patient_id))
                 
                 threading.Thread(
                     target=run_async_variant_calling,
@@ -951,14 +947,14 @@ async def variant_call(
                 ).start()
 
             return {
-                "job_id": job_id,
+                "job_id": local_job_id,
                 "status": JOB_STATUS_PENDING,
                 "progress": 5,
                 "message": f"Processing started for {file_ext} file"
             }
 
         else:
-            logger.error(f"Job {job_id}: Unsupported file format: {file_ext}")
+            logger.error(f"Job {local_job_id}: Unsupported file format: {file_ext}")
             if job_client:
                 await job_client.fail_step(f"Unsupported file format: {file_ext}", {
                     "error_type": "unsupported_format",
@@ -975,26 +971,26 @@ async def variant_call(
             })
         raise HTTPException(status_code=500, detail=str(e))
 
-def process_bam_file(job_id, input_path, output_path, reference_path, regions, workflow_id=None, patient_id=None):
+def process_bam_file(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id=None, patient_id=None):
     """Process a BAM file: first index it, then call variants"""
     try:
         # First, index the BAM file
-        success, message = index_bam_file(job_id, input_path)
+        success, message = index_bam_file(local_job_id, input_path)
         
         if not success:
-            logger.error(f"Job {job_id}: BAM indexing failed: {message}")
-            update_job_status(job_id, JOB_STATUS_ERROR, progress=100, 
+            logger.error(f"Job {local_job_id}: BAM indexing failed: {message}")
+            update_job_status(local_job_id, JOB_STATUS_ERROR, progress=100, 
                              message=f"BAM indexing failed: {message}",
                              error=message)
             return
             
         # If indexing succeeded, continue with variant calling
-        logger.info(f"Job {job_id}: BAM indexing completed, proceeding to variant calling")
-        asyncio.run(run_variant_calling(job_id, input_path, output_path, reference_path, regions, workflow_id, patient_id))
+        logger.info(f"Job {local_job_id}: BAM indexing completed, proceeding to variant calling")
+        asyncio.run(run_variant_calling(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id, patient_id))
         
     except Exception as e:
-        logger.exception(f"Job {job_id}: Error in BAM file processing: {str(e)}")
-        update_job_status(job_id, JOB_STATUS_ERROR, progress=100, 
+        logger.exception(f"Job {local_job_id}: Error in BAM file processing: {str(e)}")
+        update_job_status(local_job_id, JOB_STATUS_ERROR, progress=100, 
                          message=f"Error in BAM file processing",
                          error=str(e))
 
@@ -1152,7 +1148,7 @@ async def align_fastq(
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
-    workflow_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("gatk_alignment")
 ):
     """
@@ -1160,11 +1156,11 @@ async def align_fastq(
     This endpoint handles FASTQ alignment and returns BAM file path.
     """
     try:
-        # Initialize workflow client if workflow_id is provided
+        # Initialize job client if Zaro Job PK is provided
         job_client = None
-        if workflow_id:
+        if job_id:
             try:
-                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                job_client = JobClient(job_id=job_id, step_name=step_name)
                 await job_client.start_step(f"Starting FASTQ alignment for {file.filename}")
                 await job_client.log_progress(f"Aligning {file.filename} to {reference_genome}", {
                     "filename": file.filename,
@@ -1180,7 +1176,7 @@ async def align_fastq(
             raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} not found")
 
         # Save uploaded file
-        job_id = str(uuid.uuid4())
+        local_job_id = str(uuid.uuid4())
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         input_path = os.path.join(input_dir, file.filename)
         
@@ -1188,7 +1184,7 @@ async def align_fastq(
             content = await file.read()
             f.write(content)
         
-        logger.info(f"Job {job_id}: Saved FASTQ file to {input_path}")
+        logger.info(f"Job {local_job_id}: Saved FASTQ file to {input_path}")
         
         # Update workflow with file information
         if job_client:
@@ -1206,7 +1202,7 @@ async def align_fastq(
         with open(output_bam, "wb") as f:
             f.write(b"Mock BAM file content")
         
-        logger.info(f"Job {job_id}: Created mock BAM file at {output_bam}")
+        logger.info(f"Job {local_job_id}: Created mock BAM file at {output_bam}")
         
         # Update workflow with completion
         if job_client:
@@ -1218,7 +1214,7 @@ async def align_fastq(
 
         return {
             "success": True,
-            "job_id": job_id,
+            "job_id": local_job_id,
             "bam_path": output_bam,
             "bam": output_bam,  # Alternative field name
             "message": "FASTQ alignment completed (mock implementation)"
@@ -1237,18 +1233,18 @@ async def cram_to_bam(
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
-    workflow_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("gatk_cram_to_bam")
 ):
     """
     Convert CRAM files to BAM format using samtools.
     """
     try:
-        # Initialize workflow client if workflow_id is provided
+        # Initialize job client if Zaro Job PK is provided
         job_client = None
-        if workflow_id:
+        if job_id:
             try:
-                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                job_client = JobClient(job_id=job_id, step_name=step_name)
                 await job_client.start_step(f"Starting CRAM to BAM conversion for {file.filename}")
                 await job_client.log_progress(f"Converting {file.filename} to BAM", {
                     "filename": file.filename,
@@ -1264,7 +1260,7 @@ async def cram_to_bam(
             raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} not found")
 
         # Save uploaded file
-        job_id = str(uuid.uuid4())
+        local_job_id = str(uuid.uuid4())
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         input_path = os.path.join(input_dir, file.filename)
         output_bam = os.path.join(input_dir, f"{os.path.splitext(file.filename)[0]}.bam")
@@ -1273,7 +1269,7 @@ async def cram_to_bam(
             content = await file.read()
             f.write(content)
         
-        logger.info(f"Job {job_id}: Saved CRAM file to {input_path}")
+        logger.info(f"Job {local_job_id}: Saved CRAM file to {input_path}")
         
         # Update workflow with file information
         if job_client:
@@ -1288,7 +1284,7 @@ async def cram_to_bam(
         with open(output_bam, "wb") as f:
             f.write(b"Mock BAM file content from CRAM conversion")
         
-        logger.info(f"Job {job_id}: Created mock BAM file at {output_bam}")
+        logger.info(f"Job {local_job_id}: Created mock BAM file at {output_bam}")
         
         # Update workflow with completion
         if job_client:
@@ -1300,7 +1296,7 @@ async def cram_to_bam(
 
         return {
             "success": True,
-            "job_id": job_id,
+            "job_id": local_job_id,
             "bam_path": output_bam,
             "bam": output_bam,  # Alternative field name
             "message": "CRAM to BAM conversion completed (mock implementation)"
@@ -1319,18 +1315,18 @@ async def sam_to_bam(
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
-    workflow_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("gatk_sam_to_bam")
 ):
     """
     Convert SAM files to BAM format using samtools.
     """
     try:
-        # Initialize workflow client if workflow_id is provided
+        # Initialize job client if Zaro Job PK is provided
         job_client = None
-        if workflow_id:
+        if job_id:
             try:
-                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                job_client = JobClient(job_id=job_id, step_name=step_name)
                 await job_client.start_step(f"Starting SAM to BAM conversion for {file.filename}")
                 await job_client.log_progress(f"Converting {file.filename} to BAM", {
                     "filename": file.filename,
@@ -1341,7 +1337,7 @@ async def sam_to_bam(
                 job_client = None
 
         # Save uploaded file
-        job_id = str(uuid.uuid4())
+        local_job_id = str(uuid.uuid4())
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         input_path = os.path.join(input_dir, file.filename)
         output_bam = os.path.join(input_dir, f"{os.path.splitext(file.filename)[0]}.bam")
@@ -1350,7 +1346,7 @@ async def sam_to_bam(
             content = await file.read()
             f.write(content)
         
-        logger.info(f"Job {job_id}: Saved SAM file to {input_path}")
+        logger.info(f"Job {local_job_id}: Saved SAM file to {input_path}")
         
         # Update workflow with file information
         if job_client:
@@ -1365,7 +1361,7 @@ async def sam_to_bam(
         with open(output_bam, "wb") as f:
             f.write(b"Mock BAM file content from SAM conversion")
         
-        logger.info(f"Job {job_id}: Created mock BAM file at {output_bam}")
+        logger.info(f"Job {local_job_id}: Created mock BAM file at {output_bam}")
         
         # Update workflow with completion
         if job_client:
@@ -1377,7 +1373,7 @@ async def sam_to_bam(
 
         return {
             "success": True,
-            "job_id": job_id,
+            "job_id": local_job_id,
             "bam_path": output_bam,
             "bam": output_bam,  # Alternative field name
             "message": "SAM to BAM conversion completed (mock implementation)"

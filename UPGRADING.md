@@ -5,6 +5,8 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+- Form job_id residue: container multipart Zaro Job PK is `job_id` (not `workflow_id`);
+  Nextflow curls `-F job_id=${JOB_ID}`. Rebuild `gatk-api`, `pharmcat`, `pypgx`, `zarohla`, `nextflow`.
 - Lexicon wiring (66/125/42a): PharmCAT image ships allele translator + map;
   rebuild `pharmcat` so uploaded outside-call TSVs get ABCG2/IFNL3/VKORC1 synonym rewrite.
 
