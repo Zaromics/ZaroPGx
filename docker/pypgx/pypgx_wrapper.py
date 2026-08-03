@@ -226,7 +226,7 @@ async def process_gene_batch_parallel(
     job_dir: str, 
     reference_genome: str,
     max_workers: int = None,
-    workflow_id: str = None,
+    job_id: str = None,
     job_client = None
 ) -> Dict[str, Any]:
     """Process a batch of genes in parallel using ThreadPoolExecutor"""
@@ -240,7 +240,7 @@ async def process_gene_batch_parallel(
     if job_client:
         try:
             if await job_client.is_job_cancelled():
-                logger.info(f"Workflow {workflow_id} is cancelled, aborting batch processing")
+                logger.info(f"Workflow {job_id} is cancelled, aborting batch processing")
                 return {"cancelled": True, "message": "Workflow has been cancelled"}
         except Exception as e:
             logger.warning(f"Failed to check workflow cancellation status: {e}")
@@ -265,7 +265,7 @@ async def process_gene_batch_parallel(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all gene processing tasks
         future_to_gene = {
-            executor.submit(run_pypgx, vcf_gz, job_dir, gene, reference_genome, workflow_id): gene 
+            executor.submit(run_pypgx, vcf_gz, job_dir, gene, reference_genome, job_id): gene 
             for gene in genes
         }
         
@@ -275,7 +275,7 @@ async def process_gene_batch_parallel(
             if job_client:
                 try:
                     if await job_client.is_job_cancelled():
-                        logger.info(f"Workflow {workflow_id} is cancelled, stopping batch processing")
+                        logger.info(f"Workflow {job_id} is cancelled, stopping batch processing")
                         # Cancel remaining futures
                         for f in future_to_gene:
                             if not f.done():
@@ -444,7 +444,7 @@ async def create_input_vcf(
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
-    workflow_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("pypgx_bam2vcf")
 ):
     """
@@ -455,11 +455,11 @@ async def create_input_vcf(
     if reference_genome not in ["hg19", "hg38", "GRCh37", "GRCh38"]:
         raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} is not supported. Use hg19/GRCh37 or hg38/GRCh38.")
 
-    # Initialize workflow client if workflow_id is provided
+    # Initialize workflow client if job_id is provided
     job_client = None
-    if workflow_id:
+    if job_id:
         try:
-            job_client = JobClient(job_id=workflow_id, step_name=step_name)
+            job_client = JobClient(job_id=job_id, step_name=step_name)
             await job_client.start_step(f"Starting BAM to VCF conversion for {file.filename}")
             await job_client.log_progress(f"Converting {file.filename} to VCF", {
                 "filename": file.filename,
@@ -472,8 +472,8 @@ async def create_input_vcf(
     # Normalize to GRCh37/GRCh38 wording for PyPGx
     pypgx_assembly = "GRCh37" if reference_genome in ("hg19", "GRCh37") else "GRCh38"
 
-    job_id = str(uuid.uuid4())
-    job_dir = TEMP_DIR / job_id
+    local_job_id = str(uuid.uuid4())
+    job_dir = TEMP_DIR / local_job_id
     os.makedirs(job_dir, exist_ok=True)
 
     try:
@@ -503,7 +503,7 @@ async def create_input_vcf(
 
         payload: Dict[str, Any] = {
             "success": True,
-            "job_id": job_id,
+            "job_id": local_job_id,
             "input_file": str(input_path),
             "vcf_path": str(output_vcf_gz),
             "tbi_path": str(output_vcf_gz) + ".tbi",
@@ -578,7 +578,7 @@ async def genotype(
     reference_genome: str = Form("hg19"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
-    workflow_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("pypgx_analysis"),
     input_type: Optional[str] = Form(None),
 ):
@@ -659,20 +659,20 @@ async def genotype(
         pypgx_assembly = "GRCh38"
     
     # Create a unique job directory
-    job_id = str(uuid.uuid4())
-    job_dir = TEMP_DIR / job_id
+    local_job_id = str(uuid.uuid4())
+    job_dir = TEMP_DIR / local_job_id
     os.makedirs(job_dir, exist_ok=True)
     
     
-    # Initialize workflow client if workflow_id is provided
+    # Initialize workflow client if job_id is provided
     job_client = None
-    if workflow_id:
+    if job_id:
         try:
-            job_client = JobClient(job_id=workflow_id, step_name=step_name)
+            job_client = JobClient(job_id=job_id, step_name=step_name)
             
             # Check if workflow has been cancelled before starting
             if await job_client.is_job_cancelled():
-                logger.info(f"Workflow {workflow_id} is cancelled, aborting PyPGx processing")
+                logger.info(f"Workflow {job_id} is cancelled, aborting PyPGx processing")
                 return {"success": False, "error": "Workflow has been cancelled"}
             
             await job_client.start_step(f"Starting PyPGx analysis for {len(requested_genes)} genes")
@@ -714,7 +714,7 @@ async def genotype(
         # Split genes into batches for parallel processing
         gene_batches = chunk_list(requested_genes, optimal_batch_size)
         
-        aggregated: Dict[str, Any] = {"success": True, "results": {}, "job_id": job_id}
+        aggregated: Dict[str, Any] = {"success": True, "results": {}, "job_id": local_job_id}
         if patient_id:
             aggregated["patient_id"] = patient_id
         if report_id:
@@ -745,13 +745,13 @@ async def genotype(
                     str(job_dir), 
                     pypgx_assembly,
                     max_workers=min(len(gene_batch), PYPGX_MAX_PARALLEL_GENES),
-                    workflow_id=workflow_id,
+                    job_id=job_id,
                     job_client=job_client
                 )
                 
                 # Check if batch processing was cancelled
                 if batch_results.get("cancelled"):
-                    logger.info(f"Batch processing cancelled for workflow {workflow_id}")
+                    logger.info(f"Batch processing cancelled for workflow {job_id}")
                     aggregated["success"] = False
                     aggregated["cancelled"] = True
                     aggregated["message"] = batch_results.get("message", "Workflow cancelled")
@@ -807,7 +807,7 @@ async def genotype(
         # Move per-gene pipeline folders into per-patient reports dir if patient_id provided
         try:
             if patient_id:
-                dest_dir = REPORT_DIR / str(patient_id) / f"pypgx_{job_id}"
+                dest_dir = REPORT_DIR / str(patient_id) / f"pypgx_{local_job_id}"
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 for item in os.listdir(job_dir):
                     src_path = job_dir / item
@@ -823,12 +823,12 @@ async def genotype(
             if patient_id:
                 dest_dir = REPORT_DIR / str(patient_id)
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                output_path = dest_dir / f"{job_id}_pypgx_results.json"
+                output_path = dest_dir / f"{local_job_id}_pypgx_results.json"
             else:
-                output_path = DATA_DIR / f"{job_id}_pypgx_results.json"
+                output_path = DATA_DIR / f"{local_job_id}_pypgx_results.json"
         except Exception:
             # Fallback to DATA_DIR on any error creating the reports dir
-            output_path = DATA_DIR / f"{job_id}_pypgx_results.json"
+            output_path = DATA_DIR / f"{local_job_id}_pypgx_results.json"
         output_file = str(output_path)
         try:
             with open(output_file, "w") as f:
@@ -868,10 +868,10 @@ async def genotype(
             "success": False,
             "error": f"Error processing VCF with PyPGx: {str(e)}",
             "results": {},
-            "job_id": job_id
+            "job_id": local_job_id
         }
 
-def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19', workflow_id: str = None) -> Dict[str, Any]:
+def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19', job_id: str = None) -> Dict[str, Any]:
     """Run PyPGx for star allele calling on the input VCF"""
     try:
         # VCF should already be compressed and indexed by the batch processing function
@@ -900,10 +900,10 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
             stderr=subprocess.PIPE
         )
         
-        # Register process for cancellation if workflow_id is provided
-        if workflow_id:
+        # Register process for cancellation if job_id is provided
+        if job_id:
             # Create a unique process key for this gene
-            process_key = f"{workflow_id}_{gene}"
+            process_key = f"{job_id}_{gene}"
             register_process(process_key, process.pid, {
                 "gene": gene,
                 "pipeline_dir": str(pipeline_dir),
@@ -925,8 +925,8 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
             return_code = process.returncode
         
         # Unregister process when done
-        if workflow_id:
-            process_key = f"{workflow_id}_{gene}"
+        if job_id:
+            process_key = f"{job_id}_{gene}"
             unregister_process(process_key)
         
         # Check if the command was successful

@@ -74,24 +74,24 @@ async def call_hla(
     reference_genome: Optional[str] = Form("GRCh38"),
     patient_id: Optional[str] = Form("unknown"),
     report_id: Optional[str] = Form("unknown"),
-    workflow_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("zarohla")
 ) -> Dict[str, Any]:
     
     job_client = None
-    if workflow_id:
+    if job_id:
         try:
-            job_client = JobClient(job_id=workflow_id, step_name=step_name)
+            job_client = JobClient(job_id=job_id, step_name=step_name)
             if await job_client.is_job_cancelled():
-                logger.info(f"Workflow {workflow_id} is cancelled, aborting ZaroHLA processing")
+                logger.info(f"Workflow {job_id} is cancelled, aborting ZaroHLA processing")
                 return {"success": False, "error": "Workflow has been cancelled"}
                 
             await job_client.start_step("Starting HLA typing")
         except Exception as e:
             logger.warning(f"Failed to initialize JobClient: {e}")
             
-    job_id = str(uuid.uuid4())
-    job_dir = TEMP_DIR / job_id
+    local_job_id = str(uuid.uuid4())
+    job_dir = TEMP_DIR / local_job_id
     os.makedirs(job_dir, exist_ok=True)
     outdir = job_dir / "results"
     os.makedirs(outdir, exist_ok=True)
@@ -119,12 +119,12 @@ async def call_hla(
                 
                 logger.info(f"Running samtools: {' '.join(cmd)}")
                 process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                if workflow_id:
-                    running_processes[workflow_id] = {"pid": process.pid, "job_dir": str(job_dir)}
+                if job_id:
+                    running_processes[job_id] = {"pid": process.pid, "job_dir": str(job_dir)}
                     
                 stdout, stderr = await process.communicate()
                 
-                if workflow_id and workflow_id not in running_processes:
+                if job_id and job_id not in running_processes:
                     raise Exception("Process cancelled by user")
                     
                 if process.returncode != 0:
@@ -146,12 +146,12 @@ async def call_hla(
         
         logger.info(f"Running command: {' '.join(cmd)}")
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        if workflow_id:
-            running_processes[workflow_id] = {"pid": process.pid, "job_dir": str(job_dir)}
+        if job_id:
+            running_processes[job_id] = {"pid": process.pid, "job_dir": str(job_dir)}
             
         stdout, stderr = await process.communicate()
         
-        if workflow_id and workflow_id not in running_processes:
+        if job_id and job_id not in running_processes:
             raise Exception("Process cancelled by user")
             
         if job_id in running_processes:
@@ -193,7 +193,7 @@ async def call_hla(
         if job_client:
             await job_client.fail_step("HLA typing failed", {"error": str(e)})
             
-        if workflow_id and workflow_id in running_processes:
+        if job_id and job_id in running_processes:
             del running_processes[job_id]
             
         raise HTTPException(status_code=500, detail=str(e))

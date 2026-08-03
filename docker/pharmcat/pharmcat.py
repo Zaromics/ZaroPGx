@@ -274,7 +274,7 @@ async def process_genotype(
     file: UploadFile = File(...),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
-    workflow_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("pharmcat_analysis"),
     outside_tsv: Optional[UploadFile] = File(None),
     sample_identifier: Optional[str] = Form(None)
@@ -290,15 +290,15 @@ async def process_genotype(
         if not file.filename.endswith(('.vcf', '.vcf.gz', '.vcf.bgz')):
             raise HTTPException(status_code=400, detail="File must be a VCF (.vcf or .vcf.gz or .vcf.bgz)")
         
-        # Initialize workflow client if workflow_id is provided
+        # Initialize workflow client if job_id is provided
         job_client = None
-        if workflow_id:
+        if job_id:
             try:
-                job_client = JobClient(job_id=workflow_id, step_name=step_name)
+                job_client = JobClient(job_id=job_id, step_name=step_name)
                 
                 # Check if workflow has been cancelled before starting
                 if await job_client.is_job_cancelled():
-                    logger.info(f"Workflow {workflow_id} is cancelled, aborting PharmCAT processing")
+                    logger.info(f"Workflow {job_id} is cancelled, aborting PharmCAT processing")
                     return {"success": False, "error": "Workflow has been cancelled"}
                 
                 await job_client.start_step(f"Starting PharmCAT analysis for {file.filename}")
@@ -525,7 +525,7 @@ async def process_genotype(
                 reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 # Nest under /data/reports/{patient_id}/{job_id}/ when possible (137c)
-                job_dir_id = workflow_id or report_id
+                job_dir_id = job_id or report_id
                 if patient_id and job_dir_id:
                     patient_dir = reports_dir / str(patient_id) / str(job_dir_id)
                 elif patient_id:
@@ -639,9 +639,9 @@ async def process_genotype(
                                     pass
 
                     # Execute with streaming depending on workflow context
-                    if workflow_id:
+                    if job_id:
                         stdout_length, stderr_length, return_code = _run_and_stream(
-                            pharmcat_cmd, env, temp_dir, workflow_identifier=workflow_id, timeout_seconds=300, tee_file_path=tee_log_path
+                            pharmcat_cmd, env, temp_dir, workflow_identifier=job_id, timeout_seconds=300, tee_file_path=tee_log_path
                         )
                     else:
                         stdout_length, stderr_length, return_code = _run_and_stream(
@@ -787,7 +787,7 @@ async def process_genotype(
                 reports_dir = Path(os.getenv("REPORT_DIR", "/data/reports"))
                 reports_dir.mkdir(parents=True, exist_ok=True)
 
-                job_dir_id = workflow_id or report_id
+                job_dir_id = job_id or report_id
                 if patient_id and job_dir_id:
                     patient_dir = reports_dir / str(patient_id) / str(job_dir_id)
                 elif patient_id:
