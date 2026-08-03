@@ -155,6 +155,12 @@ class GenomeDownloadProgress {
                     console.log(`Added ${serviceName}: ${enabled}`);
                 });
             }
+
+            if (window.getPharmcatAssumeRefFlags) {
+              const flags = window.getPharmcatAssumeRefFlags();
+              formData.append('pharmcat_absent_to_ref', flags.pharmcat_absent_to_ref ? 'true' : 'false');
+              formData.append('pharmcat_unspecified_to_ref', flags.pharmcat_unspecified_to_ref ? 'true' : 'false');
+            }
             
             console.log("Form data prepared, starting upload");
             

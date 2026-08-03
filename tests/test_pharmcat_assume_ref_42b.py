@@ -94,3 +94,27 @@ def test_upload_router_mentions_assume_ref_form():
     text = UPLOAD.read_text(encoding="utf-8")
     assert "pharmcat_absent_to_ref" in text
     assert "pharmcat_unspecified_to_ref" in text
+
+
+MAIN_PY = Path("app/main.py")
+INDEX = Path("app/templates/index.html")
+UPLOAD_JS = Path("app/static/js/GenomeDownloadProgress.js")
+
+
+def test_services_config_exposes_pharmcat_assume_ref():
+    text = MAIN_PY.read_text(encoding="utf-8")
+    assert "absent_to_ref" in text
+    assert "PHARMCAT_ABSENT_TO_REF" in text
+
+
+def test_index_has_pharmcat_assume_ref_controls():
+    text = INDEX.read_text(encoding="utf-8")
+    assert "pharmcat_absent_to_ref" in text
+    assert "pharmcat_unspecified_to_ref" in text
+    assert "stagePharmcat" in text
+
+
+def test_upload_js_appends_assume_ref():
+    text = UPLOAD_JS.read_text(encoding="utf-8")
+    assert "pharmcat_absent_to_ref" in text
+    assert "pharmcat_unspecified_to_ref" in text

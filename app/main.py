@@ -156,6 +156,8 @@ OUTSIDE_CALLS_OVERRIDE_ENABLED = _env_flag("OUTSIDECALLSOVERRIDE", False)
 FHIR_EXPORT_ENABLED = _env_flag(
     "FHIR_EXPORT_ENABLED", True
 )  # Enable FHIR export by default
+PHARMCAT_ABSENT_TO_REF = _env_flag("PHARMCAT_ABSENT_TO_REF", False)
+PHARMCAT_UNSPECIFIED_TO_REF = _env_flag("PHARMCAT_UNSPECIFIED_TO_REF", False)
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
@@ -871,6 +873,11 @@ async def services_config():
                 "enabled": FHIR_EXPORT_ENABLED,
                 "description": "FHIR R4 export for pharmacogenomic reports",
                 "endpoints": "/fhir/*" if FHIR_EXPORT_ENABLED else None,
+            },
+            "pharmcat": {
+                "enabled": True,
+                "absent_to_ref": PHARMCAT_ABSENT_TO_REF,
+                "unspecified_to_ref": PHARMCAT_UNSPECIFIED_TO_REF,
             },
         }
     }

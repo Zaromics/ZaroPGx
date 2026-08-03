@@ -586,6 +586,17 @@
                                     <div class="stage-popup">
                                         <h6>PharmCAT Analysis</h6>
                                         <p>Call variants and match phenotypes with recommendations. Generate a pharmacogenomic report.</p>
+                                        <div class="toggle-section assume-ref-toggles" style="text-align:left; margin-top:0.5rem;">
+                                          <label class="d-block small mb-1">
+                                            <input type="checkbox" id="pharmcatAbsentToRef" data-flag="pharmcat_absent_to_ref">
+                                            Assume absent PGx sites = reference (<code>--absent-to-ref</code>)
+                                          </label>
+                                          <label class="d-block small mb-1">
+                                            <input type="checkbox" id="pharmcatUnspecifiedToRef" data-flag="pharmcat_unspecified_to_ref">
+                                            Assume unspecified (<code>./.</code>) = reference (<code>--unspecified-to-ref</code>)
+                                          </label>
+                                          <p class="small text-muted mb-0">Research-oriented PharmCAT preprocessor flags (dangerous if coverage is incomplete). Defaults come from stack env.</p>
+                                        </div>
                                     </div>
                                 </div>
                                 
@@ -2163,10 +2174,32 @@
                         }
                     }
                 });
+
+                const pharmcat = config.services && config.services.pharmcat;
+                if (pharmcat) {
+                  const absentEl = document.getElementById('pharmcatAbsentToRef');
+                  const unspecEl = document.getElementById('pharmcatUnspecifiedToRef');
+                  if (absentEl) absentEl.checked = !!pharmcat.absent_to_ref;
+                  if (unspecEl) unspecEl.checked = !!pharmcat.unspecified_to_ref;
+                }
+
+                const assumeRefToggles = document.querySelector('.assume-ref-toggles');
+                if (assumeRefToggles) {
+                  assumeRefToggles.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                  });
+                }
                 
             } catch (error) {
                 console.error('Error initializing service toggles:', error);
             }
+        };
+
+        window.getPharmcatAssumeRefFlags = function() {
+          return {
+            pharmcat_absent_to_ref: !!(document.getElementById('pharmcatAbsentToRef') || {}).checked,
+            pharmcat_unspecified_to_ref: !!(document.getElementById('pharmcatUnspecifiedToRef') || {}).checked,
+          };
         };
 
         // Get current stage toggle states for backend submission
