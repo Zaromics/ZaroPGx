@@ -5,6 +5,9 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## Unreleased
 
+- PharmCAT assume-reference (42b): per-run Form `pharmcat_absent_to_ref` /
+  `pharmcat_unspecified_to_ref` (UI seeded from env). Rebuild `pharmcat` and
+  `nextflow`. Methodology reports effective flags; VCF env-only Alerts copy removed.
 - Form job_id residue: container multipart Zaro Job PK is `job_id` (not `workflow_id`);
   Nextflow curls `-F job_id=${JOB_ID}`. Rebuild `gatk-api`, `pharmcat`, `pypgx`, `zarohla`, `nextflow`.
 - Lexicon wiring (66/125/42a): PharmCAT image ships allele translator + map;
