@@ -277,7 +277,9 @@ async def process_genotype(
     job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("pharmcat_analysis"),
     outside_tsv: Optional[UploadFile] = File(None),
-    sample_identifier: Optional[str] = Form(None)
+    sample_identifier: Optional[str] = Form(None),
+    pharmcat_absent_to_ref: Optional[str] = Form(None),
+    pharmcat_unspecified_to_ref: Optional[str] = Form(None),
 ):
     """
     API endpoint to process VCF files with PharmCAT.
@@ -453,40 +455,28 @@ async def process_genotype(
                     "-reporterCallsOnlyTsv",   # Generate TSV report for easy parsing
                 ]
                 
-                # Add VCF preprocessor flags based on environment variables
-                # These flags control how missing/absent/unspecified PGx positions are handled
-                # Default to False if not set (as per requirement)
-                def str_to_bool(value: Optional[str]) -> bool:
-                    """Convert string to boolean, defaulting to False if None or empty."""
-                    if value is None:
-                        return False
-                    return str(value).lower() in ("true", "1", "yes", "on")
-                
-                # Debug: Log environment variable values
-                env_absent_raw = os.environ.get("PHARMCAT_ABSENT_TO_REF")
-                env_unspecified_raw = os.environ.get("PHARMCAT_UNSPECIFIED_TO_REF")
-                logger.info(f"DEBUG: PHARMCAT_ABSENT_TO_REF raw value: {repr(env_absent_raw)}")
-                logger.info(f"DEBUG: PHARMCAT_UNSPECIFIED_TO_REF raw value: {repr(env_unspecified_raw)}")
-                
-                pharmcat_absent_to_ref = str_to_bool(env_absent_raw)
-                pharmcat_unspecified_to_ref = str_to_bool(env_unspecified_raw)
-                
-                logger.info(f"DEBUG: pharmcat_absent_to_ref parsed: {pharmcat_absent_to_ref}")
-                logger.info(f"DEBUG: pharmcat_unspecified_to_ref parsed: {pharmcat_unspecified_to_ref}")
-                
-                # --missing-to-ref (-0) is equivalent to both --absent-to-ref and --unspecified-to-ref
-                # If both are enabled, use --missing-to-ref for simplicity
-                if pharmcat_absent_to_ref and pharmcat_unspecified_to_ref:
-                    pharmcat_cmd.append("--missing-to-ref")
-                    logger.info("Using --missing-to-ref flag (equivalent to both --absent-to-ref and --unspecified-to-ref)")
-                else:
-                    # Add individual flags if only one is enabled
-                    if pharmcat_absent_to_ref:
-                        pharmcat_cmd.append("--absent-to-ref")
-                        logger.info("Using --absent-to-ref flag: assuming absent PGx sites are homozygous reference (0/0)")
-                    if pharmcat_unspecified_to_ref:
-                        pharmcat_cmd.append("--unspecified-to-ref")
-                        logger.info("Using --unspecified-to-ref flag: converting unspecified genotypes (./.) to homozygous reference (0/0)")
+                # Form overrides env for assume-ref flags (helpers from /assume-ref-lib)
+                from pharmcat_assume_ref import (
+                    resolve_assume_ref_flags,
+                    pharmcat_cli_ref_flags,
+                )
+
+                absent, unspecified = resolve_assume_ref_flags(
+                    form_absent=pharmcat_absent_to_ref,
+                    form_unspecified=pharmcat_unspecified_to_ref,
+                    env_absent=os.environ.get("PHARMCAT_ABSENT_TO_REF"),
+                    env_unspecified=os.environ.get("PHARMCAT_UNSPECIFIED_TO_REF"),
+                )
+                logger.info(
+                    "PharmCAT assume-ref effective: absent=%s unspecified=%s (form_absent=%r form_unspec=%r)",
+                    absent,
+                    unspecified,
+                    pharmcat_absent_to_ref,
+                    pharmcat_unspecified_to_ref,
+                )
+                for flag in pharmcat_cli_ref_flags(absent, unspecified):
+                    pharmcat_cmd.append(flag)
+                    logger.info("Using PharmCAT flag %s", flag)
                 
                 # Add sample ID parameter only if we successfully extracted it from VCF
                 if vcf_sample_id:

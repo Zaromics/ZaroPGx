@@ -51,3 +51,20 @@ def test_methodology_none_when_off():
     assert text is not None
     assert "missing-to-ref" in text.lower() or "absent" in text.lower()
     assert "0/0" in text or "homozygous reference" in text.lower()
+
+
+from pathlib import Path
+
+PHARMCAT = Path("docker/pharmcat/pharmcat.py")
+DOCKERFILE = Path("docker/pharmcat/Dockerfile")
+
+
+def test_pharmcat_form_declares_assume_ref_fields():
+    text = PHARMCAT.read_text(encoding="utf-8")
+    assert "pharmcat_absent_to_ref: Optional[str] = Form(None)" in text
+    assert "pharmcat_unspecified_to_ref: Optional[str] = Form(None)" in text
+
+
+def test_pharmcat_dockerfile_copies_assume_ref_helper():
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert "pharmcat_assume_ref.py" in text
