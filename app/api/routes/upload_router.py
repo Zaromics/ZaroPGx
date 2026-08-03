@@ -63,6 +63,7 @@ from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.services.job_service import JobService, schedule_coroutine
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
+from app.utils.pharmcat_assume_ref import resolve_assume_ref_flags
 from app.visualizations.workflow_diagram import (
     render_kroki_mermaid_svg,
     render_simple_png_from_workflow,
@@ -1023,6 +1024,8 @@ async def process_file_nextflow_background(
 
             # Persist sample IDs so final-stage report generation can read them
             # without relying on locals() across coroutine boundaries.
+            eff_absent = False
+            eff_unspec = False
             if job_id:
                 try:
                     job_obj = job_service.get_job(job_id)
@@ -1032,6 +1035,8 @@ async def process_file_nextflow_background(
                             meta["header_sample_identifier"] = header_sample_identifier
                         if effective_sample_identifier:
                             meta["sample_identifier"] = effective_sample_identifier
+                        eff_absent = bool(meta.get("pharmcat_absent_to_ref", False))
+                        eff_unspec = bool(meta.get("pharmcat_unspecified_to_ref", False))
                         job_service.update_job(job_id, JobUpdate(metadata=meta))
                 except Exception as meta_err:
                     logger.debug(
@@ -1054,6 +1059,8 @@ async def process_file_nextflow_background(
                 "skip_gatk": skip_gatk,
                 "skip_report": skip_report,
                 "sample_identifier": effective_sample_identifier,
+                "pharmcat_absent_to_ref": "true" if eff_absent else "false",
+                "pharmcat_unspecified_to_ref": "true" if eff_unspec else "false",
             }
 
             # Submit job to Nextflow
@@ -1114,6 +1121,8 @@ async def upload_genomic_data(
     gatk_enabled: Optional[str] = Form(None),
     pypgx_enabled: Optional[str] = Form(None),
     report_enabled: Optional[str] = Form(None),
+    pharmcat_absent_to_ref: Optional[str] = Form(None),
+    pharmcat_unspecified_to_ref: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -1144,6 +1153,13 @@ async def upload_genomic_data(
 
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])
+
+        eff_absent, eff_unspec = resolve_assume_ref_flags(
+            form_absent=pharmcat_absent_to_ref,
+            form_unspecified=pharmcat_unspecified_to_ref,
+            env_absent=os.environ.get("PHARMCAT_ABSENT_TO_REF"),
+            env_unspecified=os.environ.get("PHARMCAT_UNSPECIFIED_TO_REF"),
+        )
 
         # Create patient record (DB assigns actual_patient_id; no client-side ID pre-mint)
         patient_identifier = (
@@ -1195,6 +1211,8 @@ async def upload_genomic_data(
                     "patient_id": actual_patient_id,
                     "data_id": data_id,
                     "file_paths": result["file_paths"],
+                    "pharmcat_absent_to_ref": eff_absent,
+                    "pharmcat_unspecified_to_ref": eff_unspec,
                     "file_analysis": {
                         "file_type": file_analysis.file_type.value,
                         "is_compressed": file_analysis.is_compressed,

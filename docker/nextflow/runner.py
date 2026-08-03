@@ -70,6 +70,8 @@ class NextflowRunRequest(BaseModel):
     skip_hla: str = "false"
     skip_pypgx: str = "false"
     sample_identifier: Optional[str] = None
+    pharmcat_absent_to_ref: str = "false"
+    pharmcat_unspecified_to_ref: str = "false"
 
 @app.post("/run")
 async def run(request: NextflowRunRequest):
@@ -143,7 +145,7 @@ async def run(request: NextflowRunRequest):
     # Start Nextflow in a separate thread
     thread = threading.Thread(
         target=run_nextflow_job, 
-        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier)
+        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref)
     )
     thread.daemon = True
     thread.start()
@@ -156,7 +158,7 @@ async def run(request: NextflowRunRequest):
         "message": "Nextflow job started"
     }
 
-def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None):
+def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false'):
     """Run Nextflow job in background thread. Nextflow orchestrates individual containers that report their own progress."""
     try:
         # Update job status
@@ -184,6 +186,11 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
         # Pass sample_identifier if provided
         if sample_identifier and str(sample_identifier).strip():
             cmd.extend(['--sample_identifier', str(sample_identifier).strip()])
+
+        cmd.extend([
+            '--pharmcat_absent_to_ref', pharmcat_absent_to_ref,
+            '--pharmcat_unspecified_to_ref', pharmcat_unspecified_to_ref,
+        ])
         
         # Set environment variables for job_id passing to individual containers
         env = os.environ.copy()

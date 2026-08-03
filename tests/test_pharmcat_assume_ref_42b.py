@@ -68,3 +68,29 @@ def test_pharmcat_form_declares_assume_ref_fields():
 def test_pharmcat_dockerfile_copies_assume_ref_helper():
     text = DOCKERFILE.read_text(encoding="utf-8")
     assert "pharmcat_assume_ref.py" in text
+
+
+MAIN_NF = Path("pipelines/pgx/main.nf")
+RUNNER = Path("docker/nextflow/runner.py")
+UPLOAD = Path("app/api/routes/upload_router.py")
+
+
+def test_main_nf_passes_assume_ref_form_fields():
+    text = MAIN_NF.read_text(encoding="utf-8")
+    assert "params.pharmcat_absent_to_ref" in text
+    assert "params.pharmcat_unspecified_to_ref" in text
+    assert "-F pharmcat_absent_to_ref=" in text
+    assert "-F pharmcat_unspecified_to_ref=" in text
+
+
+def test_runner_accepts_assume_ref_fields():
+    text = RUNNER.read_text(encoding="utf-8")
+    assert "pharmcat_absent_to_ref" in text
+    assert "pharmcat_unspecified_to_ref" in text
+    assert "--pharmcat_absent_to_ref" in text
+
+
+def test_upload_router_mentions_assume_ref_form():
+    text = UPLOAD.read_text(encoding="utf-8")
+    assert "pharmcat_absent_to_ref" in text
+    assert "pharmcat_unspecified_to_ref" in text

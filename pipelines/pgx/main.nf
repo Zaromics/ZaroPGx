@@ -23,6 +23,8 @@ params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 params.sample_identifier = params.sample_identifier ?: ''
+params.pharmcat_absent_to_ref = params.pharmcat_absent_to_ref ?: 'false'
+params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'false'
 
 // FASTQ alignment
 process FastqToBAM {
@@ -343,6 +345,8 @@ process PharmCATRun {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pharmcat_analysis )
     fi
+    CURL_ARGS+=( -F pharmcat_absent_to_ref=!{params.pharmcat_absent_to_ref} )
+    CURL_ARGS+=( -F pharmcat_unspecified_to_ref=!{params.pharmcat_unspecified_to_ref} )
     curl "${CURL_ARGS[@]}" http://pharmcat:5000/genotype > pharmcat_result.json 2>pharmcat.log || true
     
     # Copy outputs from mounted volume
