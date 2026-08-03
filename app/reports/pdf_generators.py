@@ -715,6 +715,9 @@ class WeasyPrintGenerator(PDFGenerator):
                     "header_text": template_data.get("header_text", ""),
                     # Add workflow warnings/alerts for report display
                     "workflow_warnings": template_data.get("workflow_warnings", []),
+                    "pharmcat_assume_ref_methodology": template_data.get(
+                        "pharmcat_assume_ref_methodology"
+                    ),
                 }
                 # For PDF, prefer PNG over SVG to avoid WeasyPrint text rendering issues
                 # PNG ensures the diagram is reliably visible with proper scaling

@@ -118,3 +118,20 @@ def test_upload_js_appends_assume_ref():
     text = UPLOAD_JS.read_text(encoding="utf-8")
     assert "pharmcat_absent_to_ref" in text
     assert "pharmcat_unspecified_to_ref" in text
+
+
+FILE_PROC = Path("app/api/utils/file_processor.py")
+REPORT_TPL = Path("app/reports/templates/report_template.html")
+INTERACTIVE = Path("app/reports/templates/interactive_report.html")
+
+
+def test_file_processor_no_longer_emits_env_assume_ref_warning_html():
+    text = FILE_PROC.read_text(encoding="utf-8")
+    assert "PharmCAT Configuration Warning" not in text
+    assert "PHARMCAT_ABSENT_TO_REF is enabled" not in text
+
+
+def test_report_templates_include_assume_ref_methodology_hook():
+    for path in (REPORT_TPL, INTERACTIVE):
+        text = path.read_text(encoding="utf-8")
+        assert "pharmcat_assume_ref_methodology" in text

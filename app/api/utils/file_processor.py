@@ -496,18 +496,11 @@ class FileProcessor:
             "unsupported_reason": None,
         }
 
-        # Check PharmCAT flag environment variables
         def str_to_bool(value: Optional[str]) -> bool:
             """Convert string to boolean, defaulting to False if None or empty."""
             if value is None:
                 return False
             return str(value).lower() in ("true", "1", "yes", "on")
-
-        pharmcat_absent_to_ref = str_to_bool(os.environ.get("PHARMCAT_ABSENT_TO_REF"))
-        pharmcat_unspecified_to_ref = str_to_bool(
-            os.environ.get("PHARMCAT_UNSPECIFIED_TO_REF")
-        )
-        pharmcat_flags_enabled = pharmcat_absent_to_ref or pharmcat_unspecified_to_ref
 
         # Check GATK status from environment if not provided
         if gatk_enabled is None:
@@ -654,39 +647,6 @@ class FileProcessor:
                 "<p>⚠️ All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
             )
 
-            # Warn about PharmCAT flags if enabled (only for VCF files, as BAM/etc will get proper preprocessing with GATK)
-            if pharmcat_flags_enabled:
-                if pharmcat_absent_to_ref and pharmcat_unspecified_to_ref:
-                    workflow["warnings"].append(
-                        "<p>⚠️ <strong>PharmCAT Configuration Warning:</strong> Both PHARMCAT_ABSENT_TO_REF and PHARMCAT_UNSPECIFIED_TO_REF are enabled.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>This configuration assumes that absent and unspecified pharmacogenomic loci are homozygous reference (0/0). "
-                        "This may result in <strong>inaccurate results</strong> in reports if complete pre-processing could not be performed.</p>"
-                    )
-                elif pharmcat_absent_to_ref:
-                    workflow["warnings"].append(
-                        "<p>⚠️ <strong>PharmCAT Configuration Warning:</strong> PHARMCAT_ABSENT_TO_REF is enabled.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>This configuration assumes that absent pharmacogenomic loci are homozygous reference (0/0). "
-                        "This may result in <strong>inaccurate results</strong> in reports if complete pre-processing could not be performed.</p>"
-                    )
-                elif pharmcat_unspecified_to_ref:
-                    workflow["warnings"].append(
-                        "<p>⚠️ <strong>PharmCAT Configuration Warning:</strong> PHARMCAT_UNSPECIFIED_TO_REF is enabled.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>This configuration converts unspecified genotypes (./.) to homozygous reference (0/0). "
-                        "This may result in <strong>inaccurate results</strong> in reports if complete pre-processing could not be performed.</p>"
-                    )
-
-                # Additional context about when these flags are appropriate
-                workflow["warnings"].append(
-                    "<p>These flags should only be used when the provenance of the genome file ensures that prior evaluation "
-                    "of all queried loci (i.e. genotyping, haplotype calling) has been performed adequately. "
-                    "Otherwise, these flags make <strong>significant assumptions about uninterpretable loci</strong> that may compromise result accuracy.</p>"
-                )
             workflow["recommendations"].append(
                 "<p>VCF files use the quick pipeline:</p>"
             )

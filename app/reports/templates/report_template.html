@@ -839,6 +839,9 @@
     <div class="section">
         <h2>Methodology</h2>
         <p>The sample's genetic data were analyzed with the ZaroPGx pipeline, composed of several analytic tools, culminating in recommendation matching by PharmCAT (the Pharmacogenomics Clinical Annotation Tool), which references clinical guidelines published by CPIC (Clinical Pharmacogenetics Implementation Consortium), DPWG (Dutch Pharmacogenetics Working Group), and FDA (U.S. Food and Drug Administration). Notable pharmacogenetic variants were identified to determine star alleles and diplotypes, which were mapped to phenotypes and ultimately matched with associated recommendations.</p>
+        {% if pharmcat_assume_ref_methodology %}
+            {{ pharmcat_assume_ref_methodology|safe }}
+        {% endif %}
     </div>
 
     <div class="disclaimer">

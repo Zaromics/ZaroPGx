@@ -905,6 +905,7 @@ def create_interactive_html_report(
     workflow: Dict[str, Any] | None = None,
     sample_identifier: str | None = None,
     workflow_warnings: List[str] | None = None,
+    pharmcat_assume_ref_methodology: str | None = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -1077,6 +1078,7 @@ def create_interactive_html_report(
             "header_text": header_text,
             # Add workflow warnings/alerts for report display
             "workflow_warnings": workflow_warnings or [],
+            "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
         }
 
         # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
@@ -1768,6 +1770,7 @@ def generate_report(
     # Try to get PharmCAT data from database first if job_id and db_session are provided
     data = None
     workflow_warnings = []  # Initialize warnings list
+    pharmcat_assume_ref_methodology = None
     if job_id and db_session:
         try:
             logger.info(
@@ -1782,27 +1785,33 @@ def generate_report(
                 )
                 logger.info(f"Database data keys: {list(data.keys())}")
 
-            # Also retrieve workflow warnings from workflow metadata
+            # Prefer Job.job_metadata (upload writes assume-ref flags here)
             try:
-                import uuid
-
-                from app.api.db import Workflow
-
-                workflow_uuid = uuid.UUID(str(job_id))
-                workflow = (
-                    db_session.query(Workflow)
-                    .filter(Workflow.id == workflow_uuid)
-                    .first()
+                from app.api.db import Job
+                from app.utils.pharmcat_assume_ref import (
+                    methodology_assume_ref_paragraph,
                 )
-                if workflow and workflow.workflow_metadata:
-                    workflow_config = workflow.workflow_metadata.get("workflow", {})
-                    workflow_warnings = workflow_config.get("warnings", [])
-                    logger.info(
-                        f"Retrieved {len(workflow_warnings)} workflow warnings from database"
-                    )
+
+                job_uuid = uuid.UUID(str(job_id))
+                job_row = db_session.query(Job).filter(Job.id == job_uuid).first()
+                meta = (job_row.job_metadata or {}) if job_row is not None else {}
+                workflow_config = (
+                    meta.get("workflow", {})
+                    if isinstance(meta.get("workflow"), dict)
+                    else {}
+                )
+                workflow_warnings = workflow_config.get("warnings", []) or []
+                logger.info(
+                    f"Retrieved {len(workflow_warnings)} workflow warnings from job metadata"
+                )
+                pharmcat_assume_ref_methodology = methodology_assume_ref_paragraph(
+                    bool(meta.get("pharmcat_absent_to_ref")),
+                    bool(meta.get("pharmcat_unspecified_to_ref")),
+                )
             except Exception as e:
-                logger.warning(f"Failed to retrieve workflow warnings: {e}")
+                logger.warning(f"Failed to retrieve job report metadata: {e}")
                 workflow_warnings = []
+                pharmcat_assume_ref_methodology = None
 
             if not data:
                 logger.warning(
@@ -2087,6 +2096,7 @@ def generate_report(
         ),
         # Add workflow warnings/alerts for report display
         "workflow_warnings": workflow_warnings,
+        "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
     }
     # Inject unified display sample id sourced from workflow metadata or persisted field
     try:
@@ -2659,6 +2669,7 @@ def generate_report(
                 ),
                 # Add workflow warnings/alerts for report display
                 "workflow_warnings": workflow_warnings,
+                "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
             }
             try:
                 logger.info(
@@ -2826,6 +2837,7 @@ def generate_report(
                 output_path=interactive_html_path,
                 workflow=per_sample_workflow,
                 workflow_warnings=workflow_warnings,
+                pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 
