@@ -43,8 +43,8 @@ process FastqToBAM {
     '''
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=gatk_alignment )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_alignment )
     fi
     curl "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json 2>gatk.log
     BAM_PATH=$(python3 - <<'PY'
@@ -76,8 +76,8 @@ process CramToBAM {
     '''
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{cram} )
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=gatk_cram_to_bam )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_to_bam )
     fi
     curl "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam > cram_response.json 2>gatk.log
     BAM_PATH=$(python3 - <<'PY'
@@ -109,8 +109,8 @@ process SamToBAM {
     '''
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{sam} )
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=gatk_sam_to_bam )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_sam_to_bam )
     fi
     curl "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam > sam_response.json 2>gatk.log
     BAM_PATH=$(python3 - <<'PY'
@@ -143,8 +143,8 @@ process OptiTypeHLAFromFastq {
     '''
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=zarohla_fastq )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=zarohla_fastq )
     fi
     curl "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json 2>hla.log
     python3 - <<'PY'
@@ -181,8 +181,8 @@ process OptiTypeHLAFromBAM {
     '''
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=zarohla_bam )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=zarohla_bam )
     fi
     curl "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json 2>hla.log
     python3 - <<'PY'
@@ -217,8 +217,8 @@ process PyPGxBam2Vcf {
     '''
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=pypgx_bam2vcf )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_bam2vcf )
     fi
     curl "${CURL_ARGS[@]}" http://pypgx:5000/create-input-vcf > response.json 2>pypgx_bam2vcf.log
     VCF_PATH=$(python3 - <<'PY'
@@ -253,8 +253,8 @@ process PyPGxGenotypeAll {
     # Try curl, but don't fail if it returns HTTP errors
     # Capture both stdout and stderr from PyPGx container
     CURL_ARGS=( -f -X POST -F genes=ALL -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} -F input_type=!{params.input_type} )
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=pypgx_analysis )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_analysis )
     fi
     if curl "${CURL_ARGS[@]}" http://pypgx:5000/genotype > pypgx_result.json 2>pypgx_stderr.log; then
       echo "PyPGx API call succeeded" >&2
@@ -339,9 +339,9 @@ process PharmCATRun {
     if [ -s combined_outside.tsv ]; then
       CURL_ARGS+=( -F outside_tsv=@combined_outside.tsv )
     fi
-    # Add workflow_id if available
-    if [ -n "${WORKFLOW_ID:-}" ]; then
-      CURL_ARGS+=( -F workflow_id=${WORKFLOW_ID} -F step_name=pharmcat_analysis )
+    # Add job_id if available
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pharmcat_analysis )
     fi
     curl "${CURL_ARGS[@]}" http://pharmcat:5000/genotype > pharmcat_result.json 2>pharmcat.log || true
     
