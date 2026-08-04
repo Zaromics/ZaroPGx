@@ -12,6 +12,23 @@ def prefer_source_over_lookup(source: str | None, lookup: str | None) -> str:
     return (lookup or "").strip()
 
 
+def tsv_entry_to_source_diplotype(entry: dict) -> dict:
+    """Build a labeled sourceDiplotype block from a parsed TSV diplotype entry."""
+    raw = (entry.get("diplotype") or "").strip()
+    parts = raw.split("/") if raw else []
+    allele1 = (parts[0].strip() if parts else "") or "Unknown"
+    allele2 = (parts[-1].strip() if parts else "") or "Unknown"
+    label = raw if raw else "Unknown/Unknown"
+    block = {
+        "label": label,
+        "allele1": {"name": allele1},
+        "allele2": {"name": allele2},
+        "phenotypes": [entry.get("phenotype") or "Unknown"],
+        "activityScore": entry.get("activity_score"),
+    }
+    return block
+
+
 def _normalize_header(name: str) -> str:
     return (name or "").strip().lower().replace(" ", "_")
 

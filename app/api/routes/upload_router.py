@@ -412,7 +412,10 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
             try:
                 pharmcat_tsv_file = patient_dir / f"{job_id}_pgx_pharmcat.tsv"
                 if pharmcat_tsv_file.exists():
-                    from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
+                    from app.reports.pharmcat_tsv_parser import (
+                        parse_pharmcat_tsv,
+                        tsv_entry_to_source_diplotype,
+                    )
 
                     tsv_diplotypes, tsv_recs = parse_pharmcat_tsv(
                         str(pharmcat_tsv_file)
@@ -430,26 +433,12 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                             gene_block = pharmcat_data["genes"]["CPIC"].setdefault(
                                 gene, {}
                             )
-                            # Represent TSV-derived diplotype as recommendationDiplotypes shape minimally
+                            dip_obj = tsv_entry_to_source_diplotype(entry)
+                            gene_block.setdefault("sourceDiplotypes", [])
+                            gene_block["sourceDiplotypes"].append(dip_obj)
+                            # Optional mirror for any leftover sniffers:
                             gene_block.setdefault("recommendationDiplotypes", [])
-                            gene_block["recommendationDiplotypes"].append(
-                                {
-                                    "allele1": {
-                                        "name": (entry.get("diplotype") or "").split(
-                                            "/"
-                                        )[0]
-                                        or "Unknown"
-                                    },
-                                    "allele2": {
-                                        "name": (entry.get("diplotype") or "").split(
-                                            "/"
-                                        )[-1]
-                                        or "Unknown"
-                                    },
-                                    "phenotypes": [entry.get("phenotype") or "Unknown"],
-                                    "activityScore": entry.get("activity_score"),
-                                }
-                            )
+                            gene_block["recommendationDiplotypes"].append(dip_obj)
                         # Map recommendations if any
                         if tsv_recs:
                             for rec in tsv_recs:
