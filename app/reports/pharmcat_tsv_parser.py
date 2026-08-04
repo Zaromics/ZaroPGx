@@ -4,6 +4,14 @@ import os
 from typing import Any, Dict, List, Tuple
 
 
+def prefer_source_over_lookup(source: str | None, lookup: str | None) -> str:
+    """Display preference: PharmCAT Source column, else Recommendation Lookup."""
+    s = (source or "").strip()
+    if s:
+        return s
+    return (lookup or "").strip()
+
+
 def _normalize_header(name: str) -> str:
     return (name or "").strip().lower().replace(" ", "_")
 

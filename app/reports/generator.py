@@ -36,7 +36,10 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 
 from app.core.version_manager import get_all_versions, get_versions_dict
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
-from app.reports.pharmcat_tsv_parser import parse_pharmcat_tsv
+from app.reports.pharmcat_tsv_parser import (
+    parse_pharmcat_tsv,
+    prefer_source_over_lookup,
+)
 from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.visualizations.workflow_diagram import (
@@ -527,13 +530,14 @@ def generate_pdf_report(
 
                     for row in _diplos:
                         # Get phenotype, applying wild type logic if needed
-                        # Fallback to source diplotype if recommendation lookup diplotype is empty
+                        # Prefer source; fallback to recommendation lookup
                         rec_lookup_dip = (row.get("rec_lookup_diplotype") or "").strip()
                         source_dip = (row.get("diplotype") or "").strip()
-                        diplotype_str = (rec_lookup_dip or source_dip).strip()
-                        phenotype_str = str(
-                            row.get("rec_lookup_phenotype", row.get("phenotype", ""))
-                        ).strip()
+                        diplotype_str = prefer_source_over_lookup(source_dip, rec_lookup_dip)
+                        phenotype_str = prefer_source_over_lookup(
+                            str(row.get("phenotype") or ""),
+                            str(row.get("rec_lookup_phenotype") or ""),
+                        )
                         # Check for reference genotype (case-insensitive, handle variations)
                         diplotype_upper = diplotype_str.upper()
                         is_reference = diplotype_upper in {
@@ -575,8 +579,10 @@ def generate_pdf_report(
                                 "gene": row.get("gene", ""),
                                 "rec_lookup_diplotype": diplotype_str,  # Use fallback value
                                 "rec_lookup_phenotype": phenotype_str,
-                                "rec_lookup_activity_score": row.get(
-                                    "rec_lookup_activity_score"
+                                "rec_lookup_activity_score": (
+                                    row.get("activity_score")
+                                    if row.get("activity_score") not in (None, "")
+                                    else row.get("rec_lookup_activity_score")
                                 ),
                             }
                         )
@@ -1996,13 +2002,14 @@ def generate_report(
                     logger.debug("Swallowed exception: %s", e, exc_info=True)
                 for row in diplos:
                     # Get phenotype, applying wild type logic if needed
-                    # Fallback to source diplotype if recommendation lookup diplotype is empty
+                    # Prefer source; fallback to recommendation lookup
                     rec_lookup_dip = (row.get("rec_lookup_diplotype") or "").strip()
                     source_dip = (row.get("diplotype") or "").strip()
-                    diplotype_str = (rec_lookup_dip or source_dip).strip()
-                    phenotype_str = str(
-                        row.get("rec_lookup_phenotype", row.get("phenotype", ""))
-                    ).strip()
+                    diplotype_str = prefer_source_over_lookup(source_dip, rec_lookup_dip)
+                    phenotype_str = prefer_source_over_lookup(
+                        str(row.get("phenotype") or ""),
+                        str(row.get("rec_lookup_phenotype") or ""),
+                    )
                     # Check for reference genotype (case-insensitive, handle variations)
                     diplotype_upper = diplotype_str.upper()
                     is_reference = diplotype_upper in {
@@ -2037,8 +2044,10 @@ def generate_report(
                             "gene": row.get("gene", ""),
                             "rec_lookup_diplotype": diplotype_str,  # Use fallback value
                             "rec_lookup_phenotype": phenotype_str,
-                            "rec_lookup_activity_score": row.get(
-                                "rec_lookup_activity_score"
+                            "rec_lookup_activity_score": (
+                                row.get("activity_score")
+                                if row.get("activity_score") not in (None, "")
+                                else row.get("rec_lookup_activity_score")
                             ),
                         }
                     )
