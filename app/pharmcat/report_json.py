@@ -6,8 +6,9 @@ PharmCAT has emitted two live ``genes`` shapes:
 * **flat** — ``genes → gene_symbol → gene_data`` (3.x / 3.4.0)
 
 ``normalize_pharmcat_results`` and ``PharmCATParser._parse_genes`` used to sniff
-and walk these independently. All format detection and gene iteration belongs
-here so Wave 4 unification has a single contract under test.
+and walk these independently. All format detection, gene iteration, and
+``sourceDiplotypes`` extraction belongs here so Wave 4 unification has a
+single contract under test.
 """
 
 from __future__ import annotations
@@ -81,44 +82,44 @@ def iter_gene_blocks(
             yield GeneBlock(gene_symbol, gene_data, source)
 
 
-def extract_recommendation_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
-    """Pull the primary recommendation diplotype/phenotype/activity from a gene block.
+def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Pull the primary display diplotype/phenotype/activity from a gene block.
 
-    Returns the same defaults ``normalize_pharmcat_results`` historically used when
-    ``recommendationDiplotypes`` is missing or empty.
+    Uses ``sourceDiplotypes`` (PharmCAT's displayed / "real" call). Defaults match
+    the historical empty-list behaviour of the old recommendation helper.
     """
     diplotype = "Unknown/Unknown"
     phenotype = "Unknown"
     activity_score = None
 
-    rec_list = gene_data.get("recommendationDiplotypes")
-    if not isinstance(rec_list, list) or not rec_list:
+    src_list = gene_data.get("sourceDiplotypes")
+    if not isinstance(src_list, list) or not src_list:
         return {
             "diplotype": diplotype,
             "phenotype": phenotype,
             "activity_score": activity_score,
         }
 
-    rec = rec_list[0]
-    if not isinstance(rec, dict):
+    src = src_list[0]
+    if not isinstance(src, dict):
         return {
             "diplotype": diplotype,
             "phenotype": phenotype,
             "activity_score": activity_score,
         }
 
-    if "label" in rec:
-        diplotype = rec["label"]
+    if "label" in src:
+        diplotype = src["label"]
 
-    if "phenotypes" in rec:
-        phenotypes = rec["phenotypes"]
+    if "phenotypes" in src:
+        phenotypes = src["phenotypes"]
         if isinstance(phenotypes, list):
             phenotype = ", ".join(str(p) for p in phenotypes)
         else:
             phenotype = str(phenotypes)
 
-    if "activityScore" in rec:
-        activity_score = rec["activityScore"]
+    if "activityScore" in src:
+        activity_score = src["activityScore"]
 
     return {
         "diplotype": diplotype,

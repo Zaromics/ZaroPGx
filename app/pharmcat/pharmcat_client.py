@@ -14,7 +14,7 @@ import requests
 
 from app.pharmcat.report_json import (
     detect_format,
-    extract_recommendation_call,
+    extract_source_call,
     iter_gene_blocks,
 )
 from app.utils.outside_calls_override import get_override_file_path
@@ -234,7 +234,7 @@ def normalize_pharmcat_results(response):
                     )
 
                     for block in iter_gene_blocks(genes_section):
-                        call = extract_recommendation_call(block.gene_data)
+                        call = extract_source_call(block.gene_data)
                         gene_entry = {
                             "gene": block.gene_symbol,
                             "diplotype": call["diplotype"],
