@@ -533,7 +533,9 @@ def generate_pdf_report(
                         # Prefer source; fallback to recommendation lookup
                         rec_lookup_dip = (row.get("rec_lookup_diplotype") or "").strip()
                         source_dip = (row.get("diplotype") or "").strip()
-                        diplotype_str = prefer_source_over_lookup(source_dip, rec_lookup_dip)
+                        diplotype_str = prefer_source_over_lookup(
+                            source_dip, rec_lookup_dip
+                        )
                         phenotype_str = prefer_source_over_lookup(
                             str(row.get("phenotype") or ""),
                             str(row.get("rec_lookup_phenotype") or ""),
@@ -2005,7 +2007,9 @@ def generate_report(
                     # Prefer source; fallback to recommendation lookup
                     rec_lookup_dip = (row.get("rec_lookup_diplotype") or "").strip()
                     source_dip = (row.get("diplotype") or "").strip()
-                    diplotype_str = prefer_source_over_lookup(source_dip, rec_lookup_dip)
+                    diplotype_str = prefer_source_over_lookup(
+                        source_dip, rec_lookup_dip
+                    )
                     phenotype_str = prefer_source_over_lookup(
                         str(row.get("phenotype") or ""),
                         str(row.get("rec_lookup_phenotype") or ""),
