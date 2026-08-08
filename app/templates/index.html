@@ -896,10 +896,23 @@
                 logMessages.scrollTop = logMessages.scrollHeight;
             };
 
+            // BACKLOG 137b nested the workflow toggles/messages one level down:
+            // POST /upload/genomic-data now answers with
+            //   workflow: { workflow_type, options: { needs_*, unsupported,
+            //               unsupported_reason, recommendations, warnings, ... } }
+            // POST /upload/inspect-header still answers with a flat compat
+            // workflow dict (no `options` key). Normalize both to the options
+            // object so every read below hits real data. Idempotent: handed an
+            // options object it returns it unchanged.
+            window.getWorkflowOptions = function(workflow) {
+                const wf = workflow || {};
+                return wf.options || wf;
+            };
+
             // Build a consistent, aesthetically rendered planned workflow section
             window.buildPlannedWorkflowHTML = function(options) {
                 const opts = options || {};
-                const wf = opts.workflow || {};
+                const wf = window.getWorkflowOptions(opts.workflow);
                 const fileType = (opts.fileType || '').toString().toLowerCase();
 
                 const steps = [];
@@ -964,7 +977,8 @@
                 
                 // Normalize incoming shapes: prefer analysis.analysis_info (backend UploadResponse)
                 const afi = analysis.analysis_info || {};
-                const wf = analysis.workflow || {};
+                // 137b: flags/messages live under analysis.workflow.options.
+                const wf = window.getWorkflowOptions(analysis.workflow);
 
                 // Update file type info
                 fileTypeInfo.innerHTML = `
