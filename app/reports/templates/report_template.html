@@ -333,6 +333,12 @@
         .exec-summary-phenotype .as-badge {
             vertical-align: middle;
         }
+        /* 159: run-derived provenance line at the foot of the Executive Summary */
+        .run-provenance {
+            margin: 10px 0 0 0;
+            font-size: 0.85em;
+            color: #6c757d;
+        }
         .activity-score {
             margin-left: 8px;
             color: #555;
@@ -970,8 +976,19 @@
                 </tbody>
             </table>
         </div>
+        {# 159: run-derived provenance. Outside the execsum_from_tsv branches so it
+           renders on both, and inside #exec-summary so the print page-break that
+           follows this container does not push it onto the Genetic Results page.
+           Each sentence renders only if its own value resolved. #}
+        {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
+        <p class="run-provenance">
+            {% if genome_build %}This sample was analyzed against the {{ genome_build }} reference genome build.{% endif %}
+            {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
+            {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
+        </p>
+        {% endif %}
     </div>
-    
+
     <div class="section">
         <h2>Genetic Results</h2>
         

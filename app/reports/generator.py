@@ -36,6 +36,7 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 
 from app.core.version_manager import get_all_versions, get_versions_dict
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
+from app.pharmcat.report_json import extract_matcher_metadata
 from app.reports.evidence import classify_evidence
 from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
@@ -416,6 +417,43 @@ def activity_score_num(value: Any) -> Optional[float]:
         return None
 
 
+_EMPTY_MATCHER_METADATA: Dict[str, Optional[str]] = {
+    "genome_build": None,
+    "named_allele_matcher_version": None,
+    "data_version": None,
+}
+
+
+def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optional[str]]:
+    """Read run-derived provenance from the run's PharmCAT report.json (159).
+
+    Mirrors the Executive Summary TSV probes: try the canonical name first, then
+    any ``*.report.json`` in the directory (newest wins). Never raises -- a run
+    without a report.json simply renders no provenance sentences.
+
+    Note this cannot reuse ``generate_report``'s later copy of the JSON: that
+    copy happens well after template data is assembled.
+    """
+    candidates = [os.path.join(report_dir, f"{report_id}.report.json")]
+    try:
+        others = glob.glob(os.path.join(report_dir, "*.report.json"))
+        others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        candidates.extend(others)
+    except Exception as e:
+        logger.debug("Swallowed exception: %s", e, exc_info=True)
+
+    for path in candidates:
+        try:
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as fh:
+                return extract_matcher_metadata(json.load(fh))
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
+
+    return dict(_EMPTY_MATCHER_METADATA)
+
+
 # Initialize Jinja2 environment
 env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
 env.filters["activity_score_num"] = activity_score_num
@@ -592,6 +630,12 @@ def generate_pdf_report(
             except Exception:
                 execsum_rows_from_tsv = []
 
+        # 159: run-derived provenance. Probed unconditionally -- EXECSUM_USE_TSV
+        # defaults to false and the provenance block renders on both branches.
+        matcher_meta = probe_matcher_metadata(
+            os.path.dirname(report_path), str(report_id)
+        )
+
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
@@ -615,6 +659,12 @@ def generate_pdf_report(
                 if (EXECSUM_USE_TSV and execsum_rows_from_tsv)
                 else None
             ),
+            # 159: run-derived provenance (each rendered only if resolved)
+            "genome_build": matcher_meta["genome_build"],
+            "named_allele_matcher_version": matcher_meta[
+                "named_allele_matcher_version"
+            ],
+            "pharmcat_data_version": matcher_meta["data_version"],
         }
 
         # Load and render the HTML template
@@ -2063,6 +2113,14 @@ def generate_report(
     platform = build_platform_info()
     logger.info(f"Built platform info with {len(platform)} items")
 
+    # 159: run-derived provenance. `pid_for_dir` above is scoped inside the
+    # EXECSUM_USE_TSV guard, so recompute the directory here.
+    _pid_for_meta = patient_info.get("id", "unknown") if patient_info else "unknown"
+    _report_id_for_meta = str(job_id) if job_id else _pid_for_meta
+    matcher_meta = probe_matcher_metadata(
+        os.path.join(output_dir, _pid_for_meta), _report_id_for_meta
+    )
+
     template_data = {
         "patient": patient_info or {},
         "patient_id": patient_info.get("id", "unknown") if patient_info else "unknown",
@@ -2110,6 +2168,10 @@ def generate_report(
         # Add workflow warnings/alerts for report display
         "workflow_warnings": workflow_warnings,
         "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+        # 159: run-derived provenance (each rendered only if resolved)
+        "genome_build": matcher_meta["genome_build"],
+        "named_allele_matcher_version": matcher_meta["named_allele_matcher_version"],
+        "pharmcat_data_version": matcher_meta["data_version"],
     }
     # Inject unified display sample id sourced from workflow metadata or persisted field
     try:
@@ -2683,6 +2745,15 @@ def generate_report(
                 # Add workflow warnings/alerts for report display
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+                # 159: run-derived provenance (each rendered only if resolved).
+                # This dict rebinds `template_data` and is the one actually fed
+                # to report_template.html for both the HTML render below and the
+                # PDF render further down -- it must carry the keys too.
+                "genome_build": matcher_meta["genome_build"],
+                "named_allele_matcher_version": matcher_meta[
+                    "named_allele_matcher_version"
+                ],
+                "pharmcat_data_version": matcher_meta["data_version"],
             }
             try:
                 logger.info(

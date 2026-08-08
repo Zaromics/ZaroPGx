@@ -162,3 +162,35 @@ def test_extract_matcher_metadata_blank_strings_become_none():
     )
     assert meta["genome_build"] is None
     assert meta["data_version"] is None
+
+
+def test_probe_matcher_metadata_finds_report_json(tmp_path):
+    from app.reports.generator import probe_matcher_metadata
+
+    (tmp_path / "abc123.report.json").write_text(
+        json.dumps(
+            {
+                "dataVersion": "2026-07-13-11-40",
+                "matcherMetadata": {
+                    "genomeBuild": "GRCh38.p14",
+                    "namedAlleleMatcherVersion": "2.0.0",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    meta = probe_matcher_metadata(str(tmp_path), "abc123")
+    assert meta["genome_build"] == "GRCh38.p14"
+    assert meta["named_allele_matcher_version"] == "2.0.0"
+    assert meta["data_version"] == "2026-07-13-11-40"
+
+
+def test_probe_matcher_metadata_missing_dir_is_all_none(tmp_path):
+    from app.reports.generator import probe_matcher_metadata
+
+    meta = probe_matcher_metadata(str(tmp_path / "nope"), "abc123")
+    assert meta == {
+        "genome_build": None,
+        "named_allele_matcher_version": None,
+        "data_version": None,
+    }
