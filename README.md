@@ -32,7 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 *Input formats*
 - [X] Priority 0 (*Supported*): **VCF, GRCh38**/hg38, NGS-derived.
 - [...] Priority 1 (*Development*): **VCF, GRCh37**/hg19, NGS-derived. *Projected release in v0.3 with bcftools liftover.*
-- [...] Priority 2 (*Development*): **BAM, CRAM, SAM, FASTQ, BCF**, all NGS-derived. *Scaffolded, needs testing. Projected release in v0.4, with BAM support first and foremost.*
+- [...] Priority 2 (*Development*): **BAM, CRAM, SAM, BCF**, all NGS-derived. *Scaffolded, needs testing. Projected release in v0.4, with BAM support first and foremost.*
+- [ ] Not accepted: **FASTQ**. ZaroPGx ships no aligner, so raw reads (single- or paired-end) are refused at upload. *Align to GRCh38/hg38 yourself — bwa-mem2/BWA, minimap2, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.*
 - [...] Priority 3 (*Research*): Other sequencing and genotyping formats.
 - [...] Priority 4 (*Research*): BED, detailed gVCF, 23andMe, AncestryDNA, various TXT formats.
 - [...] Priority 5 (*Early research*): T2T format, and others.
@@ -66,7 +67,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
   - Handles various conversion, haplotyping, and preprocessing operations
   - Service Ports (Host → Container) 5002 → 5000
 - **ZaroHLA** - (Custom FastAPI wrapped OptiType implementation)
-  - Performs HLA Calling with either FASTQ or BAM inputs
+  - Performs HLA Calling from BAM inputs (OptiType also reads FASTQ, but FASTQ uploads are refused, so that path is unreachable from the app)
   - (Needs Testing)
 - **PyPGx service** - (FastAPI wrapped)
   - Performs allele calling for up to 87 total pharmacogenes

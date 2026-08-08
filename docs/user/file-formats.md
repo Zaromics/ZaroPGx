@@ -39,13 +39,10 @@ SAM is the text-based format for aligned sequences, often used as an intermediat
 SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 ```
 
-## FASTQ Format
-FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses.
+## FASTQ Format — not accepted
+FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. **ZaroPGx does not accept them.** No aligner ships with ZaroPGx, so raw reads cannot be turned into the aligned data every later step needs. A FASTQ upload is refused with an explanatory message rather than accepted and failed later, and this applies to single- and paired-end reads alike.
 
-### Processing Path — FASTQ
-```
-FASTQ → HLA Typing → GATK (BAM generation) → PyPGx → PharmCAT → Reports
-```
+Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or an established end-to-end pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM. A GRCh38/hg38 VCF is the fastest input of all.
 
 ## Reference Genome Support
 - **GRCh38/hg38** (Recommended)
@@ -59,7 +56,6 @@ FASTQ → HLA Typing → GATK (BAM generation) → PyPGx → PharmCAT → Report
 | **VCF** | 1-5 GB | 50-200 MB | 1-10 MB |
 | **BAM** | 50-100 GB | 2-5 GB | 50-500 MB |
 | **CRAM** | 15-30 GB | 500 MB-1 GB | 10-100 MB |
-| **FASTQ** | 100-200 GB | 5-10 GB | 100 MB-1 GB |
 
 
 ## Next Steps

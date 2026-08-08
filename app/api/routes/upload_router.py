@@ -142,10 +142,15 @@ def _nextflow_max_wait_seconds() -> float:
     return seconds
 
 
-# Input types pipelines/pgx/main.nf has a branch for. Anything else reaches its
-# `error "Unsupported input type: ${params.input_type}"` and the run dies at workflow
-# definition, so submitting one can only ever produce a failed job.
-NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam", "fastq"})
+# Input types pipelines/pgx/main.nf can carry from upload to report. Anything else
+# reaches its `error "Unsupported input type: ${params.input_type}"` and the run dies at
+# workflow definition, so submitting one can only ever produce a failed job.
+#
+# `fastq` is deliberately absent even though main.nf *has* a fastq branch: that branch's
+# first step POSTs to gatk-api's /align-fastq, which answers HTTP 501 because the image
+# ships no aligner, and main.nf's curls use --fail-with-body, so the 501 kills the run.
+# A branch existing is not the same as the branch working.
+NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam"})
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
@@ -157,11 +162,9 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     this codebase's own flag for "we did analyse it, provisionally".
 
     What genuinely cannot work is an input that is flagged unsupported, is *not* marked
-    provisional, and that the pipeline has no branch for: FASTA, BED and unrecognised
+    provisional, and that the pipeline cannot carry: FASTQ, FASTA, BED and unrecognised
     formats. Those used to be accepted, queued, and then failed minutes later with a
-    Nextflow error the user could do nothing with. FASTQ is deliberately not caught here:
-    it is flagged unsupported but main.nf does have a fastq branch, so whether to refuse
-    it is a product decision rather than a correctness fix.
+    Nextflow or gatk-api error the user could do nothing with.
     """
     if not workflow.get("unsupported"):
         return None
@@ -1360,19 +1363,21 @@ async def upload_genomic_data(
     """
     Upload genomic data files for pharmacogenomic analysis.
 
-    This endpoint handles the upload of genomic data files (VCF, BAM, CRAM, SAM, FASTQ)
+    This endpoint handles the upload of genomic data files (VCF, BAM, CRAM, SAM)
     and initiates the Nextflow-based processing pipeline.
 
     Supported file types:
     - VCF: Direct processing through PyPGx and PharmCAT. There is no liftover step: a GRCh37/hg19 VCF is flagged unsupported and still processed on its original coordinates, so convert it to GRCh38/hg38 first.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
-    - FASTQ: Processed by ZaroHLA, then GATK, then PyPGx and PharmCAT
+    - FASTQ: rejected with 400. ZaroPGx ships no aligner, so raw reads cannot reach a BAM
+      (gatk-api's /align-fastq answers 501); align them yourself and upload the BAM/CRAM/SAM.
     - 23andMe: Not yet supported, requires conversion to VCF (future implementation)
-    - FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no branch for
-      them, so accepting one could only ever produce a failed job.
+    - FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no working
+      branch for them, so accepting one could only ever produce a failed job.
 
-    The system automatically detects and uses index files (.bai, .crai, .csi, .tbi, .idx) when provided.
-    Currently only hg38/GRCh38 reference genome is fully supported.
+    Only the first uploaded data file is analysed; any further data file is reported as
+    ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be
+    uploaded alongside it. Currently only hg38/GRCh38 reference genome is fully supported.
     """
     try:
         # Reject shell-metacharacter payloads at the boundary, before any value can be
