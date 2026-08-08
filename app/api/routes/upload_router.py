@@ -100,6 +100,48 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Wall-clock ceiling for the Nextflow poll loop, in seconds. Generous on purpose: a WGS
+# FASTQ run walks ZaroHLA -> GATK -> PyPGx -> PharmCAT and can legitimately take most of a
+# day, so this is a stuck-job backstop, not a service-level objective.
+DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS = 86400  # 24 hours
+
+# Statuses that mean somebody else already finished this job. The Nextflow poll is not the
+# only thing that can complete a run (containers report in over JOB_API_BASE, and app.main
+# completes a job once its reports exist), so a deadline must never overwrite one of these.
+TERMINAL_JOB_STATUSES = frozenset(
+    {
+        JobStatus.COMPLETED.value,
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+    }
+)
+
+
+def _nextflow_max_wait_seconds() -> float:
+    """How long to wait for a Nextflow job before failing it.
+
+    Override with ``NEXTFLOW_MAX_WAIT_SECONDS`` (seconds). Anything unusable — blank,
+    unparseable, zero or negative — falls back to the default. Falling back is the safe
+    direction in both senses: the cap is never disabled, and a plausible-looking typo
+    (``0``, which conventionally reads as "no limit") can never fail every job instantly.
+    """
+    raw = (os.getenv("NEXTFLOW_MAX_WAIT_SECONDS") or "").strip()
+    if not raw:
+        return float(DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS)
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = 0.0
+    if seconds <= 0:
+        logger.warning(
+            "Unusable NEXTFLOW_MAX_WAIT_SECONDS=%r; using %ss",
+            raw,
+            DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS,
+        )
+        return float(DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS)
+    return seconds
+
+
 # Report generation flags
 INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
@@ -706,6 +748,10 @@ async def wait_for_nextflow_completion(
     their progress via WorkflowClient. The WorkflowProgressCalculator will handle
     progress calculation based on step status updates from the containers.
 
+    The wait is bounded by ``NEXTFLOW_MAX_WAIT_SECONDS`` (see
+    :func:`_nextflow_max_wait_seconds`). A job that never reaches a terminal Nextflow
+    state is marked FAILED with a JobLog naming the limit, rather than polling forever.
+
     Args:
         job_service: Workflow service instance
         job_id: The workflow ID
@@ -715,6 +761,9 @@ async def wait_for_nextflow_completion(
     """
     try:
         logger.info(f"Waiting for Nextflow completion for job {job_id}")
+
+        max_wait_seconds = _nextflow_max_wait_seconds()
+        deadline = time.monotonic() + max_wait_seconds
 
         # Log that Nextflow execution has started
         log_data = JobLogCreate(
@@ -726,12 +775,49 @@ async def wait_for_nextflow_completion(
 
         while True:
             try:
-                # Check if workflow has been cancelled
-                job = job_service.get_job(job_id)
+                # Check if workflow has been cancelled. This read is blocking SQLAlchemy,
+                # so it runs in a worker thread like the status call below; the await
+                # serialises access, so this session is never used by two threads at
+                # once. (The writes further down stay on the loop: they are one-shot on
+                # the way out, not per-iteration.)
+                job = await asyncio.to_thread(job_service.get_job, job_id)
                 if job and job.status == "cancelled":
                     logger.info(
                         f"Job {job_id} was cancelled, stopping Nextflow monitoring"
                     )
+                    break
+
+                # Give up rather than poll a wedged job forever (BACKLOG 359). Checked
+                # after the read above so the deadline can never overwrite a job that
+                # some other path already finished.
+                if time.monotonic() >= deadline:
+                    current_status = getattr(job, "status", None)
+                    if current_status in TERMINAL_JOB_STATUSES:
+                        logger.warning(
+                            f"Nextflow wait for job {job_id} hit its "
+                            f"{max_wait_seconds:g}s deadline, but the job is already "
+                            f"{current_status}; leaving that status alone"
+                        )
+                        break
+
+                    logger.error(
+                        f"Nextflow job {job_key} for job {job_id} exceeded the "
+                        f"{max_wait_seconds:g}s wait deadline; marking it failed"
+                    )
+                    job_service.update_job(job_id, JobUpdate(status=JobStatus.FAILED))
+                    log_data = JobLogCreate(
+                        step_name="nextflow_executor",
+                        log_level=LogLevel.ERROR,
+                        message=(
+                            "Nextflow wait deadline exceeded: the pipeline did not "
+                            f"reach a terminal state within {max_wait_seconds:g} "
+                            "seconds "
+                            f"(NEXTFLOW_MAX_WAIT_SECONDS={max_wait_seconds:g}). "
+                            "Marking the job failed. Raise NEXTFLOW_MAX_WAIT_SECONDS "
+                            "if this input legitimately needs longer."
+                        ),
+                    )
+                    job_service.log_job_event(job_id, log_data)
                     break
 
                 # Check Nextflow job status (off the event loop)
@@ -791,12 +877,12 @@ async def wait_for_nextflow_completion(
                         logger.info(f"Nextflow job {job_key} was cancelled")
                         break
 
-                # Wait before next check
-                await asyncio.sleep(5)
+                # Wait before next check, but never sleep past the deadline
+                await asyncio.sleep(min(5, max(0.0, deadline - time.monotonic())))
 
             except requests.RequestException as e:
                 logger.warning(f"Error checking Nextflow status: {e}")
-                await asyncio.sleep(15)
+                await asyncio.sleep(min(15, max(0.0, deadline - time.monotonic())))
 
     except Exception as e:
         logger.error(f"Error waiting for Nextflow completion: {e}")
@@ -1123,7 +1209,7 @@ async def upload_genomic_data(
     and initiates the Nextflow-based processing pipeline.
 
     Supported file types:
-    - VCF: Direct processing through PyPGx and PharmCAT. If GRCh37/hg19 reference genome is detected, bcftools liftover will be used to convert.
+    - VCF: Direct processing through PyPGx and PharmCAT. There is no liftover step: a GRCh37/hg19 VCF is flagged unsupported and still processed on its original coordinates, so convert it to GRCh38/hg38 first.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
     - FASTQ: Processed by ZaroHLA, then GATK, then PyPGx and PharmCAT
     - 23andMe/BED: Not yet supported, requires conversion to VCF (future implementation)
