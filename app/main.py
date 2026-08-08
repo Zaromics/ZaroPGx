@@ -79,6 +79,7 @@ from app.reports.generator import (
     generate_report,
 )
 from app.services.cleanup_service import cleanup_service
+from app.services.fhir_export_service import fhir_export_enabled
 from app.services.job_service import JobService
 
 # This module logs liberally with emoji. The container's stdout is UTF-8, but a Windows host
@@ -152,10 +153,13 @@ OPTITYPE_ENABLED = _env_flag("OPTITYPE_ENABLED", True)
 GENOME_DOWNLOADER_ENABLED = _env_flag("GENOME_DOWNLOADER_ENABLED", True)
 KROKI_ENABLED = _env_flag("KROKI_ENABLED", True)
 HAPI_FHIR_ENABLED = _env_flag("HAPI_FHIR_ENABLED", True)
-OUTSIDE_CALLS_OVERRIDE_ENABLED = _env_flag("OUTSIDECALLSOVERRIDE", False)
-FHIR_EXPORT_ENABLED = _env_flag(
-    "FHIR_EXPORT_ENABLED", True
-)  # Enable FHIR export by default
+# OUTSIDECALLSOVERRIDE is NOT parsed here either. This module's copy stripped
+# whitespace while app.utils.outside_calls_override's did not, and it was dead
+# besides — assigned once, read nowhere. The single reader is
+# outside_calls_override.is_override_enabled().
+# FHIR export is NOT parsed here. app.services.fhir_export_service.fhir_export_enabled()
+# is the single reader, shared with the /fhir/* router's own guard — a second
+# parse here is what let the mount and the guard disagree over "true ".
 PHARMCAT_ABSENT_TO_REF = _env_flag("PHARMCAT_ABSENT_TO_REF", False)
 PHARMCAT_UNSPECIFIED_TO_REF = _env_flag("PHARMCAT_UNSPECIFIED_TO_REF", False)
 TEMP_DIR = Path("/tmp")
@@ -317,8 +321,10 @@ app.include_router(workflow_recipe_router)
 app.include_router(job_router)
 app.include_router(pharmcat_router)
 
-# Conditionally include FHIR export router (enabled by default)
-if FHIR_EXPORT_ENABLED:
+# Conditionally include FHIR export router (enabled by default).
+# This runs below load_dotenv(), and the router's own guard calls the same
+# resolver, so the mount decision and the guard can never disagree.
+if fhir_export_enabled():
     app.include_router(fhir_export_router)
     logger.info("FHIR export functionality enabled (endpoints at /fhir/*)")
 else:
@@ -870,9 +876,9 @@ async def services_config():
             "kroki": {"enabled": KROKI_ENABLED},
             "hapi_fhir": {"enabled": HAPI_FHIR_ENABLED},
             "fhir_export": {
-                "enabled": FHIR_EXPORT_ENABLED,
+                "enabled": fhir_export_enabled(),
                 "description": "FHIR R4 export for pharmacogenomic reports",
-                "endpoints": "/fhir/*" if FHIR_EXPORT_ENABLED else None,
+                "endpoints": "/fhir/*" if fhir_export_enabled() else None,
             },
             "pharmcat": {
                 "enabled": True,

@@ -8,6 +8,7 @@ This module extends the existing report functionality without breaking changes.
 Export is enabled by the FHIR_EXPORT_ENABLED environment variable (default: true).
 """
 
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -19,7 +20,10 @@ from sqlalchemy.orm import Session
 
 from app.api.db import get_db
 from app.api.utils.security import get_optional_user
-from app.services.fhir_export_service import FHIR_EXPORT_ENABLED, FHIRExportService
+from app.services.fhir_export_service import (
+    FHIRExportService,
+    fhir_export_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +78,15 @@ async def fhir_export_status(
     Returns:
         Status of FHIR export feature
     """
+    enabled = fhir_export_enabled()
     return {
-        "enabled": FHIR_EXPORT_ENABLED,
+        "enabled": enabled,
         "message": (
             "FHIR export is enabled"
-            if FHIR_EXPORT_ENABLED
+            if enabled
             else "FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable."
         ),
-        "supported_formats": ["json", "xml"] if FHIR_EXPORT_ENABLED else [],
+        "supported_formats": ["json", "xml"] if enabled else [],
         "implementation_guide": "HL7 Genomics Reporting Implementation Guide (FHIR R4)",
         "reference_url": "https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.html",
     }
@@ -111,7 +116,7 @@ async def export_run_to_fhir(
     Returns:
         FHIR Bundle as JSON or XML file
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -176,7 +181,7 @@ async def export_run_to_fhir_with_patient(
     Returns:
         FHIR Bundle as JSON or XML file
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -248,7 +253,7 @@ async def export_workflow_to_fhir(
     Returns:
         FHIR Bundle as JSON or XML file
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -311,7 +316,7 @@ async def preview_fhir_export(
     Returns:
         FHIR Bundle content and metadata
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -451,7 +456,7 @@ async def save_fhir_export_for_run(
     Returns:
         Information about saved files including paths and URLs
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -465,7 +470,10 @@ async def save_fhir_export_for_run(
         if request.patient_info:
             patient_info = request.patient_info.model_dump(exclude_none=True)
 
-        result = service.save_fhir_export(
+        # save_fhir_export mkdir()s and writes the bundle synchronously; run it
+        # on a worker thread so the event loop keeps serving other requests.
+        result = await asyncio.to_thread(
+            service.save_fhir_export,
             run_id=run_id,
             patient_id=request.patient_id,
             patient_info=patient_info,
@@ -515,7 +523,7 @@ async def save_fhir_export_for_workflow(
     Returns:
         Information about saved files including paths and URLs
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -529,7 +537,9 @@ async def save_fhir_export_for_workflow(
         if request.patient_info:
             patient_info = request.patient_info.model_dump(exclude_none=True)
 
-        result = service.save_fhir_export_for_workflow(
+        # Delegates to save_fhir_export, so the same blocking mkdir/write applies.
+        result = await asyncio.to_thread(
+            service.save_fhir_export_for_workflow,
             workflow_id=workflow_id,
             patient_id=request.patient_id,
             patient_info=patient_info,
@@ -580,7 +590,7 @@ async def quick_save_fhir_export(
     Returns:
         Information about saved files
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -588,7 +598,8 @@ async def quick_save_fhir_export(
 
     try:
         service = FHIRExportService(db)
-        result = service.save_fhir_export(
+        result = await asyncio.to_thread(
+            service.save_fhir_export,
             run_id=run_id,
             patient_id=patient_id,
             output_format=output_format,

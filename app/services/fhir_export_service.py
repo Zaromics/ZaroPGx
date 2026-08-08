@@ -19,17 +19,44 @@ from xml.dom import minidom
 
 from sqlalchemy.orm import Session
 
+from app.services.fhir import terminology
 from app.services.pharmcat_data_service import PharmCATDataService
 
 logger = logging.getLogger(__name__)
 
-# Environment flag to enable/disable FHIR export functionality
-FHIR_EXPORT_ENABLED = os.getenv("FHIR_EXPORT_ENABLED", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def fhir_export_enabled() -> bool:
+    """The single source of truth for FHIR_EXPORT_ENABLED.
+
+    Whitespace is stripped: ``FHIR_EXPORT_ENABLED='true '`` is a trailing-space
+    typo in a ``.env`` file, not a request to disable the export.
+
+    Deliberately a function, not a module-level constant. This module is
+    imported from ``app/main.py``'s import block, which runs *before*
+    ``load_dotenv()`` further down that file. A constant evaluated here would
+    therefore snapshot a pre-``.env`` environment, while ``app/main.py`` -- which
+    decides whether to mount the ``/fhir/*`` router -- would read a post-``.env``
+    one. Two readers, two answers, and the router's guard could contradict the
+    mount that put it there.
+
+    Resolving on demand removes the ordering question entirely: every caller
+    reads the same variable through the same parser, and by the time anyone asks
+    (router mounting at the bottom of ``app/main.py``, request handlers, or
+    ``FHIRExportService.is_enabled``) ``load_dotenv()`` has already run.
+
+    The parse is inline rather than a shared ``env_flag`` helper on purpose:
+    this codebase already carries four near-copies of a private ``_env_flag``
+    (app/main.py, app/reports/generator.py, app/api/routes/upload_router.py,
+    app/visualizations/workflow_diagram.py) and a fifth generic parser living in
+    a FHIR service is not the consolidation anyone wants.
+    """
+    raw = os.getenv("FHIR_EXPORT_ENABLED")
+    if raw is None:
+        return True
+    return raw.strip().lower() in _TRUTHY
+
 
 # Reports directory - same as other report outputs
 REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
@@ -46,35 +73,10 @@ class FHIRExportService:
     Generates standalone FHIR Bundle exports in JSON or XML format.
     """
 
-    # LOINC codes for PGx observations
-    LOINC_CODES = {
-        "genotype": "84413-4",  # Genotype display name
-        "therapeutic_implication": "83009-1",  # Genetic variation clinical significance
-        "medication_assessed": "51963-7",  # Medication assessed
-        "pgx_report": "51969-4",  # Genetic analysis report
-        "haplotype": "84414-2",  # Haplotype Name
-        "gene_studied": "48018-6",  # Gene studied
-        "phenotype": "79716-7",  # Molecular consequence
-    }
-
-    # Gene-specific LOINC codes (common PGx genes)
-    GENE_LOINC_CODES = {
-        "CYP2D6": "79714-2",
-        "CYP2C19": "79713-4",
-        "CYP2C9": "79712-6",
-        "CYP3A4": "94040-2",
-        "CYP3A5": "94041-0",
-        "CYP1A2": "79711-8",
-        "SLCO1B1": "79717-5",
-        "VKORC1": "50720-0",
-        "DPYD": "98059-8",
-        "TPMT": "79715-9",
-        "NUDT15": "98060-6",
-        "UGT1A1": "79718-3",
-        "HLA-B": "81247-9",
-        "HLA-A": "81248-7",
-        "G6PD": "79719-1",
-    }
+    # Terminology is single-sourced in app.services.fhir.terminology; these
+    # aliases keep the historical `self.LOINC_CODES[...]` call sites working.
+    LOINC_CODES = terminology.LOINC_CODES
+    GENE_LOINC_CODES = terminology.GENE_LOINC_CODES
 
     def __init__(self, db: Session):
         """
@@ -88,7 +90,7 @@ class FHIRExportService:
 
     def is_enabled(self) -> bool:
         """Check if FHIR export is enabled via environment flag."""
-        return FHIR_EXPORT_ENABLED
+        return fhir_export_enabled()
 
     def export_pgx_report(
         self,
@@ -556,7 +558,7 @@ class FHIRExportService:
             for task_ref in task_references:
                 diagnostic_report["extension"].append(
                     {
-                        "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action",
+                        "url": terminology.EXT_RECOMMENDED_ACTION,
                         "valueReference": task_ref,
                     }
                 )
@@ -574,9 +576,7 @@ class FHIRExportService:
             "resourceType": "Bundle",
             "id": bundle_id,
             "meta": {
-                "profile": [
-                    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomics-bundle"
-                ],
+                "profile": [terminology.PROFILE_GENOMICS_BUNDLE],
                 "lastUpdated": timestamp,
             },
             "type": "collection",
@@ -598,11 +598,11 @@ class FHIRExportService:
             "resourceType": "Patient",
             "id": patient_id,
             "meta": {
-                "profile": ["http://hl7.org/fhir/StructureDefinition/Patient"],
+                "profile": [terminology.PROFILE_PATIENT],
             },
             "identifier": [
                 {
-                    "system": "urn:zaropgx:patient-id",
+                    "system": terminology.ZAROPGX_PATIENT_ID,
                     "value": patient_info.get("id", run_id),
                 }
             ],
@@ -665,16 +665,14 @@ class FHIRExportService:
             "resourceType": "Observation",
             "id": obs_id,
             "meta": {
-                "profile": [
-                    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
-                ],
+                "profile": [terminology.PROFILE_GENOTYPE],
             },
             "status": "final",
             "category": [
                 {
                     "coding": [
                         {
-                            "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "system": terminology.OBSERVATION_CATEGORY,
                             "code": "laboratory",
                             "display": "Laboratory",
                         }
@@ -684,7 +682,7 @@ class FHIRExportService:
             "code": {
                 "coding": [
                     {
-                        "system": "http://loinc.org",
+                        "system": terminology.LOINC,
                         "code": gene_loinc,
                         "display": f"{gene_symbol} gene product metabolic activity interpretation",
                     }
@@ -698,7 +696,7 @@ class FHIRExportService:
             "valueCodeableConcept": {
                 "coding": [
                     {
-                        "system": "http://www.pharmvar.org",
+                        "system": terminology.PHARMVAR,
                         "code": diplotype,
                         "display": diplotype,
                     }
@@ -714,7 +712,7 @@ class FHIRExportService:
                 "code": {
                     "coding": [
                         {
-                            "system": "http://loinc.org",
+                            "system": terminology.LOINC,
                             "code": self.LOINC_CODES["gene_studied"],
                             "display": "Gene studied [ID]",
                         }
@@ -723,7 +721,7 @@ class FHIRExportService:
                 "valueCodeableConcept": {
                     "coding": [
                         {
-                            "system": "http://www.genenames.org/geneId",
+                            "system": terminology.HGNC_GENE_ID,
                             "code": gene_symbol,
                             "display": gene_symbol,
                         }
@@ -740,7 +738,7 @@ class FHIRExportService:
                     "code": {
                         "coding": [
                             {
-                                "system": "http://loinc.org",
+                                "system": terminology.LOINC,
                                 "code": self.LOINC_CODES["phenotype"],
                                 "display": "Phenotype display name",
                             }
@@ -759,7 +757,7 @@ class FHIRExportService:
                     "code": {
                         "coding": [
                             {
-                                "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                                "system": terminology.GENOMICS_TBD_CODES,
                                 "code": "activity-score",
                                 "display": "Activity Score",
                             }
@@ -767,7 +765,7 @@ class FHIRExportService:
                     },
                     "valueQuantity": {
                         "value": activity_value,
-                        "system": "http://unitsofmeasure.org",
+                        "system": terminology.UCUM,
                         "code": "1",
                     },
                 }
@@ -782,7 +780,7 @@ class FHIRExportService:
                     "code": {
                         "coding": [
                             {
-                                "system": "http://loinc.org",
+                                "system": terminology.LOINC,
                                 "code": self.LOINC_CODES["haplotype"],
                                 "display": "Haplotype Name",
                             }
@@ -799,7 +797,7 @@ class FHIRExportService:
                     "code": {
                         "coding": [
                             {
-                                "system": "http://loinc.org",
+                                "system": terminology.LOINC,
                                 "code": self.LOINC_CODES["haplotype"],
                                 "display": "Haplotype Name",
                             }
@@ -835,23 +833,20 @@ class FHIRExportService:
         recommendation_text = primary_rec.get(
             "recommendation", "See report for details"
         )
-        classification = primary_rec.get("classification", "")
         guideline_source = primary_rec.get("guideline_source", "")
 
         observation = {
             "resourceType": "Observation",
             "id": obs_id,
             "meta": {
-                "profile": [
-                    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
-                ],
+                "profile": [terminology.PROFILE_THERAPEUTIC_IMPLICATION],
             },
             "status": "final",
             "category": [
                 {
                     "coding": [
                         {
-                            "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "system": terminology.OBSERVATION_CATEGORY,
                             "code": "laboratory",
                             "display": "Laboratory",
                         }
@@ -861,7 +856,7 @@ class FHIRExportService:
             "code": {
                 "coding": [
                     {
-                        "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                        "system": terminology.GENOMICS_TBD_CODES,
                         "code": "therapeutic-implication",
                         "display": "Therapeutic Implication",
                     }
@@ -881,7 +876,7 @@ class FHIRExportService:
                 "code": {
                     "coding": [
                         {
-                            "system": "http://loinc.org",
+                            "system": terminology.LOINC,
                             "code": self.LOINC_CODES["medication_assessed"],
                             "display": "Medication assessed [ID]",
                         }
@@ -890,7 +885,7 @@ class FHIRExportService:
                 "valueCodeableConcept": {
                     "coding": [
                         {
-                            "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+                            "system": terminology.RXNORM,
                             "display": drug_name,
                         }
                     ],
@@ -906,7 +901,7 @@ class FHIRExportService:
                     "code": {
                         "coding": [
                             {
-                                "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                                "system": terminology.GENOMICS_TBD_CODES,
                                 "code": "conclusion-string",
                                 "display": "Conclusion String",
                             }
@@ -921,7 +916,7 @@ class FHIRExportService:
             observation["extension"] = observation.get("extension", [])
             observation["extension"].append(
                 {
-                    "url": "http://hl7.org/fhir/StructureDefinition/workflow-relatedArtifact",
+                    "url": terminology.EXT_WORKFLOW_RELATED_ARTIFACT,
                     "valueRelatedArtifact": {
                         "type": "citation",
                         "display": f"{guideline_source} Guideline",
@@ -966,16 +961,14 @@ class FHIRExportService:
             "resourceType": "Task",
             "id": task_id,
             "meta": {
-                "profile": [
-                    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
-                ],
+                "profile": [terminology.PROFILE_MEDICATION_RECOMMENDATION],
             },
             "status": "requested",
             "intent": "proposal",
             "code": {
                 "coding": [
                     {
-                        "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                        "system": terminology.GENOMICS_TBD_CODES,
                         "code": "medication-recommendation",
                         "display": "Medication Recommendation",
                     }
@@ -994,7 +987,7 @@ class FHIRExportService:
                     "type": {
                         "coding": [
                             {
-                                "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                                "system": terminology.GENOMICS_TBD_CODES,
                                 "code": "medication-assessed",
                                 "display": "Medication Assessed",
                             }
@@ -1014,7 +1007,7 @@ class FHIRExportService:
                     "type": {
                         "coding": [
                             {
-                                "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                                "system": terminology.GENOMICS_TBD_CODES,
                                 "code": "evidence-level",
                                 "display": "Evidence Level",
                             }
@@ -1042,15 +1035,13 @@ class FHIRExportService:
             "resourceType": "Procedure",
             "id": study_id,
             "meta": {
-                "profile": [
-                    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study"
-                ],
+                "profile": [terminology.PROFILE_GENOMIC_STUDY],
             },
             "status": "completed",
             "category": {
                 "coding": [
                     {
-                        "system": "http://snomed.info/sct",
+                        "system": terminology.SNOMED_CT,
                         "code": "405824009",
                         "display": "Genetic analysis",
                     }
@@ -1059,7 +1050,7 @@ class FHIRExportService:
             "code": {
                 "coding": [
                     {
-                        "system": "http://loinc.org",
+                        "system": terminology.LOINC,
                         "code": self.LOINC_CODES["pgx_report"],
                         "display": "Pharmacogenomic analysis panel",
                     }
@@ -1101,13 +1092,11 @@ class FHIRExportService:
             "resourceType": "DiagnosticReport",
             "id": report_id,
             "meta": {
-                "profile": [
-                    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report"
-                ],
+                "profile": [terminology.PROFILE_GENOMIC_REPORT],
             },
             "identifier": [
                 {
-                    "system": "urn:zaropgx:report-id",
+                    "system": terminology.ZAROPGX_REPORT_ID,
                     "value": run_id,
                 }
             ],
@@ -1116,7 +1105,7 @@ class FHIRExportService:
                 {
                     "coding": [
                         {
-                            "system": "http://terminology.hl7.org/CodeSystem/v2-0074",
+                            "system": terminology.DIAGNOSTIC_SERVICE_SECTION,
                             "code": "GE",
                             "display": "Genetics",
                         }
@@ -1126,7 +1115,7 @@ class FHIRExportService:
             "code": {
                 "coding": [
                     {
-                        "system": "http://loinc.org",
+                        "system": terminology.LOINC,
                         "code": self.LOINC_CODES["pgx_report"],
                         "display": "Pharmacogenomic analysis report",
                     }
@@ -1144,7 +1133,7 @@ class FHIRExportService:
                 {
                     "coding": [
                         {
-                            "system": "urn:zaropgx:conclusion-codes",
+                            "system": terminology.ZAROPGX_CONCLUSION_CODES,
                             "code": "PGX-COMPLETE",
                             "display": "Pharmacogenomic Analysis Complete",
                         }
@@ -1157,7 +1146,7 @@ class FHIRExportService:
         report["extension"] = report.get("extension", [])
         report["extension"].append(
             {
-                "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study-reference",
+                "url": terminology.EXT_GENOMIC_STUDY_REFERENCE,
                 "valueReference": {
                     "reference": study_ref,
                 },
