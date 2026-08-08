@@ -52,6 +52,25 @@ myst_enable_extensions = [
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
+# Read the Docs builds with `sphinx.fail_on_warning: true` (see .readthedocs.yaml), so any
+# warning class left un-suppressed here breaks the build. That is the point: orphan pages,
+# broken {doc} targets and duplicate labels should be errors.
+
+# Without this, every "## Next Steps"/"## Troubleshooting" heading in the docs set collides in
+# one flat label namespace and autosectionlabel warns about ~40 duplicates. Prefixing with the
+# document name makes labels unique. Nothing in docs/ uses {ref}/:ref:, so no target breaks.
+autosectionlabel_prefix_document = True
+
+# The two classes below are deliberately excluded because they are style signals, not
+# correctness signals for this project:
+#   misc.highlighting_failure — ```mermaid fences have no Pygments lexer, and a couple of
+#       http/json samples are illustrative rather than parseable. Sphinx already degrades
+#       gracefully; the block still renders.
+#   myst.header — MyST wants every page to open at H1. Pages here carry a `title:` in front
+#       matter, and docs/user/usage.md additionally skips heading levels. Remove this entry
+#       once usage.md's heading levels are fixed; everything else in docs/ is already clean.
+suppress_warnings = ['misc.highlighting_failure', 'myst.header']
+
 autodoc_typehints = 'description'
 autodoc_member_order = 'bysource'
 
