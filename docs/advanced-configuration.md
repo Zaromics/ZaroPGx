@@ -11,12 +11,12 @@ disagree, `.env.example` and the source are right and this page is stale.
 
 *Last revised 2026-08-08 against ZaroPGx 0.2.8.*
 
-### General
+## General
 - Defaults listed above reflect current code paths; docker compose may set different values. When both exist, the container environment overrides code defaults.
 - Boolean flags accept any of: `1`, `true`, `yes`, `on` (case-insensitive).
 - **JAVA_OPTS**: General JVM options in various Java using containers (PharmCAT, HAPI, Nextflow images).
 
-### Main App
+## Main App
 *Feature toggles*
 - **GENOME_DOWNLOADER_ENABLED**: Enable genome downloader integration. Default: `true`.
 - **GATK_ENABLED**: Enable GATK checks/integration. Default: `true`.
@@ -59,7 +59,7 @@ disagree, `.env.example` and the source are right and this page is stale.
   listed only because reverse proxies in front of ZaroPGx often use the name.
 - **MAX_UPLOAD_TIMEOUT_SEC**: Same — not referenced in the repo.
 
-### Docker compose
+## Docker compose
 *images*
 - **ZAROPGX_TAG**: Tag of the pre-built `zaromicsresearch/zaropgx-*` images to pull from Docker
   Hub. Default: `0.2.8`. Set to `latest` to track the newest. `docker compose build` (or
@@ -93,7 +93,7 @@ disagree, `.env.example` and the source are right and this page is stale.
   services-status probes. Default: `http://zarohla:5000`. The pipeline's `/call-hla` calls in
   `pipelines/pgx/main.nf` use that hostname directly and ignore this variable.
 
-### Paths and storage
+## Paths and storage
 - **DATA_DIR**: Base data directory (varies by service). Common default: `/data`.
 - **TEMP_DIR**: Temp directory for services. Defaults:
   - PharmCAT wrapper: `/tmp/pharmcat`
@@ -101,10 +101,10 @@ disagree, `.env.example` and the source are right and this page is stale.
 - **UPLOAD_DIR**: Uploads directory. Default: `/data/uploads`.
 - **REPORT_DIR**: Reports directory. Default: `/data/reports`.
 
-### Reference genome assembly build and other content fetcher service
+## Reference genome assembly build and other content fetcher service
 - **DOWNLOAD_ON_STARTUP**: If `true`, schedule downloads at startup. Default: `true`.
 
-### PostgreSQL Database
+## PostgreSQL Database
 - **DB_USER**: Database user. Default: `zaropgx_user` (app/db.py);
 - **DB_PASSWORD**: Database password. Required when `DATABASE_URL` is unset. Compose hard-fails if unset (`${DB_PASSWORD:?...}`); start-docker generates a per-install value only when no Postgres volume exists yet.
 - **DB_HOST**: Database host. Default: `db`.
@@ -113,11 +113,11 @@ disagree, `.env.example` and the source are right and this page is stale.
 - **DATABASE_URL**: Full SQLAlchemy URL. Preferred when set (compose always passes one); otherwise constructed from the `DB_*` parts.
 - **POSTGRES_PASSWORD**: Postgres container password — sourced from `DB_PASSWORD` in compose.
 
-### Nextflow executor and workflow orchestration
+## Nextflow executor and workflow orchestration
 - **NXF_HOME**: Nextflow home/cache directory. Defaults to `/opt/nextflow` in containers or set to `/data/nextflow` for persistence in some wrappers.
 - **NXF_OPTS**: Nextflow JVM options. Defaults vary by container, e.g. `-Xms1g -Xmx4g`.
 
-### ZaroHLA (OptiType) service
+## ZaroHLA (OptiType) service
 - **OPTITYPE_ENABLED**: Gates HLA typing end to end (see *Feature toggles* above). Default: `true`.
 - **ZAROHLA_API_URL**: See *service URLs* above.
 - **DATA_DIR**, **JOB_API_BASE**: Set by compose (`/data`, `http://app:8000/api/v1`); the
@@ -126,14 +126,14 @@ disagree, `.env.example` and the source are right and this page is stale.
 The service is a FastAPI wrapper around OptiType v1.5, not a Nextflow pipeline: there are no
 `ZAROHLA_PIPELINE_VERSION` or `ZAROHLA_PROFILE` variables in the codebase.
 
-### GATK wrapper service
+## GATK wrapper service
 - **GATK_CONTAINER**: Container name for GATK. Default: `gatk`.
 - **DATA_DIR**: Data directory. Default: `/data`.
 - **TMPDIR**: Temp directory variable used as `TEMP_DIR`. Default: `/tmp/gatk_temp`.
 - **REFERENCE_DIR**: Reference files directory. Default: `/reference`.
 - **MAX_MEMORY**: Memory hint for Java jobs. Default: `20g`.
 
-### PyPGx wrapper service
+## PyPGx wrapper service
 - **PYPGX_MEMORY_LIMIT**: Memory limit hint for PyPGx. Default: `7G`.
 - **PYPGX_MAX_PARALLEL_GENES**: Max concurrent gene tasks. Default: `8`.
 - **PYPGX_BATCH_SIZE**: Batch size for processing. Default: `4`.
@@ -143,7 +143,7 @@ The service is a FastAPI wrapper around OptiType v1.5, not a Nextflow pipeline: 
 - **PYPGX_PREFERRED**: In report generator, optional hint to prefer PyPGx where both can call. Default: `false`.
 - **PHARMCAT_PREFERRED**: In report generator, optional hint to prefer PharmCAT where both can call. Default: `false`.
 
-### PharmCAT wrapper service
+## PharmCAT wrapper service
 - **PHARMCAT_VERSION**: Version for pipeline package in container build (ARG) and runtime
   metadata / version stamp (env). Default `3.4.0`.
 - **PHARMCAT_REF_CACHE**: Named-volume mount path for GRCh38 reference files (default
@@ -159,7 +159,7 @@ The service is a FastAPI wrapper around OptiType v1.5, not a Nextflow pipeline: 
 - **PHARMCAT_UNSPECIFIED_TO_REF**: Same idea for positions present but unspecified.
   Default: `false`.
 
-### HAPI FHIR container (abridged; see HAPI FHIR docs)
+## HAPI FHIR container (abridged; see HAPI FHIR docs)
 - **HAPI_FHIR_TAG**: Image tag — see *Docker compose → images* above.
 - **HAPI_FHIR_VERSION**: Optional display string for the report's platform/versions table. When
   unset, `app/core/version_manager.py` auto-detects it where possible.

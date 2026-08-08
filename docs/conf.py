@@ -66,9 +66,12 @@ autosectionlabel_prefix_document = True
 #   misc.highlighting_failure — ```mermaid fences have no Pygments lexer, and a couple of
 #       http/json samples are illustrative rather than parseable. Sphinx already degrades
 #       gracefully; the block still renders.
-#   myst.header — MyST wants every page to open at H1. Pages here carry a `title:` in front
-#       matter, and docs/user/usage.md additionally skips heading levels. Remove this entry
-#       once usage.md's heading levels are fixed; everything else in docs/ is already clean.
+#   myst.header — the sole remaining source is docs/user/usage.md, which skips heading levels:
+#       H2->H4 at :79, :86 and :93, and H1->H3 at :195. Verified 2026-08-08 by rebuilding with
+#       only misc.highlighting_failure suppressed: exactly those four fire and nothing else.
+#       Fix usage.md's heading levels and delete this entry to restore the full gate. Re-run
+#       that check before trusting this note — a page that opens at H2, or that jumps a level,
+#       silently re-broadens what this line hides.
 suppress_warnings = ['misc.highlighting_failure', 'myst.header']
 
 autodoc_typehints = 'description'
