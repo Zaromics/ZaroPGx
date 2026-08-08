@@ -107,6 +107,9 @@ CORPUS = [
     "‮reversed.vcf",
 ]
 
+# The differential below parametrises over names only. The job id is pure
+# interpolation on both sides, so a second axis over it would triple the case
+# count and prove nothing extra; it gets one dedicated test instead.
 JOB_IDS = ["job-uuid", "abc123", "0" * 32]
 
 
@@ -154,16 +157,26 @@ def sidecar_safe_upload_name():
 
 
 @pytest.mark.parametrize("name", CORPUS)
-@pytest.mark.parametrize("job_id", JOB_IDS)
-def test_app_and_sidecar_return_identical_names(sidecar_safe_upload_name, name, job_id):
+def test_app_and_sidecar_return_identical_names(sidecar_safe_upload_name, name):
     """The whole justification for duplicating the helper is that it matches.
 
     An undocumented divergence is what this suite exists to prevent; a
     documented duplicate is only acceptable while it is still a duplicate.
     """
-    assert app_safe_upload_name(name, job_id) == sidecar_safe_upload_name[
-        "safe_upload_name"
-    ](name, job_id), f"app and gatk-api disagree on {name!r}"
+    sidecar = sidecar_safe_upload_name["safe_upload_name"]
+    assert app_safe_upload_name(name, "job-uuid") == sidecar(
+        name, "job-uuid"
+    ), f"app and gatk-api disagree on {name!r}"
+
+
+def test_app_and_sidecar_interpolate_the_job_id_identically(sidecar_safe_upload_name):
+    sidecar = sidecar_safe_upload_name["safe_upload_name"]
+    for job_id in JOB_IDS:
+        assert (
+            app_safe_upload_name("sample.vcf", job_id)
+            == sidecar("sample.vcf", job_id)
+            == f"sample_{job_id}.vcf"
+        )
 
 
 def test_the_two_extension_allowlists_are_the_same(sidecar_safe_upload_name):
