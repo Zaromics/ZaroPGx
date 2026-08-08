@@ -7,6 +7,7 @@ Provides REST API endpoints for calling PyPGx supported star alleles
 import os
 import json
 import logging
+import re
 from logging.handlers import RotatingFileHandler
 import tempfile
 import shlex
@@ -89,6 +90,48 @@ def safe_upload_name(original: Optional[str], default_suffix: str) -> str:
             suffix = candidate
             break
     return f"{uuid.uuid4().hex}{suffix}"
+
+
+# --------------------------------------------------------------------------
+# Gene name hardening
+# --------------------------------------------------------------------------
+# A gene name is not only a command argument. run_pypgx() builds a filesystem
+# path out of it - `Path(output_dir) / f"{gene}-pipeline"` - and passes it to
+# the pypgx CLI as a *positional* argument. Running commands as argv lists
+# stops a gene name becoming shell syntax, but it does not stop:
+#
+#   * path escape - `../../../../TMP/X` walks out of the job directory and
+#     makes pypgx write there;
+#   * argument injection - a leading `-` is read by pypgx's own option parser
+#     as a flag rather than as the gene to call.
+#
+# Neither needs a shell, so both survive the argv rewrite. They are closed here
+# instead, on shape.
+#
+# The rule accepts every gene name the shipped catalogue can produce
+# (97 distinct names across config/genes.json, including the hyphenated HLA-A,
+# HLA-B, HLA-C and MT-RNR1) and nothing else. Requiring the first character to
+# be alphanumeric rejects a leading `-`; excluding `.` and both slashes makes
+# `..` and any path separator unrepresentable rather than merely filtered.
+GENE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+
+
+def validate_gene_names(genes: List[str]) -> List[str]:
+    """Reject any gene name that is not a plain identifier. Returns the list.
+
+    Applied to every requested gene set regardless of where it came from, so a
+    branch added later inherits the check instead of having to remember it.
+    """
+    invalid = [g for g in genes if not GENE_NAME_RE.fullmatch(g)]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid gene name(s): {invalid}. Gene names must start with a "
+                "letter or digit and contain only letters, digits, '_' and '-'."
+            ),
+        )
+    return genes
 
 
 # --------------------------------------------------------------------------
@@ -716,9 +759,15 @@ async def genotype(
         if potential_set in ["core", "cyp450", "all"] or potential_set in available_sets:
             requested_genes = gene_config.get_gene_set(potential_set)
         else:
-            # Parse as comma-separated list
+            # Parse as comma-separated list. This is raw request text, so it
+            # gets the same SUPPORTED_GENES membership check the legacy
+            # `gene`/`genes` branch below has always applied - the two paths
+            # accept the same kind of input and had no business disagreeing.
             gene_list = [g.strip().upper() for g in genes.split(',') if g.strip()]
             requested_genes = sorted(set(g for g in gene_list))
+            unsupported = [g for g in requested_genes if g not in SUPPORTED_GENES]
+            if unsupported:
+                raise HTTPException(status_code=400, detail=f"Unsupported genes: {unsupported}. Supported genes: {SUPPORTED_GENES}")
     elif gene_set:
         # Use explicit gene set parameter
         requested_genes = gene_config.get_gene_set(gene_set.lower())
@@ -759,7 +808,19 @@ async def genotype(
             raise HTTPException(status_code=400, detail=f"Unsupported genes: {unsupported}. Supported genes: {SUPPORTED_GENES}")
         if not requested_genes:
             requested_genes = ["CYP2D6"]
-    
+
+    # Single choke point, deliberately outside the branch chain above: whatever
+    # a branch produced, or a branch added later produces, is shape-checked
+    # before it can reach a path join or a CLI argument.
+    #
+    # Membership in SUPPORTED_GENES is enforced on the two branches that read
+    # raw request text, but NOT here, because SUPPORTED_GENES is not a complete
+    # catalogue: config/genes.json's `neuropsychopharmacogenes_panel_missing`
+    # set legitimately holds six names (ANK3, CACNA1C, HTR2C, MC4R, SCN1A,
+    # SCN2A) that are absent from `sets.all`. Enforcing membership on
+    # config-derived sets would reject a valid configuration.
+    validate_gene_names(requested_genes)
+
     if reference_genome not in ["hg19", "hg38", "GRCh37", "GRCh38"]:
         raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} is not supported. Use hg19/GRCh37 or hg38/GRCh38.")
     
@@ -993,6 +1054,14 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
 
         # Determine a pipeline output directory that does NOT pre-exist
         # PyPGx creates the output directory itself; avoid FileExistsError if already present
+        #
+        # `gene` is attacker-reachable (the comma-separated branch of /genotype
+        # takes it straight off the request), and it is used three ways here:
+        # to build this path, as a positional pypgx argument, and in the log
+        # line below. Keeping it out of a shell is necessary but NOT sufficient
+        # - a path separator would escape output_dir and a leading `-` would be
+        # parsed by pypgx as an option. validate_gene_names() is what makes
+        # those unrepresentable; this join relies on it having run.
         pipeline_dir = Path(output_dir) / f"{gene}-pipeline"
         if pipeline_dir.exists():
             safe_dir = Path(output_dir) / f"{gene}-pipeline-{uuid.uuid4().hex[:6]}"
@@ -1000,9 +1069,8 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
         
         # Use the appropriate command for NGS pipeline
         # Use the compressed/indexed VCF for PyPGx
-        # argv form, no shell. `gene` reaches here unvalidated on the
-        # comma-separated-list branch of /genotype, so this must not be a
-        # shell string either.
+        # argv form, no shell - see the note above on why that is only one of
+        # the three things `gene` needed protecting against.
         pypgx_cmd = [
             "pypgx", "run-ngs-pipeline",
             str(gene), str(pipeline_dir),

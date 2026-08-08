@@ -1,23 +1,35 @@
-"""Command-injection hardening for the upload paths.
+"""Hardening for request-controlled values that become paths and command arguments.
 
-Two services took a client-supplied multipart filename and used it to build a
-filesystem path, which then flowed into a command line:
+The recurring pattern, not a fixed number of instances: a value taken straight
+off an HTTP request — a multipart filename, a form field, a query parameter —
+is used to build a filesystem path or a command argument without ever being
+constrained. Each place it happens is a separate hole, and the shapes it takes
+are not interchangeable, so a fix aimed at one shape leaves the others open:
 
-  * docker/pypgx/pypgx_wrapper.py — `job_dir / file.filename` fed
-    `shell=True` invocations of pypgx/bgzip/tabix. The pypgx service has no
-    authentication and is reachable from every container on the compose
+  * as *shell syntax* — `job_dir / file.filename` fed `shell=True` invocations
+    of pypgx/bgzip/tabix in docker/pypgx/pypgx_wrapper.py. The pypgx service
+    has no authentication and is reachable from every container on the compose
     network, so this was live inside the trust boundary.
 
-  * app/api/utils/file_processor.py — `upload_{filename}` in /data/uploads
-    becomes `--input` to Nextflow. Shell metacharacters do *not* survive that
-    hop (Nextflow escapes `path`-typed inputs before interpolating them into a
-    task script), but *glob* metacharacters do: main.nf opens with
-    `Channel.fromPath(params.input)`, and `fromPath` globs, so `*.vcf` fans the
-    run out across every other file in /data/uploads.
+  * as a *path* — a gene name from /genotype's comma-separated branch builds
+    `Path(output_dir) / f"{gene}-pipeline"`, so `../../../../TMP/X` writes
+    outside the job directory. Running commands as argv does nothing about
+    this; no shell is involved.
 
-The tests below pin both halves of the pypgx fix — the sanitiser at the source
-and the argv-list sinks — plus the sanitiser in file_processor. Each is written
-so that reverting the corresponding production change fails it.
+  * as an *option* — the same gene name is a positional pypgx argument, so a
+    leading `-` is read by pypgx's own parser as a flag. Again no shell.
+
+  * as a *glob* — `upload_{filename}` in /data/uploads becomes `--input` to
+    Nextflow, and main.nf opens with `Channel.fromPath(params.input)`, which
+    globs. Shell metacharacters do *not* survive that hop (Nextflow escapes
+    `path`-typed inputs before interpolating them into a task script) but
+    `*`, `?`, `[…]` and `{…}` do, and fan the run out across every other file
+    in /data/uploads.
+
+So the tests below pin the sanitisers at each source, the argv-list sinks, the
+gene-name shape rule, and the glob containment. Each is written so that
+reverting the corresponding production change fails it. When auditing this
+area, look for the pattern above rather than for these four instances.
 
 Why AST/exec rather than `import`:
 docker/pypgx/pypgx_wrapper.py is a container entry point. Importing it on the
@@ -124,13 +136,17 @@ class _NullLogger:
 def _pypgx_namespace(recorder, **extra):
     """A namespace with everything the extracted pypgx functions close over."""
     import os
+    import re
     import shlex
     import uuid
+
+    from fastapi import HTTPException
 
     ns = {
         "subprocess": recorder,
         "logger": _NullLogger(),
         "os": os,
+        "re": re,
         "shlex": shlex,
         "uuid": uuid,
         "Path": Path,
@@ -138,6 +154,7 @@ def _pypgx_namespace(recorder, **extra):
         "Dict": dict,
         "Any": object,
         "List": list,
+        "HTTPException": HTTPException,
     }
     ns.update(extra)
     return ns
@@ -397,6 +414,129 @@ def test_pypgx_upload_endpoints_call_the_sanitiser():
     assert len(calls) >= 2, (
         "expected safe_upload_name() at both upload save sites "
         "(/create-input-vcf and /genotype)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gene names: path escape and argument injection, neither of which needs a shell
+# ---------------------------------------------------------------------------
+
+GENES_JSON = REPO_ROOT / "config" / "genes.json"
+
+
+@pytest.fixture(scope="module")
+def gene_validator():
+    ns = _load_from_source(
+        PYPGX_WRAPPER,
+        {"validate_gene_names", "GENE_NAME_RE"},
+        _pypgx_namespace(_SubprocessRecorder()),
+    )
+    return ns["validate_gene_names"]
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        # Path escape: run_pypgx builds Path(output_dir) / f"{gene}-pipeline".
+        "../../../../TMP/X",
+        "../../etc",
+        "..",
+        "a/../../b",
+        "CYP2D6/../../../TMP",
+        "sub/dir",
+        "back\\slash",
+        # Argument injection: gene is a *positional* pypgx argument.
+        "-o",
+        "--output",
+        "-CYP2D6",
+        # Shell shapes, already dead at the sink but rejected here too.
+        "CYP2D6;touch pwned",
+        "CYP2D6 $(touch pwned)",
+        "CYP2D6\ntouch pwned",
+        "CYP2D6\x00",
+        "",
+    ],
+)
+def test_validate_gene_names_rejects_paths_and_options(gene_validator, hostile):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as excinfo:
+        gene_validator([hostile])
+    assert excinfo.value.status_code == 400
+
+
+def test_validate_gene_names_reports_every_offender(gene_validator):
+    """A valid gene alongside a hostile one must not launder the request."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as excinfo:
+        gene_validator(["CYP2D6", "../../../../TMP/X", "-o"])
+    detail = str(excinfo.value.detail)
+    assert "../../../../TMP/X" in detail and "-o" in detail
+
+
+def test_validate_gene_names_accepts_every_gene_in_the_shipped_catalogue(
+    gene_validator,
+):
+    """The rule must not be stricter than the configuration it has to serve.
+
+    Includes the hyphenated HLA-A/HLA-B/HLA-C and MT-RNR1, and the six names in
+    `neuropsychopharmacogenes_panel_missing` that are deliberately absent from
+    `sets.all` — which is exactly why SUPPORTED_GENES membership is not the
+    check applied at the choke point.
+    """
+    import json
+
+    config = json.loads(GENES_JSON.read_text(encoding="utf-8"))
+    every = {g["name"] for g in config.get("genes", [])}
+    for members in config.get("sets", {}).values():
+        every.update(members)
+
+    assert len(every) >= 90, "gene catalogue looks truncated; check the fixture"
+    assert gene_validator(sorted(every)) == sorted(every)
+    # The hyphenated and panel-missing names specifically.
+    for name in ("HLA-A", "MT-RNR1", "ANK3", "CACNA1C", "SCN1A"):
+        assert name in every
+        gene_validator([name])
+
+
+def test_genotype_validates_genes_at_a_choke_point():
+    """Every branch must be covered, so the call sits outside the branch chain.
+
+    Reverting the choke point fails here.
+    """
+    calls = [
+        node
+        for node in ast.walk(_pypgx_tree())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "validate_gene_names"
+        and any(
+            isinstance(a, ast.Name) and a.id == "requested_genes" for a in node.args
+        )
+    ]
+    assert calls, (
+        "validate_gene_names(requested_genes) is not called; a gene name can "
+        "reach a path join and the pypgx CLI unchecked"
+    )
+
+
+def test_both_raw_text_gene_branches_check_supported_genes():
+    """The comma-list branch bypassed the membership check the legacy one had."""
+    source = PYPGX_WRAPPER.read_text(encoding="utf-8")
+    checks = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Compare)
+        and any(isinstance(op, ast.NotIn) for op in node.ops)
+        and any(
+            isinstance(c, ast.Name) and c.id == "SUPPORTED_GENES"
+            for c in node.comparators
+        )
+    ]
+    assert len(checks) >= 2, (
+        "expected a SUPPORTED_GENES membership check on both branches that read "
+        f"raw request text, found {len(checks)}"
     )
 
 
