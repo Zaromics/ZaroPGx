@@ -166,6 +166,13 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     used to be accepted, queued, and then failed minutes later with a Nextflow or
     gatk-api error the user could do nothing with.
 
+    This gate is not a complete guard, and cannot be one: it only ever sees inputs
+    FileProcessor chose to flag. ``gvcf`` and ``bcf`` are not flagged — ``determine_workflow``
+    gives them an ordinary ``needs_pypgx`` workflow — yet main.nf has no branch for
+    either, so they are still accepted and still die at ``error "Unsupported input
+    type"``. Fixing that is a product decision (refuse them, or convert BCF to VCF and
+    map gVCF onto the vcf branch), not a rewording of this function.
+
     ``is_provisional`` only exempts a *runnable* input type, and that ordering is the
     point rather than belt-and-braces. The flag is set by hand next to a reason string,
     so it can be — and was, for 23andMe — written aspirationally: "we intend to convert
@@ -1397,6 +1404,8 @@ async def upload_genomic_data(
     - 23andMe/FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no
       working branch for them, so accepting one could only ever produce a failed job.
       (23andMe would need a VCF converter first; that is not implemented.)
+    - GVCF/BCF: accepted today, but main.nf has no branch for either, so the job fails
+      at workflow definition. Known gap, not yet decided either way.
 
     Only the first uploaded data file is analysed; any further data file is reported as
     ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be
