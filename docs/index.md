@@ -1,10 +1,24 @@
 ---
 title: Home
+curation: partial
 ---
 
 # {{ project_name }} Documentation
 
 Welcome to the documentation for {{ project_name }} — a containerized pharmacogenomics platform that processes genetic data and generates comprehensive reports.
+
+## Overview
+
+Orientation, the service/port map, and every configuration knob:
+
+```{toctree}
+:maxdepth: 2
+:caption: Overview
+
+getting-started
+architecture
+advanced-configuration
+```
 
 ## For Users
 
@@ -29,7 +43,7 @@ Contributing to or extending ZaroPGx:
 
 ```{toctree}
 :maxdepth: 2
-:caption: Developer Guide [NEEDS CURATION]
+:caption: Developer Guide
 
 developer/architecture
 developer/api-reference
@@ -37,6 +51,7 @@ developer/development-setup
 developer/contributing
 developer/deployment
 developer/testing
+samples/README
 ```
 
 ## Roadmap
@@ -60,7 +75,9 @@ to-do
 ZaroPGx is a self-hosted, containerized platform that:
 
 - **Processes genomic data** (VCF, BAM, CRAM, FASTQ) using industry-standard tools
-- **Performs comprehensive allele calling** across 23+ pharmacogenes using PharmCAT, PyPGx, and OptiType
+- **Performs comprehensive allele calling** across **91 pharmacogenes** using PharmCAT, PyPGx and
+  OptiType — 23 of them make up PharmCAT's guideline-reporting panel, and PyPGx covers 87
+  (68 of which are outside that panel). The authoritative list is `config/genes.json`.
 - **Generates clinical reports** with actionable pharmacogenomic recommendations
 - **Maintains data privacy** through local deployment with no external data transmission
 - **Integrates with EHR systems** via FHIR export capabilities

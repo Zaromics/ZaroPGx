@@ -1,6 +1,11 @@
 ---
 title: Frequently Asked Questions
+curation: partial
 ---
+
+# Frequently Asked Questions
+
+## General Questions
 
 ### What is ZaroPGx?
 
@@ -16,7 +21,7 @@ Gratis; ZaroPGx is free and open-source software licensed under AGPLv3. You can 
 
 ### What makes ZaroPGx different from other PGx tools?
 
-- **Comprehensive Coverage, Laser Focus**: Analyzes up to 23+ core pharmacogenes to identify clinically actionable guidelines, with total coverage for 90+ genes pharmacogenes. No additional information is provided that is tangential or not directly related to pharmacogenetic relationships. For expanded modules with nutrigenomics and more, see the Zaromics umbrella project.
+- **Comprehensive Coverage, Laser Focus**: Analyzes 23 core pharmacogenes to identify clinically actionable guidelines, within total coverage of 91 pharmacogenes (see `config/genes.json`). No additional information is provided that is tangential or not directly related to pharmacogenetic relationships. For expanded modules with nutrigenomics and more, see the Zaromics umbrella project.
 - **Exceptionally Easy to Use**: The super simple user interface and "click and forget" functionality belie the comprehensiveness of the pipeline. ZaroPGx makes individual pharmacogenomics accessible to an interdisciplinary and lay audience.
 - **Easy Self-Hosted Privacy**: The docker compose based containerized architecture enables anyone with a power enough computer to process pharmacogenomic analyses in the complete privacy of their LAN, after the required references have been fetched on first run. ZaroPGx does not transmit any data without your directive; this refers to usage via API and exporting via HAPI FHIR server. Of course, being open source, any function, can be added, modified, or removed, so long as it complies with the software license.
 - **Dual Clinical + Research Focus**: Unlike tools which focus on either clinical, consumer, and/or research reporting, ZaroPGx differentiates between certainty levels, so reports contain clearly delineated clinically actionable guidelines and investigational insights. 
@@ -69,20 +74,26 @@ Analysis time depends on:
 
 ### Which pharmacogenes are analyzed?
 
-**Core 23 Pharmacogenes  (reports available):**
+`config/genes.json` is the authoritative list: **91 pharmacogenes** in total, of which 23 form
+PharmCAT's guideline-reporting panel and 87 are callable by PyPGx.
+
+**Core 23 pharmacogenes (guideline recommendations reported):**
 - ABCG2, CACNA1S, CFTR, CYP2B6, CYP2C19, CYP2C9,
 - CYP3A4, CYP3A5, CYP4F2, CYP2D6, DPYD, G6PD,
 - HLA-A, HLA-B, IFNL3, MT-RNR1, NAT2, NUDT15, RYR1,
 - SLCO1B1, TPMT, UGT1A1, VKORC1
 
-**Additional Pharmacogenes (no reports):**
-- "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
-- "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2C8", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2",
-- "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP17A1",
-- "CYP19A1", "CYP26A1", "DBH", "DRD2", "F2", "F5", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
-- "GSTT1", "HTR1A", "HTR2A", "IFNL4", "ITGB3", "ITPA", "MTHFR", "NAT1", "OPRK1", "OPRM1", "POR",
-- "PTGIS", "RARG", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B3", "SLCO2B1",
-- "SULT1A1", "TBXAS1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "XPC"
+Four of those 23 (CYP2D6, HLA-A, HLA-B, MT-RNR1) reach PharmCAT as outside calls from
+PyPGx, ZaroHLA/OptiType and mtDNA-server-2; the other 19 PharmCAT calls from the VCF itself.
+
+**Additional 68 pharmacogenes (genotype reported, no guideline recommendations):**
+- ABCB1, ACYP2, ADRA2A, ADRB2, ANKK1, APOE, ATM, BCHE, BDNF, COMT,
+- CYP1A1, CYP1A2, CYP1B1, CYP2A6, CYP2A13, CYP2C8, CYP2E1, CYP2F1, CYP2J2,
+- CYP2R1, CYP2S1, CYP2W1, CYP3A7, CYP3A43, CYP4A11, CYP4A22, CYP4B1, CYP17A1,
+- CYP19A1, CYP26A1, DBH, DRD2, F2, F5, GRIK1, GRIK4, GRIN2B, GSTM1, GSTP1,
+- GSTT1, HLA-C, HTR1A, HTR2A, IFNL4, ITGB3, ITPA, MTHFR, NAT1, OPRK1, OPRM1, POR,
+- PTGIS, RARG, SLC6A4, SLC15A2, SLC22A2, SLC28A3, SLC47A2, SLCO1B3, SLCO2B1,
+- SULT1A1, TBXAS1, UGT1A4, UGT1A6, UGT2B7, UGT2B15, UGT2B17, XPC
 
 ### What clinical guidelines does ZaroPGx use?
 
