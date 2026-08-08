@@ -292,6 +292,26 @@ class PharmCATUnannotatedGeneCall(Base):
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _as_float(value: Any) -> Optional[float]:
+    """Coerce a stored DECIMAL activity score to float, preserving zero.
+
+    ``Decimal("0.0000")`` is falsy, so a truthiness test silently turns a
+    legitimate activity score of 0 -- the score that accompanies a Poor
+    Metabolizer call -- into ``None``.  Only ``None`` means "no score".
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# ============================================================================
 # PharmCAT Parser Class
 # ============================================================================
 
@@ -499,13 +519,10 @@ class PharmCATParser:
             allele1 = diplotype.get("allele1") or {}
             allele2 = diplotype.get("allele2") or {}
 
-            # Parse activity score
-            activity_score = diplotype.get("activityScore")
-            if activity_score is not None and activity_score != "n/a":
-                try:
-                    activity_score = float(activity_score)
-                except (ValueError, TypeError):
-                    activity_score = None
+            # Parse activity score.  Anything non-numeric ("n/a", "No Result")
+            # becomes NULL -- the column is DECIMAL, so a sentinel string would
+            # otherwise be handed straight to the driver.  0 is a real score.
+            activity_score = _as_float(diplotype.get("activityScore"))
 
             diplotype_record = PharmCATDiplotype(
                 run_id=run_id,
@@ -881,7 +898,7 @@ class PharmCATParser:
                 "allele1_function": r.allele1_function,
                 "allele2_name": r.allele2_name,
                 "allele2_function": r.allele2_function,
-                "activity_score": float(r.activity_score) if r.activity_score else None,
+                "activity_score": _as_float(r.activity_score),
                 "phenotype": r.phenotype,
                 "match_score": r.match_score,
                 "inferred": r.inferred,
@@ -974,7 +991,7 @@ class PharmCATParser:
                 "gene_symbol": r.gene_symbol,
                 "diplotype_label": r.diplotype_label,
                 "phenotype": r.phenotype,
-                "activity_score": float(r.activity_score) if r.activity_score else None,
+                "activity_score": _as_float(r.activity_score),
                 "allele1_name": r.allele1_name,
                 "allele2_name": r.allele2_name,
             }
@@ -1061,7 +1078,7 @@ def load_pharmcat_file(
 
 def get_pharmcat_summary(
     run_id: str, db_session: Optional[Session] = None
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """
     Get a comprehensive summary of a PharmCAT run
 
@@ -1070,7 +1087,11 @@ def get_pharmcat_summary(
         db_session: Optional database session
 
     Returns:
-        Dictionary containing summary information
+        Dictionary containing summary information, or None when no run with
+        this identifier exists.  Every child row is FK-bound to
+        ``pharmcat.results``, so a missing result row means there is nothing to
+        summarise -- reporting zero genes would be indistinguishable from a run
+        that genuinely called none.
     """
     with PharmCATParser(db_session) as parser:
         # Get run metadata from the results table
@@ -1080,6 +1101,9 @@ def get_pharmcat_summary(
             .first()
         )
 
+        if result is None:
+            return None
+
         genes = parser.get_gene_summary(run_id)
         diplotypes = parser.get_diplotypes(run_id)
         actionable = parser.get_actionable_findings(run_id)
@@ -1087,9 +1111,9 @@ def get_pharmcat_summary(
 
         return {
             "run_id": run_id,
-            "pharmcat_version": result.pharmcat_version if result else None,
-            "data_version": result.data_version if result else None,
-            "created_at": result.created_at if result else None,
+            "pharmcat_version": result.pharmcat_version,
+            "data_version": result.data_version,
+            "created_at": result.created_at,
             "sample_identifier": run_id,  # run_id is typically the sample identifier/title
             "total_genes": len(genes),
             "total_diplotypes": len(diplotypes),

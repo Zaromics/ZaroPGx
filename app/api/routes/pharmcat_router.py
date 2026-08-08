@@ -63,6 +63,15 @@ class DiplotypeInfo(BaseModel):
     allele2_function: Optional[str] = None
     activity_score: Optional[float] = None
     phenotype: Optional[str] = None
+    match_score: Optional[int] = Field(
+        None, description="PharmCAT matcher score for the call"
+    )
+    inferred: Optional[bool] = Field(
+        None, description="Whether the diplotype was inferred rather than called"
+    )
+    combination: Optional[bool] = Field(
+        None, description="Whether the call is a combination/partial diplotype"
+    )
 
 
 class DrugInfo(BaseModel):
@@ -175,6 +184,11 @@ async def load_pharmcat_file_endpoint(
 
             # Get summary for response
             summary = get_pharmcat_summary(run_id, db)
+            if summary is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"PharmCAT run {run_id} was not persisted",
+                )
 
             return PharmCATLoadResponse(
                 run_id=run_id,
@@ -259,6 +273,10 @@ async def get_pharmcat_summary_endpoint(run_id: str, db: Session = Depends(get_d
     try:
         with PharmCATParser(db) as parser:
             summary = get_pharmcat_summary(run_id, db)
+            if summary is None:
+                raise HTTPException(
+                    status_code=404, detail=f"PharmCAT run {run_id} not found"
+                )
 
             # Convert to response model
             return _build_summary_response(summary)
