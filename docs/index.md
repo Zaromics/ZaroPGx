@@ -76,8 +76,9 @@ ZaroPGx is a self-hosted, containerized platform that:
 
 - **Processes genomic data** (VCF, BAM, CRAM, FASTQ) using industry-standard tools
 - **Performs comprehensive allele calling** across **91 pharmacogenes** using PharmCAT, PyPGx and
-  OptiType — 23 of them make up PharmCAT's guideline-reporting panel, and PyPGx covers 87
-  (68 of which are outside that panel). The authoritative list is `config/genes.json`.
+  OptiType — 23 of them make up PharmCAT's guideline-reporting panel, and PyPGx covers 87, of
+  which 67 are outside that panel. The 68th non-panel gene is HLA-C, which PyPGx does not call
+  at all; ZaroHLA/OptiType types it. The authoritative list is `config/genes.json`.
 - **Generates clinical reports** with actionable pharmacogenomic recommendations
 - **Maintains data privacy** through local deployment with no external data transmission
 - **Integrates with EHR systems** via FHIR export capabilities

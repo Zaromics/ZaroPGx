@@ -144,9 +144,21 @@ graph TB
 - Diplotype and phenotype prediction
 
 **Supported Genes:**
-- `config/genes.json` is the machine-readable authority: 91 genes total, `sets.pypgx` = 87,
-  `sets.pharmcat_all` = 23, `sets.pypgx_minus_pharmcat` = 68. Quote those numbers rather than
-  restating them from prose elsewhere.
+- `config/genes.json` is the machine-readable authority: 91 genes total (`sets.all`),
+  `sets.pypgx` = 87, `sets.pharmcat_all` = 23. Derive any other figure from those sets rather
+  than restating it from prose elsewhere.
+
+```{warning}
+Do **not** quote `sets.pypgx_minus_pharmcat` as "genes PyPGx covers beyond the PharmCAT panel".
+Despite the name it is `pypgx − pharmcat_can_call`, not `pypgx − pharmcat_all`: it contains
+CYP2D6, which *is* in `pharmcat_all` (as an outside caller), and omits HLA-C. So
+`pharmcat_all ∪ pypgx_minus_pharmcat` covers 90 genes, not 91, and its length of 68 coincides
+with `all − pharmcat_all` = 68 only by accident.
+
+The true decomposition of the 91: 23 in the PharmCAT panel, 67 more that PyPGx calls
+(`pypgx − pharmcat_all`), and HLA-C, which is in neither set — ZaroHLA/OptiType types it.
+Compute the set difference; do not read the count off the label.
+```
 
 ### GATK API (`gatk-api`)
 
