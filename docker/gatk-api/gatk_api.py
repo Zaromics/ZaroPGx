@@ -7,6 +7,7 @@ calls to the GATK container.
 import os
 import json
 import logging
+import logging.handlers
 import tempfile
 import subprocess
 import requests
@@ -33,19 +34,62 @@ import sys
 sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 
+# Configuration. Read before logging is configured because the progress-log handler
+# below writes into DATA_DIR.
+GATK_CONTAINER = os.environ.get('GATK_CONTAINER', 'gatk')
+DATA_DIR = os.environ.get('DATA_DIR', '/data')
+TEMP_DIR = os.environ.get('TMPDIR', '/tmp/gatk_temp')
+REFERENCE_DIR = os.environ.get('REFERENCE_DIR', '/reference')
+MAX_MEMORY = os.environ.get('MAX_MEMORY', '20g')  # Default to 20g per NIH recommendation
+
+# Create directories
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, 'uploads'), exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, 'results'), exist_ok=True)
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# Log rotation bounds. gatk_progress.log lives on the ./data bind mount shared with
+# the app container, so an unrotated DEBUG-level log there grows without limit and
+# takes the host filesystem with it. 5 MiB x 3 backups caps each destination at 20 MiB.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
+
+
+def _bounded_file_handler(path):
+    """Return a size-capped handler for `path`, or None if it cannot be opened.
+
+    A log destination that is missing or read-only must not take the service down at
+    import time; stdout still carries the full stream for `docker logs`.
+    """
+    try:
+        return logging.handlers.RotatingFileHandler(
+            path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
+        )
+    except OSError:
+        return None
+
+
 # Set up more verbose logging with both file and console handlers
+_log_handlers = [logging.StreamHandler(sys.stdout)]
+_log_handlers.extend(
+    handler
+    for handler in (
+        _bounded_file_handler('/var/log/gatk_api.log'),
+        # Progress log accessible to main app
+        _bounded_file_handler(os.path.join(DATA_DIR, 'gatk_progress.log')),
+    )
+    if handler is not None
+)
+
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('/var/log/gatk_api.log'),
-        logging.FileHandler('/data/gatk_progress.log')  # Progress log accessible to main app
-    ]
+    handlers=_log_handlers
 )
 
 logger = logging.getLogger(__name__)
 logger.info("Starting GATK API service with enhanced debugging")
+logger.info(f"Data directories ready: DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -67,32 +111,19 @@ app_start_time = time.time()
 
 # Write version manifest at startup
 try:
-    os.makedirs("/data/versions", exist_ok=True)
+    versions_dir = os.path.join(DATA_DIR, "versions")
+    os.makedirs(versions_dir, exist_ok=True)
     try:
         result = subprocess.run(["gatk", "--version"], capture_output=True, text=True, timeout=10)
         gatk_version = (result.stdout or result.stderr or "").strip().splitlines()[0]
     except Exception:
         gatk_version = "unknown"
-    with open("/data/versions/gatk.json", "w") as vf:
+    with open(os.path.join(versions_dir, "gatk.json"), "w") as vf:
         # Keep only the first token if it's a long banner
         ver_token = gatk_version.replace("GATK", "").strip()
         vf.write(json.dumps({"name": "GATK", "version": ver_token}))
 except Exception:
     pass
-
-# Configuration
-GATK_CONTAINER = os.environ.get('GATK_CONTAINER', 'gatk')
-DATA_DIR = os.environ.get('DATA_DIR', '/data')
-TEMP_DIR = os.environ.get('TMPDIR', '/tmp/gatk_temp')
-REFERENCE_DIR = os.environ.get('REFERENCE_DIR', '/reference')
-MAX_MEMORY = os.environ.get('MAX_MEMORY', '20g')  # Default to 20g per NIH recommendation
-
-# Create directories
-logger.info(f"Creating required directories: DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(os.path.join(DATA_DIR, 'uploads'), exist_ok=True)
-os.makedirs(os.path.join(DATA_DIR, 'results'), exist_ok=True)
-os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Map reference genome names to file paths
 REFERENCE_PATHS = {
@@ -1142,6 +1173,93 @@ async def diagnostic():
             "traceback": traceback.format_exc() if 'traceback' in sys.modules else "traceback not available"
         }
 
+# Uploads are streamed to disk in chunks of this size rather than read into memory.
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+
+
+def _discard_output(path):
+    """Delete an untrustworthy conversion output. Best effort, never raises."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as exc:
+        logger.warning(f"Could not remove {path}: {exc}")
+
+
+def _looks_like_bam(path):
+    """A real BAM is BGZF-framed, so it opens with the gzip magic bytes.
+
+    One 2-byte read is cheap insurance against the failure this module used to ship:
+    a 21-byte ASCII string saved as `.bam` and carried through the whole pipeline.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def run_samtools_view(job_label, argv, output_bam):
+    """Run a `samtools view` conversion and prove it produced a real BAM.
+
+    Every failure path raises HTTPException *and* removes the output, so a caller
+    that returns normally can promise `output_bam` exists and is a BAM. No endpoint
+    in this module may answer `success: true` over a file samtools did not write
+    (BACKLOG 0 / 51 / 113 / 115).
+
+    `argv` is a list, never a shell string: an uploaded filename reaches this
+    command line and must not be re-parsed by /bin/sh.
+
+    Returns:
+        int: size of the produced BAM in bytes.
+    """
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _discard_output(output_bam)
+        message = f"samtools could not be executed - check container configuration ({exc})"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+
+    if result.returncode != 0:
+        _discard_output(output_bam)
+        message = f"samtools view failed with exit code {result.returncode}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not os.path.exists(output_bam) or os.path.getsize(output_bam) == 0:
+        _discard_output(output_bam)
+        message = f"samtools view exited 0 but wrote no BAM to {output_bam}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not _looks_like_bam(output_bam):
+        _discard_output(output_bam)
+        message = f"samtools view produced {output_bam}, which is not a BGZF-framed BAM"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if stderr:
+        logger.warning(f"Job {job_label}: samtools stderr: {stderr}")
+
+    size = os.path.getsize(output_bam)
+    logger.info(f"Job {job_label}: wrote {output_bam} ({size} bytes)")
+    return size
+
+
+async def _fail_step(job_client, message):
+    """Report a step failure, best effort. A dead job server must not mask the error."""
+    if not job_client:
+        return
+    try:
+        await job_client.fail_step(message, {"error": message})
+    except Exception as exc:
+        logger.warning(f"Could not report step failure to job server: {exc}")
+
+
 @app.post("/align-fastq")
 async def align_fastq(
     file: UploadFile = File(...),
@@ -1152,80 +1270,36 @@ async def align_fastq(
     step_name: Optional[str] = Form("gatk_alignment")
 ):
     """
-    Align FASTQ files to reference genome using BWA-MEM2.
-    This endpoint handles FASTQ alignment and returns BAM file path.
+    Not implemented. Always returns HTTP 501.
+
+    Aligning FASTQ needs an aligner (bwa-mem2 for short reads, minimap2 for long),
+    a prebuilt reference index and a large-RAM profile, none of which this image
+    carries. Until that lands this endpoint refuses instead of inventing an
+    alignment: it used to write a 21-byte ASCII placeholder to a `.bam` and answer
+    `success: true`, and pipelines/pgx/main.nf copied that placeholder forward as a
+    real alignment for HLA calling, PyPGx and GATK (BACKLOG 0 / 51 / 112 / 113).
+
+    501 only makes this service agree with the layer in front of it:
+    app/api/utils/file_processor.py already sets workflow["unsupported"] = True for
+    FileType.FASTQ at ingest, so no supported upload path reaches this route.
+    Implementing alignment for real is tracked as BACKLOG 3 / 112.
+
+    No JobClient step is opened here, so nothing is left hanging in the job record;
+    the caller's process fails on the 501.
     """
-    try:
-        # Initialize job client if Zaro Job PK is provided
-        job_client = None
-        if job_id:
-            try:
-                job_client = JobClient(job_id=job_id, step_name=step_name)
-                await job_client.start_step(f"Starting FASTQ alignment for {file.filename}")
-                await job_client.log_progress(f"Aligning {file.filename} to {reference_genome}", {
-                    "filename": file.filename,
-                    "reference_genome": reference_genome
-                })
-            except Exception as e:
-                logger.warning(f"Failed to initialize workflow client: {e}")
-                job_client = None
+    logger.warning(
+        f"Refused /align-fastq for {file.filename}: FASTQ alignment is not implemented"
+    )
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "FASTQ alignment is not implemented. This service has no aligner, and "
+            "FASTQ uploads are already rejected as unsupported at ingest "
+            "(app/api/utils/file_processor.py). Align the reads outside ZaroPGx and "
+            "upload the resulting BAM, CRAM or VCF instead."
+        ),
+    )
 
-        # Get reference path
-        reference_path = REFERENCE_PATHS.get(reference_genome)
-        if not reference_path or not os.path.exists(reference_path):
-            raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} not found")
-
-        # Save uploaded file
-        local_job_id = str(uuid.uuid4())
-        input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        input_path = os.path.join(input_dir, file.filename)
-        
-        with open(input_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        
-        logger.info(f"Job {local_job_id}: Saved FASTQ file to {input_path}")
-        
-        # Update workflow with file information
-        if job_client:
-            file_size = os.path.getsize(input_path)
-            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
-                "file_size_bytes": file_size,
-                "input_path": input_path
-            })
-
-        # For now, return a mock BAM path since we don't have BWA-MEM2 implemented
-        # In a real implementation, this would run BWA-MEM2 alignment
-        output_bam = os.path.join(input_dir, f"{os.path.splitext(file.filename)[0]}.bam")
-        
-        # Create a mock BAM file for testing
-        with open(output_bam, "wb") as f:
-            f.write(b"Mock BAM file content")
-        
-        logger.info(f"Job {local_job_id}: Created mock BAM file at {output_bam}")
-        
-        # Update workflow with completion
-        if job_client:
-            await job_client.log_progress(f"FASTQ alignment completed", {
-                "output_bam": output_bam,
-                "reference_genome": reference_genome
-            })
-            await job_client.complete_step("FASTQ alignment completed successfully")
-
-        return {
-            "success": True,
-            "job_id": local_job_id,
-            "bam_path": output_bam,
-            "bam": output_bam,  # Alternative field name
-            "message": "FASTQ alignment completed (mock implementation)"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in FASTQ alignment: {e}")
-        if job_client:
-            await job_client.log_progress(f"FASTQ alignment failed: {str(e)}", {"error": str(e)})
-            await job_client.complete_step(f"FASTQ alignment failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"FASTQ alignment failed: {str(e)}")
 
 @app.post("/cram-to-bam")
 async def cram_to_bam(
@@ -1237,11 +1311,15 @@ async def cram_to_bam(
     step_name: Optional[str] = Form("gatk_cram_to_bam")
 ):
     """
-    Convert CRAM files to BAM format using samtools.
+    Convert CRAM to BAM with `samtools view -b -T <reference>`.
+
+    CRAM stores differences against a reference, so the reference FASTA is not
+    optional: without the exact one the records cannot be decoded. A missing
+    reference is therefore a hard 400 here rather than a file we cannot vouch for.
     """
+    job_client = None
     try:
         # Initialize job client if Zaro Job PK is provided
-        job_client = None
         if job_id:
             try:
                 job_client = JobClient(job_id=job_id, step_name=step_name)
@@ -1256,21 +1334,39 @@ async def cram_to_bam(
 
         # Get reference path
         reference_path = REFERENCE_PATHS.get(reference_genome)
-        if not reference_path or not os.path.exists(reference_path):
-            raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} not found")
+        if not reference_path:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported reference genome {reference_genome!r}; "
+                    f"known references: {sorted(REFERENCE_PATHS)}"
+                ),
+            )
+        if not os.path.exists(reference_path):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"CRAM decoding requires the {reference_genome} reference FASTA, "
+                    f"which is not present at {reference_path}. Fetch the reference "
+                    "before converting; a CRAM cannot be read without it."
+                ),
+            )
 
-        # Save uploaded file
+        # Save uploaded file. basename() keeps a crafted filename inside the temp dir.
         local_job_id = str(uuid.uuid4())
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        input_path = os.path.join(input_dir, file.filename)
-        output_bam = os.path.join(input_dir, f"{os.path.splitext(file.filename)[0]}.bam")
-        
+        filename = os.path.basename(file.filename or "input.cram")
+        input_path = os.path.join(input_dir, filename)
+        output_bam = os.path.join(input_dir, f"{os.path.splitext(filename)[0]}.bam")
+
+        # Copied in chunks: a whole-genome CRAM does not fit in this container's heap,
+        # and now that the conversion is real, whole-genome CRAMs actually arrive here.
         with open(input_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
+
         logger.info(f"Job {local_job_id}: Saved CRAM file to {input_path}")
-        
+
         # Update workflow with file information
         if job_client:
             file_size = os.path.getsize(input_path)
@@ -1279,17 +1375,21 @@ async def cram_to_bam(
                 "input_path": input_path
             })
 
-        # For now, return a mock BAM path since we don't have samtools implemented
-        # In a real implementation, this would run: samtools view -b -T {reference_path} -o {output_bam} {input_path}
-        with open(output_bam, "wb") as f:
-            f.write(b"Mock BAM file content from CRAM conversion")
-        
-        logger.info(f"Job {local_job_id}: Created mock BAM file at {output_bam}")
-        
+        # to_thread, not a bare call: converting a whole-genome CRAM takes minutes to
+        # hours, and a blocking subprocess here would stall the event loop -- taking
+        # /health, and therefore the container's healthcheck, down with it.
+        bam_size = await asyncio.to_thread(
+            run_samtools_view,
+            local_job_id,
+            ["samtools", "view", "-b", "-T", reference_path, "-o", output_bam, input_path],
+            output_bam,
+        )
+
         # Update workflow with completion
         if job_client:
-            await job_client.log_progress(f"CRAM to BAM conversion completed", {
+            await job_client.log_progress("CRAM to BAM conversion completed", {
                 "output_bam": output_bam,
+                "bam_size_bytes": bam_size,
                 "reference_genome": reference_genome
             })
             await job_client.complete_step("CRAM to BAM conversion completed successfully")
@@ -1299,15 +1399,20 @@ async def cram_to_bam(
             "job_id": local_job_id,
             "bam_path": output_bam,
             "bam": output_bam,  # Alternative field name
-            "message": "CRAM to BAM conversion completed (mock implementation)"
+            "bam_size_bytes": bam_size,
+            "message": f"Converted {filename} to BAM with samtools"
         }
-        
+
+    except HTTPException as e:
+        # Do not relabel a deliberate 4xx as a 500 on the way out.
+        logger.error(f"CRAM to BAM conversion failed: {e.detail}")
+        await _fail_step(job_client, f"CRAM to BAM conversion failed: {e.detail}")
+        raise
     except Exception as e:
-        logger.error(f"Error in CRAM to BAM conversion: {e}")
-        if job_client:
-            await job_client.log_progress(f"CRAM to BAM conversion failed: {str(e)}", {"error": str(e)})
-            await job_client.complete_step(f"CRAM to BAM conversion failed: {str(e)}")
+        logger.exception(f"Error in CRAM to BAM conversion: {e}")
+        await _fail_step(job_client, f"CRAM to BAM conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"CRAM to BAM conversion failed: {str(e)}")
+
 
 @app.post("/sam-to-bam")
 async def sam_to_bam(
@@ -1319,11 +1424,16 @@ async def sam_to_bam(
     step_name: Optional[str] = Form("gatk_sam_to_bam")
 ):
     """
-    Convert SAM files to BAM format using samtools.
+    Convert SAM to BAM with `samtools view -b`.
+
+    No reference FASTA is involved: SAM carries its own @SQ header, so unlike CRAM
+    this conversion is self-contained. `reference_genome` is accepted only because
+    callers post the same form to every conversion route. A SAM with no header is
+    rejected by samtools and surfaces here as a 500, not as an empty BAM.
     """
+    job_client = None
     try:
         # Initialize job client if Zaro Job PK is provided
-        job_client = None
         if job_id:
             try:
                 job_client = JobClient(job_id=job_id, step_name=step_name)
@@ -1336,18 +1446,20 @@ async def sam_to_bam(
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
 
-        # Save uploaded file
+        # Save uploaded file. basename() keeps a crafted filename inside the temp dir.
         local_job_id = str(uuid.uuid4())
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        input_path = os.path.join(input_dir, file.filename)
-        output_bam = os.path.join(input_dir, f"{os.path.splitext(file.filename)[0]}.bam")
-        
+        filename = os.path.basename(file.filename or "input.sam")
+        input_path = os.path.join(input_dir, filename)
+        output_bam = os.path.join(input_dir, f"{os.path.splitext(filename)[0]}.bam")
+
+        # Chunked for the same reason as the CRAM route: never buffer the whole upload.
         with open(input_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
+
         logger.info(f"Job {local_job_id}: Saved SAM file to {input_path}")
-        
+
         # Update workflow with file information
         if job_client:
             file_size = os.path.getsize(input_path)
@@ -1356,18 +1468,19 @@ async def sam_to_bam(
                 "input_path": input_path
             })
 
-        # For now, return a mock BAM path since we don't have samtools implemented
-        # In a real implementation, this would run: samtools view -b -o {output_bam} {input_path}
-        with open(output_bam, "wb") as f:
-            f.write(b"Mock BAM file content from SAM conversion")
-        
-        logger.info(f"Job {local_job_id}: Created mock BAM file at {output_bam}")
-        
+        # Offloaded for the same reason as the CRAM route: do not block the loop.
+        bam_size = await asyncio.to_thread(
+            run_samtools_view,
+            local_job_id,
+            ["samtools", "view", "-b", "-o", output_bam, input_path],
+            output_bam,
+        )
+
         # Update workflow with completion
         if job_client:
-            await job_client.log_progress(f"SAM to BAM conversion completed", {
+            await job_client.log_progress("SAM to BAM conversion completed", {
                 "output_bam": output_bam,
-                "reference_genome": reference_genome
+                "bam_size_bytes": bam_size
             })
             await job_client.complete_step("SAM to BAM conversion completed successfully")
 
@@ -1376,15 +1489,20 @@ async def sam_to_bam(
             "job_id": local_job_id,
             "bam_path": output_bam,
             "bam": output_bam,  # Alternative field name
-            "message": "SAM to BAM conversion completed (mock implementation)"
+            "bam_size_bytes": bam_size,
+            "message": f"Converted {filename} to BAM with samtools"
         }
-        
+
+    except HTTPException as e:
+        # Do not relabel a deliberate 4xx as a 500 on the way out.
+        logger.error(f"SAM to BAM conversion failed: {e.detail}")
+        await _fail_step(job_client, f"SAM to BAM conversion failed: {e.detail}")
+        raise
     except Exception as e:
-        logger.error(f"Error in SAM to BAM conversion: {e}")
-        if job_client:
-            await job_client.log_progress(f"SAM to BAM conversion failed: {str(e)}", {"error": str(e)})
-            await job_client.complete_step(f"SAM to BAM conversion failed: {str(e)}")
+        logger.exception(f"Error in SAM to BAM conversion: {e}")
+        await _fail_step(job_client, f"SAM to BAM conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"SAM to BAM conversion failed: {str(e)}")
+
 
 @app.post("/cancel")
 async def cancel_workflow_job(request: CancelRequest):
