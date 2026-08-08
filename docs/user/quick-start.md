@@ -94,7 +94,10 @@ Once complete, you'll see:
 | **BAM** | Binary Alignment Map | ZaroHLA → PyPGx → PharmCAT |
 | **CRAM** | Compressed BAM | GATK → ZaroHLA → PyPGx → PharmCAT |
 | **SAM** | Sequence Alignment Map | GATK → ZaroHLA → PyPGx → PharmCAT |
-| **FASTQ** | Raw sequencing data | ZaroHLA → GATK → PyPGx → PharmCAT |
+
+Only the first datafile you select is analysed; an index file may be uploaded alongside it.
+
+**FASTQ is not accepted.** ZaroPGx ships no aligner, so raw reads — single- or paired-end — are refused at upload with an explanatory message. Align them to GRCh38/hg38 yourself (bwa-mem2/BWA for short reads, minimap2 for long reads, or a pipeline such as nf-core/sarek) and upload the resulting BAM, CRAM or SAM.
 
 ## Next Steps
 

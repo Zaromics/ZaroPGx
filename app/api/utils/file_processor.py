@@ -1,3 +1,4 @@
+import html
 import logging
 import os
 import re
@@ -65,6 +66,12 @@ def safe_upload_basename(filename: Optional[str]) -> str:
     """
     cleaned = secure_filename(filename or "")
     return cleaned or f"{uuid.uuid4().hex}.dat"
+
+
+# Companion index files. The upload form invites one alongside the data file, and
+# process_files does not use it yet (see the TODO there) - but it is not a second
+# dataset either, so it must not raise the "extra files were not analysed" warning.
+INDEX_FILE_SUFFIXES = (".bai", ".crai", ".csi", ".tbi", ".idx")
 
 
 @dataclass
@@ -494,7 +501,7 @@ class FileProcessor:
         Determine the appropriate workflow based on file analysis.
 
         This method implements the detailed workflow logic from workflow_logic.md:
-        - FASTQ files: alignment with specific tools based on read type and hardware
+        - FASTQ files: refused (no aligner ships with ZaroPGx; see the branch below)
         - CRAM files: conversion to BAM with specific tools and considerations
         - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
         - VCF files: direct PyPGx + PharmCAT with outside calls
@@ -514,7 +521,10 @@ class FileProcessor:
             "needs_gatk": False,
             "needs_indexing": False,
             "needs_alignment": False,
-            "needs_liftover": False,  # If VCF, if GRCh37 (hg19) reference, bcftools liftover to GRCh38 (hg38)
+            # Never set anywhere, and nothing reads it: ZaroPGx performs no liftover, and
+            # app/api/utils/liftover.py has no callers. Kept only so consumers that read
+            # the key keep seeing False.
+            "needs_liftover": False,
             "needs_conversion": False,
             "needs_hla": False,
             "needs_pypgx": False,
@@ -536,37 +546,41 @@ class FileProcessor:
         if gatk_enabled is None:
             gatk_enabled = str_to_bool(os.environ.get("GATK_ENABLED"))
 
-        # FASTQ (curated on 2025-09-27)
+        # FASTQ: refused at upload, not analysed.
+        #
+        # ZaroPGx ships no aligner. Raw reads have to be aligned before any downstream
+        # step can touch them, and the only route to a BAM in this stack is gatk-api's
+        # /align-fastq, which answers HTTP 501 (docker/gatk-api/gatk_api.py). Since
+        # pipelines/pgx/main.nf's curls carry --fail-with-body, that 501 kills the run.
+        # So the fastq branch in main.nf exists but cannot complete: accepting a FASTQ
+        # could only ever buy the user a job that dies minutes later. None of the
+        # needs_* flags are set, because there is no workflow to plan.
+        #
+        # Also note process_files() analyses files[0] only. Even if alignment existed,
+        # a paired-read upload would carry one mate, so "upload both mates" was never
+        # true either; the copy below says single- and paired-end alike are refused.
         if analysis.file_type == FileType.FASTQ:
-            workflow["needs_hla"] = True
-            workflow["needs_alignment"] = True
-            workflow["needs_gatk"] = True
-            workflow["needs_pypgx"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
-                "FASTQ datafiles are an ideal starting point, however, ZaroPGx does not support this workflow yet."
-                "Once support reaches completion, paired-read FASTQ datafiles can be uploaded as inputs."
-                "Support for single FASTQ datafile as input is being reviewed."
-            )
-            # Detailed FASTQ alignment recommendations based on read type and hardware resources
-            workflow["recommendations"].append(
-                "<p>Step 1: HLA typing using OptiType. ZaroHLA is the tool which provides OptiType.</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>Step 2: Alignment to GRCh38 (hg38) reference genome, based on read type: "
-                "If Long-read: Use minimap2 for alignment. "
-                "If Short-read: Use bwa-mem2 (requires copious memory, please ensure ≥64GB RAM available), or BWA (Burrows-Wheeler Aligner). "
-                "These tools are not yet implemented. (TO DO)</p>"
+                "ZaroPGx cannot analyse FASTQ files. It ships no aligner, so raw reads "
+                "cannot be turned into the aligned data every later step needs, and a "
+                "FASTQ job would fail partway through instead of producing a report. "
+                "This applies to paired-end reads too. Align your reads to GRCh38/hg38 "
+                "yourself and upload the resulting BAM, CRAM or SAM file, or upload a "
+                "GRCh38/hg38 VCF."
             )
             workflow["recommendations"].append(
-                "<p>Step 3: PyPGx star allele calling</p>"
+                "<p>Align the reads to GRCh38/hg38 yourself, then upload the aligned file:</p>"
             )
             workflow["recommendations"].append(
-                "<p>Step 3: Convert aligned BAM to VCF using PyPGx create-input-vcf</p>"
+                "<p>• Short reads: bwa-mem2 (please ensure ≥64GB RAM available), or BWA (Burrows-Wheeler Aligner)</p>"
             )
-
+            workflow["recommendations"].append("<p>• Long reads: minimap2</p>")
             workflow["recommendations"].append(
-                "<p>Consider using nf-core pipelines for comprehensive FASTQ processing.</p>"
+                "<p>• Or run an established end-to-end pipeline such as nf-core/sarek and upload its BAM, CRAM or VCF output.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>ZaroPGx accepts BAM, CRAM and SAM directly; a GRCh38/hg38 VCF is the fastest input of all.</p>"
             )
 
         # CRAM -> to be converted to BAM (lossy)
@@ -662,7 +676,7 @@ class FileProcessor:
                 "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
             )
             workflow["warnings"].append(
-                "<p>If you have an upstream, or original, datafile, such as FASTQ/BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
+                "<p>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity. (Raw FASTQ reads are not accepted: align them to GRCh38/hg38 yourself first.)</p>"
             )
             workflow["warnings"].append(
                 "<p>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
@@ -767,20 +781,28 @@ class FileProcessor:
                     "<p>Note: Although an existing index file can be uploaded along with the main VCF file, at the moment, its functionality is not yet supported. (TO DO)</p>"
                 )
 
-        # 23andMe files need conversion
+        # 23andMe: refused at upload, not analysed.
+        #
+        # `is_provisional` used to be set here alongside `unsupported`, which read as
+        # "analysed anyway, provisionally" -- the meaning it genuinely carries for a
+        # GRCh37 VCF -- and waved 23andMe past the upload refusal gate. Nothing here is
+        # provisional: no converter exists, and pipelines/pgx/main.nf has no `23andme`
+        # branch, so the run hit `error "Unsupported input type"` and the job failed.
+        # The flag was aspirational, describing an intent rather than a behaviour.
         elif analysis.file_type == FileType.TWENTYTHREE_AND_ME:
             workflow["needs_conversion"] = True
-            workflow["is_provisional"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
-                "23andMe data format requires conversion to VCF before analysis. "
-                "This functionality is not yet implemented."
+                "ZaroPGx cannot analyse 23andMe genotyping files. They must be "
+                "converted to VCF first, and that conversion is not implemented yet, so "
+                "there is nothing ZaroPGx can run on this file. Upload a GRCh38/hg38 VCF "
+                "from sequencing, or a BAM, CRAM or SAM file, instead."
             )
             workflow["recommendations"].append(
                 "<p>23andMe format conversion needed - create schema reference and translation</p>"
             )
             workflow["warnings"].append(
-                "<p>23andMe data has limited variant coverage compared to clinical sequencing. Results will be provisional and may miss important variants.</p>"
+                "<p>⚠️ Even once conversion exists, 23andMe data has limited variant coverage compared to clinical sequencing: results would be provisional and may miss important variants.</p>"
             )
 
         # FASTA - reference genome files
@@ -874,7 +896,10 @@ class FileProcessor:
                 "<p>Priority 1 (Development): VCF, GRCh37/hg19, NGS-derived.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 2 (Development): BAM, CRAM, SAM, FASTQ, BCF, all NGS-derived.</p>"
+                "<p>Priority 2 (Development): BAM, CRAM, SAM, BCF, all NGS-derived.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Not accepted: FASTQ. ZaroPGx ships no aligner — align the reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Priority 3 (Research): Other sequencing and genotyping formats.</p>"
@@ -920,10 +945,29 @@ class FileProcessor:
             if not files:
                 return {"success": False, "error": "No files provided"}
 
-            # For now, process only the first file (primary file)
+            # Only one file is analysed.
             # TODO: Support multiple files in the future
             # 2 files can now be uploaded, but the use of the index file needs work.
-            primary_file = files[0]
+            #
+            # It is the first file that is not an index, rather than files[0]: a browser
+            # FileList is commonly alphabetical, so selecting sample.bam + sample.bai put
+            # the .bai first and the whole upload was refused as "Unrecognized file
+            # format: unknown" without ever mentioning the BAM sitting behind it.
+            data_files = [
+                f
+                for f in files
+                if not str(f.filename or "").lower().endswith(INDEX_FILE_SUFFIXES)
+            ]
+            primary_file = data_files[0] if data_files else files[0]
+
+            # Every other data file is dropped on the floor, which for a second *data*
+            # file is a silent wrong answer: a paired-read upload used to be analysed as
+            # one mate, and two VCFs as whichever arrived first, with nothing said.
+            # Collect the names now and warn below. They are HTML-escaped there, because
+            # the workflow panel renders warnings with innerHTML.
+            ignored_files = [
+                str(f.filename or "") for f in data_files if f is not primary_file
+            ]
 
             # Save the uploaded file to temporary location
             self.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -952,6 +996,26 @@ class FileProcessor:
                 workflow = result["workflow"]
                 workflow["reference"] = reference_genome
                 workflow["workflow_type"] = "genomic_analysis"
+
+                if ignored_files:
+                    # html.escape, not safe_upload_basename: the point of this warning is
+                    # to name the file the user actually chose, and sanitising would show
+                    # them a name they never typed ("my file (2).bam" -> "my_file_2.bam").
+                    # Escaping is what keeps it inert -- the panel assigns warnings with
+                    # innerHTML -- and these strings are only ever rendered as HTML.
+                    analysed = html.escape(str(primary_file.filename or "your file"))
+                    ignored = [html.escape(name) for name in ignored_files]
+                    was_were = "was" if len(ignored) == 1 else "were"
+                    logger.warning(
+                        "Analysing %s only; ignored %s",
+                        primary_file.filename,
+                        ", ".join(ignored_files),
+                    )
+                    workflow["warnings"].append(
+                        f"<p>⚠️ ZaroPGx analyses one data file per job. Only {analysed} "
+                        f"was analysed; {', '.join(ignored)} {was_were} ignored. "
+                        "Upload each data file as its own analysis.</p>"
+                    )
 
                 # Add service configurations - explicitly set both enabled and disabled states
                 workflow["optitype_enabled"] = bool(

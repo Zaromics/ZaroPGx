@@ -101,7 +101,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 # Wall-clock ceiling for the Nextflow poll loop, in seconds. Generous on purpose: a WGS
-# FASTQ run walks ZaroHLA -> GATK -> PyPGx -> PharmCAT and can legitimately take most of a
+# BAM run walks ZaroHLA -> GATK -> PyPGx -> PharmCAT and can legitimately take most of a
 # day, so this is a stuck-job backstop, not a service-level objective.
 DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS = 86400  # 24 hours
 
@@ -142,10 +142,15 @@ def _nextflow_max_wait_seconds() -> float:
     return seconds
 
 
-# Input types pipelines/pgx/main.nf has a branch for. Anything else reaches its
-# `error "Unsupported input type: ${params.input_type}"` and the run dies at workflow
-# definition, so submitting one can only ever produce a failed job.
-NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam", "fastq"})
+# Input types pipelines/pgx/main.nf can carry from upload to report. Anything else
+# reaches its `error "Unsupported input type: ${params.input_type}"` and the run dies at
+# workflow definition, so submitting one can only ever produce a failed job.
+#
+# `fastq` is deliberately absent even though main.nf *has* a fastq branch: that branch's
+# first step POSTs to gatk-api's /align-fastq, which answers HTTP 501 because the image
+# ships no aligner, and main.nf's curls use --fail-with-body, so the 501 kills the run.
+# A branch existing is not the same as the branch working.
+NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam"})
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
@@ -156,23 +161,51 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     then analysed on its original coordinates, saying so via ``is_provisional``, which is
     this codebase's own flag for "we did analyse it, provisionally".
 
-    What genuinely cannot work is an input that is flagged unsupported, is *not* marked
-    provisional, and that the pipeline has no branch for: FASTA, BED and unrecognised
-    formats. Those used to be accepted, queued, and then failed minutes later with a
-    Nextflow error the user could do nothing with. FASTQ is deliberately not caught here:
-    it is flagged unsupported but main.nf does have a fastq branch, so whether to refuse
-    it is a product decision rather than a correctness fix.
+    What genuinely cannot work is an input that is flagged unsupported and that the
+    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED and unrecognised formats. Those
+    used to be accepted, queued, and then failed minutes later with a Nextflow or
+    gatk-api error the user could do nothing with.
+
+    This gate is not a complete guard, and cannot be one: it only ever sees inputs
+    FileProcessor chose to flag. ``gvcf`` and ``bcf`` are not flagged — ``determine_workflow``
+    gives them an ordinary ``needs_pypgx`` workflow — yet main.nf has no branch for
+    either, so they are still accepted and still die at ``error "Unsupported input
+    type"``. Fixing that is a product decision (refuse them, or convert BCF to VCF and
+    map gVCF onto the vcf branch), not a rewording of this function.
+
+    ``is_provisional`` only exempts a *runnable* input type, and that ordering is the
+    point rather than belt-and-braces. The flag is set by hand next to a reason string,
+    so it can be — and was, for 23andMe — written aspirationally: "we intend to convert
+    this one day" rather than "we analysed this". Only the pipeline's own repertoire says
+    whether a provisional analysis is a thing that can happen at all, so it is consulted
+    first, and a mis-set flag can no longer wave an input past the gate.
     """
     if not workflow.get("unsupported"):
         return None
-    if workflow.get("is_provisional"):
-        return None
     file_type = str(workflow.get("file_type") or "unknown").lower()
-    if file_type in NEXTFLOW_INPUT_TYPES:
+    if file_type in NEXTFLOW_INPUT_TYPES and workflow.get("is_provisional"):
         return None
     return workflow.get("unsupported_reason") or (
         f"Files of type '{file_type}' cannot be analysed."
     )
+
+
+def _discard_refused_upload(file_paths: Optional[List[str]]) -> None:
+    """Delete the bytes of an upload we are about to refuse. Never raises.
+
+    A refusal is not a failure to clean up after: the file is unreferenced the moment
+    the 400 is raised, no patient or job row names it, and app/services/cleanup_service
+    only sweeps ``/data/uploads/{patient_id}``. Best effort by design — a file that
+    cannot be removed must not turn a clean 400 into a 500.
+    """
+    for path in file_paths or []:
+        try:
+            os.unlink(path)
+            logger.info("Removed refused upload: %s", path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Could not remove refused upload %s: %s", path, exc)
 
 
 # --- Boundary validation for values that reach the Nextflow pipeline's shell ---
@@ -1360,19 +1393,23 @@ async def upload_genomic_data(
     """
     Upload genomic data files for pharmacogenomic analysis.
 
-    This endpoint handles the upload of genomic data files (VCF, BAM, CRAM, SAM, FASTQ)
+    This endpoint handles the upload of genomic data files (VCF, BAM, CRAM, SAM)
     and initiates the Nextflow-based processing pipeline.
 
     Supported file types:
     - VCF: Direct processing through PyPGx and PharmCAT. There is no liftover step: a GRCh37/hg19 VCF is flagged unsupported and still processed on its original coordinates, so convert it to GRCh38/hg38 first.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
-    - FASTQ: Processed by ZaroHLA, then GATK, then PyPGx and PharmCAT
-    - 23andMe: Not yet supported, requires conversion to VCF (future implementation)
-    - FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no branch for
-      them, so accepting one could only ever produce a failed job.
+    - FASTQ: rejected with 400. ZaroPGx ships no aligner, so raw reads cannot reach a BAM
+      (gatk-api's /align-fastq answers 501); align them yourself and upload the BAM/CRAM/SAM.
+    - 23andMe/FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no
+      working branch for them, so accepting one could only ever produce a failed job.
+      (23andMe would need a VCF converter first; that is not implemented.)
+    - GVCF/BCF: accepted today, but main.nf has no branch for either, so the job fails
+      at workflow definition. Known gap, not yet decided either way.
 
-    The system automatically detects and uses index files (.bai, .crai, .csi, .tbi, .idx) when provided.
-    Currently only hg38/GRCh38 reference genome is fully supported.
+    Only the first uploaded data file is analysed; any further data file is reported as
+    ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be
+    uploaded alongside it. Currently only hg38/GRCh38 reference genome is fully supported.
     """
     try:
         # Reject shell-metacharacter payloads at the boundary, before any value can be
@@ -1410,6 +1447,11 @@ async def upload_genomic_data(
                 result["workflow"].get("file_type"),
                 unanalysable,
             )
+            # process_files() saves before it analyses, so the bytes are already on disk.
+            # Nothing will ever collect them: the cleanup service sweeps
+            # /data/uploads/{patient_id}, and a refusal mints no patient. Left alone, a
+            # refused 200GB FASTQ sits in the upload directory forever.
+            _discard_refused_upload(result.get("file_paths"))
             raise HTTPException(status_code=400, detail=unanalysable)
 
         eff_absent, eff_unspec = resolve_assume_ref_flags(
@@ -1717,11 +1759,17 @@ async def inspect_file_header(
             header_info = inspect_header(temp_file.name)
 
             # Derive workflow analysis using the same backend logic (no Nextflow)
+            # `refused` is the same verdict /upload/genomic-data would reach, so the
+            # preview cannot promise a workflow the upload would then refuse. It is not
+            # `unsupported`: a GRCh37 VCF is unsupported *and* analysed, and its plan must
+            # still be drawn. Only the gate can tell those apart, so the gate is asked.
             compat_workflow = {
                 "recommendations": [],
                 "warnings": [],
                 "unsupported": False,
                 "unsupported_reason": None,
+                "refused": False,
+                "refusal_reason": None,
             }
             try:
                 workflow_result = await file_processor.process_upload(
@@ -1729,11 +1777,14 @@ async def inspect_file_header(
                 )
                 if workflow_result.get("status") == "success":
                     wf = workflow_result.get("workflow", {})
+                    refusal = _unanalysable_upload_reason(wf)
                     compat_workflow = {
                         "recommendations": wf.get("recommendations", []),
                         "warnings": wf.get("warnings", []),
                         "unsupported": wf.get("unsupported", False),
                         "unsupported_reason": wf.get("unsupported_reason"),
+                        "refused": refusal is not None,
+                        "refusal_reason": refusal,
                     }
             except Exception as e:
                 logger.debug(f"Header inspect workflow derivation failed: {e}")

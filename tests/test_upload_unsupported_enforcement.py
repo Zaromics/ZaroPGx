@@ -6,22 +6,23 @@ anywhere, so the product told the user "Unsupported: <reason>" and analysed the 
 anyway. What the user then saw depended on the category:
 
 ===============  ==============  =========================================================
-category         is_provisional  what happens today
+category         is_provisional  what happens
 ===============  ==============  =========================================================
-FASTQ            no              pipelines/pgx/main.nf has a real ``fastq`` branch
 GRCh37 VCF       **yes**         analysed on its original coordinates, on purpose
-23andMe          **yes**         needs_conversion, but no conversion step exists
+FASTQ            no              main.nf has a ``fastq`` branch, but its first step POSTs
+                                 to gatk-api ``/align-fastq``, which answers HTTP 501 (no
+                                 aligner in the image) -> job FAILED. Refused up front.
+23andMe          no              needs_conversion, but no conversion step and no main.nf
+                                 branch exist -> job FAILED. Refused up front.
 FASTA            no              main.nf: ``error "Unsupported input type"`` -> job FAILED
 BED              no              same
 unrecognised     no              same
 ===============  ==============  =========================================================
 
-Only the last three are unambiguous: flagged unsupported, *not* marked provisional, and
-with no branch in the pipeline that could produce a result. Those are refused up front —
-minutes of queueing replaced by an immediate 400 carrying the reason the file processor
-already wrote. The first three are deliberately left running: ``is_provisional`` is this
-codebase's own flag for "analysed anyway, provisionally", and FASTQ has an implemented
-pipeline path, so whether to refuse them is a product decision, not a bug fix.
+Everything but the GRCh37 VCF is refused up front — minutes of queueing replaced by an
+immediate 400 carrying the reason the file processor already wrote. Only the GRCh37 VCF
+runs, because ``is_provisional`` is this codebase's own flag for "analysed anyway,
+provisionally" and the pipeline really does carry a VCF end to end.
 """
 
 import uuid
@@ -157,27 +158,34 @@ def test_provisional_inputs_are_still_analysed(upload):
     assert resp.status_code == 200, resp.text
 
 
-def test_23andme_is_left_alone(upload):
-    """Also flagged provisional; refusing it is a product call, not this fix."""
+@pytest.mark.parametrize("provisional", [False, True])
+def test_23andme_is_refused(upload, provisional):
+    """No converter and no main.nf branch: the job could only ever fail.
+
+    Parametrised over ``is_provisional`` on purpose. FileProcessor used to set it here
+    — that is what let 23andMe past the gate — and it is set by hand next to a reason
+    string, so it records intent as readily as behaviour. Refusing only in the
+    ``False`` case would be a test that passes with the fix reverted.
+    """
+    reason = "ZaroPGx cannot analyse 23andMe genotyping files."
     resp = upload(
         "23andme",
         unsupported=True,
-        unsupported_reason="23andMe data format requires conversion to VCF.",
-        is_provisional=True,
+        unsupported_reason=reason,
+        is_provisional=provisional,
     )
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 400, resp.text
+    assert reason in resp.json()["detail"]
 
 
-def test_fastq_is_left_alone(upload):
-    """Flagged unsupported and not provisional, but main.nf has a real fastq branch."""
-    resp = upload(
-        "fastq",
-        unsupported=True,
-        unsupported_reason="ZaroPGx does not support this workflow yet.",
-    )
+def test_fastq_is_refused(upload):
+    """main.nf's fastq branch dies on gatk-api's 501, so the job can only ever fail."""
+    reason = "ZaroPGx cannot analyse FASTQ files."
+    resp = upload("fastq", unsupported=True, unsupported_reason=reason)
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 400, resp.text
+    assert reason in resp.json()["detail"]
 
 
 def test_supported_uploads_are_unaffected(upload):
