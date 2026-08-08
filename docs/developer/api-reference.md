@@ -477,6 +477,152 @@ of any run. Registered unconditionally at `main.py:316`.
 field that must be true for the step to be minted. An unknown `workflow_type`
 returns 404 with `detail: "Unknown workflow_type"`.
 
+### PharmCAT Endpoints
+
+Mounted at `/api/pharmcat` (`pharmcat_router.py:27`, included unconditionally at
+`main.py:318`). These read the parsed PharmCAT results held in the database.
+
+A **run** is one PharmCAT execution, identified by `run_id`. `run_id` is not a
+`job_id`; use the `/workflow/{workflow_id}/…` routes to reach a run from the
+pipeline side. Those two routes still take the historical `workflow_id` path
+name, and the value they expect is the job id.
+
+| Endpoint | Method | Response | Source |
+| --- | --- | --- | --- |
+| `/api/pharmcat/load` | POST | `PharmCATLoadResponse` | `pharmcat_router.py:113` |
+| `/api/pharmcat/workflow/{workflow_id}/summary` | GET | `PharmCATSummary` | `:161` |
+| `/api/pharmcat/workflow/{workflow_id}/data` | GET | full parsed payload | `:194` |
+| `/api/pharmcat/summary/{run_id}` | GET | `PharmCATSummary` | `:220` |
+| `/api/pharmcat/genes/{run_id}` | GET | `GeneSummary[]` | `:254` |
+| `/api/pharmcat/diplotypes/{run_id}` | GET | `DiplotypeInfo[]` | `:271` |
+| `/api/pharmcat/drugs/{run_id}` | GET | `DrugInfo[]` | `:294` |
+| `/api/pharmcat/messages/{run_id}` | GET | `MessageInfo[]` | `:315` |
+| `/api/pharmcat/actionable/{run_id}` | GET | `ActionableFinding[]` | `:336` |
+| `/api/pharmcat/runs` | GET | run list | `:356` |
+| `/api/pharmcat/runs/{run_id}` | DELETE | deletion result | `:391` |
+| `/api/pharmcat/health` | GET | liveness | `:427` |
+
+All the list-returning routes return **bare JSON arrays**, not wrapped objects.
+
+**Query parameters:**
+- `/diplotypes/{run_id}` and `/messages/{run_id}`: optional `gene_symbol` filter
+- `/drugs/{run_id}`: **required** `gene_symbol` — the route lists the drugs
+  associated with one gene, not every drug in the run
+- `/runs`: `limit` (default 10, 1–100) and `offset` (default 0)
+
+#### Load a PharmCAT File
+
+**Endpoint:** `POST /api/pharmcat/load`
+
+`multipart/form-data` with a single `file` field holding a PharmCAT JSON report.
+Parses it into the database and returns the new `run_id`.
+
+```json
+{
+  "run_id": "…",
+  "message": "…",
+  "total_genes": 23,
+  "total_diplotypes": 23,
+  "actionable_findings": 4,
+  "warning_messages": 2
+}
+```
+
+#### PharmCAT Summary
+
+**Endpoint:** `GET /api/pharmcat/summary/{run_id}` (or
+`/api/pharmcat/workflow/{workflow_id}/summary`)
+
+**Response** (`PharmCATSummary`):
+```json
+{
+  "run_id": "…",
+  "total_genes": 23,
+  "total_diplotypes": 23,
+  "actionable_findings": 4,
+  "total_messages": 2,
+  "genes": [
+    {
+      "gene_symbol": "CYP2C19",
+      "call_source": "MATCHER",
+      "phenotype_source": "CPIC",
+      "chromosome": "chr10",
+      "phased": false
+    }
+  ],
+  "actionable_findings_list": [
+    {
+      "gene_symbol": "CYP2C19",
+      "diplotype_label": "*1/*17",
+      "phenotype": "Rapid Metabolizer",
+      "activity_score": null,
+      "allele1_name": "*1",
+      "allele2_name": "*17"
+    }
+  ],
+  "warning_messages": [
+    {
+      "gene_symbol": "CYP2D6",
+      "rule_name": "…",
+      "exception_type": "…",
+      "message": "…"
+    }
+  ]
+}
+```
+
+#### Diplotypes
+
+**Endpoint:** `GET /api/pharmcat/diplotypes/{run_id}?gene_symbol=CYP2C19`
+
+```json
+[
+  {
+    "gene_symbol": "CYP2C19",
+    "diplotype_label": "*1/*17",
+    "allele1_name": "*1",
+    "allele1_function": "Normal function",
+    "allele2_name": "*17",
+    "allele2_function": "Increased function",
+    "activity_score": null,
+    "phenotype": "Rapid Metabolizer"
+  }
+]
+```
+
+Every field except `gene_symbol` is nullable.
+
+#### List and Delete Runs
+
+**Endpoint:** `GET /api/pharmcat/runs?limit=10&offset=0`
+
+```json
+[
+  {
+    "run_id": "…",
+    "run_timestamp": "2026-08-08T10:20:00Z",
+    "pharmcat_version": "3.4.0",
+    "data_version": "…",
+    "loaded_at": "2026-08-08T10:21:00Z"
+  }
+]
+```
+
+`DELETE /api/pharmcat/runs/{run_id}` permanently removes a run and everything
+parsed from it.
+
+#### PharmCAT API Health
+
+**Endpoint:** `GET /api/pharmcat/health`
+
+```json
+{"status": "healthy", "service": "pharmcat-api", "version": "0.2.8"}
+```
+
+This reports the ZaroPGx router, not the PharmCAT container. It performs no
+check and cannot fail; the container's own health is reported by
+`GET /services-status` under the `pharmcat` key.
+
 ### FHIR Export Endpoints
 
 Mounted at `/fhir` (`fhir_export_router.py:27`). **Conditionally registered**:
