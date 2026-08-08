@@ -1773,23 +1773,28 @@ async def align_fastq(
     `success: true` (BACKLOG 0 / 51 / 112 / 113). Implementing alignment for real is
     tracked as BACKLOG 3 / 112.
 
-    FASTQ uploads DO reach this route. app/api/utils/file_processor.py sets
-    workflow["unsupported"] = True for FileType.FASTQ, but that flag is advisory:
-    app/api/routes/upload_router.py only copies it into the response and the job
-    metadata, and no guard anywhere skips the Nextflow submission. So a user who
-    uploads a FASTQ gets a job that runs, reaches pipelines/pgx/main.nf's FastqToBAM
-    process, and fails here. Refusing is still right -- the alternative is a
-    fabricated BAM -- but it is a refusal on a live path, not a formality behind a
-    closed door.
+    No ZaroPGx upload reaches this route. app/api/utils/file_processor.py sets
+    workflow["unsupported"] = True for FileType.FASTQ, and app/api/routes/upload_router.py
+    now acts on it: `_unanalysable_upload_reason` turns that verdict into a 400 before a
+    patient or job row exists, and that gate sits ahead of the only place the app submits
+    to Nextflow. So the app can no longer mint a run with `--input_type fastq`.
 
-    Because the failure is real and user-visible, a JobClient step is opened and
-    failed with the reason, so the operator sees why the job stopped instead of a
-    bare "exit status (1)" from Nextflow.
+    The 501 is kept as defence in depth, not as a formality behind a closed door.
+    gatk-api is its own service on the compose network, so anything that can reach
+    http://gatk-api:5000 can POST here: pipelines/pgx/main.nf still has a fastq branch
+    whose FastqToBAM process calls this route, so a hand-run `nextflow run
+    --input_type fastq` arrives here directly, and so would a regression in the upload
+    gate. Refusing is still right -- the alternative is a fabricated BAM.
+
+    Because a caller that gets here is mid-run, a JobClient step is opened and failed
+    with the reason, so the operator sees why the job stopped instead of a bare
+    "exit status (1)" from Nextflow.
     """
     detail = (
         "FASTQ alignment is not implemented: this service ships no aligner. "
-        "ZaroPGx accepts FASTQ at upload but cannot process it end to end. Align "
-        "the reads outside ZaroPGx and upload the resulting BAM, CRAM or VCF."
+        "ZaroPGx refuses FASTQ at upload with a 400, so reaching this route means "
+        "the pipeline was invoked outside the app. Align the reads outside ZaroPGx "
+        "and upload the resulting BAM, CRAM or VCF."
     )
     logger.warning(
         f"Refused /align-fastq for {file.filename}: FASTQ alignment is not implemented"

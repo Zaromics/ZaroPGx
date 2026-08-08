@@ -274,6 +274,10 @@ def test_align_fastq_returns_501(client):
     detail = resp.json()["detail"].lower()
     assert "not implemented" in detail
     assert "fastq" in detail
+    # The detail lands in the job log, so it must not contradict the upload gate:
+    # upload_router._unanalysable_upload_reason refuses FASTQ with a 400 before a job
+    # exists. It used to read "ZaroPGx accepts FASTQ at upload".
+    assert "accepts fastq" not in detail
 
 
 def test_align_fastq_leaves_no_bam_behind(client, gatk_api, reference_fasta):
@@ -289,23 +293,27 @@ def test_align_fastq_leaves_no_bam_behind(client, gatk_api, reference_fasta):
     assert _bam_files(gatk_api) == before
 
 
-def test_align_fastq_docstring_does_not_claim_ingest_blocks_fastq(gatk_api):
-    """The `unsupported` flag at ingest is advisory, and the docstring must say so.
+def test_align_fastq_docstring_matches_the_upload_gate(gatk_api):
+    """The docstring must describe the refusal that actually exists now.
 
-    app/api/utils/file_processor.py sets workflow["unsupported"] = True for FASTQ, but
-    app/api/routes/upload_router.py only copies that into the response and the job
-    metadata -- no guard skips the Nextflow submission. FASTQ uploads really do reach
-    this route, so a docstring claiming otherwise would be a comfortable falsehood.
+    app/api/routes/upload_router.py's `_unanalysable_upload_reason` refuses FileType.FASTQ
+    with a 400 before a patient or job row exists, ahead of the only Nextflow submission
+    the app makes. The docstring used to say the opposite -- that the ingest flag was
+    merely advisory and FASTQ uploads "do reach this route" -- which was true before the
+    gate landed and is a comfortable falsehood now.
+
+    The route still 501s on purpose: gatk-api is reachable on the compose network and
+    main.nf's fastq branch still calls it, so the docstring must say why it is kept.
     """
     doc = (gatk_api.align_fastq.__doc__ or "").lower()
     assert "501" in doc
-    assert "advisory" in doc
-    assert "do reach this route" in doc
-    for false_claim in (
-        "no supported upload path reaches this route",
-        "already rejected as unsupported at ingest",
+    assert "defence in depth" in doc
+    assert "400" in doc
+    for stale_claim in (
+        "fastq uploads do reach this route",
+        "that flag is advisory",
     ):
-        assert false_claim not in doc
+        assert stale_claim not in doc
 
 
 def test_align_fastq_records_the_reason_on_the_job(gatk_api, client, monkeypatch):
