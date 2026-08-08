@@ -222,4 +222,13 @@ def test_interactive_generator_renders_nothing_when_the_run_left_no_json(tmp_pat
 
     html = output_path.read_text(encoding="utf-8")
     assert _provenance_text(html) is None
-    assert "None" not in re.findall(r'class="run-provenance".{0,400}', html, re.S)
+    # The paragraph itself, not the always-present .run-provenance CSS rule.
+    assert '<p class="run-provenance">' not in html
+    # The failure mode a bare `{{ genome_build }}` would produce: Jinja renders a
+    # None straight through as the literal string "None".
+    for stem in (
+        "reference assembly",
+        "Named Allele Matcher",
+        "guideline data version",
+    ):
+        assert stem not in html, f"a provenance sentence leaked without a value: {stem}"

@@ -701,7 +701,7 @@ class WeasyPrintGenerator(PDFGenerator):
                 # time -- so a bare Environment does not render a report without
                 # the score, it raises TemplateAssertionError out of get_template()
                 # below and this whole generator fails. Both other renderers of
-                # this template register it (generator.py:501, :2409).
+                # this template register it (generator.py:520, :2458).
                 env.filters["activity_score_num"] = activity_score_num
 
                 # Use the PDF template (report_template.html) for proper PDF generation

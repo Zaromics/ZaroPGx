@@ -133,9 +133,20 @@ def test_a_session_that_preloaded_the_job_would_go_stale(sessions):
     _stamp_upload_metadata(sessions(), job_id)
 
     assert _read_like_generate_report(long_lived, job_id) == [], (
-        "a pre-loaded session now sees the write -- expire_on_commit or the "
-        "session shape changed, and generator.py's read needs re-auditing"
+        "a pre-loaded session now sees another session's write on a plain query -- "
+        "SQLAlchemy's identity-map behaviour changed, and generator.py's read "
+        "needs re-auditing"
     )
+
+    # The second half of the property, and the one the safety argument actually
+    # names: expire_on_commit=False. Committing the *reader* does not expire its
+    # own instances, so even a session that commits between reads stays stale.
+    long_lived.commit()
+    assert _read_like_generate_report(long_lived, job_id) == [], (
+        "the reader's own commit expired its instances -- expire_on_commit is no "
+        "longer False, which is a load-bearing assumption of this whole audit"
+    )
+
     # And the same session with populate_existing() would see it, which is the
     # fix that becomes necessary the day a caller passes such a session.
     refreshed = (
@@ -147,12 +158,13 @@ def test_a_session_that_preloaded_the_job_would_go_stale(sessions):
     assert refreshed.job_metadata["workflow"]["warnings"] == [GRCH37_ALERT]
 
 
-def test_generate_report_has_exactly_one_db_session_caller(sessions):
-    """The precondition above rests on the caller set; pin it at runtime.
+def test_db_session_stays_optional_with_no_shared_default():
+    """A narrow guard, named for what it actually checks.
 
-    ``generate_report``'s ``db_session`` parameter is optional and public, so the
-    safety argument is only as good as the list of callers. Signature-level check
-    so a new keyword-passing caller shows up in review rather than in a report.
+    It does not enumerate callers -- nothing in-process can. It pins the one
+    signature-level way the freshness argument could be voided wholesale: a
+    module-level session becoming the parameter's default, which would hand every
+    report the *same* long-lived identity map.
     """
     import inspect
 

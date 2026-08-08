@@ -20,11 +20,16 @@ lane agrees:
 * ``interactive_report.html`` ``data-activity-score`` payload
 * ``pdf_generators._diplotype_line`` (the ReportLab fallback PDF)
 
-Every assertion is on rendered output, never on template source.
+and that the two *upstream* assembly steps in ``generator.py`` do not blank the
+score before any template can see it -- fixing only the render lanes would leave
+the PyPGx paths still handing them ``None``.
+
+Every rendering assertion is on rendered output, never on template source.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from decimal import Decimal
 
@@ -71,10 +76,22 @@ def _gene_row(html, gene):
     return None
 
 
+def _activity_column_index(html):
+    """Locate the Activity Score column by its header, not by position."""
+    thead = re.search(r"<thead>\s*<tr>(.*?)</tr>\s*</thead>", html, re.S | re.I)
+    assert thead, "no gene table <thead> in rendered output"
+    headers = [
+        re.sub(r"<[^>]+>", "", h).strip()
+        for h in re.findall(r"<th[^>]*>(.*?)</th>", thead.group(1), re.S | re.I)
+    ]
+    assert "Activity Score" in headers, headers
+    return headers.index("Activity Score")
+
+
 def _activity_cell(html, gene):
     cells = _gene_row(html, gene)
     assert cells is not None, f"no 7-column gene row for {gene} in rendered output"
-    return cells[3]  # Gene, Diplotype, Phenotype, Activity Score, ...
+    return cells[_activity_column_index(html)]
 
 
 def _diplotype(score):
@@ -162,6 +179,155 @@ def test_absent_score_serialises_empty_not_none():
     html = _render("interactive_report.html", [_diplotype(None)])
     match = re.search(r'data-activity-score="([^"]*)"', html)
     assert match and match.group(1) == ""
+
+
+# ---------------------------------------------------------------------------
+# Upstream: the two PyPGx assembly steps inside generate_report
+#
+# Fixing only the render lanes would have been cosmetic for these paths -- the
+# score was already None by the time any template ran.
+# ---------------------------------------------------------------------------
+
+
+def _run_generate_report(monkeypatch, tmp_path, data, genes=None):
+    """Drive generate_report with every artifact writer off; return processed genes."""
+    import app.reports.generator as generator_module
+
+    for key in (
+        "write_pdf",
+        "write_html",
+        "write_interactive_html",
+        "write_json",
+        "write_tsv",
+        "write_workflow_svg",
+        "write_workflow_png",
+        "show_pharmcat_html_report",
+        "show_pharmcat_json_report",
+        "show_pharmcat_tsv_report",
+    ):
+        monkeypatch.setitem(generator_module.REPORT_CONFIG, key, False)
+
+    payload = {"genes": genes or [], "drugRecommendations": []}
+    payload.update(data)
+    result = generator_module.generate_report(
+        {"data": payload}, str(tmp_path), {"id": "p1"}, job_id=None
+    )
+    return {
+        g["gene"]: g
+        for g in result["processed_data"]["genes"]
+        if isinstance(g, dict) and g.get("gene")
+    }
+
+
+def test_pypgx_only_gene_keeps_an_activity_score_of_zero(monkeypatch, tmp_path):
+    """``details.get("a") or details.get("b")`` turned a PyPGx 0 into None."""
+    (tmp_path / "s_pypgx_results.json").write_text(
+        json.dumps(
+            {
+                "results": {
+                    "CYP2D6": {
+                        "success": True,
+                        "diplotype": "*4/*4",
+                        "details": {
+                            "phenotype": "Poor Metabolizer",
+                            "activity_score": 0.0,
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    genes = _run_generate_report(monkeypatch, tmp_path, {})
+    assert genes["CYP2D6"]["activity_score"] == 0.0, (
+        "the PyPGx merge blanked a Poor Metabolizer's activity score of 0 before "
+        "any template could render it"
+    )
+
+
+def test_pypgx_only_gene_still_falls_back_to_the_camelcase_key(monkeypatch, tmp_path):
+    """The `or` also served as a key fallback; that must survive the fix."""
+    (tmp_path / "s_pypgx_results.json").write_text(
+        json.dumps(
+            {
+                "results": {
+                    "CYP2C19": {
+                        "success": True,
+                        "diplotype": "*1/*1",
+                        "details": {"activityScore": 2.0},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    genes = _run_generate_report(monkeypatch, tmp_path, {})
+    assert genes["CYP2C19"]["activity_score"] == 2.0
+
+
+def _stage_pipeline_dir(tmp_path, gene):
+    pipeline = tmp_path / "pypgx_run" / f"{gene}-pipeline"
+    pipeline.mkdir(parents=True)
+    return pipeline
+
+
+def test_pipeline_merge_does_not_overwrite_a_stored_zero(monkeypatch, tmp_path):
+    """``not target.get("activity_score")`` read a stored 0 as "missing"."""
+    import app.reports.generator as generator_module
+
+    _stage_pipeline_dir(tmp_path, "CYP2D6")
+    monkeypatch.setattr(
+        generator_module,
+        "parse_gene_pipeline",
+        lambda pdir, gene: {"gene": gene, "activity_score": "2.0", "evidence": {}},
+    )
+
+    genes = _run_generate_report(
+        monkeypatch,
+        tmp_path,
+        {},
+        genes=[
+            {
+                "gene": "CYP2D6",
+                "diplotype": "*4/*4",
+                "phenotype": "Poor Metabolizer",
+                "activity_score": Decimal("0.0000"),
+            }
+        ],
+    )
+    assert float(genes["CYP2D6"]["activity_score"]) == 0.0, (
+        "a stored activity score of 0 was treated as missing and overwritten by "
+        "the PyPGx pipeline value"
+    )
+
+
+def test_pipeline_merge_still_fills_a_genuinely_missing_score(monkeypatch, tmp_path):
+    """The other half: an absent score must still be filled, including with 0."""
+    import app.reports.generator as generator_module
+
+    _stage_pipeline_dir(tmp_path, "CYP2D6")
+    monkeypatch.setattr(
+        generator_module,
+        "parse_gene_pipeline",
+        lambda pdir, gene: {"gene": gene, "activity_score": "0.0", "evidence": {}},
+    )
+
+    genes = _run_generate_report(
+        monkeypatch,
+        tmp_path,
+        {},
+        genes=[
+            {
+                "gene": "CYP2D6",
+                "diplotype": "*4/*4",
+                "phenotype": "Poor Metabolizer",
+                "activity_score": None,
+            }
+        ],
+    )
+    assert float(genes["CYP2D6"]["activity_score"]) == 0.0
 
 
 # ---------------------------------------------------------------------------

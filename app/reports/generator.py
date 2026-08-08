@@ -2135,9 +2135,13 @@ def generate_report(
                     diplotype = gene_res.get("diplotype")
                     details = gene_res.get("details") or {}
                     phenotype = details.get("phenotype") or details.get("Phenotype")
-                    activity_score = details.get("activity_score") or details.get(
-                        "activityScore"
-                    )
+                    # `a or b` would swallow a PyPGx activity score of 0 -- falsy,
+                    # so it falls through to the alternate key and ends up None,
+                    # blanking the cell before any template sees it. 0 is the Poor
+                    # Metabolizer end of the scale; pick by presence, not truth.
+                    activity_score = details.get("activity_score")
+                    if activity_score is None:
+                        activity_score = details.get("activityScore")
                     gene_entry = {
                         "gene": gene_name,
                         # Align with normalized PharmCAT structure minimally
@@ -2198,8 +2202,17 @@ def generate_report(
                                 target["diplotype"] = parsed["diplotype"]
                             if not target.get("phenotype") and parsed.get("phenotype"):
                                 target["phenotype"] = parsed["phenotype"]
-                            if not target.get("activity_score") and parsed.get(
-                                "activity_score"
+                            # Both halves were truthiness tests, and both were wrong
+                            # for a score of 0: a parsed 0 never filled an empty
+                            # target, and a stored 0 counted as missing and got
+                            # overwritten. Presence is numeric here as everywhere
+                            # else -- which also stops "N/A"/"Unknown" from being
+                            # treated as a score worth keeping or copying.
+                            if activity_score_num(
+                                target.get("activity_score")
+                            ) is None and (
+                                activity_score_num(parsed.get("activity_score"))
+                                is not None
                             ):
                                 target["activity_score"] = parsed["activity_score"]
                             if parsed.get("call_confidence") and not target.get(
