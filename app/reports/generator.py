@@ -1676,6 +1676,23 @@ def generate_report(
                     methodology_assume_ref_paragraph,
                 )
 
+                # No populate_existing() here, unlike the six JobService reads.
+                # SessionLocal sets expire_on_commit=False, so a plain query hands
+                # back an identity-mapped instance -- but only if this session
+                # already loaded the row. It has not: the sole caller that supplies
+                # db_session opens it with `next(get_db())` on the line before the
+                # call (upload_router.py), i.e. a brand-new SessionLocal with an
+                # empty identity map, and app/main.py's reprocessing path passes no
+                # session at all so this branch never runs there. Every key read
+                # below is committed at upload time, long before report generation
+                # starts, so there is no window to be stale in.
+                #
+                # The safety is the caller's freshness, not the statement's, and it
+                # is invisible from here -- tests/test_generator_job_metadata_read.py
+                # pins both shapes. Hand this function a session that already loaded
+                # the Job (a poll loop's, a reused request-scoped one) and the GRCh37
+                # provisional alert vanishes from the report with no error anywhere;
+                # populate_existing() becomes required that day.
                 job_uuid = uuid.UUID(str(job_id))
                 job_row = db_session.query(Job).filter(Job.id == job_uuid).first()
                 meta = (job_row.job_metadata or {}) if job_row is not None else {}
