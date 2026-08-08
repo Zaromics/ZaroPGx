@@ -165,9 +165,13 @@ class FakeSamtools:
         if argv[:3] == ["samtools", "view", "-H"]:
             return done(0, stdout=self.header)
 
-        # `samtools index <bam>` -- writes the .bai beside it
+        # `samtools index <bam>` -- writes the .bai beside it.
+        # Only ever for an absolute path: when a mutation run reverts a sink to a
+        # shell string, str(cmd).split() yields a relative fragment and this would
+        # otherwise drop a junk file in the repo root.
         if argv[:2] == ["samtools", "index"]:
-            Path(f"{argv[-1]}.bai").write_bytes(b"BAI\x01")
+            if os.path.isabs(argv[-1]):
+                Path(f"{argv[-1]}.bai").write_bytes(b"BAI\x01")
             return done(0)
 
         # `samtools idxstats <bam>` -- record counts, read from the index
