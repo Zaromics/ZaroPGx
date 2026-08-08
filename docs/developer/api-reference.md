@@ -202,6 +202,12 @@ top level** of this same object alongside `data`.
 **Status Values** (`JobStatus`): `pending`, `running`, `completed`, `failed`,
 `cancelled`. An unknown job is a 404.
 
+**Stage Values** (`current_stage`, from `WorkflowStage` in
+`app/services/workflow_stages.py:24-31`): `upload`, `analysis`, `gatk`, `hla`,
+`pypgx`, `pharmcat`, `report`, `completed`. Which stages a given run passes
+through depends on the input file type and the toggles it was submitted with, so
+do not assume all eight occur.
+
 #### Inspect File Header
 
 Preview a file's header without starting an analysis. This backs the "View
