@@ -129,17 +129,23 @@ def test_normalize_failed_api_response_short_circuits():
     assert normalized["data"]["genes"] == []
 
 
-def test_parser_parse_genes_nested_v2_stores_cpic_and_dpwg():
+def test_parser_parse_genes_nested_v2_stores_call_source_and_guideline_bucket():
     report = _load(NESTED_V2)
     added = _parse_genes_with_mock(report["genes"])
 
     summaries = [o for o in added if isinstance(o, PharmCATGeneSummary)]
     diplotypes = [o for o in added if isinstance(o, PharmCATDiplotype)]
 
-    symbols = {(s.gene_symbol, s.call_source) for s in summaries}
-    assert ("CYP2D6", "CPIC") in symbols
-    assert ("CYP2D6", "DPWG") in symbols
-    assert ("CYP2C19", "CPIC") in symbols
+    # call_source now holds what PharmCAT actually recorded, not the bucket key.
+    call_sources = {(s.gene_symbol, s.call_source) for s in summaries}
+    assert ("CYP2D6", "OUTSIDE") in call_sources
+    assert ("CYP2C19", "MATCHER") in call_sources
+
+    # The CPIC/DPWG bucket still round-trips -- on phenotype_source, where it belongs.
+    guideline_buckets = {(s.gene_symbol, s.phenotype_source) for s in summaries}
+    assert ("CYP2D6", "CPIC") in guideline_buckets
+    assert ("CYP2D6", "DPWG") in guideline_buckets
+    assert ("CYP2C19", "CPIC") in guideline_buckets
 
     cyp2d6 = [
         d
