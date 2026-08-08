@@ -1181,7 +1181,7 @@ async def upload_genomic_data(
     and initiates the Nextflow-based processing pipeline.
 
     Supported file types:
-    - VCF: Direct processing through PyPGx and PharmCAT. If GRCh37/hg19 reference genome is detected, bcftools liftover will be used to convert.
+    - VCF: Direct processing through PyPGx and PharmCAT. There is no liftover step: a GRCh37/hg19 VCF is flagged unsupported and still processed on its original coordinates, so convert it to GRCh38/hg38 first.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
     - FASTQ: Processed by ZaroHLA, then GATK, then PyPGx and PharmCAT
     - 23andMe/BED: Not yet supported, requires conversion to VCF (future implementation)
