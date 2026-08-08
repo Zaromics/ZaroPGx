@@ -121,8 +121,10 @@ that starts a run.
 - `files` (required): One or more genomic data files. The form field is
   **`files`** (plural) and it is required — posting `file=` returns 422.
 - `sample_identifier` (optional): Patient/sample identifier. When omitted the
-  server mints a UUID.
-- `reference_genome` (optional): Reference genome (default: `hg38`)
+  server mints a UUID. When supplied it must match the pipeline-token allowlist
+  below, or the request is a **400**.
+- `reference_genome` (optional): Reference genome (default: `hg38`). Always
+  validated against the same allowlist.
 - `optitype_enabled` (optional): Enable HLA typing
 - `gatk_enabled` (optional): Enable GATK processing
 - `pypgx_enabled` (optional): Enable PyPGx analysis
@@ -185,24 +187,42 @@ render its pre-flight summary.
 > as a real **`400`** with the bare reason in `detail`, not as
 > `"Upload failed: 400: <reason>"`.
 
-**The 400 refusal.** Two distinct checks produce it:
+**The 400 refusals.** Three distinct checks produce one, in this order:
 
-1. `FileProcessor.process_files` returned `success: false` — the file could not be
-   read or parsed at all.
-2. `_unanalysable_upload_reason` (in `upload_router.py`) rejected the derived
+1. **Field validation.** `validate_pipeline_token` (in `upload_router.py`)
+   constrains `reference_genome` — always — and `sample_identifier` when the
+   caller supplied a non-blank one, to `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`:
+   letters, digits, dot, underscore and hyphen, 1–64 characters, first character
+   alphanumeric. `NA12878`, `Sample_01`, `HG002.GRCh38`, `patient-123`, `hg38`,
+   `GRCh38`, `T2T-CHM13` all pass; a **space**, quote, semicolon, `$`, backtick,
+   parenthesis or newline does not. `detail` names the offending field and echoes
+   the received value.
+
+   This is a boundary guard, not cosmetics: `pipelines/pgx/main.nf` assembles
+   `curl` argv inside a bash `shell:` block, and Nextflow does not escape
+   `val`/`params` strings before interpolating them, so an unfiltered value would
+   be spliced verbatim into a shell running in a container that bind-mounts the
+   Docker socket. The same allowlist is applied to the sample name derived from
+   the VCF header, which is equally attacker-controlled; there an unusual value is
+   silently **dropped** rather than rejected, so it never fails an otherwise-valid
+   job.
+2. **Unreadable file.** `FileProcessor.process_files` returned `success: false` —
+   the file could not be read or parsed at all.
+3. **Unanalysable input.** `_unanalysable_upload_reason` rejected the derived
    workflow. This fires when the workflow is flagged `unsupported`, is **not**
    flagged `is_provisional`, and the detected `file_type` is outside
    `NEXTFLOW_INPUT_TYPES` (`vcf`, `bam`, `cram`, `sam`, `fastq`) — i.e. FASTA,
-   BED and unrecognised formats. `pipelines/pgx/main.nf` has no branch for those,
-   so accepting one could only ever mint a job that fails minutes later.
+   BED and unrecognised formats. `main.nf` has no branch for those, so accepting
+   one could only ever mint a job that fails minutes later. The reason string is
+   the workflow's `unsupported_reason` when it has one, otherwise
+   `"Files of type '<file_type>' cannot be analysed."`
 
-The refusal happens **before** any patient, genetic-data or job row is created, so
-a 400 leaves nothing behind and returns no `job_id`. An input flagged
-`unsupported` but marked `is_provisional`, and any input whose type is in
-`NEXTFLOW_INPUT_TYPES`, is accepted and analysed — `unsupported` on its own is not
-a refusal. The reason string reaching the client is the workflow's
-`unsupported_reason` when it has one, otherwise
-`"Files of type '<file_type>' cannot be analysed."`
+   An input flagged `unsupported` but marked `is_provisional`, and any input whose
+   type is in `NEXTFLOW_INPUT_TYPES`, is accepted and analysed — `unsupported` on
+   its own is not a refusal.
+
+All three fire **before** any patient, genetic-data or job row is created, so a
+400 leaves nothing behind and returns no `job_id`.
 
 #### Get Upload Status
 
@@ -1279,7 +1299,7 @@ Two exceptions to watch for, both returning HTTP 200 on failure:
 
 | Code | When |
 | --- | --- |
-| `400 Bad Request` | An upload the pipeline cannot analyse, or one the processor could not read (`POST /upload/genomic-data`); job not in a cancellable state; job not completed; a non-JSON or unparseable file on `POST /api/pharmcat/load` |
+| `400 Bad Request` | On `POST /upload/genomic-data`: a `sample_identifier` or `reference_genome` outside the pipeline-token allowlist, a file the processor could not read, or an input the pipeline cannot analyse. Elsewhere: job not in a cancellable state; job not completed; a non-JSON or unparseable file on `POST /api/pharmcat/load` |
 | `401 Unauthorized` | Only in `ZAROPGX_AUTH_MODE=password`, and only on non-allowlisted paths |
 | `403 Forbidden` | A report path resolved outside `/data/reports` (path-jail rejection) |
 | `404 Not Found` | Unknown job, run, PharmCAT run/workflow summary, report file, or workflow recipe |

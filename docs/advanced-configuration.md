@@ -12,9 +12,9 @@ stale.
 **The two lists are not identical, and that is intended.** Every key in `.env.example` is
 documented here. The reverse does not hold: this page also covers variables set by `compose.yml`
 or by a service's own Dockerfile and never surfaced in `.env.example` — `TEMP_DIR`, `TMPDIR`,
-`REFERENCE_DIR`, `GATK_CONTAINER`, `MAX_MEMORY`, `NXF_HOME`, `NXF_OPTS`, `KROKI_URL`,
-`JOB_API_BASE`, `POSTGRES_PASSWORD`, `DATABASE_URL`, `PHARMCAT_REF_CACHE`,
-`PHARMCAT_REFERENCE_DIR`, `PHARMCAT_PIPELINE_DIR`, `PHARMCAT_TEE` — plus two names
+`REFERENCE_DIR`, `GATK_CONTAINER`, `NXF_HOME`, `NXF_OPTS`, `KROKI_URL`, `JOB_API_BASE`,
+`POSTGRES_PASSWORD`, `DATABASE_URL`, `PHARMCAT_REF_CACHE`, `PHARMCAT_REFERENCE_DIR`,
+`PHARMCAT_PIPELINE_DIR`, `PHARMCAT_TEE` — plus two names
 (`MAX_UPLOAD_SIZE_BYTES`, `MAX_UPLOAD_TIMEOUT_SEC`) that the repo never reads at all and that are
 listed only to say so. `.env.example` is the install-time template; this page is the full set.
 
