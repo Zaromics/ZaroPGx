@@ -257,6 +257,14 @@
             margin-bottom: 40px;
         }
         
+        /* 159: run-derived provenance line at the foot of the Executive Summary.
+           Mirrors report_template.html so both lanes read identically. */
+        .run-provenance {
+            margin: 10px 0 0 0;
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
         /* Chart container enhancements */
         .chart-container {
             max-width: 100%;
@@ -856,9 +864,27 @@
                     <canvas id="genePhenotypeChart"></canvas>
                 </div>
 
-                
+                {# 159: run-derived provenance, mirrored from report_template.html.
+                   The print lane puts these three sentences at the foot of the
+                   Executive Summary; the structural equivalent here is the foot of
+                   the Summary tab, so a reader of either report finds them in the
+                   same place. Sentence text is byte-identical to the print lane --
+                   keep it that way. Each sentence renders only if its own value
+                   resolved.
+
+                   `genome_build` is PharmCAT's `matcherMetadata.genomeBuild`: the
+                   build its *allele definitions* are specified on, always GRCh38.x,
+                   never the build of the uploaded file. See report_template.html for
+                   the full note on why this must not be shortened. #}
+                {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
+                <p class="run-provenance">
+                    {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, which are specified on the {{ genome_build }} reference assembly. That is the build of PharmCAT's definition data, not the reference build of the uploaded file; any concern about this file's own build is raised under Alerts and Warnings.{% endif %}
+                    {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
+                    {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
+                </p>
+                {% endif %}
             </div>
-            
+
             <div id="genes" class="tab-content">
                 <h3>Genetic Results</h3>
                 <table>

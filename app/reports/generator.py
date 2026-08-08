@@ -1152,6 +1152,13 @@ def create_interactive_html_report(
             except Exception:
                 workflow_html_fallback = ""
 
+        # 159: run-derived provenance. `report_dir` is os.path.dirname(output_path)
+        # -- the same directory the other two lanes probe -- so the interactive
+        # report resolves the identical three facts from the identical file. Without
+        # this the print report carried provenance and the interactive one silently
+        # did not, for the same run.
+        matcher_meta = probe_matcher_metadata(report_dir, str(report_id))
+
         # Prepare the report data
         report_data = {
             "patient_id": patient_id,
@@ -1180,6 +1187,12 @@ def create_interactive_html_report(
             # Add workflow warnings/alerts for report display
             "workflow_warnings": workflow_warnings or [],
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+            # 159: run-derived provenance (each rendered only if resolved)
+            "genome_build": matcher_meta["genome_build"],
+            "named_allele_matcher_version": matcher_meta[
+                "named_allele_matcher_version"
+            ],
+            "pharmcat_data_version": matcher_meta["data_version"],
         }
 
         # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
