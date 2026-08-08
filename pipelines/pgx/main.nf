@@ -49,7 +49,16 @@ params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
 // on the toggle - declaring the param here is not a second line of defence. A
 // report process added to this pipeline later must gate on it itself.
 params.skip_report    = params.skip_report != null ? params.skip_report : false
-params.sample_identifier = params.sample_identifier ?: ''
+// sample_identifier is a free-text, user-supplied field. It is DELIBERATELY not a
+// pipeline param: a `val`/`params` string is interpolated verbatim into the shell
+// block (Nextflow escapes only `path` inputs), so a value containing a double quote
+// breaks out of the surrounding quoting and the rest runs as shell - unauthenticated
+// RCE, since this container holds the Docker socket. The value now travels to
+// PharmCATRun as the SAMPLE_IDENTIFIER environment variable (set by the runner,
+// exactly as JOB_ID already is) and is referenced there as "$SAMPLE_IDENTIFIER".
+// A bash variable expansion is data, never re-parsed as code, whatever it contains -
+// which is the structural fix, not a smarter escape. Do not reintroduce a
+// params.sample_identifier that any shell block interpolates.
 params.pharmcat_absent_to_ref = params.pharmcat_absent_to_ref ?: 'false'
 params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'false'
 
@@ -399,8 +408,11 @@ process PharmCATRun {
     [ -f "hla_outside.tsv" ] && cat hla_outside.tsv >> combined_outside.tsv
     
     CURL_ARGS=( -s -X POST -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} )
-    if [ -n "!{params.sample_identifier}" ]; then
-      CURL_ARGS+=( -F sample_identifier=!{params.sample_identifier} )
+    # SAMPLE_IDENTIFIER is passed through the environment (see runner.py), NOT spliced
+    # in by Nextflow interpolation. A shell variable expansion is inert data regardless
+    # of its content, so a hostile value cannot break out of the quoting into shell.
+    if [ -n "${SAMPLE_IDENTIFIER:-}" ]; then
+      CURL_ARGS+=( -F "sample_identifier=${SAMPLE_IDENTIFIER}" )
     fi
     if [ -s combined_outside.tsv ]; then
       CURL_ARGS+=( -F outside_tsv=@combined_outside.tsv )

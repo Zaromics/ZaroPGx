@@ -175,6 +175,61 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     )
 
 
+# --- Boundary validation for values that reach the Nextflow pipeline's shell ---
+#
+# main.nf assembles curl argv inside a bash `shell:` block. Nextflow escapes `path`
+# inputs before interpolation but NOT `val`/`params` strings, so any user string that
+# reaches an `!{...}` interpolation is spliced verbatim into the shell: a `"` breaks out
+# of the surrounding quoting and the remainder runs as code - inside the nextflow
+# container, which bind-mounts the Docker socket (root on the host). Two user-facing
+# fields travel that path: sample_identifier and reference_genome (-> params.reference).
+# We constrain both to a strict allowlist of characters that mean nothing to the shell,
+# so the interpolation is safe by construction rather than by hoping an escape holds.
+# sample_identifier is ALSO handed to the pipeline through the environment
+# (SAMPLE_IDENTIFIER, see runner.py/main.nf), which is the structural fix; this
+# allowlist is defence in depth and turns a hostile value into a clear 400.
+#
+# The alphabet is deliberately generous enough for real identifiers - alphanumerics
+# plus dot, underscore and hyphen, 1-64 chars, first char alphanumeric - so ordinary
+# sample names (NA12878, Sample_01, HG002.GRCh38, patient-123) and reference labels
+# (hg38, GRCh38, hg19, GRCh37, b37, T2T-CHM13) all pass, while every shell metacharacter
+# (quote, semicolon, $, backtick, parenthesis, whitespace, newline, ...) is rejected.
+_PIPELINE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def validate_pipeline_token(value: Optional[str], field_name: str) -> str:
+    """Return the stripped value if it is a safe pipeline token, else raise HTTP 400.
+
+    Empty/whitespace-only input is rejected; callers treating the field as optional
+    must guard for emptiness before calling.
+    """
+    stripped = (value or "").strip()
+    if not _PIPELINE_TOKEN_RE.match(stripped):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid {field_name}: only letters, digits, dot, underscore and "
+                "hyphen are allowed (1-64 characters, and it must start with a letter "
+                f"or digit). Received: {value!r}"
+            ),
+        )
+    return stripped
+
+
+def sanitize_optional_pipeline_token(value: Optional[str]) -> Optional[str]:
+    """Filter a derived, non-user-facing token (e.g. a VCF-header sample name).
+
+    Returns the stripped value if it passes the allowlist, else None. Used for the
+    header-derived sample identifier: it must never fail an otherwise-valid job, but it
+    also must not carry shell metacharacters into the pipeline - so an unusual header
+    name is dropped rather than trusted.
+    """
+    stripped = (value or "").strip()
+    if stripped and _PIPELINE_TOKEN_RE.match(stripped):
+        return stripped
+    return None
+
+
 # Report generation flags
 INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
@@ -1104,7 +1159,11 @@ async def process_file_nextflow_background(
                     f"Header text write skipped due to error: {_header_txt_err}"
                 )
 
-            # Derive Sample ID from header if available
+            # Derive Sample ID from header if available. The VCF header is
+            # attacker-controlled, so this string reaches the pipeline the same way the
+            # user-entered sample_identifier does - filter it through the same allowlist.
+            # An unusual header name is dropped (job proceeds without it) rather than
+            # trusted into the pipeline's shell.
             header_sample_identifier = None
             try:
                 if isinstance(header_json, dict):
@@ -1112,7 +1171,9 @@ async def process_file_nextflow_background(
                     if isinstance(samples_list, list) and samples_list:
                         first_sample = samples_list[0]
                         if isinstance(first_sample, str) and first_sample.strip():
-                            header_sample_identifier = first_sample.strip()
+                            header_sample_identifier = sanitize_optional_pipeline_token(
+                                first_sample
+                            )
             except Exception:
                 header_sample_identifier = None
 
@@ -1314,6 +1375,18 @@ async def upload_genomic_data(
     Currently only hg38/GRCh38 reference genome is fully supported.
     """
     try:
+        # Reject shell-metacharacter payloads at the boundary, before any value can be
+        # persisted or reach the Nextflow pipeline's shell. reference_genome is always
+        # present (defaults to hg38); sample_identifier is optional - only validate it
+        # when the user actually supplied one, otherwise it falls through to a UUID.
+        reference_genome = validate_pipeline_token(
+            reference_genome or "hg38", "reference_genome"
+        )
+        if sample_identifier and sample_identifier.strip():
+            sample_identifier = validate_pipeline_token(
+                sample_identifier, "sample_identifier"
+            )
+
         # Process uploaded files
         result = await file_processor.process_files(
             files,
