@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import and_, desc, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.db import Job, JobLog, JobStep
 from app.api.models import (
@@ -279,7 +279,7 @@ class JobService:
 
     def get_job(self, job_id: Union[str, uuid.UUID]) -> Optional[Job]:
         """
-        Get workflow by ID.
+        Get workflow by ID, re-reading the row rather than trusting the session.
 
         Args:
             job_id: Job ID to retrieve
@@ -299,7 +299,24 @@ class JobService:
                 except ValueError:
                     raise ValueError(f"Invalid job_id format: {job_id}")
 
-            return self.db.query(Job).filter(Job.id == job_id).first()
+            # populate_existing() is load-bearing. SessionLocal sets
+            # expire_on_commit=False, so an instance this session already loaded is
+            # never expired; a plain query would fetch the row and then *discard* it
+            # in favour of the identity-mapped instance. Long-lived background
+            # sessions -- the Nextflow poll loop re-reads the job every 5s for the
+            # life of a run -- would therefore never observe a write made by another
+            # session, so a mid-run cancellation was invisible and the monitor
+            # generated reports for a cancelled job.
+            #
+            # populate_existing() refreshes the *same* Python object in place rather
+            # than returning a new one, so callers holding a reference across calls
+            # keep working (and get fresh values for free). It does overwrite
+            # unflushed local changes, and autoflush is off, so any caller that
+            # mutates a Job must flush before reading it back -- see
+            # _update_job_progress, which flushes for exactly this reason.
+            return (
+                self.db.query(Job).filter(Job.id == job_id).populate_existing().first()
+            )
 
         except (ValueError, RuntimeError):
             raise
@@ -647,8 +664,10 @@ class JobService:
                 # Get updated progress information
                 progress_response = self.get_job_progress(job_id)
                 if progress_response:
-                    # Get workflow object for additional data
-                    job = self.db.query(Job).filter(Job.id == job_id).first()
+                    # Get workflow object for additional data. Via get_job() so the
+                    # status/step counts pushed to the browser are the committed ones
+                    # and not whatever this session happened to load earlier.
+                    job = self.get_job(job_id)
                     if job:
                         # Schedule workflow progress broadcast
                         schedule_coroutine(
@@ -716,8 +735,28 @@ class JobService:
                 except ValueError:
                     raise ValueError(f"Invalid job_id format: {job_id}")
 
-            # Get the workflow
-            job = self.db.query(Job).filter(Job.id == job_id).first()
+            # Get the workflow. populate_existing() for the same reason as get_job,
+            # and selectinload(Job.steps) because populate_existing() alone is NOT
+            # enough for the collection this method reads below.
+            #
+            # populate_existing() only *expires* job.steps. The reload that follows
+            # is an ordinary lazy load, which is served from the identity map, so any
+            # JobStep instance the caller still holds a reference to comes back with
+            # its stale column values. (It looks like it works when nothing holds the
+            # steps: expiring the collection drops the last strong reference, the weak
+            # identity map lets them be collected, and the reload builds fresh objects.
+            # Hold them -- as anything walking job.steps across a poll does -- and the
+            # statuses freeze.) populate_existing() *does* propagate into eager
+            # loaders, so naming the relationship refreshes the held instances in
+            # place. Step rows are written by the container services on their own
+            # request-scoped sessions, so this is the whole point of the method.
+            job = (
+                self.db.query(Job)
+                .filter(Job.id == job_id)
+                .options(selectinload(Job.steps))
+                .populate_existing()
+                .first()
+            )
             if not job:
                 return None
 
@@ -755,11 +794,20 @@ class JobService:
             if job.started_at and job.status == JobStatus.RUNNING:
                 # Simple estimation based on current progress
                 if progress_info.progress_percentage > 0:
-                    elapsed = datetime.now(timezone.utc) - job.started_at
+                    # started_at is always written as aware UTC, but comes back naive
+                    # from backends without timezone support (SQLite), and subtracting
+                    # mixed awareness raises TypeError -- which this method wraps into
+                    # RuntimeError, propagating out of _update_job_progress and taking
+                    # the whole update_job_step call down with it. Normalise rather
+                    # than assume the backend, exactly as update_job_step does.
+                    started_at = job.started_at
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
+                    elapsed = datetime.now(timezone.utc) - started_at
                     estimated_total = elapsed / (
                         progress_info.progress_percentage / 100
                     )
-                    estimated_completion = job.started_at + estimated_total
+                    estimated_completion = started_at + estimated_total
 
             return JobProgressResponse(
                 job_id=str(job.id),
@@ -902,7 +950,9 @@ class JobService:
     def _update_job_progress(self, job_id: uuid.UUID) -> None:
         """Update workflow progress based on completed steps."""
         try:
-            job = self.db.query(Job).filter(Job.id == job_id).first()
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).populate_existing().first()
+            )
             if not job:
                 return
 
@@ -920,6 +970,14 @@ class JobService:
 
             # Update workflow
             job.completed_steps = completed_steps
+
+            # Flush before the read below. get_job_progress() re-reads the row with
+            # populate_existing(), and autoflush is off, so the pending
+            # completed_steps write would be silently overwritten by the old value
+            # and the commit at the end of this method would emit no UPDATE for it.
+            # Flushing puts the new value into the transaction first, so the re-read
+            # returns it.
+            self.db.flush()
 
             # Get progress information to check if workflow should be completed
             progress_response = self.get_job_progress(job_id)
@@ -1042,10 +1100,15 @@ class JobService:
         try:
             job_id = uuid.UUID(str(job_id))
 
+            # populate_existing(): container services write these rows from their
+            # own sessions, and a session that already holds the JobStep instances
+            # (having walked job.steps) would otherwise be handed its cached copies
+            # and report step statuses frozen at first load.
             steps = (
                 self.db.query(JobStep)
                 .filter(JobStep.job_id == job_id)
                 .order_by(JobStep.step_order)
+                .populate_existing()
                 .all()
             )
 
@@ -1068,7 +1131,14 @@ class JobService:
         """
         try:
             job_id = uuid.UUID(str(job_id))
-            job = self.db.query(Job).filter(Job.id == job_id).first()
+            # populate_existing(): this is a read-modify-write of job_metadata, so it
+            # has to start from the row as it stands now. Reading a stale copy and
+            # writing the merged dict back would drop every key another session has
+            # added since -- including the "cancelled" flag the cancel endpoint
+            # writes -- because the whole dict is replaced, not patched.
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).populate_existing().first()
+            )
 
             if not job:
                 logger.error(f"Job {job_id} not found")
@@ -1111,7 +1181,11 @@ class JobService:
         """
         try:
             job_id = uuid.UUID(str(job_id))
-            job = self.db.query(Job).filter(Job.id == job_id).first()
+            # populate_existing(): the link is written by whichever session finished
+            # the PharmCAT stage, which is not necessarily the session asking here.
+            job = (
+                self.db.query(Job).filter(Job.id == job_id).populate_existing().first()
+            )
 
             if not job:
                 return None
