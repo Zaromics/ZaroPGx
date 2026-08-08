@@ -9,6 +9,7 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import tempfile
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -31,6 +32,97 @@ from pydantic import BaseModel
 import sys
 sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
+
+# --------------------------------------------------------------------------
+# Upload name hardening
+# --------------------------------------------------------------------------
+# This service has no authentication and is reachable from every container on
+# the compose network, so `file.filename` off a multipart request is entirely
+# attacker-controlled. It used to be joined straight onto a job directory and
+# then interpolated into shell=True command lines, which made a filename like
+# `x;touch pwned.bam` a command-injection vector.
+#
+# The uploaded name is therefore never used on disk. It is replaced by a UUID
+# plus one suffix drawn from the list below, which cannot carry shell syntax, a
+# path separator, or a `..` traversal segment. werkzeug's secure_filename - the
+# sanitiser the app's own /api/variant-call route uses - is deliberately NOT
+# used here: werkzeug is not installed in this image (see
+# docker/pypgx/Dockerfile.pypgx), and a rename is preferable to hand-rolling a
+# second character filter that would have to be kept in step with it.
+#
+# Longest suffixes first: `.vcf.gz` must win over `.vcf`.
+ALLOWED_UPLOAD_SUFFIXES = (
+    ".vcf.gz",
+    ".vcf.bgz",
+    ".vcf",
+    ".bcf",
+    ".bam",
+    ".cram",
+    ".sam",
+    ".fastq.gz",
+    ".fq.gz",
+    ".fastq",
+    ".fq",
+)
+
+
+def safe_upload_name(original: Optional[str], default_suffix: str) -> str:
+    """Return a shell-inert, collision-free on-disk name for an upload.
+
+    Only the *extension* of `original` is honoured, and only if it appears in
+    ALLOWED_UPLOAD_SUFFIXES; everything else about the caller's name is
+    discarded. An unrecognised or missing extension falls back to
+    `default_suffix`, which the caller picks from the endpoint's contract.
+
+    Nothing downstream correlates on the original name: the endpoints return
+    the paths they actually wrote (`input_file` / `vcf_path`) and the caller
+    uses those, and the one place the original name is still consulted -
+    input-type detection in /genotype - only classifies the extension and never
+    touches the filesystem.
+    """
+    suffix = default_suffix
+    # Strip any directory component under both separators before matching, so a
+    # name like `..\evil/x.vcf` cannot smuggle one through.
+    name = (original or "").strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
+    for candidate in ALLOWED_UPLOAD_SUFFIXES:
+        if name.endswith(candidate):
+            suffix = candidate
+            break
+    return f"{uuid.uuid4().hex}{suffix}"
+
+
+# --------------------------------------------------------------------------
+# Command helpers
+# --------------------------------------------------------------------------
+# Every external command in this module runs as an argv list with the default
+# shell=False. That closes the injection class at the sink as well as at the
+# source: no metacharacter in any argument can be reinterpreted as syntax,
+# whatever a future caller passes in.
+
+
+def bgzip_to(src: str, dest: str) -> None:
+    """bgzip `src` into `dest`.
+
+    The `> dest` redirection is the only reason this ever needed a shell; an
+    explicit stdout handle replaces it, so no shell is involved.
+    """
+    with open(dest, "wb") as out_fh:
+        subprocess.run(["bgzip", "-c", str(src)], stdout=out_fh, check=True)
+
+
+def bgzip_in_place(path: str) -> None:
+    """bgzip `path`, replacing it with `path`.gz."""
+    subprocess.run(["bgzip", "-f", str(path)], check=True)
+
+
+def tabix_index(vcf_gz: str, force: bool = False) -> None:
+    """Build a tabix index for a bgzipped VCF."""
+    argv = ["tabix"]
+    if force:
+        argv.append("-f")
+    argv.extend(["-p", "vcf", str(vcf_gz)])
+    subprocess.run(argv, check=True)
+
 
 # Gene Configuration Management
 class GeneConfig:
@@ -253,11 +345,11 @@ async def process_gene_batch_parallel(
     
     if not os.path.exists(vcf_gz):
         logger.info(f"bgzip compressing VCF for tabix: {vcf_path} -> {vcf_gz}")
-        subprocess.run(f"bgzip -c {vcf_path} > {vcf_gz}", shell=True, check=True)
-    
+        bgzip_to(vcf_path, vcf_gz)
+
     if not os.path.exists(tbi_path):
         logger.info(f"Indexing VCF with tabix: {vcf_gz}")
-        subprocess.run(f"tabix -p vcf {vcf_gz}", shell=True, check=True)
+        tabix_index(vcf_gz)
     
     # Log memory usage before processing
     memory_before = get_memory_usage()
@@ -482,14 +574,19 @@ async def create_input_vcf(
     os.makedirs(job_dir, exist_ok=True)
 
     try:
-        # Save uploaded alignment file
-        input_path = job_dir / file.filename
+        # Save uploaded alignment file under a generated name - the client's
+        # filename never reaches the filesystem or a command line.
+        safe_name = safe_upload_name(file.filename, ".bam")
+        input_path = job_dir / safe_name
         with open(input_path, "wb") as f:
             content = await file.read()
             f.write(content)
 
-        # Determine output VCF path
-        output_vcf_gz = job_dir / (Path(file.filename).stem + ".vcf.gz")
+        # Determine output VCF path. Derived from the generated stem, not from
+        # the client's name; `safe_name` is `<hex><suffix>` and the hex part
+        # never contains a dot, so splitting on the first dot yields the stem
+        # for single- and double-suffix names alike.
+        output_vcf_gz = job_dir / (safe_name.split(".", 1)[0] + ".vcf.gz")
 
         res = run_pypgx_create_input_vcf(str(input_path), str(output_vcf_gz), pypgx_assembly)
         if not res.get("success"):
@@ -538,15 +635,24 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
     try:
         # Primary, recommended form (assumed):
         # pypgx create-input-vcf --assembly GRCh38 --bam <bam> --output <out.vcf.gz>
-        cmd_primary = f"pypgx create-input-vcf --assembly {assembly} --bam {alignment_path} --output {output_vcf_gz}"
-        logger.info(f"Running PyPGx (primary) create-input-vcf: {cmd_primary}")
-        proc = subprocess.run(cmd_primary, shell=True, text=True, capture_output=True)
+        cmd_primary = [
+            "pypgx", "create-input-vcf",
+            "--assembly", str(assembly),
+            "--bam", str(alignment_path),
+            "--output", str(output_vcf_gz),
+        ]
+        logger.info(f"Running PyPGx (primary) create-input-vcf: {shlex.join(cmd_primary)}")
+        proc = subprocess.run(cmd_primary, text=True, capture_output=True)
         if proc.returncode != 0:
             logger.warning(f"Primary create-input-vcf failed (rc={proc.returncode}). stderr: {proc.stderr}\nTrying fallback invocation form.")
             # Fallback form in case of different CLI signature
-            cmd_fallback = f"pypgx create-input-vcf {alignment_path} {output_vcf_gz} --assembly {assembly}"
-            logger.info(f"Running PyPGx (fallback) create-input-vcf: {cmd_fallback}")
-            proc = subprocess.run(cmd_fallback, shell=True, text=True, capture_output=True)
+            cmd_fallback = [
+                "pypgx", "create-input-vcf",
+                str(alignment_path), str(output_vcf_gz),
+                "--assembly", str(assembly),
+            ]
+            logger.info(f"Running PyPGx (fallback) create-input-vcf: {shlex.join(cmd_fallback)}")
+            proc = subprocess.run(cmd_fallback, text=True, capture_output=True)
             if proc.returncode != 0:
                 logger.error(f"PyPGx create-input-vcf failed. stderr: {proc.stderr}")
                 return {"success": False, "error": proc.stderr or "create-input-vcf failed"}
@@ -557,14 +663,14 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             raw_vcf = output_vcf_gz[:-3] if output_vcf_gz.endswith('.gz') else output_vcf_gz
             if os.path.exists(raw_vcf):
                 logger.info(f"bgzip compressing raw VCF: {raw_vcf}")
-                subprocess.run(f"bgzip -f {raw_vcf}", shell=True, check=True)
+                bgzip_in_place(raw_vcf)
             else:
                 return {"success": False, "error": "Expected VCF output not found"}
 
         tbi_path = output_vcf_gz + ".tbi"
         if not os.path.exists(tbi_path):
             logger.info(f"Indexing VCF with tabix: {output_vcf_gz}")
-            subprocess.run(f"tabix -f -p vcf {output_vcf_gz}", shell=True, check=True)
+            tabix_index(output_vcf_gz, force=True)
 
         return {"success": True, "vcf": output_vcf_gz, "tbi": tbi_path}
     except subprocess.CalledProcessError as cpe:
@@ -691,8 +797,10 @@ async def genotype(
             job_client = None
     
     try:
-        # Save the uploaded VCF file
-        input_filepath = job_dir / file.filename
+        # Save the uploaded VCF file under a generated name. Input-type
+        # detection above still reads file.filename, but only to classify the
+        # extension - it never builds a path from it.
+        input_filepath = job_dir / safe_upload_name(file.filename, ".vcf")
         with open(input_filepath, "wb") as f:
             content = await file.read()
             f.write(content)
@@ -892,14 +1000,21 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
         
         # Use the appropriate command for NGS pipeline
         # Use the compressed/indexed VCF for PyPGx
-        pypgx_cmd = f"pypgx run-ngs-pipeline {gene} {pipeline_dir} --variants {vcf_gz} --assembly {reference_genome}"
-        
-        logger.info(f"Running PyPGx command: {pypgx_cmd}")
-        
+        # argv form, no shell. `gene` reaches here unvalidated on the
+        # comma-separated-list branch of /genotype, so this must not be a
+        # shell string either.
+        pypgx_cmd = [
+            "pypgx", "run-ngs-pipeline",
+            str(gene), str(pipeline_dir),
+            "--variants", str(vcf_gz),
+            "--assembly", str(reference_genome),
+        ]
+
+        logger.info(f"Running PyPGx command: {shlex.join(pypgx_cmd)}")
+
         # Execute PyPGx with process tracking for cancellation
         process = subprocess.Popen(
             pypgx_cmd,
-            shell=True,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
