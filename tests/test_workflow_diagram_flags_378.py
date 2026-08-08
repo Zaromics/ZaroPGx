@@ -44,9 +44,15 @@ def _drive_mermaid(workflow):
     wd.build_mermaid_from_workflow(workflow)
 
 
+# Pillow is an install dependency, but the PNG renderer returns b"" without
+# deriving anything when it is missing, so it cannot report its flags there.
+PILLOW_AVAILABLE = wd.Image is not None and wd.ImageDraw is not None
+
+
 def _drive_graphviz(workflow):
-    # Flags are derived before any rendering attempt; the `dot` binary may not
-    # exist on the test host, so a render failure is irrelevant here.
+    # Flags are derived before the graphviz-availability check and before any
+    # render attempt, so this reports its flags even where the `graphviz`
+    # package or the `dot` binary is missing. The render failure is irrelevant.
     with contextlib.suppress(Exception):
         wd.render_with_graphviz(workflow, fmt="svg")
 
@@ -66,6 +72,9 @@ RENDERERS = {
     "simple_html": _drive_simple_html,
     "simple_png": _drive_simple_png,
 }
+
+if not PILLOW_AVAILABLE:  # pragma: no cover - depends on the install
+    del RENDERERS["simple_png"]
 
 
 @pytest.fixture
@@ -158,9 +167,23 @@ def test_simple_html_fallback_defaults_file_type_to_vcf():
     assert "Detect (VCF)" in wd.build_simple_html_from_workflow({})
 
 
+@pytest.mark.skipif(not PILLOW_AVAILABLE, reason="Pillow is not installed")
 def test_simple_png_renders_with_default_flags():
     png = wd.render_simple_png_from_workflow({})
     assert png.startswith(b"\x89PNG")
+
+
+@pytest.mark.parametrize("not_a_workflow", [None, "vcf", ["vcf"], 42])
+def test_simple_html_fallback_fails_honestly_without_a_workflow_dict(not_a_workflow):
+    """No workflow means "could not be generated", never a plausible default.
+
+    This HTML is the fallback embedded in clinical PDFs; unifying the flag
+    derivation must not turn an honest failure into a confident VCF pipeline.
+    """
+    html = wd.build_simple_html_from_workflow(not_a_workflow)
+    assert "Workflow diagram could not be generated" in html
+    assert "PharmCAT" not in html
+    assert "Detect (" not in html
 
 
 # Golden for the default (no explicit flags) path -- the diagram users actually

@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 # calls, and therefore need conversion/typing stages before PharmCAT can run.
 ALIGNMENT_FILE_TYPES = frozenset({"bam", "cram", "sam", "fastq"})
 
+# Shown instead of a diagram when there is no workflow to draw.
+_WORKFLOW_HTML_UNAVAILABLE = (
+    '<div style="text-align: center; padding: 20px; color: #666;">'
+    "Workflow diagram could not be generated</div>"
+)
+
 
 @dataclass(frozen=True)
 class WorkflowFlags:
@@ -50,6 +56,20 @@ class WorkflowFlags:
     * everything else is opt-in.
 
     An explicit key in the workflow dict always wins over the default.
+
+    PROVENANCE CAVEAT: these defaults describe the pipeline a given input
+    *would* run through, not the one that demonstrably ran. They are optimistic
+    -- a diagram can show a stage the run never actually performed. That is
+    pre-existing behaviour on the primary Mermaid/Graphviz path, not something
+    introduced here, but callers that build a workflow dict from observed
+    evidence must pass the flags explicitly rather than relying on these
+    defaults. `per_sample_workflow` in app/reports/generator.py is the seam that
+    matters: it means to "infer usage conservatively: only show as used if we
+    actually ran the step", yet it omits `used_hla` and `used_pypgx_bam2vcf`,
+    so for alignment inputs those two stages are drawn from the optimistic
+    default rather than from evidence. Fixing that needs run-level provenance
+    the diagram layer does not have; it is tracked as backlog work, not
+    something to paper over with a second set of defaults here.
     """
 
     file_type: str = "vcf"
@@ -1083,7 +1103,20 @@ def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
 
     This function creates a pure HTML/CSS workflow diagram that should render
     reliably in WeasyPrint without external dependencies.
+
+    Given something that is not a workflow dict, it reports that it could not
+    draw the diagram rather than drawing a plausible default one.
     """
+    if not isinstance(workflow, dict):
+        # No workflow to describe. This HTML is the fallback embedded in
+        # clinical PDFs, so an honest "could not be generated" beats a
+        # confident default pipeline for a sample we know nothing about.
+        logger.error(
+            "Error building HTML workflow: expected a workflow dict, got %s",
+            type(workflow).__name__,
+        )
+        return _WORKFLOW_HTML_UNAVAILABLE
+
     try:
         flags = WorkflowFlags.from_workflow(workflow)
 
@@ -1158,7 +1191,7 @@ def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
     except Exception as e:
         logger.error(f"Error building HTML workflow: {str(e)}")
         # Return a simple fallback
-        return '<div style="text-align: center; padding: 20px; color: #666;">Workflow diagram could not be generated</div>'
+        return _WORKFLOW_HTML_UNAVAILABLE
 
 
 def render_simple_png_from_workflow(
