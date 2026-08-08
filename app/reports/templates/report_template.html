@@ -138,6 +138,9 @@
         .gene-recommendation.evidence-0 {
             border-left-color: #6c757d !important; /* Gray for general */
         }
+        .gene-recommendation.evidence-unspecified {
+            border-left-color: #6f42c1 !important; /* Purple: DPWG/FDA guidance, no CPIC level */
+        }
         .gene-recommendation.evidence-unclassified {
             border-left-color: #adb5bd !important; /* Muted gray: no evidence level reported */
         }
@@ -224,6 +227,13 @@
         .drug-item.evidence-0 .drug-indicator {
             background-color: #6c757d;
         }
+        .drug-item.evidence-unspecified {
+            border-left-color: #6f42c1;
+            background-color: #f7f4fc;
+        }
+        .drug-item.evidence-unspecified .drug-indicator {
+            background-color: #6f42c1;
+        }
         .drug-item.evidence-unclassified {
             border-left-color: #adb5bd;
             background-color: #fbfbfc;
@@ -268,6 +278,9 @@
         }
         .legend-item.evidence-0 .drug-indicator {
             background-color: #6c757d;
+        }
+        .legend-item.evidence-unspecified .drug-indicator {
+            background-color: #6f42c1;
         }
         .legend-item.evidence-unclassified .drug-indicator {
             background-color: #adb5bd;
@@ -1054,7 +1067,8 @@
             <span class="legend-item evidence-3"><span class="drug-indicator"></span> Strong &mdash; high actionability (CPIC Level A)</span>
             <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate &mdash; moderate actionability (CPIC Level B)</span>
             <span class="legend-item evidence-1"><span class="drug-indicator"></span> Optional &mdash; informational (CPIC Level C)</span>
-            <span class="legend-item evidence-0"><span class="drug-indicator"></span> No recommendation &mdash; guideline reviewed, no dosing change advised</span>
+            <span class="legend-item evidence-unspecified"><span class="drug-indicator"></span> Guideline available &mdash; DPWG/FDA guidance without a CPIC evidence level; may still be actionable</span>
+            <span class="legend-item evidence-0"><span class="drug-indicator"></span> No recommendation &mdash; guideline reviewed, no genotype-based action given</span>
             <span class="legend-item evidence-unclassified"><span class="drug-indicator"></span> Unclassified &mdash; no evidence level reported</span>
         </div>
         
