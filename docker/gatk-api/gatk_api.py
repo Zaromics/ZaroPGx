@@ -1861,10 +1861,13 @@ async def cram_to_bam(
                 ),
             )
 
-        # Save uploaded file. basename() keeps a crafted filename inside the work dir.
+        # Save uploaded file. basename() alone kept a crafted name inside the work dir
+        # but left every shell and glob metacharacter in it, which safe_upload_name()'s
+        # own docstring calls out as insufficient -- and output_bam below is derived
+        # from this name, so it carried them onto the *shared* volume as well.
         local_job_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        filename = os.path.basename(file.filename or "input.cram")
+        filename = safe_upload_name(file.filename or "input.cram", local_job_id)
         input_path = os.path.join(work_dir, filename)
         # Output goes on the shared volume, not beside the input -- see
         # conversion_output_dir().
@@ -1984,10 +1987,11 @@ async def sam_to_bam(
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
 
-        # Save uploaded file. basename() keeps a crafted filename inside the work dir.
+        # Sanitised for the same reason as the CRAM route: basename() alone leaves
+        # every shell and glob metacharacter in a name that reaches the shared volume.
         local_job_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        filename = os.path.basename(file.filename or "input.sam")
+        filename = safe_upload_name(file.filename or "input.sam", local_job_id)
         input_path = os.path.join(work_dir, filename)
         # Shared volume, for the same reason as the CRAM route.
         output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
