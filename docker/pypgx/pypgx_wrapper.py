@@ -7,6 +7,7 @@ Provides REST API endpoints for calling PyPGx supported star alleles
 import os
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import tempfile
 import shutil
 import subprocess
@@ -305,7 +306,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),  # Console output
-        logging.FileHandler('/data/pypgx_progress.log')  # File output for progress tracking
+        RotatingFileHandler(
+            '/data/pypgx_progress.log',  # File output for progress tracking
+            maxBytes=10 * 1024 * 1024,  # 10 MB per file before rotating
+            backupCount=5,  # keep 5 rotated backups (~60 MB max on disk)
+        ),
     ]
 )
 logger = logging.getLogger("pypgx_wrapper")

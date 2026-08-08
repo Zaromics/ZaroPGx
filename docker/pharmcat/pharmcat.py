@@ -21,6 +21,7 @@ providing both file URLs and content in the API response.
 import os
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import subprocess
 import gzip
 import shutil
@@ -58,7 +59,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),  # Console output
-        logging.FileHandler('/data/pharmcat_progress.log')  # Progress log accessible to main app
+        RotatingFileHandler(
+            '/data/pharmcat_progress.log',  # Progress log accessible to main app
+            maxBytes=10 * 1024 * 1024,  # 10 MB per file before rotating
+            backupCount=5,  # keep 5 rotated backups (~60 MB max on disk)
+        ),
     ]
 )
 logger = logging.getLogger("pharmcat")
