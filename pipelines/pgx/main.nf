@@ -22,6 +22,15 @@ params.reference      = params.reference ?: 'hg38'
 params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
+// skip_gatk covers the three GATK-container conversions (FastqToBAM/CramToBAM/SamToBAM).
+// It is a no-op for vcf/bam input (no GATK process is invoked) and rejected for
+// fastq/cram/sam, where there is no non-GATK route to a BAM - see the guard below.
+params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
+// skip_report is the ZaroPGx custom-report toggle. Report rendering happens app-side
+// (app/reports/generator.py), not in this pipeline, so there is no process here to
+// gate; the param is declared and carried so the runner's flag is not silently
+// swallowed and shows up in the run's resolved params.
+params.skip_report    = params.skip_report != null ? params.skip_report : false
 params.sample_identifier = params.sample_identifier ?: ''
 params.pharmcat_absent_to_ref = params.pharmcat_absent_to_ref ?: 'false'
 params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'false'
@@ -360,7 +369,21 @@ workflow {
     main:
     assert params.input : 'Missing --input path'
     assert params.input_type : 'Missing --input_type (vcf|bam|cram|sam|fastq)'
-    
+
+    // GATK gate. fastq/cram/sam only reach a BAM through the gatk-api container, so
+    // gating FastqToBAM/CramToBAM/SamToBAM off would leave bam_ch empty and starve
+    // every downstream channel - the pipeline would "succeed" having produced
+    // nothing, which is worse than the silent-override it replaces. Refuse the
+    // combination instead. For vcf/bam input no GATK process runs at all, so
+    // skip_gatk is correctly a no-op there.
+    if (params.skip_gatk && ['fastq', 'cram', 'sam'].contains(params.input_type)) {
+        error(
+            "--skip_gatk is not compatible with --input_type ${params.input_type}: " +
+            "converting ${params.input_type} to BAM requires the GATK service. " +
+            "Re-enable GATK, or upload a BAM/VCF instead."
+        )
+    }
+
     // Create input channels
     input_ch = Channel.fromPath(params.input)
     
