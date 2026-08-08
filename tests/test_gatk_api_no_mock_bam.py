@@ -106,27 +106,68 @@ def reference_fasta(gatk_api):
     return path
 
 
-@pytest.fixture()
-def samtools(gatk_api, monkeypatch):
-    """Record every subprocess argv and fake a successful samtools conversion.
+COORDINATE_HEADER = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:12\n"
+UNSORTED_HEADER = b"@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:chr1\tLN:12\n"
+QUERYNAME_HEADER = b"@HD\tVN:1.6\tSO:queryname\n@SQ\tSN:chr1\tLN:12\n"
+HEADER_WITHOUT_SO = b"@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:12\n"
 
-    The input file is snapshotted at call time because the handler deletes its work
-    directory once the conversion returns.
+
+class FakeSamtools:
+    """Enough of samtools to drive the handlers, recording every argv.
+
+    Defaults to reporting a coordinate-sorted input, which is the common case;
+    tests that care set `.header` before posting.
     """
-    calls = []
 
-    def fake_run(cmd, *args, **kwargs):
+    def __init__(self):
+        self.header = COORDINATE_HEADER
+        self.calls = []
+        # subcommand -> (returncode, stderr). Note "view" covers the header probe too.
+        self.fail = {}
+
+    def argvs(self):
+        return [
+            list(c["cmd"]) for c in self.calls if isinstance(c["cmd"], (list, tuple))
+        ]
+
+    def ran(self, *prefix):
+        """Every recorded argv starting with `prefix`."""
+        want = list(prefix)
+        return [argv for argv in self.argvs() if argv[: len(want)] == want]
+
+    def run(self, cmd, *args, **kwargs):
         argv = list(cmd) if isinstance(cmd, (list, tuple)) else str(cmd).split()
         record = {"cmd": cmd, "kwargs": kwargs, "input_bytes": None}
-        if argv[:2] == ["samtools", "view"]:
+        self.calls.append(record)
+
+        subcommand = argv[1] if len(argv) > 1 else ""
+        if subcommand in self.fail:
+            code, stderr = self.fail[subcommand]
+            return subprocess.CompletedProcess(cmd, code, stdout=b"", stderr=stderr)
+
+        # `samtools view -H` -- header read, no output file
+        if argv[:3] == ["samtools", "view", "-H"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=self.header, stderr=b"")
+
+        # `samtools index <bam>` -- writes the .bai beside it
+        if argv[:2] == ["samtools", "index"]:
+            Path(f"{argv[-1]}.bai").write_bytes(b"BAI\x01")
+            return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+        # A conversion: snapshot the input now, the work dir is deleted afterwards.
+        if argv[:2] in (["samtools", "view"], ["samtools", "sort"]):
             record["input_bytes"] = Path(argv[-1]).read_bytes()
-        calls.append(record)
+
         if "-o" in argv:
             Path(argv[argv.index("-o") + 1]).write_bytes(MINIMAL_BAM)
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
 
-    monkeypatch.setattr(gatk_api.subprocess, "run", fake_run)
-    return calls
+
+@pytest.fixture()
+def samtools(gatk_api, monkeypatch):
+    fake = FakeSamtools()
+    monkeypatch.setattr(gatk_api.subprocess, "run", fake.run)
+    return fake
 
 
 def _bam_files(gatk_api):
@@ -137,15 +178,18 @@ def _bam_files(gatk_api):
     return sorted(found)
 
 
-def _conversion_argv(calls):
-    """The one recorded call that is a samtools conversion."""
-    matches = []
-    for call in calls:
-        cmd = call["cmd"]
-        argv = list(cmd) if isinstance(cmd, (list, tuple)) else str(cmd).split()
-        if argv[:2] == ["samtools", "view"]:
-            matches.append(argv)
-    assert len(matches) == 1, f"expected one `samtools view` call, got {matches}"
+def _conversion_argv(samtools):
+    """The one recorded call that converted the input -- `view -b` or `sort`.
+
+    Excludes the `view -H` header probe, which is a read, not a conversion.
+    """
+    matches = [
+        argv
+        for argv in samtools.argvs()
+        if argv[:2] == ["samtools", "sort"]
+        or (argv[:2] == ["samtools", "view"] and "-H" not in argv)
+    ]
+    assert len(matches) == 1, f"expected one conversion call, got {matches}"
     return matches[0]
 
 
@@ -270,7 +314,7 @@ def test_upload_reaches_samtools_byte_for_byte(
         data={"reference_genome": "hg38"},
     )
 
-    call = [c for c in samtools if c["input_bytes"] is not None][0]
+    call = [c for c in samtools.calls if c["input_bytes"] is not None][0]
     assert call["input_bytes"] == payload
 
 
@@ -405,28 +449,15 @@ def test_output_is_verified_with_samtools_quickcheck(
         data={"reference_genome": "hg38"},
     )
 
-    quickchecks = [
-        list(c["cmd"])
-        for c in samtools
-        if isinstance(c["cmd"], (list, tuple)) and "quickcheck" in list(c["cmd"])
-    ]
+    quickchecks = samtools.ran("samtools", "quickcheck")
     assert len(quickchecks) == 1, f"expected one quickcheck, got {quickchecks}"
-    assert quickchecks[0][:2] == ["samtools", "quickcheck"]
 
 
 def test_quickcheck_rejection_is_not_reported_as_success(
-    client, gatk_api, reference_fasta, monkeypatch
+    client, gatk_api, reference_fasta, samtools
 ):
     """A truncated BAM has valid magic bytes and a missing EOF block."""
-
-    def fake_run(cmd, *args, **kwargs):
-        argv = list(cmd)
-        if "quickcheck" in argv:
-            return subprocess.CompletedProcess(cmd, 1, b"", b"EOF marker absent")
-        Path(argv[argv.index("-o") + 1]).write_bytes(MINIMAL_BAM)
-        return subprocess.CompletedProcess(cmd, 0, b"", b"")
-
-    monkeypatch.setattr(gatk_api.subprocess, "run", fake_run)
+    samtools.fail["quickcheck"] = (1, b"EOF marker absent")
     before = _bam_files(gatk_api)
 
     resp = client.post(
@@ -441,6 +472,166 @@ def test_quickcheck_rejection_is_not_reported_as_success(
     assert _bam_files(gatk_api) == before
 
 
+# --------------------------------------------------------------------------
+# Sorting and indexing
+#
+# `samtools index` only works on coordinate-sorted input, and PyPGx, GATK and
+# OptiType-from-BAM all want a sorted indexed BAM. Handing back an unsorted one
+# turns "returns a fake file" into "returns a real file the pipeline cannot use".
+# Sorting is the expensive step, so it is skipped when the header says it is
+# already done.
+# --------------------------------------------------------------------------
+
+
+def _post_cram(client, samtools, header):
+    samtools.header = header
+    return client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38"},
+    )
+
+
+def test_coordinate_sorted_input_is_not_re_sorted(
+    client, gatk_api, reference_fasta, samtools
+):
+    """`view -b` preserves record order, so a sorted input needs no sort."""
+    resp = _post_cram(client, samtools, COORDINATE_HEADER)
+    assert resp.status_code == 200, resp.text
+
+    assert samtools.ran("samtools", "sort") == [], "re-sorted an already-sorted input"
+    assert _conversion_argv(samtools)[:3] == ["samtools", "view", "-b"]
+    assert resp.json()["sorted"] is False
+
+
+@pytest.mark.parametrize(
+    "header, why",
+    [
+        (UNSORTED_HEADER, "SO:unsorted"),
+        (QUERYNAME_HEADER, "SO:queryname"),
+        (HEADER_WITHOUT_SO, "@HD carries no SO: field"),
+        (b"@SQ\tSN:chr1\tLN:12\n", "no @HD line at all"),
+        (b"", "empty header"),
+    ],
+)
+def test_input_that_is_not_coordinate_sorted_gets_sorted(
+    client, gatk_api, reference_fasta, samtools, header, why
+):
+    """Anything not known to be coordinate-sorted must be sorted -- including a
+    header that simply does not say, since guessing wrong yields an unindexable BAM."""
+    resp = _post_cram(client, samtools, header)
+    assert resp.status_code == 200, f"{why}: {resp.text}"
+
+    argv = _conversion_argv(samtools)
+    assert argv[:2] == ["samtools", "sort"], f"{why}: did not sort"
+    assert resp.json()["sorted"] is True
+
+
+def test_sort_writes_its_temp_files_into_the_scratch_dir(
+    client, gatk_api, reference_fasta, samtools
+):
+    """samtools sort spills <prefix>.NNNN.bam. Those must never land on /data.
+
+    The scratch dir is removed in the handler's finally block; the shared volume is
+    not, so a leaked intermediate there would be the same class of bug as the one
+    that put the output in container-private /tmp.
+    """
+    _post_cram(client, samtools, UNSORTED_HEADER)
+
+    argv = _conversion_argv(samtools)
+    assert "-T" in argv, "sort must be given an explicit temp prefix"
+    prefix = Path(argv[argv.index("-T") + 1])
+    scratch = Path(gatk_api.TEMP_DIR).resolve()
+    assert scratch in prefix.resolve().parents
+    results = (Path(gatk_api.DATA_DIR) / "results").resolve()
+    assert results not in prefix.resolve().parents
+
+
+def test_sort_runs_within_a_bounded_memory_budget(
+    client, gatk_api, reference_fasta, samtools
+):
+    """This container's memory is shared with a 20 GiB GATK heap."""
+    _post_cram(client, samtools, UNSORTED_HEADER)
+
+    argv = _conversion_argv(samtools)
+    assert argv[argv.index("-m") + 1] == gatk_api.SORT_MEMORY
+    assert argv[argv.index("-@") + 1] == gatk_api.SORT_THREADS
+    # A conservative default, not a guess-large one.
+    assert gatk_api.SORT_MEMORY == "768M"
+    assert gatk_api.SORT_THREADS == "2"
+
+
+def test_sorting_a_cram_still_passes_the_reference(
+    client, gatk_api, reference_fasta, samtools
+):
+    """`samtools sort` spells it --reference; -T is its temp prefix, not the FASTA."""
+    _post_cram(client, samtools, UNSORTED_HEADER)
+
+    argv = _conversion_argv(samtools)
+    assert argv[argv.index("--reference") + 1] == str(reference_fasta)
+    assert argv[argv.index("-T") + 1] != str(reference_fasta)
+
+
+def test_output_is_indexed_whether_or_not_it_was_sorted(
+    client, gatk_api, reference_fasta, samtools
+):
+    for header in (COORDINATE_HEADER, UNSORTED_HEADER):
+        samtools.calls.clear()
+        resp = _post_cram(client, samtools, header)
+        assert resp.status_code == 200, resp.text
+
+        indexes = samtools.ran("samtools", "index")
+        assert len(indexes) == 1, f"{header!r}: expected one index call, got {indexes}"
+        bam_path = resp.json()["bam_path"]
+        assert indexes[0][-1] == bam_path
+        assert resp.json()["bam_index"] == f"{bam_path}.bai"
+        assert Path(f"{bam_path}.bai").exists()
+
+
+def test_index_failure_is_not_reported_as_success(
+    client, gatk_api, reference_fasta, samtools
+):
+    """An unindexed BAM is unusable downstream, so it must not ship."""
+    samtools.fail["index"] = (1, b"[E::hts_idx_push] chromosome blocks not continuous")
+    before = _bam_files(gatk_api)
+
+    resp = _post_cram(client, samtools, COORDINATE_HEADER)
+
+    assert resp.status_code == 500, resp.text
+    assert resp.json().get("success") is not True
+    assert "index" in resp.json()["detail"]
+    assert _bam_files(gatk_api) == before, "unindexed BAM left on the shared volume"
+
+
+def test_header_probe_reads_only_the_header(
+    client, gatk_api, reference_fasta, samtools
+):
+    """`view -H` on a WGS CRAM must not stream the whole file to decide on sorting."""
+    _post_cram(client, samtools, COORDINATE_HEADER)
+
+    probes = [a for a in samtools.ran("samtools", "view") if "-H" in a]
+    assert len(probes) == 1, f"expected one header probe, got {probes}"
+    assert "-o" not in probes[0], "the probe must not write anything"
+    assert probes[0][probes[0].index("-T") + 1] == str(reference_fasta)
+
+
+def test_sam_route_sorts_an_unsorted_sam(client, gatk_api, samtools):
+    """SAM is far more often unsorted than CRAM, so this path matters more here."""
+    samtools.header = QUERYNAME_HEADER
+    resp = client.post(
+        "/sam-to-bam",
+        files={"file": ("sample.sam", SAM_BODY, "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    argv = _conversion_argv(samtools)
+    assert argv[:2] == ["samtools", "sort"]
+    # No reference is involved for SAM, sorted or not.
+    assert "--reference" not in argv
+    assert len(samtools.ran("samtools", "index")) == 1
+
+
 def test_cram_to_bam_passes_argv_as_a_list_not_a_shell_string(
     client, gatk_api, reference_fasta, samtools
 ):
@@ -450,9 +641,9 @@ def test_cram_to_bam_passes_argv_as_a_list_not_a_shell_string(
         files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
         data={"reference_genome": "hg38"},
     )
-    call = [c for c in samtools if "view" in str(c["cmd"])][0]
-    assert isinstance(call["cmd"], (list, tuple))
-    assert call["kwargs"].get("shell") is not True
+    for call in samtools.calls:
+        assert isinstance(call["cmd"], (list, tuple)), call["cmd"]
+        assert call["kwargs"].get("shell") is not True
 
 
 def test_cram_to_bam_without_reference_fails_and_writes_nothing(

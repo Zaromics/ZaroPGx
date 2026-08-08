@@ -1176,6 +1176,14 @@ async def diagnostic():
 # Uploads are streamed to disk in chunks of this size rather than read into memory.
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
+# `samtools sort` budget. Deliberately small: this container's memory limit is shared
+# with a GATK Java heap sized by MAX_MEMORY (20g by default), so a conversion must
+# never be able to starve a concurrent variant-calling run. -m is per thread, so the
+# ceiling is roughly SORT_THREADS x SORT_MEMORY -- ~2.3 GiB at these defaults.
+# 768M is samtools' own default; both are env-overridable for a bigger host.
+SORT_MEMORY = os.environ.get("SAMTOOLS_SORT_MEMORY", "768M")
+SORT_THREADS = os.environ.get("SAMTOOLS_SORT_THREADS", "2")
+
 
 def _discard_output(path):
     """Delete an untrustworthy conversion output. Best effort, never raises."""
@@ -1239,8 +1247,8 @@ def _looks_like_bam(path):
         return False
 
 
-def run_samtools_view(job_label, argv, output_bam):
-    """Run a `samtools view` conversion and prove it produced a real BAM.
+def run_samtools_conversion(job_label, argv, output_bam):
+    """Run a samtools conversion (`view -b` or `sort`) and prove it made a real BAM.
 
     Every failure path raises HTTPException *and* removes the output, so a caller
     that returns normally can promise `output_bam` exists and is a BAM. No endpoint
@@ -1266,19 +1274,19 @@ def run_samtools_view(job_label, argv, output_bam):
 
     if result.returncode != 0:
         _discard_output(output_bam)
-        message = f"samtools view failed with exit code {result.returncode}: {stderr}"
+        message = f"{argv[1]} failed with exit code {result.returncode}: {stderr}"
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
     if not os.path.exists(output_bam) or os.path.getsize(output_bam) == 0:
         _discard_output(output_bam)
-        message = f"samtools view exited 0 but wrote no BAM to {output_bam}: {stderr}"
+        message = f"samtools {argv[1]} exited 0 but wrote no BAM to {output_bam}: {stderr}"
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
     if not _looks_like_bam(output_bam):
         _discard_output(output_bam)
-        message = f"samtools view produced {output_bam}, which is not a BGZF-framed BAM"
+        message = f"samtools {argv[1]} produced {output_bam}, which is not a BGZF-framed BAM"
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
@@ -1312,6 +1320,139 @@ def run_samtools_view(job_label, argv, output_bam):
     size = os.path.getsize(output_bam)
     logger.info(f"Job {job_label}: wrote {output_bam} ({size} bytes)")
     return size
+
+
+def read_sort_order(job_label, input_path, reference_path=None):
+    """Return the `@HD SO:` value from a SAM/CRAM header, or None if it does not say.
+
+    `samtools view -H` reads the header and stops, so this stays cheap even on a
+    whole-genome CRAM -- which is the point: it lets an already-coordinate-sorted
+    input skip the sort entirely.
+
+    Any failure returns None, which callers treat as "not known to be sorted" and
+    therefore sort. Guessing "sorted" here would produce an unindexable BAM.
+    """
+    argv = ["samtools", "view", "-H"]
+    if reference_path:
+        argv += ["-T", reference_path]
+    argv.append(input_path)
+
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(f"Job {job_label}: could not read header ({exc}); assuming unsorted")
+        return None
+
+    if result.returncode != 0:
+        stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        logger.warning(f"Job {job_label}: header read failed ({stderr}); assuming unsorted")
+        return None
+
+    header = (result.stdout or b"").decode("utf-8", errors="replace")
+    for line in header.splitlines():
+        if not line.startswith("@HD"):
+            continue
+        for field in line.split("\t")[1:]:
+            if field.startswith("SO:"):
+                return field[3:].strip()
+        return None
+    return None
+
+
+def index_output_bam(job_label, output_bam):
+    """Index the converted BAM, or delete it and raise.
+
+    Indexing requires coordinate-sorted input, so this doubles as the final proof
+    that the sort decision above was right. Every downstream consumer -- PyPGx,
+    GATK HaplotypeCaller, OptiType-from-BAM -- wants an indexed BAM, so handing back
+    an unindexed one would be another success over an unusable file.
+
+    Deliberately not reusing index_bam_file(): that one drives the in-memory `jobs`
+    tracker these conversions are not registered in (every update would log a
+    warning), and it shells out with shell=True on a path built from an uploaded
+    filename.
+    """
+    index_path = f"{output_bam}.bai"
+    argv = ["samtools", "index", output_bam]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _discard_output(output_bam)
+        message = f"samtools index could not be executed ({exc})"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if result.returncode != 0:
+        stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        _discard_output(index_path)
+        _discard_output(output_bam)
+        message = f"samtools index failed with exit code {result.returncode}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not os.path.exists(index_path):
+        _discard_output(output_bam)
+        message = f"samtools index exited 0 but wrote no index at {index_path}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    logger.info(f"Job {job_label}: indexed {output_bam}")
+    return index_path
+
+
+def convert_to_indexed_bam(job_label, input_path, output_bam, work_dir, reference_path=None):
+    """Convert SAM/CRAM to a coordinate-sorted, indexed BAM.
+
+    Blocking -- call it through asyncio.to_thread.
+
+    Sorting is conditional, because it is the expensive step. `samtools view -b`
+    preserves record order, so an input whose header already says
+    `@HD ... SO:coordinate` (the normal case for CRAM) only needs the format
+    conversion. Anything else -- explicitly unsorted, queryname-sorted, or a header
+    that does not say -- gets `samtools sort`.
+
+    Sorting spills to disk: worst case it writes a full second copy of the data as
+    `<prefix>.NNNN.bam`. `-T` puts those inside `work_dir`, the caller's scratch
+    directory, which is removed in a finally block -- never on the shared /data
+    volume, where a leaked intermediate would be exactly the class of bug this
+    module was just fixed for.
+
+    Returns:
+        tuple: (bam size in bytes, index path, whether a sort was performed)
+    """
+    sort_order = read_sort_order(job_label, input_path, reference_path)
+    needs_sort = sort_order != "coordinate"
+
+    if needs_sort:
+        logger.info(
+            f"Job {job_label}: header sort order is {sort_order!r}; sorting "
+            f"(-m {SORT_MEMORY} -@ {SORT_THREADS})"
+        )
+        argv = [
+            "samtools", "sort",
+            "-O", "bam",
+            "-m", SORT_MEMORY,
+            "-@", SORT_THREADS,
+            "-T", os.path.join(work_dir, "samtools_sort"),
+            "-o", output_bam,
+        ]
+        if reference_path:
+            # `samtools sort` spells the reference --reference; -T is its temp prefix,
+            # unlike `samtools view` where -T is the reference. Easy to get backwards.
+            argv += ["--reference", reference_path]
+        argv.append(input_path)
+    else:
+        logger.info(f"Job {job_label}: already coordinate-sorted; converting without a sort")
+        argv = ["samtools", "view", "-b"]
+        if reference_path:
+            argv += ["-T", reference_path]
+        argv += ["-o", output_bam, input_path]
+
+    size = run_samtools_conversion(job_label, argv, output_bam)
+    index_path = index_output_bam(job_label, output_bam)
+    return size, index_path, needs_sort
 
 
 async def _fail_step(job_client, message):
@@ -1380,7 +1521,13 @@ async def cram_to_bam(
     step_name: Optional[str] = Form("gatk_cram_to_bam")
 ):
     """
-    Convert CRAM to BAM with `samtools view -b -T <reference>`.
+    Convert CRAM to a coordinate-sorted, indexed BAM.
+
+    `samtools view -b -T <reference>` when the CRAM header already says
+    `SO:coordinate` (the normal case), `samtools sort` when it does not. The result
+    is always indexed, because every consumer of this endpoint's output -- PyPGx,
+    GATK, OptiType-from-BAM -- needs a sorted indexed BAM, and `samtools index`
+    itself only works on coordinate-sorted input.
 
     CRAM stores differences against a reference, so the reference FASTA is not
     optional: without the exact one the records cannot be decoded. A missing
@@ -1452,11 +1599,13 @@ async def cram_to_bam(
         # to_thread, not a bare call: converting a whole-genome CRAM takes minutes to
         # hours, and a blocking subprocess here would stall the event loop -- taking
         # /health, and therefore the container's healthcheck, down with it.
-        bam_size = await asyncio.to_thread(
-            run_samtools_view,
+        bam_size, index_path, sorted_here = await asyncio.to_thread(
+            convert_to_indexed_bam,
             local_job_id,
-            ["samtools", "view", "-b", "-T", reference_path, "-o", output_bam, input_path],
+            input_path,
             output_bam,
+            work_dir,
+            reference_path,
         )
 
         # Update workflow with completion
@@ -1464,6 +1613,8 @@ async def cram_to_bam(
             await job_client.log_progress("CRAM to BAM conversion completed", {
                 "output_bam": output_bam,
                 "bam_size_bytes": bam_size,
+                "bam_index": index_path,
+                "sorted": sorted_here,
                 "reference_genome": reference_genome
             })
             await job_client.complete_step("CRAM to BAM conversion completed successfully")
@@ -1473,8 +1624,10 @@ async def cram_to_bam(
             "job_id": local_job_id,
             "bam_path": output_bam,
             "bam": output_bam,  # Alternative field name
+            "bam_index": index_path,
             "bam_size_bytes": bam_size,
-            "message": f"Converted {filename} to BAM with samtools"
+            "sorted": sorted_here,
+            "message": f"Converted {filename} to a coordinate-sorted, indexed BAM"
         }
 
     except HTTPException as e:
@@ -1505,7 +1658,11 @@ async def sam_to_bam(
     step_name: Optional[str] = Form("gatk_sam_to_bam")
 ):
     """
-    Convert SAM to BAM with `samtools view -b`.
+    Convert SAM to a coordinate-sorted, indexed BAM.
+
+    `samtools view -b` when the SAM header already says `SO:coordinate`, otherwise
+    `samtools sort` -- which matters more here than for CRAM, since a SAM is quite
+    often queryname-sorted or unsorted. The result is always indexed.
 
     No reference FASTA is involved: SAM carries its own @SQ header, so unlike CRAM
     this conversion is self-contained. `reference_genome` is accepted only because
@@ -1554,18 +1711,23 @@ async def sam_to_bam(
             })
 
         # Offloaded for the same reason as the CRAM route: do not block the loop.
-        bam_size = await asyncio.to_thread(
-            run_samtools_view,
+        # No reference is passed: SAM carries its own @SQ header.
+        bam_size, index_path, sorted_here = await asyncio.to_thread(
+            convert_to_indexed_bam,
             local_job_id,
-            ["samtools", "view", "-b", "-o", output_bam, input_path],
+            input_path,
             output_bam,
+            work_dir,
+            None,
         )
 
         # Update workflow with completion
         if job_client:
             await job_client.log_progress("SAM to BAM conversion completed", {
                 "output_bam": output_bam,
-                "bam_size_bytes": bam_size
+                "bam_size_bytes": bam_size,
+                "bam_index": index_path,
+                "sorted": sorted_here
             })
             await job_client.complete_step("SAM to BAM conversion completed successfully")
 
@@ -1574,8 +1736,10 @@ async def sam_to_bam(
             "job_id": local_job_id,
             "bam_path": output_bam,
             "bam": output_bam,  # Alternative field name
+            "bam_index": index_path,
             "bam_size_bytes": bam_size,
-            "message": f"Converted {filename} to BAM with samtools"
+            "sorted": sorted_here,
+            "message": f"Converted {filename} to a coordinate-sorted, indexed BAM"
         }
 
     except HTTPException as e:
