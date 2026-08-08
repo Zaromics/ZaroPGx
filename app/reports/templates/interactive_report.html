@@ -257,6 +257,14 @@
             margin-bottom: 40px;
         }
         
+        /* 159: run-derived provenance line at the foot of the Executive Summary.
+           Mirrors report_template.html so both lanes read identically. */
+        .run-provenance {
+            margin: 10px 0 0 0;
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
         /* Chart container enhancements */
         .chart-container {
             max-width: 100%;
@@ -856,9 +864,27 @@
                     <canvas id="genePhenotypeChart"></canvas>
                 </div>
 
-                
+                {# 159: run-derived provenance, mirrored from report_template.html.
+                   The print lane puts these three sentences at the foot of the
+                   Executive Summary; the structural equivalent here is the foot of
+                   the Summary tab, so a reader of either report finds them in the
+                   same place. Sentence text is byte-identical to the print lane --
+                   keep it that way. Each sentence renders only if its own value
+                   resolved.
+
+                   `genome_build` is PharmCAT's `matcherMetadata.genomeBuild`: the
+                   build its *allele definitions* are specified on, always GRCh38.x,
+                   never the build of the uploaded file. See report_template.html for
+                   the full note on why this must not be shortened. #}
+                {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
+                <p class="run-provenance">
+                    {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, which are specified on the {{ genome_build }} reference assembly. That is the build of PharmCAT's definition data, not the reference build of the uploaded file; any concern about this file's own build is raised under Alerts and Warnings.{% endif %}
+                    {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
+                    {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
+                </p>
+                {% endif %}
             </div>
-            
+
             <div id="genes" class="tab-content">
                 <h3>Genetic Results</h3>
                 <table>
@@ -883,7 +909,12 @@
                                     {{ d.phenotype or 'Unknown' }}
                                 </span>
                             </td>
-                            <td>{{ d.activity_score if d.activity_score else '' }}</td>
+                            {# A truthiness test dropped an activity score of 0 --
+                               0.0, Decimal("0.0000") and "0" are all falsy here, and
+                               0 is the Poor Metabolizer end of the scale. Decide
+                               presence numerically; print the raw value so stored
+                               precision survives. Mirrors report_template.html. #}
+                            <td>{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}</td>
                             <td>
                                 {% if d.phenotype and 'Normal' in d.phenotype %}
                                     Standard drug metabolism expected
@@ -1180,12 +1211,15 @@
          style="display:none;">
         
         <!-- Store diplotypes data -->
+        {# data-activity-score carried the same truthiness bug as the visible table:
+           a score of 0 serialised as "", so any consumer of this payload saw a Poor
+           Metabolizer as having no score at all. Same numeric presence test. #}
         {% for d in diplotypes %}
         <div class="diplotype-data"
              data-gene="{{ d.gene }}"
              data-diplotype="{{ d.diplotype }}"
              data-phenotype="{{ d.phenotype }}"
-             data-activity-score="{{ d.activity_score if d.activity_score else '' }}">
+             data-activity-score="{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}">
         </div>
         {% endfor %}
         

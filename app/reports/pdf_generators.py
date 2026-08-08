@@ -60,6 +60,7 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 # Local imports
 from app.reports.generator import (
     _sanitize_graphviz_svg,
+    activity_score_num,
     build_citations,
     build_platform_info,
     get_author_name,
@@ -86,12 +87,18 @@ def _diplotype_line(diplotype: dict) -> str:
     gene_name = diplotype.get("gene", "Unknown")
     diplotype_value = diplotype.get("diplotype", "Unknown")
     phenotype = diplotype.get("phenotype", "Unknown")
-    activity_score = diplotype.get("activity_score", "Unknown")
+    activity_score = diplotype.get("activity_score")
 
     text = f"<b>{gene_name}:</b> {diplotype_value}"
     if phenotype != "Unknown":
         text += f" (Phenotype: {phenotype})"
-    if activity_score != "Unknown" and activity_score and str(activity_score).strip():
+    # `and activity_score` used to drop a score of 0 -- 0.0, Decimal("0.0000") and
+    # "0" are all falsy or falsy-adjacent, and 0 is the Poor Metabolizer end of the
+    # scale, i.e. the most clinically consequential value the field ever holds.
+    # Presence is decided numerically (the same activity_score_num the HTML lanes
+    # filter through, which also rejects "N/A"/"Unknown"/blank); the raw value is
+    # still what gets printed, so stored precision is preserved.
+    if activity_score_num(activity_score) is not None:
         text += f" (Activity Score: {activity_score})"
     text += f" [{resolve_called_by(diplotype).label}]"
     return text
@@ -689,6 +696,13 @@ class WeasyPrintGenerator(PDFGenerator):
                 # Get the template directory path
                 template_dir = os.path.join(os.path.dirname(__file__), "templates")
                 env = Environment(loader=FileSystemLoader(template_dir))
+                # Load-bearing. report_template.html filters through
+                # `activity_score_num`, and Jinja resolves filters at *compile*
+                # time -- so a bare Environment does not render a report without
+                # the score, it raises TemplateAssertionError out of get_template()
+                # below and this whole generator fails. Both other renderers of
+                # this template register it (generator.py:520, :2458).
+                env.filters["activity_score_num"] = activity_score_num
 
                 # Use the PDF template (report_template.html) for proper PDF generation
                 template = env.get_template("report_template.html")

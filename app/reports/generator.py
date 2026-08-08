@@ -61,8 +61,9 @@ from app.visualizations.workflow_diagram import (
 # Keep below import commented out; this prevents circular import
 # from app.reports.pdf_generators import generate_pdf_report_dual_lane
 
-# FHIR Export - import lazily to avoid circular imports
-# from app.services.fhir_export_service import FHIRExportService, FHIR_EXPORT_ENABLED
+# FHIR Export - imported lazily to avoid circular imports; see fhir_export_enabled()
+# below and the FHIRExportService import inside generate_report. There is no
+# FHIR_EXPORT_ENABLED constant to import anywhere: the flag is resolved per call.
 
 
 # Do not hardcode; derive from pyproject when available
@@ -363,15 +364,32 @@ INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
 EXECSUM_USE_TSV = _env_flag("EXECSUM_USE_TSV", False)
 
-# FHIR Export - automatically generate FHIR R4 exports during report generation
-FHIR_EXPORT_ENABLED = _env_flag("FHIR_EXPORT_ENABLED", True)
+
+# FHIR Export - automatically generate FHIR R4 exports during report generation.
+#
+# Deliberately NOT a module-level constant. This module is imported from
+# app/main.py's import block (app/main.py:76), which runs *before* that file's
+# load_dotenv(), so a constant here would snapshot a pre-.env environment while
+# app/main.py -- which decides whether to mount /fhir/* -- reads a post-.env one:
+# two readers, two answers, and report generation could skip the export for a run
+# whose /fhir/* endpoints are live. That is the exact failure mode
+# app/utils/outside_calls_override.py documents as its reason to resolve on
+# demand, and the one tests/test_fhir_export_flag.py pins.
+#
+# fhir_export_service is imported lazily for the same circular-import reason the
+# FHIRExportService import inside generate_report gives.
+def fhir_export_enabled() -> bool:
+    """Resolve FHIR_EXPORT_ENABLED per call, through the one shared parser."""
+    from app.services.fhir_export_service import fhir_export_enabled as _resolve
+
+    return _resolve()
+
 
 # Log the configuration for debugging
 logger.info(
     f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}"
 )
 logger.info(f"Executive Summary Configuration - Use TSV: {EXECSUM_USE_TSV}")
-logger.info(f"FHIR Export Configuration - Enabled: {FHIR_EXPORT_ENABLED}")
 
 # Report configuration dictionary
 REPORT_CONFIG = {
@@ -388,8 +406,9 @@ REPORT_CONFIG = {
     "show_pharmcat_html_report": INCLUDE_PHARMCAT_HTML,  # Original HTML report from PharmCAT
     "show_pharmcat_json_report": INCLUDE_PHARMCAT_JSON,  # Original JSON report from PharmCAT
     "show_pharmcat_tsv_report": INCLUDE_PHARMCAT_TSV,  # Original TSV report from PharmCAT
-    # FHIR Export - generate FHIR R4 compliant exports
-    "generate_fhir_export": FHIR_EXPORT_ENABLED,  # FHIR JSON/XML exports
+    # FHIR Export is intentionally absent from this dict: REPORT_CONFIG is built at
+    # import time, so storing the flag here would re-freeze exactly what
+    # fhir_export_enabled() exists to avoid. generate_report calls the resolver.
 }
 
 # Configure WeasyPrint logging for debugging text rendering issues
@@ -1152,6 +1171,13 @@ def create_interactive_html_report(
             except Exception:
                 workflow_html_fallback = ""
 
+        # 159: run-derived provenance. `report_dir` is os.path.dirname(output_path)
+        # -- the same directory the other two lanes probe -- so the interactive
+        # report resolves the identical three facts from the identical file. Without
+        # this the print report carried provenance and the interactive one silently
+        # did not, for the same run.
+        matcher_meta = probe_matcher_metadata(report_dir, str(report_id))
+
         # Prepare the report data
         report_data = {
             "patient_id": patient_id,
@@ -1180,6 +1206,12 @@ def create_interactive_html_report(
             # Add workflow warnings/alerts for report display
             "workflow_warnings": workflow_warnings or [],
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+            # 159: run-derived provenance (each rendered only if resolved)
+            "genome_build": matcher_meta["genome_build"],
+            "named_allele_matcher_version": matcher_meta[
+                "named_allele_matcher_version"
+            ],
+            "pharmcat_data_version": matcher_meta["data_version"],
         }
 
         # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
@@ -1644,6 +1676,23 @@ def generate_report(
                     methodology_assume_ref_paragraph,
                 )
 
+                # No populate_existing() here, unlike the six JobService reads.
+                # SessionLocal sets expire_on_commit=False, so a plain query hands
+                # back an identity-mapped instance -- but only if this session
+                # already loaded the row. It has not: the sole caller that supplies
+                # db_session opens it with `next(get_db())` on the line before the
+                # call (upload_router.py), i.e. a brand-new SessionLocal with an
+                # empty identity map, and app/main.py's reprocessing path passes no
+                # session at all so this branch never runs there. Every key read
+                # below is committed at upload time, long before report generation
+                # starts, so there is no window to be stale in.
+                #
+                # The safety is the caller's freshness, not the statement's, and it
+                # is invisible from here -- tests/test_generator_job_metadata_read.py
+                # pins both shapes. Hand this function a session that already loaded
+                # the Job (a poll loop's, a reused request-scoped one) and the GRCh37
+                # provisional alert vanishes from the report with no error anywhere;
+                # populate_existing() becomes required that day.
                 job_uuid = uuid.UUID(str(job_id))
                 job_row = db_session.query(Job).filter(Job.id == job_uuid).first()
                 meta = (job_row.job_metadata or {}) if job_row is not None else {}
@@ -2086,9 +2135,13 @@ def generate_report(
                     diplotype = gene_res.get("diplotype")
                     details = gene_res.get("details") or {}
                     phenotype = details.get("phenotype") or details.get("Phenotype")
-                    activity_score = details.get("activity_score") or details.get(
-                        "activityScore"
-                    )
+                    # `a or b` would swallow a PyPGx activity score of 0 -- falsy,
+                    # so it falls through to the alternate key and ends up None,
+                    # blanking the cell before any template sees it. 0 is the Poor
+                    # Metabolizer end of the scale; pick by presence, not truth.
+                    activity_score = details.get("activity_score")
+                    if activity_score is None:
+                        activity_score = details.get("activityScore")
                     gene_entry = {
                         "gene": gene_name,
                         # Align with normalized PharmCAT structure minimally
@@ -2149,8 +2202,17 @@ def generate_report(
                                 target["diplotype"] = parsed["diplotype"]
                             if not target.get("phenotype") and parsed.get("phenotype"):
                                 target["phenotype"] = parsed["phenotype"]
-                            if not target.get("activity_score") and parsed.get(
-                                "activity_score"
+                            # Both halves were truthiness tests, and both were wrong
+                            # for a score of 0: a parsed 0 never filled an empty
+                            # target, and a stored 0 counted as missing and got
+                            # overwritten. Presence is numeric here as everywhere
+                            # else -- which also stops "N/A"/"Unknown" from being
+                            # treated as a score worth keeping or copying.
+                            if activity_score_num(
+                                target.get("activity_score")
+                            ) is None and (
+                                activity_score_num(parsed.get("activity_score"))
+                                is not None
                             ):
                                 target["activity_score"] = parsed["activity_score"]
                             if parsed.get("call_confidence") and not target.get(
@@ -3051,8 +3113,9 @@ def generate_report(
                 "PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable"
             )
 
-        # FHIR Export - Generate FHIR R4 compliant exports if enabled
-        if REPORT_CONFIG["generate_fhir_export"]:
+        # FHIR Export - Generate FHIR R4 compliant exports if enabled.
+        # Resolved here, per report, not read out of an import-time snapshot.
+        if fhir_export_enabled():
             logger.info("=== FHIR EXPORT GENERATION START ===")
             try:
                 # Import lazily to avoid circular imports

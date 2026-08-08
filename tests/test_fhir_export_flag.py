@@ -17,6 +17,13 @@ and the symptom points nowhere near the cause.
 
 Both the mount and the guard now call one resolver,
 ``fhir_export_service.fhir_export_enabled()``.
+
+``app/reports/generator.py`` was a third reader with the same defect: it froze
+``FHIR_EXPORT_ENABLED`` into a module constant and baked it into ``REPORT_CONFIG``
+at import time. ``app/main.py`` imports that module at :76, well before its own
+``load_dotenv()``, so report generation decided whether to write a FHIR export
+from a pre-``.env`` environment while ``/fhir/*`` was mounted from a post-``.env``
+one. It now calls the same resolver, per report.
 """
 
 from __future__ import annotations
@@ -94,14 +101,25 @@ def test_whitespace_padded_true_does_not_503_the_endpoints(client, monkeypatch):
 def test_flag_is_resolved_by_one_shared_function():
     """main.py must not keep its own parse; it must call the service's resolver."""
     import app.main as main_module
+    import app.reports.generator as generator_module
 
     assert main_module.fhir_export_enabled is fhir_export_enabled
 
-    for module in (main_module, fhir_service_module):
+    for module in (main_module, fhir_service_module, generator_module):
         assert not hasattr(module, "FHIR_EXPORT_ENABLED"), (
             f"{module.__name__} still exposes a frozen FHIR_EXPORT_ENABLED constant; "
             "a second reader will drift from the resolver"
         )
+
+
+def test_report_config_does_not_freeze_the_flag():
+    """REPORT_CONFIG is built at import time, so the flag must not live in it."""
+    from app.reports.generator import REPORT_CONFIG
+
+    assert "generate_fhir_export" not in REPORT_CONFIG, (
+        "REPORT_CONFIG re-froze FHIR_EXPORT_ENABLED at import time; that is the "
+        "snapshot fhir_export_enabled() exists to avoid"
+    )
 
 
 def test_flag_name_appears_in_exactly_one_env_lookup():
@@ -117,6 +135,7 @@ def test_flag_name_appears_in_exactly_one_env_lookup():
             "app/main.py",
             "app/api/routes/fhir_export_router.py",
             "app/services/fhir_export_service.py",
+            "app/reports/generator.py",
         )
         for line in (REPO_ROOT / name).read_text(encoding="utf-8").splitlines()
         if '"FHIR_EXPORT_ENABLED"' in line
@@ -135,18 +154,20 @@ def test_flag_is_not_frozen_at_import_time(monkeypatch):
     no pre-dotenv snapshot survives anywhere.
     """
     from app.api.routes import fhir_export_router as router_module
+    from app.reports.generator import fhir_export_enabled as generator_reader
 
     readers = (
         fhir_export_enabled,
         router_module.fhir_export_enabled,
         lambda: FHIRExportService(MagicMock()).is_enabled(),
+        generator_reader,
     )
 
     monkeypatch.setenv("FHIR_EXPORT_ENABLED", "false")
-    assert [reader() for reader in readers] == [False, False, False]
+    assert [reader() for reader in readers] == [False] * len(readers)
 
     monkeypatch.setenv("FHIR_EXPORT_ENABLED", "true ")
-    assert [reader() for reader in readers] == [True, True, True]
+    assert [reader() for reader in readers] == [True] * len(readers)
 
 
 COLD_BOOT_PROBE = textwrap.dedent("""
