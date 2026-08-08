@@ -295,12 +295,20 @@ def test_panel_renders_nothing_when_flags_are_only_at_the_old_top_level(tmp_path
 # --------------------------------------------------------------------------
 # the rename guard
 # --------------------------------------------------------------------------
-def test_template_workflow_reads_are_declared_model_fields():
-    """Every workflow field index.html reads must exist on the server model.
+def test_template_workflow_reads_are_declared_model_fields(client):
+    """Every workflow field index.html reads must be one some endpoint really sends.
 
     Nothing tied the template's read paths to the response builder's field
     names, which is why 137b's rename went unnoticed. Rename or drop a
     WorkflowOptions field now and this fails.
+
+    The panel is fed by two endpoints, so there are two sources of truth.
+    ``POST /upload/genomic-data`` sends ``WorkflowOptions``. ``POST
+    /upload/inspect-header`` sends a flat compat dict that carries a couple of
+    fields ``WorkflowOptions`` cannot have: it also answers for files the upload
+    would *refuse*, and a refused file has no workflow to describe. Those keys
+    are taken from a real preview response rather than a hardcoded list, so
+    renaming one server-side still breaks this test.
     """
     from app.api.models import WorkflowInfo, WorkflowOptions
 
@@ -313,13 +321,22 @@ def test_template_workflow_reads_are_declared_model_fields():
         "there since 137b"
     )
 
+    preview = client.post(
+        "/upload/inspect-header",
+        files={"file": ("preview.bam", b"BAM\x01", "application/octet-stream")},
+    )
+    assert preview.status_code == 200, preview.text
+    preview_fields = set(preview.json()["compat"]["workflow"])
+
     read = {m.group(1) for m in re.finditer(r"\bwf\.([a-zA-Z_][a-zA-Z0-9_]*)", script)}
     read.discard("options")  # the hop itself, checked above
 
-    unknown = sorted(read - set(WorkflowOptions.model_fields))
+    sent = set(WorkflowOptions.model_fields) | preview_fields
+    unknown = sorted(read - sent)
     assert not unknown, (
-        f"index.html reads workflow fields the server does not send: {unknown}. "
-        f"WorkflowOptions declares: {sorted(WorkflowOptions.model_fields)}"
+        f"index.html reads workflow fields no endpoint sends: {unknown}. "
+        f"WorkflowOptions declares: {sorted(WorkflowOptions.model_fields)}; "
+        f"the header preview adds: {sorted(preview_fields - set(WorkflowOptions.model_fields))}"
     )
 
     # The four reads that were dead must actually still be read somewhere.

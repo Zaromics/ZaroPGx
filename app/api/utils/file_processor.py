@@ -1,3 +1,4 @@
+import html
 import logging
 import os
 import re
@@ -520,7 +521,10 @@ class FileProcessor:
             "needs_gatk": False,
             "needs_indexing": False,
             "needs_alignment": False,
-            "needs_liftover": False,  # If VCF, if GRCh37 (hg19) reference, bcftools liftover to GRCh38 (hg38)
+            # Never set anywhere, and nothing reads it: ZaroPGx performs no liftover, and
+            # app/api/utils/liftover.py has no callers. Kept only so consumers that read
+            # the key keep seeing False.
+            "needs_liftover": False,
             "needs_conversion": False,
             "needs_hla": False,
             "needs_pypgx": False,
@@ -941,22 +945,28 @@ class FileProcessor:
             if not files:
                 return {"success": False, "error": "No files provided"}
 
-            # For now, process only the first file (primary file)
+            # Only one file is analysed.
             # TODO: Support multiple files in the future
             # 2 files can now be uploaded, but the use of the index file needs work.
-            primary_file = files[0]
-
-            # Everything after files[0] is dropped on the floor. For an index file that
-            # is merely not-yet-implemented, but for a second *data* file it is a silent
-            # wrong answer: a paired-read upload used to be analysed as one mate, and
-            # two VCFs as whichever arrived first, with nothing said. Collect the names
-            # now and warn below. safe_upload_basename() is what these would have been
-            # saved as and strips everything that is not [A-Za-z0-9._-], so the names
-            # are inert in the HTML fragment the workflow panel renders.
-            ignored_files = [
-                safe_upload_basename(f.filename)
-                for f in files[1:]
+            #
+            # It is the first file that is not an index, rather than files[0]: a browser
+            # FileList is commonly alphabetical, so selecting sample.bam + sample.bai put
+            # the .bai first and the whole upload was refused as "Unrecognized file
+            # format: unknown" without ever mentioning the BAM sitting behind it.
+            data_files = [
+                f
+                for f in files
                 if not str(f.filename or "").lower().endswith(INDEX_FILE_SUFFIXES)
+            ]
+            primary_file = data_files[0] if data_files else files[0]
+
+            # Every other data file is dropped on the floor, which for a second *data*
+            # file is a silent wrong answer: a paired-read upload used to be analysed as
+            # one mate, and two VCFs as whichever arrived first, with nothing said.
+            # Collect the names now and warn below. They are HTML-escaped there, because
+            # the workflow panel renders warnings with innerHTML.
+            ignored_files = [
+                str(f.filename or "") for f in data_files if f is not primary_file
             ]
 
             # Save the uploaded file to temporary location
@@ -988,16 +998,22 @@ class FileProcessor:
                 workflow["workflow_type"] = "genomic_analysis"
 
                 if ignored_files:
-                    analysed = safe_upload_basename(primary_file.filename)
-                    was_were = "was" if len(ignored_files) == 1 else "were"
+                    # html.escape, not safe_upload_basename: the point of this warning is
+                    # to name the file the user actually chose, and sanitising would show
+                    # them a name they never typed ("my file (2).bam" -> "my_file_2.bam").
+                    # Escaping is what keeps it inert -- the panel assigns warnings with
+                    # innerHTML -- and these strings are only ever rendered as HTML.
+                    analysed = html.escape(str(primary_file.filename or "your file"))
+                    ignored = [html.escape(name) for name in ignored_files]
+                    was_were = "was" if len(ignored) == 1 else "were"
                     logger.warning(
                         "Analysing %s only; ignored %s",
-                        analysed,
+                        primary_file.filename,
                         ", ".join(ignored_files),
                     )
                     workflow["warnings"].append(
                         f"<p>⚠️ ZaroPGx analyses one data file per job. Only {analysed} "
-                        f"was analysed; {', '.join(ignored_files)} {was_were} ignored. "
+                        f"was analysed; {', '.join(ignored)} {was_were} ignored. "
                         "Upload each data file as its own analysis.</p>"
                     )
 

@@ -183,6 +183,24 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     )
 
 
+def _discard_refused_upload(file_paths: Optional[List[str]]) -> None:
+    """Delete the bytes of an upload we are about to refuse. Never raises.
+
+    A refusal is not a failure to clean up after: the file is unreferenced the moment
+    the 400 is raised, no patient or job row names it, and app/services/cleanup_service
+    only sweeps ``/data/uploads/{patient_id}``. Best effort by design — a file that
+    cannot be removed must not turn a clean 400 into a 500.
+    """
+    for path in file_paths or []:
+        try:
+            os.unlink(path)
+            logger.info("Removed refused upload: %s", path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Could not remove refused upload %s: %s", path, exc)
+
+
 # --- Boundary validation for values that reach the Nextflow pipeline's shell ---
 #
 # main.nf assembles curl argv inside a bash `shell:` block. Nextflow escapes `path`
@@ -1420,6 +1438,11 @@ async def upload_genomic_data(
                 result["workflow"].get("file_type"),
                 unanalysable,
             )
+            # process_files() saves before it analyses, so the bytes are already on disk.
+            # Nothing will ever collect them: the cleanup service sweeps
+            # /data/uploads/{patient_id}, and a refusal mints no patient. Left alone, a
+            # refused 200GB FASTQ sits in the upload directory forever.
+            _discard_refused_upload(result.get("file_paths"))
             raise HTTPException(status_code=400, detail=unanalysable)
 
         eff_absent, eff_unspec = resolve_assume_ref_flags(
@@ -1727,11 +1750,17 @@ async def inspect_file_header(
             header_info = inspect_header(temp_file.name)
 
             # Derive workflow analysis using the same backend logic (no Nextflow)
+            # `refused` is the same verdict /upload/genomic-data would reach, so the
+            # preview cannot promise a workflow the upload would then refuse. It is not
+            # `unsupported`: a GRCh37 VCF is unsupported *and* analysed, and its plan must
+            # still be drawn. Only the gate can tell those apart, so the gate is asked.
             compat_workflow = {
                 "recommendations": [],
                 "warnings": [],
                 "unsupported": False,
                 "unsupported_reason": None,
+                "refused": False,
+                "refusal_reason": None,
             }
             try:
                 workflow_result = await file_processor.process_upload(
@@ -1739,11 +1768,14 @@ async def inspect_file_header(
                 )
                 if workflow_result.get("status") == "success":
                     wf = workflow_result.get("workflow", {})
+                    refusal = _unanalysable_upload_reason(wf)
                     compat_workflow = {
                         "recommendations": wf.get("recommendations", []),
                         "warnings": wf.get("warnings", []),
                         "unsupported": wf.get("unsupported", False),
                         "unsupported_reason": wf.get("unsupported_reason"),
+                        "refused": refusal is not None,
+                        "refusal_reason": refusal,
                     }
             except Exception as e:
                 logger.debug(f"Header inspect workflow derivation failed: {e}")

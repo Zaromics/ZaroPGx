@@ -915,12 +915,33 @@
                 const wf = window.getWorkflowOptions(opts.workflow);
                 const fileType = (opts.fileType || '').toString().toLowerCase();
 
+                // A refused input has no workflow at all. Drawing one next to the red
+                // "cannot analyse" alert told the user two opposite things at once:
+                // this file type is not accepted, and here is the pipeline it will run.
+                // `refused` is the upload gate's own verdict, sent by
+                // POST /upload/inspect-header, so this cannot drift from the upload.
+                // Note it is NOT `unsupported`: a GRCh37 VCF is unsupported and still
+                // analysed, and must keep its plan.
+                if (wf.refused) {
+                    const why = wf.refusal_reason || wf.unsupported_reason || 'This file type is not accepted.';
+                    return `
+                        <h6 class="card-title d-flex align-items-center mb-2">
+                            <i class="bi bi-diagram-3 me-2 text-secondary"></i>
+                            Planned Workflow
+                        </h6>
+                        <div class="alert alert-danger mb-0">
+                            <strong>No workflow will run.</strong> This file cannot be uploaded for analysis.
+                            <div class="mt-1">${why}</div>
+                        </div>`;
+                }
+
                 const steps = [];
                 // Always begin with analysis (header inspection)
                 steps.push({ name: 'Analysis (Header Inspection)', icon: 'bi-search' });
 
-                // GATK needed for certain formats or explicit flag
-                const needsGatk = !!wf.needs_gatk || !!wf.needs_alignment || !!wf.needs_conversion || ['sam', 'cram', 'fastq'].includes(fileType);
+                // GATK needed for certain formats or explicit flag. `fastq` is absent:
+                // FASTQ uploads are refused, so there is no FASTQ alignment to draw.
+                const needsGatk = !!wf.needs_gatk || !!wf.needs_alignment || !!wf.needs_conversion || ['sam', 'cram'].includes(fileType);
                 if (needsGatk) {
                     steps.push({ name: 'GATK Processing', icon: 'bi-cpu' });
                 }
