@@ -37,7 +37,8 @@ ZaroPGx supports:
 - **BAM**: Binary Alignment Map (soon)
 - **CRAM**: Compressed BAM (soon)
 - **SAM**: Sequence Alignment Map (soon)
-- **FASTQ**: Raw sequencing data. Paired reads preferred. (soon)
+
+**FASTQ is not accepted.** ZaroPGx ships no aligner, so raw reads cannot be turned into the aligned data every later step needs, and a FASTQ upload is refused with an explanatory message rather than accepted and failed partway through. This applies to single- and paired-end reads alike. Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.
 
 ### What reference genomes are supported?
 
@@ -51,7 +52,7 @@ ZaroPGx supports:
 - 16 GB RAM
 - 30 GB storage
 
-**Recommended (FASTQ/BAM/SAM/CRAM input):**
+**Recommended (BAM/SAM/CRAM input):**
 - 8+ CPU cores
 - 64+ GB RAM
 - 1+ TB SSD storage
@@ -60,7 +61,7 @@ ZaroPGx supports:
 
 Analysis time depends on:
 - **File size**: Larger files take longer
-- **File type**: VCF is fastest, FASTQ is slowest
+- **File type**: VCF is fastest, CRAM/SAM slowest (they are converted to BAM first)
 - **System resources**: More CPU+RAM = faster processing
 - **Reference genome**: GRCh37 adds a liftover re-alignment delay
 
@@ -68,7 +69,6 @@ Analysis time depends on:
 - **VCF (exome)**: 5-15 minutes
 - **VCF (whole genome)**: 30-60 minutes
 - **BAM (exome)**: from 15-30 minutes, up to several hours or more
-- **FASTQ (exome)**: from 30-60 minutes, up to several hours or more
 
 ## Clinical Considerations
 
