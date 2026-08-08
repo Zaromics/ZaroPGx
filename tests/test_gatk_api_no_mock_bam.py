@@ -568,8 +568,10 @@ def test_quickcheck_rejection_is_not_reported_as_success(
 # service sanitises it. On main it was joined straight into a temp path that then
 # reached three separate `shell=True` call sites from /variant-call. gatk-api has
 # no authentication and is reachable from the Docker host (127.0.0.1:5002) and from
-# any container on the compose network, so this was live inside the trust boundary
-# -- the internet-facing route (app/main.py) happens to apply secure_filename first.
+# any container on the compose network, so this was live inside the trust boundary.
+# (app/main.py's route used to apply werkzeug secure_filename, which was weaker
+# still -- it returns "" for "..." -- and now carries a copy of safe_upload_name;
+# see tests/test_upload_name_sanitiser.py.)
 #
 # Both halves are pinned here: the filename is neutralised at the source, and each
 # sink takes argv so the class stays closed whatever a future caller passes.
@@ -1319,3 +1321,34 @@ def test_unopenable_log_destination_is_skipped_not_fatal(gatk_api, tmp_path):
         gatk_api._bounded_file_handler(str(tmp_path / "no" / "such" / "dir.log"))
         is None
     )
+
+
+def test_a_skipped_log_destination_is_reported_loudly(gatk_api, tmp_path, caplog):
+    """Degrading to console must not be silent.
+
+    252 converged all five sidecars on "warn and keep running" rather than "raise
+    at import". That trade is only defensible if the operator is told: a service
+    quietly dropping its progress log is a shared volume that is not mounted, and
+    the app will show no progress for this stage. gatk-api is the one of the five
+    that can be imported out-of-container, so this is where the warning is
+    exercised for real rather than asserted against source.
+    """
+    missing = str(tmp_path / "no" / "such" / "dir.log")
+    before = len(gatk_api._log_file_errors)
+
+    assert gatk_api._bounded_file_handler(missing) is None
+    assert len(gatk_api._log_file_errors) == before + 1
+    assert gatk_api._log_file_errors[-1][0] == missing
+
+    probe = logging.getLogger("zaropgx-unopened-log-probe")
+    with caplog.at_level(logging.WARNING, logger=probe.name):
+        gatk_api._warn_about_unopened_logs(probe)
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "an unopenable log destination was skipped without a word"
+    said = "\n".join(r.getMessage() for r in warnings)
+    assert missing in said, f"the warning does not name the path: {said}"
+    assert "console only" in said
+
+    # Leave the module-level list as it was found; it is import-time state.
+    del gatk_api._log_file_errors[before:]

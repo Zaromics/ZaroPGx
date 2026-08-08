@@ -53,20 +53,76 @@ import sys
 sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 
-# Configure logging
+# --------------------------------------------------------------------------
+# Bounded logging (BACKLOG 252). Same block, same values, same failure
+# behaviour in every ZaroPGx sidecar: docker/gatk-api/gatk_api.py,
+# docker/nextflow/runner.py, docker/pypgx/pypgx_wrapper.py and
+# docker/zarohla/app.py. tests/test_log_rotation_252.py pins all five against
+# one rule, so an edit here that is not made there fails the suite.
+#
+# It is duplicated rather than imported: these are five separate images, and
+# the logging block runs before sys.path is extended with the shared
+# /job-client directory. See gatk_api.py for the full argument.
+#
+# /data is the volume shared with the main app, so the progress log has to be
+# size bounded - an unrotated handler here grows until the shared volume fills.
+# 10 MiB x 5 backups caps the destination at 60 MiB.
+PROGRESS_LOG_PATH = os.environ.get('PHARMCAT_PROGRESS_LOG', '/data/pharmcat_progress.log')
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+
+# (path, error) for every destination that could not be opened. Reported by
+# _warn_about_unopened_logs() once `logger` exists -- the failure is loud, but
+# it is not fatal.
+_log_file_errors = []
+
+
+def _bounded_file_handler(path):
+    """Return a size-capped handler for `path`, or None if it cannot be opened.
+
+    A log destination that is missing or read-only must not take the service down at
+    import time. Building this handler inline in basicConfig(), as this module used
+    to, meant a missing /data killed the container inside logging setup -- before
+    `logger` existed, so nothing ever said why, and with `restart: unless-stopped`
+    that became a silent crash loop. The handler is not the job: if /data really is
+    unmounted, the first read or write of actual pipeline data fails with an error
+    that names the real operation. Degrading keeps stdout carrying the full stream
+    for `docker logs`, and the caller warns.
+    """
+    try:
+        return RotatingFileHandler(
+            path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
+        )
+    except OSError as exc:
+        _log_file_errors.append((path, exc))
+        return None
+
+
+def _warn_about_unopened_logs(log):
+    """Say loudly, once logging works, which destinations were skipped."""
+    for path, exc in _log_file_errors:
+        log.warning(
+            "Could not open log file %s (%s) - logging to console only. If that path "
+            "is on /data, the shared volume is not mounted and the main app will not "
+            "see this service's progress; stdout still carries the full stream.",
+            path,
+            exc,
+        )
+
+
+_log_handlers = [logging.StreamHandler()]  # Console output
+# Progress log accessible to main app
+_progress_handler = _bounded_file_handler(PROGRESS_LOG_PATH)
+if _progress_handler is not None:
+    _log_handlers.append(_progress_handler)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Console output
-        RotatingFileHandler(
-            '/data/pharmcat_progress.log',  # Progress log accessible to main app
-            maxBytes=10 * 1024 * 1024,  # 10 MB per file before rotating
-            backupCount=5,  # keep 5 rotated backups (~60 MB max on disk)
-        ),
-    ]
+    handlers=_log_handlers
 )
 logger = logging.getLogger("pharmcat")
+_warn_about_unopened_logs(logger)
 
 
 def _translate_uploaded_outside_tsv(outside_path: str) -> None:
@@ -122,8 +178,10 @@ PHARMCAT_JAR = os.environ.get("PHARMCAT_JAR", "/pharmcat/pharmcat.jar")
 PHARMCAT_PIPELINE_DIR = os.environ.get("PHARMCAT_PIPELINE_DIR", "/pharmcat/pipeline")
 # Path to PharmCAT reference files (where PharmCAT expects them)
 PHARMCAT_REFERENCE_DIR = os.environ.get("PHARMCAT_REFERENCE_DIR", "/pharmcat")
-# Path to outside calls override file (for manual HLA/MT-RNR1/CYP2D6 calls)
-OUTSIDE_CALLS_OVERRIDE_PATH = os.environ.get("OUTSIDE_CALLS_OVERRIDE_PATH", "/data/lexicon/outside_calls.tsv")
+# OUTSIDE_CALLS_OVERRIDE_PATH used to be read here, for the manual
+# HLA/MT-RNR1/CYP2D6 override. It is gone with the branch that used it -- see
+# /genotype, and app/utils/outside_calls_override.py, which is now the single
+# place the override file is located and the flag that gates it is parsed.
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -377,17 +435,44 @@ async def process_genotype(
                     shutil.copy2(file_path, vcf_path)
                     logger.info(f"Copied VCF file to temp directory: {vcf_path}")
                 
-                # Handle outside TSV file - check for override first
+                # Handle outside TSV file.
+                #
+                # This service does NOT read OUTSIDECALLSOVERRIDE. It used to, with
+                # its own `os.environ.get(...).lower()` parse that -- unlike the
+                # app's -- did not .strip(), so `OUTSIDECALLSOVERRIDE='true '` in a
+                # .env file disabled the override here while enabling it there.
+                # That branch is deleted rather than repaired, for two reasons:
+                #
+                #  * It was unreachable under Compose. compose.yml passes the
+                #    variable to no service but `app` (the only one with an
+                #    `env_file:`), so `OUTSIDECALLSOVERRIDE` is unset in this
+                #    container and the branch was unconditionally False.
+                #  * Repairing it would mean a second parser for a flag the repo
+                #    has deliberately consolidated into exactly one resolver,
+                #    app/utils/outside_calls_override.py:is_override_enabled() --
+                #    and a second parser on the far side of an image boundary,
+                #    where no test can cross-check it against the first.
+                #
+                # Where the override is applied now, stated precisely rather than
+                # as "it still works end to end":
+                #
+                #  * app/pharmcat/pharmcat_client.py:614 resolves it with that single
+                #    resolver and posts the file as the `outside_tsv` multipart part,
+                #    which the branch below handles -- and which also applies the
+                #    PyPGx->PharmCAT synonym translation the deleted branch skipped.
+                #  * The Nextflow path does NOT go through that client.
+                #    pipelines/pgx/main.nf POSTs to http://pharmcat:5000/genotype
+                #    directly, with an `outside_tsv` assembled from PyPGx and HLA
+                #    output only. So on that path -- the primary production path --
+                #    a manual lexicon/outside_calls.tsv is applied by neither side.
+                #
+                # That gap is NOT introduced here: the branch removed above was
+                # already inert, because the variable never reached this container.
+                # It is a real, separate gap in the Nextflow lane and is worth its
+                # own backlog item; deleting dead code is not the place to close it.
                 outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
-                outside_calls_override_enabled = os.environ.get("OUTSIDECALLSOVERRIDE", "").lower() in ("true", "1", "yes", "on")
-                
-                if outside_calls_override_enabled and os.path.exists(OUTSIDE_CALLS_OVERRIDE_PATH):
-                    # Use the manual override file instead of any provided outside TSV
-                    shutil.copy2(OUTSIDE_CALLS_OVERRIDE_PATH, outside_path)
-                    logger.info(f"Using outside calls OVERRIDE from {OUTSIDE_CALLS_OVERRIDE_PATH}")
-                    logger.info(f"Override file copied to {outside_path}")
-                elif outside_tsv:
-                    # Use provided outside TSV if no override
+
+                if outside_tsv:
                     with open(outside_path, "wb") as f:
                         content = await outside_tsv.read()
                         f.write(content)
@@ -395,7 +480,7 @@ async def process_genotype(
                     _translate_uploaded_outside_tsv(outside_path)
                 else:
                     outside_path = None
-                    logger.info("No outside calls file provided or override enabled")
+                    logger.info("No outside calls file provided")
                 
                 # Extract actual sample ID from VCF file for PharmCAT -s parameter
                 vcf_sample_id = extract_sample_id_from_vcf(vcf_path)

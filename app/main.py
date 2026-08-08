@@ -46,7 +46,6 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from werkzeug.utils import secure_filename
 
 from app.api.db import get_db
 from app.api.middleware.auth_gate import (
@@ -172,6 +171,73 @@ TEMPLATE_DIR = BASE_DIR / "templates"
 # These directories are created by startup_event(), not at import time: the defaults are
 # absolute container paths, so creating them on import would litter the host filesystem
 # (C:\data, C:\tmp on Windows) merely from `import app.main`.
+
+# Extensions this app recognises, longest first so `.vcf.gz` wins over `.gz`.
+# The stored filename's extension is always one of these literals, never a slice of
+# the upload's own name.
+#
+# DELIBERATE DUPLICATE of docker/gatk-api/gatk_api.py's SAFE_UPLOAD_EXTENSIONS /
+# safe_upload_name(). The two must stay byte-for-byte equivalent in behaviour;
+# tests/test_upload_name_sanitiser.py runs both implementations over the same
+# corpus and asserts they return identical names, so a change to one that is not
+# made to the other fails the suite.
+SAFE_UPLOAD_EXTENSIONS = (
+    ".vcf.gz",
+    ".vcf",
+    ".bcf",
+    ".bam",
+    ".cram",
+    ".sam",
+    ".fastq",
+    ".fq",
+)
+
+
+def safe_upload_name(filename: Optional[str], local_job_id: str) -> str:
+    """Return a shell- and filesystem-safe name to store an upload under.
+
+    `file.filename` is attacker-controlled: it arrives in the multipart body and
+    nothing upstream sanitises it. This route previously used werkzeug's bare
+    `secure_filename`, which is not enough on its own -- it returns `""` for a
+    wholly pathological name such as `"..."`, and `os.path.join(temp_dir, "")` is
+    the *directory*, which the next line then opened for writing.
+
+    Same construction as the gatk-api sidecar's `safe_upload_name`: the name is
+    rebuilt from parts this process controls rather than filtered,
+
+      <allowlisted fragment of the original>_<our uuid><extension from the tuple above>
+
+    so every byte of the result is either [A-Za-z0-9_-], our own uuid, or one of
+    the literal extensions above. The fragment is kept only so logs and on-disk
+    debugging still resemble the upload; correctness does not depend on it.
+
+    Why a duplicate rather than a shared helper: `docker/gatk-api/gatk_api.py`
+    ships in a different image, and that image has no werkzeug (see
+    Dockerfile.gatk-api) -- which is why the sidecar hand-rolled this in the first
+    place. Sharing *is* mechanically possible: every sidecar Dockerfile already
+    does `COPY app/utils/job_client.py /job-client/`, so a small pure-Python
+    module under app/utils/ could be copied in the same way. It would cost a
+    Dockerfile line per image and a rebuild of each, which is why this change
+    keeps the duplicate and pins the two together with a differential test
+    instead. `app/api/utils/file_processor.py:safe_upload_basename` is a third,
+    weaker sanitiser for the upload-router path; it guarantees non-emptiness but
+    neither an allowlisted extension nor a length cap.
+    """
+    original = os.path.basename(filename or "")
+    lowered = original.lower()
+
+    extension = ""
+    for candidate in SAFE_UPLOAD_EXTENSIONS:
+        if lowered.endswith(candidate):
+            extension = candidate
+            break
+
+    stem_source = original[: len(original) - len(extension)] if extension else original
+    # Allowlist, not denylist: anything not explicitly safe is dropped.
+    fragment = re.sub(r"[^A-Za-z0-9_-]", "", stem_source)[:40]
+
+    return f"{fragment or 'upload'}_{local_job_id}{extension}"
+
 
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -703,9 +769,14 @@ async def call_variants(
 ):
     """Call variants using GATK API service."""
     try:
-        # Save the file to a temporary location to get its path
+        # Save the file to a temporary location to get its path.
+        # safe_upload_name(), not bare secure_filename(): the latter returns "" for
+        # a name like "..." and os.path.join(temp_dir, "") is the directory itself,
+        # which the open() below then tried to write to.
         temp_dir = tempfile.mkdtemp(dir="./data")
-        input_path = os.path.join(temp_dir, secure_filename(file.filename))
+        input_path = os.path.join(
+            temp_dir, safe_upload_name(file.filename, uuid.uuid4().hex)
+        )
 
         with open(input_path, "wb") as temp_file:
             content = await file.read()

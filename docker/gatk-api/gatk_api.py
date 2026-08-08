@@ -48,25 +48,67 @@ os.makedirs(os.path.join(DATA_DIR, 'uploads'), exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, 'results'), exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Log rotation bounds. gatk_progress.log lives on the ./data bind mount shared with
-# the app container, so an unrotated DEBUG-level log there grows without limit and
-# takes the host filesystem with it. 5 MiB x 3 backups caps each destination at 20 MiB.
-LOG_MAX_BYTES = 5 * 1024 * 1024
-LOG_BACKUP_COUNT = 3
+# --------------------------------------------------------------------------
+# Bounded logging (BACKLOG 252). Same block, same values, same failure
+# behaviour in every ZaroPGx sidecar: docker/nextflow/runner.py,
+# docker/pharmcat/pharmcat.py, docker/pypgx/pypgx_wrapper.py and
+# docker/zarohla/app.py. tests/test_log_rotation_252.py pins all five against
+# one rule, so an edit here that is not made there fails the suite.
+#
+# It is duplicated rather than imported: these are five separate images. The
+# repo does have a mechanism for sharing a pure-Python module into all of them
+# (every Dockerfile does `COPY app/utils/job_client.py /job-client/`), but the
+# logging block runs at the very top of each module, before sys.path is
+# extended, so a shared import would have to be bootstrapped by hand -- more
+# moving parts than the ~20 lines it would save, across five images that would
+# all need rebuilding to pick it up.
+#
+# The progress log lives on the ./data bind mount shared with the app
+# container, so an unrotated handler there grows without limit and takes the
+# host filesystem with it. 10 MiB x 5 backups caps each destination at 60 MiB.
+# That is deliberately generous rather than frugal: a whole-genome run at this
+# service's DEBUG level produces a lot of lines, the volume it shares is
+# already holding tens of gigabytes of BAM/CRAM, and the failures these logs
+# exist to explain are diagnosed hours after the fact. The item is about
+# *unbounded* growth, not about saving 40 MiB.
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+
+# (path, error) for every destination that could not be opened. Reported by
+# _warn_about_unopened_logs() once `logger` exists -- the failure is loud, but
+# it is not fatal.
+_log_file_errors = []
 
 
 def _bounded_file_handler(path):
     """Return a size-capped handler for `path`, or None if it cannot be opened.
 
     A log destination that is missing or read-only must not take the service down at
-    import time; stdout still carries the full stream for `docker logs`.
+    import time. The handler is not the job: if /data really is unmounted, the first
+    read or write of actual pipeline data fails with an error that names the real
+    operation, whereas raising here reports the wrong cause -- and does it before
+    `logger` exists, so nothing in the container ever says why it died. Degrading
+    keeps stdout carrying the full stream for `docker logs`, and the caller warns.
     """
     try:
         return logging.handlers.RotatingFileHandler(
             path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
         )
-    except OSError:
+    except OSError as exc:
+        _log_file_errors.append((path, exc))
         return None
+
+
+def _warn_about_unopened_logs(log):
+    """Say loudly, once logging works, which destinations were skipped."""
+    for path, exc in _log_file_errors:
+        log.warning(
+            "Could not open log file %s (%s) - logging to console only. If that path "
+            "is on /data, the shared volume is not mounted and the main app will not "
+            "see this service's progress; stdout still carries the full stream.",
+            path,
+            exc,
+        )
 
 
 # Set up more verbose logging with both file and console handlers
@@ -88,6 +130,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+_warn_about_unopened_logs(logger)
 logger.info("Starting GATK API service with enhanced debugging")
 logger.info(f"Data directories ready: DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
 
@@ -192,18 +235,23 @@ def safe_upload_name(filename, local_job_id):
     like `x;touch /tmp/pwned;.bam` is stored happily and then means something to any
     shell the path reaches.
 
-    werkzeug's secure_filename would be the obvious reuse (app/main.py:708 already
-    uses it on the internet-facing route), but werkzeug is not installed in this
-    image -- see Dockerfile.gatk-api, which installs only fastapi, uvicorn, httpx,
-    requests, psutil and python-multipart. Rather than add a dependency or hand-roll
-    a filter that has to be right about every metacharacter, the name is rebuilt from
-    parts this module controls:
+    werkzeug's secure_filename would be the obvious reuse, but werkzeug is not
+    installed in this image -- see Dockerfile.gatk-api, which installs only fastapi,
+    uvicorn, httpx, requests, psutil and python-multipart. Rather than add a
+    dependency or hand-roll a filter that has to be right about every metacharacter,
+    the name is rebuilt from parts this module controls:
 
       <allowlisted fragment of the original>_<our uuid><extension from the tuple above>
 
     Every byte of the result is therefore either [A-Za-z0-9_-], our own uuid, or one
     of the literal extensions above. The fragment is kept only so logs and on-disk
     debugging still resemble the upload; correctness does not depend on it.
+
+    app/main.py carries a deliberate, behaviourally identical copy of this function
+    (it dropped its bare secure_filename, which returned "" for a name like "...").
+    The two are kept in step by tests/test_upload_name_sanitiser.py, which execs
+    this one out of the source and asserts both return the same name for every
+    entry in an adversarial corpus. Change one and you must change the other.
     """
     original = os.path.basename(filename or "")
     lowered = original.lower()
@@ -1818,10 +1866,13 @@ async def cram_to_bam(
                 ),
             )
 
-        # Save uploaded file. basename() keeps a crafted filename inside the work dir.
+        # Save uploaded file. basename() alone kept a crafted name inside the work dir
+        # but left every shell and glob metacharacter in it, which safe_upload_name()'s
+        # own docstring calls out as insufficient -- and output_bam below is derived
+        # from this name, so it carried them onto the *shared* volume as well.
         local_job_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        filename = os.path.basename(file.filename or "input.cram")
+        filename = safe_upload_name(file.filename or "input.cram", local_job_id)
         input_path = os.path.join(work_dir, filename)
         # Output goes on the shared volume, not beside the input -- see
         # conversion_output_dir().
@@ -1941,10 +1992,11 @@ async def sam_to_bam(
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
 
-        # Save uploaded file. basename() keeps a crafted filename inside the work dir.
+        # Sanitised for the same reason as the CRAM route: basename() alone leaves
+        # every shell and glob metacharacter in a name that reaches the shared volume.
         local_job_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        filename = os.path.basename(file.filename or "input.sam")
+        filename = safe_upload_name(file.filename or "input.sam", local_job_id)
         input_path = os.path.join(work_dir, filename)
         # Shared volume, for the same reason as the CRAM route.
         output_dir = conversion_output_dir(local_job_id, job_id, patient_id)

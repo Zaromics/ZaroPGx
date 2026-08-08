@@ -13,10 +13,37 @@ often the only source of CYP2D6/HLA calls -- was ignored without a word.
 
 ``is_override_enabled()`` is now the single resolver and is whitespace-tolerant;
 ``get_override_file_path()`` calls it instead of re-parsing.
+
+A third parser survived that pass, on the far side of an image boundary:
+``docker/pharmcat/pharmcat.py`` re-read the flag with its own
+``os.environ.get("OUTSIDECALLSOVERRIDE", "").lower()`` -- again with no
+``.strip()`` -- to decide whether to copy a manual override file over the
+uploaded outside-calls TSV. That branch is now deleted rather than repaired,
+because it was **unreachable under Compose**: ``compose.yml`` gives an
+``env_file:`` to the ``app`` service only, and the ``pharmcat`` service's
+``environment:`` block never lists the variable, so it was unset in that
+container and the branch was unconditionally False. Repairing it would also have
+meant a second parser in an image the app-side tests cannot reach.
+
+Nothing is lost by the deletion: ``app/pharmcat/pharmcat_client.py:614`` resolves
+the override with the single resolver and posts the resulting file as the
+``outside_tsv`` multipart part, which the sidecar's remaining branch handles --
+and which additionally applies the PyPGx->PharmCAT synonym translation the
+deleted branch skipped.
+
+One thing that is *not* true, and is recorded here so nobody reads more into the
+deletion than it earned: the Nextflow lane does not go through that client at
+all. ``pipelines/pgx/main.nf`` POSTs to ``http://pharmcat:5000/genotype``
+directly with an ``outside_tsv`` assembled from PyPGx and HLA output only, so on
+the primary production path a manual ``lexicon/outside_calls.tsv`` is applied by
+neither side. That gap pre-dates this change -- the deleted branch was inert
+because the variable never reached the container -- and closing it is its own
+piece of work in the Nextflow lane, not a side effect of removing dead code.
 """
 
 from __future__ import annotations
 
+import ast
 import os
 from pathlib import Path
 
@@ -107,16 +134,87 @@ def test_both_halves_agree_for_every_spelling(monkeypatch, override_file):
         )
 
 
+def _env_lookup_sites():
+    """Every line of Python under app/ or docker/ that names the flag as a key.
+
+    A lookup *key* is the quoted name passed to os.getenv/os.environ.get, which
+    is what a second parser looks like. Prose mentioning the flag in a comment or
+    docstring is left alone -- explaining why a service does not read it is the
+    opposite of the defect.
+    """
+    sites = []
+    for path in sorted(REPO_ROOT.glob("app/**/*.py")) + sorted(
+        REPO_ROOT.glob("docker/**/*.py")
+    ):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if '"OUTSIDECALLSOVERRIDE"' in line or "'OUTSIDECALLSOVERRIDE'" in line:
+                sites.append((path.relative_to(REPO_ROOT).as_posix(), number, stripped))
+    return sites
+
+
 def test_flag_name_appears_in_exactly_one_env_lookup():
-    """Only the resolver may name the variable as a lookup key."""
-    lookups = [
-        (name, line.strip())
-        for name in ("app/main.py", "app/utils/outside_calls_override.py")
-        for line in (REPO_ROOT / name).read_text(encoding="utf-8").splitlines()
-        if '"OUTSIDECALLSOVERRIDE"' in line
-    ]
+    """Only the resolver may name the variable as a lookup key.
+
+    Scanned across app/ *and* docker/ rather than the two files the original fix
+    touched: the third parser lived in docker/pharmcat/pharmcat.py and a scan
+    limited to app/ could not have seen it.
+    """
+    lookups = _env_lookup_sites()
     assert len(lookups) == 1, f"expected exactly one env lookup, found: {lookups}"
     assert lookups[0][0] == "app/utils/outside_calls_override.py"
+
+
+def test_the_pharmcat_sidecar_does_not_re_parse_the_flag():
+    """The sidecar's copy is deleted, not merely fixed.
+
+    It was unreachable anyway -- compose.yml gives an env_file: to the app
+    service only, and the pharmcat service's environment: block never lists the
+    variable -- and a second parser across an image boundary is one no app-side
+    test can hold in step with the first.
+    """
+    source = (REPO_ROOT / "docker" / "pharmcat" / "pharmcat.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    lookups = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and any(
+            isinstance(arg, ast.Constant) and arg.value == "OUTSIDECALLSOVERRIDE"
+            for arg in node.args
+        )
+    ]
+    assert not lookups, (
+        "docker/pharmcat/pharmcat.py re-parses OUTSIDECALLSOVERRIDE; the single "
+        "resolver is app/utils/outside_calls_override.py:is_override_enabled()"
+    )
+    assert "OUTSIDE_CALLS_OVERRIDE_PATH" not in {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }, "the override path constant outlived the branch that used it"
+
+
+def test_compose_does_not_pass_the_flag_to_the_pharmcat_service():
+    """Documents the reachability claim the deletion rests on.
+
+    Written as a note-to-self rather than a rule: if someone later *does* pass
+    the variable to that service, this failing is the reminder that the sidecar
+    no longer acts on it and the app-side resolver is what actually applies.
+    """
+    compose = (REPO_ROOT / "compose.yml").read_text(encoding="utf-8")
+    assert "OUTSIDECALLSOVERRIDE" not in compose, (
+        "compose.yml now mentions OUTSIDECALLSOVERRIDE. The pharmcat sidecar no "
+        "longer reads it -- the override is resolved app-side by "
+        "app/utils/outside_calls_override.py and shipped as the outside_tsv "
+        "upload. Update this test and say which service is meant to see it."
+    )
 
 
 def test_main_keeps_no_copy_of_the_flag():

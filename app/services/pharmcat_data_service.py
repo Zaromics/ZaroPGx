@@ -44,12 +44,22 @@ class PharmCATDataService:
         """
         try:
             # Convert workflow_id to UUID format for database query
-            import uuid
-
             workflow_uuid = uuid.UUID(str(workflow_id))
 
-            # Get workflow to find associated PharmCAT run
-            job = self.db.query(Job).filter(Job.id == workflow_uuid).first()
+            # Get workflow to find associated PharmCAT run. populate_existing() for
+            # the same reason as JobService.get_job: SessionLocal sets
+            # expire_on_commit=False, so a plain .first() fetches the row and then
+            # discards it in favour of whatever instance this session already has in
+            # its identity map. pharmcat_run_id is written by whichever session
+            # finished the PharmCAT stage -- never this one -- so without this the
+            # report route reads job_metadata as it stood when the session first
+            # loaded the job and reports "no PharmCAT data" for a completed run.
+            job = (
+                self.db.query(Job)
+                .filter(Job.id == workflow_uuid)
+                .populate_existing()
+                .first()
+            )
             if not job:
                 logger.warning(f"Workflow {workflow_id} not found")
                 return None
@@ -495,13 +505,33 @@ class PharmCATDataService:
             True if successful, False otherwise
         """
         try:
-            job = self.db.query(Job).filter(Job.id == workflow_id).first()
+            workflow_uuid = uuid.UUID(str(workflow_id))
+            # populate_existing(): this is a read-modify-write of job_metadata, so it
+            # has to start from the row as it stands now. Reading a stale copy and
+            # writing the merged dict back would drop every key another session has
+            # added since -- including the "cancelled" flag the cancel endpoint
+            # writes -- because the whole dict is replaced, not patched.
+            job = (
+                self.db.query(Job)
+                .filter(Job.id == workflow_uuid)
+                .populate_existing()
+                .first()
+            )
             if not job:
                 logger.error(f"Workflow {workflow_id} not found")
                 return False
 
-            # Update workflow metadata
-            metadata = job.job_metadata or {}
+            # Update workflow metadata.
+            # dict() is load-bearing: jobs.job_metadata is a plain Column(JSON) with
+            # no MutableDict, so mutating the attached dict in place and assigning the
+            # *same object* back leaves the attribute history empty -- SQLAlchemy
+            # emits no UPDATE, commit() succeeds, this method returns True, and
+            # nothing persists. expire_on_commit=False then hides it: the caller's own
+            # session keeps showing the in-memory mutation, so the loss only surfaces
+            # on the next request. create_job always seeds job_metadata, so this is
+            # never the accidentally-safe empty-dict case. Same pattern as
+            # JobService.link_pharmcat_run and job_router.py.
+            metadata = dict(job.job_metadata or {})
             metadata["pharmcat_run_id"] = pharmcat_run_id
             metadata["pharmcat_linked_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -531,7 +561,16 @@ class PharmCATDataService:
             Dict containing PharmCAT summary data, or None if not found
         """
         try:
-            job = self.db.query(Job).filter(Job.id == workflow_id).first()
+            workflow_uuid = uuid.UUID(str(workflow_id))
+            # populate_existing(): the link is written by whichever session finished
+            # the PharmCAT stage, which is not the session asking here. Same reason as
+            # get_pharmcat_data_for_workflow.
+            job = (
+                self.db.query(Job)
+                .filter(Job.id == workflow_uuid)
+                .populate_existing()
+                .first()
+            )
             if not job:
                 return None
 
