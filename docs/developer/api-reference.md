@@ -312,26 +312,150 @@ and `GET /api-status` below.
 
 #### Health Check
 
-Check system health and service status.
+Liveness probe for the app container only. It is deliberately dependency-free —
+it touches no database and no sibling service, so it stays green while everything
+downstream is broken. For the per-service picture use `GET /services-status`.
 
 **Endpoint:** `GET /health`
+
+**Response:** exactly two keys.
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-08-08 14:30:00.123456+00:00"
+}
+```
+
+`status` is the literal string `healthy` — the handler has no failure branch, so
+a 200 here means "the ASGI app is answering", nothing more. `timestamp` is
+`str(datetime.now(timezone.utc))`, not ISO-8601 with a `T` separator.
+
+`/health` is on the auth-gate allowlist, so it answers without credentials even
+in `password` mode.
+
+#### Service Status
+
+Fan out a health check to every enabled service and summarise the result.
+
+**Endpoint:** `GET /services-status`
+
+Checked services: `app` and `database` always; `gatk` if `GATK_ENABLED`; `pypgx`
+if `PYPGX_ENABLED`; `pharmcat` always (core); `zarohla` if `OPTITYPE_ENABLED`.
+
+**Response (all healthy):**
+```json
+{
+  "status": "ok",
+  "message": "All services are available",
+  "check_time": "2026-08-08 14:30:00.123456"
+}
+```
+
+**Response (any service unreachable):**
+```json
+{
+  "status": "error",
+  "message": "Some services are unavailable",
+  "unhealthy_services": {
+    "pypgx": "Failed after 2 retries"
+  },
+  "check_time": "2026-08-08 14:30:00.123456"
+}
+```
+
+Both variants return HTTP 200; check the `status` field, not the status code.
+The per-service map is keyed by service name and the values are free-text reason
+strings, not enums.
+
+#### Service Configuration
+
+Report which optional services are switched on. This is the closest thing to a
+feature-flag endpoint.
+
+**Endpoint:** `GET /services-config`
 
 **Response:**
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00Z",
   "services": {
-    "database": "healthy",
-    "pharmcat": "healthy",
-    "pypgx": "healthy",
-    "gatk": "healthy",
-    "fhir": "healthy"
-  },
-  "version": "1.0.0",
-  "uptime": 3600
+    "gatk": {"enabled": true},
+    "pypgx": {"enabled": true},
+    "optitype": {"enabled": true},
+    "genome_downloader": {"enabled": true},
+    "kroki": {"enabled": true},
+    "hapi_fhir": {"enabled": true},
+    "fhir_export": {
+      "enabled": true,
+      "description": "FHIR R4 export for pharmacogenomic reports",
+      "endpoints": "/fhir/*"
+    },
+    "pharmcat": {
+      "enabled": true,
+      "absent_to_ref": false,
+      "unspecified_to_ref": false
+    }
+  }
 }
 ```
+
+`fhir_export.endpoints` is `null` when `FHIR_EXPORT_ENABLED` is false. `pharmcat`
+is hard-coded `true` — it is a core service with no toggle.
+
+#### API Status
+
+Dump the live route table plus a probe of the GATK API. Intended for debugging,
+not for integration.
+
+**Endpoint:** `GET /api-status`
+
+**Response:**
+```json
+{
+  "timestamp": 1754661000.123,
+  "gatk_api": {"available": true, "message": "Healthy", "details": {}},
+  "test_job_endpoint": {"available": true, "message": "Test endpoint working", "job_id": "..."},
+  "routes": [{"path": "/health", "methods": ["GET"], "name": "health_check"}],
+  "app_name": "ZaroPGx API",
+  "version": "0.2.8"
+}
+```
+
+`timestamp` is a Unix float, not a string. On an internal failure the handler
+returns HTTP 200 with `{"error": "...", "traceback": "..."}` instead.
+
+#### Miscellaneous
+
+| Endpoint | Method | Returns |
+| --- | --- | --- |
+| `/api` | GET | `{"message": "Welcome to ZaroPGx API", "docs": "/docs"}` |
+| `/license` | GET | The repository `LICENSE` file as `text/plain` (404 if absent) |
+| `/notice` | GET | The repository `NOTICE` file as `text/plain` (404 if absent) |
+| `/docs`, `/redoc`, `/openapi.json` | GET | FastAPI's generated interactive docs and schema |
+| `/documentation/` | GET | Built Sphinx HTML, mounted only when `docs/_build/html` exists (the app tries to build it at startup) |
+| `/static/…` | GET | Application static assets |
+
+#### Cleanup
+
+| Endpoint | Method | Notes |
+| --- | --- | --- |
+| `/api/cleanup/job/{job_id}` | POST | Optional `patient_id` query parameter. Removes temp files for one job. |
+| `/api/cleanup/old-files` | POST | Optional `max_age_hours` query parameter (default 24). |
+| `/api/cleanup/status` | GET | Current size/contents of the temp directories. |
+
+All three return whatever `cleanup_service` produces as JSON, and raise 500 on
+failure.
+
+#### Troubleshooting Endpoints
+
+These exist to unstick a run by hand. They are not part of the integration
+surface and their shapes may change without notice.
+
+| Endpoint | Method | Notes |
+| --- | --- | --- |
+| `/check-reports/{job_id}` | GET | Looks for report files on disk and marks the job completed if they exist. Returns `{job_id, reports: {...}, job_status, instructions}`. |
+| `/trigger-completion/{job_id}` | GET | HTML page with direct report links. |
+| `/reprocess-report/{report_id}` | POST | Re-runs PharmCAT for an existing job (`report_id` is treated as `job_id`). Primarily for testing parser changes. |
+| `/api/variant-call` | POST | `multipart/form-data` with `file`, `reference_genome` (default `hg38`), optional `regions`. Proxies to the GATK API service directly, outside the Nextflow pipeline. |
 
 ## Data Models
 
