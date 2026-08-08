@@ -253,7 +253,16 @@ class PharmCATDataService:
 
             # Report what the run recorded -- never a gene-name guess, never a
             # constant. "?"/"-" are legitimate values (BACKLOG 28 + 216).
-            provenance = resolve_called_by(gene)
+            # The gene_summary row carries no diplotype, so hand the resolver
+            # the one about to be rendered: that is what separates "not
+            # recorded" (?) from "no call made" (-) for rows written before
+            # call_source held PharmCAT's callSource.
+            provenance = resolve_called_by(
+                {
+                    **gene,
+                    "diplotype": primary_diplotype.get("diplotype_label") or "",
+                }
+            )
             guideline_source = resolve_guideline_source(gene)
 
             report_gene = {

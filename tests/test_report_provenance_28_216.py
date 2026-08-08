@@ -150,6 +150,36 @@ def test_db_lane_never_emits_report_data_from():
     assert all("report_data_from" not in row for row in rows)
 
 
+def test_db_lane_legacy_row_with_a_call_is_unknown_not_no_call():
+    """Rows parsed before 28+216 hold the guideline bucket in ``call_source``.
+
+    That value records nothing about who called the gene, so the honest answer
+    is ``?``. Answering ``-`` ("no call made") would assert something the run
+    never said, for a gene that plainly has a diplotype -- the same class of
+    fabrication this pass removes. The gene-summary row carries no diplotype of
+    its own, so the caller must supply the one it is about to render.
+    """
+    rows = _transform(
+        [{"gene_symbol": "CYP2C19", "call_source": "CPIC", "phenotype_source": "CPIC"}],
+        [
+            {
+                "gene_symbol": "CYP2C19",
+                "diplotype_label": "*38/*38",
+                "phenotype": "Normal Metabolizer",
+            }
+        ],
+    )
+    assert rows[0]["diplotype"] == "*38/*38"
+    assert rows[0]["called_by"] == CALLED_BY_UNKNOWN
+
+
+def test_db_lane_row_without_a_diplotype_is_still_no_call():
+    rows = _transform(
+        [{"gene_symbol": "CYP2C19", "call_source": "CPIC", "phenotype_source": "CPIC"}]
+    )
+    assert rows[0]["called_by"] == CALLED_BY_NO_CALL
+
+
 def test_db_lane_dedupe_prefers_cpic_on_phenotype_source():
     service = PharmCATDataService.__new__(PharmCATDataService)
     cpic = {
