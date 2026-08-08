@@ -132,12 +132,13 @@ def pg_uuid_binds(monkeypatch):
 def sessionless_engines(pgx_engine, monkeypatch):
     """Capture every engine PharmCATParser builds for itself.
 
-    The only stand-in left is the database connection itself.
-    ``PharmCATDataService.get_workflow_pharmcat_summary`` calls the module-level
-    ``get_pharmcat_summary`` *without* a session, so ``PharmCATParser`` builds
-    its own engine from ``DATABASE_URL``.  Hand it the test engine instead; the
-    service method, the parser and the summary builder all run unmodified.  The
-    recorded URLs double as proof that the sessionless path really was taken.
+    ``PharmCATParser`` builds its own engine from ``DATABASE_URL`` whenever it
+    is handed no session.  Substituting the test engine keeps that path from
+    reaching a real database, so the service method, the parser and the summary
+    builder all run unmodified either way.  An empty list is now the healthy
+    outcome: ``get_workflow_pharmcat_summary`` passes the request session, so
+    a recorded URL means a second connection leaked outside the request
+    transaction.
     """
     requested_urls = []
 
@@ -378,9 +379,10 @@ def test_workflow_summary_endpoint_returns_full_summary(
     response = pgx_client.get(f"/api/pharmcat/workflow/{job_id}/summary")
 
     assert response.status_code == 200, response.text
-    # The service reached get_pharmcat_summary without a session, so the parser
-    # had to build its own engine -- the production quirk this route depends on.
-    assert sessionless_engines, "expected the sessionless get_pharmcat_summary path"
+    # The service handed get_pharmcat_summary the request session, so the parser
+    # never built an engine of its own -- no second connection outside the
+    # request transaction.
+    assert not sessionless_engines, "get_pharmcat_summary opened its own engine"
     body = response.json()
     expected = get_pharmcat_summary(loaded_run, pgx_session)
 
