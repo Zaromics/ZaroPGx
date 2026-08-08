@@ -354,7 +354,12 @@ class PharmCATParser:
             run_timestamp = self._parse_timestamp(data.get("timestamp"))
             pharmcat_version = data.get("pharmcatVersion")
             data_version = data.get("dataVersion")
-            genome_build = data.get("genomeBuild")
+            # genomeBuild lives under matcherMetadata (PharmCAT 3.4.0+), never
+            # at the top level. Top-level read kept as a harmless fallback.
+            _matcher_metadata = data.get("matcherMetadata") or {}
+            genome_build = _matcher_metadata.get("genomeBuild") or data.get(
+                "genomeBuild"
+            )
 
             # Check if this run already exists
             existing_result = (

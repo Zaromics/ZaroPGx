@@ -26,7 +26,9 @@ from app.pharmcat.pharmcat_parser import (
     PharmCATDiplotype,
     PharmCATGeneSummary,
     PharmCATParser,
+    PharmCATResult,
 )
+from app.pharmcat.report_json import extract_matcher_metadata
 
 TEST_DATA = Path(__file__).resolve().parent.parent / "test_data"
 NESTED_V2 = TEST_DATA / "pharmcat.example.nested.v2.report.json"
@@ -159,6 +161,44 @@ def test_parser_parse_genes_flat_v340_stores_gene_symbols():
     assert by_gene["CYP2C19"].diplotype_label == "*38/*38"
     assert by_gene["CYP2C19"].phenotype == "Normal Metabolizer"
     assert by_gene["CYP2D6"].diplotype_label == "Unknown/Unknown"
+
+
+def test_v340_fixture_carries_matcher_metadata():
+    """159: the only fixture with run-derived provenance. Lock its shape."""
+    report = _load(FLAT_V340)
+    meta = report["matcherMetadata"]
+    assert meta["namedAlleleMatcherVersion"] == "2.0.0"
+    assert meta["genomeBuild"] == "GRCh38.p14"
+    assert report["dataVersion"] == "2026-07-13-11-40"
+
+
+def test_extract_matcher_metadata_on_real_fixtures():
+    v340 = extract_matcher_metadata(_load(FLAT_V340))
+    assert v340["genome_build"] == "GRCh38.p14"
+    assert v340["named_allele_matcher_version"] == "2.0.0"
+    assert v340["data_version"] == "2026-07-13-11-40"
+
+    nested = extract_matcher_metadata(_load(NESTED_V2))
+    assert nested["genome_build"] is None
+    assert nested["named_allele_matcher_version"] is None
+
+
+def test_parser_reads_genome_build_from_matcher_metadata():
+    """159: PharmCATResult.genome_build was always NULL -- genomeBuild lives
+    under matcherMetadata, never at the top level."""
+    report = _load(FLAT_V340)
+    assert "genomeBuild" not in report  # never at the top level
+
+    added = []
+    session = MagicMock()
+    session.add.side_effect = lambda obj: added.append(obj)
+    parser = PharmCATParser(db_session=session)
+    parser.db_session.query.return_value.filter.return_value.first.return_value = None
+    parser.parse_and_load(report)
+
+    results = [o for o in added if isinstance(o, PharmCATResult)]
+    assert results, "no PharmCATResult was added"
+    assert results[0].genome_build == "GRCh38.p14"
 
 
 def test_extract_sample_id_from_example_vcf():

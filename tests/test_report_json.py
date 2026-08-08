@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.pharmcat.report_json import (
     detect_format,
+    extract_matcher_metadata,
     extract_source_call,
     iter_gene_blocks,
 )
@@ -114,3 +115,50 @@ def test_detect_format_flat_when_gene_fields_present():
         }
     }
     assert detect_format(genes) == "flat"
+
+
+# ---------------------------------------------------------------------------
+# 159 -- run-derived provenance (matcherMetadata + dataVersion)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_matcher_metadata_from_v340_shape():
+    report = {
+        "pharmcatVersion": "3.4.0",
+        "dataVersion": "2026-07-13-11-40",
+        "matcherMetadata": {
+            "namedAlleleMatcherVersion": "2.0.0",
+            "genomeBuild": "GRCh38.p14",
+            "inputFilename": "pharmcat.example.v340.preprocessed.vcf.bgz",
+        },
+    }
+    meta = extract_matcher_metadata(report)
+    assert meta["genome_build"] == "GRCh38.p14"
+    assert meta["named_allele_matcher_version"] == "2.0.0"
+    assert meta["data_version"] == "2026-07-13-11-40"
+
+
+def test_extract_matcher_metadata_v2_shape_keeps_data_version_only():
+    """v2 report.json has dataVersion but no matcherMetadata -> partial render."""
+    meta = extract_matcher_metadata({"dataVersion": "2023-10-05-13-00"})
+    assert meta["genome_build"] is None
+    assert meta["named_allele_matcher_version"] is None
+    assert meta["data_version"] == "2023-10-05-13-00"
+
+
+def test_extract_matcher_metadata_handles_absent_and_malformed():
+    for payload in (None, {}, {"matcherMetadata": None}, {"matcherMetadata": "nope"}):
+        meta = extract_matcher_metadata(payload)
+        assert meta == {
+            "genome_build": None,
+            "named_allele_matcher_version": None,
+            "data_version": None,
+        }
+
+
+def test_extract_matcher_metadata_blank_strings_become_none():
+    meta = extract_matcher_metadata(
+        {"dataVersion": "  ", "matcherMetadata": {"genomeBuild": ""}}
+    )
+    assert meta["genome_build"] is None
+    assert meta["data_version"] is None

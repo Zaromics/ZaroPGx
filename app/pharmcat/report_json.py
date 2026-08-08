@@ -126,3 +126,46 @@ def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
         "phenotype": phenotype,
         "activity_score": activity_score,
     }
+
+
+def _clean(value: Any) -> Optional[str]:
+    """Return a stripped string, or ``None`` for absent/blank values."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def extract_matcher_metadata(
+    report: Optional[Mapping[str, Any]],
+) -> Dict[str, Optional[str]]:
+    """Pull run-derived provenance out of a PharmCAT ``report.json`` payload.
+
+    Three independent facts, each ``None`` when the run did not emit it:
+
+    * ``genome_build`` -- ``matcherMetadata.genomeBuild`` (e.g. ``GRCh38.p14``)
+    * ``named_allele_matcher_version`` -- ``matcherMetadata.namedAlleleMatcherVersion``
+    * ``data_version`` -- top-level ``dataVersion`` (the guideline data release)
+
+    ``matcherMetadata`` first appears in PharmCAT 3.4.0; v2-shaped reports carry
+    ``dataVersion`` only. Callers must render each fact conditionally rather
+    than substituting a placeholder.
+    """
+    if not isinstance(report, Mapping):
+        return {
+            "genome_build": None,
+            "named_allele_matcher_version": None,
+            "data_version": None,
+        }
+
+    matcher = report.get("matcherMetadata")
+    if not isinstance(matcher, Mapping):
+        matcher = {}
+
+    return {
+        "genome_build": _clean(matcher.get("genomeBuild")),
+        "named_allele_matcher_version": _clean(
+            matcher.get("namedAlleleMatcherVersion")
+        ),
+        "data_version": _clean(report.get("dataVersion")),
+    }
