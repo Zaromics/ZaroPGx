@@ -650,10 +650,11 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
 
         # Honour the report toggle. needs_report=False already drops the
         # report_generation step template (workflow_registry), and this gate is the only
-        # thing that acts on it: the skip_report the upload puts in the Nextflow payload
-        # goes nowhere, because NextflowRunRequest has no such field
-        # (docker/nextflow/runner.py) so pydantic drops it, and the pipeline never reads
-        # one. Without this, opting out of reports did nothing at all.
+        # thing that suppresses report artifacts: the skip_report the upload puts in the
+        # Nextflow payload now survives the trip -- NextflowRunRequest declares it and
+        # build_nextflow_command emits it on the argv (406) -- but no process in
+        # pipelines/pgx/main.nf reads params.skip_report, so it only reaches the run's
+        # resolved params. Without this, opting out of reports did nothing at all.
         # Absent means on: only an explicit opt-out disables it.
         needs_report = bool(workflow_config.get("needs_report", True))
         response_data: Dict[str, Any] = {}

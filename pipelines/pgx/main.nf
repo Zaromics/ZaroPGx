@@ -37,15 +37,17 @@ params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 // It is a no-op for vcf/bam input (no GATK process is invoked) and rejected for
 // fastq/cram/sam, where there is no non-GATK route to a BAM - see the guard below.
 params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
-// skip_report is the ZaroPGx custom-report toggle. NOT YET IMPLEMENTED: nothing
-// honours it. It is carried this far only so the app can stop silently dropping it -
-// declared on NextflowRunRequest, emitted on the argv, and declared here so it shows
-// up in the run's resolved params. There is no report process in this pipeline to
-// gate. The gate belongs app-side, in upload_router.py's final-stages handler
-// (_handle_final_stages_progression_sync), which today calls generate_report()
-// unconditionally; needs_report currently suppresses only the step template in
-// app/services/workflow_registry.py. Until that handler gates on it, unticking
-// Report still produces a report.
+// skip_report is the ZaroPGx custom-report toggle. It is honoured, but app-side,
+// not here: no process in this pipeline reads the param below. It is carried this
+// far so the app stops silently dropping it - declared on NextflowRunRequest,
+// emitted on the argv - and declared here so it shows up in the run's resolved
+// params. There is no report process in this pipeline to gate. The gate that
+// actually suppresses the report is upload_router.py's final-stages handler
+// (_handle_final_stages_progression_sync), which skips generate_report() when
+// needs_report is false; needs_report also drops the step template in
+// app/services/workflow_registry.py. That app-side gate is the only thing acting
+// on the toggle - declaring the param here is not a second line of defence. A
+// report process added to this pipeline later must gate on it itself.
 params.skip_report    = params.skip_report != null ? params.skip_report : false
 params.sample_identifier = params.sample_identifier ?: ''
 params.pharmcat_absent_to_ref = params.pharmcat_absent_to_ref ?: 'false'

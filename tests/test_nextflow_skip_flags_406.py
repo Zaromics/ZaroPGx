@@ -171,14 +171,28 @@ def test_failure_summary_keeps_the_tail_and_handles_empty_streams():
     assert runner.summarize_nextflow_failure("   ", "  ") == "Unknown error"
 
 
-def test_main_nf_is_honest_that_skip_report_is_not_wired_yet():
-    """The param is carried, not honoured; the comment must not imply otherwise."""
+def test_main_nf_is_honest_that_the_pipeline_does_not_honour_skip_report():
+    """The param is carried and declared here; the gate that acts on it is app-side.
+
+    The comment used to say NOT YET IMPLEMENTED, true until the final-stage report
+    worker started gating on needs_report. It must now name where the gate lives
+    without implying this pipeline enforces the toggle.
+    """
     text = MAIN_NF.read_text(encoding="utf-8")
     start = text.index("params.skip_report")
     block = text[max(0, start - 800) : start]
-    assert "NOT YET IMPLEMENTED" in block
-    assert "upload_router" in block, "name the real location of the missing gate"
+    assert "NOT YET IMPLEMENTED" not in block, "the app-side gate exists now"
+    assert "upload_router" in block, "name the real location of the gate"
     assert "app/reports/generator.py" not in block, "generator.py does not honour it"
+    # The comment's central claim: nothing in the pipeline reads the param, it is
+    # only declared. If a process ever does, the comment has to be revisited.
+    readers = [
+        line.strip()
+        for line in text.splitlines()
+        if "params.skip_report" in line
+        and not line.strip().startswith("params.skip_report")
+    ]
+    assert not readers, f"the pipeline now reads it; re-word the comment: {readers}"
 
 
 def test_main_nf_declares_all_four_skip_params():
