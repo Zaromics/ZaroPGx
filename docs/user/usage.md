@@ -248,6 +248,7 @@ curl "http://localhost:8765/fhir/save/run/{run_id}/quick?output_format=both"
 ```
 
 See {doc}`../developer/api-reference` for the full endpoint list.
+
 #### Bulk Export
 ```bash
 # Download every report file for a patient as a single ZIP
