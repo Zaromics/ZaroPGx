@@ -36,6 +36,8 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 
 from app.core.version_manager import get_all_versions, get_versions_dict
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
+from app.pharmcat.report_json import extract_matcher_metadata
+from app.reports.evidence import classify_evidence
 from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
     prefer_source_over_lookup,
@@ -415,6 +417,80 @@ def activity_score_num(value: Any) -> Optional[float]:
         return None
 
 
+_EMPTY_MATCHER_METADATA: Dict[str, Optional[str]] = {
+    "genome_build": None,
+    "named_allele_matcher_version": None,
+    "data_version": None,
+}
+
+
+# The filenames production actually writes into a report directory.
+#
+# PharmCAT's *native* output is named ``<base>.report.json``, but that name never
+# reaches a report directory: the PharmCAT service discovers it inside its own
+# temp workdir and copies it out under three renamed forms -- deliberately, "to
+# avoid colliding with our own JSON export" (docker/pharmcat/pharmcat.py:877,
+# :913, :930). ``upload_router.py:255`` reconciles the canonical one. Globbing
+# for ``*.report.json`` here matched nothing on any real run.
+_MATCHER_METADATA_FILE_SUFFIXES = (
+    "_pgx_pharmcat.json",  # canonical PharmCAT JSON copy (pharmcat.py:877)
+    "_raw_report.json",  # verbatim raw copy (pharmcat.py:913)
+    "_pgx_report.json",  # standard copy (pharmcat.py:930)
+)
+
+
+def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optional[str]]:
+    """Read run-derived provenance from the run's PharmCAT JSON output (159).
+
+    ``report_dir`` must be the directory the artifacts actually land in -- i.e.
+    the already-nested ``/data/reports/{patient_id}/{job_id}`` path that both
+    callers pass as ``output_dir`` (``upload_router.py:589``, ``main.py:1579``)
+    and that ``generate_report`` assigns straight to ``report_dir``. Do not
+    rebuild it from parts.
+
+    Tries ``{report_id}<suffix>`` for each known suffix, then falls back to a
+    newest-first glob per suffix, mirroring the existing filename probe at
+    :1150 (artifact basenames are not always the report id -- the PharmCAT
+    service names them from its own ``name_base``).
+
+    Never raises. A run with no PharmCAT JSON simply renders no provenance
+    sentences.
+
+    Note this cannot reuse ``generate_report``'s later copy of the JSON: that
+    copy happens well after template data is assembled.
+    """
+    candidates = [
+        os.path.join(report_dir, f"{report_id}{suffix}")
+        for suffix in _MATCHER_METADATA_FILE_SUFFIXES
+    ]
+    for suffix in _MATCHER_METADATA_FILE_SUFFIXES:
+        try:
+            others = glob.glob(os.path.join(report_dir, f"*{suffix}"))
+            others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            candidates.extend(others)
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
+
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as fh:
+                meta = extract_matcher_metadata(json.load(fh))
+            # A file that parses but carries no provenance must not shadow a
+            # later candidate that does.
+            if any(value is not None for value in meta.values()):
+                return meta
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
+
+    return dict(_EMPTY_MATCHER_METADATA)
+
+
 # Initialize Jinja2 environment
 env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
 env.filters["activity_score_num"] = activity_score_num
@@ -591,6 +667,12 @@ def generate_pdf_report(
             except Exception:
                 execsum_rows_from_tsv = []
 
+        # 159: run-derived provenance. Probed unconditionally -- EXECSUM_USE_TSV
+        # defaults to false and the provenance block renders on both branches.
+        matcher_meta = probe_matcher_metadata(
+            os.path.dirname(report_path), str(report_id)
+        )
+
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
@@ -614,6 +696,12 @@ def generate_pdf_report(
                 if (EXECSUM_USE_TSV and execsum_rows_from_tsv)
                 else None
             ),
+            # 159: run-derived provenance (each rendered only if resolved)
+            "genome_build": matcher_meta["genome_build"],
+            "named_allele_matcher_version": matcher_meta[
+                "named_allele_matcher_version"
+            ],
+            "pharmcat_data_version": matcher_meta["data_version"],
         }
 
         # Load and render the HTML template
@@ -1718,10 +1806,7 @@ def map_recommendations_for_template(
             recommendation_text = rec.get("recommendation", "See report for details")
             classification = rec.get("classification", "Unknown")
 
-            # DEBUG: Log what we're mapping
-            logger.info(
-                f"DEBUG MAP - Drug: {drug_name}, Gene: {gene}, Classification: '{classification}'"
-            )
+            tier = classify_evidence(classification)
 
             mapped_rec = {
                 "drug": drug_name,
@@ -1729,6 +1814,8 @@ def map_recommendations_for_template(
                 "genes": gene,  # For backward compatibility
                 "recommendation": recommendation_text,
                 "classification": classification,
+                "evidence_rank": tier.rank,
+                "evidence_class": tier.css_class,
                 "guideline": guideline,
                 "guideline_source": guideline_source,
                 "literature_references": rec.get("literature_references", []),
@@ -2063,6 +2150,18 @@ def generate_report(
     platform = build_platform_info()
     logger.info(f"Built platform info with {len(platform)} items")
 
+    # 159: run-derived provenance. `output_dir` IS the report directory -- both
+    # call sites pass an already-nested /data/reports/{patient_id}/{job_id} path
+    # (upload_router.py:589, main.py:1579) and `report_dir = output_dir` below.
+    # Joining a patient id onto it adds a level that does not exist.
+    # `_report_id_for_meta` mirrors the `report_id` computation below verbatim.
+    _report_id_for_meta = (
+        str(job_id)
+        if job_id
+        else (patient_info.get("id", "unknown") if patient_info else "unknown")
+    )
+    matcher_meta = probe_matcher_metadata(output_dir, _report_id_for_meta)
+
     template_data = {
         "patient": patient_info or {},
         "patient_id": patient_info.get("id", "unknown") if patient_info else "unknown",
@@ -2110,6 +2209,10 @@ def generate_report(
         # Add workflow warnings/alerts for report display
         "workflow_warnings": workflow_warnings,
         "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+        # 159: run-derived provenance (each rendered only if resolved)
+        "genome_build": matcher_meta["genome_build"],
+        "named_allele_matcher_version": matcher_meta["named_allele_matcher_version"],
+        "pharmcat_data_version": matcher_meta["data_version"],
     }
     # Inject unified display sample id sourced from workflow metadata or persisted field
     try:
@@ -2683,6 +2786,15 @@ def generate_report(
                 # Add workflow warnings/alerts for report display
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+                # 159: run-derived provenance (each rendered only if resolved).
+                # This dict rebinds `template_data` and is the one actually fed
+                # to report_template.html for both the HTML render below and the
+                # PDF render further down -- it must carry the keys too.
+                "genome_build": matcher_meta["genome_build"],
+                "named_allele_matcher_version": matcher_meta[
+                    "named_allele_matcher_version"
+                ],
+                "pharmcat_data_version": matcher_meta["data_version"],
             }
             try:
                 logger.info(

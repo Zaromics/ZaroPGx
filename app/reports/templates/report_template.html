@@ -127,16 +127,22 @@
             margin-left: 0;
         }
         .gene-recommendation.evidence-3 {
-            border-left-color: #dc3545 !important; /* Red for high actionability */
+            border-left-color: #dc3545 !important; /* Red: CPIC strong recommendation */
         }
         .gene-recommendation.evidence-2 {
-            border-left-color: #ffc107 !important; /* Yellow for moderate */
+            border-left-color: #ffc107 !important; /* Yellow: CPIC moderate recommendation */
         }
         .gene-recommendation.evidence-1 {
-            border-left-color: #17a2b8 !important; /* Blue for informational */
+            border-left-color: #17a2b8 !important; /* Blue: CPIC optional recommendation */
         }
         .gene-recommendation.evidence-0 {
-            border-left-color: #6c757d !important; /* Gray for general */
+            border-left-color: #6c757d !important; /* Gray: guideline reviewed, no recommendation */
+        }
+        .gene-recommendation.evidence-unspecified {
+            border-left-color: #6f42c1 !important; /* Purple: DPWG/FDA guidance, no CPIC level */
+        }
+        .gene-recommendation.evidence-unclassified {
+            border-left-color: #adb5bd !important; /* Muted gray: no recommendation strength reported */
         }
         .gene-recommendation h4 {
             margin: 0 0 4px 0;
@@ -221,6 +227,20 @@
         .drug-item.evidence-0 .drug-indicator {
             background-color: #6c757d;
         }
+        .drug-item.evidence-unspecified {
+            border-left-color: #6f42c1;
+            background-color: #f7f4fc;
+        }
+        .drug-item.evidence-unspecified .drug-indicator {
+            background-color: #6f42c1;
+        }
+        .drug-item.evidence-unclassified {
+            border-left-color: #adb5bd;
+            background-color: #fbfbfc;
+        }
+        .drug-item.evidence-unclassified .drug-indicator {
+            background-color: #adb5bd;
+        }
         .evidence-legend {
             margin-bottom: 15px;
             padding: 10px;
@@ -258,6 +278,12 @@
         }
         .legend-item.evidence-0 .drug-indicator {
             background-color: #6c757d;
+        }
+        .legend-item.evidence-unspecified .drug-indicator {
+            background-color: #6f42c1;
+        }
+        .legend-item.evidence-unclassified .drug-indicator {
+            background-color: #adb5bd;
         }
         /* Executive summary invisible columns */
         .exec-summary-table {
@@ -319,6 +345,12 @@
         .exec-summary-phenotype .gene-phenotype,
         .exec-summary-phenotype .as-badge {
             vertical-align: middle;
+        }
+        /* 159: run-derived provenance line at the foot of the Executive Summary */
+        .run-provenance {
+            margin: 10px 0 0 0;
+            font-size: 0.85em;
+            color: #6c757d;
         }
         .activity-score {
             margin-left: 8px;
@@ -957,8 +989,19 @@
                 </tbody>
             </table>
         </div>
+        {# 159: run-derived provenance. Outside the execsum_from_tsv branches so it
+           renders on both, and inside #exec-summary so the print page-break that
+           follows this container does not push it onto the Genetic Results page.
+           Each sentence renders only if its own value resolved. #}
+        {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
+        <p class="run-provenance">
+            {% if genome_build %}This sample was analyzed against the {{ genome_build }} reference genome build.{% endif %}
+            {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
+            {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
+        </p>
+        {% endif %}
     </div>
-    
+
     <div class="section">
         <h2>Genetic Results</h2>
         
@@ -1020,11 +1063,13 @@
         <p>The following drugs have pharmacogenomic guidance available based on this sample's genetic profile:</p>
         
         <div class="evidence-legend">
-            <p><strong>Evidence Level Legend:</strong></p>
-            <span class="legend-item evidence-3"><span class="drug-indicator"></span> High actionability (Level A/Strong)</span>
-            <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate actionability (Level B/Moderate)</span>
-            <span class="legend-item evidence-1"><span class="drug-indicator"></span> Informational (Level C/Optional)</span>
-            <span class="legend-item evidence-0"><span class="drug-indicator"></span> Guideline available</span>
+            <p><strong>Recommendation Strength Legend:</strong></p>
+            <span class="legend-item evidence-3"><span class="drug-indicator"></span> Strong &mdash; CPIC strong recommendation</span>
+            <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate &mdash; CPIC moderate recommendation</span>
+            <span class="legend-item evidence-1"><span class="drug-indicator"></span> Optional &mdash; CPIC optional recommendation</span>
+            <span class="legend-item evidence-unspecified"><span class="drug-indicator"></span> Guideline available &mdash; DPWG/FDA guidance without a CPIC recommendation strength; may still be actionable</span>
+            <span class="legend-item evidence-0"><span class="drug-indicator"></span> No recommendation &mdash; guideline reviewed, no genotype-based action given</span>
+            <span class="legend-item evidence-unclassified"><span class="drug-indicator"></span> Unclassified &mdash; no recommendation strength reported</span>
         </div>
         
         {% set grouped_recommendations = {} %}
@@ -1039,28 +1084,9 @@
         <div class="drugs-grid">
             {% for drug_name in grouped_recommendations.keys()|sort %}
                 {% set drug_recs = grouped_recommendations[drug_name] %}
-                {% set ns = namespace(max_evidence=0) %}
-                {% set debug_classifications = [] %}
-                {% for rec in drug_recs %}
-                    {% set classification = (rec.classification or '') %}
-                    {% set _ = debug_classifications.append(classification) %}
-                    {% set classification_upper = classification.upper() %}
-                    {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
-                        {% set evidence = 3 %}
-                    {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
-                        {% set evidence = 2 %}
-                    {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
-                        {% set evidence = 1 %}
-                    {% else %}
-                        {% set evidence = 0 %}
-                    {% endif %}
-                    {% if evidence > ns.max_evidence %}
-                        {% set ns.max_evidence = evidence %}
-                    {% endif %}
-                {% endfor %}
-                <!-- DEBUG: {{ drug_name }}: classifications=[{{ debug_classifications|join(', ') }}], max_evidence={{ ns.max_evidence }} -->
+                {% set top_rec = drug_recs|sort(attribute='evidence_rank')|last %}
                 <a href="#drug-rec-{{ drug_name|lower|replace(' ', '-') }}" class="drug-item-link">
-                    <div class="drug-item evidence-{{ ns.max_evidence }}" title="{{ drug_name|title }}: Evidence Level {{ ns.max_evidence }} | Classifications: {{ debug_classifications|join(', ') }}">
+                    <div class="drug-item {{ top_rec.evidence_class }}">
                         <span class="drug-indicator"></span>
                         <span class="drug-name">{{ drug_name|title }}</span>
                     </div>
@@ -1096,21 +1122,10 @@
                 {% endfor %}
                 
                 {% for rec_key, group_data in recommendation_groups.items() %}
-                    {% set classification = (group_data['rec'].classification or '') %}
-                    {% set classification_upper = classification.upper() %}
-                    {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
-                        {% set rec_evidence = 3 %}
-                    {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
-                        {% set rec_evidence = 2 %}
-                    {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
-                        {% set rec_evidence = 1 %}
-                    {% else %}
-                        {% set rec_evidence = 0 %}
-                    {% endif %}
-                    <div class="gene-recommendation evidence-{{ rec_evidence }}" style="background-color: #f8f9fa;">
+                    <div class="gene-recommendation {{ group_data['rec'].evidence_class }}" style="background-color: #f8f9fa;">
                         <h4>{{ group_data['genes']|join(', ') }} - {{ group_data['rec'].guideline_source if group_data['rec'].guideline_source else 'General' }}</h4>
                         <p><strong>Recommendation:</strong> {{ group_data['rec'].recommendation }}</p>
-                        <p><strong>Strength of Evidence:</strong> {{ group_data['rec'].classification }}</p>
+                        <p><strong>Strength of Recommendation:</strong> {{ group_data['rec'].classification }}</p>
                         {% if group_data['rec'].literature_references %}
                         <p><strong>References:</strong> {{ group_data['rec'].literature_references|join(", ") }}</p>
                         {% endif %}

@@ -718,6 +718,12 @@ class WeasyPrintGenerator(PDFGenerator):
                     "pharmcat_assume_ref_methodology": template_data.get(
                         "pharmcat_assume_ref_methodology"
                     ),
+                    # 159: run-derived provenance, forwarded from template_data
+                    "genome_build": template_data.get("genome_build"),
+                    "named_allele_matcher_version": template_data.get(
+                        "named_allele_matcher_version"
+                    ),
+                    "pharmcat_data_version": template_data.get("pharmcat_data_version"),
                 }
                 # For PDF, prefer PNG over SVG to avoid WeasyPrint text rendering issues
                 # PNG ensures the diagram is reliably visible with proper scaling
