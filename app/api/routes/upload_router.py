@@ -648,10 +648,13 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
             or patient_id
         )
 
-        # Honour the report toggle here too. needs_report=False already reaches Nextflow
-        # as skip_report=true and drops the report_generation step template
-        # (workflow_registry), so building the reports anyway rebuilt exactly what the
-        # user opted out of. Absent means on: only an explicit opt-out disables it.
+        # Honour the report toggle. needs_report=False already drops the
+        # report_generation step template (workflow_registry), and this gate is the only
+        # thing that acts on it: the skip_report the upload puts in the Nextflow payload
+        # goes nowhere, because NextflowRunRequest has no such field
+        # (docker/nextflow/runner.py) so pydantic drops it, and the pipeline never reads
+        # one. Without this, opting out of reports did nothing at all.
+        # Absent means on: only an explicit opt-out disables it.
         needs_report = bool(workflow_config.get("needs_report", True))
         response_data: Dict[str, Any] = {}
 

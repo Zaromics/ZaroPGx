@@ -38,10 +38,14 @@ def _handler_catches_http_exception(handler: ast.ExceptHandler) -> bool:
 def _handler_catches_bare_exception(handler: ast.ExceptHandler) -> bool:
     if handler.type is None:
         return True  # bare `except:`
-    return isinstance(handler.type, ast.Name) and handler.type.id in {
-        "Exception",
-        "BaseException",
-    }
+    # Tuple form counts too: `except (Exception, ValueError)` still swallows every 4xx.
+    candidates = (
+        handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    )
+    return any(
+        isinstance(c, ast.Name) and c.id in {"Exception", "BaseException"}
+        for c in candidates
+    )
 
 
 def _handler_raises_http_exception(handler: ast.ExceptHandler) -> bool:

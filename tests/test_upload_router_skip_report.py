@@ -1,11 +1,17 @@
-"""Regression: ``skip_report`` was honoured by Nextflow and ignored by the app.
+"""Regression: turning reports off did not turn reports off.
 
-Turning the report toggle off sets ``needs_report=False``, which reaches Nextflow as
-``skip_report=true`` and drops the ``report_generation`` step template
-(``workflow_registry.py``). But ``_handle_final_stages_progression_sync`` read
-``workflow_config`` and never looked at the flag, so it called
-``app.reports.generator.generate_report`` unconditionally the moment Nextflow finished
-— the app rebuilt exactly the artifacts the user asked it not to build.
+``needs_report=False`` drops the ``report_generation`` step template
+(``workflow_registry.py``), and that was the whole of its effect.
+``_handle_final_stages_progression_sync`` read ``workflow_config`` and never looked at
+the flag, so it called ``app.reports.generator.generate_report`` unconditionally the
+moment Nextflow finished — the app rebuilt exactly the artifacts the user asked it not
+to build.
+
+Nothing downstream saved it either: the ``skip_report`` the upload puts in the Nextflow
+payload is dropped on the floor, because ``NextflowRunRequest``
+(``docker/nextflow/runner.py``) has no such field and pydantic ignores extras, and
+``pipelines/pgx/main.nf`` never reads one. So the gate under test is the only thing in
+the system that honours the toggle.
 
 Nothing here raises to signal a violation: the function wraps its body in a blanket
 ``except Exception`` that marks the job FAILED, so an ``AssertionError`` from a stub
