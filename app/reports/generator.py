@@ -424,30 +424,67 @@ _EMPTY_MATCHER_METADATA: Dict[str, Optional[str]] = {
 }
 
 
-def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optional[str]]:
-    """Read run-derived provenance from the run's PharmCAT report.json (159).
+# The filenames production actually writes into a report directory.
+#
+# PharmCAT's *native* output is named ``<base>.report.json``, but that name never
+# reaches a report directory: the PharmCAT service discovers it inside its own
+# temp workdir and copies it out under three renamed forms -- deliberately, "to
+# avoid colliding with our own JSON export" (docker/pharmcat/pharmcat.py:877,
+# :913, :930). ``upload_router.py:255`` reconciles the canonical one. Globbing
+# for ``*.report.json`` here matched nothing on any real run.
+_MATCHER_METADATA_FILE_SUFFIXES = (
+    "_pgx_pharmcat.json",  # canonical PharmCAT JSON copy (pharmcat.py:877)
+    "_raw_report.json",  # verbatim raw copy (pharmcat.py:913)
+    "_pgx_report.json",  # standard copy (pharmcat.py:930)
+)
 
-    Mirrors the Executive Summary TSV probes: try the canonical name first, then
-    any ``*.report.json`` in the directory (newest wins). Never raises -- a run
-    without a report.json simply renders no provenance sentences.
+
+def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optional[str]]:
+    """Read run-derived provenance from the run's PharmCAT JSON output (159).
+
+    ``report_dir`` must be the directory the artifacts actually land in -- i.e.
+    the already-nested ``/data/reports/{patient_id}/{job_id}`` path that both
+    callers pass as ``output_dir`` (``upload_router.py:589``, ``main.py:1579``)
+    and that ``generate_report`` assigns straight to ``report_dir``. Do not
+    rebuild it from parts.
+
+    Tries ``{report_id}<suffix>`` for each known suffix, then falls back to a
+    newest-first glob per suffix, mirroring the existing filename probe at
+    :1150 (artifact basenames are not always the report id -- the PharmCAT
+    service names them from its own ``name_base``).
+
+    Never raises. A run with no PharmCAT JSON simply renders no provenance
+    sentences.
 
     Note this cannot reuse ``generate_report``'s later copy of the JSON: that
     copy happens well after template data is assembled.
     """
-    candidates = [os.path.join(report_dir, f"{report_id}.report.json")]
-    try:
-        others = glob.glob(os.path.join(report_dir, "*.report.json"))
-        others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-        candidates.extend(others)
-    except Exception as e:
-        logger.debug("Swallowed exception: %s", e, exc_info=True)
+    candidates = [
+        os.path.join(report_dir, f"{report_id}{suffix}")
+        for suffix in _MATCHER_METADATA_FILE_SUFFIXES
+    ]
+    for suffix in _MATCHER_METADATA_FILE_SUFFIXES:
+        try:
+            others = glob.glob(os.path.join(report_dir, f"*{suffix}"))
+            others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            candidates.extend(others)
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
 
+    seen = set()
     for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
         try:
             if not os.path.exists(path):
                 continue
             with open(path, "r", encoding="utf-8") as fh:
-                return extract_matcher_metadata(json.load(fh))
+                meta = extract_matcher_metadata(json.load(fh))
+            # A file that parses but carries no provenance must not shadow a
+            # later candidate that does.
+            if any(value is not None for value in meta.values()):
+                return meta
         except Exception as e:
             logger.debug("Swallowed exception: %s", e, exc_info=True)
 
@@ -2113,13 +2150,17 @@ def generate_report(
     platform = build_platform_info()
     logger.info(f"Built platform info with {len(platform)} items")
 
-    # 159: run-derived provenance. `pid_for_dir` above is scoped inside the
-    # EXECSUM_USE_TSV guard, so recompute the directory here.
-    _pid_for_meta = patient_info.get("id", "unknown") if patient_info else "unknown"
-    _report_id_for_meta = str(job_id) if job_id else _pid_for_meta
-    matcher_meta = probe_matcher_metadata(
-        os.path.join(output_dir, _pid_for_meta), _report_id_for_meta
+    # 159: run-derived provenance. `output_dir` IS the report directory -- both
+    # call sites pass an already-nested /data/reports/{patient_id}/{job_id} path
+    # (upload_router.py:589, main.py:1579) and `report_dir = output_dir` below.
+    # Joining a patient id onto it adds a level that does not exist.
+    # `_report_id_for_meta` mirrors the `report_id` computation below verbatim.
+    _report_id_for_meta = (
+        str(job_id)
+        if job_id
+        else (patient_info.get("id", "unknown") if patient_info else "unknown")
     )
+    matcher_meta = probe_matcher_metadata(output_dir, _report_id_for_meta)
 
     template_data = {
         "patient": patient_info or {},
