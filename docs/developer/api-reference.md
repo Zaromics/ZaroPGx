@@ -17,6 +17,12 @@ Routes marked `include_in_schema=False` (`/api-reference`, `/login`, `/logout`)
 do not appear there; they are listed here instead. WebSockets never appear in an
 OpenAPI schema, so `/api/v1/jobs/{job_id}/ws` is documented only on this page.
 
+Source citations on this page name a **file and a symbol**, never a line number.
+An earlier revision cited line numbers throughout; a single wave of unrelated
+merges shifted most of them by 20–180 lines, and a citation that points at the
+wrong line is worse than none because it still looks authoritative. Search for
+the route path or the function name instead — those survive edits above them.
+
 ## Base URL
 
 ```
@@ -91,16 +97,16 @@ no route restricts access by user.
 
 ### Upload Endpoints
 
-Mounted at `/upload` (`upload_router.py:81`, included unconditionally at
-`main.py:314`). Five routes.
+Mounted at `/upload` (`upload_router.py`, included unconditionally in
+`app/main.py`). Five routes, all in `app/api/routes/upload_router.py`.
 
-| Endpoint | Method | Source |
+| Endpoint | Method | Handler |
 | --- | --- | --- |
-| `/upload/genomic-data` | POST | `upload_router.py:1105` |
-| `/upload/status/{job_id}` | GET | `upload_router.py:1313` |
-| `/upload/inspect-header` | POST | `upload_router.py:1425` |
-| `/upload/reports/job/{job_id}` | GET | `upload_router.py:1490` |
-| `/upload/reports/download/{patient_id}` | GET | `upload_router.py:1575` |
+| `/upload/genomic-data` | POST | `upload_genomic_data` |
+| `/upload/status/{job_id}` | GET | `get_upload_status` |
+| `/upload/inspect-header` | POST | `inspect_file_header` |
+| `/upload/reports/job/{job_id}` | GET | `get_report_urls` |
+| `/upload/reports/download/{patient_id}` | GET | `download_all_reports` |
 
 #### Upload Genomic Data
 
@@ -165,23 +171,44 @@ render its pre-flight summary.
 `/api/v1/jobs/...`.
 
 **Status Codes:**
-- `200`: Upload successful
+- `200`: Upload successful, job created and started
+- `400`: The file was rejected — either the processor could not read it, or it is
+  an input the pipeline has no branch for. `detail` is the reason.
 - `422`: Missing or malformed form fields
-- `500`: Everything else, including a file the processor rejects
+- `500`: Unhandled server error, with `detail: "Upload failed: …"`
 
-> **This route does not return 400.** The handler raises
-> `HTTPException(400, …)` for a rejected file (`upload_router.py:1146`), but that
-> raise sits inside the `try:` opened at `:1134` and the terminal
-> `except Exception` at `:1287-1289` re-wraps it — unlike every other handler in
-> the module, this one has no `except HTTPException: raise` guard. A bad file
-> therefore arrives as **`500`** with `detail: "Upload failed: 400: <reason>"`.
-> Parse the reason out of `detail`; do not branch on the status code.
+> **Branch on the status code.** An earlier revision of this page said this route
+> could not return 400, because the handler's terminal `except Exception`
+> re-wrapped its own `HTTPException` as a 500. That is fixed:
+> `upload_genomic_data` now has an `except HTTPException: raise` guard ahead of
+> the catch-all, like every other handler in the module. A rejected file arrives
+> as a real **`400`** with the bare reason in `detail`, not as
+> `"Upload failed: 400: <reason>"`.
+
+**The 400 refusal.** Two distinct checks produce it:
+
+1. `FileProcessor.process_files` returned `success: false` — the file could not be
+   read or parsed at all.
+2. `_unanalysable_upload_reason` (in `upload_router.py`) rejected the derived
+   workflow. This fires when the workflow is flagged `unsupported`, is **not**
+   flagged `is_provisional`, and the detected `file_type` is outside
+   `NEXTFLOW_INPUT_TYPES` (`vcf`, `bam`, `cram`, `sam`, `fastq`) — i.e. FASTA,
+   BED and unrecognised formats. `pipelines/pgx/main.nf` has no branch for those,
+   so accepting one could only ever mint a job that fails minutes later.
+
+The refusal happens **before** any patient, genetic-data or job row is created, so
+a 400 leaves nothing behind and returns no `job_id`. An input flagged
+`unsupported` but marked `is_provisional`, and any input whose type is in
+`NEXTFLOW_INPUT_TYPES`, is accepted and analysed — `unsupported` on its own is not
+a refusal. The reason string reaching the client is the workflow's
+`unsupported_reason` when it has one, otherwise
+`"Files of type '<file_type>' cannot be analysed."`
 
 #### Get Upload Status
 
 **Endpoint:** `GET /upload/status/{job_id}` — the canonical status route.
 
-`GET /status/{data_id}` (`main.py:454`) is the same view addressed by genetic-data
+`GET /status/{data_id}` (`app/main.py`) is the same view addressed by genetic-data
 id instead of job id; it delegates to the upload router.
 
 **Response:**
@@ -212,8 +239,8 @@ top level** of this same object alongside `data`.
 **Status Values** (`JobStatus`): `pending`, `running`, `completed`, `failed`,
 `cancelled`. An unknown job is a 404.
 
-**Stage Values** (`current_stage`, from `WorkflowStage` in
-`app/services/workflow_stages.py:24-31`): `upload`, `analysis`, `gatk`, `hla`,
+**Stage Values** (`current_stage`, from the `WorkflowStage` enum in
+`app/services/workflow_stages.py`): `upload`, `analysis`, `gatk`, `hla`,
 `pypgx`, `pharmcat`, `report`, `completed`. Which stages a given run passes
 through depends on the input file type and the toggles it was submitted with, so
 do not assume all eight occur.
@@ -263,8 +290,8 @@ lookup and the per-patient ZIP, `app/main.py` serves individual files, and the
 
 **Endpoint:** `GET /upload/reports/job/{job_id}`
 
-`GET /reports/job/{job_id}` (`main.py:470`) and `GET /reports/{job_id}`
-(`main.py:484`) are thin forwarders to the same handler and return the same body.
+`GET /reports/job/{job_id}` and `GET /reports/{job_id}` (both in `app/main.py`)
+are thin forwarders to the same handler and return the same body.
 
 **Response:**
 ```json
@@ -333,7 +360,7 @@ Artifacts live on disk at `/data/reports/{patient_id}/{job_id}/`. The display
 
 #### Retired /reports Stubs
 
-The `/reports` router (`report_router.py:13`, included at `main.py:315`) is
+The `/reports` router (`report_router.py`, included in `app/main.py`) is
 mounted but every one of its five routes raises **501 Not Implemented** with a
 `detail` explaining the replacement. They are kept as signposts, not features.
 
@@ -345,9 +372,9 @@ mounted but every one of its five routes raises **501 Not Implemented** with a
 | `/reports/recommendations/{patient_id}` | GET | Report artifacts, or `/fhir/*` |
 | `/reports/{report_id}/export-to-fhir` | POST | `/fhir/export/run/{run_id}` or `/fhir/save/*` |
 
-**Route resolution under `/reports`.** The router is included at `main.py:315`,
-*before* the `@app.get("/reports/…")` decorators execute further down the module,
-and Starlette matches in registration order. The retired stubs therefore win any
+**Route resolution under `/reports`.** The router is included near the top of
+`app/main.py`, *before* the `@app.get("/reports/…")` decorators execute further
+down the module, and Starlette matches in registration order. The retired stubs therefore win any
 tie. In practice that means a report file literally named `status` or `download`
 (`GET /reports/{patient_id}/status`) resolves to the 501 stub rather than to the
 file server, as does a patient whose id is literally `recommendations`. Real
@@ -362,11 +389,11 @@ Cleanup for a finished job is `POST /api/cleanup/job/{job_id}`; the old
 > different mounts.
 >
 > - A **job** is one run instance. Jobs live under **`/api/v1/jobs`**
->   (`job_router.py:48`, mounted at `main.py:317`). Progress, steps, logs, cancel
->   and the WebSocket are all here.
+>   (`job_router.py`). Progress, steps, logs, cancel and the WebSocket are all
+>   here.
 > - A **workflow** is now only a *recipe* — a named template of step definitions.
 >   The read-only catalog lives under **`/api/v1/workflows`**
->   (`workflow_recipe_router.py:5`, mounted at `main.py:316`).
+>   (`workflow_recipe_router.py`).
 >
 > `/api/v1/workflows/{id}` is **not** an alias for `/api/v1/jobs/{id}`; the two
 > mounts serve unrelated resources. The old `workflow_router` was hard-cut to
@@ -375,22 +402,23 @@ Cleanup for a finished job is `POST /api/cleanup/job/{job_id}`; the old
 >
 > Container cancel payloads accept `job_id` only (no `workflow_id` dual-accept).
 
-All twelve job routes are registered unconditionally.
+All twelve job routes are registered unconditionally, all in
+`app/api/routes/job_router.py`.
 
-| Endpoint | Method | Response model | Source |
-| --- | --- | --- | --- |
-| `/api/v1/jobs/` | POST | `JobResponse` (201) | `job_router.py:51` |
-| `/api/v1/jobs/{job_id}` | GET | `JobResponse` | `job_router.py:89` |
-| `/api/v1/jobs/{job_id}` | PUT | `JobResponse` | `job_router.py:133` |
-| `/api/v1/jobs/{job_id}` | DELETE | empty (204) | `job_router.py:179` |
-| `/api/v1/jobs/{job_id}/steps` | POST | `JobStepResponse` (201) | `job_router.py:213` |
-| `/api/v1/jobs/{job_id}/steps` | GET | `JobStepResponse[]` | `job_router.py:262` |
-| `/api/v1/jobs/{job_id}/steps/{step_name}` | PUT | `JobStepResponse` | `job_router.py:292` |
-| `/api/v1/jobs/{job_id}/progress` | GET | `JobProgressResponse` | `job_router.py:340` |
-| `/api/v1/jobs/{job_id}/logs` | POST | `JobLogResponse` (201) | `job_router.py:371` |
-| `/api/v1/jobs/{job_id}/logs` | GET | `JobLogResponse[]` | `job_router.py:408` |
-| `/api/v1/jobs/{job_id}/ws` | WebSocket | see WebSocket Support | `job_router.py:453` |
-| `/api/v1/jobs/{job_id}/cancel` | POST | `JobResponse` | `job_router.py:722` |
+| Endpoint | Method | Response model |
+| --- | --- | --- |
+| `/api/v1/jobs/` | POST | `JobResponse` (201) |
+| `/api/v1/jobs/{job_id}` | GET | `JobResponse` |
+| `/api/v1/jobs/{job_id}` | PUT | `JobResponse` |
+| `/api/v1/jobs/{job_id}` | DELETE | empty (204) |
+| `/api/v1/jobs/{job_id}/steps` | POST | `JobStepResponse` (201) |
+| `/api/v1/jobs/{job_id}/steps` | GET | `JobStepResponse[]` |
+| `/api/v1/jobs/{job_id}/steps/{step_name}` | PUT | `JobStepResponse` |
+| `/api/v1/jobs/{job_id}/progress` | GET | `JobProgressResponse` |
+| `/api/v1/jobs/{job_id}/logs` | POST | `JobLogResponse` (201) |
+| `/api/v1/jobs/{job_id}/logs` | GET | `JobLogResponse[]` |
+| `/api/v1/jobs/{job_id}/ws` | WebSocket | see WebSocket Support |
+| `/api/v1/jobs/{job_id}/cancel` | POST | `JobResponse` |
 
 Most integrations only need `GET /api/v1/jobs/{job_id}`, the progress route, the
 WebSocket and cancel. The create/update/step-authoring routes exist so the upload
@@ -529,12 +557,13 @@ Note `warn`, not `warning`, and there is no `critical`.
 ### Workflow Recipe Catalog
 
 Read-only. A recipe describes which steps a workflow type mints — not the state
-of any run. Registered unconditionally at `main.py:316`.
+of any run. Registered unconditionally; both routes live in
+`app/api/routes/workflow_recipe_router.py`.
 
-| Endpoint | Method | Source |
+| Endpoint | Method | Handler |
 | --- | --- | --- |
-| `/api/v1/workflows` and `/api/v1/workflows/` | GET | `workflow_recipe_router.py:25-26` |
-| `/api/v1/workflows/{workflow_type}` | GET | `workflow_recipe_router.py:31` |
+| `/api/v1/workflows` and `/api/v1/workflows/` | GET | `list_workflow_recipes` (one function, two decorators) |
+| `/api/v1/workflows/{workflow_type}` | GET | `get_workflow_recipe` |
 
 **Response** (the list form returns a bare array of these objects):
 ```json
@@ -555,53 +584,58 @@ returns 404 with `detail: "Unknown workflow_type"`.
 
 ### PharmCAT Endpoints
 
-Mounted at `/api/pharmcat` (`pharmcat_router.py:27`, included unconditionally at
-`main.py:318`). These read the parsed PharmCAT results held in the database.
+Mounted at `/api/pharmcat` (`pharmcat_router.py`, included unconditionally in
+`app/main.py`). These read the parsed PharmCAT results held in the database.
 
 A **run** is one PharmCAT execution, identified by `run_id`. `run_id` is not a
 `job_id`; use the `/workflow/{workflow_id}/…` routes to reach a run from the
 pipeline side. Those two routes still take the historical `workflow_id` path
 name, and the value they expect is the job id.
 
-| Endpoint | Method | Response | Source |
-| --- | --- | --- | --- |
-| `/api/pharmcat/load` | POST | `PharmCATLoadResponse` | `pharmcat_router.py:113` |
-| `/api/pharmcat/workflow/{workflow_id}/summary` | GET | `PharmCATSummary` | `:161` |
-| `/api/pharmcat/workflow/{workflow_id}/data` | GET | full parsed payload | `:194` |
-| `/api/pharmcat/summary/{run_id}` | GET | `PharmCATSummary` | `:220` |
-| `/api/pharmcat/genes/{run_id}` | GET | `GeneSummary[]` | `:254` |
-| `/api/pharmcat/diplotypes/{run_id}` | GET | `DiplotypeInfo[]` | `:271` |
-| `/api/pharmcat/drugs/{run_id}` | GET | `DrugInfo[]` | `:294` |
-| `/api/pharmcat/messages/{run_id}` | GET | `MessageInfo[]` | `:315` |
-| `/api/pharmcat/actionable/{run_id}` | GET | `ActionableFinding[]` | `:336` |
-| `/api/pharmcat/runs` | GET | run list | `:356` |
-| `/api/pharmcat/runs/{run_id}` | DELETE | deletion result | `:391` |
-| `/api/pharmcat/health` | GET | liveness | `:427` |
+| Endpoint | Method | Response |
+| --- | --- | --- |
+| `/api/pharmcat/load` | POST | `PharmCATLoadResponse` |
+| `/api/pharmcat/workflow/{workflow_id}/summary` | GET | `PharmCATSummary` |
+| `/api/pharmcat/workflow/{workflow_id}/data` | GET | full parsed payload |
+| `/api/pharmcat/summary/{run_id}` | GET | `PharmCATSummary` |
+| `/api/pharmcat/genes/{run_id}` | GET | `GeneSummary[]` |
+| `/api/pharmcat/diplotypes/{run_id}` | GET | `DiplotypeInfo[]` |
+| `/api/pharmcat/drugs/{run_id}` | GET | `DrugInfo[]` |
+| `/api/pharmcat/messages/{run_id}` | GET | `MessageInfo[]` |
+| `/api/pharmcat/actionable/{run_id}` | GET | `ActionableFinding[]` |
+| `/api/pharmcat/runs` | GET | run list |
+| `/api/pharmcat/runs/{run_id}` | DELETE | deletion result |
+| `/api/pharmcat/health` | GET | liveness |
 
 All the list-returning routes return **bare JSON arrays**, not wrapped objects.
 
-> **Three of these routes are broken today and always return 500.** They are
-> documented below for completeness, but the bodies shown are what the code
-> *intends*, not what you will receive:
+> **The three summary routes work.** An earlier revision of this page said
+> `POST /load`, `GET /summary/{run_id}` and
+> `GET /workflow/{workflow_id}/summary` were broken and always returned 500,
+> because they fed `get_pharmcat_summary()`'s `actionable_findings` **list** into
+> a response field typed `int`. That is repaired. A shared
+> `_build_summary_response()` helper in `pharmcat_router.py` now does the mapping
+> for both summary routes: `actionable_findings` on the response is the count
+> (taken from the parser's `actionable_findings_count`) and
+> `actionable_findings_list` carries the findings themselves. `POST /load` reads
+> `actionable_findings_count` directly. All the previously missing required
+> fields (`total_messages`, `genes`, `actionable_findings_list`) are populated.
 >
-> - `POST /api/pharmcat/load` — `pharmcat_router.py:152` feeds
->   `summary["actionable_findings"]`, which `pharmcat_parser.py:1099` returns as a
->   **list**, into `PharmCATLoadResponse.actionable_findings: int` (`:41`). The
->   integer it wants is under `actionable_findings_count` (`pharmcat_parser.py:1096`).
-> - `GET /api/pharmcat/summary/{run_id}` — same type mismatch at
->   `pharmcat_router.py:237`.
-> - `GET /api/pharmcat/workflow/{workflow_id}/summary` —
->   `pharmcat_router.py:180-187` omits three required `PharmCATSummary` fields
->   (`total_messages`, `genes`, `actionable_findings_list`) and hits the same
->   list-into-`int` mismatch.
->
-> In every case the `ValidationError` is swallowed by a bare `except Exception`
-> and re-raised as `500 Error getting summary: …`. That same bare `except` at
-> `pharmcat_router.py:189` also converts the handler's own 404 into a 500, so an
-> unknown workflow is indistinguishable from the bug.
->
-> The routes that return plain lists — `/genes/`, `/diplotypes/`, `/drugs/`,
-> `/messages/`, `/actionable/`, `/runs` — are unaffected and work.
+> The 404s work too. Every handler that raises one now has an
+> `except HTTPException: raise` guard ahead of its catch-all, so an unknown run
+> or workflow is a real **404**, not a 500 indistinguishable from a bug.
+
+**Missing-data behaviour differs by route, and the split is deliberate:**
+
+- `/summary/{run_id}` and both `/workflow/{workflow_id}/…` routes **404** when
+  there is no such run/workflow. `get_pharmcat_summary()` returns `None` rather
+  than a zero-filled summary precisely so "no such run" cannot be mistaken for
+  "a run that called nothing".
+- The list routes — `/genes/`, `/diplotypes/`, `/drugs/`, `/messages/`,
+  `/actionable/` — have no such guard and return an **empty array** for an unknown
+  `run_id`. Do not treat `[]` from those as proof the run exists.
+- `POST /load` returns `400` for a non-`.json` filename or unparseable JSON, and
+  `500` if the parsed run did not persist.
 
 **Query parameters:**
 - `/diplotypes/{run_id}` and `/messages/{run_id}`: optional `gene_symbol` filter
@@ -632,10 +666,13 @@ Parses it into the database and returns the new `run_id`.
 **Endpoint:** `GET /api/pharmcat/summary/{run_id}` (or
 `/api/pharmcat/workflow/{workflow_id}/summary`)
 
+Returns **404** when no run (or no workflow-linked run) matches.
+
 **Response** (`PharmCATSummary`):
 ```json
 {
   "run_id": "…",
+  "pharmcat_version": "3.4.0",
   "total_genes": 23,
   "total_diplotypes": 23,
   "actionable_findings": 4,
@@ -670,6 +707,15 @@ Parses it into the database and returns the new `run_id`.
 }
 ```
 
+`pharmcat_version` is the `pharmcatVersion` recorded on the parsed run and is
+nullable — a run loaded from a report that omitted it reports `null`.
+
+Two same-named fields that mean different things, and both bite:
+`actionable_findings` on this model is a **count** (the findings themselves are
+in `actionable_findings_list`), and `warning_messages` here is a **list** —
+those messages whose `exception_type` is `warning` or `error` — whereas
+`warning_messages` on `PharmCATLoadResponse` is their count.
+
 #### Diplotypes
 
 **Endpoint:** `GET /api/pharmcat/diplotypes/{run_id}?gene_symbol=CYP2C19`
@@ -684,12 +730,30 @@ Parses it into the database and returns the new `run_id`.
     "allele2_name": "*17",
     "allele2_function": "Increased function",
     "activity_score": null,
-    "phenotype": "Rapid Metabolizer"
+    "phenotype": "Rapid Metabolizer",
+    "match_score": 2,
+    "inferred": false,
+    "combination": false
   }
 ]
 ```
 
 Every field except `gene_symbol` is nullable.
+
+The last three come straight from the PharmCAT matcher's `matchScore`,
+`inferred` and `combination` on each diplotype and are the call's own account of
+how it was arrived at:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `match_score` | int \| null | PharmCAT's matcher score for the call |
+| `inferred` | bool \| null | The diplotype was *inferred* rather than directly called |
+| `combination` | bool \| null | The call is a combination/partial diplotype |
+
+`null` means the loaded report did not carry the value — it is not the same as
+`false`. Report rendering uses these to distinguish a confident call from an
+inferred or partial one, so pass them through rather than flattening them to a
+label.
 
 #### List and Delete Runs
 
@@ -724,44 +788,63 @@ check and cannot fail; the container's own health is reported by
 
 ### FHIR Export Endpoints
 
-Mounted at `/fhir` (`fhir_export_router.py:27`). **Conditionally registered**:
-`main.py:321-322` includes the router only when `FHIR_EXPORT_ENABLED` is truthy,
-and that flag defaults to **true** (`main.py:156`). Set
-`FHIR_EXPORT_ENABLED=false` and the whole prefix **404s** — that is the only
-disabled behaviour you can observe.
+Mounted at `/fhir` (`fhir_export_router.py`). **Conditionally registered**:
+`app/main.py` includes the router only when `FHIR_EXPORT_ENABLED` is truthy, and
+that flag defaults to **true**. Boot with `FHIR_EXPORT_ENABLED=false` and the
+whole prefix **404s**.
 
-Seven of the nine handlers also open with `if not FHIR_EXPORT_ENABLED: raise
-HTTPException(503, …)`, reading a second module-level constant computed at import
-time in `fhir_export_service.py:27-32`. **That 503 is unreachable.** Both
-constants derive from the same environment variable in the same process using the
-same truthy set, so the flag can never be false at the handler while being true at
-the mount — if it is false the router was never included and you get a 404. Treat
-the 503 as defensive dead code; do not write a client branch for it.
+Seven of the nine handlers — everything under `/fhir/export/run/…`,
+`/fhir/export/workflow/…` and `/fhir/save/…` — also open with
+`if not fhir_export_enabled(): raise HTTPException(503, …)`. `/fhir/status` and
+`/fhir/export/formats` carry no such guard.
 
-For the same reason the "disabled" wording inside `GET /fhir/status` and the
-empty `supported_formats` it would return are not observable either: if export is
-off, `/fhir/status` does not exist.
+> **That 503 is reachable; write the branch.** An earlier revision of this page
+> called it dead code, on the reasoning that the mount and the guard read the
+> same module-level constant. They no longer read a constant.
+> `fhir_export_enabled()` (`app/services/fhir_export_service.py`) is deliberately
+> a **function**, resolved on every call, because a constant evaluated at import
+> time would snapshot the environment *before* `app/main.py` runs `load_dotenv()`
+> — which once made every `/fhir/*` route answer 503 while plainly being mounted.
+>
+> The consequence is that the flag is no longer frozen at import. The mount
+> decision is still made once at startup, but the guard is re-evaluated per
+> request against the live process environment. If that environment changes after
+> startup — anything mutating `os.environ` in-process — a request can reach a
+> mounted route whose guard now says disabled and get a **503**. With a fixed
+> process environment (the normal deployment: Compose sets the variable once at
+> container start) the two always agree and only the 404 is observable.
+
+Whitespace is stripped before the truthiness test, so `FHIR_EXPORT_ENABLED='true '`
+is a trailing-space typo, not a request to disable export. The truthy set is
+`1`, `true`, `yes`, `on`, case-insensitive; **unset means enabled**.
+
+By the same reasoning, the "disabled" wording inside `GET /fhir/status` and the
+empty `supported_formats` it returns are observable under those same conditions —
+`/fhir/status` is unguarded, so it answers whatever `fhir_export_enabled()` says
+at request time.
 
 Bundles follow the HL7 Genomics Reporting Implementation Guide (FHIR R4) and are
 built from real PharmCAT run data held in the database.
 
-| Endpoint | Method | Source |
+All nine live in `app/api/routes/fhir_export_router.py`.
+
+| Endpoint | Method | 503 guard |
 | --- | --- | --- |
-| `/fhir/status` | GET | `fhir_export_router.py:67` |
-| `/fhir/export/formats` | GET | `fhir_export_router.py:362` |
-| `/fhir/export/run/{run_id}` | GET | `fhir_export_router.py:90` |
-| `/fhir/export/run/{run_id}` | POST | `fhir_export_router.py:159` |
-| `/fhir/export/run/{run_id}/preview` | GET | `fhir_export_router.py:295` |
-| `/fhir/export/workflow/{workflow_id}` | GET | `fhir_export_router.py:231` |
-| `/fhir/save/run/{run_id}` | POST | `fhir_export_router.py:434` |
-| `/fhir/save/workflow/{workflow_id}` | POST | `fhir_export_router.py:498` |
-| `/fhir/save/run/{run_id}/quick` | GET | `fhir_export_router.py:561` |
+| `/fhir/status` | GET | no |
+| `/fhir/export/formats` | GET | no |
+| `/fhir/export/run/{run_id}` | GET | yes |
+| `/fhir/export/run/{run_id}` | POST | yes |
+| `/fhir/export/run/{run_id}/preview` | GET | yes |
+| `/fhir/export/workflow/{workflow_id}` | GET | yes |
+| `/fhir/save/run/{run_id}` | POST | yes |
+| `/fhir/save/workflow/{workflow_id}` | POST | yes |
+| `/fhir/save/run/{run_id}/quick` | GET | yes |
 
 > **`save` means save to disk.** The `/fhir/save/*` routes write bundle files
 > into `/data/reports/{subdirectory}/` on the local filesystem
-> (`fhir_export_service.py:246-348`). They do **not** POST to the HAPI FHIR
-> server or to any other endpoint. Nothing under `/fhir/*` transmits data off the
-> host.
+> (`FHIRExportService.save_fhir_export` and `save_fhir_export_for_workflow`).
+> They do **not** POST to the HAPI FHIR server or to any other endpoint. Nothing
+> under `/fhir/*` transmits data off the host.
 
 #### FHIR Export Status
 
@@ -777,8 +860,11 @@ built from real PharmCAT run data held in the database.
 }
 ```
 
-The handler has a disabled branch that would report `enabled: false` with an
-empty `supported_formats`, but it cannot be reached — see the note above.
+This route is **not** 503-guarded: it reports whatever `fhir_export_enabled()`
+answers at request time. Its disabled branch returns `enabled: false`, an empty
+`supported_formats`, and a `message` telling you to set the variable — reachable
+only under the in-process environment change described above, since a process
+that booted with the flag off never mounted this route at all.
 
 #### Supported Formats
 
@@ -800,7 +886,7 @@ the `profiles_used` list: `genomic-report`, `genotype`,
 **Response:** the bundle as a **file download** — raw body with media type
 `application/fhir+json` or `application/fhir+xml` and a `Content-Disposition`
 attachment header naming `pgx_report_{run_id}.json` / `.xml`
-(`fhir_export_service.py:157,160`). Not a JSON envelope.
+(`FHIRExportService.export_pgx_report`). Not a JSON envelope.
 
 ```bash
 curl -OJ "http://localhost:8765/fhir/export/run/{run_id}?output_format=xml"
@@ -873,7 +959,7 @@ skips patient details.
 `patient_id` names the subdirectory under `/data/reports/`. When it is omitted
 the fallback differs by route: the run routes fall back to the **run id**, and
 `/fhir/save/workflow/{workflow_id}` falls back to the **workflow id**
-(`fhir_export_service.py:389`).
+(`FHIRExportService.save_fhir_export_for_workflow`).
 
 **Response** (`FHIRSaveResponse`; the quick route adds a `message`):
 ```json
@@ -894,7 +980,7 @@ the fallback differs by route: the run routes fall back to the **run id**, and
 
 `files_saved` is a list of **objects**, not path strings. The saved filename is
 the fixed `pgx_fhir_report.json` / `pgx_fhir_report.xml`
-(`fhir_export_service.py:319`) — it does not carry the run id, so saving a second
+(`FHIRExportService.save_fhir_export`) — it does not carry the run id, so saving a second
 run into the same subdirectory overwrites the first. Note this differs from the
 download/preview filename, which is `pgx_report_{run_id}.{ext}`.
 
@@ -1037,7 +1123,7 @@ iframes **Swagger UI at `/docs`** — not this document — with a Back button),
 clear the session cookie and redirect to `/login`).
 
 Of those, only `/api-reference`, `/login` and `/logout` carry
-`include_in_schema=False`. **`/` is in the OpenAPI schema** (`main.py:558`), so
+`include_in_schema=False`. **`/` is in the OpenAPI schema** (`app/main.py`), so
 `/openapi.json` lists it even though it returns a web page.
 
 #### Cleanup
@@ -1081,7 +1167,7 @@ has no `warning` or `critical`.
 
 ### UploadResponse
 
-`models.py:187`. Returned by `POST /upload/genomic-data`.
+`UploadResponse` in `app/api/models.py`. Returned by `POST /upload/genomic-data`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -1096,7 +1182,7 @@ has no `warning` or `critical`.
 
 ### JobResponse
 
-`models.py:368`. Returned by `GET/POST/PUT /api/v1/jobs/…` and by cancel.
+`JobResponse` in `app/api/models.py`. Returned by `GET/POST/PUT /api/v1/jobs/…` and by cancel.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -1116,19 +1202,19 @@ has no `warning` or `critical`.
 
 ### JobProgressResponse
 
-`models.py:478`. Fields: `job_id`, `status` (`JobStatus`), `total_steps`,
+`JobProgressResponse` in `app/api/models.py`. Fields: `job_id`, `status` (`JobStatus`), `total_steps`,
 `completed_steps`, `progress_percentage` (float, 0–100), `current_step`,
 `estimated_completion`, `message`.
 
 ### JobStepResponse
 
-`models.py:420`. Fields: `id`, `job_id`, `step_name`, `step_order`, `status`
+`JobStepResponse` in `app/api/models.py`. Fields: `id`, `job_id`, `step_name`, `step_order`, `status`
 (`StepStatus`), `container_name`, `started_at`, `completed_at`,
 `duration_seconds`, `output_data`, `error_details`, `retry_count`.
 
 ### JobLogResponse
 
-`models.py:464`. Fields: `id` (**int**, not a UUID), `job_id`, `step_name`,
+`JobLogResponse` in `app/api/models.py`. Fields: `id` (**int**, not a UUID), `job_id`, `step_name`,
 `log_level` (`LogLevel`), `message`, `metadata`, `timestamp`.
 
 ### Report URL payload
@@ -1152,8 +1238,7 @@ Pydantic model — it is assembled from job metadata, so treat every key inside
 }
 ```
 
-Request models worth knowing: `JobCreate` and `JobUpdate` (`models.py:337`,
-`:353`), `JobStepCreate`/`JobStepUpdate`, `JobLogCreate`, `FHIRExportRequest` and
+Request models worth knowing: `JobCreate` and `JobUpdate` (both in `app/api/models.py`), `JobStepCreate`/`JobStepUpdate`, `JobLogCreate`, `FHIRExportRequest` and
 `FHIRSaveRequest` (`fhir_export_router.py`). **Every** `Job*` model — the five
 request models and the four response models alike — sets `extra="forbid"`, so an
 unrecognised key in the request body is a 422, not a silently ignored field.
@@ -1194,17 +1279,20 @@ Two exceptions to watch for, both returning HTTP 200 on failure:
 
 | Code | When |
 | --- | --- |
-| `400 Bad Request` | Job not in a cancellable state; job not completed; file rejected by the processor |
+| `400 Bad Request` | An upload the pipeline cannot analyse, or one the processor could not read (`POST /upload/genomic-data`); job not in a cancellable state; job not completed; a non-JSON or unparseable file on `POST /api/pharmcat/load` |
 | `401 Unauthorized` | Only in `ZAROPGX_AUTH_MODE=password`, and only on non-allowlisted paths |
 | `403 Forbidden` | A report path resolved outside `/data/reports` (path-jail rejection) |
-| `404 Not Found` | Unknown job, run, report file, or workflow recipe |
+| `404 Not Found` | Unknown job, run, PharmCAT run/workflow summary, report file, or workflow recipe |
 | `422 Unprocessable Entity` | Request body or form fields failed validation |
-| `500 Internal Server Error` | Unhandled server error — and, on `POST /upload/genomic-data`, a rejected file (see that route) |
+| `500 Internal Server Error` | Unhandled server error |
 | `501 Not Implemented` | A retired `/reports/*` stub |
+| `503 Service Unavailable` | A guarded `/fhir/*` route whose `FHIR_EXPORT_ENABLED` reads false at request time — see the FHIR section |
 
-`503 Service Unavailable` appears in the `/fhir/*` source but is unreachable —
-see the FHIR section. Disabling FHIR export removes the routes entirely, so the
-observable code is 404.
+Both the 400 and the 503 rows are new relative to earlier revisions of this page,
+which said this API emitted neither. Both now do.
+
+A process booted with `FHIR_EXPORT_ENABLED=false` never mounts `/fhir/*` at all,
+so in that configuration the observable code for those paths is 404, not 503.
 
 `413 Payload Too Large` and `429 Too Many Requests` are **not** emitted. There is
 no application-level upload size cap and no rate limiting of any kind — no
@@ -1219,7 +1307,7 @@ Connect to the WebSocket for real-time job updates.
 
 **Endpoint:** `ws://localhost:8765/api/v1/jobs/{job_id}/ws`
 
-The socket is declared on the job router (`job_router.py:453`) under that
+The socket is declared on the job router (`app/api/routes/job_router.py`) under that
 router's `/api/v1/jobs` prefix. There is no `@app.websocket` route in
 `app/main.py`, so no `/ws/...` URL exists.
 
