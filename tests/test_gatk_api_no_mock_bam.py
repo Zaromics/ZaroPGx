@@ -15,9 +15,11 @@ failure -- rather than a grep over the source. The two source-level assertions t
 remain are regression fences around the exact shape of the old defect.
 """
 
+import ast
 import importlib.util
 import logging
 import logging.handlers
+import os
 import re
 import subprocess
 import sys
@@ -553,6 +555,196 @@ def test_quickcheck_rejection_is_not_reported_as_success(
     assert resp.json().get("success") is not True
     assert "quickcheck" in resp.json()["detail"]
     assert _bam_files(gatk_api) == before
+
+
+# --------------------------------------------------------------------------
+# Command injection via the uploaded filename
+#
+# `file.filename` arrives in the multipart body and nothing upstream of this
+# service sanitises it. On main it was joined straight into a temp path that then
+# reached three separate `shell=True` call sites from /variant-call. gatk-api has
+# no authentication and is reachable from the Docker host (127.0.0.1:5002) and from
+# any container on the compose network, so this was live inside the trust boundary
+# -- the internet-facing route (app/main.py) happens to apply secure_filename first.
+#
+# Both halves are pinned here: the filename is neutralised at the source, and each
+# sink takes argv so the class stays closed whatever a future caller passes.
+# --------------------------------------------------------------------------
+
+PAYLOAD_FILENAME = "x;touch /tmp/pwned;.bam"
+SHELL_METACHARACTERS = ";|&$`><\n"
+
+
+def test_safe_upload_name_neutralises_the_payload(gatk_api):
+    stored = gatk_api.safe_upload_name(PAYLOAD_FILENAME, "job-uuid")
+
+    for char in SHELL_METACHARACTERS + "/\\ ":
+        assert char not in stored, f"{char!r} survived into {stored!r}"
+    # The extension still drives the endpoint's format branching.
+    assert stored.endswith(".bam")
+    # basename() already reduces this payload to "pwned;.bam" (it contains a "/"),
+    # and the allowlist then drops the ";". Every byte left is ours or [A-Za-z0-9_-].
+    assert stored == "pwned_job-uuid.bam"
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "x;touch /tmp/pwned;.bam",
+        "$(id).bam",
+        "`id`.cram",
+        "a|nc evil 1234.sam",
+        "../../../../etc/passwd.bam",
+        "sample name with spaces.bam",
+        "",
+        None,
+    ],
+)
+def test_safe_upload_name_output_is_always_inert(gatk_api, hostile):
+    stored = gatk_api.safe_upload_name(hostile, "abc123")
+    assert re.fullmatch(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9.]+)?", stored), stored
+    assert os.sep not in stored and "/" not in stored
+
+
+def test_extension_is_preserved_so_format_branching_still_works(gatk_api):
+    for name, expected in [
+        ("s.bam", ".bam"),
+        ("s.CRAM", ".cram"),
+        ("s.sam", ".sam"),
+        ("s.vcf", ".vcf"),
+        ("s.vcf.gz", ".vcf.gz"),
+        ("s.unknown", ""),
+    ]:
+        assert gatk_api.safe_upload_name(name, "u").endswith(expected)
+
+
+# --- sink 1: detect_reference -------------------------------------------------
+
+
+def test_sink_detect_reference_never_builds_a_shell_string(
+    gatk_api, samtools, tmp_path
+):
+    hostile = tmp_path / PAYLOAD_FILENAME.replace("/", "_")
+    hostile.write_bytes(b"\x1f\x8b")
+
+    gatk_api.detect_reference(str(hostile), default_reference=None)
+
+    header_calls = [c for c in samtools.calls if "view" in str(c["cmd"])]
+    assert header_calls, "detect_reference did not shell out at all"
+    for call in header_calls:
+        assert isinstance(
+            call["cmd"], (list, tuple)
+        ), f"string command: {call['cmd']!r}"
+        assert call["kwargs"].get("shell") is not True
+
+
+# --- sink 2: samtools index ---------------------------------------------------
+
+
+def test_sink_samtools_index_never_builds_a_shell_string(gatk_api, samtools, tmp_path):
+    hostile = str(tmp_path / PAYLOAD_FILENAME.replace("/", "_"))
+
+    gatk_api.index_bam_file("probe-job", hostile)
+
+    index_calls = [c for c in samtools.calls if "index" in str(c["cmd"])]
+    assert index_calls, "index_bam_file did not shell out at all"
+    for call in index_calls:
+        assert isinstance(
+            call["cmd"], (list, tuple)
+        ), f"string command: {call['cmd']!r}"
+        assert call["kwargs"].get("shell") is not True
+        # The path is one argv element, so `;` is data, not an operator.
+        assert hostile in call["cmd"]
+
+
+# --- sink 3: GATK HaplotypeCaller ---------------------------------------------
+
+
+def test_sink_haplotypecaller_keeps_metacharacters_as_single_tokens(gatk_api):
+    hostile_input = "/tmp/w/x;touch /tmp/pwned;.bam"
+    hostile_regions = "chr1;touch /tmp/pwned2"
+
+    argv = gatk_api.build_haplotypecaller_argv(
+        "-Xmx4G",
+        "/reference/hg38.fa",
+        hostile_input,
+        "/tmp/w/out.vcf",
+        regions=hostile_regions,
+        excluded_contigs=["chrEBV;id"],
+    )
+
+    assert isinstance(argv, list)
+    # Each hostile value survives as exactly one element -- never split, never joined
+    # into something a shell would re-parse.
+    assert hostile_input in argv
+    assert hostile_regions in argv
+    assert "chrEBV;id" in argv
+    assert argv[argv.index("-I") + 1] == hostile_input
+    assert argv[argv.index("-L") + 1] == hostile_regions
+    # java_options used to be wrapped in shell quotes; as argv it needs none.
+    assert "-Xmx4G" in argv
+    assert not any("'" in element for element in argv)
+
+
+def test_module_has_no_shell_true_on_request_data(source):
+    """Sweep every real `shell=True` in the module, parsed rather than grepped.
+
+    Text matching would count this file's own prose about shell=True; the AST only
+    sees actual keyword arguments, so the fence cannot be satisfied by rewording.
+    """
+    tree = ast.parse(source)
+
+    # function name -> lines where it passes shell=True
+    offenders = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            for kw in inner.keywords:
+                if (
+                    kw.arg == "shell"
+                    and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True
+                ):
+                    offenders.setdefault(node.name, []).append(inner.lineno)
+
+    # ensure_reference_dictionaries() is the only permitted survivor: it interpolates
+    # REFERENCE_PATHS, a module constant built from env config, never request data.
+    assert set(offenders) <= {"ensure_reference_dictionaries"}, offenders
+
+
+# --- end to end ---------------------------------------------------------------
+
+
+def test_uploaded_payload_filename_never_lands_on_disk(
+    client, gatk_api, reference_fasta, samtools, monkeypatch
+):
+    """The whole point: the metacharacter must not reach the filesystem either."""
+    started = []
+
+    class NoThread:
+        def __init__(self, *args, **kwargs):
+            started.append(kwargs.get("target") or (args[0] if args else None))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(gatk_api.threading, "Thread", NoThread)
+
+    resp = client.post(
+        "/variant-call",
+        files={"file": (PAYLOAD_FILENAME, b"BAM\x01", "application/octet-stream")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    stored = gatk_api.jobs[resp.json()["job_id"]]["input_file"]
+    assert ";" not in stored, f"payload reached the filesystem: {stored}"
+    assert os.path.basename(stored).endswith(".bam")
+    for call in samtools.calls:
+        assert isinstance(call["cmd"], (list, tuple)), call["cmd"]
 
 
 # --------------------------------------------------------------------------

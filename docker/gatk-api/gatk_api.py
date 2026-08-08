@@ -177,6 +177,80 @@ JOB_STATUS_RUNNING = "running"
 JOB_STATUS_COMPLETED = "completed"
 JOB_STATUS_ERROR = "error"
 
+# Extensions this service recognises, longest first so `.vcf.gz` wins over `.gz`.
+# The stored filename's extension is always one of these literals, never a slice of
+# the upload's own name.
+SAFE_UPLOAD_EXTENSIONS = (".vcf.gz", ".vcf", ".bcf", ".bam", ".cram", ".sam", ".fastq", ".fq")
+
+
+def safe_upload_name(filename, local_job_id):
+    """Return a shell- and filesystem-safe name to store an upload under.
+
+    `file.filename` is attacker-controlled: it arrives in the multipart body and
+    nothing upstream of this service sanitises it. `os.path.basename` is not enough
+    -- `;`, `|`, `$(...)` and backticks are all legal in a POSIX filename, so a name
+    like `x;touch /tmp/pwned;.bam` is stored happily and then means something to any
+    shell the path reaches.
+
+    werkzeug's secure_filename would be the obvious reuse (app/main.py:708 already
+    uses it on the internet-facing route), but werkzeug is not installed in this
+    image -- see Dockerfile.gatk-api, which installs only fastapi, uvicorn, httpx,
+    requests, psutil and python-multipart. Rather than add a dependency or hand-roll
+    a filter that has to be right about every metacharacter, the name is rebuilt from
+    parts this module controls:
+
+      <allowlisted fragment of the original>_<our uuid><extension from the tuple above>
+
+    Every byte of the result is therefore either [A-Za-z0-9_-], our own uuid, or one
+    of the literal extensions above. The fragment is kept only so logs and on-disk
+    debugging still resemble the upload; correctness does not depend on it.
+    """
+    original = os.path.basename(filename or "")
+    lowered = original.lower()
+
+    extension = ""
+    for candidate in SAFE_UPLOAD_EXTENSIONS:
+        if lowered.endswith(candidate):
+            extension = candidate
+            break
+
+    stem_source = original[: len(original) - len(extension)] if extension else original
+    # Allowlist, not denylist: anything not explicitly safe is dropped.
+    fragment = re.sub(r"[^A-Za-z0-9_-]", "", stem_source)[:40]
+
+    return f"{fragment or 'upload'}_{local_job_id}{extension}"
+
+
+def build_haplotypecaller_argv(
+    java_options, reference_path, input_path, output_path, regions=None, excluded_contigs=None
+):
+    """Build the GATK HaplotypeCaller command as an argv list.
+
+    A list, never a string: `input_path` derives from an uploaded filename and
+    `regions` is a caller-supplied form field, and both used to be interpolated into
+    a `shell=True` command string. As argv, every element is one token no matter what
+    it contains, so there is nothing for a shell to reinterpret.
+    """
+    argv = [
+        "gatk",
+        "--java-options",
+        java_options,
+        "HaplotypeCaller",
+        "-R",
+        reference_path,
+        "-I",
+        input_path,
+        "-O",
+        output_path,
+    ]
+    if regions:
+        argv += ["-L", str(regions)]
+    for contig in excluded_contigs or []:
+        argv += ["-XL", str(contig)]
+    argv += ["--verbosity", "INFO"]
+    return argv
+
+
 def index_bam_file(job_id, bam_path):
     """
     Create an index for a BAM file using samtools.
@@ -199,12 +273,12 @@ def index_bam_file(job_id, bam_path):
             logger.debug(f"Job {job_id}: samtools is installed")
             update_job_status(job_id, JOB_STATUS_INDEXING, progress=15, message="samtools found")
             
-            # Create the index with default PATH
-            cmd = f"samtools index {bam_path}"
-            logger.info(f"Job {job_id}: Running command: {cmd}")
+            # List argv, not shell=True: bam_path is built from an uploaded filename.
+            cmd = ["samtools", "index", bam_path]
+            logger.info(f"Job {job_id}: Running command: {' '.join(cmd)}")
             update_job_status(job_id, JOB_STATUS_INDEXING, progress=20, message="Running samtools index")
-            
-            process = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+
+            process = subprocess.run(cmd, check=True, capture_output=True)
         except (subprocess.SubprocessError, FileNotFoundError):
             error_msg = "samtools not found - check container configuration"
             logger.error(f"Job {job_id}: {error_msg}")
@@ -360,22 +434,26 @@ async def run_variant_calling(local_job_id, input_path, output_path, reference_p
         
         for attempt in range(max_retries + 1):
             try:
-                # Build the exclusion arg if we have contigs to exclude
-                exclude_arg = ""
                 if excluded_contigs:
-                    exclude_arg = " ".join([f"-XL {contig}" for contig in excluded_contigs])
                     logger.info(f"Job {local_job_id}: Excluding contigs: {', '.join(excluded_contigs)}")
-                
-                # Set up the command
-                cmd = f"gatk --java-options '{java_options}' HaplotypeCaller -R {reference_path} -I {input_path} -O {output_path} {regions_arg} {exclude_arg} --verbosity INFO"
-                
+
+                # Set up the command as argv -- input_path comes from an uploaded
+                # filename and regions is a caller-supplied form field.
+                cmd = build_haplotypecaller_argv(
+                    java_options,
+                    reference_path,
+                    input_path,
+                    output_path,
+                    regions=regions,
+                    excluded_contigs=excluded_contigs,
+                )
+
                 # Log the command being run
-                logger.info(f"Job {local_job_id}: Running GATK command (attempt {attempt+1}/{max_retries+1}): {cmd}")
-                
+                logger.info(f"Job {local_job_id}: Running GATK command (attempt {attempt+1}/{max_retries+1}): {' '.join(cmd)}")
+
                 # Prepare the subprocess
                 process = subprocess.Popen(
                     cmd,
-                    shell=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -863,11 +941,21 @@ async def variant_call(
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
 
-        # Save uploaded file to a temporary directory
-        filename = file.filename
+        # Save uploaded file to a temporary directory. The stored name is rebuilt
+        # from parts this module controls -- the uploaded one reaches three separate
+        # subprocess call sites (detect_reference, samtools index, HaplotypeCaller)
+        # and is attacker-controlled. file.filename is still used for the log lines
+        # and JobClient messages below, so the original is not lost to an operator.
+        original_filename = file.filename
+        filename = safe_upload_name(original_filename, local_job_id)
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         input_path = os.path.join(input_dir, filename)
         output_path = os.path.join(input_dir, f"{os.path.splitext(filename)[0]}.vcf")
+
+        if filename != original_filename:
+            logger.info(
+                f"Job {local_job_id}: storing upload {original_filename!r} as {filename!r}"
+            )
 
         logger.info(f"Job {local_job_id}: Saving file to {input_path}")
         with open(input_path, "wb") as f:
