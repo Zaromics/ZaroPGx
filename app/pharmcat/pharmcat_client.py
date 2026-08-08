@@ -241,12 +241,17 @@ def normalize_pharmcat_results(response):
                             "phenotype": call["phenotype"],
                             "activity_score": call["activity_score"],
                             "guideline_source": block.source,
+                            "call_source": block.call_source,
                         }
                         genes_data.append(gene_entry)
                         logger.info(f"Added gene from v3format: {gene_entry}")
 
                         related = block.gene_data.get("relatedDrugs")
                         if isinstance(related, list) and related:
+                            # block.source is None when the run recorded no
+                            # guideline bucket -- do not render "See None
+                            # guidelines" (BACKLOG 28 + 216).
+                            guideline_label = block.source or "PharmCAT"
                             for drug_info in related:
                                 if not isinstance(drug_info, dict):
                                     continue
@@ -257,9 +262,9 @@ def normalize_pharmcat_results(response):
                                         "gene": block.gene_symbol,
                                         "drug": drug_name,
                                         "drugId": drug_id,
-                                        "guideline": block.source,
+                                        "guideline": guideline_label,
                                         "recommendation": (
-                                            f"See {block.source} guidelines "
+                                            f"See {guideline_label} guidelines "
                                             f"for {block.gene_symbol}"
                                         ),
                                         "classification": "Related drug",

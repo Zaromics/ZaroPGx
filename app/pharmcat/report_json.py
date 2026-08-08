@@ -31,11 +31,20 @@ _GENE_SHAPE_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class GeneBlock:
-    """One gene payload plus the guideline source it was attributed to."""
+    """One gene payload, the guideline source it was attributed to, and how it
+    was called.
+
+    ``source`` is the guideline bucket (nested shape) or ``phenotypeSource``
+    (flat shape), and is ``None`` when the run recorded none -- never invented.
+    ``call_source`` is PharmCAT's ``callSource``: ``MATCHER`` when its own Named
+    Allele Matcher produced the diplotype, ``OUTSIDE`` for a supplied outside
+    call, ``NONE`` when no call was made.
+    """
 
     gene_symbol: str
     gene_data: Dict[str, Any]
-    source: str
+    source: Optional[str]
+    call_source: Optional[str] = None
 
 
 def detect_format(genes_section: Optional[Mapping[str, Any]]) -> FormatName:
@@ -59,7 +68,7 @@ def detect_format(genes_section: Optional[Mapping[str, Any]]) -> FormatName:
 def iter_gene_blocks(
     genes_section: Optional[Mapping[str, Any]],
 ) -> Iterator[GeneBlock]:
-    """Yield ``(gene_symbol, gene_data, source)`` for every gene in either shape."""
+    """Yield a ``GeneBlock`` for every gene in either shape."""
     fmt = detect_format(genes_section)
     if fmt == "empty" or genes_section is None:
         return
@@ -68,8 +77,15 @@ def iter_gene_blocks(
         for gene_symbol, gene_data in genes_section.items():
             if not isinstance(gene_data, dict):
                 continue
-            source = gene_data.get("phenotypeSource") or "CPIC"
-            yield GeneBlock(gene_symbol, gene_data, source)
+            # PharmCAT 3.x emits phenotypeSource=None. Report that as unknown --
+            # defaulting to "CPIC" fabricated a guideline attribution and
+            # destroyed callSource downstream (BACKLOG 28 + 216).
+            yield GeneBlock(
+                gene_symbol,
+                gene_data,
+                gene_data.get("phenotypeSource"),
+                gene_data.get("callSource"),
+            )
         return
 
     # nested
@@ -79,7 +95,7 @@ def iter_gene_blocks(
         for gene_symbol, gene_data in genes.items():
             if not isinstance(gene_data, dict):
                 continue
-            yield GeneBlock(gene_symbol, gene_data, source)
+            yield GeneBlock(gene_symbol, gene_data, source, gene_data.get("callSource"))
 
 
 def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
