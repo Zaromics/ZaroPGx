@@ -178,8 +178,10 @@ PHARMCAT_JAR = os.environ.get("PHARMCAT_JAR", "/pharmcat/pharmcat.jar")
 PHARMCAT_PIPELINE_DIR = os.environ.get("PHARMCAT_PIPELINE_DIR", "/pharmcat/pipeline")
 # Path to PharmCAT reference files (where PharmCAT expects them)
 PHARMCAT_REFERENCE_DIR = os.environ.get("PHARMCAT_REFERENCE_DIR", "/pharmcat")
-# Path to outside calls override file (for manual HLA/MT-RNR1/CYP2D6 calls)
-OUTSIDE_CALLS_OVERRIDE_PATH = os.environ.get("OUTSIDE_CALLS_OVERRIDE_PATH", "/data/lexicon/outside_calls.tsv")
+# OUTSIDE_CALLS_OVERRIDE_PATH used to be read here, for the manual
+# HLA/MT-RNR1/CYP2D6 override. It is gone with the branch that used it -- see
+# /genotype, and app/utils/outside_calls_override.py, which is now the single
+# place the override file is located and the flag that gates it is parsed.
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -433,17 +435,33 @@ async def process_genotype(
                     shutil.copy2(file_path, vcf_path)
                     logger.info(f"Copied VCF file to temp directory: {vcf_path}")
                 
-                # Handle outside TSV file - check for override first
+                # Handle outside TSV file.
+                #
+                # This service does NOT read OUTSIDECALLSOVERRIDE. It used to, with
+                # its own `os.environ.get(...).lower()` parse that -- unlike the
+                # app's -- did not .strip(), so `OUTSIDECALLSOVERRIDE='true '` in a
+                # .env file disabled the override here while enabling it there.
+                # That branch is deleted rather than repaired, for two reasons:
+                #
+                #  * It was unreachable under Compose. compose.yml passes the
+                #    variable to no service but `app` (the only one with an
+                #    `env_file:`), so `OUTSIDECALLSOVERRIDE` is unset in this
+                #    container and the branch was unconditionally False.
+                #  * Repairing it would mean a second parser for a flag the repo
+                #    has deliberately consolidated into exactly one resolver,
+                #    app/utils/outside_calls_override.py:is_override_enabled() --
+                #    and a second parser on the far side of an image boundary,
+                #    where no test can cross-check it against the first.
+                #
+                # The override still works end to end, and through a better path:
+                # app/pharmcat/pharmcat_client.py resolves it with that single
+                # resolver and posts the resulting file as the `outside_tsv`
+                # multipart part, which the branch below handles -- and which also
+                # applies the PyPGx->PharmCAT synonym translation that the deleted
+                # override branch skipped.
                 outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
-                outside_calls_override_enabled = os.environ.get("OUTSIDECALLSOVERRIDE", "").lower() in ("true", "1", "yes", "on")
-                
-                if outside_calls_override_enabled and os.path.exists(OUTSIDE_CALLS_OVERRIDE_PATH):
-                    # Use the manual override file instead of any provided outside TSV
-                    shutil.copy2(OUTSIDE_CALLS_OVERRIDE_PATH, outside_path)
-                    logger.info(f"Using outside calls OVERRIDE from {OUTSIDE_CALLS_OVERRIDE_PATH}")
-                    logger.info(f"Override file copied to {outside_path}")
-                elif outside_tsv:
-                    # Use provided outside TSV if no override
+
+                if outside_tsv:
                     with open(outside_path, "wb") as f:
                         content = await outside_tsv.read()
                         f.write(content)
@@ -451,7 +469,7 @@ async def process_genotype(
                     _translate_uploaded_outside_tsv(outside_path)
                 else:
                     outside_path = None
-                    logger.info("No outside calls file provided or override enabled")
+                    logger.info("No outside calls file provided")
                 
                 # Extract actual sample ID from VCF file for PharmCAT -s parameter
                 vcf_sample_id = extract_sample_id_from_vcf(vcf_path)
