@@ -508,6 +508,14 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                             gene_block = pharmcat_data["genes"]["CPIC"].setdefault(
                                 gene, {}
                             )
+                            # Carry the TSV's Outside Call through as PharmCAT's
+                            # own vocabulary, so the rest of the pipeline needs
+                            # no TSV-specific provenance code (BACKLOG 28 + 216).
+                            outside = (entry.get("outside_call") or "").strip().lower()
+                            if outside == "yes":
+                                gene_block["callSource"] = "OUTSIDE"
+                            elif outside == "no":
+                                gene_block["callSource"] = "MATCHER"
                             dip_obj = tsv_entry_to_source_diplotype(entry)
                             gene_block.setdefault("sourceDiplotypes", [])
                             gene_block["sourceDiplotypes"].append(dip_obj)
