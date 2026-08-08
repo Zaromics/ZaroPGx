@@ -142,6 +142,39 @@ def _nextflow_max_wait_seconds() -> float:
     return seconds
 
 
+# Input types pipelines/pgx/main.nf has a branch for. Anything else reaches its
+# `error "Unsupported input type: ${params.input_type}"` and the run dies at workflow
+# definition, so submitting one can only ever produce a failed job.
+NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam", "fastq"})
+
+
+def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
+    """Why this upload cannot be analysed at all, or ``None`` to let it through.
+
+    ``unsupported`` on its own is not a refusal. FileProcessor also sets it on inputs it
+    fully intends to analyse *provisionally* — a GRCh37 VCF is flagged unsupported and
+    then analysed on its original coordinates, saying so via ``is_provisional``, which is
+    this codebase's own flag for "we did analyse it, provisionally".
+
+    What genuinely cannot work is an input that is flagged unsupported, is *not* marked
+    provisional, and that the pipeline has no branch for: FASTA, BED and unrecognised
+    formats. Those used to be accepted, queued, and then failed minutes later with a
+    Nextflow error the user could do nothing with. FASTQ is deliberately not caught here:
+    it is flagged unsupported but main.nf does have a fastq branch, so whether to refuse
+    it is a product decision rather than a correctness fix.
+    """
+    if not workflow.get("unsupported"):
+        return None
+    if workflow.get("is_provisional"):
+        return None
+    file_type = str(workflow.get("file_type") or "unknown").lower()
+    if file_type in NEXTFLOW_INPUT_TYPES:
+        return None
+    return workflow.get("unsupported_reason") or (
+        f"Files of type '{file_type}' cannot be analysed."
+    )
+
+
 # Report generation flags
 INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
@@ -1261,7 +1294,9 @@ async def upload_genomic_data(
     - VCF: Direct processing through PyPGx and PharmCAT. There is no liftover step: a GRCh37/hg19 VCF is flagged unsupported and still processed on its original coordinates, so convert it to GRCh38/hg38 first.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
     - FASTQ: Processed by ZaroHLA, then GATK, then PyPGx and PharmCAT
-    - 23andMe/BED: Not yet supported, requires conversion to VCF (future implementation)
+    - 23andMe: Not yet supported, requires conversion to VCF (future implementation)
+    - FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no branch for
+      them, so accepting one could only ever produce a failed job.
 
     The system automatically detects and uses index files (.bai, .crai, .csi, .tbi, .idx) when provided.
     Currently only hg38/GRCh38 reference genome is fully supported.
@@ -1279,6 +1314,18 @@ async def upload_genomic_data(
 
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])
+
+        # Act on the unsupported verdict instead of only reporting it. Refuse before any
+        # patient/job row exists, so an input the pipeline cannot run costs the user an
+        # immediate, actionable message rather than a queued job that dies later.
+        unanalysable = _unanalysable_upload_reason(result["workflow"])
+        if unanalysable:
+            logger.warning(
+                "Refusing unanalysable upload (file_type=%s): %s",
+                result["workflow"].get("file_type"),
+                unanalysable,
+            )
+            raise HTTPException(status_code=400, detail=unanalysable)
 
         eff_absent, eff_unspec = resolve_assume_ref_flags(
             form_absent=pharmcat_absent_to_ref,
