@@ -290,30 +290,127 @@ def test_sanitize_optional_pipeline_token_drops_unsafe_keeps_safe():
     assert ur.sanitize_optional_pipeline_token("   ") is None
 
 
-def test_upload_endpoint_rejects_injection_in_sample_identifier(client):
-    vcf = (
-        b"##fileformat=VCFv4.2\n"
-        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+_VALID_VCF = (
+    b"##fileformat=VCFv4.2\n"
+    b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+)
+
+
+def _install_upload_success_mocks(monkeypatch, tmp_path):
+    """Make everything downstream of the boundary succeed.
+
+    Without this, the minimal VCF trips the endpoint's own 'invalid/unanalysable file'
+    path and returns 400 for reasons unrelated to injection - which would let the
+    rejection tests pass even with the validation removed (a false positive). With
+    process_files/DB/job all stubbed to succeed, the ONLY thing that can still produce a
+    400 is the boundary allowlist, so the assertions genuinely pin the validation.
+    """
+    import uuid as _uuid
+
+    from app.api.models import FileType
+    from app.api.routes import upload_router
+    from app.api.utils.file_processor import FileAnalysis as DcFileAnalysis
+
+    async def _fake_process_files(files, reference_genome, **kwargs):
+        for f in files:
+            await f.read()
+        analysis = DcFileAnalysis(
+            file_type=FileType.VCF,
+            is_compressed=False,
+            has_index=False,
+            file_size=1,
+            vcf_info=None,
+            is_valid=True,
+            validation_errors=[],
+        )
+        return {
+            "success": True,
+            "file_paths": [str(tmp_path / "s.vcf")],
+            "file_analysis": analysis,
+            "workflow": {
+                "workflow_type": "genomic_analysis",
+                "file_type": "vcf",
+                "needs_report": True,
+                "reference": reference_genome or "hg38",
+                "is_provisional": False,
+                "recommendations": [],
+                "warnings": [],
+            },
+        }
+
+    monkeypatch.setattr(
+        upload_router.file_processor, "process_files", _fake_process_files
     )
+    monkeypatch.setattr(
+        upload_router, "create_patient", lambda db, identifier: str(_uuid.uuid4())
+    )
+    monkeypatch.setattr(
+        upload_router,
+        "register_genetic_data",
+        lambda db, patient_id, file_type, file_path, is_supplementary: str(
+            _uuid.uuid4()
+        ),
+    )
+
+    class _FakeJob:
+        def __init__(self):
+            self.id = _uuid.uuid4()
+            self.status = "running"
+            self.job_metadata = {}
+
+    class _FakeJobService:
+        def __init__(self, db):
+            self._job = _FakeJob()
+
+        def create_job(self, job_create):
+            return self._job
+
+        def update_job(self, job_id, job_update):
+            return self._job
+
+    monkeypatch.setattr(upload_router, "JobService", _FakeJobService)
+
+    async def _noop_background(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        upload_router, "process_file_nextflow_background_with_db", _noop_background
+    )
+
+
+def test_upload_endpoint_accepts_valid_sample_and_reference(
+    client, monkeypatch, tmp_path
+):
+    """Positive control: with the downstream stubbed to succeed, a clean payload is a
+    200. This is what proves the 400s below come from validation, not the file path."""
+    _install_upload_success_mocks(monkeypatch, tmp_path)
     resp = client.post(
         "/upload/genomic-data",
-        files={"files": ("s.vcf", vcf, "text/plain")},
-        data={
-            "sample_identifier": INJECTION_PAYLOAD,
-            "reference_genome": "hg38",
-        },
+        files={"files": ("s.vcf", _VALID_VCF, "text/plain")},
+        data={"sample_identifier": "HG002_sample", "reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_upload_endpoint_rejects_injection_in_sample_identifier(
+    client, monkeypatch, tmp_path
+):
+    _install_upload_success_mocks(monkeypatch, tmp_path)
+    resp = client.post(
+        "/upload/genomic-data",
+        files={"files": ("s.vcf", _VALID_VCF, "text/plain")},
+        data={"sample_identifier": INJECTION_PAYLOAD, "reference_genome": "hg38"},
     )
     assert resp.status_code == 400, resp.text
 
 
-def test_upload_endpoint_rejects_injection_in_reference_genome(client):
-    vcf = (
-        b"##fileformat=VCFv4.2\n"
-        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
-    )
+def test_upload_endpoint_rejects_injection_in_reference_genome(
+    client, monkeypatch, tmp_path
+):
+    _install_upload_success_mocks(monkeypatch, tmp_path)
     resp = client.post(
         "/upload/genomic-data",
-        files={"files": ("s.vcf", vcf, "text/plain")},
+        files={"files": ("s.vcf", _VALID_VCF, "text/plain")},
         data={
             "sample_identifier": "ok_sample",
             "reference_genome": 'hg38"; touch /tmp/pwned #',
