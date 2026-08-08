@@ -3,11 +3,14 @@ import os
 import re
 import subprocess
 import tempfile
+import uuid
 import zipfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from werkzeug.utils import secure_filename
 
 # Optional import: pysam for rich header parsing (VCF/BAM/CRAM). Fallbacks are provided.
 try:
@@ -35,6 +38,33 @@ from app.api.utils.header_inspector import inspect_header
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def safe_upload_basename(filename: Optional[str]) -> str:
+    """Return a filesystem- and glob-safe basename for a client-supplied name.
+
+    Why this matters beyond ordinary hygiene: the saved path becomes
+    `--input` to Nextflow, and `pipelines/pgx/main.nf` opens the run with
+    `Channel.fromPath(params.input)`. `fromPath` treats its argument as a
+    *glob pattern*, so a client that names its upload `*.vcf` produces
+    `/data/uploads/upload_*.vcf`, which fans the channel out across every
+    other upload sitting in that directory - other patients' files are then
+    analysed and published into this job's report. Stripping glob
+    metacharacters here is what keeps one upload to one run.
+
+    (Shell metacharacters are a separate question and are *not* the reason for
+    this call: Nextflow escapes `path`-typed inputs before interpolating them
+    into a task script, so `;` and friends in a filename do not reach a shell
+    through that route. They are removed here anyway, because nothing
+    downstream should have to rely on that.)
+
+    werkzeug's `secure_filename` is used rather than a bespoke filter so this
+    layer matches the app's other upload route (app/main.py). It can return an
+    empty string for a wholly pathological name (`..`, `...`), so a generated
+    name is substituted in that case.
+    """
+    cleaned = secure_filename(filename or "")
+    return cleaned or f"{uuid.uuid4().hex}.dat"
 
 
 @dataclass
@@ -897,7 +927,9 @@ class FileProcessor:
 
             # Save the uploaded file to temporary location
             self.temp_dir.mkdir(parents=True, exist_ok=True)
-            temp_file_path = self.temp_dir / f"upload_{primary_file.filename}"
+            temp_file_path = (
+                self.temp_dir / f"upload_{safe_upload_basename(primary_file.filename)}"
+            )
 
             try:
                 # Write file content
