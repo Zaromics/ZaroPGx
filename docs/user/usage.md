@@ -58,7 +58,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
    - PyPGx analysis (if enabled, recommended)
    - PharmCAT analysis (required)
 5. **Report Generation**: Create reports
-6. **Data Export**: Optional FHIR export (first XML, coming in v0.3)
+6. **Data Export**: Optional FHIR export — bundle generation in JSON and XML ships today (see [Data Export](#data-export))
 
 ### Monitoring Progress
 
@@ -86,7 +86,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 #### Interactive HTML Report
 - **Detailed Annotations**: Gene-specific information
 - **Everything in PDF Report**: And more
-- **Export Options**: Download data in various formats (FHIR in XML coming in 0.3)
+- **Export Options**: Download data in various formats; FHIR R4 bundles in JSON and XML are available today via the `/fhir/*` API (see [Data Export](#data-export))
 - **Interactive Tables**: Sortable, filterable results (coming soon)
 - **Visualizations**: Charts and diagrams (coming soon)
 
@@ -112,15 +112,23 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 - **Rapid Metabolizer**: Increased drug processing
 - **Ultrarapid Metabolizer**: Very high drug processing
 
-## API Usage (NEEDS REVIEW)
-- **API Reference**: See https://pgx.zaromics.com/api-reference for the standard ZaroPGx implementation's public API reference 
+## API Usage
+
+Your own instance publishes interactive API docs at `/docs` and the raw schema at
+`/openapi.json`. The `/api-reference` page is a wrapper that embeds that same
+Swagger UI with a Back button — https://pgx.zaromics.com/api-reference is the
+reference instance's copy. For the full hand-written reference, including the
+WebSocket (which no OpenAPI schema can describe), see
+{doc}`../developer/api-reference`.
 
 ### REST API Endpoints
 
 #### Upload Genomic Data
+The form field is `files` (plural); repeat it to send an index alongside the
+data file.
 ```bash
 curl -X POST \
-  -F "file=@sample.vcf" \
+  -F "files=@sample.vcf" \
   -F "sample_identifier=patient_001" \
   -F "reference_genome=hg38" \
   http://localhost:8765/upload/genomic-data
@@ -128,12 +136,16 @@ curl -X POST \
 
 #### Check Analysis Status
 ```bash
+# by job id (canonical)
+curl http://localhost:8765/upload/status/{job_id}
+
+# by genetic-data id, if that is what you kept
 curl http://localhost:8765/status/{data_id}
 ```
 
 #### Get Report URLs
 ```bash
-curl http://localhost:8765/reports/{job_id}
+curl http://localhost:8765/upload/reports/job/{job_id}
 ```
 
 #### Download Reports
@@ -143,27 +155,41 @@ curl -O http://localhost:8765/reports/{patient_id}/{job_id}/{report_file}
 
 ### API Response Format
 
+`POST /upload/genomic-data` hands back the two identifiers you need:
+
 ```json
 {
   "job_id": "uuid-string",
   "data_id": "uuid-string",
-  "status": "completed",
-  "progress": 100,
-  "pdf_report_url": "/reports/patient_id/job_id/job_id_pgx_report.pdf",
-  "html_report_url": "/reports/patient_id/job_id/job_id_pgx_report_interactive.html",
-  "diplotypes": {
-    "CYP2D6": "*1/*2",
-    "CYP2C19": "*1/*1"
-  },
-  "recommendations": [
-    {
-      "gene": "CYP2D6",
-      "recommendation": "Consider alternative dosing",
-      "severity": "yellow"
-    }
-  ]
+  "file_type": "vcf",
+  "status": "processing",
+  "message": "Files uploaded successfully. Processing started."
 }
 ```
+
+`GET /upload/status/{job_id}` reports progress while the run is going, and once
+it completes the report URLs appear alongside:
+
+```json
+{
+  "job_id": "uuid-string",
+  "status": "completed",
+  "progress": 100,
+  "message": "Report generation complete",
+  "current_stage": "report",
+  "pdf_report_url": "/reports/{patient_id}/{job_id}/{job_id}_pgx_report.pdf",
+  "html_report_url": "/reports/{patient_id}/{job_id}/{job_id}_pgx_report_interactive.html",
+  "data": {
+    "job_id": "uuid-string",
+    "patient_id": "patient_001",
+    "data_id": "uuid-string",
+    "steps": []
+  }
+}
+```
+
+Diplotypes and drug recommendations are not returned by these routes — read them
+from the generated report, from `/api/pharmcat/*`, or from a FHIR bundle.
 
 ## Data Management
 
@@ -195,17 +221,40 @@ curl -O http://localhost:8765/reports/{patient_id}/{job_id}/{report_file}
 ### Data Export
 
 #### FHIR Export
-`POST /reports/{report_id}/export-to-fhir` is **retired (501)** — it previously
-posted fabricated genotypes. Use the `/fhir/*` routes (bundle preview/save from
-real PharmCAT run data) instead.
+
+FHIR export is enabled by default (`FHIR_EXPORT_ENABLED`, default true). What
+works today, and what does not:
+
+**Shipped.** Generating an HL7 Genomics Reporting (FHIR R4) bundle from a real
+PharmCAT run, in JSON or XML: download it, preview it in the browser, or save it
+alongside the other report files. This is the `/fhir/*` API.
+
+**Shipped but local only.** "Save" writes the bundle into
+`/data/reports/{patient_id}/` on the machine running ZaroPGx. It does not send
+anything to the bundled HAPI FHIR server or to any external system.
+
+**Not shipped.** Pushing results into an EHR or PHR, and any round-trip with an
+external FHIR server. `POST /reports/{report_id}/export-to-fhir` did talk to a
+live FHIR server but built its payload from placeholder genotypes, so it is
+**retired (501)**; do not use it.
+
 ```bash
-# Example: preview FHIR bundle for a PharmCAT run
+# Preview the FHIR bundle for a PharmCAT run
 curl http://localhost:8765/fhir/export/run/{run_id}/preview
+
+# Download it as a file (json or xml)
+curl -OJ "http://localhost:8765/fhir/export/run/{run_id}?output_format=xml"
+
+# Save it next to the other reports on disk
+curl "http://localhost:8765/fhir/save/run/{run_id}/quick?output_format=both"
 ```
+
+See {doc}`../developer/api-reference` for the full endpoint list.
+
 #### Bulk Export
 ```bash
-# Export all reports for a patient
-curl http://localhost:8765/patients/{patient_id}/export
+# Download every report file for a patient as a single ZIP
+curl -O -J http://localhost:8765/upload/reports/download/{patient_id}
 ```
 
 ## Best Practices
