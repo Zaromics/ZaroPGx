@@ -1643,7 +1643,9 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
                         )
 
         return {
-            "job_id": job_id,
+            # The resolved job's canonical UUID, not the raw path parameter: the URL may
+            # spell the same id in any form uuid.UUID accepts, and it is job.id that the
+            # report paths under /data/reports/{patient_id}/{job.id}/ are named with.
             "job_id": str(job.id),
             "status": "completed",
             "reports": reports,
