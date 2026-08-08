@@ -1,5 +1,6 @@
 ---
 title: Quick Start Guide
+curation: partial
 ---
 
 # Quick Start Guide

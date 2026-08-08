@@ -1,7 +1,7 @@
 ---
 title: Contributing Guide
+curation: not
 ---
-# *[CURATION NEEDED]*
 
 # Contributing Guide
 
