@@ -476,7 +476,7 @@ class PharmCATParser:
         for block in iter_gene_blocks(genes_data):
             gene_count += 1
             self._store_gene_data(
-                block.gene_symbol, block.gene_data, block.source, run_id
+                block.gene_symbol, block.gene_data, block.call_source, run_id
             )
 
             source_diplotypes = block.gene_data.get("sourceDiplotypes", [])
@@ -497,13 +497,22 @@ class PharmCATParser:
         )
 
     def _store_gene_data(
-        self, gene_symbol: str, gene_data: Dict[str, Any], source: str, run_id: str
+        self,
+        gene_symbol: str,
+        gene_data: Dict[str, Any],
+        call_source: Optional[str],
+        run_id: str,
     ) -> None:
-        """Store gene summary data in the database."""
+        """Store gene summary data in the database.
+
+        ``call_source`` is PharmCAT's ``callSource`` (MATCHER / OUTSIDE / NONE).
+        The CPIC/DPWG guideline bucket lives on ``phenotype_source``; this column
+        used to hold the bucket, which was a name collision (BACKLOG 28 + 216).
+        """
         gene_summary = PharmCATGeneSummary(
             run_id=run_id,
             gene_symbol=gene_symbol,
-            call_source=source,
+            call_source=call_source,
             phenotype_source=gene_data.get("phenotypeSource"),
             phenotype_version=gene_data.get("phenotypeVersion"),
             allele_definition_version=gene_data.get("alleleDefinitionVersion"),

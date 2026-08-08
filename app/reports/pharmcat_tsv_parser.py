@@ -117,6 +117,10 @@ def parse_pharmcat_tsv(
             "rec_lookup_activity_score",
         ]
     )
+    # PharmCAT's own record of whether the call came from outside its matcher.
+    # Present in every checked-in TSV fixture and previously read by nobody
+    # (BACKLOG 28 + 216).
+    outside_col = find_col(["outside_call", "outside call", "outsidecall"])
     drug_col = find_col(["drug", "medication"])  # optional
     guideline_col = find_col(["guideline", "source", "guideline_source"])  # optional
     rec_col = find_col(["recommendation", "action", "recommendation_text"])  # optional
@@ -144,6 +148,10 @@ def parse_pharmcat_tsv(
         rec_pheno_val = (gv(rec_pheno_col) or "").strip() if rec_pheno_col else ""
         rec_as_val = (gv(rec_as_col) or "").strip() if rec_as_col else ""
 
+        # Deliberately excluded from the informative-field test below: every row
+        # carries a "yes"/"no", so a bare "no" is not a result.
+        outside_val = (gv(outside_col) or "").strip().lower() if outside_col else ""
+
         # If any informative field present (from main or rec-lookup), register an entry
         if (
             diplotype_val
@@ -157,6 +165,7 @@ def parse_pharmcat_tsv(
                 "gene": gene,
                 "diplotype": diplotype_val or "Unknown",
                 "phenotype": phenotype_val or "Unknown",
+                "outside_call": outside_val,
             }
             if activity_score_val:
                 try:

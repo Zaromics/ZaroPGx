@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.db import Job
 from app.pharmcat.pharmcat_parser import PharmCATParser, get_pharmcat_summary
 from app.reports.evidence import classify_evidence
+from app.reports.provenance import resolve_called_by, resolve_guideline_source
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +238,7 @@ class PharmCATDataService:
             if gene_symbol not in gene_groups:
                 gene_groups[gene_symbol] = gene
             else:
-                # Choose the better entry based on call_source preference
+                # Choose the better entry based on guideline-bucket preference
                 existing = gene_groups[gene_symbol]
                 if self._is_better_gene_entry(gene, existing):
                     gene_groups[gene_symbol] = gene
@@ -250,11 +251,19 @@ class PharmCATDataService:
             # Find the primary diplotype (usually the first one)
             primary_diplotype = diplotype_data[0] if diplotype_data else {}
 
-            # Only set source fields if PharmCAT actually processed this gene
-            called_by = self._determine_called_by_letter(gene.get("call_source"))
-            guideline_source = self._determine_guideline_source_letter(
-                gene.get("call_source")
+            # Report what the run recorded -- never a gene-name guess, never a
+            # constant. "?"/"-" are legitimate values (BACKLOG 28 + 216).
+            # The gene_summary row carries no diplotype, so hand the resolver
+            # the one about to be rendered: that is what separates "not
+            # recorded" (?) from "no call made" (-) for rows written before
+            # call_source held PharmCAT's callSource.
+            provenance = resolve_called_by(
+                {
+                    **gene,
+                    "diplotype": primary_diplotype.get("diplotype_label") or "",
+                }
             )
+            guideline_source = resolve_guideline_source(gene)
 
             report_gene = {
                 "gene": gene_symbol,
@@ -273,10 +282,8 @@ class PharmCATDataService:
                 "combination": primary_diplotype.get("combination", False),
             }
 
-            # Only add source fields if PharmCAT actually called this gene
-            if called_by:
-                report_gene["called_by"] = called_by
-                report_gene["report_data_from"] = "C"  # C for PharmCAT
+            report_gene["called_by"] = provenance.letter
+            report_gene["called_by_label"] = provenance.label
 
             if guideline_source:
                 report_gene["guideline_source"] = guideline_source
@@ -304,6 +311,10 @@ class PharmCATDataService:
         """
         Determine if a candidate gene entry is better than the existing one.
 
+        Nested PharmCAT output yields one ``gene_summary`` row per guideline
+        bucket (CPIC and DPWG), so this picks between duplicates of the same
+        gene. It is a display-precedence tiebreak, not a provenance claim.
+
         Args:
             candidate: New gene entry to evaluate
             existing: Existing gene entry to compare against
@@ -311,9 +322,12 @@ class PharmCATDataService:
         Returns:
             True if candidate is better, False otherwise
         """
-        # Prefer entries with actual call_source over None/empty
-        candidate_source = candidate.get("call_source", "")
-        existing_source = existing.get("call_source", "")
+        # The CPIC > DPWG preference is about the guideline bucket, which lives
+        # on phenotype_source. call_source now carries MATCHER/OUTSIDE/NONE, so
+        # keying on it would compare identical values for the nested duplicate
+        # rows this exists to separate (BACKLOG 28 + 216).
+        candidate_source = candidate.get("phenotype_source", "")
+        existing_source = existing.get("phenotype_source", "")
 
         if candidate_source and not existing_source:
             return True
@@ -367,8 +381,6 @@ class PharmCATDataService:
                     "genes": [],
                     "recommendations": [],
                     "pharmgkb_id": rec.get("drug_id"),
-                    "called_by": "C",  # C for PharmCAT
-                    "report_data_from": "C",  # C for PharmCAT
                 }
 
             # Add gene to genes list if not already present
@@ -439,33 +451,6 @@ class PharmCATDataService:
             report_recommendations.append(clean_drug_data)
 
         return report_recommendations
-
-    def _determine_called_by_letter(self, call_source: str) -> str:
-        """
-        Determine which tool actually made the genetic call based on call_source.
-
-        Args:
-            call_source: The call_source from PharmCAT (CPIC, DPWG, OUTSIDE, NONE, etc.)
-
-        Returns:
-            Single letter code: P (PyPGx), C (PharmCAT), O (OptiType), M (mtDNA-server-2), G (GATK)
-        """
-        if not call_source:
-            return ""
-
-        call_source = call_source.upper()
-
-        # PharmCAT guideline sources (CPIC, DPWG) - these are called by PharmCAT
-        if call_source in ["CPIC", "DPWG", "PHARMCAT"]:
-            return "C"
-
-        # Legacy values that indicate PharmCAT called these genes
-        elif call_source in ["OUTSIDE", "NONE"]:
-            return "C"
-
-        # If it's something else, it might be from an external tool
-        else:
-            return "C"  # Default to PharmCAT for PharmCAT data
 
     def _determine_guideline_source_letter(self, guideline_source: str) -> str:
         """
@@ -556,7 +541,10 @@ class PharmCATDataService:
             if not pharmcat_run_id:
                 return None
 
-            return get_pharmcat_summary(pharmcat_run_id)
+            # Pass the request session: without it PharmCATParser opens a second
+            # engine/connection per request, outside the request transaction,
+            # and commits+closes it (matches _get_normalized_pharmcat_data).
+            return get_pharmcat_summary(pharmcat_run_id, self.db)
 
         except Exception as e:
             logger.error(

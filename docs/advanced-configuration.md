@@ -140,8 +140,6 @@ The service is a FastAPI wrapper around OptiType v1.5, not a Nextflow pipeline: 
 - **PYPGX_PHARMCAT_PREFERENCE**: Gene set preference: `auto` | `pypgx` | `pharmcat`. Code
   default `auto` (`docker/pypgx/pypgx_wrapper.py`), but compose and every `.env.*` template
   ship `pharmcat`.
-- **PYPGX_PREFERRED**: In report generator, optional hint to prefer PyPGx where both can call. Default: `false`.
-- **PHARMCAT_PREFERRED**: In report generator, optional hint to prefer PharmCAT where both can call. Default: `false`.
 
 ## PharmCAT wrapper service
 - **PHARMCAT_VERSION**: Version for pipeline package in container build (ARG) and runtime

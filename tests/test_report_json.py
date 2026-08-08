@@ -112,11 +112,17 @@ def test_iter_gene_blocks_nested_emits_source_and_symbol():
     assert float(call["activity_score"]) == 1.0
 
 
-def test_iter_gene_blocks_flat_defaults_source_when_missing():
+def test_iter_gene_blocks_flat_reports_an_absent_source_as_none():
+    """PharmCAT 3.x emits ``phenotypeSource: null``; that is not a CPIC claim.
+
+    This assertion previously read ``== "CPIC"``, locking in the ``or "CPIC"``
+    default that fabricated a guideline attribution for every 3.4.0 gene
+    (BACKLOG 28 + 216).
+    """
     blocks = list(iter_gene_blocks(_genes(FLAT_V340)))
     by_gene = {b.gene_symbol: b for b in blocks}
     assert set(by_gene) == {"ABCG2", "CYP2C19", "CYP2D6", "SLCO1B1", "VKORC1"}
-    assert by_gene["CYP2C19"].source == "CPIC"
+    assert by_gene["CYP2C19"].source is None
 
     call = extract_source_call(by_gene["CYP2C19"].gene_data)
     assert call["diplotype"] == "*38/*38"
@@ -125,6 +131,25 @@ def test_iter_gene_blocks_flat_defaults_source_when_missing():
     no_result = extract_source_call(by_gene["CYP2D6"].gene_data)
     assert no_result["diplotype"] == "Unknown/Unknown"
     assert no_result["phenotype"] == "No Result"
+
+
+def test_flat_blocks_carry_real_call_source_and_no_invented_guideline():
+    blocks = {b.gene_symbol: b for b in iter_gene_blocks(_genes(FLAT_V340))}
+
+    assert len(blocks) == 5
+    # phenotypeSource is None across the whole 3.4.0 fixture -- do not invent "CPIC".
+    assert all(b.source is None for b in blocks.values())
+    assert blocks["CYP2C19"].call_source == "MATCHER"
+    assert blocks["CYP2D6"].call_source == "NONE"
+
+
+def test_nested_blocks_keep_the_guideline_bucket_and_carry_call_source():
+    blocks = list(iter_gene_blocks(_genes(NESTED_V2)))
+
+    assert {b.source for b in blocks} == {"CPIC", "DPWG"}
+    cyp2d6 = [b for b in blocks if b.gene_symbol == "CYP2D6"]
+    assert cyp2d6
+    assert all(b.call_source == "OUTSIDE" for b in cyp2d6)
 
 
 def test_detect_format_prefers_guideline_keys_over_gene_like_values():

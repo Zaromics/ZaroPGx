@@ -68,9 +68,33 @@ from app.reports.generator import (
     get_license_url,
     get_source_url,
 )
+from app.reports.provenance import resolve_called_by
 from app.visualizations.workflow_diagram import read_workflow_mermaid, render_with_kroki
 
 logger = logging.getLogger(__name__)
+
+
+def _diplotype_line(diplotype: dict) -> str:
+    """One gene's flowing-text line for the ReportLab fallback report.
+
+    This lane renders paragraphs, not a table, so it carries no legend and no
+    hover text. It therefore states provenance in words -- a bare ``C``/``X``/
+    ``?`` glyph would be uninterpretable here, and dropping provenance
+    entirely (what this lane did before BACKLOG 28 + 216) left the fallback PDF
+    silently less honest than the HTML report of the same run.
+    """
+    gene_name = diplotype.get("gene", "Unknown")
+    diplotype_value = diplotype.get("diplotype", "Unknown")
+    phenotype = diplotype.get("phenotype", "Unknown")
+    activity_score = diplotype.get("activity_score", "Unknown")
+
+    text = f"<b>{gene_name}:</b> {diplotype_value}"
+    if phenotype != "Unknown":
+        text += f" (Phenotype: {phenotype})"
+    if activity_score != "Unknown" and activity_score and str(activity_score).strip():
+        text += f" (Activity Score: {activity_score})"
+    text += f" [{resolve_called_by(diplotype).label}]"
+    return text
 
 
 class PDFGenerator(ABC):
@@ -412,28 +436,9 @@ class ReportLabGenerator(PDFGenerator):
                         if isinstance(diplotype, dict):
                             # Handle different diplotype formats
                             if "gene" in diplotype:
-                                gene_name = diplotype.get("gene", "Unknown")
-                                diplotype_value = diplotype.get("diplotype", "Unknown")
-                                phenotype = diplotype.get("phenotype", "Unknown")
-                                activity_score = diplotype.get(
-                                    "activity_score", "Unknown"
+                                story.append(
+                                    Paragraph(_diplotype_line(diplotype), normal_style)
                                 )
-
-                                diplotype_text = (
-                                    f"<b>{gene_name}:</b> {diplotype_value}"
-                                )
-                                if phenotype != "Unknown":
-                                    diplotype_text += f" (Phenotype: {phenotype})"
-                                if (
-                                    activity_score != "Unknown"
-                                    and activity_score
-                                    and str(activity_score).strip()
-                                ):
-                                    diplotype_text += (
-                                        f" (Activity Score: {activity_score})"
-                                    )
-
-                                story.append(Paragraph(diplotype_text, normal_style))
                                 story.append(Spacer(1, 3))
                             elif "name" in diplotype:
                                 # Alternative format (legacy support)

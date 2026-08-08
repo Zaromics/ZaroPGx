@@ -98,10 +98,14 @@ def test_normalize_flat_v340_cyp_calls():
     genes = _genes_by_name(normalized)
     assert genes["CYP2C19"]["diplotype"] == "*38/*38"
     assert genes["CYP2C19"]["phenotype"] == "Normal Metabolizer"
-    assert genes["CYP2C19"]["guideline_source"] == "CPIC"
+    # 3.4.0 emits phenotypeSource: null, so there is no guideline attribution to
+    # report. This previously asserted "CPIC" -- a fabrication (BACKLOG 28 + 216).
+    assert genes["CYP2C19"]["guideline_source"] is None
+    assert genes["CYP2C19"]["call_source"] == "MATCHER"
 
     assert genes["CYP2D6"]["diplotype"] == "Unknown/Unknown"
     assert genes["CYP2D6"]["phenotype"] == "No Result"
+    assert genes["CYP2D6"]["call_source"] == "NONE"
 
     assert genes["ABCG2"]["diplotype"].startswith("rs2231142 reference")
     assert len(normalized["data"]["drugRecommendations"]) > 0
@@ -125,17 +129,23 @@ def test_normalize_failed_api_response_short_circuits():
     assert normalized["data"]["genes"] == []
 
 
-def test_parser_parse_genes_nested_v2_stores_cpic_and_dpwg():
+def test_parser_parse_genes_nested_v2_stores_call_source_and_guideline_bucket():
     report = _load(NESTED_V2)
     added = _parse_genes_with_mock(report["genes"])
 
     summaries = [o for o in added if isinstance(o, PharmCATGeneSummary)]
     diplotypes = [o for o in added if isinstance(o, PharmCATDiplotype)]
 
-    symbols = {(s.gene_symbol, s.call_source) for s in summaries}
-    assert ("CYP2D6", "CPIC") in symbols
-    assert ("CYP2D6", "DPWG") in symbols
-    assert ("CYP2C19", "CPIC") in symbols
+    # call_source now holds what PharmCAT actually recorded, not the bucket key.
+    call_sources = {(s.gene_symbol, s.call_source) for s in summaries}
+    assert ("CYP2D6", "OUTSIDE") in call_sources
+    assert ("CYP2C19", "MATCHER") in call_sources
+
+    # The CPIC/DPWG bucket still round-trips -- on phenotype_source, where it belongs.
+    guideline_buckets = {(s.gene_symbol, s.phenotype_source) for s in summaries}
+    assert ("CYP2D6", "CPIC") in guideline_buckets
+    assert ("CYP2D6", "DPWG") in guideline_buckets
+    assert ("CYP2C19", "CPIC") in guideline_buckets
 
     cyp2d6 = [
         d
