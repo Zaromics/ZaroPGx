@@ -672,22 +672,24 @@ class FileProcessor:
                 elif reference != "unknown":
                     workflow["unsupported"] = True
                     workflow["unsupported_reason"] = (
-                        f"The uploaded VCF file is not aligned to the GRCh38/hg38 reference genome."
+                        f"This VCF file is aligned to the {vcf_info.reference_genome} reference genome. "
+                        "ZaroPGx analyses GRCh38/hg38 VCF files only, so this file cannot be analysed as uploaded. "
+                        "Convert it to GRCh38/hg38 yourself and upload it again to proceed."
                     )
                     workflow["warnings"].append(
-                        f"<p>⚠️ The uploaded VCF file is aligned to the {vcf_info.reference_genome} reference genome. Only GRCh38/hg38 is currently supported.</p>"
+                        f"<p>⚠️ This file is aligned to the {vcf_info.reference_genome} reference genome. ZaroPGx only analyses GRCh38/hg38 VCF files, so this file will not be analysed.</p>"
                     )
                     workflow["recommendations"].append(
-                        "<p>Step 0: Convert the VCF file to GRCh38/hg38 using bcftools. (TO DO)</p>"
+                        "<p>To have this sample analysed, convert the VCF file to the GRCh38/hg38 reference genome yourself (a process known as liftover) before uploading it.</p>"
                     )
                     workflow["recommendations"].append(
-                        "<p>Once the VCF file has been re-aligned to GRCh38/hg38, it will proceed to Step 1.</p>"
+                        "<p>GRCh38/hg38 VCF files are supported: once this file has been converted, upload the GRCh38/hg38 version to proceed with analysis.</p>"
                     )
                     workflow["warnings"].append(
-                        "<p>⚠️ Realigning the VCF file to the GRCh38 reference genome may result in a loss of fidelity.</p>"
+                        "<p>⚠️ Converting a VCF file between reference genomes (liftover) can introduce coordinate or genotype errors, so a converted file's results may differ from a file sequenced and called directly against GRCh38/hg38.</p>"
                     )
                     workflow["warnings"].append(
-                        "<p>While no realignment tool yields perfect fidelity, bcftools' liftover is used as it is perhaps the best tool for the job.</p>"
+                        "<p>⚠️ ZaroPGx does not perform this conversion for you.</p>"
                     )
                     workflow["is_provisional"] = True
 
