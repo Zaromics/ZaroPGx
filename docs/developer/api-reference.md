@@ -4,7 +4,17 @@ title: API Reference
 
 # API Reference
 
-Complete API documentation for ZaroPGx.
+API documentation for ZaroPGx, hand-written against the code at v0.2.8.
+
+The server also publishes a generated OpenAPI schema, which is authoritative
+whenever this page and the code disagree:
+
+- `/docs` — interactive Swagger UI
+- `/redoc` — ReDoc
+- `/openapi.json` — the raw schema
+
+Routes marked `include_in_schema=False` (`/api-reference`, `/login`, `/logout`)
+do not appear there; they are listed here instead.
 
 ## Base URL
 
@@ -12,17 +22,67 @@ Complete API documentation for ZaroPGx.
 http://localhost:8765
 ```
 
+Port 8765 is the published host port; inside the compose network the app listens
+on 8000.
+
 ## Authentication
 
-### Development Mode
-Authentication is disabled by default in development mode. All endpoints are publicly accessible.
+There is one front-door gate, `AuthGateMiddleware`, and one environment variable
+that controls it: `ZAROPGX_AUTH_MODE`.
 
-### Production Mode
-JWT-based authentication is required. Include the JWT token in the Authorization header:
+| Mode | Behaviour |
+| --- | --- |
+| `open` | **Default.** Every request passes. No credential is checked anywhere. |
+| `audit` | Every request passes, but unauthenticated ones are logged at WARNING as `would-deny`. |
+| `password` | A session cookie or `Authorization: Bearer` token is required. |
+
+**The default is open, and it is open in production too.** `ZAROPGX_DEV_MODE=false`
+is *not* an auth switch — with `ZAROPGX_AUTH_MODE` unset it still resolves to
+`open` and logs a warning saying so. If you need the gate, set
+`ZAROPGX_AUTH_MODE=password` and `ZAROPGX_AUTH_PASSWORD` explicitly.
+
+### Obtaining a token
+
+```http
+POST /token
+Content-Type: application/x-www-form-urlencoded
+
+username=<anything>&password=<ZAROPGX_AUTH_PASSWORD>
+```
+
+Returns `{"access_token": "…", "token_type": "bearer"}`. Send it as:
 
 ```http
 Authorization: Bearer <jwt_token>
 ```
+
+In `open` and `audit` modes `/token` still accepts the legacy `test` / `test`
+credentials so API explorers work, but those tokens deliberately omit the `gate`
+claim and cannot unlock `password` mode.
+
+### Always-open paths
+
+These bypass the gate even in `password` mode: `/health`, `/openapi.json`,
+`/docs`, `/redoc`, `/api-reference`, `/login`, `/logout`, `/token`,
+`/favicon.ico`, and anything under `/static/`, `/documentation/`,
+`/api/v1/jobs/` or `/api/v1/workflows/`.
+
+That allowlist covers the entire job API, so `password` mode does not protect job
+status, logs or cancel.
+
+### Denial behaviour
+
+In `password` mode an unauthenticated request gets `401` with
+`{"detail": "Authentication required"}` and a `WWW-Authenticate: Bearer` header —
+unless it is a `GET`/`HEAD` whose `Accept` header prefers HTML, which gets a
+`303` redirect to `/login?next=…` instead.
+
+### Per-route authentication
+
+Several handlers declare `current_user: str = Depends(get_optional_user)`. That
+dependency never rejects anything: it returns the string `"test"` when no token
+is present or the token fails to validate. It is not an authorization check, and
+no route restricts access by user.
 
 ## API Endpoints
 
@@ -929,109 +989,148 @@ surface and their shapes may change without notice.
 
 ## Data Models
 
-### Upload Response
+Every model below is a Pydantic model in `app/api/models.py`. Field types come
+from that file; the canonical definitions are in `/openapi.json`.
+
+### Enumerations
+
+| Enum | Values |
+| --- | --- |
+| `JobStatus` | `pending`, `running`, `completed`, `failed`, `cancelled` |
+| `StepStatus` | `pending`, `running`, `completed`, `failed`, `skipped` |
+| `LogLevel` | `debug`, `info`, `warn`, `error` |
+
+All values are lowercase. `JobStatus` has no `processing` member and `LogLevel`
+has no `warning` or `critical`.
+
+### UploadResponse
+
+`models.py:187`. Returned by `POST /upload/genomic-data`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `data_id` | string | Genetic-data UUID (formerly `file_id`) |
+| `job_id` | string | Run instance id |
+| `file_type` | string | Detected format |
+| `status` | string | |
+| `message` | string | |
+| `analysis_info` | `FileAnalysis` \| null | Header/format analysis |
+| `workflow` | `WorkflowInfo` \| null | Resolved `workflow_type` and options |
+| `created_at` | datetime | |
+
+### JobResponse
+
+`models.py:369`. Returned by `GET/POST/PUT /api/v1/jobs/…` and by cancel.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | The job id. **Not** named `job_id` on this model |
+| `name` | string | |
+| `description` | string \| null | |
+| `status` | `JobStatus` | |
+| `created_at` | datetime | |
+| `started_at` | datetime \| null | |
+| `completed_at` | datetime \| null | |
+| `total_steps` | int \| null | |
+| `completed_steps` | int \| null | |
+| `metadata` | object | Free-form; holds `patient_id`, `data_id`, `file_type`, report URLs |
+| `created_by` | string \| null | |
+| `workflow_type` | string \| null | Recipe key |
+| `workflow_snapshot` | object \| null | Recipe as resolved at creation |
+
+### JobProgressResponse
+
+`models.py:478`. Fields: `job_id`, `status` (`JobStatus`), `total_steps`,
+`completed_steps`, `progress_percentage` (float, 0–100), `current_step`,
+`estimated_completion`, `message`.
+
+### JobStepResponse
+
+`models.py:419`. Fields: `id`, `job_id`, `step_name`, `step_order`, `status`
+(`StepStatus`), `container_name`, `started_at`, `completed_at`,
+`duration_seconds`, `output_data`, `error_details`, `retry_count`.
+
+### JobLogResponse
+
+`models.py:465`. Fields: `id` (**int**, not a UUID), `job_id`, `step_name`,
+`log_level` (`LogLevel`), `message`, `metadata`, `timestamp`.
+
+### Report URL payload
+
+Returned by `GET /upload/reports/job/{job_id}` and its two forwarders. Not a
+Pydantic model — it is assembled from job metadata, so treat every key inside
+`reports` as optional.
 
 ```json
 {
   "job_id": "string",
-  "data_id": "string",
-  "file_type": "string",
-  "status": "string",
-  "message": "string"
-}
-```
-
-### Job Status
-
-```json
-{
-  "job_id": "string",
-  "data_id": "string",
-  "status": "string",
-  "progress": "number",
-  "current_stage": "string",
-  "message": "string",
-  "logs": [
-    {
-      "timestamp": "string",
-      "level": "string",
-      "message": "string",
-      "container": "string"
-    }
-  ],
-  "estimated_completion": "string"
-}
-```
-
-### Report Data
-
-```json
-{
-  "job_id": "string",
-  "status": "string",
+  "status": "completed",
   "reports": {
     "pdf_report_url": "string",
     "html_report_url": "string",
-    "pharmcat_html_url": "string",
-    "pharmcat_json_url": "string",
-    "pharmcat_tsv_url": "string"
-  },
-  "diplotypes": {
-    "gene_name": "string"
-  },
-  "recommendations": [
-    {
-      "gene": "string",
-      "recommendation": "string",
-      "severity": "string",
-      "drugs": ["string"]
-    }
-  ]
+    "interactive_html_report_url": "string",
+    "pharmcat_html_report_url": "string",
+    "pharmcat_json_report_url": "string",
+    "pharmcat_tsv_report_url": "string"
+  }
 }
 ```
+
+Request models worth knowing: `JobCreate` and `JobUpdate` (`models.py:337`,
+`:353`), `JobStepCreate`/`JobStepUpdate`, `JobLogCreate`, `FHIRExportRequest` and
+`FHIRSaveRequest` (`fhir_export_router.py`). The four Job models set
+`extra="forbid"`, so an unrecognised key in the request body is a 422, not a
+silently ignored field.
 
 ## Error Handling
 
 ### Error Response Format
 
+The app installs no custom exception handler, so errors use FastAPI's defaults.
+
+**`HTTPException` (400/403/404/501/503 …)** — a single `detail` string:
+```json
+{"detail": "Job not found"}
+```
+
+**Validation errors (422)** — `detail` is an array of location records:
 ```json
 {
-  "error": "string",
-  "message": "string",
-  "details": "string",
-  "timestamp": "string",
-  "request_id": "string"
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body", "files"],
+      "msg": "Field required",
+      "input": null
+    }
+  ]
 }
 ```
 
+There is no `error`, `message`, `details`, `timestamp` or `request_id` envelope.
+Do not parse for one.
+
+Two exceptions to watch for, both returning HTTP 200 on failure:
+`GET /api-status` returns `{"error": …, "traceback": …}`, and
+`GET /services-status` signals trouble through its `status` field.
+
 ### Common Error Codes
 
-- `400 Bad Request`: Invalid request parameters
-- `401 Unauthorized`: Authentication required
-- `403 Forbidden`: Insufficient permissions
-- `404 Not Found`: Resource not found
-- `413 Payload Too Large`: File too large
-- `422 Unprocessable Entity`: Invalid file format
-- `429 Too Many Requests`: Rate limit exceeded
-- `500 Internal Server Error`: Server error
-- `503 Service Unavailable`: Service temporarily unavailable
+| Code | When |
+| --- | --- |
+| `400 Bad Request` | Job not in a cancellable state; job not completed; file rejected by the processor |
+| `401 Unauthorized` | Only in `ZAROPGX_AUTH_MODE=password`, and only on non-allowlisted paths |
+| `403 Forbidden` | A report path resolved outside `/data/reports` (path-jail rejection) |
+| `404 Not Found` | Unknown job, run, report file, or workflow recipe |
+| `422 Unprocessable Entity` | Request body or form fields failed validation |
+| `500 Internal Server Error` | Unhandled server error |
+| `501 Not Implemented` | A retired `/reports/*` stub |
+| `503 Service Unavailable` | `/fhir/*` with FHIR export disabled |
 
-## Rate Limiting
-
-### Default Limits
-
-- **Uploads**: 10 requests per minute
-- **Status Checks**: 60 requests per minute
-- **Report Downloads**: 30 requests per minute
-- **API Calls**: 100 requests per minute
-
-### Rate Limit Headers
-
-```http
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1642248000
-```
+`413 Payload Too Large` and `429 Too Many Requests` are **not** emitted. There is
+no application-level upload size cap and no rate limiting of any kind — no
+limiter middleware, no `X-RateLimit-*` headers. If you need either, put a reverse
+proxy in front of the app.
 
 ## WebSocket Support
 
@@ -1100,53 +1199,90 @@ which is logged and otherwise ignored. After 30 s of client silence the server
 sends a bare top-level `{"type": "heartbeat", "timestamp": …}` and keeps waiting.
 Invalid JSON from the client is dropped silently.
 
-## SDK Examples
+## Client Examples
 
-### Python SDK
+There is no published SDK; these are plain HTTP calls. Note the form field is
+`files`, plural — the API rejects `file` with a 422.
+
+### Python
 
 ```python
+import time
+
 import requests
 
-# Upload file
-with open('sample.vcf', 'rb') as f:
-    response = requests.post(
-        'http://localhost:8765/upload/genomic-data',
-        files={'file': f},
-        data={'sample_identifier': 'patient_001'}
-    )
-    result = response.json()
+BASE = "http://localhost:8765"
 
-# Check status
-status = requests.get(f"http://localhost:8765/upload/status/{result['job_id']}")
-print(status.json())
+# 1. Upload. Repeat the 'files' key to send an index alongside the data file.
+with open("sample.vcf", "rb") as f:
+    result = requests.post(
+        f"{BASE}/upload/genomic-data",
+        files=[("files", ("sample.vcf", f))],
+        data={"sample_identifier": "patient_001", "reference_genome": "hg38"},
+    ).json()
 
-# Get reports
-reports = requests.get(f"http://localhost:8765/reports/{result['job_id']}")
-print(reports.json())
+job_id = result["job_id"]
+
+# 2. Poll until the job leaves the running state.
+while True:
+    status = requests.get(f"{BASE}/upload/status/{job_id}").json()
+    print(status["status"], status["progress"], status["current_stage"])
+    if status["status"] in {"completed", "failed", "cancelled"}:
+        break
+    time.sleep(5)
+
+# 3. Collect the report URLs and download one. Every key is optional.
+reports = requests.get(f"{BASE}/upload/reports/job/{job_id}").json()["reports"]
+if "pdf_report_url" in reports:
+    pdf = requests.get(f"{BASE}{reports['pdf_report_url']}")
+    open("report.pdf", "wb").write(pdf.content)
 ```
 
-### JavaScript SDK
+Prefer the WebSocket at `/api/v1/jobs/{job_id}/ws` over polling for anything
+interactive.
+
+### JavaScript
 
 ```javascript
-// Upload file
+// Upload
 const formData = new FormData();
-formData.append('file', fileInput.files[0]);
+for (const file of fileInput.files) {
+  formData.append('files', file);   // 'files', not 'file'
+}
 formData.append('sample_identifier', 'patient_001');
 
-const response = await fetch('/upload/genomic-data', {
+const result = await (await fetch('/upload/genomic-data', {
   method: 'POST',
-  body: formData
-});
+  body: formData,
+})).json();
 
-const result = await response.json();
+// Follow progress over the WebSocket
+const ws = new WebSocket(
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}` +
+  `/api/v1/jobs/${result.job_id}/ws`
+);
 
-// Check status
-const statusResponse = await fetch(`/upload/status/${result.job_id}`);
-const status = await statusResponse.json();
+ws.onmessage = (event) => {
+  const frame = JSON.parse(event.data);
+  if (frame.type === 'initial_status') {
+    render(frame.data);
+  } else if (frame.type === 'job_update') {
+    // step/log/error/heartbeat updates are nested one level deeper
+    const inner = frame.data ?? {};
+    if (inner.type === 'step_update') {
+      renderStep(inner.step_name, inner.data);
+    } else {
+      render(inner);
+    }
+  } else if (frame.type === 'workflow_cancelled') {
+    renderCancelled();
+  }
+};
 
-// Get reports
-const reportsResponse = await fetch(`/reports/${result.job_id}`);
-const reports = await reportsResponse.json();
+// Reports, once the job reports 'completed'
+const { reports } = await (
+  await fetch(`/upload/reports/job/${result.job_id}`)
+).json();
 ```
 
 ## Next Steps
