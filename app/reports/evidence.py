@@ -18,30 +18,59 @@ tier). ``css_class`` is decoupled from ``rank`` on purpose: ``evidence-0..3``
 already drive dozens of CSS rules and appear in reports already on disk, so
 they keep their numbering while ranks are free to be renumbered.
 
+What ``classification`` actually is
+-----------------------------------
+It is CPIC's **strength of recommendation** (Strong / Moderate / Optional, plus
+``No recommendation``), *not* CPIC **Level of Evidence** (A / B / C / D). Those
+are two separate CPIC axes: strength grades an individual therapeutic
+recommendation, while CPIC Level is a designation on a gene-drug *pair*. No
+level-of-evidence field exists anywhere in a PharmCAT ``report.json`` -- the
+annotation object carries ``implications``, ``drugRecommendation``,
+``classification``, ``activityScore``, ``population``, ``genotypes`` and
+friends, and no A/B/C/D value appears in any fixture. Report copy must
+therefore never render ``classification`` as "CPIC Level A/B/C".
+
+Nor does a strength grade imply a prescribing *change*: 21 of the 52 ``Strong``
+annotations in ``pharmcat.example.report.json`` advise the standard or
+label-recommended dose. "Strong" means CPIC is confident in the recommendation,
+whatever that recommendation says.
+
 Six tiers, because ``Unspecified`` is its own thing
 ---------------------------------------------------
 An earlier revision folded ``Unspecified`` into ``Unclassified`` on the premise
-that it meant "no evidence level reported". That premise was wrong, and it was
-a clinical-safety bug. Measured across all four checked-in PharmCAT fixtures:
+that it meant "nothing was reported". That premise was wrong, and it was a
+clinical-safety bug.
 
-* ``Unspecified`` is emitted **only** by non-CPIC sources -- DPWG Guideline
-  Annotation (33), FDA Label Annotation (32), FDA PGx Association (35). CPIC
-  never emits it.
-* **Every single one** of those 100 annotations carries substantive
-  ``drugRecommendation`` text; roughly half contains avoid / contra-indicated /
-  dose-adjustment language.
+Counts below are reproducible from the three **git-tracked** fixtures, which are
+the only ones carrying ``classification``: ``test_data/pharmcat.example.report.json``,
+``test_data/pharmcat.example.v340.report.json`` and
+``test_data/pharmcat.example.nested.v2.report.json`` -- 175 annotations total.
+(An earlier revision of this docstring also counted a fourth file under the
+gitignored ``dev-notes/``. It is absent from clean checkouts and from CI, so its
+numbers were not reproducible; it is no longer cited. Dropping it changed no
+conclusion.)
 
-So ``Unspecified`` means "a guideline exists, it just carries no CPIC letter
+* ``Unspecified`` -- 66 annotations, emitted **only** by non-CPIC sources: DPWG
+  Guideline Annotation 29, FDA PGx Association 20, FDA Label Annotation 17.
+  CPIC never emits it.
+* **All 66** carry non-empty ``drugRecommendation`` text, 29 of them containing
+  avoid / contra-indicated / dose-adjustment language.
+* ``No recommendation`` -- 28 annotations (CPIC 3, DPWG 25). None directs a
+  therapy change; they advise the standard dose or state that the guideline
+  offers no recommendation.
+* ``Strong`` 54 / ``Moderate`` 11 / ``Optional`` 15 -- all CPIC-exclusive, which
+  is why only those three rows name CPIC in the legend.
+
+So ``Unspecified`` means "a guideline exists, it just carries no CPIC strength
 grade" -- strictly more informative than ``No recommendation``, which is the
 positive statement that nothing should change. It therefore ranks *above*
 ``No recommendation``. Ranking it below produced two real defects: venlafaxine
 (CPIC ``No recommendation`` + DPWG ``Unspecified`` advising against use) resolved
-to the tile that claims "no dosing change advised", and all-``Unspecified``
+to the tile that claimed "no dosing change advised", and all-``Unspecified``
 drugs such as eliglustat rendered fainter than "nothing to do".
 
-``Strong`` / ``Moderate`` / ``Optional`` are CPIC-exclusive in every fixture, so
-their legend copy may safely cite CPIC Levels A/B/C. ``No recommendation`` is
-**not** CPIC-exclusive (CPIC 3, DPWG 59), so its copy must stay source-neutral.
+``No recommendation`` is **not** CPIC-exclusive (CPIC 3, DPWG 25), so its legend
+copy stays source-neutral.
 """
 
 from __future__ import annotations

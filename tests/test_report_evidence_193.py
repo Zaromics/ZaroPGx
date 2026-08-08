@@ -1,7 +1,8 @@
 """Unit tests for the PharmCAT evidence-level tier mapping (BACKLOG 193).
 
-The corpus below is every distinct ``classification`` value present across all
-four checked-in PharmCAT fixtures. Before 193, ``Unspecified`` / ``None`` /
+The corpus below is every distinct ``classification`` value present across the
+three git-tracked PharmCAT fixtures under ``test_data/`` -- the only ones that
+carry ``classification`` at all. Before 193, ``Unspecified`` / ``None`` /
 ``No recommendation`` all fell through the Jinja ``{% else %}`` into
 ``evidence-0``, the bucket the legend labelled "Guideline available".
 
@@ -29,7 +30,9 @@ from app.reports.evidence import (
 )
 from app.reports.generator import map_recommendations_for_template
 
-# Every distinct value across all four fixtures.
+# Every distinct value across the three tracked fixtures. Note the fixtures
+# carry JSON ``null`` (-> Python ``None``), never the *string* "None"; the
+# string form is kept as a defensive case for lanes that stringify.
 FIXTURE_CLASSIFICATIONS = [
     "Strong",
     "Moderate",
@@ -69,13 +72,13 @@ def test_no_recommendation_is_not_the_same_tier_as_unspecified():
 def test_unspecified_outranks_no_recommendation():
     """Fix round 1. ``Unspecified`` is *not* absence of information.
 
-    Measured across all four checked-in fixtures, every one of the 100
-    ``Unspecified`` annotations carries substantive ``drugRecommendation`` text,
-    and it is emitted exclusively by non-CPIC sources (DPWG Guideline
-    Annotation, FDA Label Annotation, FDA PGx Association) -- never by CPIC.
-    It means "a guideline exists but carries no CPIC letter grade", so it must
-    outrank ``No recommendation``, which is a positive statement that nothing
-    should change.
+    Measured across the three git-tracked fixtures (175 annotations), all 66
+    ``Unspecified`` annotations carry non-empty ``drugRecommendation`` text, and
+    it is emitted exclusively by non-CPIC sources -- DPWG Guideline Annotation
+    29, FDA PGx Association 20, FDA Label Annotation 17; never by CPIC. It means
+    "a guideline exists but carries no CPIC strength grade", so it must outrank
+    ``No recommendation`` (28: CPIC 3, DPWG 25), which is a positive statement
+    that nothing should change.
     """
     assert GUIDELINE_AVAILABLE.rank > NO_RECOMMENDATION.rank
     assert NO_RECOMMENDATION.rank > UNCLASSIFIED.rank
@@ -241,6 +244,26 @@ def _fixture_annotations(drug):
     return rows
 
 
+def _fixture_annotations_all():
+    """Every ``(source, classification, drugRecommendation)`` row in the fixture."""
+    report = json.loads(EXAMPLE_REPORT.read_text(encoding="utf-8"))
+    rows = []
+    for source, drugs in (report.get("drugs") or {}).items():
+        for entry in (drugs or {}).values():
+            if not isinstance(entry, dict):
+                continue
+            for guideline in entry.get("guidelines") or []:
+                for annotation in guideline.get("annotations") or []:
+                    rows.append(
+                        (
+                            source,
+                            annotation.get("classification"),
+                            (annotation.get("drugRecommendation") or "").strip(),
+                        )
+                    )
+    return rows
+
+
 def _grouped_from_fixture(drug):
     """Grouped-shape input for ``map_recommendations_for_template``, real data."""
     rows = _fixture_annotations(drug)
@@ -302,11 +325,12 @@ def test_eliglustat_all_unspecified_is_not_unclassified():
 
 
 def test_eliglustat_mixed_shape_resolves_to_guideline_available():
-    """The eliglustat shape carried by ``example_pgx_pharmcat.json``.
+    """A synthetic three-source variant of the ordering case.
 
-    That fixture lives under ``dev-notes/`` (gitignored, absent in CI), so its
-    exact shape is reproduced here: DPWG ``No recommendation`` alongside two FDA
-    ``Unspecified`` annotations that do carry dosing text.
+    No tracked fixture pairs ``No recommendation`` with *two* ``Unspecified``
+    annotations, so this one is constructed. The real, fixture-backed mixed case
+    is ``test_venlafaxine_prefers_dpwg_guidance_over_cpic_no_recommendation``
+    above; this only widens it to a DPWG + FDA Label + FDA PGx drug.
     """
     mapped = map_recommendations_for_template(
         [
@@ -446,6 +470,47 @@ def test_template_legend_makes_no_false_no_dosing_change_claim(template_name):
     html = _render(template_name, [])
     assert "Guideline available &mdash;" in html or "Guideline available —" in html
     assert "no dosing change advised" not in html
+
+
+@pytest.mark.parametrize(
+    "template_name", ["report_template.html", "interactive_report.html"]
+)
+def test_template_legend_does_not_confuse_cpic_axes(template_name):
+    """``classification`` is CPIC strength of recommendation, not Level of Evidence.
+
+    Those are separate CPIC axes -- strength grades one therapeutic
+    recommendation; CPIC Level (A/B/C/D) designates a gene-drug *pair*. No
+    level-of-evidence field exists anywhere in a PharmCAT ``report.json``, so
+    rendering ``Strong`` as "CPIC Level A" invented a value the run never
+    produced.
+    """
+    html = _render(template_name, [])
+    for wrong in ("CPIC Level A", "CPIC Level B", "CPIC Level C", "Evidence Level"):
+        assert wrong not in html, f"legend still claims {wrong!r}"
+    assert "Recommendation Strength Legend" in html
+    assert "CPIC strong recommendation" in html
+
+
+def test_strong_does_not_imply_a_prescribing_change():
+    """Guards the other half of the old copy: "high actionability".
+
+    A strength grade rates CPIC's confidence in the recommendation, not its
+    direction -- 21 of the 52 ``Strong`` annotations in the tracked fixture
+    advise the standard or label-recommended dose.
+    """
+    standard = [
+        text
+        for _, classification, text in _fixture_annotations_all()
+        if classification == "Strong"
+        and (
+            "recommended starting dose" in text.lower()
+            or "standard dos" in text.lower()
+        )
+    ]
+    assert standard, "expected some Strong annotations advising the standard dose"
+
+    html = _render("report_template.html", [])
+    assert "high actionability" not in html
 
 
 def test_template_debug_artifacts_are_gone():

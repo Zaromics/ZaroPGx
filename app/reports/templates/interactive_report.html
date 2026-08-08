@@ -921,14 +921,14 @@
                 <p>The following drugs have pharmacogenomic guidance available based on this sample's genetic profile:</p>
                 
                 <div class="evidence-legend">
-                    <p><strong>Evidence Level Legend:</strong></p>
+                    <p><strong>Recommendation Strength Legend:</strong></p>
                     <div class="legend-items">
-                        <span class="legend-item evidence-3"><span class="drug-indicator"></span> Strong &mdash; high actionability (CPIC Level A)</span>
-                        <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate &mdash; moderate actionability (CPIC Level B)</span>
-                        <span class="legend-item evidence-1"><span class="drug-indicator"></span> Optional &mdash; informational (CPIC Level C)</span>
-                        <span class="legend-item evidence-unspecified"><span class="drug-indicator"></span> Guideline available &mdash; DPWG/FDA guidance without a CPIC evidence level; may still be actionable</span>
+                        <span class="legend-item evidence-3"><span class="drug-indicator"></span> Strong &mdash; CPIC strong recommendation</span>
+                        <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate &mdash; CPIC moderate recommendation</span>
+                        <span class="legend-item evidence-1"><span class="drug-indicator"></span> Optional &mdash; CPIC optional recommendation</span>
+                        <span class="legend-item evidence-unspecified"><span class="drug-indicator"></span> Guideline available &mdash; DPWG/FDA guidance without a CPIC recommendation strength; may still be actionable</span>
                         <span class="legend-item evidence-0"><span class="drug-indicator"></span> No recommendation &mdash; guideline reviewed, no genotype-based action given</span>
-                        <span class="legend-item evidence-unclassified"><span class="drug-indicator"></span> Unclassified &mdash; no evidence level reported</span>
+                        <span class="legend-item evidence-unclassified"><span class="drug-indicator"></span> Unclassified &mdash; no recommendation strength reported</span>
                     </div>
                 </div>
                 
@@ -988,7 +988,7 @@
                                 <div class="gene-recommendation {{ group_data['rec'].evidence_class }}" style="margin-bottom: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
                                     <h4 style="margin: 0 0 8px 0; color: #495057;">{{ group_data['genes']|join(', ') }} - {{ group_data['rec'].guideline_source if group_data['rec'].guideline_source else 'General' }}</h4>
                                     <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation }}</p>
-                                    <p style="margin: 4px 0;"><strong>Strength of Evidence:</strong> {{ group_data['rec'].classification }}</p>
+                                    <p style="margin: 4px 0;"><strong>Strength of Recommendation:</strong> {{ group_data['rec'].classification }}</p>
                                     {% if group_data['rec'].literature_references %}
                                     <p style="margin: 4px 0;"><strong>References:</strong> {{ group_data['rec'].literature_references|join(", ") }}</p>
                                     {% endif %}
