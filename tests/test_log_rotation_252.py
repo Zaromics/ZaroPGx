@@ -82,9 +82,16 @@ MODULES = {
     },
     "zarohla": {
         "path": Path("docker/zarohla/app.py"),
-        "log_files": ["zarohla_progress.log"],
+        # Per-worker filename, not a plain literal -- see
+        # test_zarohla_gives_each_gunicorn_worker_its_own_file below.
+        "log_files": ["zarohla_progress."],
     },
 }
+
+# Sidecars that run more than one process, and therefore cannot share one
+# RotatingFileHandler destination. Kept as data so that adding a second such
+# service is a deliberate edit rather than an oversight.
+MULTIPROCESS_MODULES = {"zarohla": Path("docker/zarohla/Dockerfile")}
 
 
 def _handler_name(call: ast.Call) -> str:
@@ -319,6 +326,60 @@ def test_the_declared_log_path_is_on_the_shared_volume(module):
         assert expected in module["source"], (
             f"{module['rel']} no longer declares its progress log at {expected!r}; "
             "the rotation bound may be pointed somewhere else"
+        )
+
+
+def test_only_multiprocess_sidecars_use_a_per_worker_filename(module):
+    """A shared RotatingFileHandler across processes silently deletes logs.
+
+    When worker A rolls over it renames the file out from under worker B, which
+    goes on appending to the renamed inode. B's lines migrate down the .1/.2/...
+    chain and are unlinked once they fall past backupCount -- silently -- while
+    the advertised ceiling stops holding in the meantime. So a service that runs
+    more than one process must give each one its own destination, and a service
+    that does not must NOT (a per-pid name there would only scatter the log).
+    """
+    uses_pid = "getpid()" in module["source"]
+    expected = module["name"] in MULTIPROCESS_MODULES
+    assert uses_pid == expected, (
+        f"{module['rel']}: per-pid log filename is {'missing' if expected else 'present'}; "
+        f"this service is {'multi' if expected else 'single'}-process"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(MULTIPROCESS_MODULES))
+def test_the_multiprocess_list_still_matches_the_dockerfiles(name):
+    """The rule above is only right while the process model is what it says.
+
+    Dropping zarohla to `--workers 1`, or adding workers to another sidecar,
+    must force a decision here rather than quietly invalidating the reasoning.
+    """
+    dockerfile = (REPO_ROOT / MULTIPROCESS_MODULES[name]).read_text(encoding="utf-8")
+    assert '"--workers", "2"' in dockerfile or "--workers 2" in dockerfile, (
+        f"{MULTIPROCESS_MODULES[name]} no longer starts 2 workers. If it is now "
+        "single-process, drop it from MULTIPROCESS_MODULES and take the pid back "
+        "out of its log filename."
+    )
+    # The pid trick is only needed because the workers import the module
+    # separately; --preload would fork after import and share one handler, which
+    # is the same unsafe sharing by another route.
+    assert "--preload" not in dockerfile
+
+
+def test_single_process_sidecars_are_still_single_process():
+    """Guard the other half: a new `--workers N` must not slip in unnoticed."""
+    others = {
+        "gatk_api": "docker/gatk-api/Dockerfile.gatk-api",
+        "nextflow_runner": "docker/nextflow/Dockerfile.nextflow",
+        "pharmcat": "docker/pharmcat/Dockerfile",
+        "pypgx_wrapper": "docker/pypgx/Dockerfile.pypgx",
+    }
+    for name, rel in others.items():
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        assert "--workers" not in text, (
+            f"{rel} now starts multiple workers, but {name} still writes one "
+            "shared RotatingFileHandler destination -- see "
+            "test_only_multiprocess_sidecars_use_a_per_worker_filename"
         )
 
 

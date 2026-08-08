@@ -16,10 +16,11 @@ import sys
 sys.path.append('/job-client')
 from job_client import JobClient
 
-# Read before logging is configured because the progress-log handler below writes
-# into DATA_DIR.
+# Read (and created) before logging is configured because the progress-log handler
+# below writes into DATA_DIR. Same ordering as gatk_api.py.
 DATA_DIR = Path(os.getenv('DATA_DIR', '/data'))
 TEMP_DIR = DATA_DIR / 'temp'
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 # --------------------------------------------------------------------------
 # Bounded logging (BACKLOG 252). Same block, same values, same failure
@@ -37,8 +38,28 @@ TEMP_DIR = DATA_DIR / 'temp'
 # read after the container was replaced. /data is the volume shared with the
 # main app, so the progress log has to be size bounded from the start - an
 # unrotated handler here grows until the shared volume fills. 10 MiB x 5
-# backups caps the destination at 60 MiB.
-PROGRESS_LOG_PATH = os.getenv('ZAROHLA_PROGRESS_LOG', str(DATA_DIR / 'zarohla_progress.log'))
+# backups caps each destination at 60 MiB.
+#
+# THE ONE THING THIS SERVICE DOES DIFFERENTLY, and why: the filename carries the
+# pid. zarohla is the only one of the five that runs more than one process --
+# docker/zarohla/Dockerfile:50 is `gunicorn --workers 2` with no `--preload`, so
+# each worker imports this module and builds its own handler. RotatingFileHandler
+# is not multi-process safe: when worker A rolls over it renames the file out from
+# under worker B, which goes on appending to the renamed inode. B's lines then
+# migrate down the .1/.2/... chain and are *deleted* once they fall past
+# backupCount -- silently, which is the worst possible failure for a diagnostic
+# log -- while the 60 MiB ceiling stops holding in the meantime. One file per
+# worker is what makes the bound this block advertises actually true.
+#
+# The cost is file count rather than file size: each is still capped at 60 MiB,
+# and gunicorn only mints a new pid when it respawns a dead worker, so a healthy
+# container holds two. If that ever becomes a nuisance, the better fix is
+# `--workers 1` in the Dockerfile -- which this service arguably wants anyway,
+# since `running_processes` below is per-process state that a second worker
+# cannot see (a cancel request routed to the wrong worker already finds nothing).
+PROGRESS_LOG_PATH = os.getenv(
+    'ZAROHLA_PROGRESS_LOG', str(DATA_DIR / f'zarohla_progress.{os.getpid()}.log')
+)
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
 
@@ -92,8 +113,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("zarohla")
 _warn_about_unopened_logs(logger)
-
-os.makedirs(TEMP_DIR, exist_ok=True)
 
 app = FastAPI(title="ZaroHLA API", version="1.0.0")
 
