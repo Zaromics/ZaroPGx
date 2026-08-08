@@ -16,6 +16,7 @@ from app.reports.evidence import (
     classify_evidence,
     max_evidence,
 )
+from app.reports.generator import map_recommendations_for_template
 
 # Every distinct value across all four fixtures.
 FIXTURE_CLASSIFICATIONS = [
@@ -118,3 +119,54 @@ def test_max_evidence_of_all_unclassified_stays_unclassified():
 
 def test_max_evidence_of_empty_is_unclassified():
     assert max_evidence([]) is UNCLASSIFIED
+
+
+def _grouped(drug, gene, recommendation, classification):
+    """The shape real callers pass.
+
+    ``map_recommendations_for_template`` selects its branch on
+    ``isinstance(genes, list) and isinstance(recommendations, list)``, and both
+    ``.get`` calls default to ``[]`` -- so the "legacy flattened" ``else`` arm is
+    unreachable for a flat ``{"drug", "gene", ...}`` dict and such input maps to
+    ``[]``. The only live call site (``generator.py:941-945``) gates on
+    ``"genes" in rec and "gene" not in rec``, i.e. this grouped shape.
+    """
+    return {
+        "drug": drug,
+        "genes": [gene],
+        "recommendations": [
+            {
+                "gene": gene,
+                "recommendation": recommendation,
+                "classification": classification,
+            }
+        ],
+    }
+
+
+def test_map_recommendations_stamps_evidence_keys():
+    mapped = map_recommendations_for_template(
+        [
+            _grouped("amitriptyline", "CYP2D6", "Consider alternative", "Strong"),
+            _grouped(
+                "warfarin", "CYP2C9", "See report for details", "No recommendation"
+            ),
+            _grouped("codeine", "CYP2D6", "See report for details", "Unspecified"),
+        ]
+    )
+    by_drug = {m["drug"]: m for m in mapped}
+
+    assert by_drug["amitriptyline"]["evidence_rank"] == 3
+    assert by_drug["amitriptyline"]["evidence_class"] == "evidence-3"
+    assert by_drug["warfarin"]["evidence_rank"] == 0
+    assert by_drug["warfarin"]["evidence_class"] == "evidence-0"
+    assert by_drug["codeine"]["evidence_rank"] == -1
+    assert by_drug["codeine"]["evidence_class"] == "evidence-unclassified"
+
+
+def test_map_recommendations_does_not_mutate_classification():
+    """FHIR export and app/api/models.py consume `classification` verbatim."""
+    mapped = map_recommendations_for_template(
+        [_grouped("codeine", "CYP2D6", "x", "Unspecified")]
+    )
+    assert mapped[0]["classification"] == "Unspecified"

@@ -36,6 +36,7 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 
 from app.core.version_manager import get_all_versions, get_versions_dict
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
+from app.reports.evidence import classify_evidence
 from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
     prefer_source_over_lookup,
@@ -1718,10 +1719,7 @@ def map_recommendations_for_template(
             recommendation_text = rec.get("recommendation", "See report for details")
             classification = rec.get("classification", "Unknown")
 
-            # DEBUG: Log what we're mapping
-            logger.info(
-                f"DEBUG MAP - Drug: {drug_name}, Gene: {gene}, Classification: '{classification}'"
-            )
+            tier = classify_evidence(classification)
 
             mapped_rec = {
                 "drug": drug_name,
@@ -1729,6 +1727,8 @@ def map_recommendations_for_template(
                 "genes": gene,  # For backward compatibility
                 "recommendation": recommendation_text,
                 "classification": classification,
+                "evidence_rank": tier.rank,
+                "evidence_class": tier.css_class,
                 "guideline": guideline,
                 "guideline_source": guideline_source,
                 "literature_references": rec.get("literature_references", []),

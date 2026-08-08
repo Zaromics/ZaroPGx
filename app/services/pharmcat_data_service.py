@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.db import Job
 from app.pharmcat.pharmcat_parser import PharmCATParser, get_pharmcat_summary
+from app.reports.evidence import classify_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -397,11 +398,7 @@ class PharmCATDataService:
                 "classification", "Unknown"
             )
 
-            # DEBUG: Log what we're receiving
-            logger.info(f"DEBUG - Drug: {drug_name}, Gene: {gene_symbol}")
-            logger.info(f"  strength_of_evidence: '{rec.get('strength_of_evidence')}'")
-            logger.info(f"  classification: '{rec.get('classification')}'")
-            logger.info(f"  evidence_level (final): '{evidence_level}'")
+            tier = classify_evidence(evidence_level)
 
             recommendation_entry = {
                 "gene": gene_symbol,
@@ -411,26 +408,13 @@ class PharmCATDataService:
                     else "See report for details"
                 ),
                 "classification": evidence_level,  # This is what the templates check
+                "evidence_rank": tier.rank,
+                "evidence_class": tier.css_class,
                 "strength_of_evidence": rec.get(
                     "strength_of_evidence"
                 ),  # Keep original for reference
                 "implications": rec.get("implications"),
                 "literature_references": literature_references,
-                "cpic_level": (
-                    rec.get("strength_of_evidence")
-                    if rec.get("guideline_source") == "CPIC"
-                    else None
-                ),
-                "dpwg_level": (
-                    rec.get("strength_of_evidence")
-                    if rec.get("guideline_source") == "DPWG"
-                    else None
-                ),
-                "fda_level": (
-                    rec.get("strength_of_evidence")
-                    if rec.get("guideline_source") == "FDA"
-                    else None
-                ),
             }
 
             if guideline_source:
