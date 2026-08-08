@@ -190,61 +190,125 @@ Also retired (**501**): `GET /reports/{id}/status`, `GET /reports/{id}/download`
 
 Cleanup: `POST /api/cleanup/job/{job_id}` (the old `/api/cleanup/workflow/...` path is removed).
 
-### Workflow Endpoints
+### Job Endpoints
 
-> **Note (137c):** Job-instance progress, cancel, logs, and WebSocket live under
-> `/api/v1/jobs/{job_id}`. The recipe catalog remains at `/api/v1/workflows`
-> (unchanged). Container cancel payloads accept `job_id` only (no `workflow_id`
-> dual-accept). Legacy `/workflows/{workflow_id}` paths below are historical
-> examples; prefer `/api/v1/jobs/...`.
+> **Jobs vs workflows.** These are two different things and they have two
+> different mounts.
+>
+> - A **job** is one run instance. Jobs live under **`/api/v1/jobs`**
+>   (`job_router.py:48`, mounted at `main.py:317`). Progress, steps, logs, cancel
+>   and the WebSocket are all here.
+> - A **workflow** is now only a *recipe* — a named template of step definitions.
+>   The read-only catalog lives under **`/api/v1/workflows`**
+>   (`workflow_recipe_router.py:5`, mounted at `main.py:316`).
+>
+> `/api/v1/workflows/{id}` is **not** an alias for `/api/v1/jobs/{id}`; the two
+> mounts serve unrelated resources. The old `workflow_router` was hard-cut to
+> `/api/v1/jobs` and its job-instance routes no longer answer under
+> `/api/v1/workflows`. Bare `/workflows/...` has never existed.
+>
+> Container cancel payloads accept `job_id` only (no `workflow_id` dual-accept).
 
-#### Get Workflow Status
+All twelve job routes are registered unconditionally.
 
-Get detailed workflow status and progress.
+| Endpoint | Method | Response model | Source |
+| --- | --- | --- | --- |
+| `/api/v1/jobs/` | POST | `JobResponse` (201) | `job_router.py:51` |
+| `/api/v1/jobs/{job_id}` | GET | `JobResponse` | `job_router.py:89` |
+| `/api/v1/jobs/{job_id}` | PUT | `JobResponse` | `job_router.py:133` |
+| `/api/v1/jobs/{job_id}` | DELETE | empty (204) | `job_router.py:179` |
+| `/api/v1/jobs/{job_id}/steps` | POST | `JobStepResponse` (201) | `job_router.py:213` |
+| `/api/v1/jobs/{job_id}/steps` | GET | `JobStepResponse[]` | `job_router.py:262` |
+| `/api/v1/jobs/{job_id}/steps/{step_name}` | PUT | `JobStepResponse` | `job_router.py:292` |
+| `/api/v1/jobs/{job_id}/progress` | GET | `JobProgressResponse` | `job_router.py:340` |
+| `/api/v1/jobs/{job_id}/logs` | POST | `JobLogResponse` (201) | `job_router.py:371` |
+| `/api/v1/jobs/{job_id}/logs` | GET | `JobLogResponse[]` | `job_router.py:408` |
+| `/api/v1/jobs/{job_id}/ws` | WebSocket | see WebSocket Support | `job_router.py:453` |
+| `/api/v1/jobs/{job_id}/cancel` | POST | `JobResponse` | `job_router.py:722` |
 
-**Endpoint:** `GET /api/v1/jobs/{job_id}` (preferred) / historical `GET /workflows/{workflow_id}`
+Most integrations only need `GET /api/v1/jobs/{job_id}`, the progress route, the
+WebSocket and cancel. The create/update/step-authoring routes exist so the upload
+pipeline can build a job; calling them by hand produces a job nothing executes.
+
+#### Get Job
+
+**Endpoint:** `GET /api/v1/jobs/{job_id}`
 
 **Parameters:**
 - `job_id` (path): Job identifier
 
-**Response:**
+**Response** (`JobResponse` — note the identifier key is `id`, not `job_id`):
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "genomic_analysis sample.vcf",
+  "description": null,
+  "status": "running",
+  "created_at": "2026-08-08T10:00:00Z",
+  "started_at": "2026-08-08T10:00:05Z",
+  "completed_at": null,
+  "total_steps": 5,
+  "completed_steps": 2,
+  "metadata": {
+    "patient_id": "patient_001",
+    "data_id": "550e8400-e29b-41d4-a716-446655440002",
+    "file_type": "vcf"
+  },
+  "created_by": null,
+  "workflow_type": "genomic_analysis",
+  "workflow_snapshot": {}
+}
+```
+
+`status` is one of `pending`, `running`, `completed`, `failed`, `cancelled`. The
+`processing` value earlier revisions of this page showed is not in the enum. An
+unknown job is a 404.
+
+#### Get Job Progress
+
+**Endpoint:** `GET /api/v1/jobs/{job_id}/progress`
+
+**Response** (`JobProgressResponse`):
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "processing",
-  "progress": 65,
-  "current_stage": "pharmcat_analysis",
-  "steps": [
-    {
-      "step_name": "file_validation",
-      "status": "completed",
-      "start_time": "2024-01-15T10:00:00Z",
-      "end_time": "2024-01-15T10:01:00Z",
-      "duration": 60
-    },
-    {
-      "step_name": "pypgx_analysis",
-      "status": "completed",
-      "start_time": "2024-01-15T10:01:00Z",
-      "end_time": "2024-01-15T10:15:00Z",
-      "duration": 840
-    },
-    {
-      "step_name": "pharmcat_analysis",
-      "status": "processing",
-      "start_time": "2024-01-15T10:15:00Z",
-      "end_time": null,
-      "duration": null
-    }
-  ],
-  "metadata": {
-    "file_type": "VCF",
-    "reference_genome": "hg38",
-    "sample_identifier": "patient_001",
-    "data_id": "550e8400-e29b-41d4-a716-446655440002"
-  }
+  "status": "running",
+  "total_steps": 5,
+  "completed_steps": 2,
+  "progress_percentage": 40.0,
+  "current_step": "pharmcat",
+  "estimated_completion": null,
+  "message": "Running PharmCAT analysis"
 }
 ```
+
+#### Get Job Steps
+
+**Endpoint:** `GET /api/v1/jobs/{job_id}/steps`
+
+Returns a **bare JSON array** of `JobStepResponse`, ordered by `step_order`. An
+unknown job is a 404, not an empty array.
+
+```json
+[
+  {
+    "id": "…",
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_name": "file_validation",
+    "step_order": 1,
+    "status": "completed",
+    "container_name": "app",
+    "started_at": "2026-08-08T10:00:00Z",
+    "completed_at": "2026-08-08T10:01:00Z",
+    "duration_seconds": 60,
+    "output_data": {},
+    "error_details": {},
+    "retry_count": 0
+  }
+]
+```
+
+Step `status` is one of `pending`, `running`, `completed`, `failed`, `skipped`.
 
 #### Cancel Job
 
@@ -255,16 +319,14 @@ Cancel a running job.
 **Parameters:**
 - `job_id` (path): Job identifier
 
-Container cancel JSON payloads use `job_id` only (no `workflow_id` alias).
+**Response:** the full `JobResponse` for the cancelled job with `status` set to
+`cancelled` — not the short `{job_id, status, message}` object earlier revisions
+of this page showed.
 
-**Response:**
-```json
-{
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "cancelled",
-  "message": "Job cancelled successfully"
-}
-```
+**Status Codes:**
+- `200`: Cancelled
+- `400`: Job is already `completed`, `failed` or `cancelled`
+- `404`: No such job
 
 #### Get Job Logs
 
@@ -274,34 +336,56 @@ Get logs for a specific job.
 
 **Parameters:**
 - `job_id` (path): Job identifier
-- `level` (query, optional): Log level filter (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- `container` (query, optional): Container filter
 - `limit` (query, optional): Maximum number of logs (default: 100)
+
+There are no `level` or `container` filters. The response is a **bare JSON
+array** of `JobLogResponse`, newest first — no `total`/`has_more` wrapper. An
+unknown job is a 404, not an empty array.
 
 **Response:**
 ```json
+[
+  {
+    "id": 1042,
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_name": "file_validation",
+    "log_level": "info",
+    "message": "File validation completed",
+    "metadata": {},
+    "timestamp": "2026-08-08T10:01:00Z"
+  }
+]
+```
+
+`log_level` values are lowercase and limited to `debug`, `info`, `warn`, `error`.
+Note `warn`, not `warning`, and there is no `critical`.
+
+### Workflow Recipe Catalog
+
+Read-only. A recipe describes which steps a workflow type mints — not the state
+of any run. Registered unconditionally at `main.py:316`.
+
+| Endpoint | Method | Source |
+| --- | --- | --- |
+| `/api/v1/workflows` and `/api/v1/workflows/` | GET | `workflow_recipe_router.py:25-26` |
+| `/api/v1/workflows/{workflow_type}` | GET | `workflow_recipe_router.py:31` |
+
+**Response** (the list form returns a bare array of these objects):
+```json
 {
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "logs": [
-    {
-      "timestamp": "2024-01-15T10:00:00Z",
-      "level": "INFO",
-      "message": "Starting workflow",
-      "container": "app",
-      "step": "file_validation"
-    },
-    {
-      "timestamp": "2024-01-15T10:01:00Z",
-      "level": "INFO",
-      "message": "File validation completed",
-      "container": "app",
-      "step": "file_validation"
-    }
-  ],
-  "total": 150,
-  "has_more": true
+  "workflow_type": "genomic_analysis",
+  "display_name": "Genomic Analysis",
+  "description": "",
+  "option_fields": ["needs_gatk", "needs_pypgx", "needs_hla", "needs_report"],
+  "step_templates": [
+    {"step_name": "file_validation", "container_name": "app", "when": null}
+  ]
 }
 ```
+
+`when` is `null` for always-run steps; otherwise it names the `WorkflowOptions`
+field that must be true for the step to be minted. An unknown `workflow_type`
+returns 404 with `detail: "Unknown workflow_type"`.
 
 ### System Endpoints
 
@@ -567,22 +651,68 @@ X-RateLimit-Reset: 1642248000
 
 ### Real-time Updates
 
-Connect to WebSocket for real-time job updates:
+Connect to the WebSocket for real-time job updates.
 
 **Endpoint:** `ws://localhost:8765/api/v1/jobs/{job_id}/ws`
 
-**Message Format:**
+The socket is declared on the job router (`job_router.py:453`) under that
+router's `/api/v1/jobs` prefix. There is no `@app.websocket` route in
+`app/main.py`, so no `/ws/...` URL exists.
+
+`job_id` must parse as a UUID or the server closes with code **4000** before
+accepting. An unknown job closes with **4004** after sending an `error` frame.
+
+**First frame** — sent immediately on connect:
 ```json
 {
-  "type": "job_update",
-  "job_id": "string",
-  "progress": "number",
-  "stage": "string",
-  "message": "string"
+  "type": "initial_status",
+  "data": {
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "genomic_analysis sample.vcf",
+    "status": "running",
+    "total_steps": 5,
+    "completed_steps": 2,
+    "progress_percentage": 40.0,
+    "current_step": "pharmcat",
+    "message": "Running PharmCAT analysis",
+    "created_at": "2026-08-08T10:00:00Z",
+    "started_at": "2026-08-08T10:00:05Z",
+    "completed_at": null
+  }
 }
 ```
 
-Envelope `type` is `job_update` (was `workflow_update`).
+**Subsequent server frames** use a `job_update` envelope with the real payload
+nested under `data`:
+```json
+{
+  "type": "job_update",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2026-08-08T10:05:00.000000+00:00",
+  "data": { }
+}
+```
+
+Step, log, error and heartbeat updates are **double-wrapped**: the broadcast
+helper puts its own message inside the same `job_update` envelope, so the
+specific kind is `data.type`, not the outer `type`. Read the inner value.
+
+| `data.type` | Extra keys inside `data` |
+| --- | --- |
+| `step_update` | `step_name`, `timestamp`, `data` (the step payload) |
+| `log_update` | `timestamp`, `data` (the log payload) |
+| `error_notification` | `error_message`, `error_details` |
+| `heartbeat` | `timestamp` only |
+
+Two frames are **not** wrapped, and arrive with the type at the top level:
+`initial_status` (above) and `workflow_cancelled`
+(`{type, job_id, message, timestamp, status: "cancelled"}`).
+
+**Client frames** the server understands: `{"type": "ping", "timestamp": …}`,
+answered with `{"type": "pong", "timestamp": …}`, and `{"type": "subscribe"}`,
+which is logged and otherwise ignored. After 30 s of client silence the server
+sends a bare top-level `{"type": "heartbeat", "timestamp": …}` and keeps waiting.
+Invalid JSON from the client is dropped silently.
 
 ## SDK Examples
 
