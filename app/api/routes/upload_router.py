@@ -1370,6 +1370,11 @@ async def upload_genomic_data(
         logger.info(f"Upload successful for patient {actual_patient_id}, job {job.id}")
         return response
 
+    except HTTPException:
+        # A deliberate status (the 400 above, or one raised by a dependency) is the
+        # answer, not an error to re-wrap: HTTPException is an Exception, so without
+        # this every 4xx left here as a 500.
+        raise
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
@@ -1566,6 +1571,8 @@ async def inspect_file_header(
             if os.path.exists(temp_file.name):
                 os.unlink(temp_file.name)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Header inspection failed: {e}")
         raise HTTPException(
