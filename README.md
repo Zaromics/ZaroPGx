@@ -5,7 +5,7 @@
 
 ---
 ## What ZaroPGx Does
-**ZaroPGx** is a containerized bioinformatic pipeline that **processes genetic data** and generates comprehensive pharmacogenetic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing; **allele calling** with ZaroHLA (OptiType), mtDNA-server-2, PyPGx, and optionally PharmCAT; and report generation via PharmCAT **phenotype matching** with outside calls from up to all three aforementioned tools, unlocking its full panel of 23 core pharmacogenes, with additional coverage for approximately 64 additional pharmacogenes via PyPGx. **Reports generated** include custom Zaromics reports in printer-friendly PDF, and interactive HTML formats, including as well the native PharmCAT HTML report, with raw data outputs available too. Report data will soon be seamlessly exportable to Personal / Electronic Health Records via the bundled HAPI FHIR server. Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when loaded in a local and secure network. Web-facing (public) as well as local (private) deployments are straightforward to configure with the provided environment configuration templates, allowing the software stack to be securely served to users over the web. A bundled reverse proxy or authentication / authorization tool is not yet included, but you can easily add or integrate within or alongside the compose stack according to your specific needs. 
+**ZaroPGx** is a containerized bioinformatic pipeline that **processes genetic data** and generates comprehensive pharmacogenetic reports guided by institutional resources. Nextflow as pipeline executor is used to orchestrate a finite-state algorithmic workflow which integrates GATK & samtools/bcftools preprocessing; **allele calling** with ZaroHLA (OptiType), mtDNA-server-2, PyPGx, and optionally PharmCAT; and report generation via PharmCAT **phenotype matching** with outside calls from up to all three aforementioned tools, unlocking its full panel of 23 core pharmacogenes, with coverage for a further 68 pharmacogenes via PyPGx — 91 in total (`config/genes.json` is the authoritative list). **Reports generated** include custom Zaromics reports in printer-friendly PDF, and interactive HTML formats, including as well the native PharmCAT HTML report, with raw data outputs available too. Report data will soon be seamlessly exportable to Personal / Electronic Health Records via the bundled HAPI FHIR server. Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when loaded in a local and secure network. Web-facing (public) as well as local (private) deployments are straightforward to configure with the provided environment configuration templates, allowing the software stack to be securely served to users over the web. A bundled reverse proxy or authentication / authorization tool is not yet included, but you can easily add or integrate within or alongside the compose stack according to your specific needs. 
 
 ### 🚀 Quickstart -- One-Command Setup
 **Quick and super simple setup script**
@@ -119,8 +119,16 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 ## Get Started
 
-- At this time, reference pre-built docker images are not distributed. As the program approaches v1.0 release, container images will begin to be distributed through Dockerhub.
-- For now, you must clone this repository and build the docker compose stack locally. This should not require any special action on your part, but it will take some time, possibly as long as an hour if your hardware is closer to "minimum" than "preferred" spec.
+- Pre-built images **are** published to Docker Hub under `zaromicsresearch/zaropgx-*`, and
+  `compose.yml` pulls them by default. Pin the tag with `ZAROPGX_TAG` in your `.env` (default
+  `0.2.8`, or `latest` to track the newest). Pre-1.0 tags are development builds — pin one
+  rather than tracking `latest` if you want reproducibility.
+- You still clone this repository: it carries `compose.yml`, the `.env` templates, the database
+  initialization SQL and the Nextflow pipeline. What you no longer have to do is build.
+- Building locally remains fully supported and is the fallback for any change to the source:
+  add `--build` to `docker compose up`. Budget real time for it — possibly an hour or more if
+  your hardware is closer to "minimum" than "preferred" spec. Even when pulling, the first start
+  takes ~8-15 minutes while PharmCAT downloads its GRCh38 reference data.
 
 ### One-Command Setup
 
@@ -184,23 +192,38 @@ If you prefer more control or want to customize the installation:
    
    For personal and home (LAN) use, a local deployment is recommended
    
+   All three templates are tracked and carry the same set of keys; they differ only in values.
+   `SECRET_KEY` and `DB_PASSWORD` ship **blank on purpose** — `start-docker.sh` /
+   `start-docker.ps1` generate a per-install value on first run. Leave them blank unless you are
+   managing secrets yourself, and never rotate `DB_PASSWORD` once the `zaropgx_pgdata` volume
+   exists unless you also `ALTER ROLE`.
+
    **Local Development (default):** Your typical template for personal / home use
    ```bash
    cp .env.local .env
-   # edit .env as needed (at minimum set SECRET_KEY)
+   # BIND_ADDRESS=8765, subnet 172.20.0.0/16, LOG_LEVEL=DEBUG
    ```
    
    **Web Deployment:** For hosting an externally accessible service on the web
    ```bash
    cp .env.production .env
-   # edit .env as needed (set all Keys to a secure string)
+   # BIND_ADDRESS=0.0.0.0:8765, subnet 172.28.0.0/16, LOG_LEVEL=INFO
    ```
+   Note this template does **not** turn authentication on: it ships `ZAROPGX_AUTH_MODE=open`,
+   and `ZAROPGX_DEV_MODE=false` does not enable auth either. Set
+   `ZAROPGX_AUTH_MODE=password` plus `ZAROPGX_AUTH_PASSWORD` yourself, and front it with a
+   TLS-terminating reverse proxy.
    
    **Custom Configuration:** More complete and in-line documented, for convenience
    ```bash
    cp .env.example .env
    # edit .env as needed
    ```
+
+   Every internal service (`db`, `pharmcat`, `gatk-api`, `pypgx`, `zarohla`,
+   `genome-downloader`, `fhir-server`, `kroki`, `docs`) publishes to
+   `${INTERNAL_BIND_ADDRESS:-127.0.0.1}` — loopback on the Docker host. None of them
+   authenticate, so reach them through an SSH tunnel rather than widening that value.
 
    **Docker Compose configuration** `compose.yml` is tracked in the repository, so you
    already have it and it updates with `git pull`. Do not edit it directly — put your
@@ -255,8 +278,9 @@ If you prefer more control or want to customize the installation:
 
 4. **Access the Main App**
    - Web UI: `http://localhost:8765`
-   - Documentation: `http://localhost:8765/docs`
-   - HAPI FHIR dashboard (optional): `http://localhost:8090`
+   - Interactive API docs (FastAPI/Swagger): `http://localhost:8765/docs`
+   - Project documentation (built Sphinx site, offline): `http://localhost:8765/documentation`
+   - HAPI FHIR dashboard (loopback-bound): `http://localhost:8090`
 
 **Environment Differences:**
 - **Local Development**: Binds to localhost only, uses development subnet
@@ -360,7 +384,9 @@ ZaroPGx/
 ├── docs/                   # Sphinx docs with readthedocs theme (hosted internally, allowing for offline access)
 ├── pipelines/              # Nextflow config
 ├── reference/              # Reference genomes and annotation files
-└── docker-compose.yml      # Docker Compose orchestration instructions, configured via inline flags and with .env file
+├── tests/                  # pytest suite (fast unit/API tests; tests/e2e/ needs Docker)
+├── pyproject.toml          # Python dependencies (locked in uv.lock)
+└── compose.yml             # Docker Compose orchestration; configured via inline flags and the .env file
 ```
 
 ## Report Handling
