@@ -25,10 +25,20 @@ because it was **unreachable under Compose**: ``compose.yml`` gives an
 container and the branch was unconditionally False. Repairing it would also have
 meant a second parser in an image the app-side tests cannot reach.
 
-Nothing is lost: ``app/pharmcat/pharmcat_client.py`` resolves the override with
-the single resolver and posts the resulting file as the ``outside_tsv`` multipart
-part, which the sidecar's remaining branch handles -- and which additionally
-applies the PyPGx->PharmCAT synonym translation the deleted branch skipped.
+Nothing is lost by the deletion: ``app/pharmcat/pharmcat_client.py:614`` resolves
+the override with the single resolver and posts the resulting file as the
+``outside_tsv`` multipart part, which the sidecar's remaining branch handles --
+and which additionally applies the PyPGx->PharmCAT synonym translation the
+deleted branch skipped.
+
+One thing that is *not* true, and is recorded here so nobody reads more into the
+deletion than it earned: the Nextflow lane does not go through that client at
+all. ``pipelines/pgx/main.nf`` POSTs to ``http://pharmcat:5000/genotype``
+directly with an ``outside_tsv`` assembled from PyPGx and HLA output only, so on
+the primary production path a manual ``lexicon/outside_calls.tsv`` is applied by
+neither side. That gap pre-dates this change -- the deleted branch was inert
+because the variable never reached the container -- and closing it is its own
+piece of work in the Nextflow lane, not a side effect of removing dead code.
 """
 
 from __future__ import annotations

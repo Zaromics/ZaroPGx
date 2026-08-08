@@ -103,9 +103,9 @@ def _warn_about_unopened_logs(log):
     """Say loudly, once logging works, which destinations were skipped."""
     for path, exc in _log_file_errors:
         log.warning(
-            "Could not open log file %s (%s) - logging to console only. Inside the "
-            "container this means the shared volume is not mounted, and the main app "
-            "will not see this service's progress.",
+            "Could not open log file %s (%s) - logging to console only. If that path "
+            "is on /data, the shared volume is not mounted and the main app will not "
+            "see this service's progress; stdout still carries the full stream.",
             path,
             exc,
         )
@@ -235,18 +235,23 @@ def safe_upload_name(filename, local_job_id):
     like `x;touch /tmp/pwned;.bam` is stored happily and then means something to any
     shell the path reaches.
 
-    werkzeug's secure_filename would be the obvious reuse (app/main.py:708 already
-    uses it on the internet-facing route), but werkzeug is not installed in this
-    image -- see Dockerfile.gatk-api, which installs only fastapi, uvicorn, httpx,
-    requests, psutil and python-multipart. Rather than add a dependency or hand-roll
-    a filter that has to be right about every metacharacter, the name is rebuilt from
-    parts this module controls:
+    werkzeug's secure_filename would be the obvious reuse, but werkzeug is not
+    installed in this image -- see Dockerfile.gatk-api, which installs only fastapi,
+    uvicorn, httpx, requests, psutil and python-multipart. Rather than add a
+    dependency or hand-roll a filter that has to be right about every metacharacter,
+    the name is rebuilt from parts this module controls:
 
       <allowlisted fragment of the original>_<our uuid><extension from the tuple above>
 
     Every byte of the result is therefore either [A-Za-z0-9_-], our own uuid, or one
     of the literal extensions above. The fragment is kept only so logs and on-disk
     debugging still resemble the upload; correctness does not depend on it.
+
+    app/main.py carries a deliberate, behaviourally identical copy of this function
+    (it dropped its bare secure_filename, which returned "" for a name like "...").
+    The two are kept in step by tests/test_upload_name_sanitiser.py, which execs
+    this one out of the source and asserts both return the same name for every
+    entry in an adversarial corpus. Change one and you must change the other.
     """
     original = os.path.basename(filename or "")
     lowered = original.lower()

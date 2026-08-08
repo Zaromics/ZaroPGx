@@ -568,8 +568,10 @@ def test_quickcheck_rejection_is_not_reported_as_success(
 # service sanitises it. On main it was joined straight into a temp path that then
 # reached three separate `shell=True` call sites from /variant-call. gatk-api has
 # no authentication and is reachable from the Docker host (127.0.0.1:5002) and from
-# any container on the compose network, so this was live inside the trust boundary
-# -- the internet-facing route (app/main.py) happens to apply secure_filename first.
+# any container on the compose network, so this was live inside the trust boundary.
+# (app/main.py's route used to apply werkzeug secure_filename, which was weaker
+# still -- it returns "" for "..." -- and now carries a copy of safe_upload_name;
+# see tests/test_upload_name_sanitiser.py.)
 #
 # Both halves are pinned here: the filename is neutralised at the source, and each
 # sink takes argv so the class stays closed whatever a future caller passes.

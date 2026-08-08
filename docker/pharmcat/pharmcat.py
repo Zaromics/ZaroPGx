@@ -102,9 +102,9 @@ def _warn_about_unopened_logs(log):
     """Say loudly, once logging works, which destinations were skipped."""
     for path, exc in _log_file_errors:
         log.warning(
-            "Could not open log file %s (%s) - logging to console only. Inside the "
-            "container this means the shared volume is not mounted, and the main app "
-            "will not see this service's progress.",
+            "Could not open log file %s (%s) - logging to console only. If that path "
+            "is on /data, the shared volume is not mounted and the main app will not "
+            "see this service's progress; stdout still carries the full stream.",
             path,
             exc,
         )
@@ -453,12 +453,23 @@ async def process_genotype(
                 #    and a second parser on the far side of an image boundary,
                 #    where no test can cross-check it against the first.
                 #
-                # The override still works end to end, and through a better path:
-                # app/pharmcat/pharmcat_client.py resolves it with that single
-                # resolver and posts the resulting file as the `outside_tsv`
-                # multipart part, which the branch below handles -- and which also
-                # applies the PyPGx->PharmCAT synonym translation that the deleted
-                # override branch skipped.
+                # Where the override is applied now, stated precisely rather than
+                # as "it still works end to end":
+                #
+                #  * app/pharmcat/pharmcat_client.py:614 resolves it with that single
+                #    resolver and posts the file as the `outside_tsv` multipart part,
+                #    which the branch below handles -- and which also applies the
+                #    PyPGx->PharmCAT synonym translation the deleted branch skipped.
+                #  * The Nextflow path does NOT go through that client.
+                #    pipelines/pgx/main.nf POSTs to http://pharmcat:5000/genotype
+                #    directly, with an `outside_tsv` assembled from PyPGx and HLA
+                #    output only. So on that path -- the primary production path --
+                #    a manual lexicon/outside_calls.tsv is applied by neither side.
+                #
+                # That gap is NOT introduced here: the branch removed above was
+                # already inert, because the variable never reached this container.
+                # It is a real, separate gap in the Nextflow lane and is worth its
+                # own backlog item; deleting dead code is not the place to close it.
                 outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
 
                 if outside_tsv:

@@ -70,9 +70,9 @@ def _warn_about_unopened_logs(log):
     """Say loudly, once logging works, which destinations were skipped."""
     for path, exc in _log_file_errors:
         log.warning(
-            "Could not open log file %s (%s) - logging to console only. Inside the "
-            "container this means the shared volume is not mounted, and the main app "
-            "will not see this service's progress.",
+            "Could not open log file %s (%s) - logging to console only. If that path "
+            "is on /data, the shared volume is not mounted and the main app will not "
+            "see this service's progress; stdout still carries the full stream.",
             path,
             exc,
         )
