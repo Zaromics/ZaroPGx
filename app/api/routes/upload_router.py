@@ -105,12 +105,25 @@ def _env_flag(name: str, default: bool = False) -> bool:
 # day, so this is a stuck-job backstop, not a service-level objective.
 DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS = 86400  # 24 hours
 
+# Statuses that mean somebody else already finished this job. The Nextflow poll is not the
+# only thing that can complete a run (containers report in over JOB_API_BASE, and app.main
+# completes a job once its reports exist), so a deadline must never overwrite one of these.
+TERMINAL_JOB_STATUSES = frozenset(
+    {
+        JobStatus.COMPLETED.value,
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+    }
+)
+
 
 def _nextflow_max_wait_seconds() -> float:
     """How long to wait for a Nextflow job before failing it.
 
-    Override with ``NEXTFLOW_MAX_WAIT_SECONDS`` (seconds). Unusable values fall back to
-    the default rather than disabling the cap, and negative values clamp to 0.
+    Override with ``NEXTFLOW_MAX_WAIT_SECONDS`` (seconds). Anything unusable — blank,
+    unparseable, zero or negative — falls back to the default. Falling back is the safe
+    direction in both senses: the cap is never disabled, and a plausible-looking typo
+    (``0``, which conventionally reads as "no limit") can never fail every job instantly.
     """
     raw = (os.getenv("NEXTFLOW_MAX_WAIT_SECONDS") or "").strip()
     if not raw:
@@ -118,13 +131,15 @@ def _nextflow_max_wait_seconds() -> float:
     try:
         seconds = float(raw)
     except ValueError:
+        seconds = 0.0
+    if seconds <= 0:
         logger.warning(
-            "Invalid NEXTFLOW_MAX_WAIT_SECONDS=%r; using %ss",
+            "Unusable NEXTFLOW_MAX_WAIT_SECONDS=%r; using %ss",
             raw,
             DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS,
         )
         return float(DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS)
-    return max(0.0, seconds)
+    return seconds
 
 
 # Report generation flags
@@ -760,8 +775,31 @@ async def wait_for_nextflow_completion(
 
         while True:
             try:
-                # Give up rather than poll a wedged job forever (BACKLOG 359).
+                # Check if workflow has been cancelled. This read is blocking SQLAlchemy,
+                # so it runs in a worker thread like the status call below; the await
+                # serialises access, so this session is never used by two threads at
+                # once. (The writes further down stay on the loop: they are one-shot on
+                # the way out, not per-iteration.)
+                job = await asyncio.to_thread(job_service.get_job, job_id)
+                if job and job.status == "cancelled":
+                    logger.info(
+                        f"Job {job_id} was cancelled, stopping Nextflow monitoring"
+                    )
+                    break
+
+                # Give up rather than poll a wedged job forever (BACKLOG 359). Checked
+                # after the read above so the deadline can never overwrite a job that
+                # some other path already finished.
                 if time.monotonic() >= deadline:
+                    current_status = getattr(job, "status", None)
+                    if current_status in TERMINAL_JOB_STATUSES:
+                        logger.warning(
+                            f"Nextflow wait for job {job_id} hit its "
+                            f"{max_wait_seconds:g}s deadline, but the job is already "
+                            f"{current_status}; leaving that status alone"
+                        )
+                        break
+
                     logger.error(
                         f"Nextflow job {job_key} for job {job_id} exceeded the "
                         f"{max_wait_seconds:g}s wait deadline; marking it failed"
@@ -780,16 +818,6 @@ async def wait_for_nextflow_completion(
                         ),
                     )
                     job_service.log_job_event(job_id, log_data)
-                    break
-
-                # Check if workflow has been cancelled. The DB read is blocking
-                # SQLAlchemy, so it runs in a worker thread like the status call below;
-                # the await serialises access, so this session is never shared.
-                job = await asyncio.to_thread(job_service.get_job, job_id)
-                if job and job.status == "cancelled":
-                    logger.info(
-                        f"Job {job_id} was cancelled, stopping Nextflow monitoring"
-                    )
                     break
 
                 # Check Nextflow job status (off the event loop)
