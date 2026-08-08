@@ -909,7 +909,12 @@
                                     {{ d.phenotype or 'Unknown' }}
                                 </span>
                             </td>
-                            <td>{{ d.activity_score if d.activity_score else '' }}</td>
+                            {# A truthiness test dropped an activity score of 0 --
+                               0.0, Decimal("0.0000") and "0" are all falsy here, and
+                               0 is the Poor Metabolizer end of the scale. Decide
+                               presence numerically; print the raw value so stored
+                               precision survives. Mirrors report_template.html. #}
+                            <td>{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}</td>
                             <td>
                                 {% if d.phenotype and 'Normal' in d.phenotype %}
                                     Standard drug metabolism expected
@@ -1206,12 +1211,15 @@
          style="display:none;">
         
         <!-- Store diplotypes data -->
+        {# data-activity-score carried the same truthiness bug as the visible table:
+           a score of 0 serialised as "", so any consumer of this payload saw a Poor
+           Metabolizer as having no score at all. Same numeric presence test. #}
         {% for d in diplotypes %}
         <div class="diplotype-data"
              data-gene="{{ d.gene }}"
              data-diplotype="{{ d.diplotype }}"
              data-phenotype="{{ d.phenotype }}"
-             data-activity-score="{{ d.activity_score if d.activity_score else '' }}">
+             data-activity-score="{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}">
         </div>
         {% endfor %}
         

@@ -1041,7 +1041,12 @@
                     <td>{{ d.gene }}</td>
                     <td>{{ d.diplotype }}</td>
                     <td>{{ d.phenotype or '' }}</td>
-                    <td>{{ d.activity_score if d.activity_score else '' }}</td>
+                    {# A truthiness test dropped an activity score of 0 -- 0.0,
+                       Decimal("0.0000") and "0" are all falsy here, and 0 is the
+                       Poor Metabolizer end of the scale. Decide presence
+                       numerically, like the Executive Summary above; print the raw
+                       value so stored precision survives. #}
+                    <td>{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}</td>
                     <td>
                         {% if d.phenotype and 'Normal' in d.phenotype %}
                             Standard drug metabolism expected
