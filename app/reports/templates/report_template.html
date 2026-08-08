@@ -992,10 +992,20 @@
         {# 159: run-derived provenance. Outside the execsum_from_tsv branches so it
            renders on both, and inside #exec-summary so the print page-break that
            follows this container does not push it onto the Genetic Results page.
-           Each sentence renders only if its own value resolved. #}
+           Each sentence renders only if its own value resolved.
+
+           `genome_build` is PharmCAT's `matcherMetadata.genomeBuild` -- the build
+           its *allele definitions* are specified on, which is always GRCh38.x. It
+           is NEVER the build of the uploaded file, and this pipeline does not lift
+           over: a GRCh37 upload is matched against GRCh38 definitions and gets the
+           provisional-results alert for exactly that reason. The old copy here
+           ("This sample was analyzed against the {build} reference genome build")
+           read as a claim about the upload and so silently contradicted that alert
+           two pages earlier. Do not shorten it back: the sentence must name whose
+           build this is and disclaim the file's. #}
         {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
         <p class="run-provenance">
-            {% if genome_build %}This sample was analyzed against the {{ genome_build }} reference genome build.{% endif %}
+            {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, which are specified on the {{ genome_build }} reference assembly. That is the build of PharmCAT's definition data, not the reference build of the uploaded file; any concern about this file's own build is raised under Alerts and Warnings.{% endif %}
             {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
             {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
         </p>
