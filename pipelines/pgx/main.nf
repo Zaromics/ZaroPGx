@@ -26,10 +26,15 @@ params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 // It is a no-op for vcf/bam input (no GATK process is invoked) and rejected for
 // fastq/cram/sam, where there is no non-GATK route to a BAM - see the guard below.
 params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
-// skip_report is the ZaroPGx custom-report toggle. Report rendering happens app-side
-// (app/reports/generator.py), not in this pipeline, so there is no process here to
-// gate; the param is declared and carried so the runner's flag is not silently
-// swallowed and shows up in the run's resolved params.
+// skip_report is the ZaroPGx custom-report toggle. NOT YET IMPLEMENTED: nothing
+// honours it. It is carried this far only so the app can stop silently dropping it -
+// declared on NextflowRunRequest, emitted on the argv, and declared here so it shows
+// up in the run's resolved params. There is no report process in this pipeline to
+// gate. The gate belongs app-side, in upload_router.py's final-stages handler
+// (_handle_final_stages_progression_sync), which today calls generate_report()
+// unconditionally; needs_report currently suppresses only the step template in
+// app/services/workflow_registry.py. Until that handler gates on it, unticking
+// Report still produces a report.
 params.skip_report    = params.skip_report != null ? params.skip_report : false
 params.sample_identifier = params.sample_identifier ?: ''
 params.pharmcat_absent_to_ref = params.pharmcat_absent_to_ref ?: 'false'

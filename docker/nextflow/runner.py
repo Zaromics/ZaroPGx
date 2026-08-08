@@ -31,6 +31,7 @@ PROGRESS_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB per file
 PROGRESS_LOG_BACKUP_COUNT = 5  # 60 MB ceiling for the whole set
 
 _log_handlers = [logging.StreamHandler()]  # Console output
+_progress_log_error = None
 try:
     _log_handlers.append(
         RotatingFileHandler(
@@ -39,10 +40,12 @@ try:
             backupCount=PROGRESS_LOG_BACKUP_COUNT,
         )  # Progress log accessible to main app
     )
-except OSError:
+except OSError as exc:
     # /data only exists inside the container; outside it, log to console only so the
     # module stays importable (tests exercise the request model and argv builder).
-    pass
+    # In the container this path means the shared volume is missing - say so loudly
+    # rather than degrading to console-only in silence.
+    _progress_log_error = exc
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,6 +53,15 @@ logging.basicConfig(
     handlers=_log_handlers
 )
 logger = logging.getLogger("nextflow")
+
+if _progress_log_error is not None:
+    logger.warning(
+        "Could not open progress log %s (%s) - logging to console only. "
+        "Inside the container this means the /data volume is not mounted, and the "
+        "main app will not see pipeline progress.",
+        PROGRESS_LOG_PATH,
+        _progress_log_error,
+    )
 
 app = FastAPI(title="Nextflow Pipeline Runner", version="0.2.8", description="REST API wrapper around Nextflow for the ZaroPGx pipeline")
 app.add_middleware(
@@ -179,6 +191,25 @@ async def run(request: NextflowRunRequest):
         "message": "Nextflow job started"
     }
 
+def summarize_nextflow_failure(stdout: Optional[str], stderr: Optional[str], tail: int = 1000) -> str:
+    """Build the user-facing reason a Nextflow run failed.
+
+    Nextflow writes its console output to stdout - including the text of any
+    error() raised by the pipeline itself, such as the skip_gatk guard in
+    main.nf. stderr usually carries nothing but the 'a newer version is
+    available' nag. Reporting stderr alone therefore handed the user an upgrade
+    advertisement as the reason their job failed; stdout has to be included or
+    the guard's message never reaches them (406).
+
+    Both streams are kept and each is truncated to its tail, because whatever
+    ended the run is at the end of it.
+    """
+    parts = []
+    for label, stream in (('stdout', stdout), ('stderr', stderr)):
+        if stream and stream.strip():
+            parts.append(f"{label}:\n{stream.strip()[-tail:]}")
+    return "\n\n".join(parts) if parts else "Unknown error"
+
 def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false'):
     """Build the Nextflow argv. Pure and side-effect free so it can be unit tested.
 
@@ -274,7 +305,7 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
                 else:
                     running_jobs[job_key]["status"] = "failed"
                     running_jobs[job_key]["message"] = f"Nextflow pipeline failed with return code {proc.returncode}"
-                    running_jobs[job_key]["error"] = stderr[-1000:] if stderr else "Unknown error"
+                    running_jobs[job_key]["error"] = summarize_nextflow_failure(stdout, stderr)
                 
                 running_jobs[job_key]["end_time"] = datetime.now(timezone.utc).isoformat()
                 running_jobs[job_key]["returncode"] = proc.returncode

@@ -154,6 +154,33 @@ def test_upload_payload_skip_keys_all_exist_on_the_request_model():
     assert posted <= fields, f"posted but undeclared: {sorted(posted - fields)}"
 
 
+def test_failure_summary_surfaces_the_pipeline_error_not_the_version_nag():
+    """Nextflow writes error() text to stdout; stderr carries the upgrade nag."""
+    stdout = "N E X T F L O W  ~  version 25.04.7\n--skip_gatk is not compatible"
+    stderr = "Nextflow 26.04.6 is available - please consider updating"
+    summary = runner.summarize_nextflow_failure(stdout, stderr)
+    assert "--skip_gatk is not compatible" in summary
+    assert "26.04.6" in summary, "stderr must be kept too, not traded away"
+
+
+def test_failure_summary_keeps_the_tail_and_handles_empty_streams():
+    summary = runner.summarize_nextflow_failure("x" * 50 + "TAIL", "", tail=10)
+    assert "TAIL" in summary
+    assert len(summary) < 40, "stdout must be tail-truncated"
+    assert runner.summarize_nextflow_failure(None, None) == "Unknown error"
+    assert runner.summarize_nextflow_failure("   ", "  ") == "Unknown error"
+
+
+def test_main_nf_is_honest_that_skip_report_is_not_wired_yet():
+    """The param is carried, not honoured; the comment must not imply otherwise."""
+    text = MAIN_NF.read_text(encoding="utf-8")
+    start = text.index("params.skip_report")
+    block = text[max(0, start - 800) : start]
+    assert "NOT YET IMPLEMENTED" in block
+    assert "upload_router" in block, "name the real location of the missing gate"
+    assert "app/reports/generator.py" not in block, "generator.py does not honour it"
+
+
 def test_main_nf_declares_all_four_skip_params():
     text = MAIN_NF.read_text(encoding="utf-8")
     for flag in SKIP_FLAGS:
