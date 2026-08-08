@@ -672,18 +672,18 @@ class FileProcessor:
                 elif reference != "unknown":
                     workflow["unsupported"] = True
                     workflow["unsupported_reason"] = (
-                        f"This VCF file is aligned to the {vcf_info.reference_genome} reference genome. "
-                        "ZaroPGx analyses GRCh38/hg38 VCF files only, so this file cannot be analysed as uploaded. "
-                        "Convert it to GRCh38/hg38 yourself and upload it again to proceed."
+                        f"ZaroPGx supports GRCh38/hg38 VCF files only. This file is aligned to {vcf_info.reference_genome}, "
+                        "so any results are provisional and should not be relied on. "
+                        "Convert the file to GRCh38/hg38 yourself and upload it again for reliable results."
                     )
                     workflow["warnings"].append(
-                        f"<p>⚠️ This file is aligned to the {vcf_info.reference_genome} reference genome. ZaroPGx only analyses GRCh38/hg38 VCF files, so this file will not be analysed.</p>"
+                        f"<p>⚠️ This file is aligned to the {vcf_info.reference_genome} reference genome. ZaroPGx supports GRCh38/hg38 VCF files only, so any results for this file are provisional and should not be relied on.</p>"
                     )
                     workflow["recommendations"].append(
-                        "<p>To have this sample analysed, convert the VCF file to the GRCh38/hg38 reference genome yourself (a process known as liftover) before uploading it.</p>"
+                        "<p>For reliable results, convert the VCF file to the GRCh38/hg38 reference genome yourself (a process known as liftover) before uploading it.</p>"
                     )
                     workflow["recommendations"].append(
-                        "<p>GRCh38/hg38 VCF files are supported: once this file has been converted, upload the GRCh38/hg38 version to proceed with analysis.</p>"
+                        "<p>GRCh38/hg38 VCF files are fully supported: upload the GRCh38/hg38 version of this file for non-provisional results.</p>"
                     )
                     workflow["warnings"].append(
                         "<p>⚠️ Converting a VCF file between reference genomes (liftover) can introduce coordinate or genotype errors, so a converted file's results may differ from a file sequenced and called directly against GRCh38/hg38.</p>"

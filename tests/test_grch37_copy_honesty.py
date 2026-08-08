@@ -6,25 +6,40 @@ Step 1", "bcftools' liftover is used") even though app/api/utils/liftover.py
 has zero callers anywhere in app/, docker/, or pipelines/. Nothing lifts the
 file over.
 
+Round 1 of this fix overcorrected into a second lie: it said the file
+"cannot be analysed" / "will not be analysed". In fact nothing in the repo
+gates on `unsupported` (every read of it -- app/api/models.py,
+upload_router.py, index.html -- is display-only), so a GRCh37 upload still
+runs header_analysis -> pypgx -> PharmCAT -> report_generation and the user
+gets a report. `workflow["is_provisional"] = True`, six lines below the
+reason string, is this codebase's own flag for "we *did* analyse it,
+provisionally" -- the designed intent is "analyse provisionally", not
+"refuse". The copy must be true of *that* behaviour: GRCh38/hg38 is the only
+build ZaroPGx fully supports, so results for any other build are provisional
+and should not be relied on, and the user should convert the file themselves
+for reliable results.
+
 These tests pin the emitted, user-visible strings (recommendations, warnings,
-unsupported_reason) to the truth: the file is not GRCh38/hg38, ZaroPGx
-analyses GRCh38/hg38 only, the file will not be analysed as uploaded, and the
-user must convert it themselves before uploading. They assert on the actual
-returned strings, not on source text, so a future regression back to
-promise-shaped copy is caught even if the exact wording changes.
+unsupported_reason) to that truth. They assert on the actual returned
+strings, not on source text, so a future regression back to promise-shaped
+copy -- or back to a false "not analysed" claim -- is caught even if the
+exact wording changes.
 """
 
 from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
 from app.api.utils.file_processor import FileAnalysis, FileProcessor
 
 # Phrases that must never appear in user-visible workflow copy. Each pins down
-# one specific lie that existed at f4e1bb6 in app/api/utils/file_processor.py.
+# one specific lie that existed at f4e1bb6, or was introduced by round 1 of
+# this very fix, in app/api/utils/file_processor.py.
 _FORBIDDEN_SUBSTRINGS = [
     "(to do)",  # internal marker leaking into user-visible HTML
     "will be converted",  # promises ZaroPGx performs the liftover itself
     "will be re-aligned",
     "will be realigned",
     "it will proceed",  # implies an automatic pipeline step that doesn't exist
+    "not be analys",  # catches "will/cannot/won't/should ... be analysed|analyzed":
+    # the pipeline DOES run and DOES produce a (provisional) report
 ]
 
 
@@ -71,6 +86,20 @@ def test_grch37_upload_is_marked_unsupported_with_grch38_only_reason():
     assert "GRCh37" in reason  # tells the user which build their file actually is
     assert "GRCh38" in reason or "hg38" in reason
     assert "only" in reason.lower()  # names GRCh38-only support, not a mere preference
+
+
+def test_grch37_upload_stays_provisional_not_refused():
+    # Pins the property an independent reviewer caught round 1 contradicting:
+    # is_provisional=True means the designed behaviour is "analyse it
+    # anyway, but mark the results provisional" -- not "refuse to analyse".
+    # unsupported_reason must say so, in those terms, not claim analysis
+    # is skipped.
+    workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
+    assert workflow["unsupported"] is True
+    assert workflow["is_provisional"] is True
+    reason = workflow["unsupported_reason"]
+    assert "provisional" in reason.lower()
+    assert "not be relied on" in reason.lower() or "not be reliable" in reason.lower()
 
 
 def test_grch37_upload_copy_contains_no_internal_markers_or_false_promises():
