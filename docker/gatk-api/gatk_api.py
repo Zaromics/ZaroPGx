@@ -125,6 +125,17 @@ try:
 except Exception:
     pass
 
+# Which assembly each reference name denotes. hg38 and grch38 are the same build
+# (and here the same FASTA); hg19 and grch37 are the same build under different
+# contig naming. Comparing builds rather than names keeps the CRAM reference check
+# below from rejecting a caller who said "grch38" over a header that reads hg38.
+REFERENCE_BUILDS = {
+    'hg19': 'GRCh37',
+    'grch37': 'GRCh37',
+    'hg38': 'GRCh38',
+    'grch38': 'GRCh38',
+}
+
 # Map reference genome names to file paths
 REFERENCE_PATHS = {
     'hg19': os.path.join(REFERENCE_DIR, 'hg19', 'ucsc.hg19.fasta'),
@@ -734,9 +745,15 @@ def detect_reference(file_path, default_reference='hg38'):
         if file_ext in ['.bam', '.cram', '.sam']:
             try:
                 logger.info(f"Falling back to samtools for reference detection")
-                # Use samtools to get the header
-                cmd = f"samtools view -H {file_path}"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                # Use samtools to get the header. List argv, not shell=True: file_path
+                # is built from an uploaded filename, and the conversion routes now
+                # call this function, so a name like `a;rm -rf /.cram` would otherwise
+                # reach /bin/sh.
+                result = subprocess.run(
+                    ["samtools", "view", "-H", file_path],
+                    capture_output=True,
+                    text=True,
+                )
                 if result.returncode == 0:
                     header = result.stdout
                     
@@ -1234,6 +1251,29 @@ def conversion_output_dir(local_job_id, job_id=None, patient_id=None):
     return output_dir
 
 
+# Things samtools can say on stderr while still exiting 0, which must nonetheless
+# sink the conversion. htslib downgrades some genuinely corrupting conditions to a
+# warning -- anything about the reference above all, since a CRAM decoded against the
+# wrong or an unfetchable reference yields real-looking records with wrong bases.
+STDERR_FATAL_MARKERS = (
+    ("[e::", "an htslib error"),
+    ("reference", "a reference problem"),
+    ("@sq", "a sequence-dictionary problem"),
+    ("md5", "a reference checksum problem"),
+    ("truncat", "a truncated file"),
+    ("corrupt", "a corrupt file"),
+)
+
+
+def _fatal_stderr(stderr):
+    """Return a description of the fatal complaint in `stderr`, or None if benign."""
+    haystack = (stderr or "").lower()
+    for marker, description in STDERR_FATAL_MARKERS:
+        if marker in haystack:
+            return description
+    return None
+
+
 def _looks_like_bam(path):
     """A real BAM is BGZF-framed, so it opens with the gzip magic bytes.
 
@@ -1275,6 +1315,16 @@ def run_samtools_conversion(job_label, argv, output_bam):
     if result.returncode != 0:
         _discard_output(output_bam)
         message = f"{argv[1]} failed with exit code {result.returncode}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    fatal = _fatal_stderr(stderr)
+    if fatal:
+        _discard_output(output_bam)
+        message = (
+            f"samtools {argv[1]} exited 0 but reported {fatal}: {stderr}. "
+            "Refusing to treat this output as a valid conversion."
+        )
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
@@ -1320,6 +1370,45 @@ def run_samtools_conversion(job_label, argv, output_bam):
     size = os.path.getsize(output_bam)
     logger.info(f"Job {job_label}: wrote {output_bam} ({size} bytes)")
     return size
+
+
+def verify_reference_matches(job_label, input_path, reference_genome):
+    """Reject a CRAM whose header disagrees with the reference the caller asked for.
+
+    `reference_genome` is a user-supplied form field that reaches this service
+    unvalidated (app/api/routes/upload_router.py takes it from the upload form and
+    passes it through Nextflow). Everything upstream only checks that the named
+    reference *exists*, never that it is the right one for this file -- so an hg19
+    CRAM converted against the hg38 FASTA is the one remaining way this module can
+    produce a wrong BAM rather than no BAM.
+
+    In practice htslib usually errors out on its own, because the @SQ SN/LN records
+    will not match. That is not guaranteed though -- M5 is optional in SAM -- so this
+    is a deliberate belt-and-braces check in front of it.
+
+    Inconclusive detection is not an error: detect_reference() only recognises a
+    couple of assemblies, and refusing everything it cannot name would break
+    legitimate conversions.
+    """
+    detected = detect_reference(input_path, default_reference=None)
+    if not detected:
+        logger.info(f"Job {job_label}: reference not determinable from header; proceeding")
+        return
+
+    wanted_build = REFERENCE_BUILDS.get((reference_genome or "").lower())
+    detected_build = REFERENCE_BUILDS.get(detected.lower())
+    if not wanted_build or not detected_build or wanted_build == detected_build:
+        logger.info(f"Job {job_label}: header reference {detected} agrees with {reference_genome}")
+        return
+
+    message = (
+        f"Reference mismatch: the file's header indicates {detected} "
+        f"({detected_build}) but the request asked for {reference_genome} "
+        f"({wanted_build}). Converting against the wrong reference produces a BAM "
+        f"with incorrect coordinates, so this is refused rather than converted."
+    )
+    logger.error(f"Job {job_label}: {message}")
+    raise HTTPException(status_code=400, detail=message)
 
 
 def read_sort_order(job_label, input_path, reference_path=None):
@@ -1402,6 +1491,50 @@ def index_output_bam(job_label, output_bam):
     return index_path
 
 
+def count_records(job_label, output_bam, index_path):
+    """Return the number of alignment records in an indexed BAM.
+
+    Reads `samtools idxstats`, which answers from the .bai rather than by streaming
+    the BAM, so this is cheap even on a whole genome.
+
+    Zero is treated as fatal by the caller. A header-only BAM passes every other gate
+    here -- non-empty, BGZF-framed, quickcheck-clean, indexable -- and then reads
+    downstream as "no variants found" rather than "the input was empty". Those are
+    very different clinical statements, and this pipeline has no legitimate use for
+    an empty alignment: the input is a patient's sequencing data, so zero records
+    means a truncated or wrong upload, never a real negative result.
+    """
+    argv = ["samtools", "idxstats", output_bam]
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _discard_output(index_path)
+        _discard_output(output_bam)
+        message = f"could not count records in {output_bam} ({exc})"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if result.returncode != 0:
+        stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        _discard_output(index_path)
+        _discard_output(output_bam)
+        message = f"samtools idxstats failed with exit code {result.returncode}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    total = 0
+    for line in (result.stdout or b"").decode("utf-8", errors="replace").splitlines():
+        fields = line.split("\t")
+        if len(fields) < 4:
+            continue
+        try:
+            # mapped + unmapped; the trailing '*' row carries unplaced reads.
+            total += int(fields[2]) + int(fields[3])
+        except ValueError:
+            continue
+    return total
+
+
 def convert_to_indexed_bam(job_label, input_path, output_bam, work_dir, reference_path=None):
     """Convert SAM/CRAM to a coordinate-sorted, indexed BAM.
 
@@ -1452,7 +1585,22 @@ def convert_to_indexed_bam(job_label, input_path, output_bam, work_dir, referenc
 
     size = run_samtools_conversion(job_label, argv, output_bam)
     index_path = index_output_bam(job_label, output_bam)
-    return size, index_path, needs_sort
+
+    records = count_records(job_label, output_bam, index_path)
+    if records == 0:
+        _discard_output(index_path)
+        _discard_output(output_bam)
+        message = (
+            f"The conversion produced a valid but empty BAM (0 alignment records) "
+            f"from {os.path.basename(input_path)}. That is a truncated or wrong "
+            f"input, not a negative result -- shipping it would read downstream as "
+            f"'no variants found'."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=422, detail=message)
+
+    logger.info(f"Job {job_label}: {records} alignment records")
+    return size, index_path, needs_sort, records
 
 
 async def _fail_step(job_client, message):
@@ -1486,29 +1634,41 @@ async def align_fastq(
     a prebuilt reference index and a large-RAM profile, none of which this image
     carries. Until that lands this endpoint refuses instead of inventing an
     alignment: it used to write a 21-byte ASCII placeholder to a `.bam` and answer
-    `success: true`, and pipelines/pgx/main.nf copied that placeholder forward as a
-    real alignment for HLA calling, PyPGx and GATK (BACKLOG 0 / 51 / 112 / 113).
+    `success: true` (BACKLOG 0 / 51 / 112 / 113). Implementing alignment for real is
+    tracked as BACKLOG 3 / 112.
 
-    501 only makes this service agree with the layer in front of it:
-    app/api/utils/file_processor.py already sets workflow["unsupported"] = True for
-    FileType.FASTQ at ingest, so no supported upload path reaches this route.
-    Implementing alignment for real is tracked as BACKLOG 3 / 112.
+    FASTQ uploads DO reach this route. app/api/utils/file_processor.py sets
+    workflow["unsupported"] = True for FileType.FASTQ, but that flag is advisory:
+    app/api/routes/upload_router.py only copies it into the response and the job
+    metadata, and no guard anywhere skips the Nextflow submission. So a user who
+    uploads a FASTQ gets a job that runs, reaches pipelines/pgx/main.nf's FastqToBAM
+    process, and fails here. Refusing is still right -- the alternative is a
+    fabricated BAM -- but it is a refusal on a live path, not a formality behind a
+    closed door.
 
-    No JobClient step is opened here, so nothing is left hanging in the job record;
-    the caller's process fails on the 501.
+    Because the failure is real and user-visible, a JobClient step is opened and
+    failed with the reason, so the operator sees why the job stopped instead of a
+    bare "exit status (1)" from Nextflow.
     """
+    detail = (
+        "FASTQ alignment is not implemented: this service ships no aligner. "
+        "ZaroPGx accepts FASTQ at upload but cannot process it end to end. Align "
+        "the reads outside ZaroPGx and upload the resulting BAM, CRAM or VCF."
+    )
     logger.warning(
         f"Refused /align-fastq for {file.filename}: FASTQ alignment is not implemented"
     )
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "FASTQ alignment is not implemented. This service has no aligner, and "
-            "FASTQ uploads are already rejected as unsupported at ingest "
-            "(app/api/utils/file_processor.py). Align the reads outside ZaroPGx and "
-            "upload the resulting BAM, CRAM or VCF instead."
-        ),
-    )
+
+    # Best effort: a dead job server must not turn the 501 into something else.
+    if job_id:
+        try:
+            job_client = JobClient(job_id=job_id, step_name=step_name)
+            await job_client.start_step(f"FASTQ alignment requested for {file.filename}")
+            await _fail_step(job_client, detail)
+        except Exception as exc:
+            logger.warning(f"Could not record the FASTQ refusal on job {job_id}: {exc}")
+
+    raise HTTPException(status_code=501, detail=detail)
 
 
 @app.post("/cram-to-bam")
@@ -1588,6 +1748,11 @@ async def cram_to_bam(
 
         logger.info(f"Job {local_job_id}: Saved CRAM file to {input_path}")
 
+        # The caller picked the reference; check the file agrees before decoding it.
+        await asyncio.to_thread(
+            verify_reference_matches, local_job_id, input_path, reference_genome
+        )
+
         # Update workflow with file information
         if job_client:
             file_size = os.path.getsize(input_path)
@@ -1599,7 +1764,7 @@ async def cram_to_bam(
         # to_thread, not a bare call: converting a whole-genome CRAM takes minutes to
         # hours, and a blocking subprocess here would stall the event loop -- taking
         # /health, and therefore the container's healthcheck, down with it.
-        bam_size, index_path, sorted_here = await asyncio.to_thread(
+        bam_size, index_path, sorted_here, records = await asyncio.to_thread(
             convert_to_indexed_bam,
             local_job_id,
             input_path,
@@ -1615,6 +1780,7 @@ async def cram_to_bam(
                 "bam_size_bytes": bam_size,
                 "bam_index": index_path,
                 "sorted": sorted_here,
+                "records": records,
                 "reference_genome": reference_genome
             })
             await job_client.complete_step("CRAM to BAM conversion completed successfully")
@@ -1627,6 +1793,7 @@ async def cram_to_bam(
             "bam_index": index_path,
             "bam_size_bytes": bam_size,
             "sorted": sorted_here,
+            "records": records,
             "message": f"Converted {filename} to a coordinate-sorted, indexed BAM"
         }
 
@@ -1712,7 +1879,7 @@ async def sam_to_bam(
 
         # Offloaded for the same reason as the CRAM route: do not block the loop.
         # No reference is passed: SAM carries its own @SQ header.
-        bam_size, index_path, sorted_here = await asyncio.to_thread(
+        bam_size, index_path, sorted_here, records = await asyncio.to_thread(
             convert_to_indexed_bam,
             local_job_id,
             input_path,
@@ -1727,7 +1894,8 @@ async def sam_to_bam(
                 "output_bam": output_bam,
                 "bam_size_bytes": bam_size,
                 "bam_index": index_path,
-                "sorted": sorted_here
+                "sorted": sorted_here,
+                "records": records
             })
             await job_client.complete_step("SAM to BAM conversion completed successfully")
 
@@ -1739,6 +1907,7 @@ async def sam_to_bam(
             "bam_index": index_path,
             "bam_size_bytes": bam_size,
             "sorted": sorted_here,
+            "records": records,
             "message": f"Converted {filename} to a coordinate-sorted, indexed BAM"
         }
 

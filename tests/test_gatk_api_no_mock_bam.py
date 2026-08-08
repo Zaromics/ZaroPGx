@@ -124,6 +124,10 @@ class FakeSamtools:
         self.calls = []
         # subcommand -> (returncode, stderr). Note "view" covers the header probe too.
         self.fail = {}
+        # idxstats rows: (name, length, mapped, unmapped)
+        self.idxstats = [("chr1", 12, 100, 3), ("*", 0, 0, 7)]
+        # stderr returned by the conversion even when it exits 0
+        self.conversion_stderr = b""
 
     def argvs(self):
         return [
@@ -140,19 +144,37 @@ class FakeSamtools:
         record = {"cmd": cmd, "kwargs": kwargs, "input_bytes": None}
         self.calls.append(record)
 
+        def done(returncode, stdout=b"", stderr=b""):
+            # detect_reference() passes text=True; the conversion helpers do not.
+            # Getting this wrong makes the caller's `str in bytes` blow up and the
+            # detection silently return nothing, which is how a real mismatch would
+            # slip through unnoticed.
+            if kwargs.get("text"):
+                stdout = stdout.decode("utf-8") if isinstance(stdout, bytes) else stdout
+                stderr = stderr.decode("utf-8") if isinstance(stderr, bytes) else stderr
+            return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
         subcommand = argv[1] if len(argv) > 1 else ""
         if subcommand in self.fail:
             code, stderr = self.fail[subcommand]
-            return subprocess.CompletedProcess(cmd, code, stdout=b"", stderr=stderr)
+            return done(code, stderr=stderr)
 
         # `samtools view -H` -- header read, no output file
         if argv[:3] == ["samtools", "view", "-H"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout=self.header, stderr=b"")
+            return done(0, stdout=self.header)
 
         # `samtools index <bam>` -- writes the .bai beside it
         if argv[:2] == ["samtools", "index"]:
             Path(f"{argv[-1]}.bai").write_bytes(b"BAI\x01")
-            return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+            return done(0)
+
+        # `samtools idxstats <bam>` -- record counts, read from the index
+        if argv[:2] == ["samtools", "idxstats"]:
+            rows = "".join(
+                f"{name}\t{length}\t{mapped}\t{unmapped}\n"
+                for name, length, mapped, unmapped in self.idxstats
+            )
+            return done(0, stdout=rows.encode("utf-8"))
 
         # A conversion: snapshot the input now, the work dir is deleted afterwards.
         if argv[:2] in (["samtools", "view"], ["samtools", "sort"]):
@@ -160,7 +182,8 @@ class FakeSamtools:
 
         if "-o" in argv:
             Path(argv[argv.index("-o") + 1]).write_bytes(MINIMAL_BAM)
-        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+            return done(0, stderr=self.conversion_stderr)
+        return done(0)
 
 
 @pytest.fixture()
@@ -260,11 +283,71 @@ def test_align_fastq_leaves_no_bam_behind(client, gatk_api, reference_fasta):
     assert _bam_files(gatk_api) == before
 
 
-def test_align_fastq_docstring_explains_the_501(gatk_api):
+def test_align_fastq_docstring_does_not_claim_ingest_blocks_fastq(gatk_api):
+    """The `unsupported` flag at ingest is advisory, and the docstring must say so.
+
+    app/api/utils/file_processor.py sets workflow["unsupported"] = True for FASTQ, but
+    app/api/routes/upload_router.py only copies that into the response and the job
+    metadata -- no guard skips the Nextflow submission. FASTQ uploads really do reach
+    this route, so a docstring claiming otherwise would be a comfortable falsehood.
+    """
     doc = (gatk_api.align_fastq.__doc__ or "").lower()
     assert "501" in doc
-    # The ingest layer already rejects FASTQ; the 501 only makes the API agree.
-    assert "file_processor" in doc
+    assert "advisory" in doc
+    assert "do reach this route" in doc
+    for false_claim in (
+        "no supported upload path reaches this route",
+        "already rejected as unsupported at ingest",
+    ):
+        assert false_claim not in doc
+
+
+def test_align_fastq_records_the_reason_on_the_job(gatk_api, client, monkeypatch):
+    """A failed job with no recorded reason is a support ticket."""
+    recorded = {}
+
+    class RecordingClient:
+        def __init__(self, job_id=None, step_name=None):
+            recorded["job_id"] = job_id
+            recorded["step_name"] = step_name
+
+        async def start_step(self, message=None):
+            recorded["started"] = message
+
+        async def fail_step(self, message, details=None):
+            recorded["failed"] = message
+
+    monkeypatch.setattr(gatk_api, "JobClient", RecordingClient)
+
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("sample.fastq", b"@r1\nACGT\n+\nIIII\n", "text/plain")},
+        data={"reference_genome": "hg38", "job_id": "job-77"},
+    )
+
+    assert resp.status_code == 501
+    assert recorded["job_id"] == "job-77"
+    assert "started" in recorded
+    assert "not implemented" in recorded["failed"].lower()
+
+
+def test_align_fastq_still_501s_when_the_job_server_is_down(
+    gatk_api, client, monkeypatch
+):
+    """Best-effort reporting must not turn the refusal into something else."""
+
+    class DeadClient:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("job server unreachable")
+
+    monkeypatch.setattr(gatk_api, "JobClient", DeadClient)
+
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("sample.fastq", b"@r1\nACGT\n+\nIIII\n", "text/plain")},
+        data={"reference_genome": "hg38", "job_id": "job-77"},
+    )
+    assert resp.status_code == 501
 
 
 # --------------------------------------------------------------------------
@@ -473,6 +556,166 @@ def test_quickcheck_rejection_is_not_reported_as_success(
 
 
 # --------------------------------------------------------------------------
+# The reference is caller-chosen and must be checked against the file
+#
+# reference_genome is a user-supplied form field that reaches this service
+# unvalidated. Upstream only checks that the named reference exists, never that it
+# is the right one -- the last way this module could produce a wrong BAM rather
+# than no BAM.
+# --------------------------------------------------------------------------
+
+# chr1 lengths are how detect_reference() tells the two builds apart.
+HG38_HEADER = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:248956422\n"
+HG19_HEADER = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:249250621\n"
+
+
+def _post_cram_with_body(client, body, reference_genome="hg38"):
+    return client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", body, "application/octet-stream")},
+        data={"reference_genome": reference_genome},
+    )
+
+
+def test_cram_whose_header_disagrees_with_the_requested_reference_is_refused(
+    client, gatk_api, reference_fasta, samtools
+):
+    """An hg19 CRAM converted against hg38 yields real-looking, wrong coordinates."""
+    samtools.header = HG19_HEADER
+    before = _bam_files(gatk_api)
+
+    resp = _post_cram_with_body(client, HG19_HEADER, reference_genome="hg38")
+
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert "hg19" in detail and "hg38" in detail
+    assert "mismatch" in detail.lower()
+    assert samtools.ran("samtools", "sort") == []
+    assert _bam_files(gatk_api) == before, "nothing may be written on a mismatch"
+
+
+def test_matching_reference_is_accepted(client, gatk_api, reference_fasta, samtools):
+    samtools.header = HG38_HEADER
+    resp = _post_cram_with_body(client, HG38_HEADER, reference_genome="hg38")
+    assert resp.status_code == 200, resp.text
+
+
+def test_reference_aliases_are_not_treated_as_a_mismatch(
+    client, gatk_api, reference_fasta, samtools
+):
+    """grch38 and hg38 name the same build; rejecting that pair is a false alarm."""
+    samtools.header = HG38_HEADER
+    resp = _post_cram_with_body(client, HG38_HEADER, reference_genome="grch38")
+    assert resp.status_code == 200, resp.text
+
+
+def test_undeterminable_reference_does_not_block_the_conversion(
+    client, gatk_api, reference_fasta, samtools
+):
+    """detect_reference() knows only a couple of assemblies; unknown must not fail."""
+    neutral = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:ctg1\tLN:1234\n"
+    samtools.header = neutral
+    resp = _post_cram_with_body(client, neutral, reference_genome="hg38")
+    assert resp.status_code == 200, resp.text
+
+
+def test_reference_detection_never_reaches_a_shell(source):
+    """detect_reference() is now called on uploaded filenames, so no shell=True.
+
+    A filename survives `os.path.basename` with `;` and `$(...)` intact, so handing
+    that path to /bin/sh would be command injection.
+    """
+    body = source[
+        source.index("def detect_reference(") : source.index(
+            '@app.post("/variant-call")'
+        )
+    ]
+    code = "\n".join(
+        line for line in body.splitlines() if not line.strip().startswith("#")
+    )
+    assert not re.search(r"shell\s*=\s*True", code)
+
+
+# --------------------------------------------------------------------------
+# samtools can complain on stderr and still exit 0
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "complaint",
+    [
+        b"[E::cram_get_ref] Failed to populate reference for id 0",
+        b"[W::sam_hdr_create] Reference sequence chr1 not found",
+        b"warning: MD5 checksum mismatch for chr1",
+        b"[W::bam_read1] truncated file",
+    ],
+)
+def test_reference_complaint_on_stderr_is_not_swallowed(
+    client, gatk_api, reference_fasta, samtools, complaint
+):
+    """rc=0 plus a reference complaint means real-looking records with wrong bases."""
+    samtools.conversion_stderr = complaint
+    before = _bam_files(gatk_api)
+
+    resp = _post_cram_with_body(client, HG38_HEADER)
+
+    assert resp.status_code == 500, resp.text
+    assert resp.json().get("success") is not True
+    assert _bam_files(gatk_api) == before
+
+
+def test_benign_stderr_still_succeeds(client, gatk_api, reference_fasta, samtools):
+    """Not every word on stderr is fatal, or nothing would ever convert."""
+    samtools.conversion_stderr = b"[M::bam_sort_core] merging from 2 files"
+    resp = _post_cram_with_body(client, HG38_HEADER)
+    assert resp.status_code == 200, resp.text
+
+
+# --------------------------------------------------------------------------
+# An empty BAM is not a negative result
+# --------------------------------------------------------------------------
+
+
+def test_zero_record_output_is_refused(client, gatk_api, reference_fasta, samtools):
+    """A header-only BAM passes size, magic, quickcheck and index -- and reads
+    downstream as "no variants found" rather than "the input was empty"."""
+    samtools.idxstats = [("chr1", 12, 0, 0), ("*", 0, 0, 0)]
+    before = _bam_files(gatk_api)
+    bai_before = sorted(Path(gatk_api.DATA_DIR).rglob("*.bai"))
+
+    resp = _post_cram_with_body(client, HG38_HEADER)
+
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"].lower()
+    assert "empty" in detail
+    assert "no variants found" in detail, "the clinical misreading must be named"
+    assert _bam_files(gatk_api) == before
+    assert sorted(Path(gatk_api.DATA_DIR).rglob("*.bai")) == bai_before
+
+
+def test_record_count_is_reported_and_read_from_the_index(
+    client, gatk_api, reference_fasta, samtools
+):
+    samtools.idxstats = [("chr1", 12, 100, 3), ("*", 0, 0, 7)]
+    resp = _post_cram_with_body(client, HG38_HEADER)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["records"] == 110
+    # idxstats answers from the .bai, so counting must not stream the BAM.
+    counts = samtools.ran("samtools", "idxstats")
+    assert len(counts) == 1
+    assert samtools.ran("samtools", "view", "-c") == []
+
+
+def test_unplaced_reads_alone_still_count(client, gatk_api, reference_fasta, samtools):
+    """A BAM of only unmapped reads is not empty; it lands in idxstats' '*' row."""
+    samtools.idxstats = [("chr1", 12, 0, 0), ("*", 0, 0, 5)]
+    resp = _post_cram_with_body(client, HG38_HEADER)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["records"] == 5
+
+
+# --------------------------------------------------------------------------
 # Sorting and indexing
 #
 # `samtools index` only works on coordinate-sorted input, and PyPGx, GATK and
@@ -606,13 +849,23 @@ def test_index_failure_is_not_reported_as_success(
 def test_header_probe_reads_only_the_header(
     client, gatk_api, reference_fasta, samtools
 ):
-    """`view -H` on a WGS CRAM must not stream the whole file to decide on sorting."""
+    """`view -H` on a WGS CRAM must not stream the whole file to decide on sorting.
+
+    Two probes run per CRAM: detect_reference()'s reference check and
+    read_sort_order()'s. Both are header-only reads.
+    """
     _post_cram(client, samtools, COORDINATE_HEADER)
 
     probes = [a for a in samtools.ran("samtools", "view") if "-H" in a]
-    assert len(probes) == 1, f"expected one header probe, got {probes}"
-    assert "-o" not in probes[0], "the probe must not write anything"
-    assert probes[0][probes[0].index("-T") + 1] == str(reference_fasta)
+    assert probes, "no header probe ran"
+    for probe in probes:
+        assert "-o" not in probe, "a probe must not write anything"
+        assert "-b" not in probe, "a probe must not decode records"
+
+    # read_sort_order() passes the reference so a CRAM header can be read at all.
+    with_reference = [p for p in probes if "-T" in p]
+    assert with_reference, f"no probe passed the reference: {probes}"
+    assert with_reference[0][with_reference[0].index("-T") + 1] == str(reference_fasta)
 
 
 def test_sam_route_sorts_an_unsorted_sam(client, gatk_api, samtools):
