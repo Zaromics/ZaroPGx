@@ -615,38 +615,59 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
             or patient_id
         )
 
-        # Generate reports using the main report generation function with database integration
-        logger.info(f"Generating reports using main report generation function")
+        # Honour the report toggle here too. needs_report=False already reaches Nextflow
+        # as skip_report=true and drops the report_generation step template
+        # (workflow_registry), so building the reports anyway rebuilt exactly what the
+        # user opted out of. Absent means on: only an explicit opt-out disables it.
+        needs_report = bool(workflow_config.get("needs_report", True))
+        response_data: Dict[str, Any] = {}
 
-        # Get database session for report generation
-        from app.api.db import get_db
+        if needs_report:
+            # Generate reports using the main report generation function with database integration
+            logger.info(f"Generating reports using main report generation function")
 
-        db_session = next(get_db())
+            # Get database session for report generation
+            from app.api.db import get_db
 
-        # Use the main report generation function with database integration
-        from app.reports.generator import generate_report
+            db_session = next(get_db())
 
-        response_data = generate_report(
-            pharmcat_results={"data": pharmcat_data},
-            output_dir=str(patient_dir),  # already nested outdir
-            patient_info={
-                "id": patient_id,
-                "data_id": data_id,
-                "sample_identifier": effective_sample_identifier_reports,
-            },
-            job_id=job_id,
-            db_session=db_session,
-        )
+            # Use the main report generation function with database integration
+            from app.reports.generator import generate_report
 
-        # Update progress: Reports generated (100% of report generation)
-        step_update = JobStepUpdate(
-            status=StepStatus.RUNNING, output_data={"progress_percent": 100}
-        )
-        job_service.update_job_step(job_id, "report_generation", step_update)
+            response_data = generate_report(
+                pharmcat_results={"data": pharmcat_data},
+                output_dir=str(patient_dir),  # already nested outdir
+                patient_info={
+                    "id": patient_id,
+                    "data_id": data_id,
+                    "sample_identifier": effective_sample_identifier_reports,
+                },
+                job_id=job_id,
+                db_session=db_session,
+            )
 
-        # Log report generation completion
-        logger.info(f"Report generation completed for job {job_id}")
-        logger.info(f"Generated reports: {[k for k, v in response_data.items() if v]}")
+            # Update progress: Reports generated (100% of report generation)
+            step_update = JobStepUpdate(
+                status=StepStatus.RUNNING, output_data={"progress_percent": 100}
+            )
+            job_service.update_job_step(job_id, "report_generation", step_update)
+
+            # Log report generation completion
+            logger.info(f"Report generation completed for job {job_id}")
+            logger.info(
+                f"Generated reports: {[k for k, v in response_data.items() if v]}"
+            )
+        else:
+            logger.info(
+                f"Report generation disabled for job {job_id} (needs_report=False); "
+                "skipping report artifacts"
+            )
+            log_data = JobLogCreate(
+                step_name="report_generation",
+                log_level=LogLevel.INFO,
+                message="Report generation skipped: reports were disabled for this job",
+            )
+            job_service.log_job_event(job_id, log_data)
 
         # Add provisional flag if the workflow was marked as provisional
         is_provisional = workflow_config.get("is_provisional", False)
