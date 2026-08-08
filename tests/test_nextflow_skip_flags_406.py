@@ -195,6 +195,43 @@ def test_main_nf_rejects_skip_gatk_for_conversion_inputs():
     assert guard, "main.nf must fail fast when skip_gatk conflicts with input_type"
 
 
+# PyPGxGenotypeAll degrades to PharmCAT-only on purpose; PharmCATRun ends in `|| true`.
+EXEMPT_CURL_ENDPOINTS = ("http://pypgx:5000/genotype", "http://pharmcat:5000/genotype")
+
+
+def _curl_call_sites():
+    text = MAIN_NF.read_text(encoding="utf-8")
+    return text, [
+        line.strip()
+        for line in text.splitlines()
+        if "curl " in line and "http://" in line
+    ]
+
+
+def test_every_curl_call_site_fails_on_http_errors_or_is_annotated_exempt():
+    """Plain curl exits 0 on 4xx/5xx and writes the error doc where a result belongs."""
+    text, calls = _curl_call_sites()
+    assert len(calls) == 8, f"curl call-site count changed to {len(calls)}; re-audit"
+    for call in calls:
+        if any(endpoint in call for endpoint in EXEMPT_CURL_ENDPOINTS):
+            continue
+        assert "--fail-with-body" in call, f"unguarded curl: {call}"
+    # The two exemptions must stay deliberate, not drift into being accidental.
+    assert text.count("DELIBERATELY EXEMPT") == 2
+
+
+def test_guarded_curl_failures_surface_the_server_message():
+    """--fail-with-body is only useful if the body and curl's diagnostic get out."""
+    text, calls = _curl_call_sites()
+    guarded = [call for call in calls if "--fail-with-body" in call]
+    assert len(guarded) == 6, f"{len(guarded)} guarded call sites, expected 6"
+    assert text.count("returned an error:") == 6, "each guarded call must echo the body"
+    # `2>service.log` buried curl's own error in a work-dir file nobody reads; -sS puts
+    # it on stderr, where Nextflow picks it up into .command.err and the error report.
+    for swallowed in ("2>gatk.log", "2>hla.log", "2>pypgx_bam2vcf.log"):
+        assert swallowed not in text, swallowed
+
+
 def test_runner_progress_log_is_size_bounded():
     """252 — /data is a shared volume; the progress log must not grow unbounded."""
     text = RUNNER_PATH.read_text(encoding="utf-8")
