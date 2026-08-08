@@ -24,13 +24,35 @@ from app.services.pharmcat_data_service import PharmCATDataService
 
 logger = logging.getLogger(__name__)
 
-# Environment flag to enable/disable FHIR export functionality
-FHIR_EXPORT_ENABLED = os.getenv("FHIR_EXPORT_ENABLED", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def env_flag(name: str, default: bool) -> bool:
+    """Parse a boolean environment variable, tolerating surrounding whitespace."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in _TRUTHY
+
+
+def fhir_export_enabled() -> bool:
+    """The single source of truth for FHIR_EXPORT_ENABLED.
+
+    Deliberately a function, not a module-level constant. This module is
+    imported from ``app/main.py``'s import block, which runs *before*
+    ``load_dotenv()`` further down that file. A constant evaluated here would
+    therefore snapshot a pre-``.env`` environment, while ``app/main.py`` -- which
+    decides whether to mount the ``/fhir/*`` router -- would read a post-``.env``
+    one. Two readers, two answers, and the router's guard could contradict the
+    mount that put it there.
+
+    Resolving on demand removes the ordering question entirely: every caller
+    reads the same variable through the same parser, and by the time anyone asks
+    (router mounting at the bottom of ``app/main.py``, request handlers, or
+    ``FHIRExportService.is_enabled``) ``load_dotenv()`` has already run.
+    """
+    return env_flag("FHIR_EXPORT_ENABLED", True)
+
 
 # Reports directory - same as other report outputs
 REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
@@ -64,7 +86,7 @@ class FHIRExportService:
 
     def is_enabled(self) -> bool:
         """Check if FHIR export is enabled via environment flag."""
-        return FHIR_EXPORT_ENABLED
+        return fhir_export_enabled()
 
     def export_pgx_report(
         self,

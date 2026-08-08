@@ -20,7 +20,10 @@ from sqlalchemy.orm import Session
 
 from app.api.db import get_db
 from app.api.utils.security import get_optional_user
-from app.services.fhir_export_service import FHIR_EXPORT_ENABLED, FHIRExportService
+from app.services.fhir_export_service import (
+    FHIRExportService,
+    fhir_export_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +78,15 @@ async def fhir_export_status(
     Returns:
         Status of FHIR export feature
     """
+    enabled = fhir_export_enabled()
     return {
-        "enabled": FHIR_EXPORT_ENABLED,
+        "enabled": enabled,
         "message": (
             "FHIR export is enabled"
-            if FHIR_EXPORT_ENABLED
+            if enabled
             else "FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable."
         ),
-        "supported_formats": ["json", "xml"] if FHIR_EXPORT_ENABLED else [],
+        "supported_formats": ["json", "xml"] if enabled else [],
         "implementation_guide": "HL7 Genomics Reporting Implementation Guide (FHIR R4)",
         "reference_url": "https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.html",
     }
@@ -112,7 +116,7 @@ async def export_run_to_fhir(
     Returns:
         FHIR Bundle as JSON or XML file
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -177,7 +181,7 @@ async def export_run_to_fhir_with_patient(
     Returns:
         FHIR Bundle as JSON or XML file
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -249,7 +253,7 @@ async def export_workflow_to_fhir(
     Returns:
         FHIR Bundle as JSON or XML file
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -312,7 +316,7 @@ async def preview_fhir_export(
     Returns:
         FHIR Bundle content and metadata
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -452,7 +456,7 @@ async def save_fhir_export_for_run(
     Returns:
         Information about saved files including paths and URLs
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -519,7 +523,7 @@ async def save_fhir_export_for_workflow(
     Returns:
         Information about saved files including paths and URLs
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
@@ -586,7 +590,7 @@ async def quick_save_fhir_export(
     Returns:
         Information about saved files
     """
-    if not FHIR_EXPORT_ENABLED:
+    if not fhir_export_enabled():
         raise HTTPException(
             status_code=503,
             detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
