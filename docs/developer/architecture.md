@@ -1,5 +1,6 @@
 ---
 title: System Architecture
+curation: partial
 ---
 
 # System Architecture
@@ -93,13 +94,15 @@ graph TB
 ### PostgreSQL Database (`db`)
 
 **Purpose**: Primary data storage
-**Technology**: PostgreSQL 17 (latest stable revision of)
+**Technology**: PostgreSQL 18 (`postgres:18`, per `compose.yml`)
 **Port**: 5444 → 5432
 
 **Schemas:**
 - `public`: Core application data
 - `cpic`: CPIC guidelines and data
-- `fhir`: FHIR r5 genomic IG resources
+- `fhir`: HAPI FHIR server tables. **FHIR R4** — `app/services/fhir_export_service.py` emits
+  HL7 Genomics Reporting IG **R4** bundles and `docs/samples/sample_fhir_r4_pgx_bundle.json`
+  is an R4 bundle. Nothing in the repo targets R5.
 - `user_data`: User and patient data
 - `reports`: Generated reports metadata
 - `phenopackets`: In progress
@@ -141,7 +144,21 @@ graph TB
 - Diplotype and phenotype prediction
 
 **Supported Genes:**
-- see config/genes.json
+- `config/genes.json` is the machine-readable authority: 91 genes total (`sets.all`),
+  `sets.pypgx` = 87, `sets.pharmcat_all` = 23. Derive any other figure from those sets rather
+  than restating it from prose elsewhere.
+
+```{warning}
+Do **not** quote `sets.pypgx_minus_pharmcat` as "genes PyPGx covers beyond the PharmCAT panel".
+Despite the name it is `pypgx − pharmcat_can_call`, not `pypgx − pharmcat_all`: it contains
+CYP2D6, which *is* in `pharmcat_all` (as an outside caller), and omits HLA-C. So
+`pharmcat_all ∪ pypgx_minus_pharmcat` covers 90 genes, not 91, and its length of 68 coincides
+with `all − pharmcat_all` = 68 only by accident.
+
+The true decomposition of the 91: 23 in the PharmCAT panel, 67 more that PyPGx calls
+(`pypgx − pharmcat_all`), and HLA-C, which is in neither set — ZaroHLA/OptiType types it.
+Compute the set difference; do not read the count off the label.
+```
 
 ### GATK API (`gatk-api`)
 
@@ -165,8 +182,8 @@ graph TB
 ### ZaroHLA Typing Service (`zarohla`)
 
 **Purpose**: HLA allele calling
-**Technology**: Nextflow, OptiType
-**Port**: 5055 → 5055
+**Technology**: FastAPI wrapper around OptiType v1.5
+**Port**: 5060 → 5000 (loopback-bound; gated on `OPTITYPE_ENABLED`)
 
 **Key Features:**
 - HLA-A, HLA-B, HLA-C typing
@@ -280,25 +297,38 @@ erDiagram
 see `compose.yml`
 ```
 
+### Supporting Services
+
+Not every service has its own section above. The full inventory in `compose.yml` also includes
+`genome-downloader` (5050, reference fetcher), `kroki` + `mermaid` (8001, diagram rendering),
+`nextflow` (pipeline executor, **never published to the host**) and `docs` (5070, behind the
+`optional` profile). The per-service host bindings are tabulated in
+[Architecture Overview](../architecture.md).
+
 ### Network Architecture
 
 **Bridge Network**: `pgx-network`
-- **Subnet**: 172.28.0.0/16
-- **Gateway**: 172.28.0.1
-- **DNS**: 172.28.0.1
+- **Subnet**: `${NETWORK_SUBNET:-172.28.0.0/16}` — the tracked `.env.local` overrides this to
+  `172.20.0.0/16`, `.env.production` uses the `172.28.0.0/16` default
 
 **Service Communication:**
-- All services communicate via internal network
-- External access only through exposed ports
-- No direct internet access for processing services
+- All services communicate over the internal Compose network by service name
+- The `app` is the only service whose host binding is operator-controlled (`BIND_ADDRESS`);
+  every other published port defaults to `${INTERNAL_BIND_ADDRESS:-127.0.0.1}`, and `nextflow`
+  is not published at all
+- No direct internet access is needed by the processing services once references are fetched
 
 ### Volume Management
 
-**Data Volumes:**
-- `./data`: Shared data directory
+**Bind mounts:**
+- `./data`: Shared data directory (uploads, reports, inter-service artifacts)
 - `./reference`: Reference genome data
-- `postgres_data`: Database persistence
-- `pharmcat_data`: PharmCAT reference data
+
+**Named volumes** (as declared in `compose.yml`):
+- `pgdata`: PostgreSQL persistence, mounted at `/var/lib/postgresql`
+- `pharmcat-references`: PharmCAT's GRCh38 reference cache, mounted at `/pharmcat-references`
+  (deliberately *not* `/pharmcat`, which would mask the image's own pipeline binaries)
+- `fhir-data`: declared but currently unused — `fhir-server` bind-mounts `./data/fhir-data`
 
 **Volume Mounts:**
 - Host directories mounted into containers

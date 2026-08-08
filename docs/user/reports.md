@@ -1,5 +1,6 @@
 ---
 title: Understanding Reports
+curation: partial
 ---
 
 # Understanding Reports

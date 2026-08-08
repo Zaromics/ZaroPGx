@@ -6,6 +6,10 @@ build:
 
 sphinx:
   configuration: docs/conf.py
+  # Orphan pages, broken {doc} targets and duplicate labels are the exact class of rot this
+  # docs set has accumulated before. Fail the build on them rather than burying them in a log.
+  # Classes deliberately excluded from the gate are listed in docs/conf.py:suppress_warnings.
+  fail_on_warning: true
 
 formats:
   - htmlzip

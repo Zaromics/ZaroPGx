@@ -1,15 +1,16 @@
 ---
 title: Supported File Formats
+curation: not
 ---
 
-# Supported File Formats [NEEDS CURATION]
+# Supported File Formats
 
 ZaroPGx supports multiple genomic data formats with automatic conversion and processing.
 
 ## Variant Call Format (VCF)
 VCF is the standard format for storing genetic variant information. ZaroPGx can process VCF 4.x files directly without preprocessing.
 
-### Processing Path
+### Processing Path — VCF
 ```
 VCF → Header Analysis → PyPGx → PharmCAT → Reports
 ```
@@ -17,7 +18,7 @@ VCF → Header Analysis → PyPGx → PharmCAT → Reports
 ## Binary Alignment Map (BAM)
 BAM files contain aligned sequencing reads and are commonly used for variant calling and analysis.
 
-### Processing Path
+### Processing Path — BAM
 ```
 BAM → HLA Typing → PyPGx → PharmCAT → Reports
 ```
@@ -25,7 +26,7 @@ BAM → HLA Typing → PyPGx → PharmCAT → Reports
 ## Compressed BAM (CRAM)
 CRAM is a compressed version of BAM that uses reference-based compression for smaller file sizes.
 
-### Processing Path
+### Processing Path — CRAM
 ```
 CRAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 ```
@@ -33,7 +34,7 @@ CRAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 ## Sequence Alignment Map (SAM)
 SAM is the text-based format for aligned sequences, often used as an intermediate format.
 
-### Processing Path
+### Processing Path — SAM
 ```
 SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 ```
@@ -41,7 +42,7 @@ SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 ## FASTQ Format
 FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses.
 
-### Processing Path
+### Processing Path — FASTQ
 ```
 FASTQ → HLA Typing → GATK (BAM generation) → PyPGx → PharmCAT → Reports
 ```

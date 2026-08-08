@@ -1,5 +1,6 @@
 ---
 title: Troubleshooting Guide
+curation: partial
 ---
 
 # Troubleshooting Guide
@@ -177,8 +178,9 @@ ls -la reference/
 
 **Solutions:**
 ```bash
-# Increase container memory
-# Edit docker-compose.yml
+# Increase container memory.
+# compose.yml is tracked; put overrides in compose.override.yml, which
+# Compose merges automatically.
 services:
   app:
     deploy:
@@ -375,7 +377,7 @@ sudo mkswap /swapfile
 sudo swapon /swapfile
 
 # Optimize container memory
-# Set memory limits in docker-compose.yml
+# Set memory limits in compose.override.yml (compose.yml itself is tracked)
 ```
 
 ## Log Analysis

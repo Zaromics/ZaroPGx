@@ -3,6 +3,8 @@ title: Project To‑Do & Roadmap
 curation: full
 ---
 
+# Project To‑Do & Roadmap
+
 ## Input Format Support Priorities
 
 - **Priority 0   (Supported)**: VCF, GRCh38, NGS-derived
@@ -62,7 +64,7 @@ curation: full
 
 ## Data & Database
 
-- PostgreSQL 17: add extensions; implement schemas
+- PostgreSQL 18: add extensions; implement schemas
 - Adopt JSONB where appropriate; ensure escaping for special characters (done)
 - Begin persisting normalized results; build lexicon layer translating between caller spelling
 - Consolidating reference and sample material (FASTA/CPIC dumps) into a single `references/` area
