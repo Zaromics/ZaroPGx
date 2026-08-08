@@ -1,10 +1,21 @@
-FROM python:3.12-slim
+# Debian release pinned explicitly. `python:3.12-slim` floats across Debian releases,
+# and the apt version of samtools moves with it (bookworm ships 1.16.1-1, trixie
+# 1.21-1). Since gatk_api.py now runs samtools on the clinical data path -- the
+# CRAM/SAM to BAM conversion, its sort and its index -- that drift would silently
+# change results between rebuilds. trixie is what `python:3.12-slim` resolves to
+# today, so this pins current behaviour rather than changing it.
+FROM python:3.12-slim-trixie
 
 LABEL maintainer="ZaroPGx (wrapper only)"
 LABEL description="GATK 4.6.2.0 service for the ZaroPGx pipeline"
 
 # Install system dependencies
 # Note that samtools, bcftools, possibly others, may need to be installed from source
+#
+# samtools is version-pinned because it produces clinical output here. Bump it
+# deliberately, together with the FROM line above; a Debian point release that
+# revises the package will fail this build loudly, which is the intent. bcftools and
+# bedtools are left unpinned: nothing in gatk_api.py invokes them.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
@@ -13,7 +24,7 @@ RUN apt-get update && \
     unzip \
     bcftools \
     bedtools \
-    samtools && \
+    samtools=1.21-1 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
