@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import and_, desc, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.db import Job, JobLog, JobStep
 from app.api.models import (
@@ -736,13 +736,26 @@ class JobService:
                     raise ValueError(f"Invalid job_id format: {job_id}")
 
             # Get the workflow. populate_existing() for the same reason as get_job,
-            # and it matters twice over here: it also refreshes the already-loaded
-            # job.steps collection below. Step rows are written by the container
-            # services through their own request-scoped sessions, so a long-lived
-            # session that has walked job.steps once would otherwise compute
-            # progress from the step statuses it saw the first time, forever.
+            # and selectinload(Job.steps) because populate_existing() alone is NOT
+            # enough for the collection this method reads below.
+            #
+            # populate_existing() only *expires* job.steps. The reload that follows
+            # is an ordinary lazy load, which is served from the identity map, so any
+            # JobStep instance the caller still holds a reference to comes back with
+            # its stale column values. (It looks like it works when nothing holds the
+            # steps: expiring the collection drops the last strong reference, the weak
+            # identity map lets them be collected, and the reload builds fresh objects.
+            # Hold them -- as anything walking job.steps across a poll does -- and the
+            # statuses freeze.) populate_existing() *does* propagate into eager
+            # loaders, so naming the relationship refreshes the held instances in
+            # place. Step rows are written by the container services on their own
+            # request-scoped sessions, so this is the whole point of the method.
             job = (
-                self.db.query(Job).filter(Job.id == job_id).populate_existing().first()
+                self.db.query(Job)
+                .filter(Job.id == job_id)
+                .options(selectinload(Job.steps))
+                .populate_existing()
+                .first()
             )
             if not job:
                 return None

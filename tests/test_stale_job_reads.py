@@ -22,6 +22,12 @@ Two details the tests depend on, and why:
   itself. The poll loop does hold such a reference (its ``job`` local stays bound
   across the ``await asyncio.sleep(5)`` and across the following ``get_job`` call),
   so holding one here is faithful, not a contrivance.
+
+  For ``JobStep`` this needs care: holding the *Job* is **not** enough. Refreshing
+  the Job expires its ``steps`` collection, which drops the last strong reference to
+  the step instances, and they are then collected and reloaded fresh -- which hides
+  the very staleness the test is trying to catch. Tests that care about step values
+  hold ``list(job.steps)`` directly.
 * The tests use ``session_factory`` from ``conftest.py`` directly rather than the
   ``db_session`` fixture, because they need two independent sessions.
 """
@@ -223,16 +229,25 @@ def test_wait_deadline_guard_reads_a_fresh_status(sessions):
 
 
 def test_get_job_progress_sees_step_updates_from_another_session(sessions):
-    """Step rows are written by the container services, on their own sessions."""
+    """Step rows are written by the container services, on their own sessions.
+
+    The ``held_steps`` list is the whole test. Keeping the *Job* alive is not enough:
+    ``populate_existing()`` expires the ``steps`` collection, which drops the last
+    strong reference to the JobStep instances, and the weak identity map then lets
+    them be garbage collected so the reload builds fresh objects. That hides the
+    defect. Holding the instances -- as anything that walks ``job.steps`` across a
+    poll does -- keeps them in the identity map, where a plain lazy reload hands back
+    their stale column values. Only ``selectinload`` + ``populate_existing`` refreshes
+    them in place.
+    """
     job_id = _make_job(sessions())
 
     reader = sessions()
     reader_service = JobService(reader)
 
-    # Walk job.steps so the collection *and* the JobStep instances are cached, and
-    # keep the Job alive so they cannot be garbage collected.
     job = reader_service.get_job(job_id)
-    assert [step.status for step in job.steps] == ["pending"] * len(job.steps)
+    held_steps = list(job.steps)  # strong refs to the ORM instances themselves
+    assert [step.status for step in held_steps] == ["pending"] * len(held_steps)
     before = reader_service.get_job_progress(job_id)
 
     # A container completes its step through its own request-scoped session.
@@ -246,9 +261,9 @@ def test_get_job_progress_sees_step_updates_from_another_session(sessions):
         "get_job_progress computed progress from the step statuses this session "
         "loaded the first time"
     )
-    assert [s.status for s in job.steps if s.step_name == "header_analysis"] == [
+    assert [s.status for s in held_steps if s.step_name == "header_analysis"] == [
         "completed"
-    ]
+    ], "the held JobStep instances were not refreshed in place"
 
 
 def test_get_job_steps_sees_step_updates_from_another_session(sessions):
@@ -256,9 +271,9 @@ def test_get_job_steps_sees_step_updates_from_another_session(sessions):
 
     reader = sessions()
     reader_service = JobService(reader)
-    # Hold the ORM instances alive via the relationship collection.
     job = reader_service.get_job(job_id)
-    _ = [step.status for step in job.steps]
+    held_steps = list(job.steps)  # strong refs, or the reload would build fresh objects
+    assert all(step.status == "pending" for step in held_steps)
 
     worker = sessions()
     JobService(worker).update_job_step(
@@ -269,6 +284,11 @@ def test_get_job_steps_sees_step_updates_from_another_session(sessions):
         step.step_name: step.status for step in reader_service.get_job_steps(job_id)
     }
     assert statuses["header_analysis"] == "completed"
+    # get_job_steps queries JobStep directly, so populate_existing refreshes the held
+    # instances in place -- no eager-load option needed on that path.
+    assert [s.status for s in held_steps if s.step_name == "header_analysis"] == [
+        "completed"
+    ]
 
 
 def test_get_pharmcat_run_id_sees_a_link_made_by_another_session(sessions):
