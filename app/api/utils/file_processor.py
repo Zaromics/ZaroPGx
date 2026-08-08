@@ -500,7 +500,7 @@ class FileProcessor:
         Determine the appropriate workflow based on file analysis.
 
         This method implements the detailed workflow logic from workflow_logic.md:
-        - FASTQ files: alignment with specific tools based on read type and hardware
+        - FASTQ files: refused (no aligner ships with ZaroPGx; see the branch below)
         - CRAM files: conversion to BAM with specific tools and considerations
         - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
         - VCF files: direct PyPGx + PharmCAT with outside calls
@@ -672,7 +672,7 @@ class FileProcessor:
                 "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
             )
             workflow["warnings"].append(
-                "<p>If you have an upstream, or original, datafile, such as FASTQ/BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
+                "<p>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity. (Raw FASTQ reads are not accepted: align them to GRCh38/hg38 yourself first.)</p>"
             )
             workflow["warnings"].append(
                 "<p>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"

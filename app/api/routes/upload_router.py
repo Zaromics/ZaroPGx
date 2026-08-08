@@ -101,7 +101,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 # Wall-clock ceiling for the Nextflow poll loop, in seconds. Generous on purpose: a WGS
-# FASTQ run walks ZaroHLA -> GATK -> PyPGx -> PharmCAT and can legitimately take most of a
+# BAM run walks ZaroHLA -> GATK -> PyPGx -> PharmCAT and can legitimately take most of a
 # day, so this is a stuck-job backstop, not a service-level objective.
 DEFAULT_NEXTFLOW_MAX_WAIT_SECONDS = 86400  # 24 hours
 
