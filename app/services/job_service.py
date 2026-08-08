@@ -794,11 +794,20 @@ class JobService:
             if job.started_at and job.status == JobStatus.RUNNING:
                 # Simple estimation based on current progress
                 if progress_info.progress_percentage > 0:
-                    elapsed = datetime.now(timezone.utc) - job.started_at
+                    # started_at is always written as aware UTC, but comes back naive
+                    # from backends without timezone support (SQLite), and subtracting
+                    # mixed awareness raises TypeError -- which this method wraps into
+                    # RuntimeError, propagating out of _update_job_progress and taking
+                    # the whole update_job_step call down with it. Normalise rather
+                    # than assume the backend, exactly as update_job_step does.
+                    started_at = job.started_at
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
+                    elapsed = datetime.now(timezone.utc) - started_at
                     estimated_total = elapsed / (
                         progress_info.progress_percentage / 100
                     )
-                    estimated_completion = job.started_at + estimated_total
+                    estimated_completion = started_at + estimated_total
 
             return JobProgressResponse(
                 job_id=str(job.id),

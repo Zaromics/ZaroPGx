@@ -402,6 +402,32 @@ def test_completed_steps_written_by_update_job_progress_reaches_the_database(ses
     assert verifier2.query(Job).filter(Job.id == job_id).first().completed_steps == 2
 
 
+def test_get_job_progress_survives_a_running_job_with_started_at(sessions):
+    """The estimated-completion branch must not blow up on a naive ``started_at``.
+
+    Pre-existing, and not caused by the re-read: on a backend without timezone
+    support (SQLite) ``started_at`` comes back naive, and subtracting it from an aware
+    ``datetime.now(timezone.utc)`` raises TypeError. ``get_job_progress`` wraps that
+    into RuntimeError, which ``_update_job_progress`` does not catch, so it propagates
+    and takes the whole ``update_job_step`` call down. Reachable for any RUNNING job
+    with a started_at and non-zero progress -- i.e. every job, for most of its life.
+    """
+    worker = sessions()
+    job_id = _make_job(worker)
+    service = JobService(worker)
+
+    service.update_job(job_id, JobUpdate(status=JobStatus.RUNNING))
+    # This is the call that used to raise, via _update_job_progress.
+    service.update_job_step(
+        job_id, "header_analysis", JobStepUpdate(status=StepStatus.COMPLETED)
+    )
+
+    progress = service.get_job_progress(job_id)
+    assert progress is not None
+    assert progress.progress_percentage > 0
+    assert progress.estimated_completion is not None
+
+
 def test_get_job_still_returns_none_for_an_unknown_id(sessions):
     reader = sessions()
     assert JobService(reader).get_job(uuid.uuid4()) is None
