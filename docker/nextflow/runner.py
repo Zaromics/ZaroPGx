@@ -23,29 +23,66 @@ from sqlalchemy.orm import Session
 # Nextflow is the executor, and only the executor, of the pipeline
 # Individual containers report their own progress; workflow monitoring is not required
 
-# Configure logging
-# /data is the volume shared with the main app, so the progress log has to be size
-# bounded (252) - an unrotated handler here grows until the shared volume fills.
+# --------------------------------------------------------------------------
+# Bounded logging (BACKLOG 252). Same block, same values, same failure
+# behaviour in every ZaroPGx sidecar: docker/gatk-api/gatk_api.py,
+# docker/pharmcat/pharmcat.py, docker/pypgx/pypgx_wrapper.py and
+# docker/zarohla/app.py. tests/test_log_rotation_252.py pins all five against
+# one rule, so an edit here that is not made there fails the suite.
+#
+# It is duplicated rather than imported: these are five separate images, and
+# the logging block runs before sys.path is extended with the shared
+# /job-client directory. See gatk_api.py for the full argument.
+#
+# /data is the volume shared with the main app, so the progress log has to be
+# size bounded - an unrotated handler here grows until the shared volume fills.
+# 10 MiB x 5 backups caps the destination at 60 MiB.
 PROGRESS_LOG_PATH = os.getenv('NEXTFLOW_PROGRESS_LOG', '/data/nextflow_progress.log')
-PROGRESS_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB per file
-PROGRESS_LOG_BACKUP_COUNT = 5  # 60 MB ceiling for the whole set
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+
+# (path, error) for every destination that could not be opened. Reported by
+# _warn_about_unopened_logs() once `logger` exists -- the failure is loud, but
+# it is not fatal.
+_log_file_errors = []
+
+
+def _bounded_file_handler(path):
+    """Return a size-capped handler for `path`, or None if it cannot be opened.
+
+    A log destination that is missing or read-only must not take the service down at
+    import time. The handler is not the job: if /data really is unmounted, the first
+    read or write of actual pipeline data fails with an error that names the real
+    operation, whereas raising here reports the wrong cause -- and does it before
+    `logger` exists, so nothing in the container ever says why it died. Degrading
+    keeps stdout carrying the full stream for `docker logs`, and the caller warns.
+    """
+    try:
+        return RotatingFileHandler(
+            path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
+        )
+    except OSError as exc:
+        _log_file_errors.append((path, exc))
+        return None
+
+
+def _warn_about_unopened_logs(log):
+    """Say loudly, once logging works, which destinations were skipped."""
+    for path, exc in _log_file_errors:
+        log.warning(
+            "Could not open log file %s (%s) - logging to console only. Inside the "
+            "container this means the shared volume is not mounted, and the main app "
+            "will not see this service's progress.",
+            path,
+            exc,
+        )
+
 
 _log_handlers = [logging.StreamHandler()]  # Console output
-_progress_log_error = None
-try:
-    _log_handlers.append(
-        RotatingFileHandler(
-            PROGRESS_LOG_PATH,
-            maxBytes=PROGRESS_LOG_MAX_BYTES,
-            backupCount=PROGRESS_LOG_BACKUP_COUNT,
-        )  # Progress log accessible to main app
-    )
-except OSError as exc:
-    # /data only exists inside the container; outside it, log to console only so the
-    # module stays importable (tests exercise the request model and argv builder).
-    # In the container this path means the shared volume is missing - say so loudly
-    # rather than degrading to console-only in silence.
-    _progress_log_error = exc
+# Progress log accessible to main app
+_progress_handler = _bounded_file_handler(PROGRESS_LOG_PATH)
+if _progress_handler is not None:
+    _log_handlers.append(_progress_handler)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,15 +90,7 @@ logging.basicConfig(
     handlers=_log_handlers
 )
 logger = logging.getLogger("nextflow")
-
-if _progress_log_error is not None:
-    logger.warning(
-        "Could not open progress log %s (%s) - logging to console only. "
-        "Inside the container this means the /data volume is not mounted, and the "
-        "main app will not see pipeline progress.",
-        PROGRESS_LOG_PATH,
-        _progress_log_error,
-    )
+_warn_about_unopened_logs(logger)
 
 app = FastAPI(title="Nextflow Pipeline Runner", version="0.2.8", description="REST API wrapper around Nextflow for the ZaroPGx pipeline")
 app.add_middleware(

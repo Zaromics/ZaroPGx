@@ -48,25 +48,67 @@ os.makedirs(os.path.join(DATA_DIR, 'uploads'), exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, 'results'), exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Log rotation bounds. gatk_progress.log lives on the ./data bind mount shared with
-# the app container, so an unrotated DEBUG-level log there grows without limit and
-# takes the host filesystem with it. 5 MiB x 3 backups caps each destination at 20 MiB.
-LOG_MAX_BYTES = 5 * 1024 * 1024
-LOG_BACKUP_COUNT = 3
+# --------------------------------------------------------------------------
+# Bounded logging (BACKLOG 252). Same block, same values, same failure
+# behaviour in every ZaroPGx sidecar: docker/nextflow/runner.py,
+# docker/pharmcat/pharmcat.py, docker/pypgx/pypgx_wrapper.py and
+# docker/zarohla/app.py. tests/test_log_rotation_252.py pins all five against
+# one rule, so an edit here that is not made there fails the suite.
+#
+# It is duplicated rather than imported: these are five separate images. The
+# repo does have a mechanism for sharing a pure-Python module into all of them
+# (every Dockerfile does `COPY app/utils/job_client.py /job-client/`), but the
+# logging block runs at the very top of each module, before sys.path is
+# extended, so a shared import would have to be bootstrapped by hand -- more
+# moving parts than the ~20 lines it would save, across five images that would
+# all need rebuilding to pick it up.
+#
+# The progress log lives on the ./data bind mount shared with the app
+# container, so an unrotated handler there grows without limit and takes the
+# host filesystem with it. 10 MiB x 5 backups caps each destination at 60 MiB.
+# That is deliberately generous rather than frugal: a whole-genome run at this
+# service's DEBUG level produces a lot of lines, the volume it shares is
+# already holding tens of gigabytes of BAM/CRAM, and the failures these logs
+# exist to explain are diagnosed hours after the fact. The item is about
+# *unbounded* growth, not about saving 40 MiB.
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+
+# (path, error) for every destination that could not be opened. Reported by
+# _warn_about_unopened_logs() once `logger` exists -- the failure is loud, but
+# it is not fatal.
+_log_file_errors = []
 
 
 def _bounded_file_handler(path):
     """Return a size-capped handler for `path`, or None if it cannot be opened.
 
     A log destination that is missing or read-only must not take the service down at
-    import time; stdout still carries the full stream for `docker logs`.
+    import time. The handler is not the job: if /data really is unmounted, the first
+    read or write of actual pipeline data fails with an error that names the real
+    operation, whereas raising here reports the wrong cause -- and does it before
+    `logger` exists, so nothing in the container ever says why it died. Degrading
+    keeps stdout carrying the full stream for `docker logs`, and the caller warns.
     """
     try:
         return logging.handlers.RotatingFileHandler(
             path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
         )
-    except OSError:
+    except OSError as exc:
+        _log_file_errors.append((path, exc))
         return None
+
+
+def _warn_about_unopened_logs(log):
+    """Say loudly, once logging works, which destinations were skipped."""
+    for path, exc in _log_file_errors:
+        log.warning(
+            "Could not open log file %s (%s) - logging to console only. Inside the "
+            "container this means the shared volume is not mounted, and the main app "
+            "will not see this service's progress.",
+            path,
+            exc,
+        )
 
 
 # Set up more verbose logging with both file and console handlers
@@ -88,6 +130,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+_warn_about_unopened_logs(logger)
 logger.info("Starting GATK API service with enhanced debugging")
 logger.info(f"Data directories ready: DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
 

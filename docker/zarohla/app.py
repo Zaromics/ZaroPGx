@@ -5,6 +5,7 @@ import time
 import uuid
 import csv
 import psutil
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -15,14 +16,86 @@ import sys
 sys.path.append('/job-client')
 from job_client import JobClient
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("zarohla")
-
-app = FastAPI(title="ZaroHLA API", version="1.0.0")
-
+# Read before logging is configured because the progress-log handler below writes
+# into DATA_DIR.
 DATA_DIR = Path(os.getenv('DATA_DIR', '/data'))
 TEMP_DIR = DATA_DIR / 'temp'
+
+# --------------------------------------------------------------------------
+# Bounded logging (BACKLOG 252). Same block, same values, same failure
+# behaviour in every ZaroPGx sidecar: docker/gatk-api/gatk_api.py,
+# docker/nextflow/runner.py, docker/pharmcat/pharmcat.py and
+# docker/pypgx/pypgx_wrapper.py. tests/test_log_rotation_252.py pins all five
+# against one rule, so an edit here that is not made there fails the suite.
+#
+# It is duplicated rather than imported: these are five separate images, and
+# the logging block runs before sys.path is extended with the shared
+# /job-client directory. See gatk_api.py for the full argument.
+#
+# This service had no file handler at all and no format string, so HLA typing
+# left nothing on the shared volume for the app to show and nothing on disk to
+# read after the container was replaced. /data is the volume shared with the
+# main app, so the progress log has to be size bounded from the start - an
+# unrotated handler here grows until the shared volume fills. 10 MiB x 5
+# backups caps the destination at 60 MiB.
+PROGRESS_LOG_PATH = os.getenv('ZAROHLA_PROGRESS_LOG', str(DATA_DIR / 'zarohla_progress.log'))
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+
+# (path, error) for every destination that could not be opened. Reported by
+# _warn_about_unopened_logs() once `logger` exists -- the failure is loud, but
+# it is not fatal.
+_log_file_errors = []
+
+
+def _bounded_file_handler(path):
+    """Return a size-capped handler for `path`, or None if it cannot be opened.
+
+    A log destination that is missing or read-only must not take the service down at
+    import time. The handler is not the job: if /data really is unmounted, the first
+    read or write of actual pipeline data fails with an error that names the real
+    operation, whereas raising here reports the wrong cause -- and does it before
+    `logger` exists, so nothing in the container ever says why it died. Degrading
+    keeps stdout carrying the full stream for `docker logs`, and the caller warns.
+    """
+    try:
+        return RotatingFileHandler(
+            path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
+        )
+    except OSError as exc:
+        _log_file_errors.append((path, exc))
+        return None
+
+
+def _warn_about_unopened_logs(log):
+    """Say loudly, once logging works, which destinations were skipped."""
+    for path, exc in _log_file_errors:
+        log.warning(
+            "Could not open log file %s (%s) - logging to console only. Inside the "
+            "container this means the shared volume is not mounted, and the main app "
+            "will not see this service's progress.",
+            path,
+            exc,
+        )
+
+
+_log_handlers = [logging.StreamHandler()]  # Console output
+# Progress log accessible to main app
+_progress_handler = _bounded_file_handler(PROGRESS_LOG_PATH)
+if _progress_handler is not None:
+    _log_handlers.append(_progress_handler)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=_log_handlers
+)
+logger = logging.getLogger("zarohla")
+_warn_about_unopened_logs(logger)
+
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+app = FastAPI(title="ZaroHLA API", version="1.0.0")
 
 class CancelRequest(BaseModel):
     job_id: str
