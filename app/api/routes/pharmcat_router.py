@@ -96,13 +96,45 @@ class PharmCATSummary(BaseModel):
     """Model for comprehensive PharmCAT summary"""
 
     run_id: str
+    pharmcat_version: Optional[str] = None
     total_genes: int
     total_diplotypes: int
-    actionable_findings: int
+    actionable_findings: int = Field(
+        ..., description="Number of actionable findings (see actionable_findings_list)"
+    )
     total_messages: int
     genes: List[GeneSummary]
     actionable_findings_list: List[ActionableFinding]
     warning_messages: List[MessageInfo]
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _build_summary_response(summary: Dict[str, Any]) -> PharmCATSummary:
+    """Map a ``get_pharmcat_summary()`` dict onto the API response model.
+
+    ``get_pharmcat_summary`` returns the findings themselves under
+    ``actionable_findings`` and their number under ``actionable_findings_count``;
+    the response model's ``actionable_findings`` is the count and
+    ``actionable_findings_list`` carries the findings.
+    """
+    findings = summary.get("actionable_findings") or []
+    return PharmCATSummary(
+        run_id=summary.get("run_id", ""),
+        pharmcat_version=summary.get("pharmcat_version"),
+        total_genes=summary.get("total_genes", 0),
+        total_diplotypes=summary.get("total_diplotypes", 0),
+        actionable_findings=summary.get("actionable_findings_count", len(findings)),
+        total_messages=summary.get("total_messages", 0),
+        genes=[GeneSummary(**gene) for gene in summary.get("genes") or []],
+        actionable_findings_list=[ActionableFinding(**finding) for finding in findings],
+        warning_messages=[
+            MessageInfo(**message) for message in summary.get("warning_messages") or []
+        ],
+    )
 
 
 # ============================================================================
@@ -149,10 +181,12 @@ async def load_pharmcat_file_endpoint(
                 message="PharmCAT file loaded successfully",
                 total_genes=summary["total_genes"],
                 total_diplotypes=summary["total_diplotypes"],
-                actionable_findings=summary["actionable_findings"],
+                actionable_findings=summary["actionable_findings_count"],
                 warning_messages=len(summary["warning_messages"]),
             )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error loading PharmCAT file: {e}")
         raise HTTPException(status_code=500, detail=f"Error loading file: {str(e)}")
@@ -177,15 +211,10 @@ async def get_pharmcat_summary_by_workflow(
                 status_code=404, detail="No PharmCAT data found for this workflow"
             )
 
-        return PharmCATSummary(
-            run_id=summary.get("run_id", ""),
-            pharmcat_version=summary.get("pharmcat_version", "Unknown"),
-            total_genes=summary.get("total_genes", 0),
-            total_diplotypes=summary.get("total_diplotypes", 0),
-            actionable_findings=summary.get("actionable_findings", []),
-            warning_messages=summary.get("warning_messages", []),
-        )
+        return _build_summary_response(summary)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting PharmCAT summary for workflow {workflow_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting summary: {str(e)}")
@@ -212,6 +241,8 @@ async def get_pharmcat_data_by_workflow(
 
         return data
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting PharmCAT data for workflow {workflow_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting data: {str(e)}")
@@ -230,22 +261,10 @@ async def get_pharmcat_summary_endpoint(run_id: str, db: Session = Depends(get_d
             summary = get_pharmcat_summary(run_id, db)
 
             # Convert to response model
-            return PharmCATSummary(
-                run_id=summary["run_id"],
-                total_genes=summary["total_genes"],
-                total_diplotypes=summary["total_diplotypes"],
-                actionable_findings=summary["actionable_findings"],
-                total_messages=summary["total_messages"],
-                genes=[GeneSummary(**gene) for gene in summary["genes"]],
-                actionable_findings_list=[
-                    ActionableFinding(**finding)
-                    for finding in summary["actionable_findings"]
-                ],
-                warning_messages=[
-                    MessageInfo(**msg) for msg in summary["warning_messages"]
-                ],
-            )
+            return _build_summary_response(summary)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting PharmCAT summary for {run_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting summary: {str(e)}")
