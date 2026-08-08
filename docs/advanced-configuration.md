@@ -6,8 +6,17 @@ curation: partial
 # Advanced Configuration
 
 This document lists environment variables and configuration flags used in the ZaroPGx codebase
-and containers. `.env.example` is the annotated template and carries the same set; when the two
-disagree, `.env.example` and the source are right and this page is stale.
+and containers. When this page and the source disagree, the source is right and this page is
+stale.
+
+**The two lists are not identical, and that is intended.** Every key in `.env.example` is
+documented here. The reverse does not hold: this page also covers variables set by `compose.yml`
+or by a service's own Dockerfile and never surfaced in `.env.example` — `TEMP_DIR`, `TMPDIR`,
+`REFERENCE_DIR`, `GATK_CONTAINER`, `NXF_HOME`, `NXF_OPTS`, `KROKI_URL`, `JOB_API_BASE`,
+`POSTGRES_PASSWORD`, `DATABASE_URL`, `PHARMCAT_REF_CACHE`, `PHARMCAT_REFERENCE_DIR`,
+`PHARMCAT_PIPELINE_DIR`, `PHARMCAT_TEE` — plus two names
+(`MAX_UPLOAD_SIZE_BYTES`, `MAX_UPLOAD_TIMEOUT_SEC`) that the repo never reads at all and that are
+listed only to say so. `.env.example` is the install-time template; this page is the full set.
 
 *Last revised 2026-08-08 against ZaroPGx 0.2.8.*
 
@@ -25,8 +34,12 @@ disagree, `.env.example` and the source are right and this page is stale.
 - **KROKI_ENABLED**: Enable Kroki diagram rendering. Default: `true`.
 - **HAPI_FHIR_ENABLED**: Enable HAPI FHIR integration checks. Default: `true`.
 - **FHIR_EXPORT_ENABLED**: Gates the entire `/fhir` router (bundle generation, preview, save).
-  Default: `true` — compose passes `${FHIR_EXPORT_ENABLED:-true}` to the app. When `false`,
-  every `/fhir/*` endpoint returns an error explaining the flag.
+  Default: `true` — compose passes `${FHIR_EXPORT_ENABLED:-true}` to the app, and unset also
+  means enabled. Boot with it false and the router is never mounted, so every `/fhir/*` path
+  **404s**; the 503 "export is disabled" body only appears if the value changes inside an
+  already-running process. Resolved by `fhir_export_enabled()` in
+  `app/services/fhir_export_service.py` — the single parser for this name — which strips
+  whitespace first, so a trailing space in `.env` does not disable export.
 
 *Application configs*
 - **LOG_LEVEL**: Logging level for the app. Default: `DEBUG`.
@@ -82,7 +95,12 @@ disagree, `.env.example` and the source are right and this page is stale.
   to `172.20.0.0/16`).
 
 *service URLs*
-- **GENOME_DOWNLOADER_API_URL**: Genome downloader API URL. Default: `http://genome-downloader:5050`.
+- **GENOME_DOWNLOADER_API_URL**: **Dead — nothing reads it.** `compose.yml` passes it to the app
+  and all three `.env.*` templates ship it, but no code in the repo looks the name up. The app's
+  one genome-downloader reference is a hard-coded `http://localhost:5050` in the CORS origins
+  list, which this variable does not feed. Changing it has no effect; it is kept in the
+  templates only because removing a key from a shipped `.env` is a breaking-looking change.
+  Nominal value: `http://genome-downloader:5050`.
 - **NEXTFLOW_RUNNER_URL**: Nextflow executor base URL. Default: `http://nextflow:5055`.
 - **GATK_API_URL**: GATK wrapper API base URL. Default: `http://gatk-api:5000`.
 - **PYPGX_API_URL**: PyPGx wrapper API base URL. Default: `http://pypgx:5000`.
@@ -116,6 +134,18 @@ disagree, `.env.example` and the source are right and this page is stale.
 ## Nextflow executor and workflow orchestration
 - **NXF_HOME**: Nextflow home/cache directory. Defaults to `/opt/nextflow` in containers or set to `/data/nextflow` for persistence in some wrappers.
 - **NXF_OPTS**: Nextflow JVM options. Defaults vary by container, e.g. `-Xms1g -Xmx4g`.
+- **NEXTFLOW_MAX_WAIT_SECONDS**: Wall-clock ceiling, in seconds, on how long the **app** waits
+  for a Nextflow run before marking the job failed. Default: `86400` (24 hours), which is also
+  the value `.env.example` ships. Read by `app/api/routes/upload_router.py`
+  (`_nextflow_max_wait_seconds`), not by the Nextflow container.
+
+  This is a stuck-job backstop, not a service-level objective: a WGS FASTQ run walks ZaroHLA →
+  GATK → PyPGx → PharmCAT and can legitimately take most of a day, so the default is generous on
+  purpose. Any unusable value — blank, unparseable, zero or negative — logs a warning and falls
+  back to 86400. Falling back is safe in both directions: the cap is never disabled, and `0`
+  (which conventionally reads as "no limit") cannot silently fail every job instantly. The
+  deadline also never overwrites a job that some other path already moved to `completed`,
+  `failed` or `cancelled`.
 
 ## ZaroHLA (OptiType) service
 - **OPTITYPE_ENABLED**: Gates HLA typing end to end (see *Feature toggles* above). Default: `true`.
@@ -146,7 +176,13 @@ The service is a FastAPI wrapper around OptiType v1.5, not a Nextflow pipeline: 
   metadata / version stamp (env). Default `3.4.0`.
 - **PHARMCAT_REF_CACHE**: Named-volume mount path for GRCh38 reference files (default
   `/pharmcat-references`). Must not be `/pharmcat` — that path comes from the image.
-- **PHARMCAT_LOG_LEVEL**: Log level inside PharmCAT wrapper. Default: `DEBUG`.
+- **PHARMCAT_LOG_LEVEL**: **Dead — setting it has no effect.** `compose.yml` forwards
+  `${PHARMCAT_LOG_LEVEL:-DEBUG}` into the container and `.env.example` ships it, but
+  `docker/pharmcat/pharmcat.py` never reads the name: just before spawning `pharmcat_pipeline`
+  it does `env["PHARMCAT_LOG_LEVEL"] = "DEBUG"` unconditionally, overwriting whatever arrived.
+  The effective value is always `DEBUG`. The wrapper's own Python logging is not configurable
+  either — `logging.basicConfig(level=logging.INFO)` is hard-coded and reads no environment
+  variable, so **LOG_LEVEL** does not reach this container.
 - **PHARMCAT_JAR_PATH**: Path to PharmCAT JAR for fallback direct execution. Default: `/pharmcat/pharmcat.jar`.
 - **PHARMCAT_REFERENCE_DIR**: PharmCAT references directory. Default: `/pharmcat`.
 - **PHARMCAT_PIPELINE_DIR**: PharmCAT pipeline directory. Default: `/pharmcat/pipeline`.

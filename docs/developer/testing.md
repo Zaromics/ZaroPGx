@@ -66,12 +66,15 @@ tests/
 │   ├── conftest.py             # e2e_base_url / e2e_client fixtures (skip when not enabled)
 │   ├── harness.py              # enable-flag plumbing shared with the root conftest
 │   └── test_vcf_pipeline.py    # upload → poll → assert a report artifact
+├── js/
+│   └── render_workflow_panel.js  # Node driver that renders index.html's inline <script>
 ├── run_workflow_tests.py       # optional convenience runner for the workflow modules
 └── test_*.py                   # flat modules, one per behaviour under test
 ```
 
-There are no `unit/`, `integration/`, `performance/` or `fixtures/` subdirectories, and no
-generated test-data tree — the modules are flat and named for what they pin down
+`tests/js/` is a driver directory, not a JS test suite — see *The frontend render harness*
+below. There are no `unit/`, `integration/`, `performance/` or `fixtures/` subdirectories, and
+no generated test-data tree — the modules are flat and named for what they pin down
 (`test_tsv_parser.py`, `test_report_path_jail.py`, `test_compose_contract.py`,
 `test_workflow_progress_renormalize_58.py`, …). Sample inputs live in `test_data/` at the repo
 root; the e2e test uploads `test_data/pharmcat.example.vcf`.
@@ -114,6 +117,52 @@ enforced** anywhere — not in `addopts`, not in CI.
 
 `tests/e2e/` adds `e2e_base_url` and `e2e_client`, which **skip** unless e2e was explicitly
 enabled, and skip again if `/health` is not reachable.
+
+## The frontend render harness
+
+`tests/js/render_workflow_panel.js` plus `tests/test_ui_workflow_flag_reads.py` are the repo's
+**only template-rendering coverage**. Everything else asserts against Python; this pair asserts
+against the HTML the browser would actually receive. Worth knowing about before you write a
+weaker test.
+
+It exists because asserting on template *source text* is weak evidence. BACKLOG 137b moved the
+upload response's workflow flags from `workflow.<flag>` down to `workflow.options.<flag>`;
+`app/templates/index.html` kept reading the old level, every read silently evaluated to
+`undefined`, and the post-upload "Workflow Details" panel rendered nothing at all. No test
+noticed, because nothing tied the template's read paths to the server's field names.
+
+How it works:
+
+1. The pytest module drives the **real** `POST /upload/genomic-data` endpoint through
+   `TestClient`. Only the DB, Nextflow and file-IO edges are stubbed — the workflow dict comes
+   from the real `FileProcessor.determine_workflow` and the response body is assembled by the
+   real `upload_router`, so both the user-visible copy and the JSON nesting are the real ones.
+2. It writes that exact response to a temp file and shells out to `node
+   tests/js/render_workflow_panel.js <index.html> <payload.json>`.
+3. The Node driver extracts the one inline `<script>` block that defines
+   `window.updateFileAnalysis` (skipping `<script src=…>` tags), runs it in Node's `vm` under a
+   hand-written DOM shim, fires the `DOMContentLoaded` handlers the renderer registers, then
+   calls `window.updateFileAnalysis(payload)`.
+4. The shim seeds each element's `classList` from the classes it really carries in the markup,
+   so `#warnings` genuinely starts out `d-none` and "it became visible" means something. It
+   prints `{ok, errors, elements: {<id>: {html, classes}}}` on stdout; the test asserts on the
+   rendered HTML and on which alerts lost `d-none`.
+
+Three supporting tests come with it: a **negative control** that feeds the pre-137b payload
+shape and asserts the panel renders nothing from it (without which the positive test would
+prove nothing), a **rename guard** that intersects every `wf.<field>` the template reads with
+`WorkflowOptions.model_fields` so a server-side rename breaks a test instead of the UI, and a
+check that the flat `compat` shape `/upload/inspect-header` returns stays flat.
+
+Nothing here ships to the browser — the driver is a test fixture. It writes its own logs to
+stderr to keep stdout parseable.
+
+**Node is required but not installed by anything.** Both rendering tests carry
+`@pytest.mark.skipif(shutil.which("node") is None)`, and neither `pyproject.toml` nor CI sets up
+a Node toolchain — CI's `test` job runs `uv sync` only. They therefore execute only where a
+`node` binary already happens to be on `PATH`, and pass vacuously by skipping where it is not.
+Check for `s` in the pytest output if you are relying on them. The rename guard needs no Node
+and always runs.
 
 ### The e2e enable flag
 
@@ -166,7 +215,9 @@ Being explicit so nobody assumes otherwise:
 - **A single e2e case.** `test_vcf_pipeline.py` covers one GRCh38 VCF upload through to a report
   artifact, with GATK and OptiType switched off. BAM/CRAM/FASTQ paths have no automated
   coverage.
-- **No frontend tests.** The web UI's JavaScript is untested.
+- **Almost no frontend tests.** The one exception is the render harness described above, which
+  covers the post-upload Workflow Details panel. There is no JS unit-test runner, no headless
+  browser, and no coverage of `app/static/js/**` or of any other template.
 - **No database-integration tests against real Postgres.** The fast suite is SQLite; the e2e
   stack exercises Postgres only incidentally.
 

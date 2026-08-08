@@ -28,7 +28,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 
 1. **Select Files**: Choose one or more genomic files
 2. **Configure Options**:
-   - **Sample Identifier**: Optional patient/sample name
+   - **Sample Identifier**: Optional patient/sample name. Letters, digits, dot, underscore and hyphen only, up to 64 characters, starting with a letter or digit — `Sample_01` and `patient-123` are fine, `Patient 001` (space) is rejected with a 400. Leave it blank and the server mints a UUID.
    - **Reference Genome**: hg38 (default) or hg19 (coming in 0.3)
    - **Processing Options**: Enable/disable specific tools
 3. **Start Analysis**: Click "Upload and Analyze"
