@@ -50,7 +50,23 @@ myst_enable_extensions = [
 ]
 
 templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+
+# docs/superpowers/ is gitignored, local-only scratch (handoffs, plans, specs). Sphinx globs it
+# purely because it sits under docs/, and with `sphinx.fail_on_warning: true` now enabled its 45
+# orphan pages turn a local `make html` red for files that will never be in the repo. It is absent
+# from a clean checkout, so RTD and CI never saw this; only working-tree builds did.
+# Both forms are listed on purpose. The bare name alone happens to work, but only because
+# get_matching_files() prunes the matching directory during its os.walk before descending — the
+# matcher itself does not match nested paths ('superpowers' vs 'superpowers/plans/x.md' is False).
+# The '/**' entry makes the exclusion true at the matcher level rather than a side effect of
+# traversal order, so call sites that test a file path directly are covered too.
+exclude_patterns = [
+    '_build',
+    'superpowers',
+    'superpowers/**',
+    'Thumbs.db',
+    '.DS_Store',
+]
 
 # Read the Docs builds with `sphinx.fail_on_warning: true` (see .readthedocs.yaml), so any
 # warning class left un-suppressed here breaks the build. That is the point: orphan pages,
