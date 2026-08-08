@@ -138,6 +138,9 @@
         .gene-recommendation.evidence-0 {
             border-left-color: #6c757d !important; /* Gray for general */
         }
+        .gene-recommendation.evidence-unclassified {
+            border-left-color: #adb5bd !important; /* Muted gray: no evidence level reported */
+        }
         .gene-recommendation h4 {
             margin: 0 0 4px 0;
             font-size: 0.95em;
@@ -221,6 +224,13 @@
         .drug-item.evidence-0 .drug-indicator {
             background-color: #6c757d;
         }
+        .drug-item.evidence-unclassified {
+            border-left-color: #adb5bd;
+            background-color: #fbfbfc;
+        }
+        .drug-item.evidence-unclassified .drug-indicator {
+            background-color: #adb5bd;
+        }
         .evidence-legend {
             margin-bottom: 15px;
             padding: 10px;
@@ -258,6 +268,9 @@
         }
         .legend-item.evidence-0 .drug-indicator {
             background-color: #6c757d;
+        }
+        .legend-item.evidence-unclassified .drug-indicator {
+            background-color: #adb5bd;
         }
         /* Executive summary invisible columns */
         .exec-summary-table {
@@ -1021,10 +1034,11 @@
         
         <div class="evidence-legend">
             <p><strong>Evidence Level Legend:</strong></p>
-            <span class="legend-item evidence-3"><span class="drug-indicator"></span> High actionability (Level A/Strong)</span>
-            <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate actionability (Level B/Moderate)</span>
-            <span class="legend-item evidence-1"><span class="drug-indicator"></span> Informational (Level C/Optional)</span>
-            <span class="legend-item evidence-0"><span class="drug-indicator"></span> Guideline available</span>
+            <span class="legend-item evidence-3"><span class="drug-indicator"></span> Strong &mdash; high actionability (CPIC Level A)</span>
+            <span class="legend-item evidence-2"><span class="drug-indicator"></span> Moderate &mdash; moderate actionability (CPIC Level B)</span>
+            <span class="legend-item evidence-1"><span class="drug-indicator"></span> Optional &mdash; informational (CPIC Level C)</span>
+            <span class="legend-item evidence-0"><span class="drug-indicator"></span> No recommendation &mdash; guideline reviewed, no dosing change advised</span>
+            <span class="legend-item evidence-unclassified"><span class="drug-indicator"></span> Unclassified &mdash; no evidence level reported</span>
         </div>
         
         {% set grouped_recommendations = {} %}
@@ -1039,28 +1053,9 @@
         <div class="drugs-grid">
             {% for drug_name in grouped_recommendations.keys()|sort %}
                 {% set drug_recs = grouped_recommendations[drug_name] %}
-                {% set ns = namespace(max_evidence=0) %}
-                {% set debug_classifications = [] %}
-                {% for rec in drug_recs %}
-                    {% set classification = (rec.classification or '') %}
-                    {% set _ = debug_classifications.append(classification) %}
-                    {% set classification_upper = classification.upper() %}
-                    {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
-                        {% set evidence = 3 %}
-                    {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
-                        {% set evidence = 2 %}
-                    {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
-                        {% set evidence = 1 %}
-                    {% else %}
-                        {% set evidence = 0 %}
-                    {% endif %}
-                    {% if evidence > ns.max_evidence %}
-                        {% set ns.max_evidence = evidence %}
-                    {% endif %}
-                {% endfor %}
-                <!-- DEBUG: {{ drug_name }}: classifications=[{{ debug_classifications|join(', ') }}], max_evidence={{ ns.max_evidence }} -->
+                {% set top_rec = drug_recs|sort(attribute='evidence_rank')|last %}
                 <a href="#drug-rec-{{ drug_name|lower|replace(' ', '-') }}" class="drug-item-link">
-                    <div class="drug-item evidence-{{ ns.max_evidence }}" title="{{ drug_name|title }}: Evidence Level {{ ns.max_evidence }} | Classifications: {{ debug_classifications|join(', ') }}">
+                    <div class="drug-item {{ top_rec.evidence_class }}">
                         <span class="drug-indicator"></span>
                         <span class="drug-name">{{ drug_name|title }}</span>
                     </div>
@@ -1096,18 +1091,7 @@
                 {% endfor %}
                 
                 {% for rec_key, group_data in recommendation_groups.items() %}
-                    {% set classification = (group_data['rec'].classification or '') %}
-                    {% set classification_upper = classification.upper() %}
-                    {% if 'STRONG' in classification_upper or classification_upper == 'A' or 'LEVEL A' in classification_upper or 'ACTIONABLE' in classification_upper %}
-                        {% set rec_evidence = 3 %}
-                    {% elif 'MODERATE' in classification_upper or classification_upper == 'B' or 'LEVEL B' in classification_upper %}
-                        {% set rec_evidence = 2 %}
-                    {% elif 'OPTIONAL' in classification_upper or classification_upper == 'C' or 'LEVEL C' in classification_upper or 'INFORMATIONAL' in classification_upper or 'WEAK' in classification_upper %}
-                        {% set rec_evidence = 1 %}
-                    {% else %}
-                        {% set rec_evidence = 0 %}
-                    {% endif %}
-                    <div class="gene-recommendation evidence-{{ rec_evidence }}" style="background-color: #f8f9fa;">
+                    <div class="gene-recommendation {{ group_data['rec'].evidence_class }}" style="background-color: #f8f9fa;">
                         <h4>{{ group_data['genes']|join(', ') }} - {{ group_data['rec'].guideline_source if group_data['rec'].guideline_source else 'General' }}</h4>
                         <p><strong>Recommendation:</strong> {{ group_data['rec'].recommendation }}</p>
                         <p><strong>Strength of Evidence:</strong> {{ group_data['rec'].classification }}</p>
