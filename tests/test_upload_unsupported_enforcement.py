@@ -158,30 +158,25 @@ def test_provisional_inputs_are_still_analysed(upload):
     assert resp.status_code == 200, resp.text
 
 
-def test_23andme_is_refused(upload):
-    """No converter and no main.nf branch: the job could only ever fail."""
-    reason = "ZaroPGx cannot analyse 23andMe genotyping files."
-    resp = upload("23andme", unsupported=True, unsupported_reason=reason)
+@pytest.mark.parametrize("provisional", [False, True])
+def test_23andme_is_refused(upload, provisional):
+    """No converter and no main.nf branch: the job could only ever fail.
 
-    assert resp.status_code == 400, resp.text
-    assert reason in resp.json()["detail"]
-
-
-def test_a_provisional_flag_cannot_wave_an_unrunnable_type_past_the_gate(upload):
-    """``is_provisional`` was set aspirationally on 23andMe and leaked it through.
-
-    The flag is written by hand next to a reason string, so it records intent as
-    readily as behaviour. It may only exempt an input type the pipeline can actually
-    carry; on anything else it means nothing.
+    Parametrised over ``is_provisional`` on purpose. FileProcessor used to set it here
+    — that is what let 23andMe past the gate — and it is set by hand next to a reason
+    string, so it records intent as readily as behaviour. Refusing only in the
+    ``False`` case would be a test that passes with the fix reverted.
     """
+    reason = "ZaroPGx cannot analyse 23andMe genotyping files."
     resp = upload(
         "23andme",
         unsupported=True,
-        unsupported_reason="One day we will convert this.",
-        is_provisional=True,
+        unsupported_reason=reason,
+        is_provisional=provisional,
     )
 
     assert resp.status_code == 400, resp.text
+    assert reason in resp.json()["detail"]
 
 
 def test_fastq_is_refused(upload):
