@@ -58,7 +58,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
    - PyPGx analysis (if enabled, recommended)
    - PharmCAT analysis (required)
 5. **Report Generation**: Create reports
-6. **Data Export**: Optional FHIR export (first XML, coming in v0.3)
+6. **Data Export**: Optional FHIR export — bundle generation in JSON and XML ships today (see [Data Export](#data-export))
 
 ### Monitoring Progress
 
@@ -86,7 +86,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 #### Interactive HTML Report
 - **Detailed Annotations**: Gene-specific information
 - **Everything in PDF Report**: And more
-- **Export Options**: Download data in various formats (FHIR in XML coming in 0.3)
+- **Export Options**: Download data in various formats; FHIR R4 bundles in JSON and XML are available today via the `/fhir/*` API (see [Data Export](#data-export))
 - **Interactive Tables**: Sortable, filterable results (coming soon)
 - **Visualizations**: Charts and diagrams (coming soon)
 
@@ -195,13 +195,35 @@ curl -O http://localhost:8765/reports/{patient_id}/{job_id}/{report_file}
 ### Data Export
 
 #### FHIR Export
-`POST /reports/{report_id}/export-to-fhir` is **retired (501)** — it previously
-posted fabricated genotypes. Use the `/fhir/*` routes (bundle preview/save from
-real PharmCAT run data) instead.
+
+FHIR export is enabled by default (`FHIR_EXPORT_ENABLED`, default true). What
+works today, and what does not:
+
+**Shipped.** Generating an HL7 Genomics Reporting (FHIR R4) bundle from a real
+PharmCAT run, in JSON or XML: download it, preview it in the browser, or save it
+alongside the other report files. This is the `/fhir/*` API.
+
+**Shipped but local only.** "Save" writes the bundle into
+`/data/reports/{patient_id}/` on the machine running ZaroPGx. It does not send
+anything to the bundled HAPI FHIR server or to any external system.
+
+**Not shipped.** Pushing results into an EHR or PHR, and any round-trip with an
+external FHIR server. `POST /reports/{report_id}/export-to-fhir` did talk to a
+live FHIR server but built its payload from placeholder genotypes, so it is
+**retired (501)**; do not use it.
+
 ```bash
-# Example: preview FHIR bundle for a PharmCAT run
+# Preview the FHIR bundle for a PharmCAT run
 curl http://localhost:8765/fhir/export/run/{run_id}/preview
+
+# Download it as a file (json or xml)
+curl -OJ "http://localhost:8765/fhir/export/run/{run_id}?output_format=xml"
+
+# Save it next to the other reports on disk
+curl "http://localhost:8765/fhir/save/run/{run_id}/quick?output_format=both"
 ```
+
+See {doc}`../developer/api-reference` for the full endpoint list.
 #### Bulk Export
 ```bash
 # Download every report file for a patient as a single ZIP

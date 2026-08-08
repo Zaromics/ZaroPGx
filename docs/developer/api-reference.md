@@ -477,6 +477,156 @@ of any run. Registered unconditionally at `main.py:316`.
 field that must be true for the step to be minted. An unknown `workflow_type`
 returns 404 with `detail: "Unknown workflow_type"`.
 
+### FHIR Export Endpoints
+
+Mounted at `/fhir` (`fhir_export_router.py:27`). **Conditionally registered**:
+`main.py:321` includes the router only when `FHIR_EXPORT_ENABLED` is truthy, and
+that flag defaults to **true** (`main.py:156`). Set `FHIR_EXPORT_ENABLED=false`
+and the whole prefix 404s.
+
+The gate is applied twice. Even when the router is mounted, every export and save
+handler re-reads its own `FHIR_EXPORT_ENABLED` from the environment
+(`fhir_export_service.py:27`, also defaulting true) and returns **503** if it is
+off. `GET /fhir/status` and `GET /fhir/export/formats` skip that second check and
+always answer.
+
+Bundles follow the HL7 Genomics Reporting Implementation Guide (FHIR R4) and are
+built from real PharmCAT run data held in the database.
+
+| Endpoint | Method | Source |
+| --- | --- | --- |
+| `/fhir/status` | GET | `fhir_export_router.py:67` |
+| `/fhir/export/formats` | GET | `fhir_export_router.py:362` |
+| `/fhir/export/run/{run_id}` | GET | `fhir_export_router.py:90` |
+| `/fhir/export/run/{run_id}` | POST | `fhir_export_router.py:159` |
+| `/fhir/export/run/{run_id}/preview` | GET | `fhir_export_router.py:295` |
+| `/fhir/export/workflow/{workflow_id}` | GET | `fhir_export_router.py:231` |
+| `/fhir/save/run/{run_id}` | POST | `fhir_export_router.py:434` |
+| `/fhir/save/workflow/{workflow_id}` | POST | `fhir_export_router.py:498` |
+| `/fhir/save/run/{run_id}/quick` | GET | `fhir_export_router.py:561` |
+
+> **`save` means save to disk.** The `/fhir/save/*` routes write bundle files
+> into `/data/reports/{patient_id or run_id}/` on the local filesystem
+> (`fhir_export_service.py:246-330`). They do **not** POST to the HAPI FHIR
+> server or to any other endpoint. Nothing under `/fhir/*` transmits data off the
+> host.
+
+#### FHIR Export Status
+
+**Endpoint:** `GET /fhir/status`
+
+```json
+{
+  "enabled": true,
+  "message": "FHIR export is enabled",
+  "supported_formats": ["json", "xml"],
+  "implementation_guide": "HL7 Genomics Reporting Implementation Guide (FHIR R4)",
+  "reference_url": "https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.html"
+}
+```
+
+`supported_formats` is `[]` when export is disabled.
+
+#### Supported Formats
+
+**Endpoint:** `GET /fhir/export/formats`
+
+Returns a `formats` array (`json` → `application/fhir+json`, `xml` →
+`application/fhir+xml`), an `implementation_guide` object (STU 4, FHIR R4) and
+the `profiles_used` list: `genomic-report`, `genotype`,
+`therapeutic-implication`, `medication-recommendation`, `genomic-study`.
+
+#### Export a Run
+
+**Endpoint:** `GET /fhir/export/run/{run_id}`
+
+**Query Parameters:**
+- `output_format` (optional): `json` (default) or `xml`
+- `include_recommendations` (optional): default `true`
+
+**Response:** the bundle as a **file download** — raw body with media type
+`application/fhir+json` or `application/fhir+xml` and a `Content-Disposition`
+attachment header. Not a JSON envelope.
+
+```bash
+curl -OJ "http://localhost:8765/fhir/export/run/{run_id}?output_format=xml"
+```
+
+**Status Codes:** `200`, `404` (unknown run, or the service could not build a
+bundle), `500`, `503` (export disabled).
+
+#### Export a Run with Patient Details
+
+**Endpoint:** `POST /fhir/export/run/{run_id}`
+
+**Request body** (`FHIRExportRequest`):
+```json
+{
+  "patient_info": {
+    "id": "patient_001",
+    "name": {"family": "Doe", "given": ["Jane"]},
+    "gender": "female",
+    "birthDate": "1980-01-15"
+  },
+  "output_format": "json",
+  "include_recommendations": true
+}
+```
+
+Every field is optional. The response is the same file download as the GET form.
+
+#### Export a Workflow
+
+**Endpoint:** `GET /fhir/export/workflow/{workflow_id}`
+
+Resolves the PharmCAT run linked to a workflow and exports it. Query parameter:
+`output_format` (`json` or `xml`). Same file-download response.
+
+#### Preview an Export
+
+**Endpoint:** `GET /fhir/export/run/{run_id}/preview`
+
+The one route that returns the bundle *in* a JSON body rather than as a download.
+
+```json
+{
+  "success": true,
+  "format": "json",
+  "filename": "pgx_fhir_bundle_….json",
+  "content": "…",
+  "bundle": { },
+  "xml_preview": null,
+  "resource_counts": {"Patient": 1, "Observation": 12}
+}
+```
+
+For `output_format=xml`, `content` and `bundle` are `null` and `xml_preview`
+holds the first 2000 characters followed by `...`.
+
+#### Save an Export to the Reports Directory
+
+**Endpoints:**
+- `POST /fhir/save/run/{run_id}`
+- `POST /fhir/save/workflow/{workflow_id}`
+- `GET /fhir/save/run/{run_id}/quick`
+
+The two POST routes take a `FHIRSaveRequest` body — `patient_id` (subdirectory,
+defaults to the run id), `patient_info`, `output_format` (`json`, `xml`, or
+`both`), `include_recommendations`. The quick GET route takes `output_format` and
+`patient_id` as query parameters instead and skips patient details.
+
+**Response** (`FHIRSaveResponse`; the quick route adds a `message`):
+```json
+{
+  "success": true,
+  "files_saved": ["/data/reports/patient_001/pgx_fhir_bundle_….json"],
+  "report_directory": "/data/reports/patient_001",
+  "error": null
+}
+```
+
+**Status Codes:** `200`, `500` (save failed), `503` (export disabled).
+
 ### System Endpoints
 
 There is no patient-listing API. Patients exist only as rows created implicitly
