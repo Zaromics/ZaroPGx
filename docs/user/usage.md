@@ -115,9 +115,11 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 ## API Usage
 
 Your own instance publishes interactive API docs at `/docs` and the raw schema at
-`/openapi.json`. For the full hand-written reference see
-{doc}`../developer/api-reference`; the reference instance publishes a copy at
-https://pgx.zaromics.com/api-reference.
+`/openapi.json`. The `/api-reference` page is a wrapper that embeds that same
+Swagger UI with a Back button — https://pgx.zaromics.com/api-reference is the
+reference instance's copy. For the full hand-written reference, including the
+WebSocket (which no OpenAPI schema can describe), see
+{doc}`../developer/api-reference`.
 
 ### REST API Endpoints
 
@@ -160,8 +162,8 @@ curl -O http://localhost:8765/reports/{patient_id}/{job_id}/{report_file}
   "job_id": "uuid-string",
   "data_id": "uuid-string",
   "file_type": "vcf",
-  "status": "uploaded",
-  "message": "Files uploaded successfully"
+  "status": "processing",
+  "message": "Files uploaded successfully. Processing started."
 }
 ```
 
