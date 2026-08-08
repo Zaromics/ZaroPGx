@@ -1,7 +1,15 @@
-## Advanced Configuration
-This document lists environment variables and configuration flags used in the ZaroPGx codebase and containers.
+---
+title: Advanced Configuration
+curation: partial
+---
 
-*Last Revised 2025-10-07*
+# Advanced Configuration
+
+This document lists environment variables and configuration flags used in the ZaroPGx codebase
+and containers. `.env.example` is the annotated template and carries the same set; when the two
+disagree, `.env.example` and the source are right and this page is stale.
+
+*Last revised 2026-08-08 against ZaroPGx 0.2.8.*
 
 ### General
 - Defaults listed above reflect current code paths; docker compose may set different values. When both exist, the container environment overrides code defaults.
@@ -16,6 +24,9 @@ This document lists environment variables and configuration flags used in the Za
 - **PYPGX_ENABLED**: Enable PyPGx checks/integration. Default: `true`.
 - **KROKI_ENABLED**: Enable Kroki diagram rendering. Default: `true`.
 - **HAPI_FHIR_ENABLED**: Enable HAPI FHIR integration checks. Default: `true`.
+- **FHIR_EXPORT_ENABLED**: Gates the entire `/fhir` router (bundle generation, preview, save).
+  Default: `true` — compose passes `${FHIR_EXPORT_ENABLED:-true}` to the app. When `false`,
+  every `/fhir/*` endpoint returns an error explaining the flag.
 
 *Application configs*
 - **LOG_LEVEL**: Logging level for the app. Default: `DEBUG`.
@@ -33,20 +44,42 @@ This document lists environment variables and configuration flags used in the Za
 - **INCLUDE_PHARMCAT_HTML**: Include PharmCAT HTML in reports. Default: `true`.
 - **INCLUDE_PHARMCAT_JSON**: Include PharmCAT JSON output in reports. Default: `true` (via `.env`; delivered through app `env_file`).
 - **INCLUDE_PHARMCAT_TSV**: Include PharmCAT calls-only TSV output in reports. Default: `true` (via `.env`; delivered through app `env_file`).
-- **EXECSUM_USE_TSV**: Use TSV rather than JSON report to generate Executive Summary. Default: `false`.
+- **EXECSUM_USE_TSV**: Use TSV rather than JSON report to generate Executive Summary. Code
+  default `false` (`app/reports/generator.py`), but every tracked `.env.*` template ships `true`.
+- **OUTSIDECALLSOVERRIDE**: When `true`, the pipeline looks for a manual outside-calls override
+  file instead of the generated one (`app/utils/outside_calls_override.py`). Default: `false`
+  (blank in the templates).
 - **PDF_ENGINE**: Primary PDF engine. `weasyprint` or `reportlab`. Default: `weasyprint`.
 - **PDF_FALLBACK**: If `true`, try alternate engine on failure. Default: `true`.
 
 *Upload/header safety limits*
 - **MAX_HEADER_READ_BYTES**: Header inspection byte cap. Default: `1000000000` (1 GB).
 - **MAX_HEADER_PARSE_TIMEOUT_SEC**: Header parsing timeout seconds. Default: `300`.
-- **MAX_UPLOAD_SIZE_BYTES**: Not directly referenced in code; may be used externally for reverse proxies or UI.
-- **MAX_UPLOAD_TIMEOUT_SEC**: Not directly referenced in code; may be used externally for reverse proxies or UI.
+- **MAX_UPLOAD_SIZE_BYTES**: Referenced nowhere in the repo and shipped in no `.env` template;
+  listed only because reverse proxies in front of ZaroPGx often use the name.
+- **MAX_UPLOAD_TIMEOUT_SEC**: Same — not referenced in the repo.
 
 ### Docker compose
+*images*
+- **ZAROPGX_TAG**: Tag of the pre-built `zaromicsresearch/zaropgx-*` images to pull from Docker
+  Hub. Default: `0.2.8`. Set to `latest` to track the newest. `docker compose build` (or
+  `up --build`) overrides the pull with a local build.
+- **HAPI_FHIR_TAG**: Pinned tag for the bundled `hapiproject/hapi` image. Default: `v8.10.0-2`.
+  Bump deliberately — the service owns a live Postgres schema and point releases have shipped
+  non-zero-downtime migrations. Keep `data/versions/hapi.json` in step.
+- **PHARMCAT_VERSION**: Doubles as the build ARG for the PharmCAT image. See below.
+
 *runtime*
-- **BIND_ADDRESS**: Host bind for main app port mapping. Default: `8765` (host port).
-- **NETWORK_SUBNET**: Compose network subnet. Default: `172.28.0.0/16`.
+- **BIND_ADDRESS**: Host bind for the main app port mapping. Default: `8765` (host port only,
+  i.e. all interfaces). `.env.local` uses `8765`; `.env.production` uses `0.0.0.0:8765`. A bare
+  `BIND_ADDRESS=0.0.0.0` is not a valid Compose host port — always give a port.
+- **INTERNAL_BIND_ADDRESS**: Host interface for every *internal* published service (`db`,
+  `pharmcat`, `gatk-api`, `pypgx`, `zarohla`, `genome-downloader`, `fhir-server`, `kroki`,
+  `docs`). Default: `127.0.0.1`. None of those services authenticate, so widening this exposes
+  them — and the database — directly. Prefer an SSH tunnel:
+  `ssh -L 5444:127.0.0.1:5444 <host>`. `nextflow` is not published at any value of this knob.
+- **NETWORK_SUBNET**: Compose network subnet. Default: `172.28.0.0/16` (`.env.local` overrides
+  to `172.20.0.0/16`).
 
 *service URLs*
 - **GENOME_DOWNLOADER_API_URL**: Genome downloader API URL. Default: `http://genome-downloader:5050`.
@@ -56,6 +89,9 @@ This document lists environment variables and configuration flags used in the Za
 - **PHARMCAT_API_URL**: PharmCAT wrapper base URL. Default: `http://pharmcat:5000`.
 - **KROKI_URL**: Kroki rendering service base URL. Compose sets `http://kroki:8000` (topology); do not set this in `.env`.
 - **FHIR_SERVER_URL**: HAPI FHIR server URL. Default: `http://fhir-server:8080/fhir`.
+- **ZAROHLA_API_URL**: ZaroHLA (OptiType) service URL used by the app's health and
+  services-status probes. Default: `http://zarohla:5000`. The pipeline's `/call-hla` calls in
+  `pipelines/pgx/main.nf` use that hostname directly and ignore this variable.
 
 ### Paths and storage
 - **DATA_DIR**: Base data directory (varies by service). Common default: `/data`.
@@ -82,8 +118,13 @@ This document lists environment variables and configuration flags used in the Za
 - **NXF_OPTS**: Nextflow JVM options. Defaults vary by container, e.g. `-Xms1g -Xmx4g`.
 
 ### ZaroHLA (OptiType) service
-- **ZAROHLA_PIPELINE_VERSION**: ZaroHLA pipeline version. Default: `2.1.0`, current as of 0.3 release.
-- **ZAROHLA_PROFILE**: Nextflow profile for zarohla. Default: `docker`. A conda-based profile is provided as fallback alternative.
+- **OPTITYPE_ENABLED**: Gates HLA typing end to end (see *Feature toggles* above). Default: `true`.
+- **ZAROHLA_API_URL**: See *service URLs* above.
+- **DATA_DIR**, **JOB_API_BASE**: Set by compose (`/data`, `http://app:8000/api/v1`); the
+  service posts step progress back to the app through the latter.
+
+The service is a FastAPI wrapper around OptiType v1.5, not a Nextflow pipeline: there are no
+`ZAROHLA_PIPELINE_VERSION` or `ZAROHLA_PROFILE` variables in the codebase.
 
 ### GATK wrapper service
 - **GATK_CONTAINER**: Container name for GATK. Default: `gatk`.
@@ -96,7 +137,9 @@ This document lists environment variables and configuration flags used in the Za
 - **PYPGX_MEMORY_LIMIT**: Memory limit hint for PyPGx. Default: `7G`.
 - **PYPGX_MAX_PARALLEL_GENES**: Max concurrent gene tasks. Default: `8`.
 - **PYPGX_BATCH_SIZE**: Batch size for processing. Default: `4`.
-- **PYPGX_PHARMCAT_PREFERENCE**: Gene set preference: `auto` | `pypgx` | `pharmcat`. Default: `auto`.
+- **PYPGX_PHARMCAT_PREFERENCE**: Gene set preference: `auto` | `pypgx` | `pharmcat`. Code
+  default `auto` (`docker/pypgx/pypgx_wrapper.py`), but compose and every `.env.*` template
+  ship `pharmcat`.
 - **PYPGX_PREFERRED**: In report generator, optional hint to prefer PyPGx where both can call. Default: `false`.
 - **PHARMCAT_PREFERRED**: In report generator, optional hint to prefer PharmCAT where both can call. Default: `false`.
 
@@ -110,9 +153,18 @@ This document lists environment variables and configuration flags used in the Za
 - **PHARMCAT_REFERENCE_DIR**: PharmCAT references directory. Default: `/pharmcat`.
 - **PHARMCAT_PIPELINE_DIR**: PharmCAT pipeline directory. Default: `/pharmcat/pipeline`.
 - **PHARMCAT_TEE**: If `true`, tee PharmCAT pipeline logs to file. Default: `true`.
+- **PHARMCAT_ABSENT_TO_REF**: Pass PharmCAT's "treat absent positions as reference" flag.
+  Default: `false`. Turning it on makes PharmCAT assume reference at every position missing
+  from the VCF, which is only safe for a VCF you know covers all callable positions.
+- **PHARMCAT_UNSPECIFIED_TO_REF**: Same idea for positions present but unspecified.
+  Default: `false`.
 
 ### HAPI FHIR container (abridged; see HAPI FHIR docs)
-These are passed through docker-compose to the HAPI container:
+- **HAPI_FHIR_TAG**: Image tag — see *Docker compose → images* above.
+- **HAPI_FHIR_VERSION**: Optional display string for the report's platform/versions table. When
+  unset, `app/core/version_manager.py` auto-detects it where possible.
+
+These settings are passed straight through `compose.yml` to the HAPI container:
 - `hapi.fhir.allow_external_references`
 - `hapi.fhir.allow_multiple_delete`
 - `hapi.fhir.reuse_cached_search_results_millis`
