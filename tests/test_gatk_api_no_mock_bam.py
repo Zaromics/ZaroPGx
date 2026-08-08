@@ -1319,3 +1319,34 @@ def test_unopenable_log_destination_is_skipped_not_fatal(gatk_api, tmp_path):
         gatk_api._bounded_file_handler(str(tmp_path / "no" / "such" / "dir.log"))
         is None
     )
+
+
+def test_a_skipped_log_destination_is_reported_loudly(gatk_api, tmp_path, caplog):
+    """Degrading to console must not be silent.
+
+    252 converged all five sidecars on "warn and keep running" rather than "raise
+    at import". That trade is only defensible if the operator is told: a service
+    quietly dropping its progress log is a shared volume that is not mounted, and
+    the app will show no progress for this stage. gatk-api is the one of the five
+    that can be imported out-of-container, so this is where the warning is
+    exercised for real rather than asserted against source.
+    """
+    missing = str(tmp_path / "no" / "such" / "dir.log")
+    before = len(gatk_api._log_file_errors)
+
+    assert gatk_api._bounded_file_handler(missing) is None
+    assert len(gatk_api._log_file_errors) == before + 1
+    assert gatk_api._log_file_errors[-1][0] == missing
+
+    probe = logging.getLogger("zaropgx-unopened-log-probe")
+    with caplog.at_level(logging.WARNING, logger=probe.name):
+        gatk_api._warn_about_unopened_logs(probe)
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "an unopenable log destination was skipped without a word"
+    said = "\n".join(r.getMessage() for r in warnings)
+    assert missing in said, f"the warning does not name the path: {said}"
+    assert "console only" in said
+
+    # Leave the module-level list as it was found; it is import-time state.
+    del gatk_api._log_file_errors[before:]
