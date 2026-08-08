@@ -108,12 +108,19 @@ def reference_fasta(gatk_api):
 
 @pytest.fixture()
 def samtools(gatk_api, monkeypatch):
-    """Record every subprocess argv and fake a successful samtools conversion."""
+    """Record every subprocess argv and fake a successful samtools conversion.
+
+    The input file is snapshotted at call time because the handler deletes its work
+    directory once the conversion returns.
+    """
     calls = []
 
     def fake_run(cmd, *args, **kwargs):
-        calls.append({"cmd": cmd, "kwargs": kwargs})
-        argv = cmd if isinstance(cmd, (list, tuple)) else str(cmd).split()
+        argv = list(cmd) if isinstance(cmd, (list, tuple)) else str(cmd).split()
+        record = {"cmd": cmd, "kwargs": kwargs, "input_bytes": None}
+        if argv[:2] == ["samtools", "view"]:
+            record["input_bytes"] = Path(argv[-1]).read_bytes()
+        calls.append(record)
         if "-o" in argv:
             Path(argv[argv.index("-o") + 1]).write_bytes(MINIMAL_BAM)
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
@@ -123,7 +130,11 @@ def samtools(gatk_api, monkeypatch):
 
 
 def _bam_files(gatk_api):
-    return sorted(Path(gatk_api.TEMP_DIR).rglob("*.bam"))
+    """Every .bam anywhere the service can write -- scratch and shared volume both."""
+    found = []
+    for root in (gatk_api.TEMP_DIR, gatk_api.DATA_DIR):
+        found.extend(Path(root).rglob("*.bam"))
+    return sorted(found)
 
 
 def _conversion_argv(calls):
@@ -154,16 +165,21 @@ def test_no_mock_bam_payload_literal_survives(source):
     )
 
 
-def test_module_never_hand_writes_a_bam(source):
-    """No BAM may be produced by this module except through samtools.
+def test_module_never_writes_a_literal_payload_to_a_file(source):
+    """No output may be conjured from a literal. Only samtools writes alignments.
 
-    Renaming the placeholder string would slip past the assertion above; opening a
-    `.bam` for binary write would not.
+    Renaming the placeholder string would slip past the assertion above. Matching on
+    the *write* rather than on the variable name means `open(out_path, "wb")` cannot
+    slip past either: the only way to fabricate a file is to write bytes at it, and
+    every legitimate write in this module comes from an upload or from json.dumps.
     """
-    offenders = re.findall(
+    offenders = re.findall(r"\.write\(\s*b[\"'][^\"']", source)
+    assert offenders == [], f"literal bytes written to a file: {offenders}"
+
+    handwritten = re.findall(
         r"open\(\s*(\w*bam\w*)\s*,\s*[\"']wb[\"']", source, re.IGNORECASE
     )
-    assert offenders == [], f"BAM written by hand rather than by samtools: {offenders}"
+    assert handwritten == [], f"BAM opened for writing outside samtools: {handwritten}"
 
 
 def test_no_endpoint_advertises_a_mock_implementation(source):
@@ -187,7 +203,10 @@ def test_align_fastq_returns_501(client):
     assert "fastq" in detail
 
 
-def test_align_fastq_leaves_no_bam_behind(client, gatk_api):
+def test_align_fastq_leaves_no_bam_behind(client, gatk_api, reference_fasta):
+    """Takes `reference_fasta` deliberately: the old handler checked the reference
+    first and would 400 before fabricating, so without it this test would pass
+    against the unfixed code purely on test-ordering luck."""
     before = _bam_files(gatk_api)
     client.post(
         "/align-fastq",
@@ -233,10 +252,17 @@ def test_cram_to_bam_shells_out_to_samtools_view(
 
 
 def test_upload_reaches_samtools_byte_for_byte(
-    client, gatk_api, reference_fasta, samtools
+    client, gatk_api, reference_fasta, samtools, monkeypatch
 ):
-    """The upload is streamed to disk in chunks; it must arrive intact."""
+    """The upload is streamed to disk in chunks; it must arrive intact.
+
+    The chunk size is shrunk so the copy loop really iterates -- at the production
+    8 MiB a test payload would fit in a single read and a non-chunked implementation
+    would pass.
+    """
+    monkeypatch.setattr(gatk_api, "UPLOAD_CHUNK_BYTES", 4096)
     payload = b"CRAM\x03\x00" + bytes(range(256)) * 512
+    assert len(payload) > 4096 * 8, "payload must span many chunks"
 
     client.post(
         "/cram-to-bam",
@@ -244,8 +270,8 @@ def test_upload_reaches_samtools_byte_for_byte(
         data={"reference_genome": "hg38"},
     )
 
-    argv = _conversion_argv(samtools)
-    assert Path(argv[-1]).read_bytes() == payload
+    call = [c for c in samtools if c["input_bytes"] is not None][0]
+    assert call["input_bytes"] == payload
 
 
 def test_uploaded_filename_cannot_escape_the_work_directory(
@@ -265,9 +291,154 @@ def test_uploaded_filename_cannot_escape_the_work_directory(
     )
 
     argv = _conversion_argv(samtools)
-    work_dir = Path(gatk_api.TEMP_DIR).resolve()
-    for path in (Path(argv[argv.index("-o") + 1]), Path(argv[-1])):
-        assert work_dir in path.resolve().parents
+    scratch = Path(gatk_api.TEMP_DIR).resolve()
+    results = (Path(gatk_api.DATA_DIR) / "results").resolve()
+    assert scratch in Path(argv[-1]).resolve().parents
+    assert results in Path(argv[argv.index("-o") + 1]).resolve().parents
+
+
+def test_returned_bam_lives_on_the_shared_volume_not_container_private_tmp(
+    client, gatk_api, reference_fasta, samtools
+):
+    """The caller resolves bam_path from another container.
+
+    Nextflow processes run inside the nextflow container (`process.executor = 'local'`,
+    no `container:` directive) and do `cp "$BAM_PATH" .`. The only filesystem both it
+    and gatk-api mount is ./data. A path under TMPDIR=/tmp/gatk_temp is on this
+    container's private layer, so returning one is success over an unreadable file.
+    """
+    resp = client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    bam_path = Path(resp.json()["bam_path"]).resolve()
+    data_dir = Path(gatk_api.DATA_DIR).resolve()
+    assert data_dir in bam_path.parents, f"{bam_path} is not under DATA_DIR"
+    assert Path(gatk_api.TEMP_DIR).resolve() not in bam_path.parents
+    assert bam_path.exists()
+
+
+def test_output_is_scoped_to_the_job_id_the_cleanup_service_reaps(
+    client, gatk_api, reference_fasta, samtools
+):
+    """app/services/cleanup_service.py removes /data/results/{job_id}."""
+    resp = client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38", "job_id": "job-4242"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    scope = (Path(gatk_api.DATA_DIR) / "results" / "job-4242").resolve()
+    assert scope in Path(resp.json()["bam_path"]).resolve().parents
+
+
+def test_job_id_cannot_traverse_out_of_the_results_tree(
+    client, gatk_api, reference_fasta, samtools
+):
+    """job_id is a multipart form field, so it cannot be path-joined unchecked."""
+    resp = client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38", "job_id": "../../../../etc/pwned"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    results = (Path(gatk_api.DATA_DIR) / "results").resolve()
+    assert results in Path(resp.json()["bam_path"]).resolve().parents
+
+
+def test_scratch_directory_is_not_left_behind(
+    client, gatk_api, reference_fasta, samtools
+):
+    """A WGS input is full size; nothing used to delete it, on success or failure."""
+    before = sorted(Path(gatk_api.TEMP_DIR).iterdir())
+
+    client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38"},
+    )
+    assert sorted(Path(gatk_api.TEMP_DIR).iterdir()) == before
+
+    client.post(
+        "/sam-to-bam",
+        files={"file": ("sample.sam", SAM_BODY, "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert sorted(Path(gatk_api.TEMP_DIR).iterdir()) == before
+
+
+def test_failed_conversion_leaves_nothing_on_the_shared_volume(
+    client, gatk_api, reference_fasta, monkeypatch
+):
+    results = Path(gatk_api.DATA_DIR) / "results"
+    results.mkdir(parents=True, exist_ok=True)
+    before = sorted(p.name for p in results.iterdir())
+
+    monkeypatch.setattr(
+        gatk_api.subprocess,
+        "run",
+        lambda cmd, *a, **k: subprocess.CompletedProcess(cmd, 1, b"", b"boom"),
+    )
+    resp = client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38"},
+    )
+
+    assert resp.status_code == 500
+    assert sorted(p.name for p in results.iterdir()) == before
+    assert sorted(Path(gatk_api.TEMP_DIR).iterdir()) == []
+
+
+def test_output_is_verified_with_samtools_quickcheck(
+    client, gatk_api, reference_fasta, samtools
+):
+    """Magic bytes only prove BGZF framing; a bgzipped VCF would pass that."""
+    client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38"},
+    )
+
+    quickchecks = [
+        list(c["cmd"])
+        for c in samtools
+        if isinstance(c["cmd"], (list, tuple)) and "quickcheck" in list(c["cmd"])
+    ]
+    assert len(quickchecks) == 1, f"expected one quickcheck, got {quickchecks}"
+    assert quickchecks[0][:2] == ["samtools", "quickcheck"]
+
+
+def test_quickcheck_rejection_is_not_reported_as_success(
+    client, gatk_api, reference_fasta, monkeypatch
+):
+    """A truncated BAM has valid magic bytes and a missing EOF block."""
+
+    def fake_run(cmd, *args, **kwargs):
+        argv = list(cmd)
+        if "quickcheck" in argv:
+            return subprocess.CompletedProcess(cmd, 1, b"", b"EOF marker absent")
+        Path(argv[argv.index("-o") + 1]).write_bytes(MINIMAL_BAM)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(gatk_api.subprocess, "run", fake_run)
+    before = _bam_files(gatk_api)
+
+    resp = client.post(
+        "/cram-to-bam",
+        files={"file": ("sample.cram", b"CRAM\x03\x00", "application/octet-stream")},
+        data={"reference_genome": "hg38"},
+    )
+
+    assert resp.status_code == 500, resp.text
+    assert resp.json().get("success") is not True
+    assert "quickcheck" in resp.json()["detail"]
+    assert _bam_files(gatk_api) == before
 
 
 def test_cram_to_bam_passes_argv_as_a_list_not_a_shell_string(
@@ -438,6 +609,10 @@ def test_sam_to_bam_does_not_need_a_reference_genome(
         data={"reference_genome": "hg38"},
     )
     assert resp.status_code == 200, resp.text
+    # 200 alone would also hold for the placeholder implementation; the conversion
+    # having actually run is what makes this a test of the fix rather than of a
+    # hypothetical over-correction.
+    assert _conversion_argv(samtools)[:3] == ["samtools", "view", "-b"]
 
 
 # --------------------------------------------------------------------------
@@ -495,11 +670,12 @@ def test_plain_file_handlers_are_gone(source):
 
 
 def test_unopenable_log_destination_is_skipped_not_fatal(gatk_api, tmp_path):
-    """A read-only or absent log dir must not take the service down at import."""
+    """A read-only or absent log dir must not take the service down at import.
+
+    That it does not is already proven by the `gatk_api` fixture importing at all on
+    a host with no /var/log -- a raise there would error every test in this module.
+    """
     assert (
         gatk_api._bounded_file_handler(str(tmp_path / "no" / "such" / "dir.log"))
         is None
     )
-    # And the proof that it does not: this module imported at all on a host with
-    # no /var/log.
-    assert gatk_api.app is not None

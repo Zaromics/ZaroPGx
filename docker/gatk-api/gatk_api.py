@@ -1186,6 +1186,46 @@ def _discard_output(path):
         logger.warning(f"Could not remove {path}: {exc}")
 
 
+def _cleanup_dir(path):
+    """Remove a scratch directory and everything under it. Never raises."""
+    if path:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _safe_scope(value, fallback):
+    """Sanitise a caller-supplied id before it becomes a directory name.
+
+    job_id and patient_id arrive as multipart form fields, so they cannot be joined
+    into a path unchecked.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "", str(value or "")).strip(".")
+    return cleaned or fallback
+
+
+def conversion_output_dir(local_job_id, job_id=None, patient_id=None):
+    """Return the directory a converted BAM must be written to.
+
+    Not this container's /tmp. The caller is a Nextflow process running in the
+    nextflow container, which copies `bam_path` by path; the only filesystem both
+    containers share is the ./data bind mount (`/data` in each). A BAM under
+    TMPDIR=/tmp/gatk_temp lives on this container's private writable layer and is
+    unreadable to the caller, so reporting it as a success would repeat the defect
+    this module was fixed for in a subtler form. pypgx already follows this
+    convention -- its TEMP_DIR is DATA_DIR/'temp' for the same reason.
+
+    Scoped by the Zaro job id where there is one, because
+    app/services/cleanup_service.py already reaps /data/results/{job_id}.
+    """
+    scope = _safe_scope(job_id, _safe_scope(patient_id, ""))
+    parts = [DATA_DIR, "results"]
+    if scope:
+        parts.append(scope)
+    parts.append(local_job_id)
+    output_dir = os.path.join(*parts)
+    os.makedirs(output_dir, exist_ok=True)
+    return output_dir
+
+
 def _looks_like_bam(path):
     """A real BAM is BGZF-framed, so it opens with the gzip magic bytes.
 
@@ -1242,6 +1282,30 @@ def run_samtools_view(job_label, argv, output_bam):
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
+    # The magic bytes only prove BGZF framing -- a bgzipped VCF would pass. quickcheck
+    # parses the BAM header and verifies the EOF block, so it also catches a run that
+    # died halfway and left a plausible-looking truncated file.
+    try:
+        check = subprocess.run(
+            ["samtools", "quickcheck", "-v", output_bam],
+            capture_output=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _discard_output(output_bam)
+        message = f"could not verify {output_bam} with samtools quickcheck ({exc})"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if check.returncode != 0:
+        _discard_output(output_bam)
+        complaint = (
+            (check.stdout or b"") + b" " + (check.stderr or b"")
+        ).decode("utf-8", errors="replace").strip()
+        message = f"samtools quickcheck rejected {output_bam}: {complaint}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
     if stderr:
         logger.warning(f"Job {job_label}: samtools stderr: {stderr}")
 
@@ -1270,7 +1334,12 @@ async def align_fastq(
     step_name: Optional[str] = Form("gatk_alignment")
 ):
     """
-    Not implemented. Always returns HTTP 501.
+    Not implemented. Returns HTTP 501 whenever it is reached.
+
+    (Reached, not "always": the form parameters below are still declared, so Starlette
+    parses the multipart body before this function runs. A malformed body is a 422 and
+    a body that fills the disk is a 500, neither of which this code sees. The
+    parameters are kept so the OpenAPI schema still documents what the route takes.)
 
     Aligning FASTQ needs an aligner (bwa-mem2 for short reads, minimap2 for long),
     a prebuilt reference index and a large-RAM profile, none of which this image
@@ -1318,6 +1387,8 @@ async def cram_to_bam(
     reference is therefore a hard 400 here rather than a file we cannot vouch for.
     """
     job_client = None
+    work_dir = None
+    output_dir = None
     try:
         # Initialize job client if Zaro Job PK is provided
         if job_id:
@@ -1352,12 +1423,15 @@ async def cram_to_bam(
                 ),
             )
 
-        # Save uploaded file. basename() keeps a crafted filename inside the temp dir.
+        # Save uploaded file. basename() keeps a crafted filename inside the work dir.
         local_job_id = str(uuid.uuid4())
-        input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         filename = os.path.basename(file.filename or "input.cram")
-        input_path = os.path.join(input_dir, filename)
-        output_bam = os.path.join(input_dir, f"{os.path.splitext(filename)[0]}.bam")
+        input_path = os.path.join(work_dir, filename)
+        # Output goes on the shared volume, not beside the input -- see
+        # conversion_output_dir().
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        output_bam = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}.bam")
 
         # Copied in chunks: a whole-genome CRAM does not fit in this container's heap,
         # and now that the conversion is real, whole-genome CRAMs actually arrive here.
@@ -1405,13 +1479,20 @@ async def cram_to_bam(
 
     except HTTPException as e:
         # Do not relabel a deliberate 4xx as a 500 on the way out.
+        _cleanup_dir(output_dir)
         logger.error(f"CRAM to BAM conversion failed: {e.detail}")
         await _fail_step(job_client, f"CRAM to BAM conversion failed: {e.detail}")
         raise
     except Exception as e:
+        _cleanup_dir(output_dir)
         logger.exception(f"Error in CRAM to BAM conversion: {e}")
         await _fail_step(job_client, f"CRAM to BAM conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"CRAM to BAM conversion failed: {str(e)}")
+    finally:
+        # The input copy is never needed again, and it is now full size. Nothing has
+        # ever deleted these, so a WGS run used to leave the input plus its output on
+        # this container's writable layer indefinitely.
+        _cleanup_dir(work_dir)
 
 
 @app.post("/sam-to-bam")
@@ -1432,6 +1513,8 @@ async def sam_to_bam(
     rejected by samtools and surfaces here as a 500, not as an empty BAM.
     """
     job_client = None
+    work_dir = None
+    output_dir = None
     try:
         # Initialize job client if Zaro Job PK is provided
         if job_id:
@@ -1446,12 +1529,14 @@ async def sam_to_bam(
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
 
-        # Save uploaded file. basename() keeps a crafted filename inside the temp dir.
+        # Save uploaded file. basename() keeps a crafted filename inside the work dir.
         local_job_id = str(uuid.uuid4())
-        input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         filename = os.path.basename(file.filename or "input.sam")
-        input_path = os.path.join(input_dir, filename)
-        output_bam = os.path.join(input_dir, f"{os.path.splitext(filename)[0]}.bam")
+        input_path = os.path.join(work_dir, filename)
+        # Shared volume, for the same reason as the CRAM route.
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        output_bam = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}.bam")
 
         # Chunked for the same reason as the CRAM route: never buffer the whole upload.
         with open(input_path, "wb") as f:
@@ -1495,13 +1580,17 @@ async def sam_to_bam(
 
     except HTTPException as e:
         # Do not relabel a deliberate 4xx as a 500 on the way out.
+        _cleanup_dir(output_dir)
         logger.error(f"SAM to BAM conversion failed: {e.detail}")
         await _fail_step(job_client, f"SAM to BAM conversion failed: {e.detail}")
         raise
     except Exception as e:
+        _cleanup_dir(output_dir)
         logger.exception(f"Error in SAM to BAM conversion: {e}")
         await _fail_step(job_client, f"SAM to BAM conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"SAM to BAM conversion failed: {str(e)}")
+    finally:
+        _cleanup_dir(work_dir)
 
 
 @app.post("/cancel")
