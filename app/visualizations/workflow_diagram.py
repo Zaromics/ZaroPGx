@@ -4,6 +4,7 @@ import base64
 import logging
 import os
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
@@ -23,6 +24,76 @@ except Exception:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+
+
+# File types that arrive as read alignments (or reads) rather than as variant
+# calls, and therefore need conversion/typing stages before PharmCAT can run.
+ALIGNMENT_FILE_TYPES = frozenset({"bam", "cram", "sam", "fastq"})
+
+
+@dataclass(frozen=True)
+class WorkflowFlags:
+    """The pipeline shape a sample was (or will be) run through.
+
+    Every workflow-diagram renderer derives its stages from this one type, so
+    the same ``workflow`` dict always describes the same pipeline no matter
+    which renderer draws it. Previously each renderer re-derived the flags with
+    its own defaults, and the HTML fallback defaulted them all to ``False`` --
+    rendering an empty pipeline where the SVG rendered a full one.
+
+    Defaults are the ones the Mermaid/Graphviz pair has always used, because
+    that is the diagram users see on the main path:
+
+    * ``used_pharmcat`` defaults to ``True`` -- PharmCAT is the point of the run.
+    * ``used_gatk`` / ``used_hla`` / ``used_pypgx_bam2vcf`` default to ``True``
+      only for :data:`ALIGNMENT_FILE_TYPES`, which are the inputs that need them.
+    * everything else is opt-in.
+
+    An explicit key in the workflow dict always wins over the default.
+    """
+
+    file_type: str = "vcf"
+    extracted_file_type: str = ""
+    used_gatk: bool = False
+    used_hla: bool = False
+    used_pypgx: bool = False
+    used_pypgx_bam2vcf: bool = False
+    used_pharmcat: bool = True
+    used_mtdna: bool = False
+    exported_to_fhir: bool = False
+
+    @property
+    def is_alignment(self) -> bool:
+        """True when the input is a read alignment/reads rather than a VCF."""
+        return self.file_type in ALIGNMENT_FILE_TYPES
+
+    @staticmethod
+    def from_workflow(workflow: Optional[Dict[str, Any]]) -> "WorkflowFlags":
+        """Derive the pipeline shape from a workflow dict. All keys optional."""
+        workflow = workflow or {}
+
+        def _text(key: str, default: str) -> str:
+            raw = workflow.get(key)
+            value = str(raw).strip().lower() if raw is not None else ""
+            return value or default
+
+        file_type = _text("file_type", "vcf")
+        alignment = file_type in ALIGNMENT_FILE_TYPES
+
+        def _flag(key: str, default: bool) -> bool:
+            return bool(workflow.get(key, default))
+
+        return WorkflowFlags(
+            file_type=file_type,
+            extracted_file_type=_text("extracted_file_type", ""),
+            used_gatk=_flag("used_gatk", alignment),
+            used_hla=_flag("used_hla", alignment),
+            used_pypgx=_flag("used_pypgx", False),
+            used_pypgx_bam2vcf=_flag("used_pypgx_bam2vcf", alignment),
+            used_pharmcat=_flag("used_pharmcat", True),
+            used_mtdna=_flag("used_mtdna", False),
+            exported_to_fhir=_flag("exported_to_fhir", False),
+        )
 
 
 def read_workflow_mermaid() -> str:
@@ -168,32 +239,18 @@ def render_with_kroki(
 def build_mermaid_from_workflow(workflow: Dict[str, Any]) -> str:
     """Build a Mermaid flowchart for a specific sample workflow.
 
-    Expected keys in workflow (all optional; sensible defaults applied):
-      - file_type: "vcf" | "bam" | "cram" | "sam" | "fastq" | "zip"
-      - extracted_file_type: e.g., "vcf" (if zip)
-      - used_gatk: bool
-      - used_hla: bool (HLA typing with OptiType)
-      - used_pypgx: bool
-      - used_pypgx_bam2vcf: bool (BAM to VCF conversion)
-      - used_pharmcat: bool (default True)
-      - used_mtdna: bool (mtDNA analysis)
-      - exported_to_fhir: bool
+    Expected keys in workflow (all optional) are documented on
+    :class:`WorkflowFlags`, which derives the pipeline shape drawn here.
     """
-    file_type = str(workflow.get("file_type", "vcf")).lower()
-    extracted = str(workflow.get("extracted_file_type", "")).lower()
-    used_gatk = bool(
-        workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"})
-    )
-    used_hla = bool(
-        workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"})
-    )
-    used_pypgx = bool(workflow.get("used_pypgx", False))
-    used_pypgx_bam2vcf = bool(
-        workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"})
-    )
-    used_pharmcat = bool(workflow.get("used_pharmcat", True))
-    used_mtdna = bool(workflow.get("used_mtdna", False))
-    exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
+    flags = WorkflowFlags.from_workflow(workflow)
+    file_type = flags.file_type
+    extracted = flags.extracted_file_type
+    used_hla = flags.used_hla
+    used_pypgx = flags.used_pypgx
+    used_pypgx_bam2vcf = flags.used_pypgx_bam2vcf
+    used_pharmcat = flags.used_pharmcat
+    used_mtdna = flags.used_mtdna
+    exported_to_fhir = flags.exported_to_fhir
 
     # Helper to mark active path
     def act(label: str) -> str:
@@ -352,25 +409,11 @@ def render_with_graphviz(
     logger.info(f"[GRAPHVIZ] Rendering workflow diagram - format: {fmt}")
     logger.debug(f"[GRAPHVIZ] Workflow data: {workflow}")
 
+    flags = WorkflowFlags.from_workflow(workflow)
+
     if Digraph is None:
         logger.error("[GRAPHVIZ] Graphviz library not available")
         raise RuntimeError("graphviz is not available")
-
-    file_type = str(workflow.get("file_type", "vcf")).lower()
-    extracted = str(workflow.get("extracted_file_type", "")).lower()
-    used_gatk = bool(
-        workflow.get("used_gatk", file_type in {"bam", "cram", "sam", "fastq"})
-    )
-    used_hla = bool(
-        workflow.get("used_hla", file_type in {"bam", "cram", "sam", "fastq"})
-    )
-    used_pypgx = bool(workflow.get("used_pypgx", False))
-    used_pypgx_bam2vcf = bool(
-        workflow.get("used_pypgx_bam2vcf", file_type in {"bam", "cram", "sam", "fastq"})
-    )
-    used_pharmcat = bool(workflow.get("used_pharmcat", True))
-    used_mtdna = bool(workflow.get("used_mtdna", False))
-    exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
 
     # Try two different approaches for PNG to ensure text renders
     attempts = []
@@ -562,18 +605,7 @@ def render_with_graphviz(
             logger.debug(f"[GRAPHVIZ] Graph attrs: {attempt['graph_attrs']}")
             logger.debug(f"[GRAPHVIZ] Node attrs: {attempt['node_attrs']}")
 
-            result = _render_graphviz_diagram(
-                g,
-                file_type,
-                extracted,
-                used_gatk,
-                used_hla,
-                used_pypgx,
-                used_pypgx_bam2vcf,
-                used_pharmcat,
-                used_mtdna,
-                exported_to_fhir,
-            )
+            result = _render_graphviz_diagram(g, flags)
             if result and len(result) > 1000:  # Reasonable size check for a real image
                 logger.info(
                     f"[GRAPHVIZ] ✓ Successfully rendered with {attempt['name']} settings, size: {len(result)} bytes"
@@ -610,19 +642,18 @@ def render_with_graphviz(
         raise RuntimeError("All Graphviz rendering attempts failed")
 
 
-def _render_graphviz_diagram(
-    g,
-    file_type: str,
-    extracted: str,
-    used_gatk: bool,
-    used_hla: bool,
-    used_pypgx: bool,
-    used_pypgx_bam2vcf: bool,
-    used_pharmcat: bool,
-    used_mtdna: bool,
-    exported_to_fhir: bool,
-) -> bytes:
+def _render_graphviz_diagram(g, flags: WorkflowFlags) -> bytes:
     """Helper function to build the actual Graphviz diagram structure."""
+    file_type = flags.file_type
+    extracted = flags.extracted_file_type
+    used_gatk = flags.used_gatk
+    used_hla = flags.used_hla
+    used_pypgx = flags.used_pypgx
+    used_pypgx_bam2vcf = flags.used_pypgx_bam2vcf
+    used_pharmcat = flags.used_pharmcat
+    used_mtdna = flags.used_mtdna
+    exported_to_fhir = flags.exported_to_fhir
+
     logger.debug(
         f"[GRAPHVIZ] Building diagram structure - file_type: {file_type}, gatk: {used_gatk}, hla: {used_hla}, pypgx: {used_pypgx}"
     )
@@ -1054,15 +1085,7 @@ def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
     reliably in WeasyPrint without external dependencies.
     """
     try:
-        # Extract workflow information
-        file_type = workflow.get("file_type", "unknown")
-        used_gatk = workflow.get("used_gatk", False)
-        used_hla = workflow.get("used_hla", False)
-        used_pypgx = workflow.get("used_pypgx", False)
-        used_pypgx_bam2vcf = workflow.get("used_pypgx_bam2vcf", False)
-        used_pharmcat = workflow.get("used_pharmcat", False)
-        used_mtdna = workflow.get("used_mtdna", False)
-        exported_to_fhir = workflow.get("exported_to_fhir", False)
+        flags = WorkflowFlags.from_workflow(workflow)
 
         # Build workflow steps
         steps = []
@@ -1071,40 +1094,34 @@ def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
         steps.append("Upload")
 
         # Add detection step
-        if file_type.lower() in ["vcf", "vcf.gz"]:
+        if flags.file_type in {"vcf", "vcf.gz"}:
             steps.append("Detect (VCF)")
-        elif file_type.lower() in ["bam", "sam", "cram", "fastq"]:
-            steps.append(f"Detect ({file_type.upper()})")
         else:
-            steps.append(f"Detect ({file_type.upper()})")
+            steps.append(f"Detect ({flags.file_type.upper()})")
 
         # Add file conversion steps
-        if file_type.lower() == "cram" and used_gatk:
-            steps.append("CRAM→BAM")
-        elif file_type.lower() == "sam" and used_gatk:
-            steps.append("SAM→BAM")
-        elif file_type.lower() == "fastq" and used_gatk:
-            steps.append("FASTQ→BAM")
+        if flags.used_gatk and flags.file_type in {"cram", "sam", "fastq"}:
+            steps.append(f"{flags.file_type.upper()}→BAM")
 
         # Add HLA typing for alignment files
-        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_hla:
+        if flags.is_alignment and flags.used_hla:
             steps.append("HLA Typing")
 
         # Add PyPGx BAM2VCF conversion
-        if file_type.lower() in ["bam", "cram", "sam", "fastq"] and used_pypgx_bam2vcf:
+        if flags.is_alignment and flags.used_pypgx_bam2vcf:
             steps.append("BAM→VCF")
 
         # Add VCF step
         steps.append("VCF")
 
         # Add processing steps
-        if used_pypgx:
+        if flags.used_pypgx:
             steps.append("PyPGx")
 
-        if used_mtdna:
+        if flags.used_mtdna:
             steps.append("mtDNA")
 
-        if used_pharmcat:
+        if flags.used_pharmcat:
             steps.append("PharmCAT")
 
         # Add workflow diagram generation
@@ -1113,7 +1130,7 @@ def build_simple_html_from_workflow(workflow: Dict[str, Any]) -> str:
         # Add final steps
         steps.append("Reports")
 
-        if exported_to_fhir:
+        if flags.exported_to_fhir:
             steps.append("FHIR Export")
 
         # Create simple HTML with basic styling
@@ -1153,58 +1170,42 @@ def render_simple_png_from_workflow(
     """
     if Image is None or ImageDraw is None:
         return b""
-    if workflow is None:
-        workflow = {}
-    file_type = str(workflow.get("file_type", "vcf")).upper()
-    used_gatk = bool(
-        workflow.get("used_gatk", file_type in {"BAM", "CRAM", "SAM", "FASTQ"})
-    )
-    used_hla = bool(
-        workflow.get("used_hla", file_type in {"BAM", "CRAM", "SAM", "FASTQ"})
-    )
-    used_pypgx = bool(workflow.get("used_pypgx", False))
-    used_pypgx_bam2vcf = bool(
-        workflow.get("used_pypgx_bam2vcf", file_type in {"BAM", "CRAM", "SAM", "FASTQ"})
-    )
-    used_pharmcat = bool(workflow.get("used_pharmcat", True))
-    used_mtdna = bool(workflow.get("used_mtdna", False))
-    exported_to_fhir = bool(workflow.get("exported_to_fhir", False))
+    flags = WorkflowFlags.from_workflow(workflow)
+    display_type = flags.file_type.upper()
 
-    steps = ["Upload", f"Detect ({file_type})"]
+    steps = ["Upload", f"Detect ({display_type})"]
 
     # File conversion steps
-    if file_type == "CRAM":
-        steps.append("CRAM→BAM" + (" ✔" if used_gatk else " (skipped)"))
-    elif file_type == "SAM":
-        steps.append("SAM→BAM" + (" ✔" if used_gatk else " (skipped)"))
-    elif file_type == "FASTQ":
-        steps.append("FASTQ→BAM" + (" ✔" if used_gatk else " (skipped)"))
+    if flags.file_type in {"cram", "sam", "fastq"}:
+        steps.append(
+            f"{display_type}→BAM" + (" ✔" if flags.used_gatk else " (skipped)")
+        )
 
     # HLA typing for alignment files
-    if file_type in {"BAM", "CRAM", "SAM", "FASTQ"} and used_hla:
+    if flags.is_alignment and flags.used_hla:
         steps.append("HLA Typing ✔")
 
     # PyPGx BAM2VCF conversion
-    if file_type in {"BAM", "CRAM", "SAM", "FASTQ"} and used_pypgx_bam2vcf:
+    if flags.is_alignment and flags.used_pypgx_bam2vcf:
         steps.append("BAM→VCF ✔")
 
     steps.append("VCF")
 
     # PyPGx analysis
-    if used_pypgx:
+    if flags.used_pypgx:
         steps.append("PyPGx ✔")
 
     # mtDNA analysis
-    if used_mtdna:
+    if flags.used_mtdna:
         steps.append("mtDNA ✔")
 
     # PharmCAT analysis
-    if used_pharmcat:
+    if flags.used_pharmcat:
         steps.append("PharmCAT ✔")
 
     steps.append("Workflow Diagram")
     steps.append("Reports")
-    if exported_to_fhir:
+    if flags.exported_to_fhir:
         steps.append("FHIR Export")
 
     img = Image.new("RGB", (width, height), color=(255, 255, 255))
