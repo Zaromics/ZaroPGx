@@ -506,7 +506,7 @@
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File(s)</label>
                                     <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
-                                    <div class="form-text">Upload one VCF datafile for pharmacogenomic analysis (currently only GRCh38 supported.) One index file may be included alongside it; any further datafile is ignored. Formats BAM, SAM, CRAM, and GRCh37 VCFs are in testing. FASTQ is not accepted: ZaroPGx ships no aligner, so align your reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM. 23andMe, BED, and other genotyping formats are not accepted: support for them is still in development.</div>
+                                    <div class="form-text">Upload one VCF datafile for pharmacogenomic analysis (currently only GRCh38 supported.) One index file may be included alongside it; any further datafile is ignored. Formats BAM, SAM and CRAM are in testing. A GRCh37/hg19 VCF is accepted, but ZaroPGx performs no liftover: it is analysed on its original coordinates, so its results are provisional. FASTQ is not accepted: ZaroPGx ships no aligner, so align your reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM. 23andMe, BED, and other genotyping formats are not accepted: support for them is still in development.</div>
                             </div>
                                 
                             <div class="mb-3">

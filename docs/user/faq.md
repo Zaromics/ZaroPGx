@@ -42,8 +42,10 @@ ZaroPGx supports:
 
 ### What reference genomes are supported?
 
-- **GRCh38**: Fully supported (now)
-- **GRCh37**: Supported with bcftools liftover to GRCh38 (soon)
+- **GRCh38/hg38**: Fully supported (now)
+- **GRCh37/hg19**: Accepted, but analysed on its original coordinates — see below
+
+**ZaroPGx does not perform liftover.** A GRCh37/hg19 VCF is not converted to GRCh38/hg38; it is analysed as-is, and the upload tells you so. GRCh38/hg38 is the only build ZaroPGx supports, so results for any other build are provisional and should not be relied on. For reliable results, convert the file to GRCh38/hg38 yourself before uploading it. Note that converting a VCF between reference genomes can itself introduce coordinate or genotype errors, so a converted file's results may differ from a file sequenced and called directly against GRCh38/hg38.
 
 ### What are the computing hardware requirements?
 
@@ -63,7 +65,6 @@ Analysis time depends on:
 - **File size**: Larger files take longer
 - **File type**: VCF is fastest, CRAM/SAM slowest (they are converted to BAM first)
 - **System resources**: More CPU+RAM = faster processing
-- **Reference genome**: GRCh37 adds a liftover re-alignment delay
 
 **Typical times (ballpark estimate):**
 - **VCF (exome)**: 5-15 minutes

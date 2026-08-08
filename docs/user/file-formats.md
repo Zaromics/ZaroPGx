@@ -45,8 +45,8 @@ FASTQ files contain raw sequencing reads with quality scores and are the startin
 Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or an established end-to-end pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM. A GRCh38/hg38 VCF is the fastest input of all.
 
 ## Reference Genome Support
-- **GRCh38/hg38** (Recommended)
-- **GRCh37/hg19** (Legacy)
+- **GRCh38/hg38** — the only build ZaroPGx supports.
+- **GRCh37/hg19** (Legacy) — accepted, but **analysed on its original coordinates**. ZaroPGx performs no liftover: the file is not converted to GRCh38/hg38, and the upload warns you that its results are provisional and should not be relied on. Convert it to GRCh38/hg38 yourself before uploading for reliable results. Converting a VCF between reference genomes can itself introduce coordinate or genotype errors, so a converted file's results may differ from a file sequenced and called directly against GRCh38/hg38.
 
 ## File Size Considerations
 
