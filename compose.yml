@@ -277,8 +277,12 @@ services:
 
 
   # ZaroHLA — OptiType v1.5 HLA Class I typing service.
-  # ACTIVE HLA path: the app, the Nextflow pipeline, and the workflow router all
-  # call it at http://zarohla:5000 (gated on OPTITYPE_ENABLED).
+  # ACTIVE HLA path, but only the Nextflow pipeline actually types with it: the
+  # POST /call-hla calls live solely in pipelines/pgx/main.nf (gated on
+  # OPTITYPE_ENABLED). app/ touches http://zarohla:5000 for /health probes, the
+  # services-status listing, and the broadcast /cancel in job_router — it never
+  # submits an HLA job itself. Do not prune this service on the strength of the
+  # app's references alone.
   zarohla:
     image: zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG:-0.2.8}
     build:
