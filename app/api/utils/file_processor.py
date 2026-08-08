@@ -777,20 +777,28 @@ class FileProcessor:
                     "<p>Note: Although an existing index file can be uploaded along with the main VCF file, at the moment, its functionality is not yet supported. (TO DO)</p>"
                 )
 
-        # 23andMe files need conversion
+        # 23andMe: refused at upload, not analysed.
+        #
+        # `is_provisional` used to be set here alongside `unsupported`, which read as
+        # "analysed anyway, provisionally" -- the meaning it genuinely carries for a
+        # GRCh37 VCF -- and waved 23andMe past the upload refusal gate. Nothing here is
+        # provisional: no converter exists, and pipelines/pgx/main.nf has no `23andme`
+        # branch, so the run hit `error "Unsupported input type"` and the job failed.
+        # The flag was aspirational, describing an intent rather than a behaviour.
         elif analysis.file_type == FileType.TWENTYTHREE_AND_ME:
             workflow["needs_conversion"] = True
-            workflow["is_provisional"] = True
             workflow["unsupported"] = True
             workflow["unsupported_reason"] = (
-                "23andMe data format requires conversion to VCF before analysis. "
-                "This functionality is not yet implemented."
+                "ZaroPGx cannot analyse 23andMe genotyping files. They must be "
+                "converted to VCF first, and that conversion is not implemented yet, so "
+                "there is nothing ZaroPGx can run on this file. Upload a GRCh38/hg38 VCF "
+                "from sequencing, or a BAM, CRAM or SAM file, instead."
             )
             workflow["recommendations"].append(
                 "<p>23andMe format conversion needed - create schema reference and translation</p>"
             )
             workflow["warnings"].append(
-                "<p>23andMe data has limited variant coverage compared to clinical sequencing. Results will be provisional and may miss important variants.</p>"
+                "<p>⚠️ Even once conversion exists, 23andMe data has limited variant coverage compared to clinical sequencing: results would be provisional and may miss important variants.</p>"
             )
 
         # FASTA - reference genome files

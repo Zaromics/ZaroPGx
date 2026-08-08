@@ -161,17 +161,22 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     then analysed on its original coordinates, saying so via ``is_provisional``, which is
     this codebase's own flag for "we did analyse it, provisionally".
 
-    What genuinely cannot work is an input that is flagged unsupported, is *not* marked
-    provisional, and that the pipeline cannot carry: FASTQ, FASTA, BED and unrecognised
-    formats. Those used to be accepted, queued, and then failed minutes later with a
-    Nextflow or gatk-api error the user could do nothing with.
+    What genuinely cannot work is an input that is flagged unsupported and that the
+    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED and unrecognised formats. Those
+    used to be accepted, queued, and then failed minutes later with a Nextflow or
+    gatk-api error the user could do nothing with.
+
+    ``is_provisional`` only exempts a *runnable* input type, and that ordering is the
+    point rather than belt-and-braces. The flag is set by hand next to a reason string,
+    so it can be — and was, for 23andMe — written aspirationally: "we intend to convert
+    this one day" rather than "we analysed this". Only the pipeline's own repertoire says
+    whether a provisional analysis is a thing that can happen at all, so it is consulted
+    first, and a mis-set flag can no longer wave an input past the gate.
     """
     if not workflow.get("unsupported"):
         return None
-    if workflow.get("is_provisional"):
-        return None
     file_type = str(workflow.get("file_type") or "unknown").lower()
-    if file_type in NEXTFLOW_INPUT_TYPES:
+    if file_type in NEXTFLOW_INPUT_TYPES and workflow.get("is_provisional"):
         return None
     return workflow.get("unsupported_reason") or (
         f"Files of type '{file_type}' cannot be analysed."
@@ -1371,9 +1376,9 @@ async def upload_genomic_data(
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
     - FASTQ: rejected with 400. ZaroPGx ships no aligner, so raw reads cannot reach a BAM
       (gatk-api's /align-fastq answers 501); align them yourself and upload the BAM/CRAM/SAM.
-    - 23andMe: Not yet supported, requires conversion to VCF (future implementation)
-    - FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no working
-      branch for them, so accepting one could only ever produce a failed job.
+    - 23andMe/FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no
+      working branch for them, so accepting one could only ever produce a failed job.
+      (23andMe would need a VCF converter first; that is not implemented.)
 
     Only the first uploaded data file is analysed; any further data file is reported as
     ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be

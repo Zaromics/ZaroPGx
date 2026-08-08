@@ -158,16 +158,30 @@ def test_provisional_inputs_are_still_analysed(upload):
     assert resp.status_code == 200, resp.text
 
 
-def test_23andme_is_left_alone(upload):
-    """Also flagged provisional; refusing it is a product call, not this fix."""
+def test_23andme_is_refused(upload):
+    """No converter and no main.nf branch: the job could only ever fail."""
+    reason = "ZaroPGx cannot analyse 23andMe genotyping files."
+    resp = upload("23andme", unsupported=True, unsupported_reason=reason)
+
+    assert resp.status_code == 400, resp.text
+    assert reason in resp.json()["detail"]
+
+
+def test_a_provisional_flag_cannot_wave_an_unrunnable_type_past_the_gate(upload):
+    """``is_provisional`` was set aspirationally on 23andMe and leaked it through.
+
+    The flag is written by hand next to a reason string, so it records intent as
+    readily as behaviour. It may only exempt an input type the pipeline can actually
+    carry; on anything else it means nothing.
+    """
     resp = upload(
         "23andme",
         unsupported=True,
-        unsupported_reason="23andMe data format requires conversion to VCF.",
+        unsupported_reason="One day we will convert this.",
         is_provisional=True,
     )
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 400, resp.text
 
 
 def test_fastq_is_refused(upload):
