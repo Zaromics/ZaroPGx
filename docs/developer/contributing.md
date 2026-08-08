@@ -438,8 +438,9 @@ async def upload_genomic_data(
     """
     Upload genomic data files for pharmacogenomic analysis.
     
-    This endpoint accepts various genomic file formats (VCF, BAM, CRAM, SAM, FASTQ)
-    and initiates the Nextflow-based processing pipeline.
+    This endpoint accepts various genomic file formats (VCF, BAM, CRAM, SAM)
+    and initiates the Nextflow-based processing pipeline. FASTQ is refused with a
+    400: ZaroPGx ships no aligner, so raw reads cannot reach a BAM.
     
     Args:
         files: List of genomic data files to upload

@@ -8,16 +8,21 @@ curation: full
 ## Input Format Support Priorities
 
 - **Priority 0   (Supported)**: VCF, GRCh38, NGS-derived
-- **Priority 1   (Development)**: VCF, GRCh37, NGS-derived (liftover via bcftools)
+- **Priority 1   (Development)**: VCF, GRCh37, NGS-derived — accepted today and analysed on
+  its original coordinates (no liftover), so results are provisional and say so. Liftover via
+  bcftools is the outstanding piece.
 - **Priority 1.5 (Development)**: BAM
-- **Priority 2   (Development)**: CRAM, SAM, FASTQ, BCF (NGS-derived)
+- **Priority 2   (Development)**: CRAM, SAM, BCF (NGS-derived)
+- **Not accepted**: FASTQ. ZaroPGx ships no aligner, so raw reads — single- or paired-end —
+  are refused at upload. Implementing alignment is the only thing that would change this.
 - **Priority 3   (Research)**: Other sequencing/genotyping formats
 - **Priority 4   (Research)**: BED, gVCF, 23andMe, AncestryDNA, TXT formats
 - **Priority 5   (Early Research)**: T2T and other emerging formats
 
 ## Pipeline Function
 
-- Add GRCh37 support via `bcftools` liftover; surface accuracy caveats after conversion
+- Add `bcftools` liftover for GRCh37 input (the files are already accepted and analysed on
+  their original coordinates as provisional); surface accuracy caveats after conversion
 - Clarify workflow vs job IDs; define single source for workflow definition and per-run job state
 - Represent workflows as finite state matrix, each unique and deterministic workflow should have an assigned ID which can be quickly spot checked 
 - Nextflow orchestration

@@ -9,7 +9,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 ## Web Interface
 - The **Main Dashboard** provides:
 
-- **File Upload**: Drag and drop or click to upload genomic files: single datafile is fine unless you have a raw FASTQ; in that case please upload both paired reads. If you have an existing index file, you may upload it as well, though it may not be necessary as a new one may be generated anyhow at some point throughout the pipeline. You may also enter an identifier for the sample.
+- **File Upload**: Drag and drop or click to upload genomic files. Upload one data file per analysis: only the first is analysed, and any further data file is reported as ignored in the workflow warnings. If you have an existing index file, you may upload it as well, though it may not be necessary as a new one may be generated anyhow at some point throughout the pipeline. You may also enter an identifier for the sample.
 - **System Status**: Monitor service health visually by observing the service glyphs, progress bar, and processing log.
 - **Quick Actions**: Common tasks and shortcuts: you can check the header of a sample without running the pipeline. You can cancel a running pipeline cleanly. While uploading a sample, a cancel button is not provided, you may simply press the home button to reset the display. Service glyphs may be interacted with to toggle enable/disable override certain stages in the pipeline. 
 - **Report Screen**: Upon completion of a workflow, a report screen will appear, offering PharmCAT and custom ZaroPGx reports. 
@@ -22,22 +22,23 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 | **BAM** | `.bam` | Aligned reads | HLA typing → Analysis |
 | **CRAM** | `.cram` | Compressed BAM | GATK → HLA typing → Analysis |
 | **SAM** | `.sam` | Text alignment | GATK → HLA typing → Analysis |
-| **FASTQ** | `.fastq`, `.fastq.gz` | Raw sequences | HLA typing → GATK → Analysis |
+
+**FASTQ is not accepted.** ZaroPGx ships no aligner, so raw reads cannot be turned into the aligned data every later step needs, and a FASTQ upload is refused with an explanatory message rather than accepted and failed partway through. This applies to single- and paired-end reads alike. Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.
 
 #### Upload Process
 
 1. **Select Files**: Choose one or more genomic files
 2. **Configure Options**:
    - **Sample Identifier**: Optional patient/sample name. Letters, digits, dot, underscore and hyphen only, up to 64 characters, starting with a letter or digit — `Sample_01` and `patient-123` are fine, `Patient 001` (space) is rejected with a 400. Leave it blank and the server mints a UUID.
-   - **Reference Genome**: hg38 (default) or hg19 (coming in 0.3)
+   - **Reference Genome**: not something you select — ZaroPGx reads the build from the file's own header and tells you what it found. GRCh38/hg38 is the only build it supports; a GRCh37/hg19 file is accepted today, with the caveat below.
    - **Processing Options**: Enable/disable specific tools
 3. **Start Analysis**: Click "Upload and Analyze"
 
 #### Upload Options
 
-**Reference Genome Selection:**
-- **hg38/GRCh38**: Recommended
-- **hg19/GRCh37**: Supported with automatic bcftools liftover (coming in 0.3)
+**Reference Genome:**
+- **hg38/GRCh38**: the only build ZaroPGx supports.
+- **hg19/GRCh37**: accepted, but **analysed on its original coordinates**. ZaroPGx performs no liftover: the file is not converted to GRCh38/hg38, and the upload warns you that its results are provisional and should not be relied on. Convert it to GRCh38/hg38 yourself before uploading for reliable results. Converting a VCF between reference genomes can itself introduce coordinate or genotype errors, so a converted file's results may differ from a file sequenced and called directly against GRCh38/hg38.
 - **T2T**: Not yet supported
 
 **Processing Toggles:**

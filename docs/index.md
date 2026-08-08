@@ -74,7 +74,9 @@ to-do
 
 ZaroPGx is a self-hosted, containerized platform that:
 
-- **Processes genomic data** (VCF, BAM, CRAM, FASTQ) using industry-standard tools
+- **Processes genomic data** (VCF, BAM, CRAM, SAM) using industry-standard tools. FASTQ is
+  not accepted: ZaroPGx ships no aligner, so align your reads to GRCh38/hg38 yourself and
+  upload the resulting BAM, CRAM or SAM.
 - **Performs comprehensive allele calling** across **91 pharmacogenes** using PharmCAT, PyPGx and
   OptiType — 23 of them make up PharmCAT's guideline-reporting panel, and PyPGx covers 87, of
   which 67 are outside that panel. The 68th non-panel gene is HLA-C, which PyPGx does not call
