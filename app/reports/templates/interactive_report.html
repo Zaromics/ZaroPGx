@@ -870,7 +870,6 @@
                             <th>Activity Score</th>
                             <th>Implications</th>
                             <th class="narrow-col">Call</th>
-                            <th class="narrow-col">Data</th>
                             <th class="narrow-col">Guide</th>
                         </tr>
                     </thead>
@@ -898,8 +897,7 @@
                                     Consult clinical guidelines
                                 {% endif %}
                             </td>
-                            <td class="narrow-col">{{ d.called_by if d.called_by else '' }}</td>
-                            <td class="narrow-col">{{ d.report_data_from if d.report_data_from else '' }}</td>
+                            <td class="narrow-col tool-source" title="{{ d.called_by_label or '' }}">{{ d.called_by }}</td>
                             <td class="narrow-col">{{ d.guideline_source if d.guideline_source else '' }}</td>
                         </tr>
                         {% endfor %}
@@ -908,9 +906,8 @@
                 
                 <div class="tool-key">
                     <h4>Source Legend:</h4>
-                    <p><strong>Call:</strong> Calling tool - <strong>P</strong> = PyPGx, <strong>C</strong> = PharmCAT, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>G</strong> = GATK</p>
-                    <p><strong>Data:</strong> Report data tool - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx</p>
-                    <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB</p>
+                    <p><strong>Call:</strong> Tool that made this call, as recorded by the run - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call made, <strong>?</strong> = not recorded by this run</p>
+                    <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB, blank = not recorded</p>
                 </div>
                 
                 <div id="geneInfoSection"></div>

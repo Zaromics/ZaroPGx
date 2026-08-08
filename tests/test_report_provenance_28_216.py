@@ -4,7 +4,10 @@ The rule under test: report what the run recorded, and say so explicitly when
 it recorded nothing. No arm may consult the gene name.
 """
 
+import re
 from pathlib import Path
+
+import pytest
 
 import app.reports.generator as generator_module
 from app.reports.provenance import (
@@ -17,6 +20,8 @@ from app.reports.provenance import (
     resolve_guideline_source,
 )
 from app.services.pharmcat_data_service import PharmCATDataService
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_matcher_is_pharmcat():
@@ -209,7 +214,9 @@ def test_db_lane_workflow_summary_uses_the_request_session():
     """A second engine/connection per request commits outside the request
     transaction; ``get_pharmcat_summary`` takes the session (see the call at
     ``_get_normalized_pharmcat_data``)."""
-    src = Path("app/services/pharmcat_data_service.py").read_text(encoding="utf-8")
+    src = REPO_ROOT.joinpath("app/services/pharmcat_data_service.py").read_text(
+        encoding="utf-8"
+    )
     assert "get_pharmcat_summary(pharmcat_run_id, self.db)" in src
     assert "get_pharmcat_summary(pharmcat_run_id)" not in src
 
@@ -296,6 +303,196 @@ def test_pypgx_only_row_keeps_its_tool_attribution():
 
 def test_both_pypgx_merges_write_the_same_tool_marker_key():
     """merge-1 wrote ``source``, merge-2 ``tool_source`` -- same fact, two keys."""
-    src = Path("app/reports/generator.py").read_text(encoding="utf-8")
+    src = REPO_ROOT.joinpath("app/reports/generator.py").read_text(encoding="utf-8")
     assert '"source": "PyPGx"' not in src
     assert src.count('"tool_source": "PyPGx"') >= 2
+
+
+# ---------------------------------------------------------------------------
+# Templates -- rendered markup, not template source text
+# ---------------------------------------------------------------------------
+
+TEMPLATES = ("report_template.html", "interactive_report.html")
+
+_ROWS = [
+    {
+        "gene": "CYP2C19",
+        "diplotype": "*38/*38",
+        "phenotype": "Normal Metabolizer",
+        "called_by": CALLED_BY_PHARMCAT,
+        "called_by_label": "Called by PharmCAT",
+        "guideline_source": "C",
+        # A stale value from an upstream lane must never reach the page.
+        "report_data_from": "ZZZ_SHOULD_NOT_RENDER",
+    },
+    {
+        "gene": "CYP2D6",
+        "diplotype": "*1/*3",
+        "phenotype": "Intermediate Metabolizer",
+        "called_by": CALLED_BY_OUTSIDE,
+        "called_by_label": "Outside call - producing tool not recorded by this run",
+    },
+    {
+        "gene": "ABCG2",
+        "diplotype": "",
+        "phenotype": "",
+        "called_by": CALLED_BY_NO_CALL,
+        "called_by_label": "No call made for this gene",
+    },
+    {
+        "gene": "NAT2",
+        "diplotype": "*1/*1",
+        "phenotype": "Unknown",
+        "called_by": CALLED_BY_UNKNOWN,
+        "called_by_label": "Calling tool not recorded by this run",
+    },
+]
+
+
+def _render(template_name, diplotypes=_ROWS):
+    """Render through the app's own Jinja env so custom filters are registered."""
+    from app.reports.generator import env
+
+    return env.get_template(template_name).render(
+        diplotypes=diplotypes,
+        recommendations=[],
+        gene_drug_recommendations=[],
+        organized_recommendations=[],
+        patient_id="test-patient",
+        report_id="test-report",
+        report_date="2026-08-08",
+        organization="ZaroPGx",
+        disclaimer="",
+    )
+
+
+def _gene_table_headers(html):
+    """The <th> texts of the gene table, from the rendered page."""
+    thead = re.search(
+        r"<thead>\s*<tr>(.*?)</tr>\s*</thead>", html, re.S | re.I
+    )  # first table on the page is the gene table in both templates
+    assert thead, "no gene table <thead> found in rendered output"
+    return [
+        re.sub(r"<[^>]+>", "", h).strip()
+        for h in re.findall(r"<th[^>]*>(.*?)</th>", thead.group(1), re.S | re.I)
+    ]
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_rendered_gene_table_has_seven_columns_and_no_data_column(template_name):
+    headers = _gene_table_headers(_render(template_name))
+    assert headers == [
+        "Gene",
+        "Diplotype",
+        "Phenotype",
+        "Activity Score",
+        "Implications",
+        "Call",
+        "Guide",
+    ], headers
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_rendered_page_never_carries_report_data_from(template_name):
+    html = _render(template_name)
+    assert "ZZZ_SHOULD_NOT_RENDER" not in html
+    assert "report_data_from" not in html
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_templates_no_longer_reference_report_data_from(template_name):
+    path = REPO_ROOT / "app" / "reports" / "templates" / template_name
+    assert "report_data_from" not in path.read_text(encoding="utf-8"), path
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_rendered_legend_explains_every_glyph(template_name):
+    html = _render(template_name)
+    assert "X</strong> = outside call" in html
+    assert "?</strong> = not recorded by this run" in html
+    assert "&ndash;</strong> = no call made" in html
+    # The Data column is gone, so the legend must not describe it.
+    assert "Data:</strong>" not in html
+    assert "Report data tool" not in html
+    # GATK never called a diplotype; grep 'return "G"' has zero hits in app/.
+    assert "G</strong> = GATK" not in html
+    assert "G = GATK" not in html
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_rendered_call_cell_is_never_blank_and_self_explains(template_name):
+    html = _render(template_name)
+    for letter, label in (
+        (CALLED_BY_PHARMCAT, "Called by PharmCAT"),
+        (CALLED_BY_OUTSIDE, "Outside call - producing tool not recorded by this run"),
+        (CALLED_BY_NO_CALL, "No call made for this gene"),
+        (CALLED_BY_UNKNOWN, "Calling tool not recorded by this run"),
+    ):
+        cell = f'<td class="narrow-col tool-source" title="{label}">{letter}</td>'
+        assert cell in html, f"missing Call cell for {letter!r}: {label}"
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_rendered_guide_cell_is_blank_when_not_recorded(template_name):
+    html = _render(template_name)
+    # CYP2C19 recorded "C"; the other three recorded nothing.
+    assert html.count('<td class="narrow-col">C</td>') == 1
+    assert html.count('<td class="narrow-col"></td>') == 3
+
+
+# ---------------------------------------------------------------------------
+# ReportLab fallback lane -- previously dropped provenance entirely
+# ---------------------------------------------------------------------------
+
+
+def test_reportlab_gene_line_states_provenance_in_words():
+    """This lane renders flowing text, not a table: it has no legend and no
+    hover, so a bare glyph would be uninterpretable. Render the label."""
+    from app.reports.pdf_generators import _diplotype_line
+
+    line = _diplotype_line(
+        {
+            "gene": "CYP2C19",
+            "diplotype": "*38/*38",
+            "phenotype": "Normal Metabolizer",
+            "call_source": "MATCHER",
+        }
+    )
+    assert "<b>CYP2C19:</b> *38/*38" in line
+    assert "(Phenotype: Normal Metabolizer)" in line
+    assert "[Called by PharmCAT]" in line
+
+
+def test_reportlab_gene_line_is_honest_about_outside_and_unknown():
+    from app.reports.pdf_generators import _diplotype_line
+
+    outside = _diplotype_line(
+        {"gene": "CYP2D6", "diplotype": "*1/*3", "call_source": "OUTSIDE"}
+    )
+    assert "[Outside call - producing tool not recorded by this run]" in outside
+
+    unrecorded = _diplotype_line({"gene": "NAT2", "diplotype": "*1/*1"})
+    assert "[Calling tool not recorded by this run]" in unrecorded
+
+    no_call = _diplotype_line({"gene": "ABCG2", "diplotype": ""})
+    assert "[No call made for this gene]" in no_call
+
+
+def test_reportlab_gene_line_preserves_the_existing_activity_score_format():
+    from app.reports.pdf_generators import _diplotype_line
+
+    line = _diplotype_line(
+        {
+            "gene": "CYP2D6",
+            "diplotype": "*1/*3",
+            "phenotype": "Intermediate Metabolizer",
+            "activity_score": 1.0,
+            "call_source": "OUTSIDE",
+            "tool_source": "PyPGx",
+        }
+    )
+    assert "(Activity Score: 1.0)" in line
+    # OUTSIDE refined by a recorded tool marker names the tool.
+    assert "[Called by PyPGx]" in line
+    # Provenance goes last, after the existing fields.
+    assert line.index("Activity Score") < line.index("[Called by PyPGx]")
