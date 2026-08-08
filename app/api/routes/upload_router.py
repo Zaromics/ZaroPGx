@@ -896,6 +896,34 @@ async def wait_for_nextflow_completion(
                         break
                     elif status_data.get("status") == "cancelled":
                         logger.info(f"Nextflow job {job_key} was cancelled")
+
+                        # Breaking out without a write left the job at 'running'
+                        # forever: this poll is the only thing watching the run. Guard
+                        # the write the same way the deadline does (bff00ad) —
+                        # update_job has no terminal-state guard of its own, and a
+                        # container callback or app.main may already have finished this
+                        # job between the read above and this poll.
+                        current_status = getattr(job, "status", None)
+                        if current_status in TERMINAL_JOB_STATUSES:
+                            logger.warning(
+                                f"Nextflow job {job_key} reported cancelled, but job "
+                                f"{job_id} is already {current_status}; leaving that "
+                                "status alone"
+                            )
+                            break
+
+                        job_service.update_job(
+                            job_id, JobUpdate(status=JobStatus.CANCELLED)
+                        )
+                        log_data = JobLogCreate(
+                            step_name="nextflow_executor",
+                            log_level=LogLevel.WARN,
+                            message=(
+                                "Nextflow reported the pipeline cancelled; marking the "
+                                "job cancelled."
+                            ),
+                        )
+                        job_service.log_job_event(job_id, log_data)
                         break
 
                 # Wait before next check, but never sleep past the deadline
