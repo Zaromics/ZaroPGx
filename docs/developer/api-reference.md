@@ -1025,7 +1025,7 @@ has no `warning` or `critical`.
 
 ### JobResponse
 
-`models.py:369`. Returned by `GET/POST/PUT /api/v1/jobs/…` and by cancel.
+`models.py:368`. Returned by `GET/POST/PUT /api/v1/jobs/…` and by cancel.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -1051,13 +1051,13 @@ has no `warning` or `critical`.
 
 ### JobStepResponse
 
-`models.py:419`. Fields: `id`, `job_id`, `step_name`, `step_order`, `status`
+`models.py:420`. Fields: `id`, `job_id`, `step_name`, `step_order`, `status`
 (`StepStatus`), `container_name`, `started_at`, `completed_at`,
 `duration_seconds`, `output_data`, `error_details`, `retry_count`.
 
 ### JobLogResponse
 
-`models.py:465`. Fields: `id` (**int**, not a UUID), `job_id`, `step_name`,
+`models.py:464`. Fields: `id` (**int**, not a UUID), `job_id`, `step_name`,
 `log_level` (`LogLevel`), `message`, `metadata`, `timestamp`.
 
 ### Report URL payload
