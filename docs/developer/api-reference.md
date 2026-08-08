@@ -964,6 +964,11 @@ returns HTTP 200 with `{"error": "...", "traceback": "..."}` instead.
 | `/documentation/` | GET | Built Sphinx HTML, mounted only when `docs/_build/html` exists (the app tries to build it at startup) |
 | `/static/…` | GET | Application static assets |
 
+HTML pages, all excluded from the OpenAPI schema: `/` (the upload dashboard),
+`/api-reference` (a framed copy of this page), `/login` (GET renders the form,
+POST submits it) and `/logout` (GET or POST, both clear the session cookie and
+redirect to `/login`).
+
 #### Cleanup
 
 | Endpoint | Method | Notes |
