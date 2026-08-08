@@ -1,5 +1,6 @@
 ---
 title: Development Setup
+curation: partial
 ---
 
 # Development Setup
@@ -128,9 +129,9 @@ docker compose up -d db
 
 **Run everything locally:**
 ```bash
-# Install all dependencies
-uv pip install -e .
-uv pip install -r requirements-dev.txt
+# Install all dependencies (there is no requirements.txt; deps live in
+# pyproject.toml and are locked in uv.lock)
+uv sync --extra dev
 
 # Run services
 python -m app.services.pharmcat_service &
@@ -265,9 +266,10 @@ async def get_new_feature(db: Session = Depends(get_db)):
 **Adding new service:**
 1. Create service directory in `docker/`
 2. Add Dockerfile and configuration
-3. Update `docker-compose.yml`
+3. Update `compose.yml` (the tracked Compose file; there is no `docker-compose.yml`)
 4. Add service client in `app/services/`
-5. Update environment variables
+5. Update environment variables — add the keys to `.env.example`, `.env.local` and
+   `.env.production`, and document them in {doc}`../advanced-configuration`
 
 **Example service client:**
 ```python
@@ -511,16 +513,20 @@ docker compose up -d --build app
 ```
 
 **Multi-stage builds:**
+
+Dependencies are declared in `pyproject.toml` and pinned in `uv.lock` — copy those two
+files, not a `requirements.txt` (the project has none):
+
 ```dockerfile
 # Development stage
 FROM python:3.12-slim as development
-COPY requirements-dev.txt .
-RUN uv pip install -r requirements-dev.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --extra dev
 
 # Production stage
 FROM python:3.12-slim as production
-COPY requirements.txt .
-RUN uv pip install -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 ```
 
 ## Next Steps
