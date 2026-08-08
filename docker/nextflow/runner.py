@@ -3,13 +3,13 @@ import glob
 import json
 import logging
 import os
-import psutil
 import shutil
 import subprocess
 import threading
 import time
 import uvicorn
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -24,15 +24,44 @@ from sqlalchemy.orm import Session
 # Individual containers report their own progress; workflow monitoring is not required
 
 # Configure logging
+# /data is the volume shared with the main app, so the progress log has to be size
+# bounded (252) - an unrotated handler here grows until the shared volume fills.
+PROGRESS_LOG_PATH = os.getenv('NEXTFLOW_PROGRESS_LOG', '/data/nextflow_progress.log')
+PROGRESS_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB per file
+PROGRESS_LOG_BACKUP_COUNT = 5  # 60 MB ceiling for the whole set
+
+_log_handlers = [logging.StreamHandler()]  # Console output
+_progress_log_error = None
+try:
+    _log_handlers.append(
+        RotatingFileHandler(
+            PROGRESS_LOG_PATH,
+            maxBytes=PROGRESS_LOG_MAX_BYTES,
+            backupCount=PROGRESS_LOG_BACKUP_COUNT,
+        )  # Progress log accessible to main app
+    )
+except OSError as exc:
+    # /data only exists inside the container; outside it, log to console only so the
+    # module stays importable (tests exercise the request model and argv builder).
+    # In the container this path means the shared volume is missing - say so loudly
+    # rather than degrading to console-only in silence.
+    _progress_log_error = exc
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Console output
-        logging.FileHandler('/data/nextflow_progress.log')  # Progress log accessible to main app
-    ]
+    handlers=_log_handlers
 )
 logger = logging.getLogger("nextflow")
+
+if _progress_log_error is not None:
+    logger.warning(
+        "Could not open progress log %s (%s) - logging to console only. "
+        "Inside the container this means the /data volume is not mounted, and the "
+        "main app will not see pipeline progress.",
+        PROGRESS_LOG_PATH,
+        _progress_log_error,
+    )
 
 app = FastAPI(title="Nextflow Pipeline Runner", version="0.2.8", description="REST API wrapper around Nextflow for the ZaroPGx pipeline")
 app.add_middleware(
@@ -69,6 +98,10 @@ class NextflowRunRequest(BaseModel):
     job_id: Optional[str] = None
     skip_hla: str = "false"
     skip_pypgx: str = "false"
+    # 406: the app posts skip_gatk/skip_report too. Undeclared fields are silently
+    # dropped by pydantic, which is how the GATK and Report toggles used to be lost.
+    skip_gatk: str = "false"
+    skip_report: str = "false"
     sample_identifier: Optional[str] = None
     pharmcat_absent_to_ref: str = "false"
     pharmcat_unspecified_to_ref: str = "false"
@@ -145,7 +178,7 @@ async def run(request: NextflowRunRequest):
     # Start Nextflow in a separate thread
     thread = threading.Thread(
         target=run_nextflow_job, 
-        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref)
+        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref, request.skip_gatk, request.skip_report)
     )
     thread.daemon = True
     thread.start()
@@ -158,40 +191,86 @@ async def run(request: NextflowRunRequest):
         "message": "Nextflow job started"
     }
 
-def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false'):
+def summarize_nextflow_failure(stdout: Optional[str], stderr: Optional[str], tail: int = 1000) -> str:
+    """Build the user-facing reason a Nextflow run failed.
+
+    Nextflow writes its console output to stdout - including the text of any
+    error() raised by the pipeline itself, such as the skip_gatk guard in
+    main.nf. stderr usually carries nothing but the 'a newer version is
+    available' nag. Reporting stderr alone therefore handed the user an upgrade
+    advertisement as the reason their job failed; stdout has to be included or
+    the guard's message never reaches them (406).
+
+    Both streams are kept and each is truncated to its tail, because whatever
+    ended the run is at the end of it.
+    """
+    parts = []
+    for label, stream in (('stdout', stdout), ('stderr', stderr)):
+        if stream and stream.strip():
+            parts.append(f"{label}:\n{stream.strip()[-tail:]}")
+    return "\n\n".join(parts) if parts else "Unknown error"
+
+def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false'):
+    """Build the Nextflow argv. Pure and side-effect free so it can be unit tested.
+
+    Every skip flag the request model accepts must be emitted here; a flag that
+    stops at the runner is indistinguishable, from the user's side, from a toggle
+    that does nothing (406).
+    """
+    # Nextflow command - JVM options should be set via environment variables, not command line args
+    cmd = [
+        'nextflow',
+        'run', 'pipelines/pgx/main.nf', '-profile', 'docker',
+        '--input', input_path,
+        '--input_type', input_type,
+        '--patient_id', str(patient_id),
+        '--report_id', str(report_id),
+        '--reference', reference,
+        '--outdir', outdir,
+        '--skip_hla', skip_hla,
+        '--skip_pypgx', skip_pypgx,
+        '--skip_gatk', skip_gatk,
+        '--skip_report', skip_report,
+        '-with-report', f"{outdir}/report.html",
+        '-with-trace', f"{outdir}/trace.txt",
+        '-with-timeline', f"{outdir}/timeline.html",
+        '-ansi-log', 'false'
+    ]
+
+    # Pass sample_identifier if provided
+    if sample_identifier and str(sample_identifier).strip():
+        cmd.extend(['--sample_identifier', str(sample_identifier).strip()])
+
+    cmd.extend([
+        '--pharmcat_absent_to_ref', pharmcat_absent_to_ref,
+        '--pharmcat_unspecified_to_ref', pharmcat_unspecified_to_ref,
+    ])
+
+    return cmd
+
+def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false'):
     """Run Nextflow job in background thread. Nextflow orchestrates individual containers that report their own progress."""
     try:
         # Update job status
         running_jobs[job_key]["status"] = "running"
         running_jobs[job_key]["message"] = "Nextflow pipeline started"
 
-        # Nextflow command - JVM options should be set via environment variables, not command line args
-        cmd = [
-            'nextflow',
-            'run', 'pipelines/pgx/main.nf', '-profile', 'docker',
-            '--input', input_path,
-            '--input_type', input_type,
-            '--patient_id', str(patient_id),
-            '--report_id', str(report_id),
-            '--reference', reference,
-            '--outdir', outdir,
-            '--skip_hla', skip_hla,
-            '--skip_pypgx', skip_pypgx,
-            '-with-report', f"{outdir}/report.html",
-            '-with-trace', f"{outdir}/trace.txt",
-            '-with-timeline', f"{outdir}/timeline.html",
-            '-ansi-log', 'false'
-        ]
+        cmd = build_nextflow_command(
+            input_path=input_path,
+            input_type=input_type,
+            patient_id=patient_id,
+            report_id=report_id,
+            reference=reference,
+            outdir=outdir,
+            skip_hla=skip_hla,
+            skip_pypgx=skip_pypgx,
+            skip_gatk=skip_gatk,
+            skip_report=skip_report,
+            sample_identifier=sample_identifier,
+            pharmcat_absent_to_ref=pharmcat_absent_to_ref,
+            pharmcat_unspecified_to_ref=pharmcat_unspecified_to_ref,
+        )
 
-        # Pass sample_identifier if provided
-        if sample_identifier and str(sample_identifier).strip():
-            cmd.extend(['--sample_identifier', str(sample_identifier).strip()])
-
-        cmd.extend([
-            '--pharmcat_absent_to_ref', pharmcat_absent_to_ref,
-            '--pharmcat_unspecified_to_ref', pharmcat_unspecified_to_ref,
-        ])
-        
         # Set environment variables for job_id passing to individual containers
         env = os.environ.copy()
         if job_id:
@@ -226,7 +305,7 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
                 else:
                     running_jobs[job_key]["status"] = "failed"
                     running_jobs[job_key]["message"] = f"Nextflow pipeline failed with return code {proc.returncode}"
-                    running_jobs[job_key]["error"] = stderr[-1000:] if stderr else "Unknown error"
+                    running_jobs[job_key]["error"] = summarize_nextflow_failure(stdout, stderr)
                 
                 running_jobs[job_key]["end_time"] = datetime.now(timezone.utc).isoformat()
                 running_jobs[job_key]["returncode"] = proc.returncode

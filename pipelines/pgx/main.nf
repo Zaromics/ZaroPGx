@@ -12,6 +12,17 @@ nextflow.enable.dsl=2
     VCF -> PyPGx -> PharmCAT (quick pipeline, no HLA)
 
   Inputs/Outputs are file-path based; integration with FastAPI will pass params.
+
+  HTTP error handling: service calls use `curl -sS --fail-with-body` so that an HTTP
+  error is an error. Plain curl exits 0 on 4xx/5xx, writes the error document where the
+  result belongs, and lets the process carry on - the failure then surfaces much later
+  as a bare "exit status (1)" from some downstream step, pointing nowhere near the call
+  that actually failed. --fail-with-body (curl >= 7.76; the image ships 8.5.0) fails the
+  call while keeping the server's message, which the caller echoes to stderr. -sS
+  replaces the old `2>service.log` redirect, which was swallowing curl's own diagnostic
+  into a work-dir file nobody reads; on stderr it reaches .command.err and therefore
+  Nextflow's error report. Two call sites are deliberately exempt and say so inline:
+  PyPGxGenotypeAll and PharmCATRun.
 */
 
 params.input          = params.input ?: ''
@@ -22,6 +33,20 @@ params.reference      = params.reference ?: 'hg38'
 params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
+// skip_gatk covers the three GATK-container conversions (FastqToBAM/CramToBAM/SamToBAM).
+// It is a no-op for vcf/bam input (no GATK process is invoked) and rejected for
+// fastq/cram/sam, where there is no non-GATK route to a BAM - see the guard below.
+params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
+// skip_report is the ZaroPGx custom-report toggle. NOT YET IMPLEMENTED: nothing
+// honours it. It is carried this far only so the app can stop silently dropping it -
+// declared on NextflowRunRequest, emitted on the argv, and declared here so it shows
+// up in the run's resolved params. There is no report process in this pipeline to
+// gate. The gate belongs app-side, in upload_router.py's final-stages handler
+// (_handle_final_stages_progression_sync), which today calls generate_report()
+// unconditionally; needs_report currently suppresses only the step template in
+// app/services/workflow_registry.py. Until that handler gates on it, unticking
+// Report still produces a report.
+params.skip_report    = params.skip_report != null ? params.skip_report : false
 params.sample_identifier = params.sample_identifier ?: ''
 params.pharmcat_absent_to_ref = params.pharmcat_absent_to_ref ?: 'false'
 params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'false'
@@ -48,7 +73,11 @@ process FastqToBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_alignment )
     fi
-    curl "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json 2>gatk.log
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json; then
+      echo "gatk-api /align-fastq returned an error:" >&2
+      cat align_response.json >&2 || true
+      exit 1
+    fi
     BAM_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('align_response.json'))
@@ -81,7 +110,11 @@ process CramToBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_to_bam )
     fi
-    curl "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam > cram_response.json 2>gatk.log
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam > cram_response.json; then
+      echo "gatk-api /cram-to-bam returned an error:" >&2
+      cat cram_response.json >&2 || true
+      exit 1
+    fi
     BAM_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('cram_response.json'))
@@ -114,7 +147,11 @@ process SamToBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_sam_to_bam )
     fi
-    curl "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam > sam_response.json 2>gatk.log
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam > sam_response.json; then
+      echo "gatk-api /sam-to-bam returned an error:" >&2
+      cat sam_response.json >&2 || true
+      exit 1
+    fi
     BAM_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('sam_response.json'))
@@ -148,7 +185,15 @@ process OptiTypeHLAFromFastq {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=zarohla_fastq )
     fi
-    curl "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json 2>hla.log
+    # An HTTP error here used to be swallowed: the error JSON landed in hla_result.json,
+    # the parser below found no HLA- keys, and the run completed reporting no HLA calls -
+    # indistinguishable from OptiType legitimately finding none. Untick OptiType
+    # (--skip_hla) to opt out of HLA typing; a failing service is not that.
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json; then
+      echo "zarohla /call-hla returned an error:" >&2
+      cat hla_result.json >&2 || true
+      exit 1
+    fi
     python3 - <<'PY'
 import json,sys
 data=json.load(open('hla_result.json'))
@@ -186,7 +231,15 @@ process OptiTypeHLAFromBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=zarohla_bam )
     fi
-    curl "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json 2>hla.log
+    # An HTTP error here used to be swallowed: the error JSON landed in hla_result.json,
+    # the parser below found no HLA- keys, and the run completed reporting no HLA calls -
+    # indistinguishable from OptiType legitimately finding none. Untick OptiType
+    # (--skip_hla) to opt out of HLA typing; a failing service is not that.
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json; then
+      echo "zarohla /call-hla returned an error:" >&2
+      cat hla_result.json >&2 || true
+      exit 1
+    fi
     python3 - <<'PY'
 import json,sys
 data=json.load(open('hla_result.json'))
@@ -222,7 +275,11 @@ process PyPGxBam2Vcf {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_bam2vcf )
     fi
-    curl "${CURL_ARGS[@]}" http://pypgx:5000/create-input-vcf > response.json 2>pypgx_bam2vcf.log
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://pypgx:5000/create-input-vcf > response.json; then
+      echo "pypgx /create-input-vcf returned an error:" >&2
+      cat response.json >&2 || true
+      exit 1
+    fi
     VCF_PATH=$(python3 - <<'PY'
 import json; import sys
 data=json.load(open('response.json'))
@@ -254,6 +311,11 @@ process PyPGxGenotypeAll {
     set -uo pipefail
     # Try curl, but don't fail if it returns HTTP errors
     # Capture both stdout and stderr from PyPGx container
+    # DELIBERATELY EXEMPT from the --fail-with-body rule in the header: -f already makes
+    # an HTTP error a non-zero exit, and the if/else below handles it on purpose by
+    # degrading to PharmCAT-only. --fail-with-body would write the error body into
+    # pypgx_result.json, which the else branch overwrites anyway - no gain, and the
+    # explicit degradation path is the point.
     CURL_ARGS=( -f -X POST -F genes=ALL -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} -F input_type=!{params.input_type} )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_analysis )
@@ -347,6 +409,11 @@ process PharmCATRun {
     fi
     CURL_ARGS+=( -F pharmcat_absent_to_ref=!{params.pharmcat_absent_to_ref} )
     CURL_ARGS+=( -F pharmcat_unspecified_to_ref=!{params.pharmcat_unspecified_to_ref} )
+    # DELIBERATELY EXEMPT from the --fail-with-body rule in the header: the trailing
+    # `|| true` already discards curl's exit status, so adding the flag would change
+    # nothing, and removing `|| true` would turn a tolerated PharmCAT error into a hard
+    # run failure - a behaviour change that cannot be validated without a live run.
+    # Left as-is on purpose; making PharmCAT failures fail the run is its own change.
     curl "${CURL_ARGS[@]}" http://pharmcat:5000/genotype > pharmcat_result.json 2>pharmcat.log || true
     
     # Copy outputs from mounted volume
@@ -360,7 +427,21 @@ workflow {
     main:
     assert params.input : 'Missing --input path'
     assert params.input_type : 'Missing --input_type (vcf|bam|cram|sam|fastq)'
-    
+
+    // GATK gate. fastq/cram/sam only reach a BAM through the gatk-api container, so
+    // gating FastqToBAM/CramToBAM/SamToBAM off would leave bam_ch empty and starve
+    // every downstream channel - the pipeline would "succeed" having produced
+    // nothing, which is worse than the silent-override it replaces. Refuse the
+    // combination instead. For vcf/bam input no GATK process runs at all, so
+    // skip_gatk is correctly a no-op there.
+    if (params.skip_gatk && ['fastq', 'cram', 'sam'].contains(params.input_type)) {
+        error(
+            "--skip_gatk is not compatible with --input_type ${params.input_type}: " +
+            "converting ${params.input_type} to BAM requires the GATK service. " +
+            "Re-enable GATK, or upload a BAM/VCF instead."
+        )
+    }
+
     // Create input channels
     input_ch = Channel.fromPath(params.input)
     
