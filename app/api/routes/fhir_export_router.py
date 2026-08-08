@@ -8,6 +8,7 @@ This module extends the existing report functionality without breaking changes.
 Export is enabled by the FHIR_EXPORT_ENABLED environment variable (default: true).
 """
 
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -465,7 +466,10 @@ async def save_fhir_export_for_run(
         if request.patient_info:
             patient_info = request.patient_info.model_dump(exclude_none=True)
 
-        result = service.save_fhir_export(
+        # save_fhir_export mkdir()s and writes the bundle synchronously; run it
+        # on a worker thread so the event loop keeps serving other requests.
+        result = await asyncio.to_thread(
+            service.save_fhir_export,
             run_id=run_id,
             patient_id=request.patient_id,
             patient_info=patient_info,
@@ -529,7 +533,9 @@ async def save_fhir_export_for_workflow(
         if request.patient_info:
             patient_info = request.patient_info.model_dump(exclude_none=True)
 
-        result = service.save_fhir_export_for_workflow(
+        # Delegates to save_fhir_export, so the same blocking mkdir/write applies.
+        result = await asyncio.to_thread(
+            service.save_fhir_export_for_workflow,
             workflow_id=workflow_id,
             patient_id=request.patient_id,
             patient_info=patient_info,
@@ -588,7 +594,8 @@ async def quick_save_fhir_export(
 
     try:
         service = FHIRExportService(db)
-        result = service.save_fhir_export(
+        result = await asyncio.to_thread(
+            service.save_fhir_export,
             run_id=run_id,
             patient_id=patient_id,
             output_format=output_format,

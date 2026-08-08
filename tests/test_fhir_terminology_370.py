@@ -1,4 +1,4 @@
-"""FHIR export layer: terminology single-sourcing (370).
+"""FHIR export layer: terminology single-sourcing (370) and off-loop writes (371).
 
 Item 370 moves every coding-system / profile / extension URI out of the resource
 builders in ``app.services.fhir_export_service`` and into
@@ -10,6 +10,9 @@ The golden digests below were captured from the pre-refactor service at
 ``uuid``/``datetime`` frozen, so the byte comparison really is "before vs after"
 and not just "after vs after".
 
+Item 371 pushes the blocking ``save_fhir_export`` disk writes off the event loop
+via ``asyncio.to_thread`` in all three saving handlers.
+
 Everything here runs against in-memory fixtures: no FHIR server, no database, no
 network.
 """
@@ -17,8 +20,10 @@ network.
 from __future__ import annotations
 
 import ast
+import asyncio
 import hashlib
 import itertools
+import threading
 import uuid as uuid_module
 from datetime import datetime, timezone
 from pathlib import Path
@@ -247,3 +252,110 @@ def test_service_builders_hold_no_inline_terminology_literals():
         "terminology URIs must come from app.services.fhir.terminology; "
         f"inline literals remain: {offenders}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 371 - the blocking save must not run on the event loop thread
+# ---------------------------------------------------------------------------
+
+
+SAVE_RESULT = {
+    "success": True,
+    "files_saved": [{"format": "json", "path": "/data/reports/x/pgx_fhir_report.json"}],
+    "report_directory": "/data/reports/x",
+}
+
+
+@pytest.fixture
+def offload_probe(monkeypatch):
+    """Instrument ``asyncio.to_thread`` and ``save_fhir_export``.
+
+    ``to_thread`` still delegates to the real implementation, so the recorded
+    thread id is the id of a genuine worker thread - the test proves the write
+    left the loop thread, not merely that a helper was named.
+    """
+    seen: Dict[str, Any] = {"to_thread": [], "save_thread": None, "save_kwargs": None}
+    real_to_thread = asyncio.to_thread
+
+    async def recording_to_thread(func, /, *args, **kwargs):
+        seen["to_thread"].append(func)
+        return await real_to_thread(func, *args, **kwargs)
+
+    def fake_save(self, **kwargs):
+        seen["save_thread"] = threading.get_ident()
+        seen["save_kwargs"] = kwargs
+        return dict(SAVE_RESULT)
+
+    monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
+    monkeypatch.setattr(FHIRExportService, "save_fhir_export", fake_save)
+    return seen
+
+
+def _assert_ran_off_loop(seen: Dict[str, Any]) -> None:
+    assert seen["to_thread"], "handler never called asyncio.to_thread"
+    assert seen["save_thread"] is not None, "save_fhir_export was never reached"
+    assert seen["save_thread"] != threading.get_ident(), (
+        "save_fhir_export ran on the event loop thread - its mkdir/write would "
+        "block every other request"
+    )
+
+
+def test_save_run_handler_offloads_the_write(offload_probe):
+    from app.api.routes import fhir_export_router as router_module
+
+    response = asyncio.run(
+        router_module.save_fhir_export_for_run(
+            run_id="run-370",
+            request=router_module.FHIRSaveRequest(output_format="json"),
+            db=MagicMock(),
+            current_user="tester",
+        )
+    )
+
+    _assert_ran_off_loop(offload_probe)
+    assert offload_probe["save_kwargs"]["run_id"] == "run-370"
+    assert response.success is True
+
+
+def test_save_workflow_handler_offloads_the_write(offload_probe, monkeypatch):
+    from app.api.routes import fhir_export_router as router_module
+    from app.services.pharmcat_data_service import PharmCATDataService
+
+    monkeypatch.setattr(
+        PharmCATDataService,
+        "get_pharmcat_data_for_workflow",
+        lambda self, workflow_id: {"run_id": "run-370"},
+    )
+
+    response = asyncio.run(
+        router_module.save_fhir_export_for_workflow(
+            workflow_id="wf-370",
+            request=router_module.FHIRSaveRequest(output_format="json"),
+            db=MagicMock(),
+            current_user="tester",
+        )
+    )
+
+    # Reached transitively: handler -> to_thread -> save_fhir_export_for_workflow
+    # -> save_fhir_export.
+    _assert_ran_off_loop(offload_probe)
+    assert offload_probe["save_kwargs"]["workflow_id"] == "wf-370"
+    assert response.success is True
+
+
+def test_quick_save_handler_offloads_the_write(offload_probe):
+    from app.api.routes import fhir_export_router as router_module
+
+    response = asyncio.run(
+        router_module.quick_save_fhir_export(
+            run_id="run-370",
+            output_format="both",
+            patient_id=None,
+            db=MagicMock(),
+            current_user="tester",
+        )
+    )
+
+    _assert_ran_off_loop(offload_probe)
+    assert offload_probe["save_kwargs"]["output_format"] == "both"
+    assert response["success"] is True
