@@ -28,99 +28,167 @@ Authorization: Bearer <jwt_token>
 
 ### Upload Endpoints
 
+Mounted at `/upload` (`upload_router.py:81`, included unconditionally at
+`main.py:314`). Five routes.
+
+| Endpoint | Method | Source |
+| --- | --- | --- |
+| `/upload/genomic-data` | POST | `upload_router.py:1105` |
+| `/upload/status/{job_id}` | GET | `upload_router.py:1313` |
+| `/upload/inspect-header` | POST | `upload_router.py:1425` |
+| `/upload/reports/job/{job_id}` | GET | `upload_router.py:1490` |
+| `/upload/reports/download/{patient_id}` | GET | `upload_router.py:1575` |
+
 #### Upload Genomic Data
 
-Upload genomic data files for pharmacogenomic analysis.
+Upload genomic data files for pharmacogenomic analysis. This is the only route
+that starts a run.
 
 **Endpoint:** `POST /upload/genomic-data`
 
 **Content-Type:** `multipart/form-data`
 
 **Parameters:**
-- `files` (required): List of genomic data files
-- `sample_identifier` (optional): Patient/sample identifier
-- `reference_genome` (optional): Reference genome (default: "hg38")
-- `optitype_enabled` (optional): Enable HLA typing (default: null)
-- `gatk_enabled` (optional): Enable GATK processing (default: null)
-- `pypgx_enabled` (optional): Enable PyPGx analysis (default: null)
-- `report_enabled` (optional): Enable report generation (default: null)
+- `files` (required): One or more genomic data files. The form field is
+  **`files`** (plural) and it is required — posting `file=` returns 422.
+- `sample_identifier` (optional): Patient/sample identifier. When omitted the
+  server mints a UUID.
+- `reference_genome` (optional): Reference genome (default: `hg38`)
+- `optitype_enabled` (optional): Enable HLA typing
+- `gatk_enabled` (optional): Enable GATK processing
+- `pypgx_enabled` (optional): Enable PyPGx analysis
+- `report_enabled` (optional): Enable report generation
+- `pharmcat_absent_to_ref` (optional): Treat absent positions as reference
+- `pharmcat_unspecified_to_ref` (optional): Treat unspecified positions as reference
+
+Every toggle is an optional **string** form field, not a bool, and defaults to
+`None` — meaning "fall back to the server-side env default", which is not the
+same as `false`. The two `pharmcat_*` flags fall back to `PHARMCAT_ABSENT_TO_REF`
+and `PHARMCAT_UNSPECIFIED_TO_REF`.
 
 **Request Example:**
 ```bash
 curl -X POST \
-  -F "file=@sample.vcf" \
+  -F "files=@sample.vcf" \
   -F "sample_identifier=patient_001" \
   -F "reference_genome=hg38" \
   -F "pypgx_enabled=true" \
   http://localhost:8765/upload/genomic-data
 ```
 
-**Response:**
+Send an index file by repeating the field: `-F "files=@sample.bam" -F "files=@sample.bam.bai"`.
+
+**Response** (`UploadResponse`):
 ```json
 {
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "data_id": "550e8400-e29b-41d4-a716-446655440002",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "file_type": "vcf",
   "status": "uploaded",
   "message": "Files uploaded successfully",
-  "file_type": "vcf"
+  "analysis_info": { },
+  "workflow": {"workflow_type": "genomic_analysis", "options": { }},
+  "created_at": "2026-08-08T10:00:00Z"
 }
 ```
 
-`data_id` is the genetic-data UUID (formerly `file_id`). Use it with `GET /status/{data_id}`. Job progress and cancel use `job_id` under `/api/v1/jobs/...`. The recipe catalog at `/api/v1/workflows` is unchanged (recipes, not job instances).
+`analysis_info` (a `FileAnalysis`) and `workflow` (a `WorkflowInfo` carrying the
+resolved `WorkflowOptions`, plus any recommendations and warnings raised during
+header inspection) are both optional and are the fields the web UI reads to
+render its pre-flight summary.
+
+`data_id` is the genetic-data UUID (formerly `file_id`); use it with
+`GET /status/{data_id}`. Job progress and cancel use `job_id` under
+`/api/v1/jobs/...`.
 
 **Status Codes:**
 - `200`: Upload successful
-- `400`: Invalid file format or parameters
-- `413`: File too large
+- `400`: File rejected by the processor (bad format, unsupported type)
+- `422`: Missing or malformed form fields
 - `500`: Server error
 
 #### Get Upload Status
 
-Get the processing status of an uploaded file.
+**Endpoint:** `GET /upload/status/{job_id}` — the canonical status route.
 
-**Endpoint:** `GET /status/{data_id}` (also `GET /upload/status/{job_id}` for job-scoped status)
-
-**Parameters:**
-- `data_id` (path): Genetic data identifier (= `genetic_data.data_id`; was `file_id`)
+`GET /status/{data_id}` (`main.py:454`) is the same view addressed by genetic-data
+id instead of job id; it delegates to the upload router.
 
 **Response:**
 ```json
 {
-  "data_id": "550e8400-e29b-41d4-a716-446655440002",
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "processing",
+  "status": "running",
   "progress": 45,
-  "current_stage": "pypgx_analysis",
-  "message": "Running PyPGx analysis...",
-  "logs": [
-    {
-      "timestamp": "2024-01-15T10:30:00Z",
-      "level": "INFO",
-      "message": "Starting PyPGx analysis",
-      "container": "pypgx"
-    }
-  ],
-  "estimated_completion": "2024-01-15T10:45:00Z"
+  "message": "Running PyPGx analysis",
+  "current_stage": "pypgx",
+  "data": {
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "patient_id": "patient_001",
+    "data_id": "550e8400-e29b-41d4-a716-446655440002",
+    "steps": [
+      {"name": "file_validation", "status": "completed", "order": 1, "container": "app"},
+      {"name": "pypgx", "status": "running", "order": 2, "container": "pypgx"}
+    ]
+  }
 }
 ```
 
-**Status Values:**
-- `uploaded`: File uploaded, waiting for processing
-- `processing`: Currently being processed
-- `completed`: Processing completed successfully
-- `failed`: Processing failed
-- `cancelled`: Processing was cancelled
+There is no `logs` array and no `estimated_completion` field here — use
+`GET /api/v1/jobs/{job_id}/logs` and `GET /api/v1/jobs/{job_id}/progress` for
+those. Once the job completes, the report URL keys below are **spliced in at the
+top level** of this same object alongside `data`.
+
+**Status Values** (`JobStatus`): `pending`, `running`, `completed`, `failed`,
+`cancelled`. An unknown job is a 404.
+
+#### Inspect File Header
+
+Preview a file's header without starting an analysis. This backs the "View
+Header" button in the web UI.
+
+**Endpoint:** `POST /upload/inspect-header`
+
+**Content-Type:** `multipart/form-data` with a single field `file` (singular
+here, unlike `/upload/genomic-data`).
+
+The file is written to a temp path, parsed, and deleted before the response is
+returned. Nothing is persisted and no job is created.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "success": true,
+  "filename": "sample.vcf",
+  "file_size": 1048576,
+  "header_info": { },
+  "compat": {
+    "workflow": {
+      "recommendations": [],
+      "warnings": [],
+      "unsupported": false,
+      "unsupported_reason": null
+    }
+  }
+}
+```
+
+`header_info` is the parsed `GenomicFileHeader`. Any failure is a 500 with
+`detail: "Header inspection failed: …"` — there is no 400 branch.
 
 ### Report Endpoints
 
+Report delivery is split across three mounts: the upload router serves the URL
+lookup and the per-patient ZIP, `app/main.py` serves individual files, and the
+`/reports` router is a set of retired stubs.
+
 #### Get Report URLs
 
-Get URLs for generated reports.
+**Endpoint:** `GET /upload/reports/job/{job_id}`
 
-**Endpoint:** `GET /reports/{job_id}`
-
-**Parameters:**
-- `job_id` (path): Job identifier
+`GET /reports/job/{job_id}` (`main.py:470`) and `GET /reports/{job_id}`
+(`main.py:484`) are thin forwarders to the same handler and return the same body.
 
 **Response:**
 ```json
@@ -128,67 +196,89 @@ Get URLs for generated reports.
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",
   "reports": {
-    "pdf_report_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_report.pdf",
-    "html_report_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_report_interactive.html",
-    "pharmcat_html_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_pharmcat.html",
-    "pharmcat_json_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_pharmcat.json",
-    "pharmcat_tsv_url": "/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_pharmcat.tsv"
-  },
-  "diplotypes": {
-    "CYP2D6": "*1/*2",
-    "CYP2C19": "*1/*1",
-    "TPMT": "*1/*1"
-  },
-  "recommendations": [
-    {
-      "gene": "CYP2D6",
-      "recommendation": "Consider alternative dosing",
-      "severity": "yellow",
-      "drugs": ["codeine", "tramadol"]
-    }
-  ]
+    "pdf_report_url": "/reports/patient_001/550e8400-…/550e8400-…_pgx_report.pdf",
+    "html_report_url": "/reports/patient_001/550e8400-…/550e8400-…_pgx_report_interactive.html",
+    "pharmcat_html_report_url": "/reports/patient_001/550e8400-…/550e8400-…_pgx_pharmcat.html",
+    "pharmcat_json_report_url": "/reports/patient_001/550e8400-…/550e8400-…_pgx_pharmcat.json",
+    "pharmcat_tsv_report_url": "/reports/patient_001/550e8400-…/550e8400-…_pgx_pharmcat.tsv"
+  }
 }
 ```
 
-Artifacts live on disk at `/data/reports/{patient_id}/{job_id}/`. Display `report_id` in templates equals `job_id`.
+The response carries **only** those three keys. It has no `diplotypes` and no
+`recommendations` — read those from the PharmCAT routes under `/api/pharmcat` or
+from the generated report artifacts.
 
-#### Download Report
+Note the exact key spelling: `pharmcat_html_report_url`, not `pharmcat_html_url`.
+An interactive variant may also appear as `interactive_html_report_url`. Keys are
+present only when the corresponding file exists, so treat every one as optional.
 
-Download a specific report file.
+**Status Codes:**
+- `200`: URLs returned
+- `400`: Job exists but is not `completed`
+- `404`: No such job
+- `500`: Server error
 
-**Endpoint:** `GET /reports/{patient_id}/{filename}`
+#### Download All Reports for a Patient
 
-Nested layout examples use `{patient_id}/{job_id}/{filename}` under the same route
-(`filename` may include the job subdirectory path).
+**Endpoint:** `GET /upload/reports/download/{patient_id}`
+
+Zips `/data/reports/{patient_id}/` recursively and returns it as
+`application/zip` with `Content-Disposition: attachment; filename=reports_{patient_id}.zip`.
+The path is resolved through the same jail as individual file serving.
+
+**Status Codes:** `200`, `403` (path escape attempt), `404` (no such directory),
+`500`.
+
+#### Download a Single Report File
+
+**Endpoint:** `GET /reports/{patient_id}/{filename}` (also accepts `HEAD`)
+
+`filename` is a `:path` parameter, so it may include the job subdirectory:
+`/reports/{patient_id}/{job_id}/{filename}`.
 
 **Parameters:**
 - `patient_id` (path): Patient identifier
-- `filename` (path): Report filename (or `{job_id}/{filename}`)
+- `filename` (path): Report filename, or `{job_id}/{filename}`
 
-**Response:**
-- File content with appropriate Content-Type header
+**Response:** file content with a Content-Type guessed from the extension,
+falling back to `application/octet-stream`.
+
+**Status Codes:** `200`, `403` (resolved path escapes the reports directory),
+`404` (file missing).
 
 **Example:**
 ```bash
 curl -O http://localhost:8765/reports/patient_001/550e8400-e29b-41d4-a716-446655440000/550e8400-e29b-41d4-a716-446655440000_pgx_report.pdf
 ```
 
-#### Generate Report (retired)
+Artifacts live on disk at `/data/reports/{patient_id}/{job_id}/`. The display
+`report_id` in templates equals `job_id`.
 
-**Endpoint:** `POST /reports/generate` — returns **501**.
+#### Retired /reports Stubs
 
-Report generation runs via `POST /upload/genomic-data`. Status and file delivery:
+The `/reports` router (`report_router.py:13`, included at `main.py:315`) is
+mounted but every one of its five routes raises **501 Not Implemented** with a
+`detail` explaining the replacement. They are kept as signposts, not features.
 
-- `GET /status/{data_id}` / `GET /upload/status/{job_id}` / `GET /api/v1/jobs/{job_id}`
-- `GET /upload/reports/job/{job_id}` / `GET /upload/reports/download/{patient_id}`
-- `GET /reports/{patient_id}/{filename}` (nested `{patient_id}/{job_id}/…`)
-- Recipe catalog: `GET /api/v1/workflows` (unchanged; not job-instance status)
+| Endpoint | Method | Use instead |
+| --- | --- | --- |
+| `/reports/generate` | POST | `POST /upload/genomic-data` |
+| `/reports/{report_id}/status` | GET | `GET /upload/status/{job_id}` or `GET /api/v1/jobs/{job_id}` |
+| `/reports/{report_id}/download` | GET | `GET /upload/reports/download/{patient_id}` or `GET /reports/{patient_id}/{filename}` |
+| `/reports/recommendations/{patient_id}` | GET | Report artifacts, or `/fhir/*` |
+| `/reports/{report_id}/export-to-fhir` | POST | `/fhir/export/run/{run_id}` or `/fhir/save/*` |
 
-Also retired (**501**): `GET /reports/{id}/status`, `GET /reports/{id}/download`,
-`GET /reports/recommendations/{patient_id}`, `POST /reports/{id}/export-to-fhir`
-(use `/fhir/*` for real FHIR export).
+**Route resolution under `/reports`.** The router is included at `main.py:315`,
+*before* the `@app.get("/reports/…")` decorators execute further down the module,
+and Starlette matches in registration order. The retired stubs therefore win any
+tie. In practice that means a report file literally named `status` or `download`
+(`GET /reports/{patient_id}/status`) resolves to the 501 stub rather than to the
+file server, as does a patient whose id is literally `recommendations`. Real
+report paths are three or more segments deep and are unaffected.
 
-Cleanup: `POST /api/cleanup/job/{job_id}` (the old `/api/cleanup/workflow/...` path is removed).
+Cleanup for a finished job is `POST /api/cleanup/job/{job_id}`; the old
+`/api/cleanup/workflow/...` path is gone.
 
 ### Job Endpoints
 
