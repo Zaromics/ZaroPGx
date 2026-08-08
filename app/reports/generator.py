@@ -61,8 +61,9 @@ from app.visualizations.workflow_diagram import (
 # Keep below import commented out; this prevents circular import
 # from app.reports.pdf_generators import generate_pdf_report_dual_lane
 
-# FHIR Export - import lazily to avoid circular imports
-# from app.services.fhir_export_service import FHIRExportService, FHIR_EXPORT_ENABLED
+# FHIR Export - imported lazily to avoid circular imports; see fhir_export_enabled()
+# below and the FHIRExportService import inside generate_report. There is no
+# FHIR_EXPORT_ENABLED constant to import anywhere: the flag is resolved per call.
 
 
 # Do not hardcode; derive from pyproject when available
@@ -363,15 +364,32 @@ INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
 INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
 EXECSUM_USE_TSV = _env_flag("EXECSUM_USE_TSV", False)
 
-# FHIR Export - automatically generate FHIR R4 exports during report generation
-FHIR_EXPORT_ENABLED = _env_flag("FHIR_EXPORT_ENABLED", True)
+
+# FHIR Export - automatically generate FHIR R4 exports during report generation.
+#
+# Deliberately NOT a module-level constant. This module is imported from
+# app/main.py's import block (app/main.py:76), which runs *before* that file's
+# load_dotenv(), so a constant here would snapshot a pre-.env environment while
+# app/main.py -- which decides whether to mount /fhir/* -- reads a post-.env one:
+# two readers, two answers, and report generation could skip the export for a run
+# whose /fhir/* endpoints are live. That is the exact failure mode
+# app/utils/outside_calls_override.py documents as its reason to resolve on
+# demand, and the one tests/test_fhir_export_flag.py pins.
+#
+# fhir_export_service is imported lazily for the same circular-import reason the
+# FHIRExportService import inside generate_report gives.
+def fhir_export_enabled() -> bool:
+    """Resolve FHIR_EXPORT_ENABLED per call, through the one shared parser."""
+    from app.services.fhir_export_service import fhir_export_enabled as _resolve
+
+    return _resolve()
+
 
 # Log the configuration for debugging
 logger.info(
     f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}"
 )
 logger.info(f"Executive Summary Configuration - Use TSV: {EXECSUM_USE_TSV}")
-logger.info(f"FHIR Export Configuration - Enabled: {FHIR_EXPORT_ENABLED}")
 
 # Report configuration dictionary
 REPORT_CONFIG = {
@@ -388,8 +406,9 @@ REPORT_CONFIG = {
     "show_pharmcat_html_report": INCLUDE_PHARMCAT_HTML,  # Original HTML report from PharmCAT
     "show_pharmcat_json_report": INCLUDE_PHARMCAT_JSON,  # Original JSON report from PharmCAT
     "show_pharmcat_tsv_report": INCLUDE_PHARMCAT_TSV,  # Original TSV report from PharmCAT
-    # FHIR Export - generate FHIR R4 compliant exports
-    "generate_fhir_export": FHIR_EXPORT_ENABLED,  # FHIR JSON/XML exports
+    # FHIR Export is intentionally absent from this dict: REPORT_CONFIG is built at
+    # import time, so storing the flag here would re-freeze exactly what
+    # fhir_export_enabled() exists to avoid. generate_report calls the resolver.
 }
 
 # Configure WeasyPrint logging for debugging text rendering issues
@@ -3064,8 +3083,9 @@ def generate_report(
                 "PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable"
             )
 
-        # FHIR Export - Generate FHIR R4 compliant exports if enabled
-        if REPORT_CONFIG["generate_fhir_export"]:
+        # FHIR Export - Generate FHIR R4 compliant exports if enabled.
+        # Resolved here, per report, not read out of an import-time snapshot.
+        if fhir_export_enabled():
             logger.info("=== FHIR EXPORT GENERATION START ===")
             try:
                 # Import lazily to avoid circular imports
