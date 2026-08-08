@@ -1074,8 +1074,15 @@ class JobService:
                 logger.error(f"Job {job_id} not found")
                 return False
 
-            # Update workflow metadata with PharmCAT run ID
-            metadata = job.job_metadata or {}
+            # Update workflow metadata with PharmCAT run ID.
+            # dict() is load-bearing: jobs.job_metadata is a plain Column(JSON)
+            # with no MutableDict, so mutating the attached dict in place and
+            # assigning the *same object* back leaves the attribute history
+            # empty -- SQLAlchemy emits no UPDATE and the link is silently lost
+            # the moment the session is expired or a later request reloads the
+            # row. create_job always seeds job_metadata, so this is never the
+            # accidentally-safe empty-dict case. Same pattern as job_router.py.
+            metadata = dict(job.job_metadata or {})
             metadata["pharmcat_run_id"] = pharmcat_run_id
             metadata["pharmcat_linked_at"] = datetime.now(timezone.utc).isoformat()
 

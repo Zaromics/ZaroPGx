@@ -212,9 +212,16 @@ def _validate_chain_file(chain_path: str) -> bool:
             )
             # Don't fail validation for small files, just warn
 
-        # Basic format check - chain files should start with "chain"
+        # Basic format check - chain files should start with "chain".
+        # Every URL in CHAIN_FILE_URLS is gzipped, so sniff the magic number and
+        # decompress before looking: reading raw bytes out of a .gz never finds
+        # the literal b"chain", which used to fail *every* real UCSC chain file
+        # and made download_chain_file() unable to ever succeed.
         try:
             with open(chain_path, "rb") as f:
+                magic = f.read(2)
+            opener = gzip.open if magic == b"\x1f\x8b" else open
+            with opener(chain_path, "rb") as f:
                 header = f.read(100)  # Read first 100 bytes
                 if b"chain" not in header.lower():
                     logger.warning(f"Chain file missing 'chain' header: {chain_path}")
@@ -393,7 +400,10 @@ def _check_gwas_vcf_compliance(header_lines: list) -> Dict[str, Union[bool, list
     found_headers = set()
     for line in header_lines:
         for rec_header in recommended_headers:
-            if line.startswith(f"##{rec_header}"):
+            # recommended_headers already carry their leading "##"; re-adding it
+            # here tested for "####FILTER" etc., so nothing was ever found and
+            # every VCF -- however compliant -- was reported non-compliant.
+            if line.startswith(rec_header):
                 found_headers.add(rec_header)
 
     missing_headers = set(recommended_headers) - found_headers
@@ -411,9 +421,13 @@ def _count_vcf_samples(chrom_line: str) -> int:
     if not chrom_line.startswith("#CHROM"):
         return 0
 
-    # Split by tab and count columns after FORMAT
+    # Split by tab and count columns after FORMAT.
+    # CHROM, POS, ID, REF, ALT, QUAL, FILTER and INFO are the 8 fixed columns;
+    # FORMAT is the 9th and is only present when the VCF carries genotypes. A
+    # sites-only VCF therefore has exactly 8 columns and zero samples -- the old
+    # ``< 8`` guard let it through and returned -1.
     parts = chrom_line.split("\t")
-    if len(parts) < 8:  # Need at least CHROM, POS, ID, REF, ALT, QUAL, FILTER, FORMAT
+    if len(parts) < 9:
         return 0
 
     # Samples are columns after FORMAT
