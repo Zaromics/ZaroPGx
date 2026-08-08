@@ -1,5 +1,6 @@
 ---
 title: Deployment Guide
+curation: partial
 ---
 
 # Deployment Guide
@@ -167,7 +168,7 @@ services:
       retries: 3
 
   db:
-    image: postgres:15
+    image: postgres:18
     ports:
       - "5444:5432"
     environment:
@@ -175,7 +176,9 @@ services:
       - POSTGRES_DB=zaropgx_db
       - POSTGRES_USER=zaropgx_user
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # PG18+ stores data in a major-version subdirectory and refuses a mount at
+      # /var/lib/postgresql/data; mount at the postgres home instead.
+      - postgres_data:/var/lib/postgresql
       - ./db/init:/docker-entrypoint-initdb.d
     restart: unless-stopped
     healthcheck:
