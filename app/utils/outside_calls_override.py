@@ -21,6 +21,34 @@ logger = logging.getLogger(__name__)
 # Default override file path - in lexicon directory for version control
 DEFAULT_OVERRIDE_PATH = "lexicon/outside_calls.tsv"
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def is_override_enabled() -> bool:
+    """Check if outside calls override is enabled.
+
+    The single source of truth for OUTSIDECALLSOVERRIDE. Every other reader --
+    including app/main.py, which used to keep its own ``_env_flag`` parse -- must
+    call this rather than reach for the environment again.
+
+    Whitespace is stripped: ``OUTSIDECALLSOVERRIDE='true '`` is a trailing-space
+    typo in a ``.env`` file, not a request to disable the override, and silently
+    ignoring a hand-curated lexicon/outside_calls.tsv is an expensive way to find
+    that out.
+
+    Resolved on demand rather than captured into a module-level constant: this
+    module is imported (via app.pharmcat.pharmcat_client) from app/main.py's
+    import block, which runs before that file's load_dotenv(), so a constant here
+    would snapshot a pre-.env environment.
+
+    Returns:
+        True if override is enabled, False otherwise
+    """
+    raw = os.getenv("OUTSIDECALLSOVERRIDE")
+    if raw is None:
+        return False
+    return raw.strip().lower() in _TRUTHY
+
 
 def get_override_file_path() -> Optional[str]:
     """
@@ -29,15 +57,7 @@ def get_override_file_path() -> Optional[str]:
     Returns:
         Path to the override file if it exists and override is enabled, None otherwise
     """
-    # Check if override is enabled
-    override_enabled = os.getenv("OUTSIDECALLSOVERRIDE", "false").lower() in {
-        "true",
-        "1",
-        "yes",
-        "on",
-    }
-
-    if not override_enabled:
+    if not is_override_enabled():
         logger.debug("Outside calls override is disabled")
         return None
 
@@ -61,21 +81,6 @@ def get_override_file_path() -> Optional[str]:
         f"Outside calls override is enabled but no override file found at any of these locations: {possible_paths}"
     )
     return None
-
-
-def is_override_enabled() -> bool:
-    """
-    Check if outside calls override is enabled.
-
-    Returns:
-        True if override is enabled, False otherwise
-    """
-    return os.getenv("OUTSIDECALLSOVERRIDE", "false").lower() in {
-        "true",
-        "1",
-        "yes",
-        "on",
-    }
 
 
 def validate_override_file(file_path: str) -> bool:

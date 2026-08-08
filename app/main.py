@@ -153,7 +153,10 @@ OPTITYPE_ENABLED = _env_flag("OPTITYPE_ENABLED", True)
 GENOME_DOWNLOADER_ENABLED = _env_flag("GENOME_DOWNLOADER_ENABLED", True)
 KROKI_ENABLED = _env_flag("KROKI_ENABLED", True)
 HAPI_FHIR_ENABLED = _env_flag("HAPI_FHIR_ENABLED", True)
-OUTSIDE_CALLS_OVERRIDE_ENABLED = _env_flag("OUTSIDECALLSOVERRIDE", False)
+# OUTSIDECALLSOVERRIDE is NOT parsed here either. This module's copy stripped
+# whitespace while app.utils.outside_calls_override's did not, and it was dead
+# besides — assigned once, read nowhere. The single reader is
+# outside_calls_override.is_override_enabled().
 # FHIR export is NOT parsed here. app.services.fhir_export_service.fhir_export_enabled()
 # is the single reader, shared with the /fhir/* router's own guard — a second
 # parse here is what let the mount and the guard disagree over "true ".

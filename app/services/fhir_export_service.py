@@ -27,16 +27,11 @@ logger = logging.getLogger(__name__)
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
-def env_flag(name: str, default: bool) -> bool:
-    """Parse a boolean environment variable, tolerating surrounding whitespace."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in _TRUTHY
-
-
 def fhir_export_enabled() -> bool:
     """The single source of truth for FHIR_EXPORT_ENABLED.
+
+    Whitespace is stripped: ``FHIR_EXPORT_ENABLED='true '`` is a trailing-space
+    typo in a ``.env`` file, not a request to disable the export.
 
     Deliberately a function, not a module-level constant. This module is
     imported from ``app/main.py``'s import block, which runs *before*
@@ -50,8 +45,17 @@ def fhir_export_enabled() -> bool:
     reads the same variable through the same parser, and by the time anyone asks
     (router mounting at the bottom of ``app/main.py``, request handlers, or
     ``FHIRExportService.is_enabled``) ``load_dotenv()`` has already run.
+
+    The parse is inline rather than a shared ``env_flag`` helper on purpose:
+    this codebase already carries four near-copies of a private ``_env_flag``
+    (app/main.py, app/reports/generator.py, app/api/routes/upload_router.py,
+    app/visualizations/workflow_diagram.py) and a fifth generic parser living in
+    a FHIR service is not the consolidation anyone wants.
     """
-    return env_flag("FHIR_EXPORT_ENABLED", True)
+    raw = os.getenv("FHIR_EXPORT_ENABLED")
+    if raw is None:
+        return True
+    return raw.strip().lower() in _TRUTHY
 
 
 # Reports directory - same as other report outputs

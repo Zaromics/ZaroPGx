@@ -123,7 +123,7 @@ def test_flag_name_appears_in_exactly_one_env_lookup():
     ]
     assert len(lookups) == 1, f"expected exactly one env lookup, found: {lookups}"
     assert lookups[0][0] == "app/services/fhir_export_service.py"
-    assert lookups[0][1] == 'return env_flag("FHIR_EXPORT_ENABLED", True)'
+    assert lookups[0][1] == 'raw = os.getenv("FHIR_EXPORT_ENABLED")'
 
 
 def test_flag_is_not_frozen_at_import_time(monkeypatch):
