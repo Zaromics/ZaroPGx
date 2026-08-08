@@ -3,6 +3,7 @@ import glob
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -16,7 +17,7 @@ from typing import Dict, Optional
 import requests
 from fastapi import FastAPI, HTTPException, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -88,6 +89,24 @@ def check_external_service_health(service_name: str) -> bool:
 def health() -> Dict[str, str]:
     return {"status": "ok"}
 
+# Strings that get interpolated into main.nf's bash `shell:` blocks must not carry
+# shell metacharacters: Nextflow escapes `path` inputs but not `val`/`params` strings,
+# so a `"` in one of them breaks out of the quoting and the rest runs as code - inside
+# a container holding the Docker socket. sample_identifier is additionally passed via
+# the environment (never interpolated), but reference IS still interpolated, so this
+# allowlist is what keeps it safe. The alphabet matches the app's boundary validator:
+# alphanumerics plus dot/underscore/hyphen, 1-64 chars, first char alphanumeric.
+_PIPELINE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _require_pipeline_token(value: str, field_name: str) -> str:
+    if not _PIPELINE_TOKEN_RE.match(value or ""):
+        raise ValueError(
+            f"invalid {field_name}: only letters, digits, '.', '_' and '-' are "
+            "allowed (1-64 characters, first character alphanumeric)"
+        )
+    return value
+
 class NextflowRunRequest(BaseModel):
     input: str
     input_type: str
@@ -105,6 +124,23 @@ class NextflowRunRequest(BaseModel):
     sample_identifier: Optional[str] = None
     pharmcat_absent_to_ref: str = "false"
     pharmcat_unspecified_to_ref: str = "false"
+
+    @field_validator("reference")
+    @classmethod
+    def _validate_reference(cls, v: str) -> str:
+        # reference is interpolated verbatim into several curl argv in main.nf; reject
+        # anything outside the safe alphabet before it can reach the shell.
+        return _require_pipeline_token((v or "").strip(), "reference")
+
+    @field_validator("sample_identifier")
+    @classmethod
+    def _validate_sample_identifier(cls, v: Optional[str]) -> Optional[str]:
+        # Optional: an absent/blank identifier is fine. When present it must be a safe
+        # token even though it now travels via the environment - defence in depth, and
+        # it keeps a hostile value from ever being persisted or logged downstream.
+        if v is None or not str(v).strip():
+            return None
+        return _require_pipeline_token(str(v).strip(), "sample_identifier")
 
 @app.post("/run")
 async def run(request: NextflowRunRequest):
@@ -210,12 +246,18 @@ def summarize_nextflow_failure(stdout: Optional[str], stderr: Optional[str], tai
             parts.append(f"{label}:\n{stream.strip()[-tail:]}")
     return "\n\n".join(parts) if parts else "Unknown error"
 
-def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false'):
+def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false'):
     """Build the Nextflow argv. Pure and side-effect free so it can be unit tested.
 
     Every skip flag the request model accepts must be emitted here; a flag that
     stops at the runner is indistinguishable, from the user's side, from a toggle
     that does nothing (406).
+
+    sample_identifier is DELIBERATELY not on the argv: it is a user-controlled string
+    and main.nf now reads it from the SAMPLE_IDENTIFIER environment variable (set in
+    run_nextflow_job) instead of interpolating it into the shell. Passing it as a
+    --param would put an attacker-controlled value back onto a path that Nextflow does
+    not escape.
     """
     # Nextflow command - JVM options should be set via environment variables, not command line args
     cmd = [
@@ -237,9 +279,8 @@ def build_nextflow_command(input_path: str, input_type: str, patient_id: str, re
         '-ansi-log', 'false'
     ]
 
-    # Pass sample_identifier if provided
-    if sample_identifier and str(sample_identifier).strip():
-        cmd.extend(['--sample_identifier', str(sample_identifier).strip()])
+    # NOTE: sample_identifier is intentionally NOT emitted here - it reaches main.nf as
+    # the SAMPLE_IDENTIFIER environment variable (see run_nextflow_job), not as a param.
 
     cmd.extend([
         '--pharmcat_absent_to_ref', pharmcat_absent_to_ref,
@@ -266,7 +307,6 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
             skip_pypgx=skip_pypgx,
             skip_gatk=skip_gatk,
             skip_report=skip_report,
-            sample_identifier=sample_identifier,
             pharmcat_absent_to_ref=pharmcat_absent_to_ref,
             pharmcat_unspecified_to_ref=pharmcat_unspecified_to_ref,
         )
@@ -276,6 +316,14 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
         if job_id:
             env['JOB_ID'] = job_id
             env['JOB_API_BASE'] = 'http://app:8000/api/v1'
+
+        # sample_identifier travels to PharmCATRun through the environment, exactly as
+        # JOB_ID does, and is referenced there as "$SAMPLE_IDENTIFIER" - never
+        # interpolated into the shell with !{...}. A bash variable expansion is inert
+        # data whatever it holds, so this is the structural fix for the injection, not a
+        # cleverer escape. The value is already allowlist-validated by NextflowRunRequest.
+        if sample_identifier and str(sample_identifier).strip():
+            env['SAMPLE_IDENTIFIER'] = str(sample_identifier).strip()
 
         os.makedirs(outdir, exist_ok=True)
         
