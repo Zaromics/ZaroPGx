@@ -42,6 +42,11 @@ from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
     prefer_source_over_lookup,
 )
+from app.reports.provenance import (
+    CALLED_BY_NO_CALL,
+    resolve_called_by,
+    resolve_guideline_source,
+)
 from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.visualizations.workflow_diagram import (
@@ -1225,256 +1230,6 @@ def create_interactive_html_report(
         raise
 
 
-def determine_tool_source(
-    gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None
-) -> str:
-    """
-    Determine which tool was used to call a specific gene based on the logic:
-    - HLA genes (HLA-A, HLA-B, HLA-C) → O (OptiType)
-    - MT-RNR1 → M (mtDNA-server-2)
-    - PyPGx-only genes → P (PyPGx)
-    - Overlapping genes: VCF input → C (PharmCAT), others → P (PyPGx)
-    - Environment variable overrides can force PyPGx preference
-
-    Args:
-        gene_name: Name of the gene
-        file_type: Type of input file (vcf, bam, cram, sam)
-        workflow_config: Workflow configuration dict
-
-    Returns:
-        Single letter code: C (PharmCAT), P (PyPGx), O (OptiType), M (mtDNA-server-2)
-    """
-    gene_name = gene_name.upper().strip()
-
-    # HLA genes → OptiType
-    if gene_name in ["HLA-A", "HLA-B", "HLA-C"]:
-        return "O"
-
-    # MT-RNR1 → mtDNA-server-2
-    if gene_name == "MT-RNR1":
-        return "M"
-
-    # Load gene categories from config
-    try:
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config",
-            "genes.json",
-        )
-        with open(config_path, "r") as f:
-            genes_config = json.load(f)
-
-        # Get gene sets
-        pharmcat_can_call = set(
-            genes_config.get("sets", {}).get("pharmcat_can_call", [])
-        )
-        pypgx_minus_pharmcat = set(
-            genes_config.get("sets", {}).get("pypgx_minus_pharmcat", [])
-        )
-        pharmcat_outside_callers = set(
-            genes_config.get("sets", {}).get("pharmcat_outside_callers", [])
-        )
-
-    except Exception as e:
-        # If config can't be loaded, log the error and use empty sets
-        logger.warning(
-            f"Failed to load genes.json config: {e}. Tool source determination may be limited."
-        )
-        pharmcat_can_call = set()
-        pypgx_minus_pharmcat = set()
-        pharmcat_outside_callers = set()
-
-    # PyPGx-only genes → PyPGx
-    if gene_name in pypgx_minus_pharmcat:
-        return "P"
-
-    # PharmCAT outside callers (handled by PyPGx/OptiType/mtDNA-server-2, not PharmCAT directly)
-    if gene_name in pharmcat_outside_callers:
-        # These are handled by outside tools, not PharmCAT directly
-        # CYP2D6 is handled by PyPGx, HLA genes by OptiType, MT-RNR1 by mtDNA-server-2
-        if gene_name == "CYP2D6":
-            return "P"  # CYP2D6 is handled by PyPGx
-        # HLA genes and MT-RNR1 are already handled above
-
-    # Overlapping genes (both PharmCAT and PyPGx can call)
-    if gene_name in pharmcat_can_call:
-        # Check for environment variable override
-        pypgx_preferred = os.environ.get("PYPGX_PREFERRED", "false").lower() in {
-            "true",
-            "1",
-            "yes",
-        }
-        pharmcat_preferred = os.environ.get("PHARMCAT_PREFERRED", "false").lower() in {
-            "true",
-            "1",
-            "yes",
-        }
-
-        if pypgx_preferred:
-            return "P"
-        elif pharmcat_preferred:
-            return "C"
-        else:
-            # Default logic: VCF input → PharmCAT, others → PyPGx
-            if file_type and file_type.lower() in ["vcf"]:
-                return "C"
-            else:
-                return "P"
-
-    # Default fallback to PyPGx for unknown genes
-    return "P"
-
-
-def determine_called_by(
-    gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None
-) -> str:
-    """
-    Determine which tool actually made the genetic call.
-
-    Args:
-        gene_name: Name of the gene
-        file_type: Type of input file (vcf, bam, cram, sam)
-        workflow_config: Workflow configuration dict
-
-    Returns:
-        Single letter code: P (PyPGx), C (PharmCAT), O (OptiType), M (mtDNA-server-2), G (GATK)
-    """
-    gene_name = gene_name.upper().strip()
-
-    # HLA genes → OptiType
-    if gene_name in ["HLA-A", "HLA-B", "HLA-C"]:
-        return "O"
-
-    # MT-RNR1 → mtDNA-server-2
-    if gene_name == "MT-RNR1":
-        return "M"
-
-    # Load gene categories from config
-    try:
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "config",
-            "genes.json",
-        )
-        with open(config_path, "r") as f:
-            genes_config = json.load(f)
-
-        # Get gene sets
-        pharmcat_can_call = set(
-            genes_config.get("sets", {}).get("pharmcat_can_call", [])
-        )
-        pypgx_minus_pharmcat = set(
-            genes_config.get("sets", {}).get("pypgx_minus_pharmcat", [])
-        )
-        pharmcat_outside_callers = set(
-            genes_config.get("sets", {}).get("pharmcat_outside_callers", [])
-        )
-
-    except Exception as e:
-        logger.warning(
-            f"Failed to load genes.json config: {e}. Tool determination may be limited."
-        )
-        pharmcat_can_call = set()
-        pypgx_minus_pharmcat = set()
-        pharmcat_outside_callers = set()
-
-    # PyPGx-only genes → PyPGx
-    if gene_name in pypgx_minus_pharmcat:
-        return "P"
-
-    # PharmCAT outside callers (handled by PyPGx/OptiType/mtDNA-server-2, not PharmCAT directly)
-    if gene_name in pharmcat_outside_callers:
-        if gene_name == "CYP2D6":
-            return "P"  # CYP2D6 is handled by PyPGx
-        # HLA genes and MT-RNR1 are already handled above
-
-    # Overlapping genes (both PharmCAT and PyPGx can call)
-    if gene_name in pharmcat_can_call:
-        # Check for environment variable override
-        pypgx_preferred = os.environ.get("PYPGX_PREFERRED", "false").lower() in {
-            "true",
-            "1",
-            "yes",
-        }
-        pharmcat_preferred = os.environ.get("PHARMCAT_PREFERRED", "false").lower() in {
-            "true",
-            "1",
-            "yes",
-        }
-
-        if pypgx_preferred:
-            return "P"
-        elif pharmcat_preferred:
-            return "C"
-        else:
-            # Default logic: VCF input → PharmCAT, others → PyPGx
-            if file_type and file_type.lower() in ["vcf"]:
-                return "C"
-            else:
-                return "P"
-
-    # Default fallback to PyPGx for unknown genes
-    return "P"
-
-
-def determine_report_data_from(
-    gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None
-) -> str:
-    """
-    Determine which tool provided the raw data for the report.
-
-    Args:
-        gene_name: Name of the gene
-        file_type: Type of input file (vcf, bam, cram, sam)
-        workflow_config: Workflow configuration dict
-
-    Returns:
-        Single letter code: P (PyPGx), C (PharmCAT), O (OptiType), M (mtDNA-server-2), G (GATK)
-    """
-    # For now, this is the same as called_by, but could be different in the future
-    # For example, if PharmCAT calls a gene but uses PyPGx data as input
-    return determine_called_by(gene_name, file_type, workflow_config)
-
-
-def determine_guideline_source(
-    gene_name: str, file_type: str, workflow_config: Dict[str, Any] = None
-) -> str:
-    """
-    Determine which guideline source was referenced for recommendations.
-
-    Args:
-        gene_name: Name of the gene
-        file_type: Type of input file (vcf, bam, cram, sam)
-        workflow_config: Workflow configuration dict
-
-    Returns:
-        Single letter code: F (FDA), D (DPWG), C (CPIC), P (PharmGKB)
-    """
-    called_by = determine_called_by(gene_name, file_type, workflow_config)
-
-    # PharmCAT typically uses CPIC or DPWG guidelines
-    if called_by == "C":
-        # This could be more sophisticated based on gene-specific guidelines
-        return "C"  # Default to CPIC for PharmCAT
-
-    # PyPGx doesn't typically provide guideline-based recommendations
-    elif called_by == "P":
-        return ""  # PyPGx doesn't have guideline sources
-
-    # Other tools
-    elif called_by == "O":
-        return ""  # OptiType doesn't have guideline sources
-
-    elif called_by == "M":
-        return ""  # mtDNA-server-2 doesn't have guideline sources
-
-    elif called_by == "G":
-        return ""  # GATK doesn't have guideline sources
-
-    else:
-        return ""
-
-
 def _load_all_gene_names() -> List[str]:
     """Load the full, canonical list of supported genes from config/genes.json.
 
@@ -1518,19 +1273,35 @@ def _choose_better_gene_entry(
     """Heuristic to pick a better gene entry when duplicates are present.
 
     Priority:
-    - Prefer entries with tool_source == 'C' (PharmCAT)
+    - Prefer entries with a PharmCAT call
     - Else prefer non-unknown phenotype over unknown
     - Otherwise keep existing
+
+    This is a display tiebreak between two candidate rows, not a provenance
+    claim -- the letter that reaches the report comes from
+    ``resolve_called_by`` (BACKLOG 28 + 216).
     """
     try:
-        # Normalize sources
+        # Normalize sources. ``called_by`` first: the resolver has already run
+        # on every file-lane row by the time dedupe fires, so it is the one
+        # field that reflects what the run recorded.
         existing_source = (
-            (existing.get("tool_source") or existing.get("source") or "")
+            (
+                existing.get("called_by")
+                or existing.get("tool_source")
+                or existing.get("source")
+                or ""
+            )
             .strip()
             .upper()
         )
         candidate_source = (
-            (candidate.get("tool_source") or candidate.get("source") or "")
+            (
+                candidate.get("called_by")
+                or candidate.get("tool_source")
+                or candidate.get("source")
+                or ""
+            )
             .strip()
             .upper()
         )
@@ -1560,7 +1331,9 @@ def _choose_better_gene_entry(
             .upper()
         )
 
-        # Special precedence:
+        # Special precedence -- a TIEBREAK between two candidate rows only.
+        # This never produces the letter that reaches the report; provenance
+        # comes from resolve_called_by (BACKLOG 28 + 216).
         # - HLA-A/B/C → prefer O (OptiType)
         # - MT-RNR1   → prefer M (mtDNA-server-2)
         # - CYP2D6    → prefer P (PyPGx)
@@ -1636,24 +1409,20 @@ def _build_canonical_diplotypes(
             row = dict(best_by_gene[key])
             row["gene"] = name
             try:
-                # Set source fields if not already set (preserve PharmCAT data service settings)
-                if not row.get("called_by"):
-                    row["called_by"] = determine_called_by(
-                        name, file_type, workflow_config
-                    )
-                if not row.get("report_data_from"):
-                    row["report_data_from"] = determine_report_data_from(
-                        name, file_type, workflow_config
-                    )
-                if not row.get("guideline_source"):
-                    row["guideline_source"] = determine_guideline_source(
-                        name, file_type, workflow_config
-                    )
-                # Keep tool_source for backward compatibility
-                if not row.get("tool_source"):
-                    row["tool_source"] = determine_tool_source(
-                        name, file_type, workflow_config
-                    )
+                # Report what the run recorded. Assigned unconditionally: the
+                # old `if not row.get(...)` guards existed so the DB lane's
+                # value survived, but both lanes now produce the same letters
+                # from the same resolver, so re-resolving is idempotent -- and
+                # the guard would have re-admitted stale values (28 + 216).
+                provenance = resolve_called_by(row)
+                row["called_by"] = provenance.letter
+                row["called_by_label"] = provenance.label
+                guideline_letter = resolve_guideline_source(row)
+                if guideline_letter:
+                    row["guideline_source"] = guideline_letter
+                else:
+                    row.pop("guideline_source", None)
+                row.pop("report_data_from", None)
 
                 # Assign wild type phenotype labels based on file type
                 diplotype_str = str(row.get("diplotype") or "").strip()
@@ -1697,25 +1466,17 @@ def _build_canonical_diplotypes(
                 logger.debug("Swallowed exception: %s", e, exc_info=True)
             canonical_rows.append(row)
         else:
-            # Placeholder row for genes without results
+            # Placeholder row for a gene with no result. The run recorded no
+            # call, so it has no caller and no guideline attribution either --
+            # a guessed letter here was pure fabrication (28 + 216).
             canonical_rows.append(
                 {
                     "gene": name,
                     "diplotype": "",
                     "phenotype": "",
                     "activity_score": None,
-                    "called_by": determine_called_by(
-                        name, file_type, workflow_config or {}
-                    ),
-                    "report_data_from": determine_report_data_from(
-                        name, file_type, workflow_config or {}
-                    ),
-                    "guideline_source": determine_guideline_source(
-                        name, file_type, workflow_config or {}
-                    ),
-                    "tool_source": determine_tool_source(
-                        name, file_type, workflow_config or {}
-                    ),  # Keep for backward compatibility
+                    "called_by": CALLED_BY_NO_CALL,
+                    "called_by_label": "No call made for this gene",
                 }
             )
 
@@ -1754,7 +1515,6 @@ def map_recommendations_for_template(
                     "recommendations": [],
                     "pharmgkb_id": drug_data.get("pharmgkb_id"),
                     "called_by": drug_data.get("called_by"),
-                    "report_data_from": drug_data.get("report_data_from"),
                 }
 
             # Add genes and recommendations
@@ -1774,7 +1534,6 @@ def map_recommendations_for_template(
                     "recommendations": [],
                     "pharmgkb_id": drug_data.get("pharmgkb_id"),
                     "called_by": drug_data.get("called_by"),
-                    "report_data_from": drug_data.get("report_data_from"),
                 }
 
             # Add gene if not already present
@@ -1826,8 +1585,6 @@ def map_recommendations_for_template(
                 mapped_rec["pharmgkb_id"] = drug_data["pharmgkb_id"]
             if drug_data.get("called_by"):
                 mapped_rec["called_by"] = drug_data["called_by"]
-            if drug_data.get("report_data_from"):
-                mapped_rec["report_data_from"] = drug_data["report_data_from"]
 
             mapped_recommendations.append(mapped_rec)
 
@@ -1993,24 +1750,16 @@ def generate_report(
         if isinstance(diplotype, dict):
             gene_name = diplotype.get("gene", "")
             if gene_name:
-                # Set source fields if not already set (preserve PharmCAT data service settings)
-                if not diplotype.get("called_by"):
-                    diplotype["called_by"] = determine_called_by(
-                        gene_name, file_type, workflow_config
-                    )
-                if not diplotype.get("report_data_from"):
-                    diplotype["report_data_from"] = determine_report_data_from(
-                        gene_name, file_type, workflow_config
-                    )
-                if not diplotype.get("guideline_source"):
-                    diplotype["guideline_source"] = determine_guideline_source(
-                        gene_name, file_type, workflow_config
-                    )
-                # Keep tool_source for backward compatibility
-                if not diplotype.get("tool_source"):
-                    diplotype["tool_source"] = determine_tool_source(
-                        gene_name, file_type, workflow_config
-                    )
+                # Report what the run recorded (BACKLOG 28 + 216).
+                provenance = resolve_called_by(diplotype)
+                diplotype["called_by"] = provenance.letter
+                diplotype["called_by_label"] = provenance.label
+                guideline_letter = resolve_guideline_source(diplotype)
+                if guideline_letter:
+                    diplotype["guideline_source"] = guideline_letter
+                else:
+                    diplotype.pop("guideline_source", None)
+                diplotype.pop("report_data_from", None)
                 enhanced_diplotypes.append(diplotype)
             else:
                 enhanced_diplotypes.append(diplotype)
@@ -2346,7 +2095,7 @@ def generate_report(
                         "diplotype": diplotype if diplotype else "Unknown",
                         "phenotype": phenotype if phenotype else "Unknown",
                         "activity_score": activity_score,
-                        "source": "PyPGx",
+                        "tool_source": "PyPGx",
                         "pyPgxOnly": True,
                     }
                     # activity_score is already included in the gene_entry above

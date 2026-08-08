@@ -6,6 +6,7 @@ it recorded nothing. No arm may consult the gene name.
 
 from pathlib import Path
 
+import app.reports.generator as generator_module
 from app.reports.provenance import (
     CALLED_BY_NO_CALL,
     CALLED_BY_OUTSIDE,
@@ -181,3 +182,90 @@ def test_db_lane_workflow_summary_uses_the_request_session():
     src = Path("app/services/pharmcat_data_service.py").read_text(encoding="utf-8")
     assert "get_pharmcat_summary(pharmcat_run_id, self.db)" in src
     assert "get_pharmcat_summary(pharmcat_run_id)" not in src
+
+
+# ---------------------------------------------------------------------------
+# File/generator lane -- the four gene-name ladders are gone
+# ---------------------------------------------------------------------------
+
+
+def test_generator_no_longer_defines_the_gene_name_ladders():
+    for dead in (
+        "determine_called_by",
+        "determine_report_data_from",
+        "determine_tool_source",
+        "determine_guideline_source",
+    ):
+        assert not hasattr(generator_module, dead), f"{dead} must be deleted"
+
+
+def test_canonical_rows_report_recorded_provenance_only():
+    rows = generator_module._build_canonical_diplotypes(
+        raw_gene_entries=[
+            {"gene": "CYP2C19", "diplotype": "*38/*38", "call_source": "MATCHER"},
+            {"gene": "CYP2D6", "diplotype": "*1/*3", "call_source": "OUTSIDE"},
+        ],
+        file_type="vcf",
+        workflow_config=None,
+    )
+    by_gene = {r["gene"]: r for r in rows}
+
+    assert by_gene["CYP2C19"]["called_by"] == CALLED_BY_PHARMCAT
+    # No gene-name guess: OUTSIDE with no tool marker stays honest.
+    assert by_gene["CYP2D6"]["called_by"] == CALLED_BY_OUTSIDE
+    assert all("report_data_from" not in r for r in rows)
+
+
+def test_canonical_placeholder_rows_are_no_call_not_a_tool():
+    rows = generator_module._build_canonical_diplotypes(
+        raw_gene_entries=[],
+        file_type="vcf",
+        workflow_config=None,
+    )
+    assert rows, "canonical gene list should not be empty"
+    assert {r["called_by"] for r in rows} == {CALLED_BY_NO_CALL}
+
+
+def test_canonical_rows_blank_an_unrecorded_guideline_source():
+    """The file lane used to render the word "CPIC" (straight from block.source)
+    into a letter column, and to guess "C" whenever it guessed the caller."""
+    rows = generator_module._build_canonical_diplotypes(
+        raw_gene_entries=[
+            {"gene": "CYP2C19", "diplotype": "*38/*38", "call_source": "MATCHER"},
+            {
+                "gene": "CYP2C9",
+                "diplotype": "*1/*2",
+                "call_source": "MATCHER",
+                "guideline_source": "DPWG",
+            },
+        ],
+        file_type="vcf",
+        workflow_config=None,
+    )
+    by_gene = {r["gene"]: r for r in rows}
+    assert by_gene["CYP2C19"].get("guideline_source", "") == ""
+    assert by_gene["CYP2C9"]["guideline_source"] == "D"
+
+
+def test_pypgx_only_row_keeps_its_tool_attribution():
+    rows = generator_module._build_canonical_diplotypes(
+        raw_gene_entries=[
+            {
+                "gene": "CYP2D6",
+                "diplotype": "*1/*4",
+                "tool_source": "PyPGx",
+                "pyPgxOnly": True,
+            }
+        ],
+        file_type="bam",
+        workflow_config=None,
+    )
+    by_gene = {r["gene"]: r for r in rows}
+    assert by_gene["CYP2D6"]["called_by"] == CALLED_BY_PYPGX
+
+
+def test_both_pypgx_merges_write_the_same_tool_marker_key():
+    """merge-1 wrote ``source``, merge-2 ``tool_source`` -- same fact, two keys."""
+    src = Path("app/reports/generator.py").read_text(encoding="utf-8")
+    assert '"source": "PyPGx"' not in src
+    assert src.count('"tool_source": "PyPGx"') >= 2
