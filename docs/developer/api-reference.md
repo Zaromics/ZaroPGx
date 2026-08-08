@@ -303,73 +303,12 @@ Get logs for a specific job.
 }
 ```
 
-### Patient Endpoints
-
-#### List Patients
-
-Get a list of all patients.
-
-**Endpoint:** `GET /patients`
-
-**Query Parameters:**
-- `limit` (optional): Maximum number of patients (default: 100)
-- `offset` (optional): Number of patients to skip (default: 0)
-- `search` (optional): Search term for patient identifier
-
-**Response:**
-```json
-{
-  "patients": [
-    {
-      "id": "patient_001",
-      "identifier": "SAMPLE_001",
-      "created_at": "2024-01-15T10:00:00Z",
-      "last_analysis": "2024-01-15T10:30:00Z",
-      "analysis_count": 3
-    }
-  ],
-  "total": 1,
-  "limit": 100,
-  "offset": 0
-}
-```
-
-#### Get Patient Details
-
-Get detailed information about a specific patient.
-
-**Endpoint:** `GET /patients/{patient_id}`
-
-**Parameters:**
-- `patient_id` (path): Patient identifier
-
-**Response:**
-```json
-{
-  "id": "patient_001",
-  "identifier": "SAMPLE_001",
-  "created_at": "2024-01-15T10:00:00Z",
-  "updated_at": "2024-01-15T10:30:00Z",
-  "genetic_data": [
-    {
-      "id": "data_001",
-      "file_type": "VCF",
-      "file_path": "/data/uploads/sample.vcf",
-      "created_at": "2024-01-15T10:00:00Z"
-    }
-  ],
-  "workflows": [
-    {
-      "id": "workflow_001",
-      "status": "completed",
-      "created_at": "2024-01-15T10:00:00Z",
-      "completed_at": "2024-01-15T10:30:00Z"
-    }
-  ]
-}
-```
-
 ### System Endpoints
+
+There is no patient-listing API. Patients exist only as rows created implicitly
+by `POST /upload/genomic-data`; no route enumerates or reads them. There is also
+no `/system/info` route — for build/feature information use `GET /services-config`
+and `GET /api-status` below.
 
 #### Health Check
 
@@ -391,32 +330,6 @@ Check system health and service status.
   },
   "version": "1.0.0",
   "uptime": 3600
-}
-```
-
-#### System Information
-
-Get system information and configuration.
-
-**Endpoint:** `GET /system/info`
-
-**Response:**
-```json
-{
-  "version": "1.0.0",
-  "build_date": "2024-01-15T00:00:00Z",
-  "git_commit": "abc123def456",
-  "environment": "development",
-  "features": {
-    "gatk_enabled": true,
-    "pypgx_enabled": true,
-    "optitype_enabled": true,
-    "fhir_enabled": true
-  },
-  "limits": {
-    "max_upload_size": "1GB",
-    "max_concurrent_workflows": 10
-  }
 }
 ```
 

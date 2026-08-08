@@ -204,8 +204,8 @@ curl http://localhost:8765/fhir/export/run/{run_id}/preview
 ```
 #### Bulk Export
 ```bash
-# Export all reports for a patient
-curl http://localhost:8765/patients/{patient_id}/export
+# Download every report file for a patient as a single ZIP
+curl -O -J http://localhost:8765/upload/reports/download/{patient_id}
 ```
 
 ## Best Practices
