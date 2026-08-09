@@ -18,10 +18,10 @@ It is nonetheless safe, and the reason is a property of the callers, not of the
 statement:
 
 * ``generate_report`` is reached with a ``db_session`` from exactly one place,
-  ``app/api/routes/upload_router.py``, which does ``db_session = next(get_db())``
-  on the line before the call. ``get_db`` constructs a brand-new
-  ``SessionLocal()``, whose identity map is empty, so the query loads the row from
-  the database.
+  ``app/api/routes/upload_router.py``, which opens a dedicated ``SessionLocal()``
+  in a try/finally around the call -- deliberately not the long-lived session that
+  function already holds. Its identity map is empty, so the query loads the row
+  from the database.
 * ``app/main.py``'s reprocessing path calls ``generate_report`` with no
   ``db_session`` at all, so the read never executes there.
 * The only earlier load of ``Job`` on that session is
@@ -111,8 +111,8 @@ def test_a_session_opened_at_the_call_site_sees_the_upload_metadata(sessions):
     job_id = _make_job(sessions())
     _stamp_upload_metadata(sessions(), job_id)
 
-    # upload_router.py: db_session = next(get_db()) -- a fresh SessionLocal, empty
-    # identity map, opened after every write this read cares about.
+    # upload_router.py: a dedicated SessionLocal() for this call -- empty identity
+    # map, opened after every write this read cares about.
     fresh = sessions()
     assert _read_like_generate_report(fresh, job_id) == [GRCH37_ALERT]
 

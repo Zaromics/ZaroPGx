@@ -1732,12 +1732,13 @@ def generate_report(
                 # SessionLocal sets expire_on_commit=False, so a plain query hands
                 # back an identity-mapped instance -- but only if this session
                 # already loaded the row. It has not: the sole caller that supplies
-                # db_session opens it with `next(get_db())` on the line before the
-                # call (upload_router.py), i.e. a brand-new SessionLocal with an
-                # empty identity map, and app/main.py's reprocessing path passes no
-                # session at all so this branch never runs there. Every key read
-                # below is committed at upload time, long before report generation
-                # starts, so there is no window to be stale in.
+                # db_session opens a dedicated `SessionLocal()` in a try/finally on
+                # the lines around the call (upload_router.py), deliberately *not*
+                # reusing the long-lived session it already holds, i.e. a brand-new
+                # session with an empty identity map; and app/main.py's reprocessing
+                # path passes no session at all so this branch never runs there.
+                # Every key read below is committed at upload time, long before
+                # report generation starts, so there is no window to be stale in.
                 #
                 # The safety is the caller's freshness, not the statement's, and it
                 # is invisible from here -- tests/test_generator_job_metadata_read.py
