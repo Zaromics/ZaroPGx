@@ -1015,7 +1015,15 @@
                             {% for rec_key, group_data in recommendation_groups.items() %}
                                 <div class="gene-recommendation {{ group_data['rec'].evidence_class }}" style="margin-bottom: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
                                     <h4 style="margin: 0 0 8px 0; color: #495057;">{{ group_data['genes']|join(', ') }} - {{ group_data['rec'].guideline_source if group_data['rec'].guideline_source else 'General' }}</h4>
-                                    <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation }}</p>
+                                    {# |safe: PharmCAT ships guideline prose as an HTML
+                                        fragment (<ul>/<li> dosing lists,
+                                        <h4 id="other-considerations"> sections, &quot;
+                                        entities). It is the only field in the report
+                                        payload that carries markup, and it comes from
+                                        PharmCAT's bundled CPIC/DPWG/FDA data, not from
+                                        the uploaded file. The data-recommendation
+                                        attribute below deliberately stays escaped. -#}
+                                    <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
                                     <p style="margin: 4px 0;"><strong>Strength of Recommendation:</strong> {{ group_data['rec'].classification }}</p>
                                     {% if group_data['rec'].literature_references %}
                                     <p style="margin: 4px 0;"><strong>References:</strong> {{ group_data['rec'].literature_references|join(", ") }}</p>

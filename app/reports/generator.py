@@ -550,8 +550,25 @@ def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optiona
     return dict(_EMPTY_MATCHER_METADATA)
 
 
-# Initialize Jinja2 environment
-env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+# Initialize Jinja2 environment.
+#
+# autoescape is not optional here. The interactive report writes free text into
+# HTML attributes -- data-recommendation="{{ rec.recommendation }}" among them --
+# and PharmCAT's own guideline prose contains markup: <h4 id="other-considerations">
+# appears in 45 of the 151 data-recommendation attributes of a real run. Without
+# escaping, the browser terminates the attribute at that first inner quote and the
+# rest of the recommendation leaks out as stray attributes on the div, so
+# pgx-report.js reads truncated dosing text. Gene names, diplotypes, sample
+# identifiers and filenames all reach the page the same way, and some of them come
+# from an uploaded file.
+#
+# The one value that is genuinely markup is the drug recommendation body, which
+# the templates now mark |safe explicitly. It is the only field carrying tags or
+# entities across all 24 runs under data/reports.
+env = Environment(
+    loader=FileSystemLoader(TEMPLATE_DIR),
+    autoescape=select_autoescape(["html", "xml"]),
+)
 env.filters["activity_score_num"] = activity_score_num
 
 
@@ -2484,13 +2501,10 @@ def generate_report(
         if REPORT_CONFIG["write_html"]:
             logger.info("=== HTML REPORT GENERATION START ===")
             logger.info("Loading HTML template...")
-            env = Environment(
-                loader=FileSystemLoader(
-                    os.path.join(os.path.dirname(__file__), "templates")
-                ),
-                autoescape=select_autoescape(["html", "xml"]),
-            )
-            env.filters["activity_score_num"] = activity_score_num
+            # The module-level `env` -- same loader, same filter, same autoescape.
+            # This used to build a third Environment inline, which is how the three
+            # renderers of these two templates drifted apart on autoescape in the
+            # first place.
             template = env.get_template("report_template.html")
             logger.info("HTML template loaded successfully")
 

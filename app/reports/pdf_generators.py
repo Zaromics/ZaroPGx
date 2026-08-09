@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 # Third-party imports
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
@@ -695,13 +695,21 @@ class WeasyPrintGenerator(PDFGenerator):
             try:
                 # Get the template directory path
                 template_dir = os.path.join(os.path.dirname(__file__), "templates")
-                env = Environment(loader=FileSystemLoader(template_dir))
+                # autoescape matches the other two renderers of this template.
+                # report_template.html marks the one genuinely-markup field
+                # (the drug recommendation body) |safe explicitly, so escaping
+                # here only affects values that should never have been markup:
+                # gene names, diplotypes, sample identifiers, filenames.
+                env = Environment(
+                    loader=FileSystemLoader(template_dir),
+                    autoescape=select_autoescape(["html", "xml"]),
+                )
                 # Load-bearing. report_template.html filters through
                 # `activity_score_num`, and Jinja resolves filters at *compile*
                 # time -- so a bare Environment does not render a report without
                 # the score, it raises TemplateAssertionError out of get_template()
                 # below and this whole generator fails. Both other renderers of
-                # this template register it (generator.py:520, :2458).
+                # this template register it (generator.py, both Environments).
                 env.filters["activity_score_num"] = activity_score_num
 
                 # Use the PDF template (report_template.html) for proper PDF generation
