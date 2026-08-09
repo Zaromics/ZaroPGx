@@ -16,7 +16,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import requests
 from fastapi import (
@@ -59,6 +59,7 @@ from app.api.utils.header_inspector import (
     filter_header_to_canonical_contigs,
     inspect_header,
 )
+from app.pharmcat.report_json import PharmCATSchemaError, iter_gene_blocks
 from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.services.job_service import JobService, schedule_coroutine
@@ -188,6 +189,23 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     return workflow.get("unsupported_reason") or (
         f"Files of type '{file_type}' cannot be analysed."
     )
+
+
+def _has_readable_gene_blocks(pharmcat_data: Any) -> bool:
+    """True when the report formatters would find at least one gene to render.
+
+    Asks ``iter_gene_blocks`` -- the same walker the report lane and the database
+    loader use -- rather than testing ``pharmcat_data["genes"]`` for truthiness.
+    The TSV fallback seeds ``{"genes": {"CPIC": {}}}`` before it knows whether any
+    row carries a gene symbol, and that empty bucket is truthy while yielding
+    nothing to render, so a truthiness test would call an empty report usable.
+    """
+    if not isinstance(pharmcat_data, Mapping):
+        return False
+    genes_section = pharmcat_data.get("genes")
+    if not isinstance(genes_section, Mapping):
+        return False
+    return any(True for _ in iter_gene_blocks(genes_section))
 
 
 def _discard_refused_upload(file_paths: Optional[List[str]]) -> None:
@@ -515,6 +533,11 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         # Look for PharmCAT JSON results
         pharmcat_json_file = patient_dir / f"{job_id}_pgx_pharmcat.json"
         pharmcat_run_id = None
+        # 265: set when validate_report() refused the payload. The report lane
+        # reads it twice -- once to keep the rejected payload out of
+        # pharmcat_data, and once after the TSV fallback to decide whether this
+        # job can honestly produce a report at all.
+        pharmcat_schema_error: Optional[PharmCATSchemaError] = None
 
         if pharmcat_json_file.exists():
             try:
@@ -540,6 +563,19 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                                 logger.warning(
                                     "load_pharmcat_file returned None - database insert may have failed"
                                 )
+                        except PharmCATSchemaError as schema_error:
+                            # Not a database failure, and reporting it as one sends
+                            # the operator to the wrong system. validate_report()
+                            # found the payload's structure has moved away from what
+                            # the walkers read, so nothing downstream can read it
+                            # honestly -- not the DB loader, and not the report
+                            # formatters, which share those walkers.
+                            pharmcat_schema_error = schema_error
+                            pharmcat_run_id = None
+                            logger.error(
+                                f"PharmCAT report.json rejected by the schema gate "
+                                f"for job {job_id}: {schema_error}"
+                            )
                         except Exception as db_error:
                             # Check if it's a database constraint error
                             error_str = str(db_error).lower()
@@ -558,11 +594,25 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                             # Continue with file-based data fallback
                             pharmcat_run_id = None
 
-                        # PharmCAT JSON has genes directly, not in a "data" object
-                        pharmcat_data = pharmcat_results
-                        logger.info(
-                            f"Loaded PharmCAT results from {pharmcat_json_file}"
-                        )
+                        if pharmcat_schema_error is None:
+                            # PharmCAT JSON has genes directly, not in a "data" object
+                            pharmcat_data = pharmcat_results
+                            logger.info(
+                                f"Loaded PharmCAT results from {pharmcat_json_file}"
+                            )
+                        else:
+                            # Deliberately leave pharmcat_data at its empty seed.
+                            # Assigning the rejected payload here is what made the
+                            # gate ornamental: `genes` is non-empty in every
+                            # rejection mode, so the TSV fallback below could never
+                            # fire and the report was built from the very payload
+                            # the gate had just declared unreadable.
+                            logger.error(
+                                "Not building a report from the rejected payload; "
+                                "trying the PharmCAT TSV, which is a separate "
+                                "artifact of the same run and is read by a "
+                                "different parser"
+                            )
                     else:
                         logger.warning(
                             f"PharmCAT JSON file has unexpected structure: {pharmcat_results}"
@@ -629,6 +679,55 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                         )
             except Exception as e:
                 logger.warning(f"Failed TSV fallback for PharmCAT parsing: {e}")
+
+        # 265: the gate has teeth on this lane too.
+        #
+        # A payload the gate rejected must not become a clinical report. The TSV
+        # above is the one honest way out: it is PharmCAT's own tab-delimited
+        # output for the same run, a different file read by a different parser
+        # (app/reports/pharmcat_tsv_parser.py), so believing it is not believing
+        # the payload that was refused. If it yielded gene blocks, the report is
+        # built from that and the run continues.
+        #
+        # If it did not, there is nothing left to report from. Generating anyway
+        # would emit a report with no genes, and an empty report is
+        # indistinguishable from a clean one -- exactly the silent degradation
+        # the gate exists to catch. So the job fails, loudly, naming the reason.
+        #
+        # Deliberately ahead of the `needs_report` gate below rather than inside
+        # it. A rejected payload also failed to load into the database -- the
+        # gate raised before the first write, so no PharmCAT run is linked --
+        # which means a needs_report=False job would otherwise complete having
+        # produced no usable PharmCAT data at all and said nothing about it.
+        # That is the same silent degradation wearing a different hat. Opting out
+        # of reports is not opting out of knowing the analysis failed.
+        if pharmcat_schema_error is not None and not _has_readable_gene_blocks(
+            pharmcat_data
+        ):
+            message = (
+                f"PharmCAT report.json failed the structure gate and no usable "
+                f"PharmCAT TSV was available, so no report was generated: "
+                f"{pharmcat_schema_error}"
+            )
+            logger.error(f"Job {job_id}: {message}")
+            job_service.update_job_step(
+                job_id,
+                "report_generation",
+                JobStepUpdate(
+                    status=StepStatus.FAILED,
+                    error_details={
+                        "error": message,
+                        "reason": "pharmcat_schema_gate",
+                    },
+                ),
+            )
+            raise RuntimeError(message) from pharmcat_schema_error
+
+        if pharmcat_schema_error is not None:
+            logger.warning(
+                f"Job {job_id}: report built from the PharmCAT TSV because the "
+                f"report.json was rejected by the structure gate"
+            )
 
         # Update progress: Diagram generation (35% of report generation)
         step_update = JobStepUpdate(

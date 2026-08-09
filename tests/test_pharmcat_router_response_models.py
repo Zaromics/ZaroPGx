@@ -442,6 +442,76 @@ def test_load_endpoint_rejects_malformed_json_with_400(pgx_client):
 
 
 # ---------------------------------------------------------------------------
+# The schema gate is a statement about the *request*, not about this server
+# ---------------------------------------------------------------------------
+
+# Valid JSON, refused by validate_report(): every gene block has lost
+# ``sourceDiplotypes``, so loading it would store a run in which every gene reads
+# Unknown/Unknown.  ``genes`` is still populated, so nothing shallower notices.
+UNREADABLE_REPORT = {
+    "pharmcatVersion": "3.4.0",
+    "genes": {
+        "CYP2C19": {"geneSymbol": "CYP2C19"},
+        "CYP2D6": {"geneSymbol": "CYP2D6"},
+    },
+    "drugs": {},
+}
+
+
+def _post_report(client, payload):
+    return client.post(
+        "/api/pharmcat/load",
+        files={
+            "file": (
+                "report.json",
+                json.dumps(payload).encode("utf-8"),
+                "application/json",
+            )
+        },
+    )
+
+
+def test_load_endpoint_answers_400_for_a_payload_the_gate_refuses(pgx_client):
+    """500 says "this server is broken" and invites a retry; nothing is broken.
+
+    ``PharmCATSchemaError`` is a verdict on the uploaded body -- well-formed JSON
+    that is not a report.json this parser can read -- so it belongs in the 4xx
+    range.  It used to fall through the handler's blanket ``except Exception``
+    and answer 500.
+
+    400 rather than 422: FastAPI already spends 422 on ``RequestValidationError``,
+    whose ``detail`` is a *list* of error objects, and the sibling guard tests
+    above pin 400-with-a-string for the other two refusals on this route.
+    """
+    response = _post_report(pgx_client, UNREADABLE_REPORT)
+
+    assert response.status_code == 400, response.text
+
+
+def test_the_refusal_explains_which_part_of_the_payload_was_refused(pgx_client):
+    response = _post_report(pgx_client, UNREADABLE_REPORT)
+
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert "PharmCAT" in detail, detail
+    assert "sourceDiplotypes" in detail, detail
+
+
+def test_a_refused_payload_leaves_nothing_in_the_database(pgx_client, pgx_session):
+    """The gate runs before the first write and the context manager rolls back,
+    so a refusal must not leave a half-loaded run for a later query to find."""
+    from app.pharmcat.pharmcat_parser import PharmCATResult
+
+    assert _post_report(pgx_client, UNREADABLE_REPORT).status_code == 400
+    assert pgx_session.query(PharmCATResult).count() == 0
+
+
+def test_a_readable_payload_is_still_accepted(pgx_client, report_payload):
+    """The refusal must not become a new way to reject working uploads."""
+    assert _post_report(pgx_client, report_payload).status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # Every other route on the router -- same class of mismatch?
 # ---------------------------------------------------------------------------
 
