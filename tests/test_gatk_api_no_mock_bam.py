@@ -16,6 +16,7 @@ remain are regression fences around the exact shape of the old defect.
 """
 
 import ast
+import gzip
 import importlib.util
 import logging
 import logging.handlers
@@ -630,6 +631,151 @@ def test_extension_is_preserved_so_format_branching_still_works(gatk_api):
         ("s.unknown", ""),
     ]:
         assert gatk_api.safe_upload_name(name, "u").endswith(expected)
+
+
+# --------------------------------------------------------------------------
+# ...and the branching has to be able to read the extension back
+#
+# safe_upload_name preserves `.vcf.gz` deliberately -- SAFE_UPLOAD_EXTENSIONS
+# is ordered longest-first precisely so it wins over `.gz`. But every consumer
+# read it back with `os.path.splitext(name)[1]`, which returns only the *final*
+# component. So `file_ext` was `.gz`, and the comparisons written against
+# `'.vcf.gz'` could never be true: a bgzipped VCF skipped reference
+# auto-detection, missed both format branches, and was answered
+# `400 Unsupported file format: .gz`. stored_extension()/stored_stem() match
+# against the same tuple the sanitiser chose from, so the two halves cannot
+# disagree.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("sample_job.vcf.gz", ".vcf.gz"),
+        ("sample_job.VCF.GZ", ".vcf.gz"),
+        ("sample_job.vcf", ".vcf"),
+        ("sample_job.bam", ".bam"),
+        ("sample_job.cram", ".cram"),
+        ("sample_job.sam", ".sam"),
+        ("sample_job.bcf", ".bcf"),
+        ("sample_job.fastq", ".fastq"),
+        ("sample_job.fq", ".fq"),
+        ("sample_job", ""),
+        ("upload_job.unknown", ""),
+    ],
+)
+def test_stored_extension_reads_back_what_the_sanitiser_preserved(
+    gatk_api, name, expected
+):
+    assert gatk_api.stored_extension(name) == expected
+
+
+def test_stored_extension_differs_from_splitext_exactly_where_the_bug_was(gatk_api):
+    """The contrast, stated outright so the next reader does not re-derive it."""
+    assert os.path.splitext("sample_job.vcf.gz")[1] == ".gz"
+    assert gatk_api.stored_extension("sample_job.vcf.gz") == ".vcf.gz"
+    # Which is what made the dead comparison dead.
+    assert os.path.splitext("sample_job.vcf.gz")[1].lower() != ".vcf.gz"
+
+
+def test_every_preserved_extension_is_recognised_again(gatk_api):
+    """No suffix may be preservable by one half and unreadable by the other."""
+    for extension in gatk_api.SAFE_UPLOAD_EXTENSIONS:
+        stored = gatk_api.safe_upload_name(f"sample{extension}", "job-uuid")
+        assert gatk_api.stored_extension(stored) == extension
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("sample_job.vcf.gz", "sample_job"),
+        ("sample_job.vcf", "sample_job"),
+        ("sample_job.bam", "sample_job"),
+        ("sample_job", "sample_job"),
+    ],
+)
+def test_stored_stem_strips_the_whole_suffix(gatk_api, name, expected):
+    """`splitext(...)[0]` left the `.vcf` on, deriving `<name>.vcf.vcf`."""
+    assert gatk_api.stored_stem(name) == expected
+
+
+def test_bgzipped_vcf_is_accepted_instead_of_rejected_as_unsupported(
+    client, gatk_api, reference_fasta
+):
+    """The live consequence: /variant-call used to 400 on a legitimate .vcf.gz."""
+    resp = client.post(
+        "/variant-call",
+        files={
+            "file": ("sample.vcf.gz", b"\x1f\x8b\x08\x04rubbish", "application/gzip")
+        },
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "Unsupported file format" not in resp.text
+    body = resp.json()
+    assert body["status"] == gatk_api.JOB_STATUS_COMPLETED
+    # It is returned as an already-called VCF, not sent to HaplotypeCaller.
+    assert body["output_file"].endswith(".vcf.gz")
+
+
+def test_no_stored_name_is_split_with_splitext(source):
+    """Regression fence on the exact defective expression, at every site.
+
+    `filename` is always safe_upload_name()'s output and `file_path` is always a
+    path built from one, so either may carry a two-part extension;
+    `os.path.splitext` cannot see that. Both names are fenced: an earlier cut of
+    this test checked only `filename` and so passed while detect_reference() was
+    still splitting `file_path` the old way, leaving its `.vcf.gz` branch dead.
+
+    Not fenced, and correctly so: splitext on a *reference* path (`fasta_path`,
+    the `.dict` sidecar derivation) -- those are single-extension files this
+    module names itself, not uploads.
+    """
+    offenders = [
+        (i, line.strip())
+        for i, line in enumerate(source.splitlines(), 1)
+        if "os.path.splitext(filename)" in line or "os.path.splitext(file_path)" in line
+    ]
+    assert not offenders, (
+        f"gatk_api.py splits a stored upload name with os.path.splitext at "
+        f"{offenders}; use stored_extension()/stored_stem()"
+    )
+
+
+def test_detect_reference_reads_a_bgzipped_vcf_header(gatk_api, tmp_path):
+    """The branch that named '.vcf.gz' but could never run for one.
+
+    Two defects stacked: splitext reported `.gz` so the branch was unreachable,
+    and the branch opened the file as plain text, which cannot read bgzip even
+    once it is reachable.
+    """
+    path = tmp_path / "sample_job.vcf.gz"
+    with gzip.open(path, "wt") as handle:
+        handle.write("##fileformat=VCFv4.2\n##reference=GRCh37/hg19\n#CHROM\tPOS\n")
+
+    assert gatk_api.detect_reference(str(path), default_reference="hg38") == "hg19"
+
+
+def test_detect_reference_does_not_guess_from_compressed_bytes(gatk_api, tmp_path):
+    """A false positive here silently *overrides* the caller's reference_genome.
+
+    The plain-text 10 KiB scan matches three-character tokens ('b38', 'b37'), so
+    over deflate output it is a coin-flip generator, not a detector. Routing
+    .vcf.gz into detect_reference() at all is new, so this is the failure mode
+    that change could have introduced. The bgzipped body below decompresses to a
+    header with no reference field; the caller's default must survive.
+    """
+    path = tmp_path / "sample_job.vcf.gz"
+    with gzip.open(path, "wt") as handle:
+        handle.write("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\n")
+
+    assert gatk_api.detect_reference(str(path), default_reference="hg38") == "hg38"
+
+    # And the scan really is skipped rather than merely failing to match: a
+    # compressed payload whose *raw* bytes spell b37 must not be believed.
+    raw = tmp_path / "planted_job.vcf.gz"
+    raw.write_bytes(b"b37" + b"\x00" * 64)
+    assert gatk_api.detect_reference(str(raw), default_reference="hg38") == "hg38"
 
 
 # --- sink 1: detect_reference -------------------------------------------------
