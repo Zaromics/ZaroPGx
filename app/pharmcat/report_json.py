@@ -211,9 +211,13 @@ def extract_matcher_metadata(
 #: mapped to the payload that proves it.  Membership is evidence, not
 #: aspiration: every entry below was checked by walking a real report.json of
 #: that version and confirming the walkers extract every gene the file
-#: contains.  Patch releases inside a listed series are assumed compatible --
-#: PharmCAT has never changed report.json shape in a patch bump, and treating
-#: 3.4.1 as unknown would cry wolf on every upstream point release.
+#: contains.  Patch releases inside a listed series are *assumed* compatible.
+#: That is a deliberate trade, not a verified fact -- no two patch releases of
+#: one series have ever been compared here, because the repo has only ever held
+#: one payload per series.  Pinning exact versions instead would flag 3.4.1 and
+#: every subsequent point release, and a warning that fires on routine bumps is
+#: a warning nobody reads.  The structural checks below are what actually
+#: protect the parse, and they run on every payload regardless of version.
 #:
 #: When you bump ``PHARMCAT_VERSION`` in ``compose.yml``, regenerate a fixture
 #: and add the series here.  Until you do, runs are annotated as unverified.
