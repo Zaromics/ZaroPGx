@@ -35,7 +35,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 # ZaroPGx imports
 from app.api.db import DATABASE_URL, get_db
-from app.pharmcat.report_json import detect_format, iter_gene_blocks
+from app.pharmcat.report_json import (
+    PharmCATSchemaError,
+    detect_format,
+    iter_gene_blocks,
+    validate_report,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -367,7 +372,23 @@ class PharmCATParser:
 
         Returns:
             run_id: The unique identifier for this PharmCAT run
+
+        Raises:
+            PharmCATSchemaError: the payload's structure has moved away from
+                what the walkers read, so parsing it would store an empty or
+                partial run that is indistinguishable from a clean result.
         """
+        # 265: gate before anything is written.  An unverified PharmCAT version
+        # is logged and allowed through; a broken structure is not.
+        validation = validate_report(data)
+        for issue in validation.warnings:
+            logger.warning("PharmCAT report.json check: %s", issue)
+        if not validation.ok:
+            for issue in validation.errors:
+                logger.error("PharmCAT report.json check: %s", issue)
+            raise PharmCATSchemaError(validation)
+        logger.info("PharmCAT report.json check passed: %s", validation.summary())
+
         try:
             # Extract basic metadata
             run_id = data.get("title", str(uuid.uuid4()))
