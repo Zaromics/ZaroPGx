@@ -385,6 +385,41 @@ def fhir_export_enabled() -> bool:
     return _resolve()
 
 
+def lookup_pharmcat_run_id(db_session, job_id) -> Optional[str]:
+    """Read the PharmCAT run id the upload path linked to this job.
+
+    ``JobService.link_pharmcat_run`` writes ``pharmcat_run_id`` into
+    ``jobs.job_metadata`` as soon as ``load_pharmcat_file`` returns, so by report
+    time it is there for every run that produced parsable PharmCAT output.
+
+    The FHIR export lane read it as ``Workflow.workflow_metadata`` --  the names
+    ``db/init/migrations/04_rename_workflows_to_jobs.sql`` retired. ``Workflow``
+    does not exist in ``app.api.db``, so the read raised ``ImportError`` on every
+    call and the run id was unconditionally ``None``. That is not cosmetic:
+    ``FHIRExportService`` uses it for the Bundle identifier and the export
+    filename, both of which silently degraded to the job id.
+
+    Returns ``None`` -- never raises -- when there is no session, no job, no
+    metadata, or no link yet; the caller treats that as "fall back to job id".
+    """
+    if db_session is None or not job_id:
+        return None
+    try:
+        import uuid as uuid_module
+
+        from app.api.db import Job
+
+        job_uuid = uuid_module.UUID(str(job_id))
+        job_row = db_session.query(Job).filter(Job.id == job_uuid).first()
+        metadata = getattr(job_row, "job_metadata", None) if job_row else None
+        if isinstance(metadata, dict):
+            run_id = metadata.get("pharmcat_run_id")
+            return str(run_id) if run_id else None
+    except Exception as e:
+        logger.warning(f"Could not read PharmCAT run_id from job metadata: {e}")
+    return None
+
+
 # Log the configuration for debugging
 logger.info(
     f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}"
@@ -3125,31 +3160,12 @@ def generate_report(
                 if db_session:
                     fhir_service = FHIRExportService(db_session)
 
-                    # Get the PharmCAT run_id - it might be in workflow metadata or we can use patient_id
-                    pharmcat_run_id = None
-                    if job_id:
-                        try:
-                            import uuid as uuid_module
-
-                            from app.api.db import Workflow
-
-                            workflow_uuid = uuid_module.UUID(str(job_id))
-                            workflow_obj = (
-                                db_session.query(Workflow)
-                                .filter(Workflow.id == workflow_uuid)
-                                .first()
-                            )
-                            if workflow_obj and workflow_obj.workflow_metadata:
-                                pharmcat_run_id = workflow_obj.workflow_metadata.get(
-                                    "pharmcat_run_id"
-                                )
-                                logger.info(
-                                    f"Found PharmCAT run_id in workflow metadata: {pharmcat_run_id}"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not get PharmCAT run_id from workflow: {e}"
-                            )
+                    # The PharmCAT run id the upload path linked to this job.
+                    pharmcat_run_id = lookup_pharmcat_run_id(db_session, job_id)
+                    if pharmcat_run_id:
+                        logger.info(
+                            f"Found PharmCAT run_id in job metadata: {pharmcat_run_id}"
+                        )
 
                     if not pharmcat_run_id:
                         logger.info(
