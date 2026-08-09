@@ -385,6 +385,41 @@ def fhir_export_enabled() -> bool:
     return _resolve()
 
 
+def lookup_pharmcat_run_id(db_session, job_id) -> Optional[str]:
+    """Read the PharmCAT run id the upload path linked to this job.
+
+    ``JobService.link_pharmcat_run`` writes ``pharmcat_run_id`` into
+    ``jobs.job_metadata`` as soon as ``load_pharmcat_file`` returns, so by report
+    time it is there for every run that produced parsable PharmCAT output.
+
+    The FHIR export lane read it as ``Workflow.workflow_metadata`` --  the names
+    ``db/init/migrations/04_rename_workflows_to_jobs.sql`` retired. ``Workflow``
+    does not exist in ``app.api.db``, so the read raised ``ImportError`` on every
+    call and the run id was unconditionally ``None``. That is not cosmetic:
+    ``FHIRExportService`` uses it for the Bundle identifier and the export
+    filename, both of which silently degraded to the job id.
+
+    Returns ``None`` -- never raises -- when there is no session, no job, no
+    metadata, or no link yet; the caller treats that as "fall back to job id".
+    """
+    if db_session is None or not job_id:
+        return None
+    try:
+        import uuid as uuid_module
+
+        from app.api.db import Job
+
+        job_uuid = uuid_module.UUID(str(job_id))
+        job_row = db_session.query(Job).filter(Job.id == job_uuid).first()
+        metadata = getattr(job_row, "job_metadata", None) if job_row else None
+        if isinstance(metadata, dict):
+            run_id = metadata.get("pharmcat_run_id")
+            return str(run_id) if run_id else None
+    except Exception as e:
+        logger.warning(f"Could not read PharmCAT run_id from job metadata: {e}")
+    return None
+
+
 # Log the configuration for debugging
 logger.info(
     f"PharmCAT Report Configuration - HTML: {INCLUDE_PHARMCAT_HTML}, JSON: {INCLUDE_PHARMCAT_JSON}, TSV: {INCLUDE_PHARMCAT_TSV}"
@@ -422,6 +457,63 @@ if not weasyprint_logger.handlers:
 # Constants
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
+
+
+# Wild-type labelling (BACKLOG 235).
+#
+# PharmCAT reports a reference diplotype with no phenotype when it found nothing
+# to call. What that *means* depends on what the pipeline was given, so the report
+# says two different things:
+#
+#   VCF                 -> "Possibly Wild Type". A variant-only file is silent
+#                          about positions it does not list, so the absence of a
+#                          variant call is not evidence of the reference allele.
+#   BAM/CRAM/SAM/FASTQ  -> "Likely Wild Type". Aligned reads cover the locus, so
+#                          the absence of a variant is positive evidence.
+#   anything else       -> no label at all. An unknown provenance cannot support
+#                          either claim, and inventing one would be fabrication.
+#
+# This lived inline in three places (the TSV Executive Summary in the PDF lane,
+# _build_canonical_diplotypes, and the TSV Executive Summary in the HTML lane) and
+# had no test anywhere. The copies agreed on every input reachable today, but only
+# because each caller happened to lower-case file_type first: the HTML-lane copy
+# compared it raw, so a single upstream change to that normalisation would have
+# made one lane stop labelling while the other two carried on.
+WILD_TYPE_VARIANT_ONLY_LABEL = "Possibly Wild Type"
+WILD_TYPE_ALIGNED_READS_LABEL = "Likely Wild Type"
+
+# Reference calls, in the spellings PharmCAT and the TSV parser actually emit.
+_REFERENCE_DIPLOTYPES = frozenset(
+    {"*1/*1", "REFERENCE/REFERENCE", "*1 / *1", "REFERENCE / REFERENCE"}
+)
+# Spellings that mean "no phenotype reported", not a phenotype named "Unknown".
+_ABSENT_PHENOTYPES = frozenset({"n/a", "na", "unknown", "none", "-", "."})
+_VARIANT_ONLY_FILE_TYPES = frozenset({"vcf", "vcf.gz", "vcf.bgz"})
+_ALIGNED_READ_FILE_TYPES = frozenset({"bam", "fastq", "fq", "cram", "sam"})
+
+
+def wild_type_phenotype(
+    diplotype: Any, phenotype: Any, file_type: Any
+) -> Optional[str]:
+    """Return the wild-type label for a row, or ``None`` to leave it alone.
+
+    ``None`` means "not a wild-type row" *and* "file type cannot support the
+    claim" -- callers must not substitute a default label for it.
+    """
+    diplotype_str = str(diplotype or "").strip()
+    if diplotype_str.upper() not in _REFERENCE_DIPLOTYPES:
+        return None
+
+    phenotype_str = str(phenotype or "").strip()
+    if phenotype_str and phenotype_str.lower() not in _ABSENT_PHENOTYPES:
+        return None
+
+    normalized_file_type = str(file_type or "").strip().lower()
+    if normalized_file_type in _VARIANT_ONLY_FILE_TYPES:
+        return WILD_TYPE_VARIANT_ONLY_LABEL
+    if normalized_file_type in _ALIGNED_READ_FILE_TYPES:
+        return WILD_TYPE_ALIGNED_READS_LABEL
+    return None
 
 
 def activity_score_num(value: Any) -> Optional[float]:
@@ -515,8 +607,25 @@ def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optiona
     return dict(_EMPTY_MATCHER_METADATA)
 
 
-# Initialize Jinja2 environment
-env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+# Initialize Jinja2 environment.
+#
+# autoescape is not optional here. The interactive report writes free text into
+# HTML attributes -- data-recommendation="{{ rec.recommendation }}" among them --
+# and PharmCAT's own guideline prose contains markup: <h4 id="other-considerations">
+# appears in 45 of the 151 data-recommendation attributes of a real run. Without
+# escaping, the browser terminates the attribute at that first inner quote and the
+# rest of the recommendation leaks out as stray attributes on the div, so
+# pgx-report.js reads truncated dosing text. Gene names, diplotypes, sample
+# identifiers and filenames all reach the page the same way, and some of them come
+# from an uploaded file.
+#
+# The one value that is genuinely markup is the drug recommendation body, which
+# the templates now mark |safe explicitly. It is the only field carrying tags or
+# entities across all 24 runs under data/reports.
+env = Environment(
+    loader=FileSystemLoader(TEMPLATE_DIR),
+    autoescape=select_autoescape(["html", "xml"]),
+)
 env.filters["activity_score_num"] = activity_score_num
 
 
@@ -640,41 +749,14 @@ def generate_pdf_report(
                             str(row.get("phenotype") or ""),
                             str(row.get("rec_lookup_phenotype") or ""),
                         )
-                        # Check for reference genotype (case-insensitive, handle variations)
-                        diplotype_upper = diplotype_str.upper()
-                        is_reference = diplotype_upper in {
-                            "*1/*1",
-                            "REFERENCE/REFERENCE",
-                            "*1 / *1",
-                            "REFERENCE / REFERENCE",
-                        }
-                        # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
-                        phenotype_lower = phenotype_str.lower()
-                        is_empty_phenotype = (
-                            phenotype_str == ""
-                            or phenotype_lower
-                            in {"n/a", "na", "unknown", "none", "-", "."}
-                            or phenotype_str.isspace()
+                        wild_type_label = wild_type_phenotype(
+                            diplotype_str, phenotype_str, inferred_file_type
                         )
-
-                        # Assign wild type phenotype if conditions are met
-                        if is_reference and is_empty_phenotype:
-                            if inferred_file_type in {"vcf", "vcf.gz", "vcf.bgz"}:
-                                phenotype_str = "Possibly Wild Type"
-                                logger.debug(
-                                    f"TSV PDF: Assigned 'Possibly Wild Type' to {row.get('gene')}"
-                                )
-                            elif inferred_file_type in {
-                                "bam",
-                                "fastq",
-                                "fq",
-                                "cram",
-                                "sam",
-                            }:
-                                phenotype_str = "Likely Wild Type"
-                                logger.debug(
-                                    f"TSV PDF: Assigned 'Likely Wild Type' to {row.get('gene')}"
-                                )
+                        if wild_type_label:
+                            phenotype_str = wild_type_label
+                            logger.debug(
+                                f"TSV PDF: Assigned '{wild_type_label}' to {row.get('gene')}"
+                            )
 
                         execsum_rows_from_tsv.append(
                             {
@@ -1457,43 +1539,15 @@ def _build_canonical_diplotypes(
                 row.pop("report_data_from", None)
 
                 # Assign wild type phenotype labels based on file type
-                diplotype_str = str(row.get("diplotype") or "").strip()
-                phenotype_str = str(row.get("phenotype") or "").strip()
-                # Check for reference genotype (case-insensitive, handle variations)
-                diplotype_upper = diplotype_str.upper()
-                is_reference = diplotype_upper in {
-                    "*1/*1",
-                    "REFERENCE/REFERENCE",
-                    "*1 / *1",
-                    "REFERENCE / REFERENCE",
-                }
-                # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
-                phenotype_lower = phenotype_str.lower()
-                is_empty_phenotype = (
-                    phenotype_str == ""
-                    or phenotype_lower in {"n/a", "na", "unknown", "none", "-", "."}
-                    or phenotype_str.isspace()
+                wild_type_label = wild_type_phenotype(
+                    row.get("diplotype"), row.get("phenotype"), file_type
                 )
-
-                if is_reference and is_empty_phenotype:
-                    # VCF files → "Possibly Wild Type" (absence of known variants)
-                    if file_type and file_type.lower() in {"vcf", "vcf.gz", "vcf.bgz"}:
-                        row["phenotype"] = "Possibly Wild Type"
-                        logger.debug(
-                            f"Assigned 'Possibly Wild Type' to {row.get('gene')} (diplotype: {diplotype_str}, file_type: {file_type})"
-                        )
-                    # BAM/FASTQ/CRAM files → "Likely Wild Type" (comprehensive analysis with SV/CNV)
-                    elif file_type and file_type.lower() in {
-                        "bam",
-                        "fastq",
-                        "fq",
-                        "cram",
-                        "sam",
-                    }:
-                        row["phenotype"] = "Likely Wild Type"
-                        logger.debug(
-                            f"Assigned 'Likely Wild Type' to {row.get('gene')} (diplotype: {diplotype_str}, file_type: {file_type})"
-                        )
+                if wild_type_label:
+                    row["phenotype"] = wild_type_label
+                    logger.debug(
+                        f"Assigned '{wild_type_label}' to {row.get('gene')} "
+                        f"(diplotype: {row.get('diplotype')}, file_type: {file_type})"
+                    )
             except Exception as e:
                 logger.debug("Swallowed exception: %s", e, exc_info=True)
             canonical_rows.append(row)
@@ -1680,12 +1734,13 @@ def generate_report(
                 # SessionLocal sets expire_on_commit=False, so a plain query hands
                 # back an identity-mapped instance -- but only if this session
                 # already loaded the row. It has not: the sole caller that supplies
-                # db_session opens it with `next(get_db())` on the line before the
-                # call (upload_router.py), i.e. a brand-new SessionLocal with an
-                # empty identity map, and app/main.py's reprocessing path passes no
-                # session at all so this branch never runs there. Every key read
-                # below is committed at upload time, long before report generation
-                # starts, so there is no window to be stale in.
+                # db_session opens a dedicated `SessionLocal()` in a try/finally on
+                # the lines around the call (upload_router.py), deliberately *not*
+                # reusing the long-lived session it already holds, i.e. a brand-new
+                # session with an empty identity map; and app/main.py's reprocessing
+                # path passes no session at all so this branch never runs there.
+                # Every key read below is committed at upload time, long before
+                # report generation starts, so there is no window to be stale in.
                 #
                 # The safety is the caller's freshness, not the statement's, and it
                 # is invisible from here -- tests/test_generator_job_metadata_read.py
@@ -1899,34 +1954,16 @@ def generate_report(
                         str(row.get("phenotype") or ""),
                         str(row.get("rec_lookup_phenotype") or ""),
                     )
-                    # Check for reference genotype (case-insensitive, handle variations)
-                    diplotype_upper = diplotype_str.upper()
-                    is_reference = diplotype_upper in {
-                        "*1/*1",
-                        "REFERENCE/REFERENCE",
-                        "*1 / *1",
-                        "REFERENCE / REFERENCE",
-                    }
-                    # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
-                    phenotype_lower = phenotype_str.lower()
-                    is_empty_phenotype = (
-                        phenotype_str == ""
-                        or phenotype_lower in {"n/a", "na", "unknown", "none", "-", "."}
-                        or phenotype_str.isspace()
+                    # Assign wild type phenotype if conditions are met
+                    # (file_type already determined above)
+                    wild_type_label = wild_type_phenotype(
+                        diplotype_str, phenotype_str, file_type
                     )
-
-                    # Assign wild type phenotype if conditions are met (file_type already determined above)
-                    if is_reference and is_empty_phenotype:
-                        if file_type in {"vcf", "vcf.gz", "vcf.bgz"}:
-                            phenotype_str = "Possibly Wild Type"
-                            logger.debug(
-                                f"TSV HTML: Assigned 'Possibly Wild Type' to {row.get('gene')}"
-                            )
-                        elif file_type in {"bam", "fastq", "fq", "cram", "sam"}:
-                            phenotype_str = "Likely Wild Type"
-                            logger.debug(
-                                f"TSV HTML: Assigned 'Likely Wild Type' to {row.get('gene')}"
-                            )
+                    if wild_type_label:
+                        phenotype_str = wild_type_label
+                        logger.debug(
+                            f"TSV HTML: Assigned '{wild_type_label}' to {row.get('gene')}"
+                        )
 
                     execsum_rows_from_tsv.append(
                         {
@@ -2449,13 +2486,10 @@ def generate_report(
         if REPORT_CONFIG["write_html"]:
             logger.info("=== HTML REPORT GENERATION START ===")
             logger.info("Loading HTML template...")
-            env = Environment(
-                loader=FileSystemLoader(
-                    os.path.join(os.path.dirname(__file__), "templates")
-                ),
-                autoescape=select_autoescape(["html", "xml"]),
-            )
-            env.filters["activity_score_num"] = activity_score_num
+            # The module-level `env` -- same loader, same filter, same autoescape.
+            # This used to build a third Environment inline, which is how the three
+            # renderers of these two templates drifted apart on autoescape in the
+            # first place.
             template = env.get_template("report_template.html")
             logger.info("HTML template loaded successfully")
 
@@ -3125,31 +3159,12 @@ def generate_report(
                 if db_session:
                     fhir_service = FHIRExportService(db_session)
 
-                    # Get the PharmCAT run_id - it might be in workflow metadata or we can use patient_id
-                    pharmcat_run_id = None
-                    if job_id:
-                        try:
-                            import uuid as uuid_module
-
-                            from app.api.db import Workflow
-
-                            workflow_uuid = uuid_module.UUID(str(job_id))
-                            workflow_obj = (
-                                db_session.query(Workflow)
-                                .filter(Workflow.id == workflow_uuid)
-                                .first()
-                            )
-                            if workflow_obj and workflow_obj.workflow_metadata:
-                                pharmcat_run_id = workflow_obj.workflow_metadata.get(
-                                    "pharmcat_run_id"
-                                )
-                                logger.info(
-                                    f"Found PharmCAT run_id in workflow metadata: {pharmcat_run_id}"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not get PharmCAT run_id from workflow: {e}"
-                            )
+                    # The PharmCAT run id the upload path linked to this job.
+                    pharmcat_run_id = lookup_pharmcat_run_id(db_session, job_id)
+                    if pharmcat_run_id:
+                        logger.info(
+                            f"Found PharmCAT run_id in job metadata: {pharmcat_run_id}"
+                        )
 
                     if not pharmcat_run_id:
                         logger.info(
