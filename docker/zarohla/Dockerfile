@@ -46,5 +46,43 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:5000/health || exit 1
 
-# Start the application using Gunicorn with Uvicorn workers for production
-CMD ["gunicorn", "app:app", "--workers", "2", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:5000"]
+# Start the application using Gunicorn with Uvicorn workers for production.
+#
+# ONE worker, deliberately, and not for throughput reasons.
+#
+# app.py's `running_processes` registry is a module-level dict. Under
+# `--workers 2` each gunicorn worker imports the module and gets its own copy,
+# and the OS decides which worker accepts a given connection -- so a POST
+# /cancel had roughly a coin-flip chance of landing on the worker that does not
+# hold the job, finding nothing in its registry, and answering
+# {"status": "success"} while OptiType kept running. `--preload` does not fix
+# this: it forks after import, and the dict is mutated after the fork, so each
+# worker still diverges into its own copy-on-write page.
+#
+# The concurrency given up is small, and it is not where you would guess.
+# /call-hla is `async def` and awaits
+# `asyncio.create_subprocess_exec(...).communicate()`, so the event loop is free
+# for the whole multi-minute OptiType run -- the expensive part costs nothing,
+# one worker serves many concurrent typings, and the real parallelism was always
+# in the OptiType and samtools child processes, which are unaffected. Load is low
+# by construction too: only pipelines/pgx/main.nf submits HLA jobs (see the note
+# on this service in compose.yml), at most one per pipeline run.
+#
+# What is genuinely lost: app.py ingests an upload as
+# `f.write(await file.read())` -- the whole file into memory, then a synchronous
+# write -- and `shutil.rmtree`s the job dir the same way. Those block the one
+# event loop, so while a multi-GB BAM is being ingested this container will not
+# answer /health or the broadcast /cancel, where a second worker could have. The
+# fix for that is chunked I/O, which the gatk-api sidecar already does
+# (`await file.read(UPLOAD_CHUNK_BYTES)`), not a second worker -- a second worker
+# only halves the odds of a blocked ingest while breaking every cancel that lands
+# on the wrong one.
+#
+# The other alternative -- a registry shared across workers -- means real shared
+# state (Redis, or a file under /data with locking), which is a lot of moving
+# parts for a service that does not need the second worker in the first place.
+#
+# tests/test_log_rotation_252.py pins this: dropping to one worker is what lets
+# app.py write a single /data/zarohla_progress.log again instead of a per-pid
+# one, and a future `--workers 2` here must go back through both.
+CMD ["gunicorn", "app:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:5000"]

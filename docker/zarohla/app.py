@@ -40,25 +40,17 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # unrotated handler here grows until the shared volume fills. 10 MiB x 5
 # backups caps each destination at 60 MiB.
 #
-# THE ONE THING THIS SERVICE DOES DIFFERENTLY, and why: the filename carries the
-# pid. zarohla is the only one of the five that runs more than one process --
-# docker/zarohla/Dockerfile:50 is `gunicorn --workers 2` with no `--preload`, so
-# each worker imports this module and builds its own handler. RotatingFileHandler
-# is not multi-process safe: when worker A rolls over it renames the file out from
-# under worker B, which goes on appending to the renamed inode. B's lines then
-# migrate down the .1/.2/... chain and are *deleted* once they fall past
-# backupCount -- silently, which is the worst possible failure for a diagnostic
-# log -- while the 60 MiB ceiling stops holding in the meantime. One file per
-# worker is what makes the bound this block advertises actually true.
-#
-# The cost is file count rather than file size: each is still capped at 60 MiB,
-# and gunicorn only mints a new pid when it respawns a dead worker, so a healthy
-# container holds two. If that ever becomes a nuisance, the better fix is
-# `--workers 1` in the Dockerfile -- which this service arguably wants anyway,
-# since `running_processes` below is per-process state that a second worker
-# cannot see (a cancel request routed to the wrong worker already finds nothing).
+# This block briefly carried the pid in the filename, because zarohla was the
+# only one of the five running `gunicorn --workers 2` and RotatingFileHandler is
+# not multi-process safe: when worker A rolls over it renames the file out from
+# under worker B, which goes on appending to the renamed inode, and B's lines
+# migrate down the .1/.2/... chain until they are silently deleted past
+# backupCount. The Dockerfile now starts one worker (see the comment on its CMD:
+# the `running_processes` registry below is per-process state, so a second worker
+# broke /cancel about half the time), which removes the hazard at the source and
+# lets this go back to the same single shared path as the other four.
 PROGRESS_LOG_PATH = os.getenv(
-    'ZAROHLA_PROGRESS_LOG', str(DATA_DIR / f'zarohla_progress.{os.getpid()}.log')
+    'ZAROHLA_PROGRESS_LOG', str(DATA_DIR / 'zarohla_progress.log')
 )
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
@@ -114,6 +106,80 @@ logging.basicConfig(
 logger = logging.getLogger("zarohla")
 _warn_about_unopened_logs(logger)
 
+# --------------------------------------------------------------------------
+# Upload filename sanitising
+# --------------------------------------------------------------------------
+# `file.filename` arrives in the multipart body and nothing upstream of this
+# service constrains it. The Nextflow HLA processes post `-F file=@<staged
+# name>` (pipelines/pgx/main.nf), and that staged name derives from the
+# patient's own upload, so joining it onto the job directory made it a
+# path-write primitive: `../` walks out of TEMP_DIR, and `*`, `?`, `[...]` and
+# `{...}` survive into paths that later reach glob-expanding code -- an upload
+# filename doing exactly that in the Nextflow lane produced a verified
+# cross-patient disclosure. This service runs no `shell=True`, so it was never
+# command injection here; the write primitive is reason enough on its own.
+#
+# DOCUMENTED DUPLICATE of docker/pypgx/pypgx_wrapper.py's ALLOWED_UPLOAD_SUFFIXES
+# and safe_upload_name(): same tuple in the same order, same fallback
+# semantics, same uuid4-hex stem. It is copied rather than imported because
+# these are separate images and this module is imported before sys.path is
+# extended with the shared /job-client directory -- the same argument the
+# bounded-logging block above makes. The copy is held honest by
+# tests/test_command_injection_hardening.py, which execs both implementations
+# out of their sources and asserts they choose the same suffix for the same
+# name; an undocumented divergence is what that test exists to prevent.
+#
+# Longest suffixes first: `.vcf.gz` must win over `.vcf`, and `.fastq.gz` over
+# `.fastq` -- OptiType is a FASTQ consumer, so the gzipped FASTQ suffixes are
+# the ones that matter most here.
+ALLOWED_UPLOAD_SUFFIXES = (
+    ".vcf.gz",
+    ".vcf.bgz",
+    ".vcf",
+    ".bcf",
+    ".bam",
+    ".cram",
+    ".sam",
+    ".fastq.gz",
+    ".fq.gz",
+    ".fastq",
+    ".fq",
+)
+
+
+def safe_upload_name(original: Optional[str], default_suffix: str) -> str:
+    """Return a shell-inert, collision-free on-disk name for an upload.
+
+    Only the *extension* of `original` is honoured, and only if it appears in
+    ALLOWED_UPLOAD_SUFFIXES; everything else about the caller's name is
+    discarded. An unrecognised or missing extension falls back to
+    `default_suffix`, which the caller picks from the endpoint's contract --
+    `.fastq` here, because a file this endpoint does not recognise as an
+    alignment is handed to OptiType as reads.
+
+    Nothing downstream correlates on the original name: /call-hla returns only
+    {"status", "results"}, the results are read from OptiType's own timestamped
+    `*_result.tsv` rather than from anything named after the input, the job
+    directory is removed in the `finally` block, and the one place the stored
+    name is still consulted -- the BAM/SAM/CRAM branch below -- only classifies
+    the suffix, which this function preserves.
+
+    The per-call uuid also removes a collision this endpoint could already hit:
+    `file1` and `file2` land in the same job directory, so two uploads sharing
+    a filename used to overwrite each other and hand OptiType the same file
+    twice.
+    """
+    suffix = default_suffix
+    # Strip any directory component under both separators before matching, so a
+    # name like `..\evil/x.bam` cannot smuggle one through.
+    name = (original or "").strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
+    for candidate in ALLOWED_UPLOAD_SUFFIXES:
+        if name.endswith(candidate):
+            suffix = candidate
+            break
+    return f"{uuid.uuid4().hex}{suffix}"
+
+
 app = FastAPI(title="ZaroHLA API", version="1.0.0")
 
 class CancelRequest(BaseModel):
@@ -121,6 +187,13 @@ class CancelRequest(BaseModel):
     patient_id: str
     action: str
 
+# Per-process, and that is only correct because docker/zarohla/Dockerfile starts
+# `gunicorn --workers 1`. /cancel below can only kill a pid it finds in here, so
+# under two workers a cancel accepted by the worker that did not start the job
+# returned {"status": "success"} while OptiType went on running. If this service
+# ever needs more than one worker, this dict has to become genuinely shared state
+# first -- a module global is not that, and neither is `--preload`, which forks
+# after import and then lets each worker mutate its own copy.
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 @app.get("/health")
@@ -193,12 +266,22 @@ async def call_hla(
         f2_path = None
         
         if file1 and file2:
-            f1_path = job_dir / file1.filename
-            f2_path = job_dir / file2.filename
+            # Never `job_dir / file1.filename` -- see safe_upload_name() above.
+            f1_path = job_dir / safe_upload_name(file1.filename, ".fastq")
+            f2_path = job_dir / safe_upload_name(file2.filename, ".fastq")
+            logger.info(
+                f"Job {local_job_id}: storing paired uploads "
+                f"{file1.filename!r}/{file2.filename!r} as "
+                f"{f1_path.name!r}/{f2_path.name!r}"
+            )
             with open(f1_path, "wb") as f: f.write(await file1.read())
             with open(f2_path, "wb") as f: f.write(await file2.read())
         elif file:
-            input_path = job_dir / file.filename
+            input_path = job_dir / safe_upload_name(file.filename, ".fastq")
+            logger.info(
+                f"Job {local_job_id}: storing upload {file.filename!r} as "
+                f"{input_path.name!r}"
+            )
             with open(input_path, "wb") as f: f.write(await file.read())
             
             if input_path.name.lower().endswith(".bam") or input_path.name.lower().endswith(".sam") or input_path.name.lower().endswith(".cram"):

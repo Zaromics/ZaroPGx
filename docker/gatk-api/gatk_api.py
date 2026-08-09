@@ -21,6 +21,7 @@ import shutil
 import traceback
 import re  # Add regex module for header parsing
 import random
+import gzip  # bgzipped VCF headers -- see detect_reference()
 from typing import List, Dict, Optional, Any
 import asyncio
 
@@ -267,6 +268,43 @@ def safe_upload_name(filename, local_job_id):
     fragment = re.sub(r"[^A-Za-z0-9_-]", "", stem_source)[:40]
 
     return f"{fragment or 'upload'}_{local_job_id}{extension}"
+
+
+def stored_extension(name):
+    """Return the SAFE_UPLOAD_EXTENSIONS suffix of a stored upload name, or "".
+
+    Deliberately not `os.path.splitext(name)[1]`, which every caller here used
+    to use. splitext returns only the *final* component, so a `.vcf.gz` upload
+    came back as `.gz` -- and every membership test downstream was written
+    against the literal `'.vcf.gz'`, which `.gz` can never equal. A bgzipped VCF
+    therefore fell past `['.vcf', '.vcf.gz']`, past `['.bam', '.cram', '.sam']`,
+    and into the `else`, where /variant-call answered
+    `400 Unsupported file format: .gz`; reference auto-detection was skipped for
+    the same reason, one branch earlier. The tests are in
+    tests/test_gatk_api_no_mock_bam.py.
+
+    `name` is always the output of safe_upload_name(), so by construction its
+    extension is one of the SAFE_UPLOAD_EXTENSIONS literals or nothing at all.
+    Matching longest-first against that same tuple -- the one the sanitiser
+    chose from -- is exact rather than a heuristic, and keeps the two halves
+    from drifting: an extension the sanitiser learns to preserve is one this
+    function learns to recognise, in the same edit.
+    """
+    lowered = (name or "").lower()
+    for candidate in SAFE_UPLOAD_EXTENSIONS:
+        if lowered.endswith(candidate):
+            return candidate
+    return ""
+
+
+def stored_stem(name):
+    """`name` with its SAFE_UPLOAD_EXTENSIONS suffix removed.
+
+    The other half of the same defect: `os.path.splitext(name)[0]` leaves the
+    `.vcf` on a `.vcf.gz` name, so the derived output was `<name>.vcf.vcf`.
+    """
+    extension = stored_extension(name)
+    return name[: len(name) - len(extension)] if extension else name
 
 
 def build_haplotypecaller_argv(
@@ -846,26 +884,37 @@ def detect_reference(file_path, default_reference='hg38'):
     """
     try:
         logger.info(f"Attempting to detect reference genome from file: {file_path}")
-        file_ext = os.path.splitext(file_path)[1].lower()
-        
-        # First try simple text search for all file types (fast)
-        try:
-            logger.info(f"Trying simple text search for reference genome detection")
-            with open(file_path, 'rb') as f:
-                # Read first 10KB which should contain any headers
-                header = f.read(10240).decode('utf-8', errors='ignore')
-                
-            # Look for specific reference genome identifiers
-            if any(x in header for x in ['GRCh38', 'hg38', 'b38']):
-                logger.info(f"Detected hg38/GRCh38 reference via text search")
-                return 'hg38'
-            elif any(x in header for x in ['GRCh37', 'hg19', 'b37']):
-                logger.info(f"Detected hg19/GRCh37 reference via text search") 
-                return 'hg19'
-            
-            logger.info(f"Simple text search did not find reference genome information")
-        except Exception as e:
-            logger.warning(f"Simple text search failed: {str(e)}")
+        # stored_extension(), not os.path.splitext()[1]: file_path is built from a
+        # safe_upload_name() result, so a bgzipped VCF gave `.gz` here and the
+        # `.vcf.gz` branch below could never run for the one format it names.
+        file_ext = stored_extension(os.path.basename(file_path))
+        gzipped_vcf = file_ext == '.vcf.gz'
+
+        # First try simple text search (fast). Deliberately NOT for a bgzipped
+        # VCF: the bytes are deflate output, so the only thing this scan can
+        # produce there is a false positive -- and a false positive is worse than
+        # no answer, because the caller *overrides* its own reference_genome with
+        # whatever comes back. Three-character tokens like 'b38'/'b37' hit
+        # roughly once in a few hundred files' worth of random bytes. The
+        # gzip-aware branch below reads the real header instead.
+        if not gzipped_vcf:
+            try:
+                logger.info(f"Trying simple text search for reference genome detection")
+                with open(file_path, 'rb') as f:
+                    # Read first 10KB which should contain any headers
+                    header = f.read(10240).decode('utf-8', errors='ignore')
+
+                # Look for specific reference genome identifiers
+                if any(x in header for x in ['GRCh38', 'hg38', 'b38']):
+                    logger.info(f"Detected hg38/GRCh38 reference via text search")
+                    return 'hg38'
+                elif any(x in header for x in ['GRCh37', 'hg19', 'b37']):
+                    logger.info(f"Detected hg19/GRCh37 reference via text search")
+                    return 'hg19'
+
+                logger.info(f"Simple text search did not find reference genome information")
+            except Exception as e:
+                logger.warning(f"Simple text search failed: {str(e)}")
         
         # For BAM/CRAM/SAM files, try samtools as a fallback if text search failed
         if file_ext in ['.bam', '.cram', '.sam']:
@@ -917,8 +966,11 @@ def detect_reference(file_path, default_reference='hg38'):
         # For VCF files, check header lines explicitly
         elif file_ext in ['.vcf', '.vcf.gz']:
             try:
-                # Open as text directly for VCF files
-                with open(file_path, 'r') as f:
+                # Open as text; through gzip when the VCF is bgzipped, which is
+                # the whole reason this branch was unreachable before -- plain
+                # open() on deflate output yields nothing that starts with '#'.
+                opener = gzip.open if gzipped_vcf else open
+                with opener(file_path, 'rt', errors='ignore') as f:
                     for line in f:
                         if not line.startswith('#'):
                             break
@@ -998,7 +1050,7 @@ async def variant_call(
         filename = safe_upload_name(original_filename, local_job_id)
         input_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         input_path = os.path.join(input_dir, filename)
-        output_path = os.path.join(input_dir, f"{os.path.splitext(filename)[0]}.vcf")
+        output_path = os.path.join(input_dir, f"{stored_stem(filename)}.vcf")
 
         if filename != original_filename:
             logger.info(
@@ -1033,8 +1085,11 @@ async def variant_call(
         file_size = os.path.getsize(input_path)
         logger.info(f"Job {local_job_id}: File saved: {input_path}, size: {file_size} bytes")
         
-        # Auto-detect reference genome for all genomic file types
-        file_ext = os.path.splitext(filename)[1].lower()
+        # Auto-detect reference genome for all genomic file types. The extension
+        # comes from stored_extension(), not os.path.splitext(): splitext returns
+        # `.gz` for a `.vcf.gz` name, which matches nothing in this list, so
+        # bgzipped VCFs silently skipped detection.
+        file_ext = stored_extension(filename)
         if file_ext in ['.bam', '.cram', '.sam', '.vcf', '.vcf.gz']:
             detected_reference = detect_reference(input_path, default_reference=reference_genome)
             if detected_reference != reference_genome:
@@ -1067,8 +1122,12 @@ async def variant_call(
             "updated_at": time.time()
         }
 
-        # Determine if it's a BAM/CRAM or VCF file
-        file_ext = os.path.splitext(filename)[1].lower()
+        # Determine if it's a BAM/CRAM or VCF file. Same reason as above for
+        # stored_extension(): with splitext, a `.vcf.gz` upload reported `.gz`,
+        # missed both branches below and was rejected by the `else` as an
+        # "Unsupported file format" -- despite safe_upload_name() having
+        # deliberately preserved `.vcf.gz` so this branch could see it.
+        file_ext = stored_extension(filename)
 
         if file_ext in ['.vcf', '.vcf.gz']:
             # If it's already a VCF, just return the path
@@ -1882,7 +1941,10 @@ async def cram_to_bam(
         # Output goes on the shared volume, not beside the input -- see
         # conversion_output_dir().
         output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
-        output_bam = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}.bam")
+        # stored_stem(), not os.path.splitext()[0]: safe_upload_name preserves
+        # whichever allowlisted suffix arrived, including the two-part ones, so a
+        # misdirected `.vcf.gz` post here would otherwise yield `<name>.vcf.bam`.
+        output_bam = os.path.join(output_dir, f"{stored_stem(filename)}.bam")
 
         # Copied in chunks: a whole-genome CRAM does not fit in this container's heap,
         # and now that the conversion is real, whole-genome CRAMs actually arrive here.
@@ -2005,7 +2067,8 @@ async def sam_to_bam(
         input_path = os.path.join(work_dir, filename)
         # Shared volume, for the same reason as the CRAM route.
         output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
-        output_bam = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}.bam")
+        # stored_stem(), for the same reason as the CRAM route.
+        output_bam = os.path.join(output_dir, f"{stored_stem(filename)}.bam")
 
         # Chunked for the same reason as the CRAM route: never buffer the whole upload.
         with open(input_path, "wb") as f:
