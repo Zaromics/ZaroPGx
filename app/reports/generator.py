@@ -459,6 +459,63 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
 
 
+# Wild-type labelling (BACKLOG 235).
+#
+# PharmCAT reports a reference diplotype with no phenotype when it found nothing
+# to call. What that *means* depends on what the pipeline was given, so the report
+# says two different things:
+#
+#   VCF                 -> "Possibly Wild Type". A variant-only file is silent
+#                          about positions it does not list, so the absence of a
+#                          variant call is not evidence of the reference allele.
+#   BAM/CRAM/SAM/FASTQ  -> "Likely Wild Type". Aligned reads cover the locus, so
+#                          the absence of a variant is positive evidence.
+#   anything else       -> no label at all. An unknown provenance cannot support
+#                          either claim, and inventing one would be fabrication.
+#
+# This lived inline in three places (the TSV Executive Summary in the PDF lane,
+# _build_canonical_diplotypes, and the TSV Executive Summary in the HTML lane) and
+# had no test anywhere. The copies agreed on every input reachable today, but only
+# because each caller happened to lower-case file_type first: the HTML-lane copy
+# compared it raw, so a single upstream change to that normalisation would have
+# made one lane stop labelling while the other two carried on.
+WILD_TYPE_VARIANT_ONLY_LABEL = "Possibly Wild Type"
+WILD_TYPE_ALIGNED_READS_LABEL = "Likely Wild Type"
+
+# Reference calls, in the spellings PharmCAT and the TSV parser actually emit.
+_REFERENCE_DIPLOTYPES = frozenset(
+    {"*1/*1", "REFERENCE/REFERENCE", "*1 / *1", "REFERENCE / REFERENCE"}
+)
+# Spellings that mean "no phenotype reported", not a phenotype named "Unknown".
+_ABSENT_PHENOTYPES = frozenset({"n/a", "na", "unknown", "none", "-", "."})
+_VARIANT_ONLY_FILE_TYPES = frozenset({"vcf", "vcf.gz", "vcf.bgz"})
+_ALIGNED_READ_FILE_TYPES = frozenset({"bam", "fastq", "fq", "cram", "sam"})
+
+
+def wild_type_phenotype(
+    diplotype: Any, phenotype: Any, file_type: Any
+) -> Optional[str]:
+    """Return the wild-type label for a row, or ``None`` to leave it alone.
+
+    ``None`` means "not a wild-type row" *and* "file type cannot support the
+    claim" -- callers must not substitute a default label for it.
+    """
+    diplotype_str = str(diplotype or "").strip()
+    if diplotype_str.upper() not in _REFERENCE_DIPLOTYPES:
+        return None
+
+    phenotype_str = str(phenotype or "").strip()
+    if phenotype_str and phenotype_str.lower() not in _ABSENT_PHENOTYPES:
+        return None
+
+    normalized_file_type = str(file_type or "").strip().lower()
+    if normalized_file_type in _VARIANT_ONLY_FILE_TYPES:
+        return WILD_TYPE_VARIANT_ONLY_LABEL
+    if normalized_file_type in _ALIGNED_READ_FILE_TYPES:
+        return WILD_TYPE_ALIGNED_READS_LABEL
+    return None
+
+
 def activity_score_num(value: Any) -> Optional[float]:
     """Coerce activity scores to float for templates (PyPGx may leave strings)."""
     if value is None or value is False:
@@ -692,41 +749,14 @@ def generate_pdf_report(
                             str(row.get("phenotype") or ""),
                             str(row.get("rec_lookup_phenotype") or ""),
                         )
-                        # Check for reference genotype (case-insensitive, handle variations)
-                        diplotype_upper = diplotype_str.upper()
-                        is_reference = diplotype_upper in {
-                            "*1/*1",
-                            "REFERENCE/REFERENCE",
-                            "*1 / *1",
-                            "REFERENCE / REFERENCE",
-                        }
-                        # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
-                        phenotype_lower = phenotype_str.lower()
-                        is_empty_phenotype = (
-                            phenotype_str == ""
-                            or phenotype_lower
-                            in {"n/a", "na", "unknown", "none", "-", "."}
-                            or phenotype_str.isspace()
+                        wild_type_label = wild_type_phenotype(
+                            diplotype_str, phenotype_str, inferred_file_type
                         )
-
-                        # Assign wild type phenotype if conditions are met
-                        if is_reference and is_empty_phenotype:
-                            if inferred_file_type in {"vcf", "vcf.gz", "vcf.bgz"}:
-                                phenotype_str = "Possibly Wild Type"
-                                logger.debug(
-                                    f"TSV PDF: Assigned 'Possibly Wild Type' to {row.get('gene')}"
-                                )
-                            elif inferred_file_type in {
-                                "bam",
-                                "fastq",
-                                "fq",
-                                "cram",
-                                "sam",
-                            }:
-                                phenotype_str = "Likely Wild Type"
-                                logger.debug(
-                                    f"TSV PDF: Assigned 'Likely Wild Type' to {row.get('gene')}"
-                                )
+                        if wild_type_label:
+                            phenotype_str = wild_type_label
+                            logger.debug(
+                                f"TSV PDF: Assigned '{wild_type_label}' to {row.get('gene')}"
+                            )
 
                         execsum_rows_from_tsv.append(
                             {
@@ -1509,43 +1539,15 @@ def _build_canonical_diplotypes(
                 row.pop("report_data_from", None)
 
                 # Assign wild type phenotype labels based on file type
-                diplotype_str = str(row.get("diplotype") or "").strip()
-                phenotype_str = str(row.get("phenotype") or "").strip()
-                # Check for reference genotype (case-insensitive, handle variations)
-                diplotype_upper = diplotype_str.upper()
-                is_reference = diplotype_upper in {
-                    "*1/*1",
-                    "REFERENCE/REFERENCE",
-                    "*1 / *1",
-                    "REFERENCE / REFERENCE",
-                }
-                # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
-                phenotype_lower = phenotype_str.lower()
-                is_empty_phenotype = (
-                    phenotype_str == ""
-                    or phenotype_lower in {"n/a", "na", "unknown", "none", "-", "."}
-                    or phenotype_str.isspace()
+                wild_type_label = wild_type_phenotype(
+                    row.get("diplotype"), row.get("phenotype"), file_type
                 )
-
-                if is_reference and is_empty_phenotype:
-                    # VCF files → "Possibly Wild Type" (absence of known variants)
-                    if file_type and file_type.lower() in {"vcf", "vcf.gz", "vcf.bgz"}:
-                        row["phenotype"] = "Possibly Wild Type"
-                        logger.debug(
-                            f"Assigned 'Possibly Wild Type' to {row.get('gene')} (diplotype: {diplotype_str}, file_type: {file_type})"
-                        )
-                    # BAM/FASTQ/CRAM files → "Likely Wild Type" (comprehensive analysis with SV/CNV)
-                    elif file_type and file_type.lower() in {
-                        "bam",
-                        "fastq",
-                        "fq",
-                        "cram",
-                        "sam",
-                    }:
-                        row["phenotype"] = "Likely Wild Type"
-                        logger.debug(
-                            f"Assigned 'Likely Wild Type' to {row.get('gene')} (diplotype: {diplotype_str}, file_type: {file_type})"
-                        )
+                if wild_type_label:
+                    row["phenotype"] = wild_type_label
+                    logger.debug(
+                        f"Assigned '{wild_type_label}' to {row.get('gene')} "
+                        f"(diplotype: {row.get('diplotype')}, file_type: {file_type})"
+                    )
             except Exception as e:
                 logger.debug("Swallowed exception: %s", e, exc_info=True)
             canonical_rows.append(row)
@@ -1952,34 +1954,16 @@ def generate_report(
                         str(row.get("phenotype") or ""),
                         str(row.get("rec_lookup_phenotype") or ""),
                     )
-                    # Check for reference genotype (case-insensitive, handle variations)
-                    diplotype_upper = diplotype_str.upper()
-                    is_reference = diplotype_upper in {
-                        "*1/*1",
-                        "REFERENCE/REFERENCE",
-                        "*1 / *1",
-                        "REFERENCE / REFERENCE",
-                    }
-                    # Check for empty/unknown phenotype (case-insensitive, trim whitespace)
-                    phenotype_lower = phenotype_str.lower()
-                    is_empty_phenotype = (
-                        phenotype_str == ""
-                        or phenotype_lower in {"n/a", "na", "unknown", "none", "-", "."}
-                        or phenotype_str.isspace()
+                    # Assign wild type phenotype if conditions are met
+                    # (file_type already determined above)
+                    wild_type_label = wild_type_phenotype(
+                        diplotype_str, phenotype_str, file_type
                     )
-
-                    # Assign wild type phenotype if conditions are met (file_type already determined above)
-                    if is_reference and is_empty_phenotype:
-                        if file_type in {"vcf", "vcf.gz", "vcf.bgz"}:
-                            phenotype_str = "Possibly Wild Type"
-                            logger.debug(
-                                f"TSV HTML: Assigned 'Possibly Wild Type' to {row.get('gene')}"
-                            )
-                        elif file_type in {"bam", "fastq", "fq", "cram", "sam"}:
-                            phenotype_str = "Likely Wild Type"
-                            logger.debug(
-                                f"TSV HTML: Assigned 'Likely Wild Type' to {row.get('gene')}"
-                            )
+                    if wild_type_label:
+                        phenotype_str = wild_type_label
+                        logger.debug(
+                            f"TSV HTML: Assigned '{wild_type_label}' to {row.get('gene')}"
+                        )
 
                     execsum_rows_from_tsv.append(
                         {
