@@ -224,7 +224,25 @@ JOB_STATUS_ERROR = "error"
 # Extensions this service recognises, longest first so `.vcf.gz` wins over `.gz`.
 # The stored filename's extension is always one of these literals, never a slice of
 # the upload's own name.
-SAFE_UPLOAD_EXTENSIONS = (".vcf.gz", ".vcf", ".bcf", ".bam", ".cram", ".sam", ".fastq", ".fq")
+#
+# The compound `.gz` forms come first: an extension is chosen by the first
+# `endswith` that matches, so a bare `.gz` variant added later must never precede
+# the two-part form it is a suffix of.
+#
+# Kept byte-for-byte in step with app/main.py's copy -- tests/test_upload_name_sanitiser.py
+# asserts the two tuples are equal, so neither may be edited alone.
+SAFE_UPLOAD_EXTENSIONS = (
+    ".vcf.gz",
+    ".fastq.gz",
+    ".fq.gz",
+    ".vcf",
+    ".bcf",
+    ".bam",
+    ".cram",
+    ".sam",
+    ".fastq",
+    ".fq",
+)
 
 
 def safe_upload_name(filename, local_job_id):
@@ -875,12 +893,210 @@ def list_jobs(status: Optional[str] = None):
     
     return result
 
+# Assembly-defining sequence lengths, keyed by the @SQ SN name with any `chr`
+# prefix removed (GRCh37/b37 headers say `1`, hg19/hg38 headers say `chr1`) and
+# valued with the *assembly*, not with a reference key -- which reference file
+# an assembly corresponds to also depends on the naming convention, below.
+#
+# These are exact facts about the assemblies, not heuristics: no two GRC builds
+# give the same chromosome the same length, and a nine-digit number appearing as
+# the LN of the correspondingly named @SQ record cannot be a coincidence the way
+# a three-byte substring can.
+#
+# Every value below was read out of the sequence dictionaries this deployment
+# actually ships, not recalled: reference/hg38/Homo_sapiens_assembly38.dict,
+# reference/hg19/ucsc.hg19.dict and reference/grch37/human_g1k_v37.dict. They
+# cannot be pinned by a test -- reference/ is gitignored (.gitignore:203), the
+# same reason tests/test_pharmcat_schema_gate_265.py's data/reports glob is empty
+# in a fresh checkout -- so re-read them if you touch this table.
+SQ_LENGTH_ASSEMBLIES = {
+    ('1', 248956422): 'GRCh38',
+    ('1', 249250621): 'GRCh37',
+    ('2', 242193529): 'GRCh38',
+    ('2', 243199373): 'GRCh37',
+    ('3', 198295559): 'GRCh38',
+    ('3', 198022430): 'GRCh37',
+    ('X', 156040895): 'GRCh38',
+    ('X', 155270560): 'GRCh37',
+}
+
+# (assembly, sequences are chr-prefixed) -> the REFERENCE_PATHS key whose FASTA
+# a file of that description can actually be aligned against.
+#
+# The naming convention is evidence, not cosmetics. The two GRCh37 dictionaries
+# this deployment ships carry the same four lengths under different names --
+# ucsc.hg19.dict says `SN:chr1`, human_g1k_v37.dict says `SN:1` -- and they are
+# two different FASTAs, so a b37-named file run against ucsc.hg19.fasta fails on
+# incompatible contigs (and vice versa). Throwing the prefix away and answering
+# only "GRCh37" would leave the caller a 50/50 guess between them on the one axis
+# that decides whether the run can work at all.
+#
+# They are not even the same sequence throughout: hg19 chr3 is
+# M5:641e4338fa8d52a5b781bd2a2c08d3c3 and b37 3 is
+# M5:fdfd811849cc2fadebc929bb925902e5, identical length notwithstanding.
+#
+# GRCh38 has one entry because it has one file: REFERENCE_PATHS['grch38'] is the
+# same path string as REFERENCE_PATHS['hg38'], and reference/grch38/ holds a
+# symlink to it. There is no un-prefixed GRCh38 FASTA here to point at.
+ASSEMBLY_REFERENCE_KEYS = {
+    ('GRCh38', True): 'hg38',
+    ('GRCh38', False): 'hg38',
+    ('GRCh37', True): 'hg19',
+    ('GRCh37', False): 'grch37',
+}
+
+
+def is_chr_prefixed(name):
+    """True when an @SQ SN uses UCSC-style `chr1` rather than Ensembl/b37 `1`."""
+    return (name or '').strip().lower().startswith('chr')
+
+
+def normalise_sq_name(name):
+    """`chr1` / `1` / `CHR1` -> `1`, so both naming conventions match one table."""
+    name = (name or '').strip()
+    if name.lower().startswith('chr'):
+        name = name[3:]
+    return name.upper()
+
+
+def reference_from_sam_header(header):
+    """Return the REFERENCE_PATHS key a SAM/BAM/CRAM header states, or None.
+
+    Reads the @SQ records, which are the header's actual description of the
+    coordinate system every alignment in the file is expressed in -- as opposed
+    to a three-character token appearing somewhere in the first 10 KiB, which
+    over BGZF is deflate output and carries no information at all.
+
+    Answers with a *reference key* (`hg38` / `hg19` / `grch37`), not merely an
+    assembly, because naming the assembly is not enough to pick a FASTA: GRCh37
+    ships here twice, as chr-prefixed ucsc.hg19.fasta and un-prefixed
+    human_g1k_v37.fasta, and aligning against the wrong one of those pair fails
+    on incompatible contigs. The SN prefix says which, so it is read rather than
+    discarded -- see ASSEMBLY_REFERENCE_KEYS.
+
+    Parses field-wise rather than matching a literal `"SN:chr1\\tLN:248956422"`:
+    SAM tags are unordered, so a header carrying `SN:chr1 M5:... LN:248956422`
+    describes exactly the same assembly and used to read as undetectable.
+
+    A header whose @SQ records point at two different assemblies -- or at one
+    assembly under both naming conventions -- is reported as *undetectable*, not
+    as whichever appeared first. Either combination means the file is not what
+    any single answer would claim, and guessing is precisely the failure being
+    removed here.
+
+    Falls back to the `-R <path>` of an @PG line only when the @SQ records said
+    nothing -- a recorded command line is evidence about the tool run, not about
+    the records in this file, and can survive a subsequent liftover.
+    """
+    seen = set()
+    program_lines = []
+
+    for line in (header or '').splitlines():
+        if line.startswith('@PG'):
+            program_lines.append(line)
+            continue
+        if not line.startswith('@SQ'):
+            continue
+
+        raw_name = None
+        length = None
+        for field in line.split('\t')[1:]:
+            if field.startswith('SN:'):
+                raw_name = field[3:]
+            elif field.startswith('LN:'):
+                try:
+                    length = int(field[3:].strip())
+                except ValueError:
+                    length = None
+        if raw_name is None or length is None:
+            continue
+        assembly = SQ_LENGTH_ASSEMBLIES.get((normalise_sq_name(raw_name), length))
+        if assembly:
+            seen.add((assembly, is_chr_prefixed(raw_name)))
+
+    if len(seen) == 1:
+        detected = ASSEMBLY_REFERENCE_KEYS[seen.pop()]
+        logger.info(f"Detected {detected} from the @SQ records in the header")
+        return detected
+    if len(seen) > 1:
+        logger.warning(
+            f"Header @SQ records describe more than one reference "
+            f"({sorted(seen)}); reporting it as undetectable rather than "
+            f"picking one"
+        )
+        return None
+
+    for line in program_lines:
+        # `-R` is GATK's reference flag, but it is *bwa mem's read-group* flag,
+        # where the token is an @RG string and any hg19/hg38 inside it is a
+        # sample or library name. Requiring the capture to look like a FASTA
+        # path keeps a read group from being read as a reference.
+        ref_path_match = re.search(r'-R\s+(\S+)', line)
+        if not ref_path_match:
+            continue
+        ref_path = ref_path_match.group(1)
+        if not re.search(r'\.(fa|fasta|fna)(\.gz)?$', ref_path, re.IGNORECASE):
+            logger.info(
+                f"Ignoring @PG -R value {ref_path!r}: not a FASTA path, so it is "
+                f"a read group rather than a reference"
+            )
+            continue
+        logger.info(f"Found reference path in @PG line: {ref_path}")
+        if "hg38" in ref_path or "GRCh38" in ref_path:
+            return "hg38"
+        if "hg19" in ref_path:
+            return "hg19"
+        if "GRCh37" in ref_path or "g1k_v37" in ref_path:
+            return "grch37"
+
+    return None
+
+
+def looks_like_text(blob):
+    """True when a byte string is plausibly a text header rather than a container.
+
+    The token scan below is only meaningful over text. Over compressed bytes --
+    BGZF, which is what BAM, CRAM, BCF and bgzipped VCF all are -- `b38` and
+    `b37` are three-byte substrings that turn up by chance roughly once in a few
+    hundred files, and a chance hit used to *override* the caller's own
+    reference_genome. A NUL byte or an undecodable sequence is proof the buffer
+    is not a header, so the scan is skipped rather than believed.
+
+    `blob` is a fixed-size read off the front of a file, so its last few bytes
+    may be half of a multi-byte character that the rest of the file completes.
+    Up to three trailing bytes are therefore dropped before giving up -- a
+    truncated character is an artefact of the read, not evidence of a container,
+    and failing on it would silently skip the scan for any UTF-8 text file whose
+    10240th byte happened to land mid-character.
+    """
+    if not blob or b'\x00' in blob:
+        return False
+    for trim in range(0, 4):
+        candidate = blob[: len(blob) - trim] if trim else blob
+        if not candidate:
+            return False
+        try:
+            candidate.decode('utf-8')
+            return True
+        except UnicodeDecodeError:
+            continue
+    return False
+
+
 def detect_reference(file_path, default_reference='hg38'):
     """
-    Detect reference genome from genomic file headers
-    
-    First tries a fast text-based search, then falls back to samtools for BAM files
-    if needed for more accurate detection
+    Detect the reference genome a genomic file is expressed against.
+
+    Structured header evidence first, and for the compressed formats *only*
+    structured header evidence: `samtools view -H` for BAM/CRAM/SAM, the
+    `##reference=` line for VCF (through gzip when bgzipped). The raw-bytes
+    token scan that used to run first is now the last resort, and only over a
+    buffer that is actually text -- see looks_like_text().
+
+    Returns `default_reference` when nothing conclusive was found. Callers must
+    treat that as "no answer" rather than as a detection: a wrong answer here
+    means an analysis against the wrong coordinates, which is worse than no
+    answer at all.
     """
     try:
         logger.info(f"Attempting to detect reference genome from file: {file_path}")
@@ -890,36 +1106,13 @@ def detect_reference(file_path, default_reference='hg38'):
         file_ext = stored_extension(os.path.basename(file_path))
         gzipped_vcf = file_ext == '.vcf.gz'
 
-        # First try simple text search (fast). Deliberately NOT for a bgzipped
-        # VCF: the bytes are deflate output, so the only thing this scan can
-        # produce there is a false positive -- and a false positive is worse than
-        # no answer, because the caller *overrides* its own reference_genome with
-        # whatever comes back. Three-character tokens like 'b38'/'b37' hit
-        # roughly once in a few hundred files' worth of random bytes. The
-        # gzip-aware branch below reads the real header instead.
-        if not gzipped_vcf:
-            try:
-                logger.info(f"Trying simple text search for reference genome detection")
-                with open(file_path, 'rb') as f:
-                    # Read first 10KB which should contain any headers
-                    header = f.read(10240).decode('utf-8', errors='ignore')
-
-                # Look for specific reference genome identifiers
-                if any(x in header for x in ['GRCh38', 'hg38', 'b38']):
-                    logger.info(f"Detected hg38/GRCh38 reference via text search")
-                    return 'hg38'
-                elif any(x in header for x in ['GRCh37', 'hg19', 'b37']):
-                    logger.info(f"Detected hg19/GRCh37 reference via text search")
-                    return 'hg19'
-
-                logger.info(f"Simple text search did not find reference genome information")
-            except Exception as e:
-                logger.warning(f"Simple text search failed: {str(e)}")
-        
-        # For BAM/CRAM/SAM files, try samtools as a fallback if text search failed
+        # For BAM/CRAM/SAM the header is the evidence, and it is the *first*
+        # thing consulted -- not a fallback for when a text scan over BGZF
+        # "failed". BAM and CRAM are compressed containers, so the scan could
+        # only ever produce noise over them, and this is the main upload path.
         if file_ext in ['.bam', '.cram', '.sam']:
             try:
-                logger.info(f"Falling back to samtools for reference detection")
+                logger.info(f"Reading the alignment header with samtools")
                 # Use samtools to get the header. List argv, not shell=True: file_path
                 # is built from an uploaded filename, and the conversion routes now
                 # call this function, so a name like `a;rm -rf /.cram` would otherwise
@@ -930,41 +1123,24 @@ def detect_reference(file_path, default_reference='hg38'):
                     text=True,
                 )
                 if result.returncode == 0:
-                    header = result.stdout
-                    
-                    # Check for specific reference genome indicators in the header
-                    # First check for @SQ lines with known reference lengths
-                    if "SN:chr1\tLN:248956422" in header:
-                        logger.info("Detected GRCh38/hg38 reference based on chr1 length")
-                        return "hg38"
-                    elif "SN:chr1\tLN:249250621" in header:
-                        logger.info("Detected GRCh37/hg19 reference based on chr1 length")
-                        return "hg19"
-                    
-                    # Check for reference path in header comments
-                    ref_path_match = re.search(r'@PG.*?-R\s+(\S+)', header)
-                    if ref_path_match:
-                        ref_path = ref_path_match.group(1)
-                        logger.info(f"Found reference path in header: {ref_path}")
-                        if "hg38" in ref_path or "GRCh38" in ref_path:
-                            return "hg38"
-                        elif "hg19" in ref_path or "GRCh37" in ref_path:
-                            return "hg19"
-                    
-                    # Check reference dictionary
-                    ref_dict_match = re.search(r'@HD.*?VN:(\S+)', header)
-                    if ref_dict_match:
-                        ref_version = ref_dict_match.group(1)
-                        logger.info(f"Found reference version in header: {ref_version}")
-                        if "38" in ref_version:
-                            return "hg38"
-                        elif "19" in ref_version or "37" in ref_version:
-                            return "hg19"
+                    detected = reference_from_sam_header(result.stdout)
+                    if detected:
+                        return detected
+                    logger.info("The alignment header does not name a known assembly")
+                else:
+                    logger.warning(
+                        f"samtools could not read the header (rc={result.returncode})"
+                    )
             except Exception as e:
                 logger.warning(f"Samtools detection failed: {str(e)}")
-                
+
+            # Deliberately no raw-bytes fallback for these three. A BAM or CRAM
+            # whose header samtools cannot read is not a file to guess about.
+            logger.warning(f"Could not determine reference genome, using default: {default_reference}")
+            return default_reference
+
         # For VCF files, check header lines explicitly
-        elif file_ext in ['.vcf', '.vcf.gz']:
+        if file_ext in ['.vcf', '.vcf.gz']:
             try:
                 # Open as text; through gzip when the VCF is bgzipped, which is
                 # the whole reason this branch was unreachable before -- plain
@@ -985,7 +1161,41 @@ def detect_reference(file_path, default_reference='hg38'):
                                 return 'hg19'
             except Exception as e:
                 logger.warning(f"VCF header parsing failed: {str(e)}")
-        
+
+        else:
+            # Last resort, for a format with no structured reader here (.bcf, or
+            # an upload whose name carried no allowlisted extension at all).
+            #
+            # Guarded twice over what it used to be: it never runs for a format
+            # whose header was read properly above, and it never runs over bytes
+            # that are not text, so it can no longer answer from deflate output.
+            # `b38`/`b37` additionally need word boundaries -- unanchored, three
+            # characters is not a token, it is a substring.
+            try:
+                logger.info(f"Falling back to a text scan of the first 10 KiB")
+                with open(file_path, 'rb') as f:
+                    blob = f.read(10240)
+
+                if looks_like_text(blob):
+                    # errors='ignore' only for the scan itself: looks_like_text()
+                    # has already made the is-this-text decision strictly, so all
+                    # this can drop is a character the 10 KiB read cut in half.
+                    header = blob.decode('utf-8', errors='ignore')
+                    if 'GRCh38' in header or 'hg38' in header or re.search(r'\bb38\b', header):
+                        logger.info(f"Detected hg38/GRCh38 reference via text search")
+                        return 'hg38'
+                    if 'GRCh37' in header or 'hg19' in header or re.search(r'\bb37\b', header):
+                        logger.info(f"Detected hg19/GRCh37 reference via text search")
+                        return 'hg19'
+                    logger.info(f"Text scan did not find reference genome information")
+                else:
+                    logger.info(
+                        f"First 10 KiB is not text, so it carries no readable header; "
+                        f"not guessing a reference from compressed bytes"
+                    )
+            except Exception as e:
+                logger.warning(f"Text scan failed: {str(e)}")
+
         # If we can't determine, return default
         logger.warning(f"Could not determine reference genome, using default: {default_reference}")
         return default_reference
@@ -1089,13 +1299,52 @@ async def variant_call(
         # comes from stored_extension(), not os.path.splitext(): splitext returns
         # `.gz` for a `.vcf.gz` name, which matches nothing in this list, so
         # bgzipped VCFs silently skipped detection.
+        #
+        # Detection is still allowed to override reference_genome, and that is a
+        # deliberate choice rather than an oversight. The form field cannot be
+        # trusted as an explicit statement: it is declared `Form("hg38")`, and
+        # pipelines/pgx/main.nf always sends *something* for it, so this service
+        # cannot tell a user's considered choice from a default that was never
+        # touched. The file's own header, by contrast, describes the coordinate
+        # system the records are actually in. Between a header and a form
+        # default, the header wins.
+        #
+        # What changed is that detect_reference() no longer answers from a
+        # three-byte substring of compressed bytes -- BAM and CRAM go through
+        # `samtools view -H` and the @SQ records, and there is no raw-bytes
+        # fallback for them -- so an override now follows evidence rather than
+        # noise. That is what makes keeping the override defensible.
+        #
+        # The comparison is on the FASTA each name resolves to, not on the name
+        # and not on the assembly. Those three differ in ways that matter:
+        #
+        #   hg38 vs grch38 -> REFERENCE_PATHS gives the *same path string* for
+        #       both (reference/grch38/ holds a symlink), so overriding one with
+        #       the other is churn with no effect. Comparing names would do it.
+        #   hg19 vs grch37 -> same assembly, two different FASTAs with different
+        #       contig naming (`chr1` vs `1`). Aligning against the wrong one of
+        #       that pair fails on incompatible contigs. Comparing *assemblies*
+        #       would suppress this override, which is the one case where it is
+        #       most needed -- and detect_reference() now reads the SN prefix
+        #       precisely so it can tell them apart.
+        #
+        # "Would this change which file we align against?" is the question the
+        # override is actually asking, so it is the one asked here.
         file_ext = stored_extension(filename)
         if file_ext in ['.bam', '.cram', '.sam', '.vcf', '.vcf.gz']:
             detected_reference = detect_reference(input_path, default_reference=reference_genome)
-            if detected_reference != reference_genome:
+            requested_fasta = REFERENCE_PATHS.get((reference_genome or '').lower())
+            detected_fasta = REFERENCE_PATHS.get((detected_reference or '').lower())
+            if detected_fasta and detected_fasta != requested_fasta:
                 logger.warning(f"Job {local_job_id}: Detected reference ({detected_reference}) differs from specified reference ({reference_genome})")
                 logger.warning(f"Job {local_job_id}: Using detected reference: {detected_reference}")
                 reference_genome = detected_reference
+            elif detected_reference != reference_genome:
+                logger.info(
+                    f"Job {local_job_id}: detected {detected_reference} resolves to the "
+                    f"same FASTA as the requested {reference_genome}; keeping the "
+                    f"caller's choice"
+                )
 
         # Validate reference genome
         if reference_genome not in REFERENCE_PATHS:

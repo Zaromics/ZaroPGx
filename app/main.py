@@ -181,8 +181,14 @@ TEMPLATE_DIR = BASE_DIR / "templates"
 # tests/test_upload_name_sanitiser.py runs both implementations over the same
 # corpus and asserts they return identical names, so a change to one that is not
 # made to the other fails the suite.
+#
+# The compound `.gz` forms come first: an extension is chosen by the first
+# `endswith` that matches, so a bare `.gz` variant added later must never
+# precede the two-part form it is a suffix of.
 SAFE_UPLOAD_EXTENSIONS = (
     ".vcf.gz",
+    ".fastq.gz",
+    ".fq.gz",
     ".vcf",
     ".bcf",
     ".bam",

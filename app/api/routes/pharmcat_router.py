@@ -18,6 +18,7 @@ from app.pharmcat.pharmcat_parser import (
     get_pharmcat_summary,
     load_pharmcat_file,
 )
+from app.pharmcat.report_json import PharmCATSchemaError
 from app.services.pharmcat_data_service import PharmCATDataService
 
 # Configure logging
@@ -201,6 +202,26 @@ async def load_pharmcat_file_endpoint(
 
     except HTTPException:
         raise
+    except PharmCATSchemaError as e:
+        # 400, not 500: the upload was syntactically valid JSON that this server
+        # understood well enough to inspect and then decline. Nothing here is
+        # broken -- the payload is not a report.json this parser can read, which
+        # is a fact about the request body, so the client must not retry it.
+        #
+        # 400 rather than 422, even though 422's "well-formed but unprocessable"
+        # describes the verdict more precisely: FastAPI already spends 422 on
+        # RequestValidationError, whose body is `detail: [{loc, msg, type}, ...]`.
+        # Answering 422 with a `detail` *string* would put two incompatible
+        # shapes under one status on the same route. The two sibling guards here
+        # -- non-.json filename, undecodable JSON -- are 400 with a string, and
+        # this is the same kind of refusal.
+        logger.warning(f"Rejected PharmCAT file: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This file is not a PharmCAT report.json this parser can read: " f"{e}"
+            ),
+        )
     except Exception as e:
         logger.error(f"Error loading PharmCAT file: {e}")
         raise HTTPException(status_code=500, detail=f"Error loading file: {str(e)}")

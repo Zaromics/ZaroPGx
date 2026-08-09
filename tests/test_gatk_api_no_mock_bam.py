@@ -660,6 +660,12 @@ def test_extension_is_preserved_so_format_branching_still_works(gatk_api):
         ("sample_job.bcf", ".bcf"),
         ("sample_job.fastq", ".fastq"),
         ("sample_job.fq", ".fq"),
+        # The compressed FASTQ forms, which the allowlist did not carry until
+        # now: `stored_extension` must read back the whole two-part suffix, not
+        # the `.gz` os.path.splitext would return.
+        ("sample_job.fastq.gz", ".fastq.gz"),
+        ("sample_job.fq.gz", ".fq.gz"),
+        ("sample_job.FASTQ.GZ", ".fastq.gz"),
         ("sample_job", ""),
         ("upload_job.unknown", ""),
     ],
@@ -668,6 +674,12 @@ def test_stored_extension_reads_back_what_the_sanitiser_preserved(
     gatk_api, name, expected
 ):
     assert gatk_api.stored_extension(name) == expected
+
+
+@pytest.mark.parametrize("name", ["sample_job.fastq.gz", "sample_job.fq.gz"])
+def test_stored_stem_strips_the_whole_compressed_fastq_suffix(gatk_api, name):
+    """A stem with `.fastq` still on it derives `<name>.fastq.bam` downstream."""
+    assert gatk_api.stored_stem(name) == "sample_job"
 
 
 def test_stored_extension_differs_from_splitext_exactly_where_the_bug_was(gatk_api):
@@ -776,6 +788,388 @@ def test_detect_reference_does_not_guess_from_compressed_bytes(gatk_api, tmp_pat
     raw = tmp_path / "planted_job.vcf.gz"
     raw.write_bytes(b"b37" + b"\x00" * 64)
     assert gatk_api.detect_reference(str(raw), default_reference="hg38") == "hg38"
+
+
+# --------------------------------------------------------------------------
+# BAM and CRAM are compressed, and they are the main path
+#
+# The raw 10 KiB token scan was guarded for `.vcf.gz` and left running over
+# `.bam` and `.cram` -- BGZF in both cases, i.e. deflate output, where `b38` and
+# `b37` are three-byte substrings that turn up by chance roughly once in a few
+# hundred files. A hit *overrode* the caller's reference_genome, so the sample
+# was then analysed against the wrong assembly: wrong coordinates, wrong calls,
+# and nothing in the output saying so.
+#
+# The header is the evidence. `@SQ SN/LN` states the coordinate system every
+# record in the file is expressed in; a substring of compressed bytes states
+# nothing.
+# --------------------------------------------------------------------------
+
+GRCH38_SQ = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:248956422\n"
+# GRCh37 under each of its two naming conventions. They are not interchangeable:
+# `chr1` is ucsc.hg19.fasta and `1` is human_g1k_v37.fasta, two different files.
+HG19_SQ = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:249250621\n"
+B37_SQ = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:1\tLN:249250621\n"
+
+
+@pytest.mark.parametrize("extension", [".bam", ".cram"])
+def test_planted_tokens_in_compressed_bytes_are_not_believed(
+    gatk_api, samtools, tmp_path, extension
+):
+    """The live false positive, stated as its consequence.
+
+    The body spells `b37` in its raw bytes; the header says GRCh38. Believing
+    the bytes here means calling an hg38 sample against hg19 coordinates.
+    """
+    samtools.header = GRCH38_SQ
+    path = tmp_path / f"sample_job{extension}"
+    path.write_bytes(b"\x1f\x8b" + b"b37" * 64 + b"\x00" * 16)
+
+    assert gatk_api.detect_reference(str(path), default_reference=None) == "hg38"
+
+
+@pytest.mark.parametrize("extension", [".bam", ".cram"])
+def test_an_unreadable_alignment_is_never_guessed_at_from_its_bytes(
+    gatk_api, samtools, tmp_path, extension
+):
+    """samtools could not read the header, so there is no evidence at all.
+
+    There must be no raw-bytes second opinion for these formats: the caller's
+    own choice survives instead of being replaced by a coin flip.
+    """
+    samtools.fail = {"view": (1, b"[E::hts_open] fail")}
+    path = tmp_path / f"sample_job{extension}"
+    path.write_bytes(b"\x1f\x8b" + b"b38" * 64)
+
+    assert gatk_api.detect_reference(str(path), default_reference="hg19") == "hg19"
+
+
+@pytest.mark.parametrize(
+    "header,expected",
+    [
+        # SN before LN, LN before SN, and an M5 wedged between them: SAM tags are
+        # unordered, and the old literal `"SN:chr1\tLN:248956422"` match read all
+        # but the first as undetectable.
+        (b"@SQ\tSN:chr1\tLN:248956422\n", "hg38"),
+        (b"@SQ\tLN:248956422\tSN:chr1\n", "hg38"),
+        (
+            b"@SQ\tSN:chr1\tM5:6aef897c3d6ff0c78aff06ac189178dd\tLN:248956422\n",
+            "hg38",
+        ),
+        # GRCh37 ships twice, under two naming conventions and as two different
+        # FASTAs, so the SN prefix decides *which reference file* the answer
+        # names -- not merely which assembly. `1` is b37 (human_g1k_v37.fasta),
+        # `chr1` is UCSC (ucsc.hg19.fasta). Answering "GRCh37" and discarding the
+        # prefix would leave the caller a 50/50 guess on the one axis that
+        # decides whether the alignment can run at all.
+        (b"@SQ\tSN:1\tLN:249250621\n", "grch37"),
+        (b"@SQ\tSN:chr1\tLN:249250621\n", "hg19"),
+        # A build is identifiable from chromosomes other than the first, and the
+        # prefix rule holds there too.
+        (b"@SQ\tSN:chrX\tLN:156040895\n", "hg38"),
+        (b"@SQ\tSN:chrX\tLN:155270560\n", "hg19"),
+        (b"@SQ\tSN:X\tLN:155270560\n", "grch37"),
+        (b"@SQ\tSN:chr2\tLN:242193529\n", "hg38"),
+        (b"@SQ\tSN:2\tLN:243199373\n", "grch37"),
+        # GRCh38 ships once -- REFERENCE_PATHS['grch38'] is the same path string
+        # as REFERENCE_PATHS['hg38'] -- so there is no un-prefixed GRCh38 FASTA
+        # to name and both conventions answer hg38.
+        (b"@SQ\tSN:1\tLN:248956422\n", "hg38"),
+    ],
+)
+def test_the_sq_records_are_read_field_wise(
+    gatk_api, samtools, tmp_path, header, expected
+):
+    samtools.header = b"@HD\tVN:1.6\tSO:coordinate\n" + header
+    path = tmp_path / "sample_job.bam"
+    path.write_bytes(b"\x1f\x8b")
+
+    assert gatk_api.detect_reference(str(path), default_reference=None) == expected
+
+
+def test_every_detected_name_is_one_this_service_can_resolve(gatk_api):
+    """Detection's answers feed REFERENCE_PATHS directly, so they must be keys.
+
+    A detected name that is not in REFERENCE_PATHS reaches the validation gate
+    below it and 400s the job -- so the two tables have to agree.
+    """
+    for key in gatk_api.ASSEMBLY_REFERENCE_KEYS.values():
+        assert key in gatk_api.REFERENCE_PATHS, key
+        assert key in gatk_api.REFERENCE_BUILDS, key
+
+
+def test_the_two_grch37_references_are_genuinely_different_files(gatk_api):
+    """The premise the prefix rule rests on, stated so it cannot rot.
+
+    If these ever became the same path, the hg19/grch37 distinction would be
+    pointless churn -- which is exactly what hg38/grch38 already are.
+    """
+    assert (
+        gatk_api.REFERENCE_PATHS["hg19"] != gatk_api.REFERENCE_PATHS["grch37"]
+    ), "hg19 and grch37 now name one file; the prefix rule can be dropped"
+    assert (
+        gatk_api.REFERENCE_PATHS["hg38"] == gatk_api.REFERENCE_PATHS["grch38"]
+    ), "grch38 is no longer a symlink to hg38; hg38 needs a prefix rule too"
+
+
+def test_a_header_naming_two_assemblies_is_undetectable(gatk_api, samtools, tmp_path):
+    """Neither answer describes this file, so there is no answer to give."""
+    samtools.header = (
+        b"@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:248956422\n@SQ\tSN:chr2\tLN:243199373\n"
+    )
+    path = tmp_path / "sample_job.bam"
+    path.write_bytes(b"\x1f\x8b")
+
+    assert gatk_api.detect_reference(str(path), default_reference=None) is None
+
+
+def test_one_assembly_under_two_naming_conventions_is_undetectable(
+    gatk_api, samtools, tmp_path
+):
+    """A mixed-naming header names no single FASTA, so it gets no answer.
+
+    Both records really are GRCh37, so an assembly-level check would happily
+    answer -- and then pick one of two incompatible references at random.
+    """
+    samtools.header = (
+        b"@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:249250621\n@SQ\tSN:2\tLN:243199373\n"
+    )
+    path = tmp_path / "sample_job.bam"
+    path.write_bytes(b"\x1f\x8b")
+
+    assert gatk_api.detect_reference(str(path), default_reference=None) is None
+
+
+def test_the_sam_format_version_is_not_a_reference_build(gatk_api, samtools, tmp_path):
+    """`@HD VN:` is the SAM spec version, never an assembly.
+
+    The old code ran `"38" in ref_version` / `"19" in ref_version` over it, which
+    is a category error waiting for a `VN:1.38` to make it a live one.
+    """
+    samtools.header = b"@HD\tVN:1.38\tSO:coordinate\n@SQ\tSN:ctg1\tLN:1234\n"
+    path = tmp_path / "sample_job.bam"
+    path.write_bytes(b"\x1f\x8b")
+
+    assert gatk_api.detect_reference(str(path), default_reference=None) is None
+
+
+def test_the_pg_reference_path_is_only_consulted_when_the_sq_records_are_silent(
+    gatk_api, samtools, tmp_path
+):
+    """A recorded command line describes the tool run, not these records."""
+    path = tmp_path / "sample_job.bam"
+    path.write_bytes(b"\x1f\x8b")
+
+    # @SQ silent -> the @PG path is the only evidence there is. `-R <fasta>` is
+    # GATK's reference flag, so this is a GATK @PG line.
+    samtools.header = (
+        b"@SQ\tSN:ctg1\tLN:1234\n"
+        b"@PG\tID:GATK\tCL:HaplotypeCaller -R /ref/hg19/ucsc.hg19.fasta -I in.bam\n"
+    )
+    assert gatk_api.detect_reference(str(path), default_reference=None) == "hg19"
+
+    # @SQ speaks -> it wins, even against a contradicting @PG line, because the
+    # records were lifted over after that command ran.
+    samtools.header = (
+        b"@SQ\tSN:chr1\tLN:248956422\n"
+        b"@PG\tID:GATK\tCL:HaplotypeCaller -R /ref/hg19/ucsc.hg19.fasta -I in.bam\n"
+    )
+    assert gatk_api.detect_reference(str(path), default_reference=None) == "hg38"
+
+
+def test_a_bwa_read_group_is_not_mistaken_for_a_reference(gatk_api, samtools, tmp_path):
+    """`-R` is GATK's reference flag but *bwa mem's read-group* flag.
+
+    In a bwa @PG line the token after -R is an @RG string, and a sample or
+    library name is free to contain 'hg19'. Reading that as the assembly would
+    reinstate exactly the kind of substring guess this change removed -- and its
+    answer feeds an override of the caller's reference.
+    """
+    path = tmp_path / "sample_job.bam"
+    path.write_bytes(b"\x1f\x8b")
+    samtools.header = (
+        b"@SQ\tSN:ctg1\tLN:1234\n"
+        b"@PG\tID:bwa\tCL:bwa mem -R @RG\\tID:1\\tSM:patient_hg19\\tLB:lib1 ref.fa in.fq\n"
+    )
+
+    assert gatk_api.detect_reference(str(path), default_reference=None) is None
+
+
+def test_looks_like_text_rejects_container_bytes(gatk_api):
+    """The guard that keeps the last-resort scan off compressed formats."""
+    assert gatk_api.looks_like_text(b"##fileformat=VCFv4.2\n")
+    assert not gatk_api.looks_like_text(b"\x1f\x8b\x08\x04\x00\x00b37")
+    assert not gatk_api.looks_like_text(b"b37\x00\x00")
+    assert not gatk_api.looks_like_text(b"\xff\xfe\xfdb38")
+    assert not gatk_api.looks_like_text(b"")
+
+
+def test_looks_like_text_tolerates_a_character_split_by_the_read(gatk_api):
+    """The buffer is a fixed-size read off the front of a file, so its last
+    character may be half-present. That is an artefact of the read, not evidence
+    of a container, and rejecting it would silently skip the scan for any UTF-8
+    text file whose 10240th byte landed mid-character."""
+    truncated = ("x" * 10239 + "é").encode("utf-8")[:10240]
+    assert truncated[-1:] == b"\xc3", "the fixture is not actually cut mid-character"
+
+    assert gatk_api.looks_like_text(truncated)
+    # A genuinely undecodable buffer is still rejected -- the tolerance is three
+    # trailing bytes, not a licence to ignore errors anywhere in the blob.
+    assert not gatk_api.looks_like_text(b"\xff\xfe\xfd" + b"x" * 100)
+
+
+def test_a_compressed_format_with_no_structured_reader_is_not_scanned(
+    gatk_api, tmp_path
+):
+    """`.bcf` is BGZF too, and it has no header reader here."""
+    path = tmp_path / "sample_job.bcf"
+    path.write_bytes(b"BCF\x02\x02" + b"\x00" * 8 + b"b37" * 32)
+
+    assert gatk_api.detect_reference(str(path), default_reference="hg38") == "hg38"
+
+
+def test_a_genuinely_textual_file_is_still_scanned(gatk_api, tmp_path):
+    """The last resort still works where it is meaningful: real text."""
+    path = tmp_path / "sample_job.unknown"
+    path.write_text("some header\nreference: GRCh37/hg19\n", encoding="utf-8")
+
+    assert gatk_api.detect_reference(str(path), default_reference="hg38") == "hg19"
+
+
+def test_the_three_character_tokens_need_word_boundaries(gatk_api, tmp_path):
+    """Unanchored, `b38` is a substring, not a token."""
+    path = tmp_path / "sample_job.unknown"
+    path.write_text("sample_ab38cd analysis notes\n", encoding="utf-8")
+
+    assert gatk_api.detect_reference(str(path), default_reference="hg19") == "hg19"
+
+
+# --------------------------------------------------------------------------
+# What /variant-call does with the answer
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def no_background_thread(gatk_api, monkeypatch):
+    """Stop the HaplotypeCaller worker; only the reference decision is under test."""
+
+    class NoThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(gatk_api.threading, "Thread", NoThread)
+
+
+@pytest.fixture()
+def hg19_reference_fasta(gatk_api):
+    for key in ("hg19", "grch37"):
+        path = Path(gatk_api.REFERENCE_PATHS[key])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(">chr1\nACGTACGTACGT\n", encoding="utf-8")
+
+
+def _post_bam(client, body, reference_genome):
+    return client.post(
+        "/variant-call",
+        files={"file": ("sample.bam", body, "application/octet-stream")},
+        data={"reference_genome": reference_genome},
+    )
+
+
+def test_header_evidence_still_overrides_the_form_field(
+    client,
+    gatk_api,
+    samtools,
+    reference_fasta,
+    hg19_reference_fasta,
+    no_background_thread,
+):
+    """`reference_genome` is declared Form("hg38") and main.nf always sends one,
+    so this service cannot tell a considered choice from an untouched default.
+    A header can be told from a default, so the header wins."""
+    samtools.header = HG19_SQ
+
+    resp = _post_bam(client, b"\x1f\x8b" + b"\x00" * 32, "hg38")
+
+    assert resp.status_code == 200, resp.text
+    assert gatk_api.jobs[resp.json()["job_id"]]["reference_genome"] == "hg19"
+
+
+def test_an_alias_that_resolves_to_one_file_is_not_an_override(
+    client,
+    gatk_api,
+    samtools,
+    reference_fasta,
+    hg19_reference_fasta,
+    no_background_thread,
+):
+    """hg38 and grch38 are one file -- REFERENCE_PATHS gives both the same path
+    string -- so rewriting the caller's name would be churn with no effect."""
+    samtools.header = GRCH38_SQ
+
+    resp = _post_bam(client, b"\x1f\x8b" + b"\x00" * 32, "grch38")
+
+    assert resp.status_code == 200, resp.text
+    assert gatk_api.jobs[resp.json()["job_id"]]["reference_genome"] == "grch38"
+
+
+@pytest.mark.parametrize(
+    "header,requested,expected",
+    [
+        # The naming the header uses decides which GRCh37 FASTA can be used, and
+        # an assembly-level comparison gets both of these wrong: it would fire on
+        # neither (they are all GRCh37) and leave a b37-named file pointed at
+        # ucsc.hg19.fasta, or an hg19-named file at human_g1k_v37.fasta.
+        (B37_SQ, "hg19", "grch37"),
+        (HG19_SQ, "grch37", "hg19"),
+        # And the same file described consistently needs no change at all.
+        (B37_SQ, "grch37", "grch37"),
+        (HG19_SQ, "hg19", "hg19"),
+    ],
+)
+def test_the_two_grch37_references_are_not_swapped_for_each_other(
+    client,
+    gatk_api,
+    samtools,
+    reference_fasta,
+    hg19_reference_fasta,
+    no_background_thread,
+    header,
+    requested,
+    expected,
+):
+    """Same assembly, two FASTAs, differently named contigs. Aligning against
+    the wrong one of the pair fails on incompatible contigs, so the choice
+    between them has to follow the header rather than the form field."""
+    samtools.header = header
+
+    resp = _post_bam(client, b"\x1f\x8b" + b"\x00" * 32, requested)
+
+    assert resp.status_code == 200, resp.text
+    chosen = gatk_api.jobs[resp.json()["job_id"]]["reference_genome"]
+    assert chosen == expected
+    # The real test: the FASTA picked is the one whose contigs the file names.
+    assert gatk_api.REFERENCE_PATHS[chosen] == gatk_api.REFERENCE_PATHS[expected]
+
+
+def test_planted_bytes_do_not_change_the_reference_on_the_route(
+    client,
+    gatk_api,
+    samtools,
+    reference_fasta,
+    hg19_reference_fasta,
+    no_background_thread,
+):
+    """End to end: the false positive can no longer switch the assembly."""
+    samtools.header = GRCH38_SQ
+
+    resp = _post_bam(client, b"\x1f\x8b" + b"b37" * 64 + b"\x00" * 16, "hg38")
+
+    assert resp.status_code == 200, resp.text
+    assert gatk_api.jobs[resp.json()["job_id"]]["reference_genome"] == "hg38"
 
 
 # --- sink 1: detect_reference -------------------------------------------------

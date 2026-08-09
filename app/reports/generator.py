@@ -1,5 +1,6 @@
 import base64
 import glob
+import html
 import json
 import logging
 import os
@@ -7,7 +8,7 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -36,7 +37,11 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 
 from app.core.version_manager import get_all_versions, get_versions_dict
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
-from app.pharmcat.report_json import extract_matcher_metadata
+from app.pharmcat.report_json import (
+    SUPPORTED_VERSION_SERIES,
+    extract_matcher_metadata,
+    parse_pharmcat_version,
+)
 from app.reports.evidence import classify_evidence
 from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
@@ -1032,6 +1037,70 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
         raise
 
 
+def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
+    """Alert text when the run's PharmCAT version is one nobody has verified.
+
+    265's version gate warns and never blocks: hard-failing on an upstream point
+    release would turn a harmless bump into a clinical outage after the expensive
+    preprocessing already succeeded, and the structure checks are what carry the
+    teeth. But that warning reached the log only, so the operator knew and the
+    clinician reading the report did not -- and "these calls came out of a
+    PharmCAT release this pipeline has never been checked against" is exactly the
+    kind of qualification the Alerts and Warnings page exists for.
+
+    Returns ``None`` when there is nothing to say. In particular, a payload with
+    **no** ``pharmcatVersion`` key at all is silent rather than alarming: that is
+    the shape of the TSV fallback and of already-normalised data, neither of
+    which is making a claim about a PharmCAT release, and alerting there would
+    put the banner on every TSV-rescued run. Only a version that is present and
+    unverified is reported, which is the case the gate's warning is about.
+
+    HTML, because the template renders each warning with ``|safe`` and the
+    existing warnings are HTML fragments. Every interpolated value is escaped.
+    """
+    payload = pharmcat_results
+    if isinstance(payload, Mapping) and isinstance(payload.get("data"), Mapping):
+        payload = payload["data"]
+    if not isinstance(payload, Mapping) or "pharmcatVersion" not in payload:
+        return None
+
+    raw = payload["pharmcatVersion"]
+    parsed = parse_pharmcat_version(raw) if isinstance(raw, str) else None
+    if parsed is not None and (parsed[0], parsed[1]) in SUPPORTED_VERSION_SERIES:
+        return None
+
+    known = html.escape(
+        ", ".join(
+            f"{major}.{minor}" for major, minor in sorted(SUPPORTED_VERSION_SERIES)
+        )
+    )
+    # `pharmcatVersion: null` and `pharmcatVersion: ""` are "the field is there
+    # and says nothing", which is a different sentence from "it says 9.9.1".
+    # Interpolating them naively printed the literal "None" -- str(None) is
+    # truthy, so an `or` fallback never fired -- and told the reader the release
+    # was called None.
+    shown = "" if raw is None else str(raw).strip()
+    if shown:
+        claim = (
+            f"These results were produced by PharmCAT "
+            f"<strong>{html.escape(shown)}</strong>, a release this pipeline has "
+            f"not been verified against (verified series: {known})."
+        )
+    else:
+        claim = (
+            f"The PharmCAT output does not say which release produced these "
+            f"results, so they cannot be attributed to a version this pipeline "
+            f"has been verified against (verified series: {known})."
+        )
+    return (
+        "<p><strong>Unverified PharmCAT version</strong></p>"
+        f"<p>{claim} The structural checks on the PharmCAT output passed, so the "
+        f"calls below are readable and are reported as PharmCAT made them; but "
+        f"they have not been confirmed to match this pipeline's expectations for "
+        f"a known release, and should be treated as unverified until they are.</p>"
+    )
+
+
 def get_disclaimer() -> str:
     """
     Return the legal disclaimer for pharmacogenomic reports.
@@ -1996,6 +2065,17 @@ def generate_report(
         else (patient_info.get("id", "unknown") if patient_info else "unknown")
     )
     matcher_meta = probe_matcher_metadata(output_dir, _report_id_for_meta)
+
+    # 265: put an unverified PharmCAT version in front of the reader, not just in
+    # the log. A new list rather than an append: `workflow_warnings` above may be
+    # the very list object inside the Job row's JSON metadata, and mutating that
+    # in place edits a loaded ORM attribute for no reason.
+    _version_alert = unverified_pharmcat_version_alert(pharmcat_results)
+    if _version_alert:
+        logger.warning(
+            "PharmCAT version is not a verified series; adding a report alert"
+        )
+        workflow_warnings = list(workflow_warnings) + [_version_alert]
 
     template_data = {
         "patient": patient_info or {},
