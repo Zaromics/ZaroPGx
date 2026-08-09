@@ -1357,14 +1357,21 @@ async def check_reports(job_id: str):
         # Prefer nested /data/reports/{patient_id}/{job_id}/ when job metadata has patient_id
         patient_id = None
         try:
-            from app.api.db import get_db
+            # SessionLocal() + try/finally, not `next(get_db())`: get_db's
+            # `finally: db.close()` only runs when the generator is exhausted or
+            # closed, and advancing it once never gets there, so every session
+            # taken that way leaked its connection.
+            from app.api.db import SessionLocal
             from app.services.job_service import JobService
 
-            db = next(get_db())
-            job_service = JobService(db)
-            job = job_service.get_job(job_id)
-            if job and job.job_metadata:
-                patient_id = job.job_metadata.get("patient_id")
+            db = SessionLocal()
+            try:
+                job_service = JobService(db)
+                job = job_service.get_job(job_id)
+                if job and job.job_metadata:
+                    patient_id = job.job_metadata.get("patient_id")
+            finally:
+                db.close()
         except Exception:
             patient_id = None
 
@@ -1382,35 +1389,36 @@ async def check_reports(job_id: str):
 
         # Check workflow status using the new workflow system
         try:
-            from sqlalchemy.orm import Session
-
-            from app.api.db import get_db
+            from app.api.db import SessionLocal
             from app.services.job_service import JobService
 
-            # Get database session
-            db = next(get_db())
-            job_service = JobService(db)
+            # Get database session (see the note above on SessionLocal vs get_db)
+            db = SessionLocal()
+            try:
+                job_service = JobService(db)
 
-            # Look up run-instance Job by id (path param may be job UUID)
-            from app.api.models import JobStatus, JobUpdate
+                # Look up run-instance Job by id (path param may be job UUID)
+                from app.api.models import JobStatus, JobUpdate
 
-            job = job_service.get_job(job_id)
-            job_data = {"status": "unknown", "complete": False}
+                job = job_service.get_job(job_id)
+                job_data = {"status": "unknown", "complete": False}
 
-            if job:
-                job_data = {
-                    "status": job.status,  # status is already a string from database
-                    "complete": job.status in ["completed", "failed"],
-                    "job_id": str(job.id),
-                }
+                if job:
+                    job_data = {
+                        "status": job.status,  # already a string from the database
+                        "complete": job.status in ["completed", "failed"],
+                        "job_id": str(job.id),
+                    }
 
-                # Update job status if reports exist
-                if pdf_exists or html_exists and job.status != "completed":
-                    job_service.update_job(
-                        job.id,
-                        JobUpdate(status=JobStatus.COMPLETED),
-                    )
-                    logger.info(f"Updated job status for job {job_id} to completed")
+                    # Update job status if reports exist
+                    if pdf_exists or html_exists and job.status != "completed":
+                        job_service.update_job(
+                            job.id,
+                            JobUpdate(status=JobStatus.COMPLETED),
+                        )
+                        logger.info(f"Updated job status for job {job_id} to completed")
+            finally:
+                db.close()
         except Exception as e:
             logger.warning(f"Could not check workflow status for job {job_id}: {e}")
             job_data = {"status": "unknown", "complete": False}
@@ -1457,14 +1465,18 @@ async def trigger_completion(job_id: str):
     # Prefer nested /data/reports/{patient_id}/{job_id}/ when job metadata has patient_id
     patient_id = None
     try:
-        from app.api.db import get_db
+        # SessionLocal() + try/finally, not `next(get_db())` -- see check_reports.
+        from app.api.db import SessionLocal
         from app.services.job_service import JobService
 
-        db = next(get_db())
-        job_service = JobService(db)
-        job = job_service.get_job(job_id)
-        if job and job.job_metadata:
-            patient_id = job.job_metadata.get("patient_id")
+        db = SessionLocal()
+        try:
+            job_service = JobService(db)
+            job = job_service.get_job(job_id)
+            if job and job.job_metadata:
+                patient_id = job.job_metadata.get("patient_id")
+        finally:
+            db.close()
     except Exception:
         patient_id = None
 
@@ -1486,27 +1498,30 @@ async def trigger_completion(job_id: str):
     # Update workflow status if reports exist
     if pdf_exists or html_exists:
         try:
-            from app.api.db import get_db
+            from app.api.db import SessionLocal
             from app.services.job_service import JobService
 
-            # Get database session
-            db = next(get_db())
-            job_service = JobService(db)
+            # Get database session (SessionLocal + try/finally, see check_reports)
+            db = SessionLocal()
+            try:
+                job_service = JobService(db)
 
-            from app.api.models import JobStatus, JobUpdate
+                from app.api.models import JobStatus, JobUpdate
 
-            job = job_service.get_job(job_id)
+                job = job_service.get_job(job_id)
 
-            if job:
-                job_service.update_job(
-                    job.id,
-                    JobUpdate(status=JobStatus.COMPLETED),
-                )
-                logger.info(
-                    f"Manual trigger for job {job_id} - Job status updated to completed"
-                )
-            else:
-                logger.warning(f"Manual trigger for job {job_id} - No job found")
+                if job:
+                    job_service.update_job(
+                        job.id,
+                        JobUpdate(status=JobStatus.COMPLETED),
+                    )
+                    logger.info(
+                        f"Manual trigger for job {job_id} - Job status updated to completed"
+                    )
+                else:
+                    logger.warning(f"Manual trigger for job {job_id} - No job found")
+            finally:
+                db.close()
         except Exception as e:
             logger.error(f"Manual trigger for job {job_id} - Error updating job: {e}")
     else:
@@ -1588,14 +1603,18 @@ async def reprocess_report(report_id: str):
         # Resolve patient_id from job metadata when available for nested layout
         patient_id = None
         try:
-            from app.api.db import get_db
+            # SessionLocal() + try/finally, not `next(get_db())` -- see check_reports.
+            from app.api.db import SessionLocal
             from app.services.job_service import JobService
 
-            db = next(get_db())
-            job_service = JobService(db)
-            job = job_service.get_job(job_id)
-            if job and job.job_metadata:
-                patient_id = job.job_metadata.get("patient_id")
+            db = SessionLocal()
+            try:
+                job_service = JobService(db)
+                job = job_service.get_job(job_id)
+                if job and job.job_metadata:
+                    patient_id = job.job_metadata.get("patient_id")
+            finally:
+                db.close()
         except Exception:
             patient_id = None
 

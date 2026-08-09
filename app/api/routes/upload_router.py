@@ -759,25 +759,35 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
             # Generate reports using the main report generation function with database integration
             logger.info(f"Generating reports using main report generation function")
 
-            # Get database session for report generation
-            from app.api.db import get_db
-
-            db_session = next(get_db())
+            # A second, *fresh* session -- deliberately not the long-lived `db` this
+            # function opened at the top. generate_report's Job read carries no
+            # populate_existing(), so it only observes the upload's metadata on a
+            # session with an empty identity map; tests/test_generator_job_metadata_read.py
+            # pins both shapes.
+            #
+            # SessionLocal() + try/finally, never `next(get_db())`: get_db is a
+            # generator whose `finally: db.close()` only runs when the generator is
+            # exhausted or closed, and advancing it once never gets there -- that
+            # session was leaked, its connection never returned to the pool.
+            db_session = SessionLocal()
 
             # Use the main report generation function with database integration
             from app.reports.generator import generate_report
 
-            response_data = generate_report(
-                pharmcat_results={"data": pharmcat_data},
-                output_dir=str(patient_dir),  # already nested outdir
-                patient_info={
-                    "id": patient_id,
-                    "data_id": data_id,
-                    "sample_identifier": effective_sample_identifier_reports,
-                },
-                job_id=job_id,
-                db_session=db_session,
-            )
+            try:
+                response_data = generate_report(
+                    pharmcat_results={"data": pharmcat_data},
+                    output_dir=str(patient_dir),  # already nested outdir
+                    patient_info={
+                        "id": patient_id,
+                        "data_id": data_id,
+                        "sample_identifier": effective_sample_identifier_reports,
+                    },
+                    job_id=job_id,
+                    db_session=db_session,
+                )
+            finally:
+                db_session.close()
 
             # Update progress: Reports generated (100% of report generation)
             step_update = JobStepUpdate(
