@@ -425,3 +425,184 @@ def test_parse_and_load_rejects_a_silently_empty_shape_change():
     with pytest.raises(PharmCATSchemaError):
         parser.parse_and_load(report)
     assert not added
+
+
+# ---------------------------------------------------------------------------
+# Second pass (independent review).  Counting gene *containers* is not enough:
+# these are the shape changes that matched container-for-container and still
+# produced an empty parse, plus two false positives on shapes the repo builds.
+# ---------------------------------------------------------------------------
+
+
+def _diplotype_rows(report: dict) -> int:
+    """Diplotype rows the real parser would actually store."""
+    from app.pharmcat.pharmcat_parser import PharmCATDiplotype
+
+    parser, added = _mock_parser()
+    parser.parse_and_load(report)
+    return sum(1 for o in added if isinstance(o, PharmCATDiplotype))
+
+
+def test_a_renamed_sourceDiplotypes_field_is_rejected():
+    """The likeliest upstream change of all, and the old gate waved it through.
+
+    Container counts still matched (5 entries, 5 blocks) because ``geneSymbol``
+    alone keeps a block gene-like -- but every diplotype vanished.
+    """
+    clean = _load(FLAT_V340)
+    assert _diplotype_rows(clean) > 0
+
+    renamed = _load(FLAT_V340)
+    for gene in renamed["genes"].values():
+        gene["diplotypes"] = gene.pop("sourceDiplotypes")
+
+    result = validate_report(renamed)
+    assert not result.ok, "a renamed diplotype field must not pass"
+    assert "genes.no_source_diplotypes" in _codes(result)
+    # The container counts still agree -- which is exactly why this needed its
+    # own check rather than more counting.
+    assert result.gene_entry_count == result.gene_block_count == 5
+
+
+def test_source_diplotypes_retyped_to_an_object_is_rejected():
+    """List -> object made the parser die with AttributeError mid-write."""
+    report = _load(FLAT_V340)
+    for gene in report["genes"].values():
+        gene["sourceDiplotypes"] = {"0": {"label": "*1/*1"}}
+
+    result = validate_report(report)
+    assert not result.ok
+    assert "genes.source_diplotypes_not_a_list" in _codes(result)
+
+
+def test_one_gene_missing_source_diplotypes_only_warns():
+    """A single odd gene is not a schema change; do not fail the analysis."""
+    report = _load(FLAT_V340)
+    report["genes"]["ABCG2"].pop("sourceDiplotypes")
+    result = validate_report(report)
+    assert result.ok
+    assert "genes.some_source_diplotypes_missing" in _codes(result)
+
+
+def test_an_extra_nesting_level_is_rejected():
+    """``genes -> symbol -> {"call": gene_data}`` matched container-for-container
+    and stored 126 rows under the literal gene symbol ``"call"``."""
+    report = _load(FLAT_V340)
+    report["genes"] = {sym: {"call": data} for sym, data in report["genes"].items()}
+
+    result = validate_report(report)
+    assert not result.ok
+    assert "genes.symbol_mismatch" in _codes(result)
+
+
+def test_gene_symbol_disagreeing_with_its_key_is_reported():
+    report = _load(FLAT_V340)
+    report["genes"]["ABCG2"]["geneSymbol"] = "NOT_ABCG2"
+    result = validate_report(report)
+    assert result.ok, "one disagreement is not a schema change"
+    assert "genes.some_symbols_mismatch" in _codes(result)
+
+
+@pytest.mark.parametrize(
+    "key,code",
+    [
+        ("drugs", "drugs.null"),
+        ("unannotatedGeneCalls", "unannotatedGeneCalls.null"),
+    ],
+)
+def test_explicit_null_top_level_containers_are_rejected(key, code):
+    """``data.get(k, {})`` returns None when the key exists holding null, so the
+    parser crashes on ``.items()`` / iteration.  No real payload has one."""
+    report = _load(FLAT_V340)
+    report[key] = None
+    result = validate_report(report)
+    assert not result.ok
+    assert code in _codes(result)
+
+
+@pytest.mark.parametrize(
+    "field,code",
+    [
+        ("guidelines", "drugs.guidelines_null"),
+        ("annotations", "drugs.annotations_null"),
+    ],
+)
+def test_explicit_null_inside_the_drugs_spine_is_rejected(field, code):
+    report = _load(FLAT_V340)
+    src = next(iter(report["drugs"]))
+    drug = next(iter(report["drugs"][src]))
+    if field == "guidelines":
+        report["drugs"][src][drug]["guidelines"] = None
+    else:
+        report["drugs"][src][drug]["guidelines"][0]["annotations"] = None
+
+    result = validate_report(report)
+    assert not result.ok
+    assert code in _codes(result)
+
+
+def test_an_all_empty_nested_genes_section_is_a_warning_not_an_error():
+    """``{"genes": {"CPIC": {}}}`` is a shape ZaroPGx builds itself as the TSV
+    fallback seed (upload_router.py:588).  A nested-era run that called no genes
+    is the same fact as ``genes: {}``, which is already only a warning."""
+    result = validate_report(
+        {"pharmcatVersion": "v2.15.4-20-g7f763d7c", "genes": {"CPIC": {}, "DPWG": {}}}
+    )
+    assert result.ok, result.summary()
+    assert "genes.empty" in _codes(result)
+
+
+def test_one_empty_guideline_bucket_alongside_real_genes_is_clean():
+    """An empty DPWG bucket is a recognised bucket holding nothing -- not an
+    unparsed entry.  The old message claimed both, and both were false."""
+    report = _load(NESTED_V2)
+    report["genes"]["DPWG"] = {}
+    result = validate_report(report)
+    assert result.ok
+    assert not result.issues, [i.message for i in result.issues]
+
+
+def test_a_non_string_version_is_not_silently_accepted():
+    """``pharmcatVersion: 3.4`` as a JSON *number* used to stringify into a
+    supported series, contradicting parse_pharmcat_version's own contract."""
+    report = _load(FLAT_V340)
+    report["pharmcatVersion"] = 3.4
+    result = validate_report(report)
+    assert result.version_supported is False
+    assert "version.unparseable" in _codes(result)
+
+
+def test_pharmcat_3_3_is_supported():
+    """ZaroPGx shipped PharmCAT 3.3.0 (bb47abc -> 87dda76), so a 3.3 run must
+    not be flagged as unverified."""
+    assert (3, 3) in SUPPORTED_VERSION_SERIES
+    report = _load(FLAT_V340)
+    report["pharmcatVersion"] = "3.3.0"
+    result = validate_report(report)
+    assert result.version_supported
+    assert not result.issues
+
+
+def test_a_3_1_shaped_payload_passes_without_needing_data_reports():
+    """(3, 1) is claimed on the strength of 18 production runs that live only in
+    a gitignored directory.  Pin the claim with a payload CI can actually see:
+    the 3.1.1 shape is flat, with matcherMetadata and unannotatedGeneCalls."""
+    report = {
+        "title": "3.1.1-shaped",
+        "pharmcatVersion": "3.1.1",
+        "dataVersion": "2025-09-01-12-00",
+        "matcherMetadata": {"genomeBuild": "GRCh38.p13"},
+        "genes": {
+            "CYP2C19": {
+                "geneSymbol": "CYP2C19",
+                "callSource": "MATCHER",
+                "sourceDiplotypes": [{"label": "*1/*1", "phenotypes": ["Normal"]}],
+            }
+        },
+        "unannotatedGeneCalls": [],
+        "messages": [],
+    }
+    result = validate_report(report)
+    assert result.ok and result.version_supported
+    assert not result.issues
+    assert result.detected_format == "flat"

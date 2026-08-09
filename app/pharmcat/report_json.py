@@ -229,6 +229,10 @@ SUPPORTED_VERSION_SERIES: Dict[Tuple[int, int], str] = {
     ),
     (3, 1): "data/reports -- 18 real runs (3.1.1, flat)",
     (3, 2): "data/reports -- 1 real run (3.2.0, flat)",
+    (3, 3): (
+        "shipped in the 0.2.7 image line (bb47abc 3.2.0->3.3.0, superseded by "
+        "87dda76 three days later); A/B-verified at the time, no payload retained"
+    ),
     (3, 4): "test_data/pharmcat.example.v340.report.json + 5 real runs (3.4.0, flat)",
 }
 
@@ -340,7 +344,12 @@ def _scan_genes(genes_section: Mapping[str, Any]) -> Tuple[int, List[str]]:
         if _is_gene_like(value):  # flat: genes -> symbol -> gene_data
             expected += 1
             continue
-        if isinstance(value, Mapping) and value:
+        if isinstance(value, Mapping):
+            if not value:
+                # An empty guideline bucket: recognised, holds nothing. ZaroPGx
+                # builds exactly this itself as the TSV fallback seed
+                # (upload_router.py:588), so it is not a broken shape.
+                continue
             nested = sum(1 for child in value.values() if _is_gene_like(child))
             if nested:  # nested: genes -> SOURCE -> symbol -> gene_data
                 expected += nested
@@ -348,6 +357,88 @@ def _scan_genes(genes_section: Mapping[str, Any]) -> Tuple[int, List[str]]:
         unrecognised.append(str(key))
 
     return expected, unrecognised
+
+
+def _check_gene_payloads(blocks: List[GeneBlock], issues: List[SchemaIssue]) -> None:
+    """Check the gene blocks themselves, not just that they were reachable.
+
+    Counting containers is not enough.  A rename of ``sourceDiplotypes`` --
+    by far the likeliest upstream change, and the field every downstream
+    consumer reads -- leaves the container counts matching exactly while every
+    diplotype silently disappears.  So look at the payload.
+    """
+    total = len(blocks)
+    missing_diplotypes: List[str] = []
+    mistyped_diplotypes: List[str] = []
+    mismatched_symbols: List[str] = []
+
+    for block in blocks:
+        if "sourceDiplotypes" not in block.gene_data:
+            missing_diplotypes.append(block.gene_symbol)
+        elif not isinstance(block.gene_data["sourceDiplotypes"], list):
+            mistyped_diplotypes.append(block.gene_symbol)
+
+        symbol = block.gene_data.get("geneSymbol")
+        if isinstance(symbol, str) and symbol != block.gene_symbol:
+            mismatched_symbols.append(f"{block.gene_symbol}!={symbol}")
+
+    if mistyped_diplotypes:
+        # _parse_diplotypes iterates it and calls .get on each element; a
+        # mapping there yields str keys and an AttributeError mid-write.
+        issues.append(
+            SchemaIssue(
+                "error",
+                "genes.source_diplotypes_not_a_list",
+                f"'sourceDiplotypes' is not a list on "
+                f"{len(mistyped_diplotypes)}/{total} genes: "
+                f"{sorted(mistyped_diplotypes)[:8]}",
+            )
+        )
+
+    if missing_diplotypes:
+        if len(missing_diplotypes) == total:
+            issues.append(
+                SchemaIssue(
+                    "error",
+                    "genes.no_source_diplotypes",
+                    f"not one of the {total} gene blocks carries "
+                    f"'sourceDiplotypes' -- every diplotype, phenotype and "
+                    f"activity score would be dropped and every gene would "
+                    f"render as Unknown/Unknown",
+                )
+            )
+        else:
+            issues.append(
+                SchemaIssue(
+                    "warning",
+                    "genes.some_source_diplotypes_missing",
+                    f"{len(missing_diplotypes)}/{total} gene blocks carry no "
+                    f"'sourceDiplotypes': {sorted(missing_diplotypes)[:8]}",
+                )
+            )
+
+    if mismatched_symbols:
+        if len(mismatched_symbols) == total:
+            issues.append(
+                SchemaIssue(
+                    "error",
+                    "genes.symbol_mismatch",
+                    f"every gene block's 'geneSymbol' disagrees with the key it "
+                    f"is filed under -- the walk is one level off and genes "
+                    f"would be stored under the wrong symbol: "
+                    f"{sorted(mismatched_symbols)[:8]}",
+                )
+            )
+        else:
+            issues.append(
+                SchemaIssue(
+                    "warning",
+                    "genes.some_symbols_mismatch",
+                    f"{len(mismatched_symbols)}/{total} gene blocks disagree "
+                    f"with the key they are filed under: "
+                    f"{sorted(mismatched_symbols)[:8]}",
+                )
+            )
 
 
 def _check_genes(
@@ -390,7 +481,21 @@ def _check_genes(
 
     expected, unrecognised = _scan_genes(genes_section)
     detected = detect_format(genes_section)
-    blocks = len(list(iter_gene_blocks(genes_section)))
+    gene_blocks = list(iter_gene_blocks(genes_section))
+    blocks = len(gene_blocks)
+
+    if expected == 0 and not unrecognised:
+        # Every entry was a recognised-but-empty bucket: a run that called no
+        # genes, which is the same fact as ``genes: {}`` and equally advisory.
+        issues.append(
+            SchemaIssue(
+                "warning",
+                "genes.empty",
+                f"'genes' holds only empty buckets "
+                f"({sorted(genes_section)[:8]}); no genes called",
+            )
+        )
+        return detected, 0, blocks
 
     if expected == 0:
         issues.append(
@@ -441,6 +546,9 @@ def _check_genes(
             )
         )
 
+    if gene_blocks:
+        _check_gene_payloads(gene_blocks, issues)
+
     return detected, expected, blocks
 
 
@@ -457,6 +565,16 @@ def _check_drugs(report: Mapping[str, Any], issues: List[SchemaIssue]) -> None:
 
     drugs = report.get("drugs")
     if drugs is None:
+        # ``data.get("drugs", {})`` returns None when the key exists holding
+        # null, so _parse_drugs dies on .items(). No real payload has one.
+        issues.append(
+            SchemaIssue(
+                "error",
+                "drugs.null",
+                "'drugs' is present but null; the parser reads it with "
+                "get('drugs', {}), which yields None and fails on .items()",
+            )
+        )
         return
     if not isinstance(drugs, Mapping):
         issues.append(
@@ -493,6 +611,7 @@ def _check_drugs(report: Mapping[str, Any], issues: List[SchemaIssue]) -> None:
 
             guidelines = drug_data.get("guidelines")
             if guidelines is None:
+                flag("drugs.guidelines_null", f"{source}/{drug_name}")
                 continue
             if not isinstance(guidelines, list):
                 flag(
@@ -507,6 +626,8 @@ def _check_drugs(report: Mapping[str, Any], issues: List[SchemaIssue]) -> None:
                     continue
                 annotations = guideline.get("annotations")
                 if annotations is None:
+                    if "annotations" in guideline:
+                        flag("drugs.annotations_null", f"{source}/{drug_name}")
                     continue
                 if not isinstance(annotations, list):
                     flag(
@@ -541,9 +662,8 @@ def _check_version(
     report: Mapping[str, Any], issues: List[SchemaIssue]
 ) -> Tuple[Optional[str], Optional[Tuple[int, int]], bool]:
     raw = report.get("pharmcatVersion")
-    version = _clean(raw)
 
-    if version is None:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
         issues.append(
             SchemaIssue(
                 "warning",
@@ -554,6 +674,21 @@ def _check_version(
         )
         return None, None, False
 
+    if not isinstance(raw, str):
+        # Do not stringify a non-string into supportedness -- 3.4 as a JSON
+        # number is not the release string "3.4.0" and must not read as one.
+        issues.append(
+            SchemaIssue(
+                "warning",
+                "version.unparseable",
+                f"'pharmcatVersion' is {type(raw).__name__} ({raw!r}), not a "
+                f"version string; results cannot be attributed to a verified "
+                f"release",
+            )
+        )
+        return str(raw), None, False
+
+    version = raw.strip()
     parsed = parse_pharmcat_version(version)
     if parsed is None:
         issues.append(
@@ -623,16 +758,26 @@ def validate_report(report: Any) -> ValidationResult:
     detected, entries, blocks = _check_genes(report, issues)
     _check_drugs(report, issues)
 
-    unannotated = report.get("unannotatedGeneCalls")
-    if unannotated is not None and not isinstance(unannotated, list):
-        issues.append(
-            SchemaIssue(
-                "error",
-                "unannotatedGeneCalls.not_a_list",
-                f"'unannotatedGeneCalls' is {type(unannotated).__name__}, "
-                f"expected a list of gene call objects",
+    if "unannotatedGeneCalls" in report:
+        unannotated = report["unannotatedGeneCalls"]
+        if unannotated is None:
+            issues.append(
+                SchemaIssue(
+                    "error",
+                    "unannotatedGeneCalls.null",
+                    "'unannotatedGeneCalls' is present but null; the parser "
+                    "reads it with get(..., []) and then iterates the None",
+                )
             )
-        )
+        elif not isinstance(unannotated, list):
+            issues.append(
+                SchemaIssue(
+                    "error",
+                    "unannotatedGeneCalls.not_a_list",
+                    f"'unannotatedGeneCalls' is {type(unannotated).__name__}, "
+                    f"expected a list of gene call objects",
+                )
+            )
 
     messages = report.get("messages")
     if messages is not None and not isinstance(messages, list):
