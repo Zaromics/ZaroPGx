@@ -224,7 +224,25 @@ JOB_STATUS_ERROR = "error"
 # Extensions this service recognises, longest first so `.vcf.gz` wins over `.gz`.
 # The stored filename's extension is always one of these literals, never a slice of
 # the upload's own name.
-SAFE_UPLOAD_EXTENSIONS = (".vcf.gz", ".vcf", ".bcf", ".bam", ".cram", ".sam", ".fastq", ".fq")
+#
+# The compound `.gz` forms come first: an extension is chosen by the first
+# `endswith` that matches, so a bare `.gz` variant added later must never precede
+# the two-part form it is a suffix of.
+#
+# Kept byte-for-byte in step with app/main.py's copy -- tests/test_upload_name_sanitiser.py
+# asserts the two tuples are equal, so neither may be edited alone.
+SAFE_UPLOAD_EXTENSIONS = (
+    ".vcf.gz",
+    ".fastq.gz",
+    ".fq.gz",
+    ".vcf",
+    ".bcf",
+    ".bam",
+    ".cram",
+    ".sam",
+    ".fastq",
+    ".fq",
+)
 
 
 def safe_upload_name(filename, local_job_id):

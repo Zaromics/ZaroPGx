@@ -64,6 +64,9 @@ CORPUS = [
     "reads.bcf",
     "reads.fastq",
     "reads.fq",
+    "reads.fastq.gz",
+    "reads.fq.gz",
+    "READS.FASTQ.GZ",
     "patient_001-run2.vcf",
     # The empty-result case that broke the app route.
     "...",
@@ -250,11 +253,35 @@ def test_output_is_never_empty_and_is_never_the_directory(tmp_path, name):
         ("reads.cram", ".cram"),
         ("reads.sam", ".sam"),
         ("reads.fq", ".fq"),
+        # Gzipped FASTQ is how FASTQ is actually distributed; the bare forms were
+        # allowlisted and the compressed ones were not, so a `reads.fastq.gz`
+        # upload was stored as `readsfastq_<uuid>` -- extensionless, with the
+        # `.fastq` welded into the fragment.
+        ("reads.fastq.gz", ".fastq.gz"),
+        ("reads.fq.gz", ".fq.gz"),
+        ("READS.FASTQ.GZ", ".fastq.gz"),
     ],
 )
 def test_whitelisted_extensions_are_preserved(name, expected):
     """Downstream code branches on the extension, so it has to survive."""
     assert app_safe_upload_name(name, "j").endswith(expected)
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("reads.fastq.gz", "reads_j.fastq.gz"),
+        ("reads.fq.gz", "reads_j.fq.gz"),
+    ],
+)
+def test_the_compressed_fastq_suffix_is_taken_whole(name, expected):
+    """The whole two-part suffix, not a slice of it.
+
+    Order matters in the tuple: the extension is the *first* `endswith` that
+    matches, so a bare `.gz` entry placed ahead of `.fastq.gz` would silently
+    reduce this to `reads.fastq_j.gz`.
+    """
+    assert app_safe_upload_name(name, "j") == expected
 
 
 @pytest.mark.parametrize("name", ["payload.sh", "noextension", "evil.exe", "x.tar.gz"])

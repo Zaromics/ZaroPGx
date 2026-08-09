@@ -660,6 +660,12 @@ def test_extension_is_preserved_so_format_branching_still_works(gatk_api):
         ("sample_job.bcf", ".bcf"),
         ("sample_job.fastq", ".fastq"),
         ("sample_job.fq", ".fq"),
+        # The compressed FASTQ forms, which the allowlist did not carry until
+        # now: `stored_extension` must read back the whole two-part suffix, not
+        # the `.gz` os.path.splitext would return.
+        ("sample_job.fastq.gz", ".fastq.gz"),
+        ("sample_job.fq.gz", ".fq.gz"),
+        ("sample_job.FASTQ.GZ", ".fastq.gz"),
         ("sample_job", ""),
         ("upload_job.unknown", ""),
     ],
@@ -668,6 +674,12 @@ def test_stored_extension_reads_back_what_the_sanitiser_preserved(
     gatk_api, name, expected
 ):
     assert gatk_api.stored_extension(name) == expected
+
+
+@pytest.mark.parametrize("name", ["sample_job.fastq.gz", "sample_job.fq.gz"])
+def test_stored_stem_strips_the_whole_compressed_fastq_suffix(gatk_api, name):
+    """A stem with `.fastq` still on it derives `<name>.fastq.bam` downstream."""
+    assert gatk_api.stored_stem(name) == "sample_job"
 
 
 def test_stored_extension_differs_from_splitext_exactly_where_the_bug_was(gatk_api):
