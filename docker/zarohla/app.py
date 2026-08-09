@@ -40,25 +40,17 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # unrotated handler here grows until the shared volume fills. 10 MiB x 5
 # backups caps each destination at 60 MiB.
 #
-# THE ONE THING THIS SERVICE DOES DIFFERENTLY, and why: the filename carries the
-# pid. zarohla is the only one of the five that runs more than one process --
-# docker/zarohla/Dockerfile:50 is `gunicorn --workers 2` with no `--preload`, so
-# each worker imports this module and builds its own handler. RotatingFileHandler
-# is not multi-process safe: when worker A rolls over it renames the file out from
-# under worker B, which goes on appending to the renamed inode. B's lines then
-# migrate down the .1/.2/... chain and are *deleted* once they fall past
-# backupCount -- silently, which is the worst possible failure for a diagnostic
-# log -- while the 60 MiB ceiling stops holding in the meantime. One file per
-# worker is what makes the bound this block advertises actually true.
-#
-# The cost is file count rather than file size: each is still capped at 60 MiB,
-# and gunicorn only mints a new pid when it respawns a dead worker, so a healthy
-# container holds two. If that ever becomes a nuisance, the better fix is
-# `--workers 1` in the Dockerfile -- which this service arguably wants anyway,
-# since `running_processes` below is per-process state that a second worker
-# cannot see (a cancel request routed to the wrong worker already finds nothing).
+# This block briefly carried the pid in the filename, because zarohla was the
+# only one of the five running `gunicorn --workers 2` and RotatingFileHandler is
+# not multi-process safe: when worker A rolls over it renames the file out from
+# under worker B, which goes on appending to the renamed inode, and B's lines
+# migrate down the .1/.2/... chain until they are silently deleted past
+# backupCount. The Dockerfile now starts one worker (see the comment on its CMD:
+# the `running_processes` registry below is per-process state, so a second worker
+# broke /cancel about half the time), which removes the hazard at the source and
+# lets this go back to the same single shared path as the other four.
 PROGRESS_LOG_PATH = os.getenv(
-    'ZAROHLA_PROGRESS_LOG', str(DATA_DIR / f'zarohla_progress.{os.getpid()}.log')
+    'ZAROHLA_PROGRESS_LOG', str(DATA_DIR / 'zarohla_progress.log')
 )
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
@@ -195,6 +187,13 @@ class CancelRequest(BaseModel):
     patient_id: str
     action: str
 
+# Per-process, and that is only correct because docker/zarohla/Dockerfile starts
+# `gunicorn --workers 1`. /cancel below can only kill a pid it finds in here, so
+# under two workers a cancel accepted by the worker that did not start the job
+# returned {"status": "success"} while OptiType went on running. If this service
+# ever needs more than one worker, this dict has to become genuinely shared state
+# first -- a module global is not that, and neither is `--preload`, which forks
+# after import and then lets each worker mutate its own copy.
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 @app.get("/health")

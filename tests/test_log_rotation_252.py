@@ -48,6 +48,7 @@ Complementary runtime coverage, deliberately not duplicated here:
 """
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -82,16 +83,64 @@ MODULES = {
     },
     "zarohla": {
         "path": Path("docker/zarohla/app.py"),
-        # Per-worker filename, not a plain literal -- see
-        # test_zarohla_gives_each_gunicorn_worker_its_own_file below.
-        "log_files": ["zarohla_progress."],
+        "log_files": ["zarohla_progress.log"],
     },
 }
 
 # Sidecars that run more than one process, and therefore cannot share one
-# RotatingFileHandler destination. Kept as data so that adding a second such
-# service is a deliberate edit rather than an oversight.
-MULTIPROCESS_MODULES = {"zarohla": Path("docker/zarohla/Dockerfile")}
+# RotatingFileHandler destination. Kept as data so that adding such a service is
+# a deliberate edit rather than an oversight.
+#
+# Empty on purpose. zarohla was the one entry, on `gunicorn --workers 2`, and it
+# carried the pid in its log filename to survive that. It now starts one worker:
+# its `running_processes` registry is a module-level dict, so a POST /cancel
+# accepted by the worker that did not start the job found nothing to kill and
+# still answered success -- roughly half of all cancels. `--preload` is not a fix
+# (it forks after import and each worker then mutates its own copy), and a
+# genuinely shared registry is a lot of machinery for a service whose /call-hla
+# is `async def` awaiting a subprocess, so one worker already serves many
+# concurrent typings. See docker/zarohla/Dockerfile for the full argument.
+MULTIPROCESS_MODULES: dict = {}
+
+# Every sidecar's Dockerfile, checked against MULTIPROCESS_MODULES in both
+# directions by test_the_multiprocess_list_still_matches_the_dockerfiles.
+SIDECAR_DOCKERFILES = {
+    "gatk_api": Path("docker/gatk-api/Dockerfile.gatk-api"),
+    "nextflow_runner": Path("docker/nextflow/Dockerfile.nextflow"),
+    "pharmcat": Path("docker/pharmcat/Dockerfile"),
+    "pypgx_wrapper": Path("docker/pypgx/Dockerfile.pypgx"),
+    "zarohla": Path("docker/zarohla/Dockerfile"),
+}
+
+# Every spelling gunicorn accepts, so the rule does not depend on how the CMD is
+# written: `"--workers", "2"` (exec form), `--workers 2`, `--workers=2`, `-w 2`.
+# An earlier cut matched only the first two, which would have read `--workers=2`
+# as no workers at all -- the silent-pass direction. `--worker-class` must not
+# match, hence the trailing `s` and the boundaries around the short form.
+WORKERS_RE = re.compile(
+    r'(?:--workers|(?<![\w-])-w(?![\w-]))["\'\s]*[=,]?["\'\s]*(\d+)'
+)
+
+
+def _instructions(dockerfile_text: str) -> str:
+    """`dockerfile_text` with comment lines removed.
+
+    Every rule below reads this rather than the raw file. The comments matter:
+    the CMD in docker/zarohla/Dockerfile is preceded by a long explanation of
+    why it is one worker and not two, and why `--preload` would not have helped.
+    A rule that read prose would report the service as multi-process, and would
+    flag a `--preload` that exists only in a sentence saying not to use one.
+    """
+    return "\n".join(
+        line
+        for line in dockerfile_text.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def _worker_counts(dockerfile_text: str):
+    """Every `--workers N` in the actual instructions, comments excluded."""
+    return [int(n) for n in WORKERS_RE.findall(_instructions(dockerfile_text))]
 
 
 def _handler_name(call: ast.Call) -> str:
@@ -347,23 +396,72 @@ def test_only_multiprocess_sidecars_use_a_per_worker_filename(module):
     )
 
 
-@pytest.mark.parametrize("name", sorted(MULTIPROCESS_MODULES))
+@pytest.mark.parametrize("name", sorted(SIDECAR_DOCKERFILES))
 def test_the_multiprocess_list_still_matches_the_dockerfiles(name):
     """The rule above is only right while the process model is what it says.
 
-    Dropping zarohla to `--workers 1`, or adding workers to another sidecar,
-    must force a decision here rather than quietly invalidating the reasoning.
+    Checked in both directions and over every sidecar, not just the declared
+    multi-process ones: adding workers anywhere must force a decision here
+    rather than quietly invalidating the reasoning. When zarohla was the one
+    entry this was parametrised over MULTIPROCESS_MODULES, which would have
+    become a no-op the moment that dict emptied.
     """
-    dockerfile = (REPO_ROOT / MULTIPROCESS_MODULES[name]).read_text(encoding="utf-8")
-    assert '"--workers", "2"' in dockerfile or "--workers 2" in dockerfile, (
-        f"{MULTIPROCESS_MODULES[name]} no longer starts 2 workers. If it is now "
-        "single-process, drop it from MULTIPROCESS_MODULES and take the pid back "
-        "out of its log filename."
+    rel = SIDECAR_DOCKERFILES[name]
+    dockerfile = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    workers = _worker_counts(dockerfile)
+    declared = name in MULTIPROCESS_MODULES
+
+    assert any(n > 1 for n in workers) == declared, (
+        f"{rel} starts {workers or 1} worker(s) but is "
+        f"{'not ' if not declared else ''}listed in MULTIPROCESS_MODULES. A "
+        "service that runs several processes needs a per-pid log filename; one "
+        "that does not must not have one (it would only scatter the log)."
     )
-    # The pid trick is only needed because the workers import the module
-    # separately; --preload would fork after import and share one handler, which
-    # is the same unsafe sharing by another route.
-    assert "--preload" not in dockerfile
+    # Unconditional, for every sidecar, not just the declared multi-process ones.
+    # --preload forks after import: with several workers it makes them share one
+    # handler, which is the same unsafe sharing the per-pid filename exists to
+    # avoid, and it does nothing for mutable state mutated after the fork (see
+    # zarohla's `running_processes`). No sidecar here has a use for it. Guarding
+    # this behind `if declared` would have silently switched the check off the
+    # moment MULTIPROCESS_MODULES emptied.
+    assert "--preload" not in _instructions(dockerfile)
+
+
+def test_zarohla_runs_one_worker_so_its_cancel_registry_is_visible():
+    """Not a logging rule -- the reason the logging rule changed.
+
+    `running_processes` in docker/zarohla/app.py is a module-level dict and
+    /cancel can only kill a pid it finds there. Under `gunicorn --workers 2` the
+    OS picked which worker accepted the cancel, so about half of them found an
+    empty registry and answered success while OptiType kept running.
+    """
+    dockerfile = (REPO_ROOT / SIDECAR_DOCKERFILES["zarohla"]).read_text(
+        encoding="utf-8"
+    )
+    assert _worker_counts(dockerfile) == [1], (
+        "docker/zarohla/Dockerfile no longer starts exactly one worker; "
+        "running_processes must become genuinely shared state first (a module "
+        "global is not that, and neither is --preload)"
+    )
+
+    # And the premise: the registry really is a module-level dict, i.e. genuinely
+    # per-process state rather than something already shared. Asserted on the AST
+    # so this does not pass on a mention in a comment.
+    app_path = REPO_ROOT / MODULES["zarohla"]["path"]
+    tree = ast.parse(app_path.read_text(encoding="utf-8"), filename=str(app_path))
+    module_level = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for target in (
+            [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+        )
+        if isinstance(target, ast.Name) and target.id == "running_processes"
+    ]
+    assert module_level, (
+        "docker/zarohla/app.py no longer binds `running_processes` at module "
+        "level; if it became shared state, this test's reasoning is stale"
+    )
 
 
 def test_single_process_sidecars_are_still_single_process():
