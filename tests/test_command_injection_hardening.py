@@ -26,22 +26,30 @@ are not interchangeable, so a fix aimed at one shape leaves the others open:
     `*`, `?`, `[…]` and `{…}` do, and fan the run out across every other file
     in /data/uploads.
 
+  * as a *path*, again, in a third service — `job_dir / file.filename` in
+    docker/zarohla/app.py, for all three of its upload fields. That sidecar
+    runs no `shell=True`, so this one was never command injection; it was the
+    write primitive and the glob shape above, in a service the Nextflow HLA
+    processes reach with a filename derived from the patient's own upload.
+
 So the tests below pin the sanitisers at each source, the argv-list sinks, the
 gene-name shape rule, and the glob containment. Each is written so that
 reverting the corresponding production change fails it. When auditing this
-area, look for the pattern above rather than for these four instances.
+area, look for the pattern above rather than for these five instances.
 
 Why AST/exec rather than `import`:
-docker/pypgx/pypgx_wrapper.py is a container entry point. Importing it on the
-host dies at `import psutil`, then at `sys.path.append('/job-client')`, then at
-a RotatingFileHandler pointed into /data — none of which exist here. This is
-the same constraint tests/test_log_rotation_252.py documents. Rather than
-settle for a text grep, the individual top-level functions are extracted from
-the parsed source and executed against stub modules, so the assertions are made
-against the functions actually running in the image.
+docker/pypgx/pypgx_wrapper.py and docker/zarohla/app.py are container entry
+points. Importing either on the host dies at `import psutil`, then at
+`sys.path.append('/job-client')`, then at a RotatingFileHandler pointed into
+/data — none of which exist here. This is the same constraint
+tests/test_log_rotation_252.py documents. Rather than settle for a text grep,
+the individual top-level functions are extracted from the parsed source and
+executed against stub modules, so the assertions are made against the functions
+actually running in the image.
 """
 
 import ast
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -50,6 +58,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPGX_WRAPPER = REPO_ROOT / "docker" / "pypgx" / "pypgx_wrapper.py"
+ZAROHLA_APP = REPO_ROOT / "docker" / "zarohla" / "app.py"
 
 # The canonical payload: a filename that, interpolated into a shell string,
 # ends the pypgx command and starts a second one. '/' is not used because it is
@@ -240,6 +249,157 @@ def test_safe_upload_name_is_unique_per_call(pypgx_sanitiser):
 
 
 # ---------------------------------------------------------------------------
+# The third instance: docker/zarohla/app.py, and its documented duplicate
+# ---------------------------------------------------------------------------
+#
+# zarohla carries its own copy of ALLOWED_UPLOAD_SUFFIXES / safe_upload_name
+# because it ships in a separate image and imports the module before sys.path
+# reaches the shared /job-client directory (the same argument the bounded
+# logging block in every sidecar makes). A documented duplicate is acceptable;
+# an undocumented divergence is not, so both are executed out of their sources
+# below and required to agree.
+
+# 32 lowercase hex characters, then one of the allowlisted suffixes.
+_STORED_NAME_RE = re.compile(r"^[0-9a-f]{32}(\.[a-z.]+)?$")
+
+# Ordinary names, the shapes the sanitiser exists for, and the degenerate ones.
+SUFFIX_CORPUS = [
+    "reads.fastq",
+    "reads.fq",
+    "reads.fastq.gz",
+    "READS.FASTQ.GZ",
+    "reads.fq.gz",
+    "sample.vcf",
+    "sample.vcf.gz",
+    "sample.vcf.bgz",
+    "reads.bam",
+    "reads.cram",
+    "reads.sam",
+    "reads.bcf",
+    "payload.sh",
+    "noextension",
+    "archive.tar.gz",
+    "",
+    None,
+    "...",
+    "/",
+    PAYLOAD_NAME,
+    "*.fastq.gz",
+    "?.bam",
+    "[a-z].vcf",
+    "{a,b}.fq.gz",
+    "../../etc/passwd.bam",
+    "..\\..\\windows\\evil.bam",
+    "$(touch pwned).fastq",
+    "`touch pwned`.bam",
+    "a|b&c>d<e.vcf",
+    "a b\tc.bam",
+    "a\nb.fastq",
+]
+
+
+@pytest.fixture(scope="module")
+def zarohla_sanitiser():
+    ns = _load_from_source(
+        ZAROHLA_APP,
+        {"safe_upload_name", "ALLOWED_UPLOAD_SUFFIXES"},
+        _pypgx_namespace(_SubprocessRecorder()),
+    )
+    return ns
+
+
+def test_zarohla_and_pypgx_allowlists_are_identical(zarohla_sanitiser):
+    ns = _load_from_source(
+        PYPGX_WRAPPER,
+        {"ALLOWED_UPLOAD_SUFFIXES"},
+        _pypgx_namespace(_SubprocessRecorder()),
+    )
+    assert tuple(zarohla_sanitiser["ALLOWED_UPLOAD_SUFFIXES"]) == tuple(
+        ns["ALLOWED_UPLOAD_SUFFIXES"]
+    ), "the zarohla and pypgx upload-suffix allowlists have drifted apart"
+
+
+@pytest.mark.parametrize("suffix", [".fastq.gz", ".fq.gz"])
+def test_gzipped_fastq_suffixes_are_allowlisted(zarohla_sanitiser, suffix):
+    """OptiType is a FASTQ consumer; a mangled `.fastq.gz` is a confusing failure.
+
+    Written against the two-part suffixes specifically because a single-part
+    matcher silently reduces `reads.fastq.gz` to no recognised extension at all
+    (`.gz` is not on the list) and drops it.
+    """
+    assert suffix in zarohla_sanitiser["ALLOWED_UPLOAD_SUFFIXES"]
+    assert zarohla_sanitiser["safe_upload_name"](f"reads{suffix}", ".fastq").endswith(
+        suffix
+    )
+
+
+@pytest.mark.parametrize("name", SUFFIX_CORPUS)
+def test_zarohla_and_pypgx_choose_the_same_suffix(zarohla_sanitiser, name):
+    """The whole justification for duplicating the helper is that it matches.
+
+    The uuid stem differs by construction on every call, so the differential is
+    on the part that is a decision: which suffix the name is allowed to keep.
+    """
+    pypgx_ns = _load_from_source(
+        PYPGX_WRAPPER,
+        {"safe_upload_name", "ALLOWED_UPLOAD_SUFFIXES"},
+        _pypgx_namespace(_SubprocessRecorder()),
+    )
+    zarohla = zarohla_sanitiser["safe_upload_name"](name, ".fastq")
+    pypgx = pypgx_ns["safe_upload_name"](name, ".fastq")
+    assert zarohla[32:] == pypgx[32:], f"zarohla and pypgx disagree on {name!r}"
+
+
+@pytest.mark.parametrize("name", SUFFIX_CORPUS)
+def test_zarohla_stored_name_is_always_inert(zarohla_sanitiser, name):
+    """Every byte is our own hex uuid or a literal suffix from the tuple."""
+    result = zarohla_sanitiser["safe_upload_name"](name, ".fastq")
+    assert _STORED_NAME_RE.match(result), result
+    assert "/" not in result and "\\" not in result
+    assert ".." not in result
+    for meta in "*?[]{}$`|&;<>() \t\n'\"":
+        assert meta not in result, f"{meta!r} survived {name!r} -> {result!r}"
+
+
+def test_zarohla_upload_names_do_not_collide(zarohla_sanitiser):
+    """file1 and file2 share one job directory, so equal names used to clobber."""
+    names = {
+        zarohla_sanitiser["safe_upload_name"]("reads.fastq", ".fastq")
+        for _ in range(50)
+    }
+    assert len(names) == 50
+
+
+def test_zarohla_never_builds_a_path_from_the_client_filename():
+    """Reverting any of the three save sites to `job_dir / fileN.filename` fails here."""
+    offenders = _raw_filename_path_joins(
+        ast.parse(ZAROHLA_APP.read_text(encoding="utf-8"), filename=str(ZAROHLA_APP))
+    )
+    assert not offenders, (
+        f"{ZAROHLA_APP.name} joins a path with the raw client filename at "
+        f"line(s) {offenders}; it must go through safe_upload_name()"
+    )
+
+
+def test_zarohla_upload_endpoint_calls_the_sanitiser():
+    """All three multipart fields -- file, file1, file2 -- must be routed through it."""
+    calls = [
+        node
+        for node in ast.walk(
+            ast.parse(
+                ZAROHLA_APP.read_text(encoding="utf-8"), filename=str(ZAROHLA_APP)
+            )
+        )
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "safe_upload_name"
+    ]
+    assert (
+        len(calls) >= 3
+    ), "expected safe_upload_name() at all three /call-hla save sites"
+
+
+# ---------------------------------------------------------------------------
 # Sink side: every command is an argv list, so a payload cannot become syntax
 # ---------------------------------------------------------------------------
 
@@ -381,10 +541,15 @@ def test_pypgx_wrapper_never_uses_shell_true():
     )
 
 
-def test_pypgx_wrapper_never_builds_a_path_from_the_client_filename():
-    """Reverting either source site to `job_dir / file.filename` fails here."""
+def _raw_filename_path_joins(tree: ast.AST):
+    """Line numbers of every `<anything> / <upload>.filename` path join.
+
+    Matched on any Name receiver, not just `file`: zarohla has three upload
+    fields (`file`, `file1`, `file2`), and a guard written against one of them
+    would have passed while the other two stayed open.
+    """
     offenders = []
-    for node in ast.walk(_pypgx_tree()):
+    for node in ast.walk(tree):
         if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
             continue
         right = node.right
@@ -392,9 +557,14 @@ def test_pypgx_wrapper_never_builds_a_path_from_the_client_filename():
             isinstance(right, ast.Attribute)
             and right.attr == "filename"
             and isinstance(right.value, ast.Name)
-            and right.value.id == "file"
         ):
             offenders.append(getattr(node, "lineno", "?"))
+    return offenders
+
+
+def test_pypgx_wrapper_never_builds_a_path_from_the_client_filename():
+    """Reverting either source site to `job_dir / file.filename` fails here."""
+    offenders = _raw_filename_path_joins(_pypgx_tree())
     assert not offenders, (
         f"{PYPGX_WRAPPER.name} joins a path with the raw client filename at "
         f"line(s) {offenders}; it must go through safe_upload_name()"

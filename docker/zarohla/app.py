@@ -114,6 +114,80 @@ logging.basicConfig(
 logger = logging.getLogger("zarohla")
 _warn_about_unopened_logs(logger)
 
+# --------------------------------------------------------------------------
+# Upload filename sanitising
+# --------------------------------------------------------------------------
+# `file.filename` arrives in the multipart body and nothing upstream of this
+# service constrains it. The Nextflow HLA processes post `-F file=@<staged
+# name>` (pipelines/pgx/main.nf), and that staged name derives from the
+# patient's own upload, so joining it onto the job directory made it a
+# path-write primitive: `../` walks out of TEMP_DIR, and `*`, `?`, `[...]` and
+# `{...}` survive into paths that later reach glob-expanding code -- an upload
+# filename doing exactly that in the Nextflow lane produced a verified
+# cross-patient disclosure. This service runs no `shell=True`, so it was never
+# command injection here; the write primitive is reason enough on its own.
+#
+# DOCUMENTED DUPLICATE of docker/pypgx/pypgx_wrapper.py's ALLOWED_UPLOAD_SUFFIXES
+# and safe_upload_name(): same tuple in the same order, same fallback
+# semantics, same uuid4-hex stem. It is copied rather than imported because
+# these are separate images and this module is imported before sys.path is
+# extended with the shared /job-client directory -- the same argument the
+# bounded-logging block above makes. The copy is held honest by
+# tests/test_command_injection_hardening.py, which execs both implementations
+# out of their sources and asserts they choose the same suffix for the same
+# name; an undocumented divergence is what that test exists to prevent.
+#
+# Longest suffixes first: `.vcf.gz` must win over `.vcf`, and `.fastq.gz` over
+# `.fastq` -- OptiType is a FASTQ consumer, so the gzipped FASTQ suffixes are
+# the ones that matter most here.
+ALLOWED_UPLOAD_SUFFIXES = (
+    ".vcf.gz",
+    ".vcf.bgz",
+    ".vcf",
+    ".bcf",
+    ".bam",
+    ".cram",
+    ".sam",
+    ".fastq.gz",
+    ".fq.gz",
+    ".fastq",
+    ".fq",
+)
+
+
+def safe_upload_name(original: Optional[str], default_suffix: str) -> str:
+    """Return a shell-inert, collision-free on-disk name for an upload.
+
+    Only the *extension* of `original` is honoured, and only if it appears in
+    ALLOWED_UPLOAD_SUFFIXES; everything else about the caller's name is
+    discarded. An unrecognised or missing extension falls back to
+    `default_suffix`, which the caller picks from the endpoint's contract --
+    `.fastq` here, because a file this endpoint does not recognise as an
+    alignment is handed to OptiType as reads.
+
+    Nothing downstream correlates on the original name: /call-hla returns only
+    {"status", "results"}, the results are read from OptiType's own timestamped
+    `*_result.tsv` rather than from anything named after the input, the job
+    directory is removed in the `finally` block, and the one place the stored
+    name is still consulted -- the BAM/SAM/CRAM branch below -- only classifies
+    the suffix, which this function preserves.
+
+    The per-call uuid also removes a collision this endpoint could already hit:
+    `file1` and `file2` land in the same job directory, so two uploads sharing
+    a filename used to overwrite each other and hand OptiType the same file
+    twice.
+    """
+    suffix = default_suffix
+    # Strip any directory component under both separators before matching, so a
+    # name like `..\evil/x.bam` cannot smuggle one through.
+    name = (original or "").strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
+    for candidate in ALLOWED_UPLOAD_SUFFIXES:
+        if name.endswith(candidate):
+            suffix = candidate
+            break
+    return f"{uuid.uuid4().hex}{suffix}"
+
+
 app = FastAPI(title="ZaroHLA API", version="1.0.0")
 
 class CancelRequest(BaseModel):
@@ -193,12 +267,22 @@ async def call_hla(
         f2_path = None
         
         if file1 and file2:
-            f1_path = job_dir / file1.filename
-            f2_path = job_dir / file2.filename
+            # Never `job_dir / file1.filename` -- see safe_upload_name() above.
+            f1_path = job_dir / safe_upload_name(file1.filename, ".fastq")
+            f2_path = job_dir / safe_upload_name(file2.filename, ".fastq")
+            logger.info(
+                f"Job {local_job_id}: storing paired uploads "
+                f"{file1.filename!r}/{file2.filename!r} as "
+                f"{f1_path.name!r}/{f2_path.name!r}"
+            )
             with open(f1_path, "wb") as f: f.write(await file1.read())
             with open(f2_path, "wb") as f: f.write(await file2.read())
         elif file:
-            input_path = job_dir / file.filename
+            input_path = job_dir / safe_upload_name(file.filename, ".fastq")
+            logger.info(
+                f"Job {local_job_id}: storing upload {file.filename!r} as "
+                f"{input_path.name!r}"
+            )
             with open(input_path, "wb") as f: f.write(await file.read())
             
             if input_path.name.lower().endswith(".bam") or input_path.name.lower().endswith(".sam") or input_path.name.lower().endswith(".cram"):
