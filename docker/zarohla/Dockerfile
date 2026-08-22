@@ -68,15 +68,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # by construction too: only pipelines/pgx/main.nf submits HLA jobs (see the note
 # on this service in compose.yml), at most one per pipeline run.
 #
-# What is genuinely lost: app.py ingests an upload as
+# What is genuinely lost: app.py used to ingest an upload as
 # `f.write(await file.read())` -- the whole file into memory, then a synchronous
-# write -- and `shutil.rmtree`s the job dir the same way. Those block the one
-# event loop, so while a multi-GB BAM is being ingested this container will not
-# answer /health or the broadcast /cancel, where a second worker could have. The
-# fix for that is chunked I/O, which the gatk-api sidecar already does
-# (`await file.read(UPLOAD_CHUNK_BYTES)`), not a second worker -- a second worker
-# only halves the odds of a blocked ingest while breaking every cancel that lands
-# on the wrong one.
+# write. It now streams in UPLOAD_CHUNK_BYTES chunks, the same shape the
+# gatk-api sidecar already used, so that part no longer blocks the loop for the
+# duration of the read. `shutil.rmtree`s of the job dir are still synchronous
+# and still block the one event loop while they run, so while a large cleanup
+# is in flight this container will not answer /health or the broadcast
+# /cancel, where a second worker could have. A second worker is still the
+# wrong fix for that: it only halves the odds of a blocked request landing on
+# the busy worker while breaking every cancel that lands on the wrong one.
 #
 # The other alternative -- a registry shared across workers -- means real shared
 # state (Redis, or a file under /data with locking), which is a lot of moving

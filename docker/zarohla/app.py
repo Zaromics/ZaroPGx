@@ -22,6 +22,13 @@ DATA_DIR = Path(os.getenv('DATA_DIR', '/data'))
 TEMP_DIR = DATA_DIR / 'temp'
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Uploads are streamed to disk in chunks of this size rather than read into memory --
+# see Dockerfile's note on this service's single-worker choice: a whole-genome BAM
+# ingested via a bare `await file.read()` blocks the one event loop for as long as
+# the read takes, taking /health and the broadcast /cancel down with it. Same value
+# as the gatk-api sidecar.
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+
 # --------------------------------------------------------------------------
 # Bounded logging (BACKLOG 252). Same block, same values, same failure
 # behaviour in every ZaroPGx sidecar: docker/gatk-api/gatk_api.py,
@@ -274,15 +281,21 @@ async def call_hla(
                 f"{file1.filename!r}/{file2.filename!r} as "
                 f"{f1_path.name!r}/{f2_path.name!r}"
             )
-            with open(f1_path, "wb") as f: f.write(await file1.read())
-            with open(f2_path, "wb") as f: f.write(await file2.read())
+            with open(f1_path, "wb") as f:
+                while chunk := await file1.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
+            with open(f2_path, "wb") as f:
+                while chunk := await file2.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
         elif file:
             input_path = job_dir / safe_upload_name(file.filename, ".fastq")
             logger.info(
                 f"Job {local_job_id}: storing upload {file.filename!r} as "
                 f"{input_path.name!r}"
             )
-            with open(input_path, "wb") as f: f.write(await file.read())
+            with open(input_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
             
             if input_path.name.lower().endswith(".bam") or input_path.name.lower().endswith(".sam") or input_path.name.lower().endswith(".cram"):
                 if job_client:
