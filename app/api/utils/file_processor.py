@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -149,6 +149,35 @@ class FileAnalysis:
     error: Optional[str] = None
     is_valid: bool = True
     validation_errors: Optional[List[str]] = None
+    # Same evidence VCFHeaderInfo.reference_genome_ambiguous/candidates carry for
+    # VCF (Task 6/8), but for BAM/CRAM/SAM: vcf_info stays VCF-only (see above),
+    # so a self-contradicting alignment header's @SQ evidence travels through
+    # these fields instead, populated by analyze_file's alignment branch and
+    # read by determine_workflow's BAM/CRAM/SAM branches (Task 10 item 5).
+    reference_genome_ambiguous: bool = False
+    reference_genome_candidates: List[str] = field(default_factory=list)
+
+
+def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
+    """Same warning copy/channel for a self-contradicting genome-build header,
+    shared by determine_workflow's VCF and BAM/CRAM/SAM branches (Task 8,
+    extended to alignment files by Task 10 item 5).
+
+    Does not imply unsupported/is_provisional: the build genuinely could not
+    be verified, so the job proceeds against the caller-declared build rather
+    than being refused or marked as a known-wrong one.
+    """
+    candidates = candidates or []
+    # detect_reference_assembly's contract (header_inspector.py) only ever
+    # sets ambiguous=True with >=2 candidates today, but gate on truthiness
+    # rather than a >=2 length check so a future one-candidate ambiguity still
+    # gets named instead of silently falling back to the no-candidates phrasing.
+    builds_note = f" (candidates: {', '.join(candidates)})" if candidates else ""
+    return (
+        "<p>⚠️ This file's header contradicts itself about the genome "
+        f"build{builds_note}. The build could not be verified, so "
+        "analysis proceeds against the caller-declared build.</p>"
+    )
 
 
 class FileProcessor:
@@ -186,6 +215,8 @@ class FileProcessor:
 
             # If it's a VCF or alignment, use the independent header inspector
             vcf_info = None
+            reference_genome_ambiguous = False
+            reference_genome_candidates: List[str] = []
             try:
                 normalized = inspect_header(str(file_path))
                 # Map normalized structure to VCFHeaderInfo when applicable
@@ -227,21 +258,30 @@ class FileProcessor:
                         reference_genome_ambiguous=reference_genome_ambiguous,
                         reference_genome_candidates=reference_genome_candidates,
                     )
+                elif file_type in (
+                    FileType.BAM,
+                    FileType.CRAM,
+                    FileType.SAM,
+                ) and isinstance(normalized, dict):
+                    # Alignment headers carry the same ambiguity evidence
+                    # (Task 6's @SQ-record detection) but have no VCFHeaderInfo
+                    # to live in -- vcf_info stays VCF-only (see FileAnalysis's
+                    # dataclass comment), so it travels on FileAnalysis itself
+                    # instead, for determine_workflow's BAM/CRAM/SAM branches
+                    # to read (Task 10 item 5).
+                    metadata = normalized.get("metadata") or {}
+                    reference_genome_ambiguous = bool(
+                        metadata.get("reference_genome_ambiguous")
+                    )
+                    reference_genome_candidates = (
+                        metadata.get("reference_genome_candidates") or []
+                    )
             except Exception as e:
                 logger.warning(
                     f"Independent header inspector failed, falling back for type {file_type}: {e}"
                 )
-                # Fall back to prior behavior for VCF only
-                if file_type == FileType.VCF:
-                    try:
-                        vcf_info = await self._analyze_vcf_header(file_path)
-                        vcf_info.is_bgzipped = (
-                            is_compressed
-                            or vcf_info.is_bgzipped
-                            or str(file_path).endswith(".gz")
-                        )
-                    except Exception:
-                        pass
+                # No fallback exists: inspector failure leaves vcf_info at its
+                # None initialization above, regardless of file_type.
 
             # Create the file analysis object with all the gathered information
             analysis = FileAnalysis(
@@ -250,6 +290,8 @@ class FileProcessor:
                 has_index=has_index,
                 vcf_info=vcf_info,
                 file_size=file_size,
+                reference_genome_ambiguous=reference_genome_ambiguous,
+                reference_genome_candidates=reference_genome_candidates,
             )
 
             logger.info(f"Analysis complete: {analysis}")
@@ -830,23 +872,10 @@ class FileProcessor:
                     # (e.g. ##contig records naming two builds), not a header
                     # with no evidence at all. The latter stays silent -- see
                     # detect_reference_assembly's contract in header_inspector.py.
-                    # This does not set unsupported/is_provisional: the build
-                    # genuinely could not be verified, so the job proceeds
-                    # against the caller-declared build rather than being
-                    # refused or marked as a known-wrong one.
-                    candidates = vcf_info.reference_genome_candidates or []
-                    # detect_reference_assembly's contract (header_inspector.py)
-                    # only ever sets ambiguous=True with >=2 candidates today,
-                    # but gate on truthiness rather than a >=2 length check so
-                    # a future one-candidate ambiguity still gets named instead
-                    # of silently falling back to the no-candidates phrasing.
-                    builds_note = (
-                        f" (candidates: {', '.join(candidates)})" if candidates else ""
-                    )
                     workflow["warnings"].append(
-                        "<p>⚠️ This file's header contradicts itself about the genome "
-                        f"build{builds_note}. The build could not be verified, so "
-                        "analysis proceeds against the caller-declared build.</p>"
+                        _ambiguous_reference_genome_warning(
+                            vcf_info.reference_genome_candidates
+                        )
                     )
 
                 # Enhanced sequencing profile recommendations
@@ -1074,6 +1103,26 @@ class FileProcessor:
             )
             workflow["recommendations"].append(
                 "<p>If you happen to have a supported datafile, please try again and upload that file(s) instead.</p>"
+            )
+
+        # Same self-contradicting-header warning as the VCF branch above
+        # (Task 8), extended to alignment files (Task 10 item 5): T6's
+        # detect_reference_assembly flags a BAM/CRAM/SAM header the same way
+        # it flags a VCF one, via analysis.reference_genome_ambiguous/
+        # _candidates (populated by analyze_file's alignment branch, since
+        # vcf_info stays VCF-only). A single check after the branches above,
+        # rather than one copy per BAM/CRAM/SAM branch, keeps the warning from
+        # drifting out of sync between them. "No evidence" stays silent here
+        # exactly as it does for VCF, because reference_genome_ambiguous is
+        # only ever True when the header actually contradicts itself.
+        if (
+            analysis.file_type in (FileType.BAM, FileType.CRAM, FileType.SAM)
+            and analysis.reference_genome_ambiguous
+        ):
+            workflow["warnings"].append(
+                _ambiguous_reference_genome_warning(
+                    analysis.reference_genome_candidates
+                )
             )
 
         return workflow

@@ -21,8 +21,11 @@ curation: full
 
 ## Pipeline Function
 
-- Add `bcftools` liftover for GRCh37 input (the files are already accepted and analysed on
-  their original coordinates as provisional); surface accuracy caveats after conversion
+- Add real coordinate-conversion liftover for GRCh37 input (the files are already accepted
+  and analysed on their original coordinates as provisional) via `bcftools +liftover`,
+  CrossMap, or Picard `LiftoverVcf` — plain `bcftools annotate --rename-chrs` was tried and
+  deleted (Aug 2026) because it only renames contigs, it does not convert coordinates;
+  surface accuracy caveats after conversion
 - Clarify workflow vs job IDs; define single source for workflow definition and per-run job state
 - Represent workflows as finite state matrix, each unique and deterministic workflow should have an assigned ID which can be quickly spot checked 
 - Nextflow orchestration

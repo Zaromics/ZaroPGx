@@ -86,6 +86,11 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
 REPORTS_DIR = os.environ.get("REPORT_DIR", "/data/reports")
 
+# Same idiom/size as the sidecars' UPLOAD_CHUNK_BYTES (docker/pypgx/pypgx_wrapper.py,
+# docker/zarohla/app.py, docker/gatk-api/gatk_api.py, docker/pharmcat/pharmcat.py):
+# stream an upload in bounded chunks instead of buffering it whole in memory.
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+
 # Not created at import time — the default is an absolute container path, so importing this
 # module off-host would create it on the host. app.main's startup_event creates it instead.
 
@@ -1928,8 +1933,16 @@ async def inspect_file_header(
             delete=False, suffix=f"_{safe_upload_basename(file.filename)}"
         )
         try:
-            content = await file.read()
-            temp_file.write(content)
+            # Stream to disk in bounded chunks rather than buffering the whole
+            # upload in memory -- the same UPLOAD_CHUNK_BYTES idiom the sidecars
+            # use (see tests/test_sidecar_chunked_io.py). Header inspection still
+            # needs the complete file on disk (inspect_header and
+            # process_upload below both read the saved copy, not a prefix), so
+            # this bounds memory, not I/O volume.
+            file_size = 0
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                temp_file.write(chunk)
+                file_size += len(chunk)
             temp_file.close()
 
             # Inspect header
@@ -1970,7 +1983,7 @@ async def inspect_file_header(
                 "status": "success",
                 "success": True,
                 "filename": file.filename,
-                "file_size": len(content),
+                "file_size": file_size,
                 "header_info": header_info,
                 "compat": {"workflow": compat_workflow},
             }
