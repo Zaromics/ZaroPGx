@@ -191,6 +191,50 @@ os.chmod(TEMP_DIR, 0o777)
 print(f"Starting PharmCAT wrapper service with DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
 print(f"PharmCAT JAR location: {PHARMCAT_JAR}")
 
+# /genotype's two uploads (the VCF `file`, and the optional `outside_tsv`)
+# are streamed to disk in chunks of this size rather than read into memory in
+# one call -- a whole-genome VCF does not fit comfortably as a single
+# in-memory `bytes` plus a duplicate on-disk copy, and `await file.read()`
+# with no size argument reads the entire upload before the first byte is
+# written. Same idiom, same value, as the other four sidecars
+# (docker/gatk-api/gatk_api.py, docker/pypgx/pypgx_wrapper.py,
+# docker/zarohla/app.py).
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+
+# This service has no authentication and is reachable from every container on
+# the compose network, so `file.filename` off /genotype's multipart request is
+# entirely attacker-controlled. It used to be joined straight onto TEMP_DIR
+# with no sanitisation at all (an `os.path.join` of TEMP_DIR and the raw
+# filename), so a name like `../../evil.vcf` was a path-write primitive, and
+# two uploads sharing a name overwrote each other.
+#
+# DOCUMENTED DUPLICATE of docker/pypgx/pypgx_wrapper.py's and
+# docker/zarohla/app.py's ALLOWED_UPLOAD_SUFFIXES / safe_upload_name(): same
+# uuid4-hex-stem rename, same reasoning, narrowed to this route's own
+# contract. It does not need those two's unrecognised-extension fallback:
+# process_genotype()'s own extension guard, a few lines above the call site
+# below (load-bearing for Task 1's BCF-refusal rationale -- do not loosen
+# it), has already rejected any filename that does not end in .vcf, .vcf.gz,
+# or .vcf.bgz by the time safe_upload_name() ever runs.
+#
+# Nothing downstream correlates on the original name: file.filename is still
+# read for display/logging and to classify the extension when this route
+# copies the upload into its own per-job temp directory further down, but
+# never again to build a path, and the JSON response never echoes file_path.
+ALLOWED_UPLOAD_SUFFIXES = (".vcf.gz", ".vcf.bgz", ".vcf")
+
+
+def safe_upload_name(original: str) -> str:
+    """Return a shell/path-inert, collision-free on-disk name for the upload."""
+    name = (original or "").strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
+    for suffix in ALLOWED_UPLOAD_SUFFIXES:
+        if name.endswith(suffix):
+            return f"{uuid.uuid4().hex}{suffix}"
+    # Unreachable while the extension guard above runs first; kept as a
+    # defined fallback rather than an assert so a caller that skips the guard
+    # fails safe instead of writing an attacker-chosen name.
+    return f"{uuid.uuid4().hex}.vcf"
+
 # Add these global variables after the existing ones
 processing_status = {
     "current_file": None,
@@ -375,16 +419,19 @@ async def process_genotype(
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
         
-        # Save file to temporary directory
-        file_path = os.path.join(TEMP_DIR, file.filename)
+        # Save file to temporary directory. The on-disk name is never
+        # file.filename -- see safe_upload_name() above -- so a hostile
+        # client-supplied name can neither traverse out of TEMP_DIR nor
+        # collide with a concurrent upload.
+        file_path = os.path.join(TEMP_DIR, safe_upload_name(file.filename))
         logger.info(f"Saving file to: {file_path}")
         logger.info(f"TEMP_DIR exists: {os.path.exists(TEMP_DIR)}")
         logger.info(f"TEMP_DIR permissions: {oct(os.stat(TEMP_DIR).st_mode) if os.path.exists(TEMP_DIR) else 'N/A'}")
-        
+
         with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
+
         logger.info(f"VCF file saved to {file_path}")
         logger.info(f"File size after save: {os.path.getsize(file_path)}")
         logger.info(f"File permissions: {oct(os.stat(file_path).st_mode)}")
@@ -473,9 +520,12 @@ async def process_genotype(
                 outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
 
                 if outside_tsv:
+                    # Path is base_name-derived, not filename-derived (see
+                    # outside_path above), so there is nothing to sanitise
+                    # here -- only the whole-file-buffer read needed fixing.
                     with open(outside_path, "wb") as f:
-                        content = await outside_tsv.read()
-                        f.write(content)
+                        while chunk := await outside_tsv.read(UPLOAD_CHUNK_BYTES):
+                            f.write(chunk)
                     logger.info(f"Saved uploaded outside call TSV to {outside_path}")
                     _translate_uploaded_outside_tsv(outside_path)
                 else:
