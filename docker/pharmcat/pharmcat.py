@@ -191,12 +191,13 @@ os.chmod(TEMP_DIR, 0o777)
 print(f"Starting PharmCAT wrapper service with DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
 print(f"PharmCAT JAR location: {PHARMCAT_JAR}")
 
-# /genotype's upload is streamed to disk in chunks of this size rather than
-# read into memory in one call -- a whole-genome VCF does not fit comfortably
-# as a single in-memory `bytes` plus a duplicate on-disk copy, and
-# `await file.read()` with no size argument reads the entire upload before
-# the first byte is written. Same idiom, same value, as the other four
-# sidecars (docker/gatk-api/gatk_api.py, docker/pypgx/pypgx_wrapper.py,
+# /genotype's two uploads (the VCF `file`, and the optional `outside_tsv`)
+# are streamed to disk in chunks of this size rather than read into memory in
+# one call -- a whole-genome VCF does not fit comfortably as a single
+# in-memory `bytes` plus a duplicate on-disk copy, and `await file.read()`
+# with no size argument reads the entire upload before the first byte is
+# written. Same idiom, same value, as the other four sidecars
+# (docker/gatk-api/gatk_api.py, docker/pypgx/pypgx_wrapper.py,
 # docker/zarohla/app.py).
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
@@ -519,9 +520,12 @@ async def process_genotype(
                 outside_path = os.path.join(temp_dir, f"{base_name}.outside.tsv")
 
                 if outside_tsv:
+                    # Path is base_name-derived, not filename-derived (see
+                    # outside_path above), so there is nothing to sanitise
+                    # here -- only the whole-file-buffer read needed fixing.
                     with open(outside_path, "wb") as f:
-                        content = await outside_tsv.read()
-                        f.write(content)
+                        while chunk := await outside_tsv.read(UPLOAD_CHUNK_BYTES):
+                            f.write(chunk)
                     logger.info(f"Saved uploaded outside call TSV to {outside_path}")
                     _translate_uploaded_outside_tsv(outside_path)
                 else:

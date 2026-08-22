@@ -41,6 +41,12 @@ extension guard, a few lines above the save site (load-bearing for Task 1's
 BCF-refusal rationale), has already restricted file.filename to
 .vcf/.vcf.gz/.vcf.bgz by the time safe_upload_name() ever runs.
 
+A sixth site, found in review one call after the fifth: `/genotype`'s
+optional `outside_tsv` upload had the same whole-file-buffer read, but its
+destination path (`outside_path`, built from `base_name`) was never
+filename-derived and so was never unsafe -- only the read needed to change,
+to the same UPLOAD_CHUNK_BYTES idiom, with no renaming involved.
+
 Each sidecar is imported the way tests/test_gatk_api_no_mock_bam.py already
 imports gatk_api.py: out of its source file with `psutil` and `job_client`
 (the /job-client stub every sidecar Dockerfile copies in) faked in sys.modules,
@@ -111,11 +117,6 @@ def _import_sidecar(spec_name, source_path, mp, root):
     mp.setenv("REFERENCE_DIR", str(root / "reference"))
     mp.setenv("PYPGX_PROGRESS_LOG", str(root / "pypgx_progress.log"))
     mp.setenv("ZAROHLA_PROGRESS_LOG", str(root / "zarohla_progress.log"))
-    # pharmcat.py-specific; harmless no-ops for the other three modules, none
-    # of which read these exact env var names.
-    mp.setenv("TEMP_DIR", str(root / "pharmcat_temp"))
-    mp.setenv("REPORT_DIR", str(root / "reports"))
-    mp.setenv("PHARMCAT_PROGRESS_LOG", str(root / "pharmcat_progress.log"))
     mp.setitem(sys.modules, "psutil", _fake_psutil())
     mp.setitem(sys.modules, "job_client", _fake_job_client())
 
@@ -175,6 +176,17 @@ def pharmcat_api(tmp_path_factory):
     root = tmp_path_factory.mktemp("pharmcat_home")
     before_handlers = list(logging.root.handlers)
     with pytest.MonkeyPatch.context() as mp:
+        # pharmcat.py-specific env vars, kept out of _import_sidecar() (which
+        # the other three fixtures also use) rather than added there: unlike
+        # TEMP_DIR/PHARMCAT_PROGRESS_LOG, REPORT_DIR is also read by
+        # docker/pypgx/pypgx_wrapper.py at module level, so setting it in the
+        # shared helper would have redirected pypgx's REPORT_DIR too --
+        # harmless in practice (better sandboxing, if anything), but not
+        # something a shared helper should do silently for a module that did
+        # not ask for it.
+        mp.setenv("TEMP_DIR", str(root / "pharmcat_temp"))
+        mp.setenv("REPORT_DIR", str(root / "reports"))
+        mp.setenv("PHARMCAT_PROGRESS_LOG", str(root / "pharmcat_progress.log"))
         # Makes `from pharmcat_assume_ref import ...`, called inside the
         # /genotype handler, resolve the same way docker/pharmcat/Dockerfile's
         # PYTHONPATH entry for /assume-ref-lib does in the real image.
@@ -277,16 +289,25 @@ def test_zarohla_upload_sites_no_longer_buffer_whole_file(zarohla_source):
     assert zarohla_source.count("await file2.read(UPLOAD_CHUNK_BYTES)") == 1
 
 
-def test_pharmcat_upload_site_no_longer_buffers_whole_file(pharmcat_source):
-    """/genotype's own upload save (queue task 9) -- the fifth site, and the
-    first found by the rescan to also build its path off the raw filename.
+def test_pharmcat_upload_sites_no_longer_buffer_whole_file(pharmcat_source):
+    """/genotype has two upload save sites -- the VCF `file` (queue task 9's
+    original finding, and the only one whose path was also built off the raw
+    filename) and the optional `outside_tsv` (found in review one call after
+    the first: same whole-file-buffer shape, but its path was already
+    base_name-derived and safe, so only its read needed to change).
     """
-    assert "content = await file.read()" not in pharmcat_source, (
-        "pharmcat.py reads an entire upload into memory with a bare "
-        "await file.read(); the save site must stream via UPLOAD_CHUNK_BYTES"
-    )
-    # /genotype: exactly one chunked read loop for the uploaded VCF.
+    for bad in (
+        "content = await file.read()",
+        "content = await outside_tsv.read()",
+    ):
+        assert bad not in pharmcat_source, (
+            f"pharmcat.py still has the old whole-file-buffer shape {bad!r}; "
+            "it must stream via UPLOAD_CHUNK_BYTES"
+        )
+    # One chunked read loop apiece -- checked explicitly per site rather than
+    # a >=1 total, so a regression at either site is caught by name.
     assert pharmcat_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 1
+    assert pharmcat_source.count("await outside_tsv.read(UPLOAD_CHUNK_BYTES)") == 1
 
 
 def test_pharmcat_upload_site_no_longer_builds_path_from_raw_filename(pharmcat_source):
@@ -481,6 +502,56 @@ def test_pharmcat_genotype_streams_upload_in_chunks(pharmcat_api, monkeypatch):
     assert read_sizes, "file.read() was never called"
     assert set(read_sizes) == {4}
     assert len(read_sizes) > 1, "the whole upload was still read in a single call"
+
+
+def test_pharmcat_genotype_streams_outside_tsv_upload_in_chunks(
+    pharmcat_api, monkeypatch
+):
+    """The second finding from review: outside_tsv's save had the same
+    whole-file-buffer read (its path was already base_name-derived and safe,
+    so only the read needed to change).
+    """
+    monkeypatch.setattr(pharmcat_api, "UPLOAD_CHUNK_BYTES", 4)
+    read_sizes = _spy_on_upload_reads(monkeypatch)
+
+    captured: dict = {}
+
+    def fake_translate(outside_path):
+        # Read while the file still exists -- the enclosing
+        # tempfile.TemporaryDirectory() that holds it is torn down (its
+        # `with` block exits) before the response reaches this test, the
+        # same constraint zarohla's job_dir rmtree imposes on its own test.
+        captured["content"] = Path(outside_path).read_bytes()
+
+    monkeypatch.setattr(pharmcat_api, "_translate_uploaded_outside_tsv", fake_translate)
+
+    vcf_payload = b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\n"
+    outside_payload = b"Gene\tDiplotype\nCYP2D6\t*1/*1\n"  # not a multiple of 4
+    client = TestClient(pharmcat_api.app)
+    response = client.post(
+        "/genotype",
+        data={"patient_id": "patient789"},
+        files={
+            "file": ("sample.vcf", vcf_payload, "application/octet-stream"),
+            "outside_tsv": (
+                "outside.tsv",
+                outside_payload,
+                "text/tab-separated-values",
+            ),
+        },
+    )
+
+    assert response.status_code in (200, 500), response.text
+    assert (
+        captured.get("content") == outside_payload
+    ), "the outside_tsv save does not match what was uploaded"
+
+    # Both uploads share the same UPLOAD_CHUNK_BYTES=4: if either had reverted
+    # to a single unchunked read(), that call's default size=-1 would show up
+    # here and break the {4}-only set.
+    assert read_sizes, "file.read() was never called"
+    assert set(read_sizes) == {4}
+    assert len(read_sizes) > 1, "at least one upload was still read in a single call"
 
 
 def test_pharmcat_genotype_sanitises_hostile_filename(pharmcat_api, monkeypatch):
