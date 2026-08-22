@@ -531,6 +531,14 @@ def inspect_header(
                     version = programs[0].get("VN")
         except Exception:
             pass
+        # The @SQ records are the same evidence a VCF's ##contig records are:
+        # the coordinate system every alignment in the file is expressed in.
+        # This branch used to report reference_genome unconditionally as None.
+        build = detect_reference_assembly(
+            contig_lengths={
+                seq["name"]: seq.get("length") for seq in sequences if seq.get("name")
+            }
+        )
         normalized = {
             "file_info": {
                 "path": str(path),
@@ -546,8 +554,14 @@ def inspect_header(
             "metadata": {
                 "version": version,
                 "created_by": created_by,
-                "reference_genome": None,
+                "reference_genome": build["assembly"],
+                # No path to report: an alignment header names sequences, not a
+                # FASTA. The @PG `-R` value is a record of the tool run rather
+                # than of these alignments, and is not read here.
                 "reference_genome_path": None,
+                "reference_genome_source": build["source"],
+                "reference_genome_ambiguous": build["ambiguous"],
+                "reference_genome_candidates": build["candidates"],
             },
             "sequences": sequences,
             "sample": None,

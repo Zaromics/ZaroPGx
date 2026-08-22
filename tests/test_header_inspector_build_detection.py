@@ -12,6 +12,7 @@ against the wrong coordinates with nothing in the output saying so.
 
 import pytest
 
+from app.api.utils import header_inspector
 from app.api.utils.header_inspector import (
     GenomicHeaderInspector,
     detect_reference_assembly,
@@ -275,3 +276,47 @@ def test_inspect_header_fills_sequence_lengths_from_the_contig_records(
     sequences = inspect_header(str(path))["sequences"]
 
     assert {"name": "chr1", "length": 248956422} in sequences
+
+
+def _canned_bam(monkeypatch, tmp_path, sq_records):
+    """Point inspect_header's alignment reader at an @SQ dictionary we control."""
+    path = tmp_path / "sample.bam"
+    path.write_bytes(b"not really a BAM")
+
+    def _fake_inspect(self, filepath):
+        return {
+            "format": "SAM/BAM/CRAM",
+            "file": filepath,
+            "header_dict": {"SQ": list(sq_records)},
+        }
+
+    monkeypatch.setattr(header_inspector, "_HAS_PYSAM", True)
+    monkeypatch.setattr(GenomicHeaderInspector, "_inspect_sam_bam_cram", _fake_inspect)
+    return path
+
+
+def test_bam_sq_records_name_the_assembly(monkeypatch, tmp_path):
+    """The @SQ dictionary is the same evidence a ##contig record is."""
+    path = _canned_bam(
+        monkeypatch,
+        tmp_path,
+        [{"SN": "chr1", "LN": 248956422}, {"SN": "chrX", "LN": 156040895}],
+    )
+
+    metadata = inspect_header(str(path))["metadata"]
+
+    assert metadata["reference_genome"] == "GRCh38"
+    assert metadata["reference_genome_source"] == "contig_lengths"
+
+
+def test_bam_sq_records_naming_two_assemblies_are_undetectable(monkeypatch, tmp_path):
+    path = _canned_bam(
+        monkeypatch,
+        tmp_path,
+        [{"SN": "chr1", "LN": 248956422}, {"SN": "chrX", "LN": 155270560}],
+    )
+
+    metadata = inspect_header(str(path))["metadata"]
+
+    assert metadata["reference_genome"] is None
+    assert metadata["reference_genome_ambiguous"] is True
