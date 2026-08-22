@@ -190,10 +190,19 @@ class FileProcessor:
                 normalized = inspect_header(str(file_path))
                 # Map normalized structure to VCFHeaderInfo when applicable
                 if file_type == FileType.VCF and isinstance(normalized, dict):
+                    metadata = normalized.get("metadata") or {}
                     # Reference genome inference
-                    reference_genome = (normalized.get("metadata") or {}).get(
-                        "reference_genome"
-                    ) or "unknown"
+                    reference_genome = metadata.get("reference_genome") or "unknown"
+                    # The evidence trail behind that collapse: a self-
+                    # contradicting header and a header with no evidence at
+                    # all both land on "unknown" above, but only one of them
+                    # is worth warning the user about (see determine_workflow).
+                    reference_genome_ambiguous = bool(
+                        metadata.get("reference_genome_ambiguous")
+                    )
+                    reference_genome_candidates = (
+                        metadata.get("reference_genome_candidates") or []
+                    )
                     # Sequencing profile inference based on contigs count
                     contigs_list = [
                         c.get("name")
@@ -208,16 +217,15 @@ class FileProcessor:
                     samples = normalized.get("samples") or []
                     vcf_info = VCFHeaderInfo(
                         reference_genome=reference_genome,
-                        sequencing_platform=(normalized.get("metadata") or {}).get(
-                            "created_by"
-                        )
-                        or "unknown",
+                        sequencing_platform=metadata.get("created_by") or "unknown",
                         sequencing_profile=seq_profile,
                         has_index=has_index,
                         is_bgzipped=is_compressed or str(file_path).endswith(".gz"),
                         contigs=contigs_list,
                         sample_count=len(samples),
                         variant_count=None,
+                        reference_genome_ambiguous=reference_genome_ambiguous,
+                        reference_genome_candidates=reference_genome_candidates,
                     )
             except Exception as e:
                 logger.warning(
@@ -816,6 +824,27 @@ class FileProcessor:
                         "<p>⚠️ ZaroPGx does not perform this conversion for you.</p>"
                     )
                     workflow["is_provisional"] = True
+                elif vcf_info.reference_genome_ambiguous:
+                    # reference == "unknown" here, but not every "unknown" is
+                    # the same: this one is a header that contradicts itself
+                    # (e.g. ##contig records naming two builds), not a header
+                    # with no evidence at all. The latter stays silent -- see
+                    # detect_reference_assembly's contract in header_inspector.py.
+                    # This does not set unsupported/is_provisional: the build
+                    # genuinely could not be verified, so the job proceeds
+                    # against the caller-declared build rather than being
+                    # refused or marked as a known-wrong one.
+                    candidates = vcf_info.reference_genome_candidates or []
+                    builds_note = (
+                        f" (candidates: {', '.join(candidates)})"
+                        if len(candidates) >= 2
+                        else ""
+                    )
+                    workflow["warnings"].append(
+                        "<p>⚠️ This file's header contradicts itself about the genome "
+                        f"build{builds_note}. The build could not be verified, so "
+                        "analysis proceeds against the caller-declared build.</p>"
+                    )
 
                 # Enhanced sequencing profile recommendations
                 if vcf_info.sequencing_profile == SequencingProfile.WGS:
