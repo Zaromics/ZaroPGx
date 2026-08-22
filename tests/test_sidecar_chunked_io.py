@@ -1,4 +1,5 @@
-"""Chunked upload I/O and the gatk-api to_thread concurrency cap (queue task 3).
+"""Chunked upload I/O and the gatk-api to_thread concurrency cap (queue task 3;
+extended by queue task 9 for docker/pharmcat/pharmcat.py).
 
 Four upload save sites across three sidecars used to buffer the whole upload
 into memory with `content = await file.read(); f.write(content)` (or the
@@ -27,11 +28,29 @@ which a 28 G container sharing a 20 g Java heap cannot survive. A semaphore
 now gates both call sites; this file proves it actually bounds concurrency and
 that the source wraps the right calls with it.
 
+A fifth save site, found by the rescan that produced queue task 9:
+docker/pharmcat/pharmcat.py's `/genotype` had the identical whole-file-buffer
+shape, AND -- unlike the four above -- built its save path straight from the
+unsanitised `file.filename`: `os.path.join(TEMP_DIR, file.filename)`, a
+path-write primitive (`../../evil.vcf` walks out of TEMP_DIR) on top of the
+memory issue. Both are fixed together below: chunked reads via the same
+UPLOAD_CHUNK_BYTES idiom, and a `safe_upload_name()` uuid4-hex rename modelled
+on pypgx_wrapper.py's / zarohla/app.py's own. pharmcat.py's copy does not need
+either of those two's unrecognised-extension fallback: this route's own
+extension guard, a few lines above the save site (load-bearing for Task 1's
+BCF-refusal rationale), has already restricted file.filename to
+.vcf/.vcf.gz/.vcf.bgz by the time safe_upload_name() ever runs.
+
 Each sidecar is imported the way tests/test_gatk_api_no_mock_bam.py already
 imports gatk_api.py: out of its source file with `psutil` and `job_client`
 (the /job-client stub every sidecar Dockerfile copies in) faked in sys.modules,
 and DATA_DIR/TMPDIR/REFERENCE_DIR repointed at a temp tree, because none of
-these three modules are importable as-is outside their own container image.
+these four modules are importable as-is outside their own container image.
+pharmcat.py additionally does `from pharmcat_assume_ref import ...` inside the
+route handler itself; in the real image that resolves via the PYTHONPATH
+entry docker/pharmcat/Dockerfile adds for /assume-ref-lib (a copy of
+app/utils/pharmcat_assume_ref.py). Here it resolves the same bare module name
+off app/utils directly, prepended to sys.path for the fixture's lifetime.
 """
 
 from __future__ import annotations
@@ -52,6 +71,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GATK_API_SOURCE = REPO_ROOT / "docker" / "gatk-api" / "gatk_api.py"
 PYPGX_SOURCE = REPO_ROOT / "docker" / "pypgx" / "pypgx_wrapper.py"
 ZAROHLA_SOURCE = REPO_ROOT / "docker" / "zarohla" / "app.py"
+PHARMCAT_SOURCE = REPO_ROOT / "docker" / "pharmcat" / "pharmcat.py"
+# Where pharmcat.py's own `from pharmcat_assume_ref import ...` resolves from
+# outside the image -- see the module docstring above.
+PHARMCAT_ASSUME_REF_LIB = REPO_ROOT / "app" / "utils"
 
 
 def _fake_psutil():
@@ -88,6 +111,11 @@ def _import_sidecar(spec_name, source_path, mp, root):
     mp.setenv("REFERENCE_DIR", str(root / "reference"))
     mp.setenv("PYPGX_PROGRESS_LOG", str(root / "pypgx_progress.log"))
     mp.setenv("ZAROHLA_PROGRESS_LOG", str(root / "zarohla_progress.log"))
+    # pharmcat.py-specific; harmless no-ops for the other three modules, none
+    # of which read these exact env var names.
+    mp.setenv("TEMP_DIR", str(root / "pharmcat_temp"))
+    mp.setenv("REPORT_DIR", str(root / "reports"))
+    mp.setenv("PHARMCAT_PROGRESS_LOG", str(root / "pharmcat_progress.log"))
     mp.setitem(sys.modules, "psutil", _fake_psutil())
     mp.setitem(sys.modules, "job_client", _fake_job_client())
 
@@ -142,6 +170,22 @@ def zarohla_api(tmp_path_factory):
     _close_module_log_handlers(module, before_handlers)
 
 
+@pytest.fixture(scope="module")
+def pharmcat_api(tmp_path_factory):
+    root = tmp_path_factory.mktemp("pharmcat_home")
+    before_handlers = list(logging.root.handlers)
+    with pytest.MonkeyPatch.context() as mp:
+        # Makes `from pharmcat_assume_ref import ...`, called inside the
+        # /genotype handler, resolve the same way docker/pharmcat/Dockerfile's
+        # PYTHONPATH entry for /assume-ref-lib does in the real image.
+        mp.syspath_prepend(str(PHARMCAT_ASSUME_REF_LIB))
+        module = _import_sidecar(
+            "zaropgx_pharmcat_chunk_io_test", PHARMCAT_SOURCE, mp, root
+        )
+        yield module
+    _close_module_log_handlers(module, before_handlers)
+
+
 def _spy_on_upload_reads(monkeypatch):
     """Patch starlette.datastructures.UploadFile.read and return the recorded sizes.
 
@@ -182,6 +226,11 @@ def pypgx_source():
 @pytest.fixture(scope="module")
 def zarohla_source():
     return ZAROHLA_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def pharmcat_source():
+    return PHARMCAT_SOURCE.read_text(encoding="utf-8")
 
 
 def test_gatk_api_upload_sites_no_longer_buffer_whole_file(gatk_api_source):
@@ -226,6 +275,33 @@ def test_zarohla_upload_sites_no_longer_buffer_whole_file(zarohla_source):
     assert zarohla_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 1
     assert zarohla_source.count("await file1.read(UPLOAD_CHUNK_BYTES)") == 1
     assert zarohla_source.count("await file2.read(UPLOAD_CHUNK_BYTES)") == 1
+
+
+def test_pharmcat_upload_site_no_longer_buffers_whole_file(pharmcat_source):
+    """/genotype's own upload save (queue task 9) -- the fifth site, and the
+    first found by the rescan to also build its path off the raw filename.
+    """
+    assert "content = await file.read()" not in pharmcat_source, (
+        "pharmcat.py reads an entire upload into memory with a bare "
+        "await file.read(); the save site must stream via UPLOAD_CHUNK_BYTES"
+    )
+    # /genotype: exactly one chunked read loop for the uploaded VCF.
+    assert pharmcat_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 1
+
+
+def test_pharmcat_upload_site_no_longer_builds_path_from_raw_filename(pharmcat_source):
+    """The other half of the same finding: the destination path must no
+    longer be `os.path.join(TEMP_DIR, file.filename)` -- a hostile filename
+    (`../../evil.vcf`, an embedded path separator) could write outside
+    TEMP_DIR or collide with a concurrent upload. safe_upload_name() must be
+    the only thing that decides the on-disk name.
+    """
+    assert "os.path.join(TEMP_DIR, file.filename)" not in pharmcat_source, (
+        "pharmcat.py still joins the raw client filename onto TEMP_DIR; "
+        "the save path must come from safe_upload_name() instead"
+    )
+    assert "def safe_upload_name(" in pharmcat_source
+    assert "os.path.join(TEMP_DIR, safe_upload_name(file.filename))" in pharmcat_source
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +449,71 @@ def test_zarohla_call_hla_streams_single_file_upload_in_chunks(
     assert read_sizes, "file.read() was never called"
     assert set(read_sizes) == {4}
     assert len(read_sizes) > 1, "the whole upload was still read in a single call"
+
+
+def test_pharmcat_genotype_streams_upload_in_chunks(pharmcat_api, monkeypatch):
+    monkeypatch.setattr(pharmcat_api, "UPLOAD_CHUNK_BYTES", 4)
+    # The saved path is never in the response body -- pin the one uuid4() call
+    # safe_upload_name() makes (patient_id below means base_name's own
+    # fallback uuid4() branch, line ~414, never runs) to make it predictable.
+    fixed_uuid = pharmcat_api.uuid.uuid4()
+    monkeypatch.setattr(pharmcat_api.uuid, "uuid4", lambda: fixed_uuid)
+    read_sizes = _spy_on_upload_reads(monkeypatch)
+
+    payload = bytes(range(29))  # not a multiple of the 4-byte chunk size
+    client = TestClient(pharmcat_api.app)
+    response = client.post(
+        "/genotype",
+        data={"patient_id": "patient123"},
+        files={"file": ("sample.vcf", payload, "application/octet-stream")},
+    )
+
+    # The real pharmcat_pipeline binary is not installed in this environment,
+    # so processing fails after the save -- that failure is not what this
+    # test is about, only the save that happens before it.
+    assert response.status_code in (200, 500), response.text
+
+    expected_path = Path(pharmcat_api.TEMP_DIR) / f"{fixed_uuid.hex}.vcf"
+    assert (
+        expected_path.read_bytes() == payload
+    ), "the saved file does not match what was uploaded"
+
+    assert read_sizes, "file.read() was never called"
+    assert set(read_sizes) == {4}
+    assert len(read_sizes) > 1, "the whole upload was still read in a single call"
+
+
+def test_pharmcat_genotype_sanitises_hostile_filename(pharmcat_api, monkeypatch):
+    """A client-controlled filename must never reach the filesystem, in any
+    form -- the vulnerability the source-fence test above pins shut.
+    """
+    fixed_uuid = pharmcat_api.uuid.uuid4()
+    monkeypatch.setattr(pharmcat_api.uuid, "uuid4", lambda: fixed_uuid)
+
+    payload = b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\n"
+    # Passes process_genotype()'s own .vcf extension guard but carries a
+    # traversal segment and shell metacharacters -- the same payload shape
+    # tests/test_command_injection_hardening.py uses for pypgx/zarohla.
+    hostile_name = "../../evil;touch pwned.vcf"
+    client = TestClient(pharmcat_api.app)
+    response = client.post(
+        "/genotype",
+        data={"patient_id": "patient456"},
+        files={"file": (hostile_name, payload, "application/octet-stream")},
+    )
+
+    assert response.status_code in (200, 500), response.text
+
+    temp_dir = Path(pharmcat_api.TEMP_DIR)
+    on_disk = {p.name for p in temp_dir.iterdir()}
+    assert not any(
+        "evil" in name or "pwned" in name or ".." in name for name in on_disk
+    ), f"the hostile filename leaked into an on-disk name: {on_disk}"
+
+    expected_path = temp_dir / f"{fixed_uuid.hex}.vcf"
+    assert (
+        expected_path.read_bytes() == payload
+    ), "the sanitised path was not written with the uploaded content"
 
 
 # ---------------------------------------------------------------------------
