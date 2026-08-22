@@ -1366,6 +1366,10 @@ async def variant_call(
             "reference_genome": reference_genome,
             "regions": regions,
             "job_id": local_job_id,
+            # The Zaro workflow's job id, distinct from the "job_id" key above
+            # (this module's own local_job_id). Cancel matches on this one --
+            # see cancel_workflow_job().
+            "zaro_job_id": zaro_job_id,
             "patient_id": patient_id,
             "created_at": time.time(),
             "updated_at": time.time()
@@ -1644,6 +1648,18 @@ UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 # 768M is samtools' own default; both are env-overridable for a bigger host.
 SORT_MEMORY = os.environ.get("SAMTOOLS_SORT_MEMORY", "768M")
 SORT_THREADS = os.environ.get("SAMTOOLS_SORT_THREADS", "2")
+
+# asyncio.to_thread() hands the call to the loop's default executor, whose own cap
+# is min(32, os.cpu_count() + 4) workers -- not this container's memory. Each worker
+# running convert_to_indexed_bam() can drive a `samtools sort` at up to roughly
+# SORT_THREADS x SORT_MEMORY (~2.3 GiB at the defaults above); the executor handing
+# out anywhere near its own 32-worker ceiling would multiply that past this
+# container's limit, which is shared with a GATK Java heap sized by MAX_MEMORY (20g
+# by default). This semaphore caps how many of those to_thread calls may run at
+# once, independently of the executor's own worker count. Small by default and
+# env-overridable for a bigger host.
+TO_THREAD_CONCURRENCY_LIMIT = int(os.environ.get("TO_THREAD_CONCURRENCY_LIMIT", "2"))
+_to_thread_semaphore = asyncio.Semaphore(TO_THREAD_CONCURRENCY_LIMIT)
 
 
 def _discard_output(path):
@@ -2218,15 +2234,19 @@ async def cram_to_bam(
 
         # to_thread, not a bare call: converting a whole-genome CRAM takes minutes to
         # hours, and a blocking subprocess here would stall the event loop -- taking
-        # /health, and therefore the container's healthcheck, down with it.
-        bam_size, index_path, sorted_here, records = await asyncio.to_thread(
-            convert_to_indexed_bam,
-            local_job_id,
-            input_path,
-            output_bam,
-            work_dir,
-            reference_path,
-        )
+        # /health, and therefore the container's healthcheck, down with it. Gated by
+        # _to_thread_semaphore: without it, the executor could hand out enough
+        # concurrent sorts to exceed this container's memory limit -- see
+        # TO_THREAD_CONCURRENCY_LIMIT above.
+        async with _to_thread_semaphore:
+            bam_size, index_path, sorted_here, records = await asyncio.to_thread(
+                convert_to_indexed_bam,
+                local_job_id,
+                input_path,
+                output_bam,
+                work_dir,
+                reference_path,
+            )
 
         # Update workflow with completion
         if job_client:
@@ -2335,15 +2355,17 @@ async def sam_to_bam(
             })
 
         # Offloaded for the same reason as the CRAM route: do not block the loop.
-        # No reference is passed: SAM carries its own @SQ header.
-        bam_size, index_path, sorted_here, records = await asyncio.to_thread(
-            convert_to_indexed_bam,
-            local_job_id,
-            input_path,
-            output_bam,
-            work_dir,
-            None,
-        )
+        # No reference is passed: SAM carries its own @SQ header. Gated by
+        # _to_thread_semaphore for the same reason as the CRAM route.
+        async with _to_thread_semaphore:
+            bam_size, index_path, sorted_here, records = await asyncio.to_thread(
+                convert_to_indexed_bam,
+                local_job_id,
+                input_path,
+                output_bam,
+                work_dir,
+                None,
+            )
 
         # Update workflow with completion
         if job_client:
@@ -2421,12 +2443,19 @@ async def cancel_workflow_job(request: CancelRequest):
             # Remove from registry
             del running_processes[job_id]
         
-        # Use existing jobs dictionary to find and cancel jobs
+        # Use existing jobs dictionary to find and cancel jobs. Matched on
+        # zaro_job_id alone -- this used to also match any job whose input_file
+        # or output_file *contained* patient_id as a substring, which is a
+        # patient-wide selector, not a job-scoped one: two concurrent uploads
+        # for the same patient share one patient_id, so cancelling one could
+        # sweep in and rmtree the other's still-running BAM. It also compared
+        # against a "workflow_id" key that variant_call() never sets, so that
+        # half of the check was always False and the patient-substring half was
+        # the only thing that ever matched. zaro_job_id is recorded on every
+        # entry variant_call() creates, so an exact match is now available.
         jobs_cancelled = 0
         for gatk_job_id, job in jobs.items():
-            if (job.get("workflow_id") == job_id or
-                patient_id in job.get("input_file", "") or
-                patient_id in job.get("output_file", "")):
+            if job.get("zaro_job_id") == job_id:
 
                 # Mark job as cancelled
                 job["status"] = "cancelled"
