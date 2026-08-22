@@ -535,9 +535,15 @@ async def process_genotype(
                 # Format: pharmcat_pipeline [options] <input_file>
                 # The default pipeline runs: Named Allele Matcher → Phenotyper → Reporter
                 # To get drug recommendations, we need the Reporter step
+                #
+                # No "-G": PharmCAT's own gVCF check is left switched on deliberately.
+                # A gVCF is refused at upload (app/api/utils/file_processor.py's
+                # determine_workflow) because PharmCAT is not validated against
+                # <NON_REF> reference blocks, so this check is the backstop for
+                # anything that reaches the sidecar by another route - not a nuisance
+                # to bypass.
                 pharmcat_cmd = [
                     "pharmcat_pipeline",
-                    # "-G",  # Bypass gVCF check
                     "-v",  # Verbose output
                     "-o", output_dir,  # Specify output directory explicitly
                     "-reporterJson",  # Generate reporter JSON with drug recommendations

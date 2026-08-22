@@ -53,7 +53,7 @@ from app.api.models import (
     WorkflowInfo,
     WorkflowOptions,
 )
-from app.api.utils.file_processor import FileProcessor
+from app.api.utils.file_processor import FileProcessor, safe_upload_basename
 from app.api.utils.header_inspector import (
     extract_raw_header_text,
     filter_header_to_canonical_contigs,
@@ -151,6 +151,15 @@ def _nextflow_max_wait_seconds() -> float:
 # first step POSTs to gatk-api's /align-fastq, which answers HTTP 501 because the image
 # ships no aligner, and main.nf's curls use --fail-with-body, so the 501 kills the run.
 # A branch existing is not the same as the branch working.
+#
+# `bcf` is deliberately absent, and deliberately NOT aliased onto `vcf` either. The
+# alias was tried: it makes main.nf take the vcf branch, but that branch converts
+# nothing - it stages the upload verbatim, so the file reaches docker/pharmcat still
+# named `.bcf`, /genotype gates on that name and answers 400, and the PharmCAT curl's
+# trailing `|| true` swallows it. The run then "completes" with no PharmCAT output: a
+# silent wrong answer replacing a loud one. Renaming an input type is only honest when
+# a lane exists that can finish it, so BCF is refused at ingest instead (see
+# FileProcessor.determine_workflow).
 NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam"})
 
 
@@ -163,16 +172,24 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     this codebase's own flag for "we did analyse it, provisionally".
 
     What genuinely cannot work is an input that is flagged unsupported and that the
-    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED and unrecognised formats. Those
-    used to be accepted, queued, and then failed minutes later with a Nextflow or
-    gatk-api error the user could do nothing with.
+    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED, gVCF, BCF and unrecognised
+    formats. Those used to be accepted, queued, and then failed minutes later with a
+    Nextflow or gatk-api error the user could do nothing with.
 
-    This gate is not a complete guard, and cannot be one: it only ever sees inputs
-    FileProcessor chose to flag. ``gvcf`` and ``bcf`` are not flagged — ``determine_workflow``
-    gives them an ordinary ``needs_pypgx`` workflow — yet main.nf has no branch for
-    either, so they are still accepted and still die at ``error "Unsupported input
-    type"``. Fixing that is a product decision (refuse them, or convert BCF to VCF and
-    map gVCF onto the vcf branch), not a rewording of this function.
+    gVCF and BCF are refused for opposite-looking reasons, and both are worth stating
+    because each rules out an obvious-looking shortcut:
+
+    * gVCF onto the vcf branch would *run*. PharmCAT has simply never been validated
+      against a gVCF's ``<NON_REF>`` reference blocks, so the output would be star
+      alleles nobody has checked — a confident wrong answer, not a failure.
+    * BCF onto the vcf branch would *not* run, and would not say so. That branch stages
+      the upload verbatim, so the file reaches docker/pharmcat still named ``.bcf``,
+      /genotype gates on the extension and answers 400, and main.nf's PharmCAT curl ends
+      in ``|| true`` — the run finishes with no PharmCAT output at all. Accepting BCF
+      needs a real conversion step, which ZaroPGx does not ship.
+
+    This gate is still not a complete guard, and cannot be one: it only ever sees inputs
+    FileProcessor chose to flag.
 
     ``is_provisional`` only exempts a *runnable* input type, and that ordering is the
     point rather than belt-and-braces. The flag is set by hand next to a reason string,
@@ -1355,7 +1372,10 @@ async def process_file_nextflow_background(
         nextflow_url = os.getenv("NEXTFLOW_RUNNER_URL", "http://nextflow:5055")
 
         try:
-            # Determine input type and reference from workflow
+            # Determine input type and reference from workflow. Passed through as
+            # detected, never renamed: main.nf stages the file verbatim, so a payload
+            # that disagrees with the file on disk buys a swallowed sidecar error
+            # instead of a refusal (see NEXTFLOW_INPUT_TYPES above).
             input_type = workflow.get("file_type", "vcf")
 
             # Get reference genome from workflow metadata (already set by file_processor)
@@ -1513,8 +1533,17 @@ async def upload_genomic_data(
     - 23andMe/FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no
       working branch for them, so accepting one could only ever produce a failed job.
       (23andMe would need a VCF converter first; that is not implemented.)
-    - GVCF/BCF: accepted today, but main.nf has no branch for either, so the job fails
-      at workflow definition. Known gap, not yet decided either way.
+    - GVCF: rejected with 400. Detected from the name (.gvcf, .g.vcf, either gzipped)
+      and, whatever the name, from a ##GVCFBlock record in the header — the stored name
+      is sanitised, so it can reach disk with no usable extension at all. PharmCAT has
+      not been validated against a gVCF's <NON_REF> reference blocks, so analysing one
+      would produce star alleles nobody has checked rather than an error. Convert to a
+      plain VCF first.
+    - BCF: rejected with 400. Nothing in the stack converts it, and the pipeline stages
+      the upload verbatim, so a BCF reaches the PharmCAT sidecar under a name its
+      /genotype endpoint refuses — and that refusal is swallowed by a `|| true`, ending
+      the run with no results and no error. Convert first:
+      bcftools view -O z sample.bcf > sample.vcf.gz
 
     Only the first uploaded data file is analysed; any further data file is reported as
     ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be
@@ -1855,9 +1884,15 @@ async def inspect_file_header(
     committing to the full upload and analysis process.
     """
     try:
-        # Save uploaded file temporarily
+        # Save uploaded file temporarily. The suffix carries the uploaded name because
+        # inspect_header branches on the extension - but `file.filename` is a
+        # client-controlled string on its way into a filesystem path, so it goes through
+        # the same sanitiser the upload lane uses for the stored upload
+        # (file_processor.safe_upload_basename). Without it a name like `../../x.vcf` or
+        # `*.vcf` shapes the path NamedTemporaryFile creates. The response below still
+        # echoes the raw name: that is display, not a path.
         temp_file = tempfile.NamedTemporaryFile(
-            delete=False, suffix=f"_{file.filename}"
+            delete=False, suffix=f"_{safe_upload_basename(file.filename)}"
         )
         try:
             content = await file.read()

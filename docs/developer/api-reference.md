@@ -211,15 +211,35 @@ render its pre-flight summary.
 3. **Unanalysable input.** `_unanalysable_upload_reason` rejected the derived
    workflow. This fires when the workflow is flagged `unsupported`, is **not**
    flagged `is_provisional`, and the detected `file_type` is outside
-   `NEXTFLOW_INPUT_TYPES` (`vcf`, `bam`, `cram`, `sam`, `fastq`) — i.e. FASTA,
-   BED and unrecognised formats. `main.nf` has no branch for those, so accepting
-   one could only ever mint a job that fails minutes later. The reason string is
-   the workflow's `unsupported_reason` when it has one, otherwise
+   `NEXTFLOW_INPUT_TYPES` (`vcf`, `bam`, `cram`, `sam`) — i.e. FASTQ, 23andMe,
+   FASTA, BED, gVCF, BCF and unrecognised formats. The reason string is the
+   workflow's `unsupported_reason` when it has one, otherwise
    `"Files of type '<file_type>' cannot be analysed."`
+
+   Accepting any of these could only ever mint a job that fails, but not all for
+   the same reason, and the differences are the point:
+
+   - **FASTA, BED, 23andMe, unrecognised** — `main.nf` has no branch, so the run
+     dies at `error "Unsupported input type"`.
+   - **FASTQ** — `main.nf` *has* a branch, but its first step POSTs to gatk-api's
+     `/align-fastq`, which answers HTTP 501 because the image ships no aligner.
+     A branch existing is not the same as the branch working.
+   - **gVCF** — would run to completion and be wrong. PharmCAT is not validated
+     against a gVCF's `<NON_REF>` reference blocks, so the result would be star
+     alleles nobody has checked. Detected by name (`.gvcf`, `.g.vcf`, gzipped or
+     not) *and* by a `##GVCFBlock` header record, since the stored filename is
+     sanitised and can lose its extension.
+   - **BCF** — would run and produce nothing, silently. The pipeline stages the
+     upload verbatim, so the file reaches the PharmCAT sidecar still named
+     `.bcf`; `/genotype` gates on the extension and answers 400; and the
+     PharmCAT curl ends in `|| true`, so that 400 is swallowed. Renaming the
+     input type to `vcf` does not help — the file on disk is unchanged. Accepting
+     BCF needs a conversion step ZaroPGx does not ship.
 
    An input flagged `unsupported` but marked `is_provisional`, and any input whose
    type is in `NEXTFLOW_INPUT_TYPES`, is accepted and analysed — `unsupported` on
-   its own is not a refusal.
+   its own is not a refusal. A GRCh37 VCF is the case that matters here: it is
+   flagged `unsupported` and still analysed, on its original coordinates.
 
 All three fire **before** any patient, genetic-data or job row is created, so a
 400 leaves nothing behind and returns no `job_id`.
