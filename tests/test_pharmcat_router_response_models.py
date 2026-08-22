@@ -129,29 +129,34 @@ def pg_uuid_binds(monkeypatch):
 
 
 @pytest.fixture
-def sessionless_engines(pgx_engine, monkeypatch):
-    """Capture every engine PharmCATParser builds for itself.
+def sessionless_sessions(pgx_engine, monkeypatch):
+    """Capture every session PharmCATParser opens for itself.
 
-    ``PharmCATParser`` builds its own engine from ``DATABASE_URL`` whenever it
-    is handed no session.  Substituting the test engine keeps that path from
-    reaching a real database, so the service method, the parser and the summary
-    builder all run unmodified either way.  An empty list is now the healthy
-    outcome: ``get_workflow_pharmcat_summary`` passes the request session, so
-    a recorded URL means a second connection leaked outside the request
-    transaction.
+    ``PharmCATParser`` falls back to ``app.api.db.SessionLocal`` -- the app's
+    canonical factory, the same one ``get_db()`` uses -- whenever it is handed
+    no session.  Substituting a factory bound to the test engine keeps that
+    path from reaching a real database, so the service method, the parser and
+    the summary builder all run unmodified either way.  An empty list is the
+    healthy outcome: ``get_workflow_pharmcat_summary`` passes the request
+    session, so a recorded session means a second connection leaked outside
+    the request transaction.
     """
-    requested_urls = []
+    opened = []
+    _TestSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=pgx_engine, expire_on_commit=False
+    )
 
-    def _create_engine(url, *args, **kwargs):
-        requested_urls.append(url)
-        return pgx_engine
+    def _session_local(*args, **kwargs):
+        session = _TestSessionLocal(*args, **kwargs)
+        opened.append(session)
+        return session
 
-    monkeypatch.setattr(pharmcat_parser, "create_engine", _create_engine)
-    return requested_urls
+    monkeypatch.setattr(pharmcat_parser, "SessionLocal", _session_local)
+    return opened
 
 
 @pytest.fixture
-def pgx_client(pgx_session, pg_uuid_binds, sessionless_engines):
+def pgx_client(pgx_session, pg_uuid_binds, sessionless_sessions):
     """TestClient whose ``get_db`` hands out the PharmCAT-aware session."""
     from app.main import app
 
@@ -355,7 +360,7 @@ def test_summary_endpoint_returns_full_summary(pgx_client, pgx_session, loaded_r
 
 
 def test_workflow_summary_endpoint_returns_full_summary(
-    pgx_client, pgx_session, loaded_run, sessionless_engines
+    pgx_client, pgx_session, loaded_run, sessionless_sessions
 ):
     from app.services.pharmcat_data_service import PharmCATDataService
 
@@ -380,9 +385,9 @@ def test_workflow_summary_endpoint_returns_full_summary(
 
     assert response.status_code == 200, response.text
     # The service handed get_pharmcat_summary the request session, so the parser
-    # never built an engine of its own -- no second connection outside the
+    # never opened a session of its own -- no second connection outside the
     # request transaction.
-    assert not sessionless_engines, "get_pharmcat_summary opened its own engine"
+    assert not sessionless_sessions, "get_pharmcat_summary opened its own session"
     body = response.json()
     expected = get_pharmcat_summary(loaded_run, pgx_session)
 

@@ -25,16 +25,15 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    create_engine,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 # ZaroPGx imports
-from app.api.db import DATABASE_URL, get_db
+from app.api.db import SessionLocal
 from app.pharmcat.report_json import (
     PharmCATSchemaError,
     detect_format,
@@ -335,11 +334,11 @@ class PharmCATParser:
         self._session_created = False
 
         if self.db_session is None:
-            # Create engine and session
-            self.engine = create_engine(DATABASE_URL, echo=False)
-            SessionLocal = sessionmaker(
-                autocommit=False, autoflush=False, bind=self.engine
-            )
+            # CLI-only path (see `if __name__ == "__main__":` below) --
+            # every application caller passes db_session explicitly. Reuse
+            # the app's canonical session factory (app.api.db.SessionLocal,
+            # the same factory get_db() uses) instead of building a second,
+            # differently-configured engine here.
             self.db_session = SessionLocal()
             self._session_created = True
 
