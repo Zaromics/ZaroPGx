@@ -13,6 +13,9 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE SCHEMA IF NOT EXISTS cpic;
 
 -- Create guidelines table
+-- NOTE: this table is seeded below with 12 hand-written placeholder rows for
+-- local dev/testing only (see "Insert sample guidelines"). They are NOT real
+-- CPIC guideline content and must never be treated as clinical data.
 CREATE TABLE cpic.guidelines (
     guideline_id SERIAL PRIMARY KEY,
     gene VARCHAR(20) NOT NULL,
@@ -410,8 +413,12 @@ VALUES
 ('Fluorouracil', 'Fluoropyrimidine', 'L01BC02');
 
 -- Insert sample guidelines
+-- NON-CLINICAL SAMPLE DATA: these 12 rows are hand-written toy fixtures for
+-- local dev/testing (schema smoke tests, demo data). They are not sourced
+-- from CPIC and must not be surfaced as, or mistaken for, real clinical
+-- guidance. Real CPIC guideline ingestion is not implemented here.
 INSERT INTO cpic.guidelines (gene, drug, allele_combination, recommendation, activity_score)
-VALUES 
+VALUES
 ('CYP2D6', 'Codeine', '{"diplotypes": ["*1/*1", "*1/*2", "*2/*2"]}', 'Normal metabolizer. Use labeled dosage.', 1.5),
 ('CYP2D6', 'Codeine', '{"diplotypes": ["*1/*4", "*2/*4"]}', 'Intermediate metabolizer. Consider alternate drug or reduced dose.', 0.5),
 ('CYP2D6', 'Codeine', '{"diplotypes": ["*4/*4", "*4/*10"]}', 'Poor metabolizer. Avoid codeine due to lack of efficacy.', 0.0),

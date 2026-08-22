@@ -2,9 +2,8 @@
 
 `FileProcessor.determine_workflow` used to tell GRCh37/hg19 uploaders that
 liftover to GRCh38/hg38 happens ("Step 0 ... (TO DO)", "it will proceed to
-Step 1", "bcftools' liftover is used") even though app/api/utils/liftover.py
-has zero callers anywhere in app/, docker/, or pipelines/. Nothing lifts the
-file over.
+Step 1", "bcftools' liftover is used") even though no liftover step exists
+anywhere in app/, docker/, or pipelines/. Nothing lifts the file over.
 
 Round 1 of this fix overcorrected into a second lie: it said the file
 "cannot be analysed" / "will not be analysed". In fact nothing in the repo

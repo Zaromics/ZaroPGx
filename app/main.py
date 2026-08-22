@@ -74,7 +74,6 @@ from app.api.utils.security import (
 from app.pharmcat import pharmcat_client
 from app.reports.generator import (
     create_interactive_html_report,
-    generate_pdf_report,
     generate_report,
 )
 from app.services.cleanup_service import cleanup_service

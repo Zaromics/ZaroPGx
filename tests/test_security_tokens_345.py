@@ -104,19 +104,24 @@ def test_create_access_token_signs_with_the_configured_algorithm():
     assert header["alg"] == ALGORITHM
 
 
-def test_create_access_token_default_expiry_is_fifteen_minutes():
-    """The default is a hard-coded 15 minutes, NOT ACCESS_TOKEN_EXPIRE_MINUTES.
+def test_create_access_token_default_expiry_is_the_configured_lifetime():
+    """The default IS ACCESS_TOKEN_EXPIRE_MINUTES, no longer a hard-coded 15.
 
-    Callers that want the configured lifetime have to pass expires_delta
-    themselves - main.py's /token endpoint does, auth_gate mints its own.  If
-    that hard-coded default is ever unified with the setting, this test is the
-    one that should be updated deliberately.
+    This is the deliberate update the previous version of this test asked for:
+    it used to pin a hard-coded 15-minute fallback that ignored the setting,
+    and the setting exists precisely to be that fallback, so the two are now
+    unified.  Callers wanting a different lifetime still pass expires_delta -
+    main.py's /token endpoint does, auth_gate mints its own.
     """
     before = datetime.now(timezone.utc)
     exp = _exp_of(create_access_token({"sub": "alice"}))
 
-    assert timedelta(minutes=14) <= exp - before <= timedelta(minutes=16)
     assert ACCESS_TOKEN_EXPIRE_MINUTES == 30
+    assert (
+        timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES - 1)
+        <= exp - before
+        <= timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES + 1)
+    )
 
 
 def test_create_access_token_honours_expires_delta():
