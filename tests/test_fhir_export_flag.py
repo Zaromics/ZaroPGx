@@ -128,16 +128,14 @@ def test_flag_name_appears_in_exactly_one_env_lookup():
     Matches the quoted token ``"FHIR_EXPORT_ENABLED"``, which is how an env
     lookup spells it. Prose mentions in docstrings and in the "Set
     FHIR_EXPORT_ENABLED=true to enable." messages are unquoted and so excluded.
+
+    Scans every ``.py`` file under ``app/`` rather than a fixed list, so a new
+    reader added anywhere in the tree cannot merge past this guard.
     """
     lookups = [
-        (name, line.strip())
-        for name in (
-            "app/main.py",
-            "app/api/routes/fhir_export_router.py",
-            "app/services/fhir_export_service.py",
-            "app/reports/generator.py",
-        )
-        for line in (REPO_ROOT / name).read_text(encoding="utf-8").splitlines()
+        (path.relative_to(REPO_ROOT).as_posix(), line.strip())
+        for path in sorted(REPO_ROOT.glob("app/**/*.py"))
+        for line in path.read_text(encoding="utf-8").splitlines()
         if '"FHIR_EXPORT_ENABLED"' in line
     ]
     assert len(lookups) == 1, f"expected exactly one env lookup, found: {lookups}"
