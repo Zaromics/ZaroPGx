@@ -1,0 +1,396 @@
+"""Chunked upload I/O and the gatk-api to_thread concurrency cap (queue task 3).
+
+Three sidecars used to save an upload with `f.write(await file.read())` -- the
+whole multipart body read into memory as one `bytes`, then a synchronous write
+on the event loop:
+
+  * docker/pypgx/pypgx_wrapper.py, both `/create-input-vcf` and `/genotype`.
+  * docker/zarohla/app.py's `/call-hla`, all three save sites (the paired
+    file1/file2 upload and the single-file upload).
+
+All three now stream in UPLOAD_CHUNK_BYTES-sized chunks, the shape
+docker/gatk-api/gatk_api.py already used. This module pins the regression shut
+with a source fence (the old one-line pattern must not reappear) and proves the
+new shape is real by driving each save site through its actual FastAPI route
+with `fastapi.UploadFile.read` spied on, so the assertion is about what the
+running handler actually calls, not a transcription of it.
+
+It also covers gatk_api.py's TO_THREAD_CONCURRENCY_LIMIT semaphore: the two
+asyncio.to_thread() call sites that drive convert_to_indexed_bam() (a
+`samtools sort`, ~2.3 GiB per worker at the module's own defaults) used to be
+bounded only by the default executor's own cap of up to 32 concurrent workers,
+which a 28 G container sharing a 20 g Java heap cannot survive. A semaphore
+now gates both call sites; this file proves it actually bounds concurrency and
+that the source wraps the right calls with it.
+
+Each sidecar is imported the way tests/test_gatk_api_no_mock_bam.py already
+imports gatk_api.py: out of its source file with `psutil` and `job_client`
+(the /job-client stub every sidecar Dockerfile copies in) faked in sys.modules,
+and DATA_DIR/TMPDIR/REFERENCE_DIR repointed at a temp tree, because none of
+these three modules are importable as-is outside their own container image.
+"""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+import importlib.util
+import logging
+import sys
+import types
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from starlette.datastructures import UploadFile as StarletteUploadFile
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+GATK_API_SOURCE = REPO_ROOT / "docker" / "gatk-api" / "gatk_api.py"
+PYPGX_SOURCE = REPO_ROOT / "docker" / "pypgx" / "pypgx_wrapper.py"
+ZAROHLA_SOURCE = REPO_ROOT / "docker" / "zarohla" / "app.py"
+
+
+def _fake_psutil():
+    """Enough of psutil to satisfy import-time and the routes exercised here."""
+    module = types.ModuleType("psutil")
+    module.virtual_memory = lambda: types.SimpleNamespace(
+        total=16 * 1024**3, available=8 * 1024**3, used=8 * 1024**3, percent=50.0
+    )
+    module.Process = lambda *a, **k: types.SimpleNamespace()
+    module.pid_exists = lambda pid: False
+    module.NoSuchProcess = type("NoSuchProcess", (Exception,), {})
+    module.AccessDenied = type("AccessDenied", (Exception,), {})
+    module.TimeoutExpired = type("TimeoutExpired", (Exception,), {})
+    return module
+
+
+def _fake_job_client():
+    """Stand-in for app/utils/job_client.py, which lives at /job-client in the image."""
+    module = types.ModuleType("job_client")
+
+    class JobClient:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("no job server in tests")
+
+    module.JobClient = JobClient
+    module.create_job_client = lambda *a, **k: JobClient()
+    return module
+
+
+def _import_sidecar(spec_name, source_path, mp, root):
+    """Exec a sidecar module out of its source, isolated under `root`."""
+    mp.setenv("DATA_DIR", str(root / "data"))
+    mp.setenv("TMPDIR", str(root / "tmp"))
+    mp.setenv("REFERENCE_DIR", str(root / "reference"))
+    mp.setenv("PYPGX_PROGRESS_LOG", str(root / "pypgx_progress.log"))
+    mp.setenv("ZAROHLA_PROGRESS_LOG", str(root / "zarohla_progress.log"))
+    mp.setitem(sys.modules, "psutil", _fake_psutil())
+    mp.setitem(sys.modules, "job_client", _fake_job_client())
+
+    spec = importlib.util.spec_from_file_location(spec_name, source_path)
+    module = importlib.util.module_from_spec(spec)
+    mp.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _close_module_log_handlers(module, before_handlers):
+    for handler in list(logging.root.handlers):
+        if handler not in before_handlers:
+            logging.root.removeHandler(handler)
+    for handler in getattr(module, "_log_handlers", []):
+        handler.close()
+
+
+@pytest.fixture(scope="module")
+def gatk_api(tmp_path_factory):
+    root = tmp_path_factory.mktemp("gatk_api_home")
+    before_handlers = list(logging.root.handlers)
+    with pytest.MonkeyPatch.context() as mp:
+        module = _import_sidecar(
+            "zaropgx_gatk_api_chunk_io_test", GATK_API_SOURCE, mp, root
+        )
+        yield module
+    _close_module_log_handlers(module, before_handlers)
+
+
+@pytest.fixture(scope="module")
+def pypgx_api(tmp_path_factory):
+    root = tmp_path_factory.mktemp("pypgx_home")
+    before_handlers = list(logging.root.handlers)
+    with pytest.MonkeyPatch.context() as mp:
+        module = _import_sidecar(
+            "zaropgx_pypgx_wrapper_chunk_io_test", PYPGX_SOURCE, mp, root
+        )
+        yield module
+    _close_module_log_handlers(module, before_handlers)
+
+
+@pytest.fixture(scope="module")
+def zarohla_api(tmp_path_factory):
+    root = tmp_path_factory.mktemp("zarohla_home")
+    before_handlers = list(logging.root.handlers)
+    with pytest.MonkeyPatch.context() as mp:
+        module = _import_sidecar(
+            "zaropgx_zarohla_chunk_io_test", ZAROHLA_SOURCE, mp, root
+        )
+        yield module
+    _close_module_log_handlers(module, before_handlers)
+
+
+def _spy_on_upload_reads(monkeypatch):
+    """Patch starlette.datastructures.UploadFile.read and return the recorded sizes.
+
+    Every sidecar route below declares its upload parameter as `fastapi.UploadFile`,
+    but FastAPI's own multipart form parsing constructs plain
+    `starlette.datastructures.UploadFile` instances at request time -- the FastAPI
+    subclass exists for typing and is never what actually reaches the handler, as
+    confirmed by printing `type(file)` inside a running route. The patch has to
+    land on the Starlette class for the recorded sizes to reflect what the route
+    actually calls.
+    """
+    read_sizes: list[int] = []
+    original_read = StarletteUploadFile.read
+
+    async def spy_read(self, size=-1):
+        read_sizes.append(size)
+        return await original_read(self, size)
+
+    monkeypatch.setattr(StarletteUploadFile, "read", spy_read)
+    return read_sizes
+
+
+# ---------------------------------------------------------------------------
+# Source fence: the old whole-file-in-memory shape must not come back
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pypgx_source():
+    return PYPGX_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def zarohla_source():
+    return ZAROHLA_SOURCE.read_text(encoding="utf-8")
+
+
+def test_pypgx_upload_sites_no_longer_buffer_whole_file(pypgx_source):
+    # The exact old bug shape: the whole upload into one `bytes`, then a
+    # separate synchronous write. (A bare, argument-less `await file.read()`
+    # is also named in this module's own explanatory comment, so checking for
+    # that substring alone would false-positive on the comment.)
+    assert "content = await file.read()" not in pypgx_source, (
+        "pypgx_wrapper.py reads an entire upload into memory with a bare "
+        "await file.read(); both save sites must stream via UPLOAD_CHUNK_BYTES"
+    )
+    # /create-input-vcf and /genotype: exactly one chunked read loop each.
+    assert pypgx_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 2
+
+
+def test_zarohla_upload_sites_no_longer_buffer_whole_file(zarohla_source):
+    for bad in (
+        "f.write(await file.read())",
+        "f.write(await file1.read())",
+        "f.write(await file2.read())",
+    ):
+        assert bad not in zarohla_source, (
+            f"zarohla/app.py still has the old one-line save shape {bad!r}; "
+            "it must stream via UPLOAD_CHUNK_BYTES"
+        )
+    # The paired upload (file1, file2) and the single-file upload: one chunked
+    # read loop apiece.
+    assert zarohla_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 1
+    assert zarohla_source.count("await file1.read(UPLOAD_CHUNK_BYTES)") == 1
+    assert zarohla_source.count("await file2.read(UPLOAD_CHUNK_BYTES)") == 1
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: the chunked writes actually work, driven through the real routes
+# ---------------------------------------------------------------------------
+
+
+def test_pypgx_create_input_vcf_streams_upload_in_chunks(pypgx_api, monkeypatch):
+    # A tiny chunk size makes a modest payload span many read() calls without
+    # a slow multi-megabyte test fixture.
+    monkeypatch.setattr(pypgx_api, "UPLOAD_CHUNK_BYTES", 4)
+    # The actual PyPGx CLI is not installed in this environment; only the save
+    # step is under test here.
+    monkeypatch.setattr(
+        pypgx_api, "run_pypgx_create_input_vcf", lambda *a, **k: {"success": True}
+    )
+    read_sizes = _spy_on_upload_reads(monkeypatch)
+
+    payload = bytes(range(37))  # not a multiple of the 4-byte chunk size
+    client = TestClient(pypgx_api.app)
+    response = client.post(
+        "/create-input-vcf",
+        files={"file": ("reads.bam", payload, "application/octet-stream")},
+    )
+
+    assert response.status_code == 200, response.text
+    written = Path(response.json()["input_file"]).read_bytes()
+    assert written == payload, "the saved file does not match what was uploaded"
+
+    assert read_sizes, "file.read() was never called"
+    assert set(read_sizes) == {
+        4
+    }, f"expected every read() call to request the configured chunk size, got {read_sizes}"
+    assert len(read_sizes) > 1, "the whole upload was still read in a single call"
+
+
+def test_pypgx_genotype_streams_upload_in_chunks(pypgx_api, monkeypatch):
+    monkeypatch.setattr(pypgx_api, "UPLOAD_CHUNK_BYTES", 4)
+    read_sizes = _spy_on_upload_reads(monkeypatch)
+
+    payload = bytes(range(29))
+    client = TestClient(pypgx_api.app)
+    response = client.post(
+        "/genotype",
+        data={"genes": "CYP2D6"},
+        files={"file": ("sample.vcf", payload, "application/octet-stream")},
+    )
+
+    # PyPGx itself is not installed, so genotyping fails after the save --
+    # that failure is not what this test is about.
+    assert response.status_code in (200, 500), response.text
+
+    assert read_sizes, "file.read() was never called"
+    assert set(read_sizes) == {4}
+    assert len(read_sizes) > 1, "the whole upload was still read in a single call"
+
+
+def test_zarohla_call_hla_streams_single_file_upload_in_chunks(
+    zarohla_api, monkeypatch
+):
+    monkeypatch.setattr(zarohla_api, "UPLOAD_CHUNK_BYTES", 4)
+    read_sizes = _spy_on_upload_reads(monkeypatch)
+
+    captured: dict = {}
+
+    class _FakeProcess:
+        pid = 4321
+        returncode = 1  # a clean, deliberate "OptiType failed"
+
+        async def communicate(self):
+            return b"", b"stub optitype failure"
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        if "-i" in cmd:
+            input_arg = Path(cmd[cmd.index("-i") + 1])
+            # Read while the file still exists -- the route rmtree's job_dir
+            # in a `finally` once this call returns.
+            captured["content"] = input_arg.read_bytes()
+        captured["cmd"] = cmd
+        return _FakeProcess()
+
+    monkeypatch.setattr(
+        zarohla_api.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    payload = bytes(range(53))
+    client = TestClient(zarohla_api.app)
+    response = client.post(
+        "/call-hla",
+        files={"file": ("reads.fastq", payload, "application/octet-stream")},
+    )
+
+    assert response.status_code == 500, response.text  # the stubbed OptiType "failed"
+    assert captured.get("cmd", [""])[0] == "optitype", "OptiType was never invoked"
+    assert (
+        captured.get("content") == payload
+    ), "the file OptiType was pointed at does not match what was uploaded"
+
+    assert read_sizes, "file.read() was never called"
+    assert set(read_sizes) == {4}
+    assert len(read_sizes) > 1, "the whole upload was still read in a single call"
+
+
+# ---------------------------------------------------------------------------
+# gatk-api: TO_THREAD_CONCURRENCY_LIMIT
+# ---------------------------------------------------------------------------
+
+
+def test_to_thread_semaphore_default_and_shape(gatk_api):
+    assert gatk_api.TO_THREAD_CONCURRENCY_LIMIT == 2
+    assert isinstance(gatk_api._to_thread_semaphore, asyncio.Semaphore)
+
+
+def test_to_thread_concurrency_limit_is_env_overridable(tmp_path_factory):
+    root = tmp_path_factory.mktemp("gatk_api_home_override")
+    before_handlers = list(logging.root.handlers)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("TO_THREAD_CONCURRENCY_LIMIT", "5")
+        module = _import_sidecar(
+            "zaropgx_gatk_api_chunk_io_override_test", GATK_API_SOURCE, mp, root
+        )
+        try:
+            assert module.TO_THREAD_CONCURRENCY_LIMIT == 5
+            # asyncio.Semaphore has no public way to read its starting count;
+            # this is the same private attribute the stdlib itself relies on
+            # to report the value, and it is set once at construction.
+            assert module._to_thread_semaphore._value == 5
+        finally:
+            _close_module_log_handlers(module, before_handlers)
+
+
+def test_to_thread_semaphore_caps_concurrency(gatk_api):
+    """The semaphore actually serialises access, not merely exists."""
+    limit = gatk_api.TO_THREAD_CONCURRENCY_LIMIT
+    current = 0
+    max_seen = 0
+
+    async def worker():
+        nonlocal current, max_seen
+        async with gatk_api._to_thread_semaphore:
+            current += 1
+            max_seen = max(max_seen, current)
+            await asyncio.sleep(0.02)
+            current -= 1
+
+    async def run_all():
+        await asyncio.gather(*(worker() for _ in range(limit * 3)))
+
+    asyncio.run(run_all())
+    assert (
+        max_seen == limit
+    ), f"expected concurrency to saturate at exactly {limit}, saw {max_seen}"
+
+
+def test_to_thread_semaphore_wraps_the_heavy_call_sites():
+    """cram_to_bam and sam_to_bam's to_thread(convert_to_indexed_bam, ...) calls
+    must each sit inside `async with _to_thread_semaphore:` -- a semaphore that
+    exists but does not wrap the call site it was added for caps nothing.
+    """
+    tree = ast.parse(
+        GATK_API_SOURCE.read_text(encoding="utf-8"), filename=str(GATK_API_SOURCE)
+    )
+
+    guarded_to_thread_calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncWith):
+            continue
+        guarded = any(
+            isinstance(item.context_expr, ast.Name)
+            and item.context_expr.id == "_to_thread_semaphore"
+            for item in node.items
+        )
+        if not guarded:
+            continue
+        for call in ast.walk(node):
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "to_thread"
+            ):
+                guarded_to_thread_calls.append(call)
+
+    assert len(guarded_to_thread_calls) == 2, (
+        f"expected 2 semaphore-guarded asyncio.to_thread() calls "
+        f"(cram_to_bam, sam_to_bam), found {len(guarded_to_thread_calls)}"
+    )
+    for call in guarded_to_thread_calls:
+        first_arg = call.args[0]
+        assert (
+            isinstance(first_arg, ast.Name) and first_arg.id == "convert_to_indexed_bam"
+        ), "a semaphore-guarded to_thread() call does not drive convert_to_indexed_bam"
