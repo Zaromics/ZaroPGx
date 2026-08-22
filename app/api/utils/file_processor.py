@@ -609,9 +609,9 @@ class FileProcessor:
             "needs_gatk": False,
             "needs_indexing": False,
             "needs_alignment": False,
-            # Never set anywhere, and nothing reads it: ZaroPGx performs no liftover, and
-            # app/api/utils/liftover.py has no callers. Kept only so consumers that read
-            # the key keep seeing False.
+            # Never set anywhere, and nothing reads it: ZaroPGx performs no
+            # liftover at all. Kept only so consumers that read the key keep
+            # seeing False.
             "needs_liftover": False,
             "needs_conversion": False,
             "needs_hla": False,
