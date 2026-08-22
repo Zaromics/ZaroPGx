@@ -383,19 +383,6 @@ def register_genetic_data(
     return None
 
 
-# Function to get CPIC guidelines for a gene-drug pair
-def get_guidelines_for_gene_drug(db, gene, drug):
-    result = db.execute(
-        text("""
-        SELECT guideline_id, gene, drug, allele_combination, recommendation, activity_score
-        FROM cpic.guidelines
-        WHERE gene = :gene AND drug = :drug
-        """),
-        {"gene": gene, "drug": drug},
-    )
-    return result.fetchall()
-
-
 # Function to store patient allele calls
 def store_patient_alleles(
     db,
