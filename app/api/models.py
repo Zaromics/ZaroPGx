@@ -116,6 +116,12 @@ class VCFHeaderInfo(BaseModel):
     contigs: List[str]
     sample_count: int
     variant_count: Optional[int] = None
+    # Carries header_inspector's ambiguity evidence (Task 6) through to
+    # FileProcessor.determine_workflow, which only has this model to work
+    # with -- reference_genome alone can't distinguish "no evidence" from
+    # "the header contradicts itself", both of which collapse to "unknown".
+    reference_genome_ambiguous: bool = False
+    reference_genome_candidates: List[str] = Field(default_factory=list)
 
 
 class FileAnalysis(BaseModel):

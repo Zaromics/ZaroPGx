@@ -588,6 +588,14 @@ def inspect_header(
                 "created_by": None,
                 "reference_genome": None,
                 "reference_genome_path": None,
+                # No header evidence is read for FASTQ at all, so there is
+                # nothing to contradict. Present for shape uniformity with
+                # the VCF/alignment branches, whose reference_genome_source/
+                # _ambiguous/_candidates keys carry the detect_reference_
+                # assembly() evidence trail.
+                "reference_genome_source": None,
+                "reference_genome_ambiguous": False,
+                "reference_genome_candidates": [],
             },
             "sequences": [],
             "sample": next(
@@ -622,6 +630,12 @@ def inspect_header(
                 "created_by": None,
                 "reference_genome": None,
                 "reference_genome_path": None,
+                # A FASTA file IS a reference, not something aligned to one;
+                # there is no header evidence to read here either. Present
+                # for shape uniformity -- see the FASTQ branch above.
+                "reference_genome_source": None,
+                "reference_genome_ambiguous": False,
+                "reference_genome_candidates": [],
             },
             "sequences": [
                 {"name": s.get("id") or s.get("header"), "length": s.get("length")}
@@ -651,6 +665,11 @@ def inspect_header(
                 "created_by": None,
                 "reference_genome": None,
                 "reference_genome_path": None,
+                # Format not even recognised; present for shape uniformity
+                # -- see the FASTQ branch above.
+                "reference_genome_source": None,
+                "reference_genome_ambiguous": False,
+                "reference_genome_candidates": [],
             },
             "sequences": [],
             "sample": None,

@@ -1692,6 +1692,8 @@ async def upload_genomic_data(
                 contigs=file_analysis.vcf_info.contigs,
                 sample_count=file_analysis.vcf_info.sample_count,
                 variant_count=file_analysis.vcf_info.variant_count,
+                reference_genome_ambiguous=file_analysis.vcf_info.reference_genome_ambiguous,
+                reference_genome_candidates=file_analysis.vcf_info.reference_genome_candidates,
             )
 
         # Create workflow info (nested options for UI / clients)
