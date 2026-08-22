@@ -117,16 +117,25 @@ class _FakeJob:
 
 
 class _FakeJobService:
-    def __init__(self, db=None, metadata=None):
+    def __init__(self, db=None, metadata=None, events=None):
         self.db = db
         self.job = _FakeJob(metadata or {})
         self.updates = []
         self.step_updates = []
         self.logs = []
         self.linked = []
+        self.appended_warnings = []
+        # Shared ordering tape: every event the rescue-warning constraint is
+        # about lands here in the order it happened.
+        self.events = events if events is not None else []
 
     def get_job(self, job_id):
         return self.job
+
+    def append_workflow_warning(self, job_id, warning):
+        self.appended_warnings.append(warning)
+        self.events.append("warning-committed")
+        return True
 
     def update_job(self, job_id, update):
         self.updates.append(update)
@@ -171,7 +180,6 @@ def final_stage(monkeypatch, tmp_path, caplog):
     import app.api.db as api_db
     import app.reports.generator as generator
 
-    monkeypatch.setattr(api_db, "SessionLocal", _FakeSession)
     monkeypatch.setattr(ur, "schedule_coroutine", lambda *a, **k: None)
 
     monkeypatch.setattr(ur, "render_with_graphviz", lambda *a, **k: None)
@@ -179,12 +187,32 @@ def final_stage(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(ur, "render_workflow", lambda *a, **k: None)
     monkeypatch.setattr(ur, "render_simple_png_from_workflow", lambda *a, **k: None)
 
+    # The ordering tape the TSV-rescue warning's constraint is pinned against:
+    # the warning has to be committed before generate_report's own session is
+    # even opened, because that session's empty identity map is the only reason
+    # generator.py's plain Job read sees it (tests/test_generator_job_metadata_read.py).
+    events = []
+
     report_calls = []
-    monkeypatch.setattr(
-        generator,
-        "generate_report",
-        lambda **kwargs: report_calls.append(kwargs) or {"pdf_path": "/x.pdf"},
-    )
+
+    def _fake_generate_report(**kwargs):
+        events.append("generate_report-called")
+        report_calls.append(kwargs)
+        return {"pdf_path": "/x.pdf"}
+
+    monkeypatch.setattr(generator, "generate_report", _fake_generate_report)
+
+    class _RecordingSessionLocal(_FakeSession):
+        def __init__(self):
+            events.append("session-opened")
+
+    # Both bindings, because the report lane's `db_session = SessionLocal()`
+    # resolves to the function-local `from app.api.db import SessionLocal` at
+    # the top of _handle_final_stages_progression_sync, not to the module
+    # global -- and the day that local import goes away, the global is what
+    # runs. Patching one only would silently stop recording.
+    monkeypatch.setattr(api_db, "SessionLocal", _RecordingSessionLocal)
+    monkeypatch.setattr(ur, "SessionLocal", _RecordingSessionLocal)
 
     def _run(report_payload=None, tsv=None, needs_report=True):
         outdir = tmp_path / PATIENT_ID / JOB_ID
@@ -201,7 +229,8 @@ def final_stage(monkeypatch, tmp_path, caplog):
                 "patient_id": PATIENT_ID,
                 "data_id": "data-1",
                 "workflow": {"needs_report": needs_report},
-            }
+            },
+            events=events,
         )
         monkeypatch.setattr(ur, "JobService", lambda db: service)
         caplog.clear()
@@ -377,6 +406,233 @@ def test_a_missing_report_json_with_a_tsv_still_uses_the_tsv(final_stage):
 # ---------------------------------------------------------------------------
 # _has_readable_gene_blocks: the usability test the failure decision rests on
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# The rescue is not silent: the clinician is told the TSV built this report
+# ---------------------------------------------------------------------------
+#
+# Before this, a rescued run reached the reader looking exactly like a clean
+# one. The only trace was a logger.warning, which no clinician reads. The
+# unverified-version banner (265) already solved the same surfacing problem via
+# `workflow_warnings`, which both report templates render in "Alerts and
+# Warnings"; this follows that channel, from the other end -- the job row's
+# metadata, which generator.py reads at :1828.
+
+
+def test_a_tsv_rescued_run_tells_the_reader_it_was_rescued(final_stage):
+    """Exactly one warning, appended to the channel the templates read."""
+    service, report_calls = final_stage(report_payload=BROKEN_REPORT, tsv=PHARMCAT_TSV)
+
+    assert len(report_calls) == 1, "the TSV fallback did not rescue the run"
+    assert len(service.appended_warnings) == 1, (
+        "a TSV-rescued run did not put exactly one warning in front of the "
+        f"reader: {service.appended_warnings}"
+    )
+
+
+def test_the_rescue_warning_is_committed_before_the_report_session_opens(final_stage):
+    """The load-bearing ordering constraint, pinned as a tape.
+
+    ``generate_report`` reads ``workflow.warnings`` off the Job row with a plain
+    query, no ``populate_existing()``. That read only observes another session's
+    write because ``upload_router`` hands it a session opened *after* every such
+    write and never used before (tests/test_generator_job_metadata_read.py). So
+    the warning must be committed before ``db_session = SessionLocal()`` runs --
+    not merely before ``generate_report`` is called.
+
+    The tape's first "session-opened" is the worker's own long-lived ``db``; the
+    second is the dedicated report session. The warning has to land between them.
+    """
+    service, _ = final_stage(report_payload=BROKEN_REPORT, tsv=PHARMCAT_TSV)
+
+    assert service.events == [
+        "session-opened",  # the worker's own db
+        "warning-committed",
+        "session-opened",  # generate_report's dedicated, empty-identity-map session
+        "generate_report-called",
+    ], service.events
+
+
+def test_the_rescue_warning_says_what_happened_and_why(final_stage):
+    """Honest copy: name the gate's reason, name the TSV, don't overclaim."""
+    service, _ = final_stage(report_payload=BROKEN_REPORT, tsv=PHARMCAT_TSV)
+
+    warning = service.appended_warnings[0]
+
+    # It names the file that was refused and the file the report came from.
+    assert "report.json" in warning, warning
+    assert "TSV" in warning, warning
+    # It carries the gate's own diagnosis, not just "validation failed".
+    assert "sourceDiplotypes" in warning, warning
+    # And it does not claim the rejected file is out of the picture entirely:
+    # probe_matcher_metadata globs *_pgx_pharmcat.json, so genome build and
+    # matcher version are still read from it.
+    assert "genome build" in warning.lower(), warning
+    assert "matcher" in warning.lower(), warning
+
+
+def test_a_clean_run_gets_no_rescue_warning(final_stage):
+    """The banner must not become noise on every report."""
+    service, report_calls = final_stage(report_payload=GOOD_REPORT)
+
+    assert len(report_calls) == 1
+    assert service.appended_warnings == [], service.appended_warnings
+    assert "warning-committed" not in service.events, service.events
+    assert service.events[-1] == "generate_report-called", service.events
+
+
+def test_a_run_with_no_report_json_at_all_gets_no_rescue_warning(final_stage):
+    """A missing report.json is not a gate rejection, so nothing was rescued."""
+    service, report_calls = final_stage(report_payload=None, tsv=PHARMCAT_TSV)
+
+    assert len(report_calls) == 1
+    assert service.appended_warnings == [], service.appended_warnings
+
+
+@pytest.mark.parametrize(
+    "tsv", [None, "Gene\tSource Diplotype\tPhenotype\tActivity Score\tOutside Call\n"]
+)
+def test_the_fail_path_is_unchanged_and_writes_no_warning(final_stage, tsv):
+    """Nothing was rescued, so there is no rescued report to qualify. The job
+    still fails naming the gate, exactly as before."""
+    service, report_calls = final_stage(report_payload=BROKEN_REPORT, tsv=tsv)
+
+    assert not report_calls
+    assert JobStatus.FAILED in service.statuses(), service.statuses()
+    assert service.appended_warnings == [], service.appended_warnings
+
+
+def test_a_failed_warning_write_does_not_sink_the_rescued_report(
+    final_stage, monkeypatch
+):
+    """Losing the banner is bad; losing the report the reader needs is worse."""
+
+    def _boom(*a, **k):
+        raise RuntimeError("job metadata write failed")
+
+    monkeypatch.setattr(_FakeJobService, "append_workflow_warning", _boom)
+    service, report_calls = final_stage(report_payload=BROKEN_REPORT, tsv=PHARMCAT_TSV)
+
+    assert len(report_calls) == 1, "a warning-write failure killed the rescued report"
+    assert JobStatus.COMPLETED in service.statuses(), service.statuses()
+
+
+# ---------------------------------------------------------------------------
+# The copy itself
+# ---------------------------------------------------------------------------
+
+
+def test_the_alert_escapes_the_gate_reason():
+    """The templates render each warning with ``|safe``; the gate's summary is
+    built from payload-derived key names, so it is not trusted markup."""
+    from app.reports.generator import pharmcat_tsv_rescue_alert
+
+    alert = pharmcat_tsv_rescue_alert("<script>alert(1)</script> & co")
+
+    assert "<script>" not in alert
+    assert "&lt;script&gt;" in alert
+    assert "&amp; co" in alert
+
+
+def test_the_alert_survives_an_empty_reason():
+    """A rejection with no printable summary must still produce a coherent
+    banner rather than a dangling sentence."""
+    from app.reports.generator import pharmcat_tsv_rescue_alert
+
+    for reason in ("", "   ", None):
+        alert = pharmcat_tsv_rescue_alert(reason)
+        assert "None" not in alert, alert
+        assert "TSV" in alert
+        assert alert.startswith("<p>")
+
+
+# ---------------------------------------------------------------------------
+# The persistence the ordering tape stands in for: a real row, a real commit
+# ---------------------------------------------------------------------------
+
+
+def test_append_workflow_warning_is_visible_to_a_freshly_opened_session(
+    session_factory,
+):
+    """End to end on real sessions: the worker's long-lived session writes the
+    warning, and the shape of read ``generate_report`` performs picks it up."""
+    import uuid as _uuid
+
+    from app.api.db import Job
+    from app.api.models import JobCreate
+    from app.services.job_service import JobService
+
+    worker = session_factory()
+    fresh = session_factory()
+    try:
+        service = JobService(worker)
+        job = service.create_job(
+            JobCreate(workflow_type="genomic_analysis", name="tsv-rescue-probe")
+        )
+        job_id = job.id
+        # The upload path's warnings are already there; the rescue appends.
+        row = worker.query(Job).filter(Job.id == job_id).first()
+        row.job_metadata = {
+            "patient_id": PATIENT_ID,
+            "workflow": {"needs_report": True, "warnings": ["<p>upload alert</p>"]},
+        }
+        worker.commit()
+
+        assert service.append_workflow_warning(job_id, "<p>rescued</p>") is True
+
+        # generator.py:1828's read, on a session opened afterwards.
+        job_uuid = _uuid.UUID(str(job_id))
+        read_row = fresh.query(Job).filter(Job.id == job_uuid).first()
+        warnings = (read_row.job_metadata or {})["workflow"]["warnings"]
+        assert warnings == ["<p>upload alert</p>", "<p>rescued</p>"], warnings
+
+        # And the rest of the workflow config survived the read-modify-write.
+        assert read_row.job_metadata["workflow"]["needs_report"] is True
+        assert read_row.job_metadata["patient_id"] == PATIENT_ID
+    finally:
+        for session in (worker, fresh):
+            session.rollback()
+            session.close()
+
+
+def test_append_workflow_warning_does_not_duplicate_on_a_re_run(session_factory):
+    """Final-stage progression can be driven twice for the same job; the reader
+    should not get the same banner twice."""
+    from app.api.db import Job
+    from app.api.models import JobCreate
+    from app.services.job_service import JobService
+
+    worker = session_factory()
+    try:
+        service = JobService(worker)
+        job = service.create_job(
+            JobCreate(workflow_type="genomic_analysis", name="tsv-rescue-dupe")
+        )
+        service.append_workflow_warning(job.id, "<p>rescued</p>")
+        service.append_workflow_warning(job.id, "<p>rescued</p>")
+
+        row = worker.query(Job).filter(Job.id == job.id).populate_existing().first()
+        assert row.job_metadata["workflow"]["warnings"] == ["<p>rescued</p>"]
+    finally:
+        worker.rollback()
+        worker.close()
+
+
+def test_append_workflow_warning_reports_a_missing_job(session_factory):
+    import uuid as _uuid
+
+    from app.services.job_service import JobService
+
+    worker = session_factory()
+    try:
+        assert (
+            JobService(worker).append_workflow_warning(_uuid.uuid4(), "<p>x</p>")
+            is False
+        )
+    finally:
+        worker.rollback()
+        worker.close()
 
 
 @pytest.mark.parametrize(

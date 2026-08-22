@@ -1101,6 +1101,58 @@ def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
     )
 
 
+def pharmcat_tsv_rescue_alert(schema_gate_reason: Optional[str]) -> str:
+    """Alert text for a report the PharmCAT TSV rescued from a rejected JSON.
+
+    When 265's structure gate refuses ``report.json``, the report lane's one
+    honest way out is PharmCAT's tab-delimited output for the same run -- a
+    separate file read by a separate parser
+    (``app/reports/pharmcat_tsv_parser.py``). That rescue used to leave a
+    ``logger.warning`` and nothing else, so the clinician holding the report had
+    no way to know it had been built from the fallback artifact rather than from
+    PharmCAT's structured output. Same problem the unverified-version banner
+    solved, same channel: ``workflow_warnings``, rendered by both templates in
+    "Alerts and Warnings".
+
+    The third paragraph is not padding. ``probe_matcher_metadata`` globs
+    ``*_pgx_pharmcat.json`` first, so the genome build and Named Allele Matcher
+    version printed on the report are still read out of the *rejected* file. A
+    banner claiming the rejected file contributed nothing would be false, and
+    falsely reassuring about the two fields a reader is most likely to check.
+
+    HTML, because the templates render each warning with ``|safe`` and the
+    existing warnings are HTML fragments. ``schema_gate_reason`` is built from
+    key names lifted out of the payload, so it is escaped.
+    """
+    reason = "" if schema_gate_reason is None else str(schema_gate_reason).strip()
+    if reason:
+        refusal = (
+            "PharmCAT's structured output (<strong>report.json</strong>) failed this "
+            "pipeline's structure check and was not used. The check reported: "
+            f"<em>{html.escape(reason)}</em>"
+        )
+    else:
+        refusal = (
+            "PharmCAT's structured output (<strong>report.json</strong>) failed this "
+            "pipeline's structure check and was not used; the check recorded no "
+            "further detail"
+        )
+    return (
+        "<p><strong>Report built from PharmCAT's TSV output</strong></p>"
+        f"<p>{refusal}. The genotypes and drug recommendations below were read "
+        "instead from PharmCAT's tab-delimited (TSV) output for the same run -- "
+        "a separate file, parsed by separate code -- so the results below are "
+        "not taken from the file that was refused.</p>"
+        "<p>The run provenance shown elsewhere in this report -- genome build "
+        "and Named Allele Matcher version -- is the exception: those fields are "
+        "still read from the refused file, which is the only artifact that "
+        "carries them. The structure check's verdict does not cover them, so it "
+        "neither confirms nor condemns them; treat them as unverified. The TSV "
+        "also carries less detail than the structured output, so this report may "
+        "be less complete than a report from a run that passed the check.</p>"
+    )
+
+
 def get_disclaimer() -> str:
     """
     Return the legal disclaimer for pharmacogenomic reports.

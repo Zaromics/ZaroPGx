@@ -745,6 +745,31 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                 f"Job {job_id}: report built from the PharmCAT TSV because the "
                 f"report.json was rejected by the structure gate"
             )
+            # The log is for the operator. The clinician holding the report needs
+            # to know too -- a rescued report otherwise looks exactly like a
+            # clean one -- so the same fact goes onto the Alerts and Warnings
+            # page through workflow_warnings, the channel 265's unverified
+            # version banner already established.
+            #
+            # Deliberately here rather than anywhere below: generate_report reads
+            # workflow.warnings off the Job row with a plain query and no
+            # populate_existing(), so it only sees this write because
+            # `db_session = SessionLocal()` further down opens a session *after*
+            # the commit, with an empty identity map. Move this past that line
+            # and the banner silently stops appearing, with no error anywhere.
+            # tests/test_generator_job_metadata_read.py holds the argument.
+            try:
+                from app.reports.generator import pharmcat_tsv_rescue_alert
+
+                job_service.append_workflow_warning(
+                    job_id, pharmcat_tsv_rescue_alert(str(pharmcat_schema_error))
+                )
+            except Exception as warn_error:
+                # A report the reader can use, minus its banner, beats no report.
+                logger.error(
+                    f"Job {job_id}: failed to record the TSV-rescue alert on the "
+                    f"report: {warn_error}"
+                )
 
         # Update progress: Diagram generation (35% of report generation)
         step_update = JobStepUpdate(
