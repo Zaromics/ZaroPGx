@@ -231,17 +231,8 @@ class FileProcessor:
                 logger.warning(
                     f"Independent header inspector failed, falling back for type {file_type}: {e}"
                 )
-                # Fall back to prior behavior for VCF only
-                if file_type == FileType.VCF:
-                    try:
-                        vcf_info = await self._analyze_vcf_header(file_path)
-                        vcf_info.is_bgzipped = (
-                            is_compressed
-                            or vcf_info.is_bgzipped
-                            or str(file_path).endswith(".gz")
-                        )
-                    except Exception:
-                        pass
+                # No fallback exists: inspector failure leaves vcf_info at its
+                # None initialization above, regardless of file_type.
 
             # Create the file analysis object with all the gathered information
             analysis = FileAnalysis(
