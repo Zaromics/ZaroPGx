@@ -392,7 +392,7 @@ class JobService:
                 {
                     "updated_fields": [
                         k
-                        for k, v in update_data.dict(exclude_unset=True).items()
+                        for k, v in update_data.model_dump(exclude_unset=True).items()
                         if v is not None
                     ]
                 },
