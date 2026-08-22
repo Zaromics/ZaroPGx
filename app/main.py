@@ -80,6 +80,7 @@ from app.reports.generator import (
 from app.services.cleanup_service import cleanup_service
 from app.services.fhir_export_service import fhir_export_enabled
 from app.services.job_service import JobService
+from app.utils.env import env_flag
 
 # This module logs liberally with emoji. The container's stdout is UTF-8, but a Windows host
 # console is cp1252, where a single emoji raises UnicodeEncodeError and takes down the whole
@@ -136,22 +137,13 @@ PHARMCAT_API_URL = os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000")
 ZAROHLA_API_URL = os.getenv("ZAROHLA_API_URL", "http://zarohla:5000")
 
 
-# Service toggle configuration
-def _env_flag(name: str, default: bool = False) -> bool:
-    """Parse environment variable as boolean flag."""
-    val = os.getenv(name)
-    if val is None:
-        return default
-    return str(val).strip().lower() in {"1", "true", "yes", "on"}
-
-
-# Service enablement flags
-GATK_ENABLED = _env_flag("GATK_ENABLED", True)
-PYPGX_ENABLED = _env_flag("PYPGX_ENABLED", True)
-OPTITYPE_ENABLED = _env_flag("OPTITYPE_ENABLED", True)
-GENOME_DOWNLOADER_ENABLED = _env_flag("GENOME_DOWNLOADER_ENABLED", True)
-KROKI_ENABLED = _env_flag("KROKI_ENABLED", True)
-HAPI_FHIR_ENABLED = _env_flag("HAPI_FHIR_ENABLED", True)
+# Service toggle configuration / service enablement flags
+GATK_ENABLED = env_flag("GATK_ENABLED", True)
+PYPGX_ENABLED = env_flag("PYPGX_ENABLED", True)
+OPTITYPE_ENABLED = env_flag("OPTITYPE_ENABLED", True)
+GENOME_DOWNLOADER_ENABLED = env_flag("GENOME_DOWNLOADER_ENABLED", True)
+KROKI_ENABLED = env_flag("KROKI_ENABLED", True)
+HAPI_FHIR_ENABLED = env_flag("HAPI_FHIR_ENABLED", True)
 # OUTSIDECALLSOVERRIDE is NOT parsed here either. This module's copy stripped
 # whitespace while app.utils.outside_calls_override's did not, and it was dead
 # besides — assigned once, read nowhere. The single reader is
@@ -159,8 +151,8 @@ HAPI_FHIR_ENABLED = _env_flag("HAPI_FHIR_ENABLED", True)
 # FHIR export is NOT parsed here. app.services.fhir_export_service.fhir_export_enabled()
 # is the single reader, shared with the /fhir/* router's own guard — a second
 # parse here is what let the mount and the guard disagree over "true ".
-PHARMCAT_ABSENT_TO_REF = _env_flag("PHARMCAT_ABSENT_TO_REF", False)
-PHARMCAT_UNSPECIFIED_TO_REF = _env_flag("PHARMCAT_UNSPECIFIED_TO_REF", False)
+PHARMCAT_ABSENT_TO_REF = env_flag("PHARMCAT_ABSENT_TO_REF", False)
+PHARMCAT_UNSPECIFIED_TO_REF = env_flag("PHARMCAT_UNSPECIFIED_TO_REF", False)
 TEMP_DIR = Path("/tmp")
 DATA_DIR = Path("/data")
 REPORTS_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))

@@ -64,6 +64,7 @@ from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
 from app.services.job_service import JobService, schedule_coroutine
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
+from app.utils.env import env_flag
 from app.utils.pharmcat_assume_ref import resolve_assume_ref_flags
 from app.visualizations.workflow_diagram import (
     render_kroki_mermaid_svg,
@@ -90,16 +91,6 @@ REPORTS_DIR = os.environ.get("REPORT_DIR", "/data/reports")
 
 # Initialize file processor
 file_processor = FileProcessor(temp_dir=UPLOAD_DIR)
-
-
-# Environment variable helper function
-def _env_flag(name: str, default: bool = False) -> bool:
-    """Helper function to read boolean environment variables."""
-    val = os.getenv(name)
-    if val is None:
-        return default
-    return str(val).strip().lower() in {"1", "true", "yes", "on"}
-
 
 # Wall-clock ceiling for the Nextflow poll loop, in seconds. Generous on purpose: a WGS
 # BAM run walks ZaroHLA -> GATK -> PyPGx -> PharmCAT and can legitimately take most of a
@@ -299,9 +290,9 @@ def sanitize_optional_pipeline_token(value: Optional[str]) -> Optional[str]:
 
 
 # Report generation flags
-INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
-INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
-INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
+INCLUDE_PHARMCAT_HTML = env_flag("INCLUDE_PHARMCAT_HTML", True)
+INCLUDE_PHARMCAT_JSON = env_flag("INCLUDE_PHARMCAT_JSON", False)
+INCLUDE_PHARMCAT_TSV = env_flag("INCLUDE_PHARMCAT_TSV", False)
 
 # Always use Nextflow for processing
 USE_NEXTFLOW = True
