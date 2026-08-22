@@ -10,6 +10,8 @@ from typing import Any, Dict, Literal, Optional
 
 import requests
 
+from app.utils.env import env_flag
+
 try:
     from graphviz import Digraph  # type: ignore
 except Exception:  # pragma: no cover
@@ -173,13 +175,6 @@ def try_read_static_asset(preferred: str = "svg") -> tuple[str, bytes] | None:
     return None
 
 
-def _env_flag(name: str, default: bool = True) -> bool:
-    raw = os.environ.get(name)
-    if raw is None or str(raw).strip() == "":
-        return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _kroki_timeout_seconds() -> float:
     """HTTP timeout for Kroki posts. Override with KROKI_TIMEOUT (seconds)."""
     raw = (os.environ.get("KROKI_TIMEOUT") or "30").strip()
@@ -210,7 +205,7 @@ def render_with_kroki(
         RuntimeError: when KROKI_ENABLED is false (callers should fall back)
         requests exceptions / HTTP errors from Kroki
     """
-    if not _env_flag("KROKI_ENABLED", True):
+    if not env_flag("KROKI_ENABLED", True):
         raise RuntimeError("Kroki disabled via KROKI_ENABLED")
 
     # Get base URL, handling empty strings properly

@@ -54,6 +54,7 @@ from app.reports.provenance import (
 )
 from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
 from app.services.pharmcat_data_service import PharmCATDataService
+from app.utils.env import env_flag
 from app.visualizations.workflow_diagram import (
     build_simple_html_from_workflow,
     render_kroki_mermaid_svg,
@@ -354,20 +355,11 @@ def _is_uuid_like(s: str) -> bool:
         return False
 
 
-# Environment variable helper function
-def _env_flag(name: str, default: bool = False) -> bool:
-    """Helper function to read boolean environment variables."""
-    val = os.getenv(name)
-    if val is None:
-        return default
-    return str(val).strip().lower() in {"1", "true", "yes", "on"}
-
-
 # Read PharmCAT report configuration from environment variables
-INCLUDE_PHARMCAT_HTML = _env_flag("INCLUDE_PHARMCAT_HTML", True)
-INCLUDE_PHARMCAT_JSON = _env_flag("INCLUDE_PHARMCAT_JSON", False)
-INCLUDE_PHARMCAT_TSV = _env_flag("INCLUDE_PHARMCAT_TSV", False)
-EXECSUM_USE_TSV = _env_flag("EXECSUM_USE_TSV", False)
+INCLUDE_PHARMCAT_HTML = env_flag("INCLUDE_PHARMCAT_HTML", True)
+INCLUDE_PHARMCAT_JSON = env_flag("INCLUDE_PHARMCAT_JSON", False)
+INCLUDE_PHARMCAT_TSV = env_flag("INCLUDE_PHARMCAT_TSV", False)
+EXECSUM_USE_TSV = env_flag("EXECSUM_USE_TSV", False)
 
 
 # FHIR Export - automatically generate FHIR R4 exports during report generation.

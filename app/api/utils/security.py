@@ -26,6 +26,9 @@ class OptionalOAuth2PasswordBearer(OAuth2PasswordBearer):
 
     async def __call__(self, request: Request) -> Optional[str]:
         # Development mode - never require authentication
+        # Blank ZAROPGX_DEV_MODE already reads as off here ("" != "true"), which
+        # matches the adopted blank-means-off rule (app/utils/env.py) -- left as
+        # its own parse rather than migrated, per that task's explicit scope.
         if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
             return None
 
@@ -55,6 +58,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 # get_current_user was deleted in Wave 2 Step 4a: nothing used it as Depends().
 async def get_optional_user(token: Optional[str] = Depends(optional_oauth2_scheme)):
     # Always return a default user in development mode
+    # Blank ZAROPGX_DEV_MODE already reads as off here too -- same rule, same
+    # reasoning as the check above.
     if os.getenv("ZAROPGX_DEV_MODE", "true").lower() == "true":
         return "test"
 
