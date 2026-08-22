@@ -1,3 +1,4 @@
+import gzip
 import html
 import logging
 import os
@@ -66,6 +67,60 @@ def safe_upload_basename(filename: Optional[str]) -> str:
     """
     cleaned = secure_filename(filename or "")
     return cleaned or f"{uuid.uuid4().hex}.dat"
+
+
+# The two spellings a gVCF arrives under. GATK writes `sample.g.vcf[.gz]`, whose last
+# suffix is `.vcf`; other callers write `sample.gvcf[.gz]`. Only the second pair ever
+# reached the extension table in _detect_file_type, so the GATK spelling was typed VCF
+# and analysed as an ordinary variant call set - see _detect_file_type for why that is a
+# wrong answer rather than a wrong label.
+GVCF_NAME_SUFFIXES = (".gvcf", ".gvcf.gz", ".g.vcf", ".g.vcf.gz")
+
+# The header record every gVCF carries and no plain VCF does: one per
+# reference-confidence band, e.g. `##GVCFBlock0-1=minGQ=0(inclusive),...`.
+GVCF_HEADER_MARKER = "##GVCFBlock"
+
+# Bounds on the header read below. A VCF header is a few hundred lines of a few hundred
+# bytes; these caps exist so a hostile or corrupt file cannot turn a type check into an
+# unbounded read.
+GVCF_HEADER_SCAN_LINES = 2000
+GVCF_HEADER_MAX_LINE_BYTES = 64 * 1024
+
+
+def _header_declares_gvcf_blocks(file_path: Path) -> bool:
+    """True when a VCF-shaped file's header carries a ``##GVCFBlock`` record.
+
+    Bounded to the header: it stops at the first line that is not a ``##`` meta line -
+    the ``#CHROM`` row, or a data row in a file with no header at all - so it reads the
+    same few kilobytes ``inspect_header`` already reads and never touches the variant
+    records.
+
+    Never raises. A file that cannot be read here is simply "not known to be a gVCF" and
+    falls through to the ordinary extension logic; deciding a file's type must not be the
+    thing that turns an unreadable upload into a 500.
+    """
+    try:
+        opener = gzip.open if str(file_path).lower().endswith(".gz") else open
+        with opener(file_path, "rt", errors="ignore") as handle:
+            for _ in range(GVCF_HEADER_SCAN_LINES):
+                line = handle.readline(GVCF_HEADER_MAX_LINE_BYTES)
+                if not line or not line.startswith("##"):
+                    return False
+                if line.startswith(GVCF_HEADER_MARKER):
+                    return True
+    except Exception as e:
+        logger.debug(f"Could not read {file_path} for a {GVCF_HEADER_MARKER}: {e}")
+    return False
+
+
+def _is_gvcf(file_path: Path) -> bool:
+    """Decide gVCF from the name, and from the header when the name says only "VCF"."""
+    name = str(file_path).lower()
+    if name.endswith(GVCF_NAME_SUFFIXES):
+        return True
+    if name.endswith((".vcf", ".vcf.gz")):
+        return _header_declares_gvcf_blocks(file_path)
+    return False
 
 
 # Companion index files. The upload form invites one alongside the data file, and
@@ -207,7 +262,7 @@ class FileProcessor:
         - SAM (.sam)
         - FASTQ (.fastq, .fq, .fastq.gz, .fq.gz)
         - FASTA (.fasta, .fa, .fna)
-        - GVCF (.gvcf, .gvcf.gz)
+        - GVCF (.gvcf, .gvcf.gz, .g.vcf, .g.vcf.gz, or a ##GVCFBlock header)
         - BCF (.bcf)
         - BED (.bed)
         - 23andMe (.txt)
@@ -220,19 +275,27 @@ class FileProcessor:
         ext = file_path.suffix.lower()
         logger.info(f"File extension: {ext}")
 
+        # gVCF is decided ahead of the extension table, because the extension table
+        # cannot decide it: `sample.g.vcf[.gz]` ends in `.vcf` and was typed VCF, and
+        # a gVCF handed to the VCF lane is a wrong *answer*, not a wrong label. Its
+        # <NON_REF> allele and ##GVCFBlock records assert reference confidence over
+        # whole spans, which PharmCAT has not been validated against - so it would
+        # emit star alleles nobody has checked rather than fail. determine_workflow
+        # refuses gVCF outright; getting the type right is what lets it.
+        if _is_gvcf(file_path):
+            logger.info("Identified as GVCF file")
+            return FileType.GVCF
+
         # Check for double extensions like .vcf.gz
         if ext == ".gz" and len(file_path.suffixes) > 1:
             prev_ext = file_path.suffixes[-2].lower()
             logger.info(f"Previous extension for compressed file: {prev_ext}")
 
-            # Check for VCF format
+            # Check for VCF format. (No `.gvcf` case here, nor below: every name ending
+            # in `.gvcf[.gz]` was answered by the _is_gvcf check above.)
             if prev_ext == ".vcf":
                 logger.info("Identified as compressed VCF file")
                 return FileType.VCF
-            # Check for GVCF format
-            elif prev_ext == ".gvcf":
-                logger.info("Identified as compressed GVCF file")
-                return FileType.GVCF
             # Check for FASTQ format
             elif prev_ext in [".fastq", ".fq"]:
                 logger.info("Identified as compressed FASTQ file")
@@ -269,9 +332,6 @@ class FileProcessor:
         elif ext in [".fasta", ".fa", ".fna"]:
             logger.info("Identified as FASTA file")
             return FileType.FASTA
-        elif ext in [".gvcf"]:
-            logger.info("Identified as GVCF file")
-            return FileType.GVCF
         elif ext == ".bcf":
             logger.info("Identified as BCF file")
             return FileType.BCF
@@ -293,8 +353,6 @@ class FileProcessor:
         try:
             # For possibly compressed files, use gzip to open
             if ext == ".gz":
-                import gzip
-
                 with gzip.open(file_path, "rt", errors="ignore") as f:
                     first_line = f.readline().strip()
                     if first_line.startswith("##fileformat=VCF"):
@@ -505,8 +563,9 @@ class FileProcessor:
         - CRAM files: conversion to BAM with specific tools and considerations
         - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
         - VCF files: direct PyPGx + PharmCAT with outside calls
-        - GVCF files: genomic VCF with reference calls, treated as VCF
-        - BCF files: binary VCF format, converted as needed
+        - GVCF files: refused (PharmCAT is not validated against reference blocks)
+        - BCF files: binary VCF, carried on the vcf branch (see upload_router's
+          NEXTFLOW_INPUT_TYPE_ALIASES); htslib reads the encoding from the file itself
         - SAM files: conversion to BAM using GATK or samtools
         - FASTA files: reference genome files (unsupported for direct analysis)
         - BED files: genomic interval files (unsupported for direct analysis)
@@ -824,31 +883,55 @@ class FileProcessor:
                 "<p>• Then use the resulting BAM for pharmacogenomic analysis</p>"
             )
 
-        # GVCF - genomic VCF with reference calls
+        # GVCF: refused at upload, not analysed.
+        #
+        # A gVCF is not a VCF with extra rows. Its <NON_REF> symbolic allele and its
+        # ##GVCFBlock records assert reference confidence over whole spans, and PharmCAT
+        # has not been validated against either. That makes it worse than the formats
+        # refused above rather than better: routed onto the vcf lane it would not error,
+        # it would emit star alleles nobody has checked. Until the validation exists,
+        # saying so at upload beats publishing a confident wrong answer. None of the
+        # needs_* flags are set, because there is no workflow to plan.
         elif analysis.file_type == FileType.GVCF:
-            workflow["needs_pypgx"] = True
-            workflow["recommendations"].append(
-                "<p>GVCF files (genomic VCF with reference calls):</p>"
+            workflow["unsupported"] = True
+            # No angle brackets around NON_REF, deliberately. This string is the 400's
+            # plain-text `detail` *and* the panel's red alert, and the panel assigns it
+            # with innerHTML - a literal "<NON_REF>" would be parsed as a tag and vanish
+            # from the sentence. Escaping instead would fix the panel and leave
+            # "&lt;NON_REF&gt;" in the API error. The bare name reads correctly in both.
+            workflow["unsupported_reason"] = (
+                "ZaroPGx cannot analyse gVCF files. A gVCF records reference-confidence "
+                "blocks (the NON_REF allele and ##GVCFBlock header records) alongside "
+                "its variant calls, and PharmCAT has not been validated against them, so "
+                "analysing one would produce star alleles nobody has checked rather than "
+                "a clear failure. Convert it to a plain single-sample GRCh38/hg38 VCF "
+                "first, or upload the BAM, CRAM or SAM it was called from."
             )
             workflow["recommendations"].append(
-                "<p>• Will be processed through PyPGx and PharmCAT pipeline</p>"
+                "<p>Convert the gVCF to a plain VCF, then upload that:</p>"
             )
             workflow["recommendations"].append(
-                "<p>• GVCFs contain both variant and reference calls</p>"
+                "<p>• GATK: GenotypeGVCFs turns a gVCF into a genotyped VCF</p>"
             )
             workflow["recommendations"].append(
-                "<p>• May require conversion to standard VCF for some tools</p>"
+                "<p>• bcftools: drop the reference blocks, e.g. "
+                "bcftools view -e 'ALT=\"&lt;NON_REF&gt;\"' input.g.vcf.gz</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>• Or upload the BAM, CRAM or SAM the gVCF was called from and let "
+                "ZaroPGx call the variants.</p>"
             )
 
-        # BCF - binary VCF format
+        # BCF - binary VCF format, carried on the pipeline's vcf branch unconverted.
+        # No conversion step is planned because none is needed: bcftools and pysam both
+        # detect the binary encoding from the file's own magic bytes. See
+        # upload_router.NEXTFLOW_INPUT_TYPE_ALIASES for where `bcf` becomes `vcf`.
         elif analysis.file_type == FileType.BCF:
             workflow["needs_pypgx"] = True
             workflow["recommendations"].append("<p>BCF files (binary VCF format):</p>")
             workflow["recommendations"].append(
-                "<p>• Will be converted to VCF format if needed</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>• Use bcftools for conversion: bcftools view input.bcf > output.vcf</p>"
+                "<p>• Processed on the VCF path; the tools that read it (bcftools, "
+                "pysam) accept BCF directly, so no conversion step is needed</p>"
             )
             workflow["recommendations"].append(
                 "<p>• Standard PyPGx + PharmCAT pipeline will be applied</p>"
