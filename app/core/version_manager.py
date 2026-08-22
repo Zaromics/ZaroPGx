@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from app.utils.env import env_flag
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,9 +45,7 @@ class VersionManager:
         self._hapi_version_cache: Optional[str] = None
         self._hapi_version_cache_time: float = 0.0
         # When True, include all services from compose even if a manifest exists
-        env_include_all = os.getenv(
-            "VERSION_MANAGER_INCLUDE_ALL_COMPOSE", "false"
-        ).lower() in {"1", "true", "yes"}
+        env_include_all = env_flag("VERSION_MANAGER_INCLUDE_ALL_COMPOSE", False)
         self.include_all_compose_services = (
             include_all_compose_services
             if include_all_compose_services is not None
