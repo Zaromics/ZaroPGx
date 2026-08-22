@@ -56,6 +56,218 @@ DEFAULT_MAX_BYTES = int(os.getenv("MAX_HEADER_READ_BYTES", str(1_000_000_000)))
 DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 
 
+# --- Genome build detection --------------------------------------------------
+#
+# Assembly-defining sequence lengths, keyed by the contig name with any `chr`
+# prefix removed (GRCh37/b37 headers say `1`, hg19/hg38 headers say `chr1`).
+#
+# These are facts about the assemblies rather than heuristics: no two GRC builds
+# give the same chromosome the same length, so a nine-digit number appearing as
+# the `length=` of the correspondingly named `##contig` record cannot be the
+# coincidence that a three-character token in free text can.
+#
+# The same table, under the same reasoning, drives the SAM/BAM/CRAM detector in
+# docker/gatk-api/gatk_api.py (SQ_LENGTH_ASSEMBLIES) -- that service is a
+# separate image and cannot import from the app, so the values are duplicated
+# deliberately. They were read out of the sequence dictionaries this deployment
+# ships (reference/hg38/Homo_sapiens_assembly38.dict, reference/hg19/ucsc.hg19.dict,
+# reference/grch37/human_g1k_v37.dict); reference/ is gitignored, so no test can
+# pin them -- re-read the dictionaries if you touch this table.
+#
+# Unlike gatk-api's copy, this one answers with the *assembly* alone and does not
+# read the `chr` prefix as evidence of which GRCh37 FASTA to align against: the
+# app stores an assembly name in metadata.reference_genome, and no caller here
+# picks a reference file from it.
+CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
+    ("1", 248956422): "GRCh38",
+    ("1", 249250621): "GRCh37",
+    ("2", 242193529): "GRCh38",
+    ("2", 243199373): "GRCh37",
+    ("3", 198295559): "GRCh38",
+    ("3", 198022430): "GRCh37",
+    ("X", 156040895): "GRCh38",
+    ("X", 155270560): "GRCh37",
+}
+
+# Tokens that name an assembly when they appear in a free-text `##reference=`
+# value. Beyond the two build names, these cover the reference files that are
+# actually in use and whose names carry no build name of their own:
+# human_g1k_v37.fasta, and the GATK bundle's Homo_sapiens_assembly38.fasta /
+# Homo_sapiens_assembly19.fasta (assembly19 is a GRCh37 reference).
+#
+# Deliberately no bare `b37` / `b38`: three characters is a substring, not a
+# token, and this value is a path that may carry a hash or a project name.
+ASSEMBLY_NAME_TOKENS: Dict[str, tuple] = {
+    "GRCh38": ("grch38", "hg38", "assembly38"),
+    "GRCh37": ("grch37", "hg19", "g1k_v37", "assembly19"),
+}
+
+
+def _normalise_contig_name(name: Optional[str]) -> str:
+    """`chr1` / `1` / `CHR1` -> `1`, so both naming conventions hit one table."""
+    cid = (name or "").strip()
+    if cid.lower().startswith("chr"):
+        cid = cid[3:]
+    return cid.upper()
+
+
+def parse_vcf_contig_lengths(header_records) -> Dict[str, Optional[int]]:
+    """Parse `##contig=<ID=...,length=...>` records into {ID: length}.
+
+    Field-wise, not by a regex over the whole line: the fields of a structured
+    header line are unordered and a `##contig` record may carry `assembly=`,
+    `md5=` and more between the two that matter here.
+    """
+    lengths: Dict[str, Optional[int]] = {}
+    for record in header_records or []:
+        if not isinstance(record, str):
+            continue
+        line = record.strip()
+        if not line.startswith("##contig=<") or not line.endswith(">"):
+            continue
+        contig_id: Optional[str] = None
+        length: Optional[int] = None
+        for field in line[len("##contig=<") : -1].split(","):
+            key, sep, value = field.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            value = value.strip().strip('"')
+            if key == "ID":
+                contig_id = value
+            elif key == "length":
+                try:
+                    length = int(value)
+                except ValueError:
+                    length = None
+        if contig_id:
+            # A record that repeats a contig without its length must not erase a
+            # length already read for it.
+            if contig_id not in lengths or lengths[contig_id] is None:
+                lengths[contig_id] = length
+    return lengths
+
+
+def merged_contig_lengths(
+    header_records=None, contig_lengths=None
+) -> Dict[str, Optional[int]]:
+    """Combine already-parsed contig lengths with those in the header text.
+
+    The two readers in this module supply different halves: the bcftools
+    fallback parses `contig_lengths` itself, while the pysam path returns the
+    header records verbatim and no lengths at all.
+    """
+    merged: Dict[str, Optional[int]] = {}
+    for name, length in (contig_lengths or {}).items():
+        if isinstance(name, str):
+            merged[name] = length if isinstance(length, int) else None
+    for name, length in parse_vcf_contig_lengths(header_records).items():
+        if merged.get(name) is None:
+            merged[name] = length
+    return merged
+
+
+def _assemblies_from_contig_lengths(contig_lengths) -> List[str]:
+    """Every assembly the (name, length) pairs are consistent with, sorted."""
+    seen = set()
+    for name, length in (contig_lengths or {}).items():
+        if not isinstance(length, int):
+            continue
+        assembly = CONTIG_LENGTH_ASSEMBLIES.get((_normalise_contig_name(name), length))
+        if assembly:
+            seen.add(assembly)
+    return sorted(seen)
+
+
+def _assemblies_from_reference_values(values) -> List[str]:
+    """Every assembly named by the free text of a `##reference=` value, sorted.
+
+    A single value naming two builds -- `hg19_to_hg38_lifted.fasta` -- returns
+    both, so the caller reports the conflict instead of taking whichever the
+    checks happened to test first.
+    """
+    seen = set()
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        lowered = value.lower()
+        for assembly, tokens in ASSEMBLY_NAME_TOKENS.items():
+            if any(token in lowered for token in tokens):
+                seen.add(assembly)
+    return sorted(seen)
+
+
+def reference_values_from_header(header_records) -> List[str]:
+    """The value of every `##reference=` line, in header order."""
+    values: List[str] = []
+    for record in header_records or []:
+        if isinstance(record, str) and record.strip().startswith("##reference="):
+            values.append(record.strip().split("=", 1)[1].strip().strip('"'))
+    return values
+
+
+def detect_reference_assembly(header_records=None, contig_lengths=None) -> Dict:
+    """Decide which assembly a header describes, structured evidence first.
+
+    Returns::
+
+        {"assembly": "GRCh38" | "GRCh37" | None,
+         "source": "contig_lengths" | "reference_line" | None,
+         "ambiguous": bool,
+         "candidates": [assembly, ...]}
+
+    `assembly` is None whenever the answer is not established -- either no
+    evidence at all, or evidence that contradicts itself. A caller must treat
+    None as "no answer" rather than as a detection: naming the wrong build means
+    the sample is analysed against the wrong coordinates with nothing in the
+    output saying so, which is worse than declining to answer.
+
+    Decision order:
+
+    1. `##contig=<ID=...,length=...>` records (or lengths already parsed off
+       them, e.g. from a SAM `@SQ` dictionary). These describe the coordinate
+       system every position in the file is expressed in.
+    2. The free-text `##reference=` line, and only when step 1 found nothing.
+       It records what the writing tool was pointed at, which a liftover leaves
+       untouched -- a GRCh38 file with a stale `##reference=...hg19.fasta` is
+       exactly the case this ordering exists for -- so it breaks ties and never
+       overrides the records.
+
+    Contig records that name two assemblies (or that conflict with each other)
+    end the decision as ambiguous; the reference line is not consulted, because
+    free text cannot resolve a file whose own records disagree.
+    """
+    lengths = merged_contig_lengths(header_records, contig_lengths)
+    contig_assemblies = _assemblies_from_contig_lengths(lengths)
+    if contig_assemblies:
+        ambiguous = len(contig_assemblies) > 1
+        return {
+            "assembly": None if ambiguous else contig_assemblies[0],
+            "source": "contig_lengths",
+            "ambiguous": ambiguous,
+            "candidates": contig_assemblies,
+        }
+
+    ref_assemblies = _assemblies_from_reference_values(
+        reference_values_from_header(header_records)
+    )
+    if ref_assemblies:
+        ambiguous = len(ref_assemblies) > 1
+        return {
+            "assembly": None if ambiguous else ref_assemblies[0],
+            "source": "reference_line",
+            "ambiguous": ambiguous,
+            "candidates": ref_assemblies,
+        }
+
+    return {
+        "assembly": None,
+        "source": None,
+        "ambiguous": False,
+        "candidates": [],
+    }
+
+
 def inspect_header(
     filepath: str, max_bytes: Optional[int] = None, timeout_sec: Optional[int] = None
 ) -> Dict:
@@ -186,7 +398,6 @@ def inspect_header(
                 res = {"error": f"bcftools fallback failed: {e}"}
 
         # Normalize
-        md_ref = None
         md_ref_path = None
         md_version = None
         md_created_by = None
@@ -209,13 +420,16 @@ def inspect_header(
                             pass
         except Exception:
             pass
-        if md_ref_path:
-            # simple inference of genome name
-            base = Path(md_ref_path).name.lower()
-            if "grch38" in base or "hg38" in base:
-                md_ref = "GRCh38"
-            elif "grch37" in base or "hg19" in base:
-                md_ref = "GRCh37"
+        # Which assembly the file is expressed against: the ##contig records
+        # first, the ##reference= line only as a tie-breaker. The previous
+        # inference read nothing but that free-text line, so a lifted-over VCF
+        # carrying a stale `##reference=...hg19.fasta` reported GRCh37 while
+        # every contig in it was GRCh38.
+        build = detect_reference_assembly(
+            header_records=res.get("header_records") or [],
+            contig_lengths=res.get("contig_lengths") or {},
+        )
+        md_ref = build["assembly"]
 
         # Prefer parsed values from res if available
         if not md_version:
@@ -223,9 +437,14 @@ def inspect_header(
         if not md_created_by:
             md_created_by = res.get("created_by")
 
-        # Build sequences with lengths if available
+        # Build sequences with lengths if available. The lengths come from the
+        # ##contig records when the reader did not parse them itself -- the
+        # pysam path returns records but no contig_lengths, which used to leave
+        # every sequence here with length None.
         sequences_norm: List[Dict[str, Optional[Union[str, int]]]] = []
-        contig_lengths_map = res.get("contig_lengths") or {}
+        contig_lengths_map = merged_contig_lengths(
+            res.get("header_records") or [], res.get("contig_lengths") or {}
+        )
         if res.get("contigs"):
             for c in res.get("contigs"):
                 sequences_norm.append({"name": c, "length": contig_lengths_map.get(c)})
@@ -261,6 +480,14 @@ def inspect_header(
                 "created_by": md_created_by,
                 "reference_genome": md_ref or None,
                 "reference_genome_path": md_ref_path,
+                # The evidence trail behind reference_genome. Additive keys:
+                # reference_genome itself keeps its contract (an assembly name,
+                # or None when undetectable), so callers reading only that are
+                # unaffected, while a None caused by a self-contradicting header
+                # stays distinguishable from one caused by an empty header.
+                "reference_genome_source": build["source"],
+                "reference_genome_ambiguous": build["ambiguous"],
+                "reference_genome_candidates": build["candidates"],
             },
             "sequences": sequences_norm,
             "samples": res.get("samples") or [],  # <-- all samples
