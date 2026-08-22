@@ -1169,6 +1169,65 @@ class JobService:
             self.db.rollback()
             return False
 
+    def append_workflow_warning(
+        self, job_id: Union[str, uuid.UUID], warning: str
+    ) -> bool:
+        """Add one alert to ``job_metadata['workflow']['warnings']`` and commit.
+
+        This is the channel the report templates read: ``generate_report`` lifts
+        that list off the Job row and hands it to both templates' "Alerts and
+        Warnings" section. Anything a later stage learns that the reader needs to
+        know -- the PharmCAT TSV having rescued the run, say -- reaches the page
+        through here; the upload path seeds the same list.
+
+        The caller's ordering obligation: ``generate_report`` reads the row with
+        a plain query, no ``populate_existing()``, so it only observes this write
+        on a session opened afterwards. Commit before that session exists, not
+        merely before the call (tests/test_generator_job_metadata_read.py).
+
+        Idempotent on the exact text: final-stage progression can be driven more
+        than once for a job, and the reader should not get the same banner twice.
+
+        Returns True when the warning is stored (or was already stored).
+        """
+        try:
+            job_uuid = uuid.UUID(str(job_id))
+            # populate_existing(): read-modify-write of job_metadata, and the
+            # session that gets here has usually loaded this Job already. Same
+            # reasoning as link_pharmcat_run.
+            job = (
+                self.db.query(Job)
+                .filter(Job.id == job_uuid)
+                .populate_existing()
+                .first()
+            )
+
+            if not job:
+                logger.error(f"Job {job_id} not found; workflow warning not stored")
+                return False
+
+            # New dicts at every level, not in-place mutation: job_metadata is a
+            # plain Column(JSON) with no MutableDict, so assigning the same
+            # object back leaves the attribute history empty and SQLAlchemy
+            # emits no UPDATE. Same trap as link_pharmcat_run.
+            metadata = dict(job.job_metadata or {})
+            workflow = dict(metadata.get("workflow") or {})
+            warnings = list(workflow.get("warnings") or [])
+            if warning in warnings:
+                return True
+            warnings.append(warning)
+            workflow["warnings"] = warnings
+            metadata["workflow"] = workflow
+
+            job.job_metadata = metadata
+            self.db.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error appending workflow warning to job {job_id}: {e}")
+            self.db.rollback()
+            return False
+
     def get_pharmcat_run_id(self, job_id: str) -> Optional[str]:
         """
         Get the PharmCAT run ID for a job.

@@ -736,6 +736,31 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                 f"Job {job_id}: report built from the PharmCAT TSV because the "
                 f"report.json was rejected by the structure gate"
             )
+            # The log is for the operator. The clinician holding the report needs
+            # to know too -- a rescued report otherwise looks exactly like a
+            # clean one -- so the same fact goes onto the Alerts and Warnings
+            # page through workflow_warnings, the channel 265's unverified
+            # version banner already established.
+            #
+            # Deliberately here rather than anywhere below: generate_report reads
+            # workflow.warnings off the Job row with a plain query and no
+            # populate_existing(), so it only sees this write because
+            # `db_session = SessionLocal()` further down opens a session *after*
+            # the commit, with an empty identity map. Move this past that line
+            # and the banner silently stops appearing, with no error anywhere.
+            # tests/test_generator_job_metadata_read.py holds the argument.
+            try:
+                from app.reports.generator import pharmcat_tsv_rescue_alert
+
+                job_service.append_workflow_warning(
+                    job_id, pharmcat_tsv_rescue_alert(str(pharmcat_schema_error))
+                )
+            except Exception as warn_error:
+                # A report the reader can use, minus its banner, beats no report.
+                logger.error(
+                    f"Job {job_id}: failed to record the TSV-rescue alert on the "
+                    f"report: {warn_error}"
+                )
 
         # Update progress: Diagram generation (35% of report generation)
         step_update = JobStepUpdate(
@@ -930,8 +955,23 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         if pharmcat_run_id:
             response_data["pharmcat_run_id"] = pharmcat_run_id
 
-        # Update workflow metadata with reports
-        updated_metadata = metadata.copy()
+        # Update workflow metadata with reports.
+        #
+        # Built from a re-read, not from the `metadata` snapshot taken near the
+        # top of this function. update_job replaces job_metadata wholesale --
+        # `job.job_metadata = update_data.metadata`, no merge
+        # (job_service.py:371-372) -- so anything written to the row since that
+        # snapshot is erased by a copy of it. And things are written to it:
+        # link_pharmcat_run adds pharmcat_run_id/pharmcat_linked_at, the TSV
+        # rescue above adds its reader-facing alert, and both assign a *new*
+        # dict, which the stale local cannot see. get_job's populate_existing()
+        # is what makes this a genuine re-read rather than the identity map's
+        # copy of the same stale row.
+        current_job = job_service.get_job(job_id)
+        current_metadata = (
+            (current_job.job_metadata or {}) if current_job is not None else metadata
+        )
+        updated_metadata = dict(current_metadata)
         updated_metadata["reports"] = response_data
 
         # Update the workflow with the new metadata
