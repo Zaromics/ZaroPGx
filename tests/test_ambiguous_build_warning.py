@@ -23,8 +23,11 @@ These tests pin:
      index `metadata["reference_genome_ambiguous"]` without `.get`.
 """
 
+import asyncio
 import types
 import uuid
+
+import pytest
 
 from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
 from app.api.utils.file_processor import FileAnalysis, FileProcessor
@@ -294,3 +297,155 @@ def test_ambiguous_upload_response_carries_ambiguity_through_the_api(
     assert vcf_info is not None
     assert vcf_info["reference_genome_ambiguous"] is True
     assert vcf_info["reference_genome_candidates"] == ["GRCh37", "GRCh38"]
+
+
+# ---------------------------------------------------------------------------
+# Task 10 item 5: the same warning, extended to alignment files (BAM/CRAM/SAM)
+# ---------------------------------------------------------------------------
+#
+# T6's detect_reference_assembly already flags a self-contradicting alignment
+# header (@SQ records naming two builds) the same way it flags a VCF one, but
+# T8 wired the warning only through vcf_info, which analyze_file builds for
+# FileType.VCF alone -- a self-contradicting BAM/CRAM/SAM header proceeded in
+# total silence. These tests pin the fix: the ambiguity fields travel from
+# header_inspector's alignment branch through FileAnalysis's own fields (NOT
+# vcf_info -- that field is documented VCF-only) into the same
+# determine_workflow warning, for BAM/CRAM/SAM alike, and "no evidence ->
+# silent" stays exactly as the VCF path already has it.
+
+
+def _alignment_analysis(
+    file_type: FileType = FileType.BAM,
+    ambiguous: bool = False,
+    candidates=None,
+) -> FileAnalysis:
+    return FileAnalysis(
+        file_type=file_type,
+        is_compressed=False,
+        has_index=True,
+        reference_genome_ambiguous=ambiguous,
+        reference_genome_candidates=candidates or [],
+    )
+
+
+@pytest.mark.parametrize("file_type", [FileType.BAM, FileType.CRAM, FileType.SAM])
+def test_ambiguous_alignment_header_gets_exactly_one_new_warning(file_type):
+    baseline = FileProcessor().determine_workflow(_alignment_analysis(file_type))
+    workflow = FileProcessor().determine_workflow(
+        _alignment_analysis(file_type, ambiguous=True, candidates=["GRCh37", "GRCh38"])
+    )
+
+    new_warnings = [w for w in workflow["warnings"] if w not in baseline["warnings"]]
+    assert (
+        len(new_warnings) == 1
+    ), f"expected exactly one new warning for {file_type}, got {new_warnings}"
+
+    warning = new_warnings[0].lower()
+    assert "contradicts itself" in warning
+    assert "grch37" in warning and "grch38" in warning
+    assert "could not be verified" in warning
+    assert "caller-declared build" in warning
+
+    # Same channel/shape as the VCF warning: an HTML <p> string appended to
+    # workflow["warnings"].
+    assert new_warnings[0].startswith("<p>") and new_warnings[0].endswith("</p>")
+
+
+@pytest.mark.parametrize("file_type", [FileType.BAM, FileType.CRAM, FileType.SAM])
+def test_unambiguous_alignment_header_adds_no_warning(file_type):
+    # The pre-existing, legitimate "no evidence at all" case must stay silent,
+    # exactly like the VCF path's test_no_evidence_header_adds_no_new_warning.
+    baseline = FileProcessor().determine_workflow(_alignment_analysis(file_type))
+    workflow = FileProcessor().determine_workflow(
+        _alignment_analysis(file_type, ambiguous=False, candidates=[])
+    )
+    assert workflow["warnings"] == baseline["warnings"]
+
+
+def test_ambiguous_bam_header_does_not_block_the_job():
+    workflow = FileProcessor().determine_workflow(
+        _alignment_analysis(
+            FileType.BAM, ambiguous=True, candidates=["GRCh37", "GRCh38"]
+        )
+    )
+    assert workflow["unsupported"] is False
+    assert workflow["unsupported_reason"] is None
+
+
+def test_ambiguous_alignment_header_without_named_candidates_still_warns():
+    workflow = FileProcessor().determine_workflow(
+        _alignment_analysis(FileType.BAM, ambiguous=True, candidates=[])
+    )
+    ambiguity_warnings = [w for w in workflow["warnings"] if "contradicts itself" in w]
+    assert len(ambiguity_warnings) == 1
+
+
+def test_vcf_ambiguity_warning_unaffected_by_alignment_wiring():
+    # Belt-and-braces: the VCF branch must keep reading vcf_info, not the new
+    # FileAnalysis-level fields this item adds -- their False/[] defaults on a
+    # VCF FileAnalysis must not produce or suppress anything.
+    baseline_dataclass_defaults = FileAnalysis(
+        file_type=FileType.VCF,
+        is_compressed=True,
+        has_index=True,
+        vcf_info=_vcf_info(),
+    )
+    workflow = FileProcessor().determine_workflow(baseline_dataclass_defaults)
+    assert not any("contradicts itself" in w for w in workflow["warnings"])
+
+
+def test_analyze_file_threads_alignment_ambiguity_into_file_analysis(
+    monkeypatch, tmp_path
+):
+    """analyze_file must capture header_inspector's alignment-branch ambiguity
+    evidence the same way it already does for VCF -- via FileAnalysis's own
+    fields, not vcf_info (see FileAnalysis's dataclass comment: vcf_info stays
+    VCF-only).
+    """
+    import app.api.utils.file_processor as file_processor_module
+
+    path = tmp_path / "sample.bam"
+    path.write_bytes(b"not a real bam -- inspect_header is stubbed below")
+
+    def _fake_inspect_header(filepath):
+        return {
+            "metadata": {
+                "reference_genome": None,
+                "reference_genome_ambiguous": True,
+                "reference_genome_candidates": ["GRCh37", "GRCh38"],
+            },
+            "sequences": [],
+        }
+
+    monkeypatch.setattr(file_processor_module, "inspect_header", _fake_inspect_header)
+
+    analysis = asyncio.run(FileProcessor().analyze_file(str(path)))
+
+    assert analysis.file_type == FileType.BAM
+    assert analysis.reference_genome_ambiguous is True
+    assert analysis.reference_genome_candidates == ["GRCh37", "GRCh38"]
+    assert analysis.vcf_info is None  # still VCF-only, unaffected by this wiring
+
+
+def test_analyze_file_unambiguous_alignment_leaves_fields_false(monkeypatch, tmp_path):
+    import app.api.utils.file_processor as file_processor_module
+
+    path = tmp_path / "sample.bam"
+    path.write_bytes(b"not a real bam -- inspect_header is stubbed below")
+
+    def _fake_inspect_header(filepath):
+        return {
+            "metadata": {
+                "reference_genome": "GRCh38",
+                "reference_genome_ambiguous": False,
+                "reference_genome_candidates": [],
+            },
+            "sequences": [],
+        }
+
+    monkeypatch.setattr(file_processor_module, "inspect_header", _fake_inspect_header)
+
+    analysis = asyncio.run(FileProcessor().analyze_file(str(path)))
+
+    assert analysis.reference_genome_ambiguous is False
+    assert analysis.reference_genome_candidates == []
