@@ -515,6 +515,13 @@ REPORT_DIR = Path(os.getenv('REPORT_DIR', '/data/reports'))
 # Create necessary directories
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Uploads are streamed to disk in chunks of this size rather than read into memory --
+# see the save sites in create_input_vcf() and genotype() below. A whole-genome
+# BAM/VCF does not fit comfortably as a single in-memory `bytes` plus a duplicate
+# on-disk copy, and `await file.read()` with no size argument reads the entire
+# upload before the first byte is written.
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+
 # Load supported genes from configuration (replaces hardcoded SUPPORTED_GENES list)
 SUPPORTED_GENES = gene_config.get_supported_genes()
 
@@ -678,8 +685,8 @@ async def create_input_vcf(
         safe_name = safe_upload_name(file.filename, ".bam")
         input_path = job_dir / safe_name
         with open(input_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
 
         # Determine output VCF path. Derived from the generated stem, not from
         # the client's name; `safe_name` is `<hex><suffix>` and the hex part
@@ -919,8 +926,8 @@ async def genotype(
         # extension - it never builds a path from it.
         input_filepath = job_dir / safe_upload_name(file.filename, ".vcf")
         with open(input_filepath, "wb") as f:
-            content = await file.read()
-            f.write(content)
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
         
         # Get file size for memory optimization
         file_size_gb = os.path.getsize(input_filepath) / (1024**3)
