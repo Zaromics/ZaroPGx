@@ -135,10 +135,24 @@ class _FakeJobService:
     def append_workflow_warning(self, job_id, warning):
         self.appended_warnings.append(warning)
         self.events.append("warning-committed")
+        # Mirror the real method: read-modify-write onto a *new* dict, which is
+        # what makes the router's earlier `metadata` local go stale.
+        metadata = dict(self.job.job_metadata or {})
+        workflow = dict(metadata.get("workflow") or {})
+        workflow["warnings"] = list(workflow.get("warnings") or []) + [warning]
+        metadata["workflow"] = workflow
+        self.job.job_metadata = metadata
         return True
 
     def update_job(self, job_id, update):
         self.updates.append(update)
+        # The real one replaces job_metadata wholesale, with no merge
+        # (job_service.py:371-372). A fake that only records the call cannot
+        # show a mid-function write being erased by a stale snapshot, which is
+        # exactly the bug test_the_rescue_warning_survives_the_final_metadata_update
+        # exists for.
+        if getattr(update, "metadata", None) is not None:
+            self.job.job_metadata = update.metadata
         return self.job
 
     def update_job_step(self, job_id, step_name, update):
@@ -204,6 +218,7 @@ def final_stage(monkeypatch, tmp_path, caplog):
 
     class _RecordingSessionLocal(_FakeSession):
         def __init__(self):
+            super().__init__()
             events.append("session-opened")
 
     # Both bindings, because the report lane's `db_session = SessionLocal()`
@@ -417,7 +432,7 @@ def test_a_missing_report_json_with_a_tsv_still_uses_the_tsv(final_stage):
 # unverified-version banner (265) already solved the same surfacing problem via
 # `workflow_warnings`, which both report templates render in "Alerts and
 # Warnings"; this follows that channel, from the other end -- the job row's
-# metadata, which generator.py reads at :1828.
+# metadata, which generator.py reads at :1880.
 
 
 def test_a_tsv_rescued_run_tells_the_reader_it_was_rescued(final_stage):
@@ -581,7 +596,7 @@ def test_append_workflow_warning_is_visible_to_a_freshly_opened_session(
 
         assert service.append_workflow_warning(job_id, "<p>rescued</p>") is True
 
-        # generator.py:1828's read, on a session opened afterwards.
+        # generator.py:1880's read, on a session opened afterwards.
         job_uuid = _uuid.UUID(str(job_id))
         read_row = fresh.query(Job).filter(Job.id == job_uuid).first()
         warnings = (read_row.job_metadata or {})["workflow"]["warnings"]
@@ -617,6 +632,135 @@ def test_append_workflow_warning_does_not_duplicate_on_a_re_run(session_factory)
     finally:
         worker.rollback()
         worker.close()
+
+
+@pytest.fixture
+def real_final_stage(monkeypatch, tmp_path, session_factory):
+    """Drive the whole final stage against a *real* JobService and a real row.
+
+    The fake-service harness above cannot see what this fixture exists for: its
+    ``update_job`` only appends to a list, so the final
+    ``update_job(JobUpdate(metadata=...))`` -- which replaces ``job_metadata``
+    wholesale (job_service.py:371-372, no merge) -- never actually overwrites
+    anything. Only a real row can show whether a warning written mid-function is
+    still there at the end.
+    """
+    import app.api.db as api_db
+    import app.reports.generator as generator
+    from app.api.models import JobCreate
+    from app.services.job_service import JobService
+
+    monkeypatch.setattr(ur, "schedule_coroutine", lambda *a, **k: None)
+    monkeypatch.setattr(ur, "render_with_graphviz", lambda *a, **k: None)
+    monkeypatch.setattr(ur, "render_kroki_mermaid_svg", lambda *a, **k: None)
+    monkeypatch.setattr(ur, "render_workflow", lambda *a, **k: None)
+    monkeypatch.setattr(ur, "render_simple_png_from_workflow", lambda *a, **k: None)
+    monkeypatch.setattr(
+        generator, "generate_report", lambda **kwargs: {"pdf_path": "/x.pdf"}
+    )
+    # Real service, but no event loop here to await the broadcast coroutine on.
+    monkeypatch.setattr(
+        JobService, "_broadcast_job_update", lambda self, *a, **k: None, raising=False
+    )
+
+    # The worker opens its own sessions; hand it real ones on the test database.
+    monkeypatch.setattr(api_db, "SessionLocal", session_factory)
+    monkeypatch.setattr(ur, "SessionLocal", session_factory)
+
+    opened = []
+
+    def _open():
+        session = session_factory()
+        opened.append(session)
+        return session
+
+    setup = _open()
+    created = JobService(setup).create_job(
+        JobCreate(workflow_type="genomic_analysis", name="tsv-rescue-persistence")
+    )
+    job_id = str(created.id)
+
+    outdir = tmp_path / PATIENT_ID / job_id
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / f"{job_id}_pgx_pharmcat.json").write_text(
+        json.dumps(BROKEN_REPORT), encoding="utf-8"
+    )
+    (outdir / f"{job_id}_pgx_pharmcat.tsv").write_text(PHARMCAT_TSV, encoding="utf-8")
+
+    def _stamp(metadata):
+        from app.api.db import Job
+
+        row = setup.query(Job).filter(Job.id == created.id).populate_existing().first()
+        row.job_metadata = metadata
+        setup.commit()
+
+    _stamp(
+        {
+            "patient_id": PATIENT_ID,
+            "data_id": "data-1",
+            "workflow": {"needs_report": True, "warnings": ["<p>upload alert</p>"]},
+        }
+    )
+
+    def _drive():
+        ur._handle_final_stages_progression_sync(job_id, str(outdir))
+
+    def _read_row():
+        """Read the row as a brand-new session would -- the report's own view."""
+        from app.api.db import Job
+
+        verifier = _open()
+        return (
+            verifier.query(Job)
+            .filter(Job.id == created.id)
+            .populate_existing()
+            .first()
+            .job_metadata
+        )
+
+    yield _drive, _read_row
+
+    for session in opened:
+        session.rollback()
+        session.close()
+
+
+def test_the_rescue_warning_survives_the_final_metadata_update(real_final_stage):
+    """The warning has to still be on the row when the function returns.
+
+    It was not. ``metadata = job.job_metadata or {}`` is captured near the top of
+    ``_handle_final_stages_progression_sync``; ``append_workflow_warning``
+    assigns a *new* dict to ``job.job_metadata``, so that local still points at
+    the pre-warning object; and the closing ``updated_metadata =
+    metadata.copy()`` + ``update_job(JobUpdate(metadata=...))`` then replaced the
+    row with the stale snapshot. The banner reached the report that was rendered
+    in-process and was erased from the record, so any *regenerated* report came
+    out TSV-rescued with nothing saying so -- the silent degradation 265 exists
+    to prevent.
+    """
+    drive, read_row = real_final_stage
+    drive()
+
+    metadata = read_row()
+    warnings = metadata["workflow"]["warnings"]
+
+    assert "<p>upload alert</p>" in warnings, warnings
+    rescue = [w for w in warnings if "TSV" in w]
+    assert len(rescue) == 1, f"the rescue warning did not survive the run: {warnings}"
+    # And the final update genuinely happened -- otherwise this passes for the
+    # wrong reason.
+    assert metadata.get("reports"), metadata
+
+
+def test_a_second_drive_does_not_duplicate_the_surviving_warning(real_final_stage):
+    """Dedup is only real if the row it reads still holds the first warning."""
+    drive, read_row = real_final_stage
+    drive()
+    drive()
+
+    warnings = read_row()["workflow"]["warnings"]
+    assert len([w for w in warnings if "TSV" in w]) == 1, warnings
+    assert warnings.count("<p>upload alert</p>") == 1, warnings
 
 
 def test_append_workflow_warning_reports_a_missing_job(session_factory):
