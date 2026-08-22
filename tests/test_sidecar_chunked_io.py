@@ -1,19 +1,23 @@
 """Chunked upload I/O and the gatk-api to_thread concurrency cap (queue task 3).
 
-Three sidecars used to save an upload with `f.write(await file.read())` -- the
-whole multipart body read into memory as one `bytes`, then a synchronous write
-on the event loop:
+Four upload save sites across three sidecars used to buffer the whole upload
+into memory with `content = await file.read(); f.write(content)` (or the
+equivalent one-liner), then write it out in a single synchronous call:
 
   * docker/pypgx/pypgx_wrapper.py, both `/create-input-vcf` and `/genotype`.
   * docker/zarohla/app.py's `/call-hla`, all three save sites (the paired
     file1/file2 upload and the single-file upload).
+  * docker/gatk-api/gatk_api.py's `/variant-call` -- this one was missed in
+    the first pass: `/cram-to-bam` and `/sam-to-bam` in the same module
+    already streamed, and "gatk_api.py already shows the chunked shape" was
+    true only of those two, not of `/variant-call`'s own save site.
 
-All three now stream in UPLOAD_CHUNK_BYTES-sized chunks, the shape
-docker/gatk-api/gatk_api.py already used. This module pins the regression shut
-with a source fence (the old one-line pattern must not reappear) and proves the
-new shape is real by driving each save site through its actual FastAPI route
-with `fastapi.UploadFile.read` spied on, so the assertion is about what the
-running handler actually calls, not a transcription of it.
+All now stream in UPLOAD_CHUNK_BYTES-sized chunks. This module pins the
+regression shut with a source fence (the old whole-file pattern must not
+reappear, in any of the four) and proves the new shape is real by driving
+each save site through its actual FastAPI route with
+`starlette.datastructures.UploadFile.read` spied on, so the assertion is
+about what the running handler actually calls, not a transcription of it.
 
 It also covers gatk_api.py's TO_THREAD_CONCURRENCY_LIMIT semaphore: the two
 asyncio.to_thread() call sites that drive convert_to_indexed_bam() (a
@@ -166,6 +170,11 @@ def _spy_on_upload_reads(monkeypatch):
 
 
 @pytest.fixture(scope="module")
+def gatk_api_source():
+    return GATK_API_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
 def pypgx_source():
     return PYPGX_SOURCE.read_text(encoding="utf-8")
 
@@ -173,6 +182,20 @@ def pypgx_source():
 @pytest.fixture(scope="module")
 def zarohla_source():
     return ZAROHLA_SOURCE.read_text(encoding="utf-8")
+
+
+def test_gatk_api_upload_sites_no_longer_buffer_whole_file(gatk_api_source):
+    """/variant-call used the old whole-file shape after /cram-to-bam and
+    /sam-to-bam had already been converted to the chunked one -- the brief's
+    "gatk_api.py already shows the chunked shape" was true only of the latter
+    two. All three of this module's own upload save sites must now match.
+    """
+    assert "content = await file.read()" not in gatk_api_source, (
+        "gatk_api.py reads an entire upload into memory with a bare "
+        "await file.read(); every save site must stream via UPLOAD_CHUNK_BYTES"
+    )
+    # /variant-call, /cram-to-bam, /sam-to-bam: one chunked read loop each.
+    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 3
 
 
 def test_pypgx_upload_sites_no_longer_buffer_whole_file(pypgx_source):
@@ -241,6 +264,12 @@ def test_pypgx_create_input_vcf_streams_upload_in_chunks(pypgx_api, monkeypatch)
 
 def test_pypgx_genotype_streams_upload_in_chunks(pypgx_api, monkeypatch):
     monkeypatch.setattr(pypgx_api, "UPLOAD_CHUNK_BYTES", 4)
+    # /genotype never returns its saved path in the response body (unlike
+    # /create-input-vcf), and nothing here rmtree's job_dir -- so the path is
+    # made predictable instead, by pinning the two uuid4() calls that build it
+    # (local_job_id, then safe_upload_name()'s own stem) to one fixed value.
+    fixed_uuid = pypgx_api.uuid.uuid4()
+    monkeypatch.setattr(pypgx_api.uuid, "uuid4", lambda: fixed_uuid)
     read_sizes = _spy_on_upload_reads(monkeypatch)
 
     payload = bytes(range(29))
@@ -255,8 +284,48 @@ def test_pypgx_genotype_streams_upload_in_chunks(pypgx_api, monkeypatch):
     # that failure is not what this test is about.
     assert response.status_code in (200, 500), response.text
 
+    expected_path = pypgx_api.TEMP_DIR / str(fixed_uuid) / f"{fixed_uuid.hex}.vcf"
+    assert (
+        expected_path.read_bytes() == payload
+    ), "the saved file does not match what was uploaded"
+
     assert read_sizes, "file.read() was never called"
     assert set(read_sizes) == {4}
+    assert len(read_sizes) > 1, "the whole upload was still read in a single call"
+
+
+def test_gatk_api_variant_call_streams_upload_in_chunks(gatk_api, monkeypatch):
+    # /variant-call checks the reference FASTA exists on disk before it looks
+    # at the file type at all -- materialise a minimal one so the request can
+    # reach a clean 200 rather than failing on an unrelated missing file.
+    reference_path = Path(gatk_api.REFERENCE_PATHS["hg38"])
+    reference_path.parent.mkdir(parents=True, exist_ok=True)
+    reference_path.write_text(">chr1\nACGTACGTACGT\n", encoding="utf-8")
+
+    monkeypatch.setattr(gatk_api, "UPLOAD_CHUNK_BYTES", 4)
+    read_sizes = _spy_on_upload_reads(monkeypatch)
+
+    # A VCF with no `##reference=` line, so detect_reference() has nothing to
+    # override the requested (default) hg38 with -- the upload is already a
+    # VCF, so /variant-call returns it directly instead of calling out to GATK.
+    payload = b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\n"
+    client = TestClient(gatk_api.app)
+    response = client.post(
+        "/variant-call",
+        files={"file": ("sample.vcf", payload, "application/octet-stream")},
+    )
+
+    assert response.status_code == 200, response.text
+    output_file = response.json()["output_file"]
+    assert output_file, "no output_file in the /variant-call response"
+    assert (
+        Path(output_file).read_bytes() == payload
+    ), "the saved file does not match what was uploaded"
+
+    assert read_sizes, "file.read() was never called"
+    assert set(read_sizes) == {
+        4
+    }, f"expected every read() call to request the configured chunk size, got {read_sizes}"
     assert len(read_sizes) > 1, "the whole upload was still read in a single call"
 
 

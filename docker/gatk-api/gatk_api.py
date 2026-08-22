@@ -1268,9 +1268,12 @@ async def variant_call(
             )
 
         logger.info(f"Job {local_job_id}: Saving file to {input_path}")
+        # Chunked for the same reason as the CRAM/SAM routes: a whole-genome BAM
+        # does not fit as a single in-memory `bytes`, and the old single
+        # `f.write(await file.read())` blocked the event loop for the whole read.
         with open(input_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
         logger.info(f"Job {local_job_id}: Saved uploaded file to {input_path}")
         
         # Update workflow with file information
