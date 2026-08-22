@@ -63,6 +63,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      # Pins the Node guarantee that tests/test_ui_workflow_flag_reads.py's two
+      # skipif(shutil.which("node") is None) tests currently get only by luck
+      # (ubuntu-latest happens to ship Node). Without this step they skip silently.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       # Fast suite: unit/API tests on in-memory SQLite (tests/conftest.py).
       # Full-stack compose e2e lives in the separate `e2e` job (-m e2e).
       - name: Install dependencies
