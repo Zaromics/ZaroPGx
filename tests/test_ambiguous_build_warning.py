@@ -23,6 +23,9 @@ These tests pin:
      index `metadata["reference_genome_ambiguous"]` without `.get`.
 """
 
+import types
+import uuid
+
 from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
 from app.api.utils.file_processor import FileAnalysis, FileProcessor
 from app.api.utils.header_inspector import inspect_header
@@ -150,3 +153,144 @@ def test_unknown_format_metadata_keys_match_vcf_shape(tmp_path):
     assert set(metadata.keys()) == _EXPECTED_METADATA_KEYS
     assert metadata["reference_genome_ambiguous"] is False
     assert metadata["reference_genome_candidates"] == []
+
+
+def test_real_vcf_metadata_keys_match_the_expected_shape(tmp_path):
+    # Closes the reviewer's note on the VCF branch itself: the three prior
+    # tests exercise FASTA/FASTQ/unknown against the same expected set, but
+    # never actually drove a real VCF through inspect_header to confirm the
+    # branch that HAS always carried these keys (Task 6) still matches.
+    path = tmp_path / "sample.vcf"
+    path.write_text(
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=248956422>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n",
+        encoding="utf-8",
+    )
+
+    metadata = inspect_header(str(path))["metadata"]
+
+    assert set(metadata.keys()) == _EXPECTED_METADATA_KEYS
+
+
+# ---------------------------------------------------------------------------
+# API response: analysis_info.vcf_info must carry the ambiguity evidence too
+# ---------------------------------------------------------------------------
+#
+# Review finding (Important): upload_router.py rebuilds a fresh VCFHeaderInfo
+# for the response's analysis_info.vcf_info from file_analysis.vcf_info, and
+# that reconstruction did not pass reference_genome_ambiguous /
+# reference_genome_candidates through -- they silently defaulted to False/[],
+# so the API told callers a genuinely ambiguous file was unambiguous even
+# though workflow["warnings"] (tested above) correctly flagged it. Fixed at
+# app/api/routes/upload_router.py:1695-1706 (the VCFHeaderInfo(...) call now
+# passes both fields through from file_analysis.vcf_info).
+def _upload_ambiguous_vcf_and_capture_response(monkeypatch, tmp_path) -> dict:
+    """POST a VCF through the real endpoint and return the JSON body.
+
+    Mirrors tests/test_ui_workflow_flag_reads.py's
+    _upload_grch37_and_capture_response: only the DB/Nextflow/file-IO edges
+    are stubbed. file_processor.process_files is stubbed to return a
+    FileAnalysis whose vcf_info is ambiguous, so the real upload_router code
+    assembles the real response shape from it.
+    """
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.api.routes import upload_router
+
+    main.app.router.on_startup.clear()
+    main.app.router.on_shutdown.clear()
+
+    monkeypatch.setattr(
+        upload_router, "create_patient", lambda db, identifier: uuid.uuid4()
+    )
+    monkeypatch.setattr(
+        upload_router,
+        "register_genetic_data",
+        lambda db, patient_id, file_type, file_path, is_supplementary: uuid.uuid4(),
+    )
+
+    class _FakeJob:
+        def __init__(self):
+            self.id = str(uuid.uuid4())
+            self.status = "running"
+            self.job_metadata = {}
+
+    class _FakeJobService:
+        def __init__(self, db):
+            self._job = _FakeJob()
+
+        def create_job(self, job_create):
+            return self._job
+
+        def update_job(self, job_id, job_update):
+            return self._job
+
+    monkeypatch.setattr(upload_router, "JobService", _FakeJobService)
+
+    class _FakeProgressCalc:
+        def calculate_progress_from_steps(self, steps_dict, workflow_config, job_id):
+            return types.SimpleNamespace(
+                progress_percentage=0,
+                stage=types.SimpleNamespace(value="header_analysis"),
+                message="stubbed",
+            )
+
+    monkeypatch.setattr(upload_router, "WorkflowProgressCalculator", _FakeProgressCalc)
+
+    async def _noop_background(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        upload_router, "process_file_nextflow_background_with_db", _noop_background
+    )
+
+    async def _fake_process_files(files, reference_genome, **kwargs):
+        stored = []
+        for f in files:
+            p = tmp_path / f.filename
+            p.write_bytes(await f.read())
+            stored.append(str(p))
+
+        analysis = _analysis(_vcf_info(ambiguous=True, candidates=["GRCh37", "GRCh38"]))
+        workflow = FileProcessor().determine_workflow(analysis)
+        workflow["file_type"] = analysis.file_type.value
+        workflow["reference"] = reference_genome or "hg38"
+        workflow["workflow_type"] = "genomic_analysis"
+        return {
+            "success": True,
+            "file_paths": stored,
+            "file_analysis": analysis,
+            "workflow": workflow,
+        }
+
+    monkeypatch.setattr(
+        upload_router.file_processor, "process_files", _fake_process_files
+    )
+
+    def _fake_get_db():
+        yield object()
+
+    monkeypatch.setitem(main.app.dependency_overrides, main.get_db, _fake_get_db)
+
+    vcf = b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS\n"
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/upload/genomic-data",
+            files={"files": ("ambiguous.vcf", vcf, "text/plain")},
+            data={"sample_identifier": "ambiguous_sample", "reference_genome": "hg38"},
+        )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_ambiguous_upload_response_carries_ambiguity_through_the_api(
+    monkeypatch, tmp_path
+):
+    payload = _upload_ambiguous_vcf_and_capture_response(monkeypatch, tmp_path)
+
+    vcf_info = payload["analysis_info"]["vcf_info"]
+    assert vcf_info is not None
+    assert vcf_info["reference_genome_ambiguous"] is True
+    assert vcf_info["reference_genome_candidates"] == ["GRCh37", "GRCh38"]

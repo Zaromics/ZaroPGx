@@ -835,10 +835,13 @@ class FileProcessor:
                     # against the caller-declared build rather than being
                     # refused or marked as a known-wrong one.
                     candidates = vcf_info.reference_genome_candidates or []
+                    # detect_reference_assembly's contract (header_inspector.py)
+                    # only ever sets ambiguous=True with >=2 candidates today,
+                    # but gate on truthiness rather than a >=2 length check so
+                    # a future one-candidate ambiguity still gets named instead
+                    # of silently falling back to the no-candidates phrasing.
                     builds_note = (
-                        f" (candidates: {', '.join(candidates)})"
-                        if len(candidates) >= 2
-                        else ""
+                        f" (candidates: {', '.join(candidates)})" if candidates else ""
                     )
                     workflow["warnings"].append(
                         "<p>⚠️ This file's header contradicts itself about the genome "
