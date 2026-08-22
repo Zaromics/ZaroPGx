@@ -98,6 +98,13 @@ def _header_declares_gvcf_blocks(file_path: Path) -> bool:
     Never raises. A file that cannot be read here is simply "not known to be a gVCF" and
     falls through to the ordinary extension logic; deciding a file's type must not be the
     thing that turns an unreadable upload into a 500.
+
+    Both bounds fail *closed* in the same direction - a header longer than
+    GVCF_HEADER_SCAN_LINES lines, or a single line past GVCF_HEADER_MAX_LINE_BYTES,
+    ends the scan as "not a gVCF" rather than as an error. That is the safe direction
+    for a malformed file and the wrong one for a pathological gVCF, so the caps are set
+    far above any real VCF header (a few hundred lines of a few hundred bytes) and the
+    name rule in _is_gvcf covers the ordinary case without reading anything at all.
     """
     try:
         opener = gzip.open if str(file_path).lower().endswith(".gz") else open
@@ -356,6 +363,14 @@ class FileProcessor:
                 with gzip.open(file_path, "rt", errors="ignore") as f:
                     first_line = f.readline().strip()
                     if first_line.startswith("##fileformat=VCF"):
+                        # A gVCF's first line says `##fileformat=VCF` too, so this sniff
+                        # cannot stop here. It is reached precisely when the name told us
+                        # nothing - and the stored name often tells us nothing, because
+                        # safe_upload_basename drops non-ASCII: `образец.gvcf` is
+                        # stored as `upload_gvcf`, which matches no extension rule.
+                        if _header_declares_gvcf_blocks(file_path):
+                            logger.info("Identified as gzipped GVCF from content")
+                            return FileType.GVCF
                         logger.info("Identified as gzipped VCF from content")
                         return FileType.VCF
 
@@ -379,6 +394,12 @@ class FileProcessor:
                     try:
                         header = f.read(20).decode("utf-8", errors="ignore")
                         if "##fileformat=VCF" in header:
+                            # Same reasoning as the gzipped arm above: line one does not
+                            # distinguish a VCF from a gVCF, and this branch is reached
+                            # only when the name has stopped being evidence.
+                            if _header_declares_gvcf_blocks(file_path):
+                                logger.info("Identified as GVCF from content")
+                                return FileType.GVCF
                             logger.info("Identified as VCF from content")
                             return FileType.VCF
                         elif header.startswith("@HD") or header.startswith("@SQ"):
@@ -564,8 +585,8 @@ class FileProcessor:
         - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
         - VCF files: direct PyPGx + PharmCAT with outside calls
         - GVCF files: refused (PharmCAT is not validated against reference blocks)
-        - BCF files: binary VCF, carried on the vcf branch (see upload_router's
-          NEXTFLOW_INPUT_TYPE_ALIASES); htslib reads the encoding from the file itself
+        - BCF files: refused (no conversion step ships, and the sidecars gate on the
+          filename, so a BCF job ends with no results rather than an error)
         - SAM files: conversion to BAM using GATK or samtools
         - FASTA files: reference genome files (unsupported for direct analysis)
         - BED files: genomic interval files (unsupported for direct analysis)
@@ -922,19 +943,42 @@ class FileProcessor:
                 "ZaroPGx call the variants.</p>"
             )
 
-        # BCF - binary VCF format, carried on the pipeline's vcf branch unconverted.
-        # No conversion step is planned because none is needed: bcftools and pysam both
-        # detect the binary encoding from the file's own magic bytes. See
-        # upload_router.NEXTFLOW_INPUT_TYPE_ALIASES for where `bcf` becomes `vcf`.
+        # BCF: refused at upload, not analysed.
+        #
+        # Renaming it onto the pipeline's vcf branch was tried and reverted, because the
+        # branch does not convert anything - it stages the upload verbatim, so the file
+        # arrives downstream still called `upload_sample.bcf`. docker/pharmcat's
+        # /genotype gates on that name (`.vcf`/`.vcf.gz`/`.vcf.bgz`) and answers 400,
+        # and main.nf's PharmCAT curl ends in `|| true`, so the 400 is swallowed and the
+        # run "completes" with no PharmCAT output at all. That is a silent wrong answer
+        # where there used to be a loud `error "Unsupported input type"` - strictly
+        # worse. (docker/pypgx stores it as {uuid}.vcf and feeds it to PyPGx unchecked,
+        # which is its own unvalidated path.)
+        #
+        # Accepting BCF honestly needs a real conversion step. ZaroPGx ships none, so
+        # until it does, the user is told the one command that fixes it. None of the
+        # needs_* flags are set, because there is no workflow to plan.
         elif analysis.file_type == FileType.BCF:
-            workflow["needs_pypgx"] = True
-            workflow["recommendations"].append("<p>BCF files (binary VCF format):</p>")
-            workflow["recommendations"].append(
-                "<p>• Processed on the VCF path; the tools that read it (bcftools, "
-                "pysam) accept BCF directly, so no conversion step is needed</p>"
+            workflow["unsupported"] = True
+            workflow["unsupported_reason"] = (
+                "ZaroPGx cannot analyse BCF files. BCF is the binary encoding of a VCF, "
+                "but ZaroPGx ships no conversion step, and the analysis tools are handed "
+                "the file under its original name - so a BCF job would end with no "
+                "results rather than an error. Convert it to a bgzipped VCF first and "
+                "upload that: bcftools view -O z sample.bcf > sample.vcf.gz"
             )
             workflow["recommendations"].append(
-                "<p>• Standard PyPGx + PharmCAT pipeline will be applied</p>"
+                "<p>Convert the BCF to a bgzipped VCF, then upload that:</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>• bcftools view -O z sample.bcf &gt; sample.vcf.gz</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>• Index it if you have one to spare: bcftools index -t "
+                "sample.vcf.gz</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>• A GRCh38/hg38 VCF is the fastest input ZaroPGx accepts.</p>"
             )
 
         # BED - genome interval/annotation files
@@ -979,10 +1023,13 @@ class FileProcessor:
                 "<p>Priority 1 (Development): VCF, GRCh37/hg19, NGS-derived.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 2 (Development): BAM, CRAM, SAM, BCF, all NGS-derived.</p>"
+                "<p>Priority 2 (Development): BAM, CRAM, SAM, all NGS-derived.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Not accepted: FASTQ. ZaroPGx ships no aligner — align the reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Not accepted: BCF. Convert it first: bcftools view -O z sample.bcf &gt; sample.vcf.gz</p>"
             )
             workflow["recommendations"].append(
                 "<p>Priority 3 (Research): Other sequencing and genotyping formats.</p>"

@@ -151,18 +151,16 @@ def _nextflow_max_wait_seconds() -> float:
 # first step POSTs to gatk-api's /align-fastq, which answers HTTP 501 because the image
 # ships no aligner, and main.nf's curls use --fail-with-body, so the 501 kills the run.
 # A branch existing is not the same as the branch working.
-NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam"})
-
-# Input types that reach main.nf under a different name than FileProcessor gave them.
 #
-# BCF is VCF in htslib's binary encoding, and every consumer on main.nf's vcf branch
-# reads it through htslib - bcftools in the PharmCAT preprocessor, pysam in the header
-# inspector - which detects the encoding from the file's own magic bytes, not from
-# `params.input_type`. A `bcf` branch would therefore be a copy of the `vcf` one, so the
-# rename happens here instead and main.nf's branch table stays equal to the set of
-# genuinely different workflows. (Before this, `bcf` was submitted verbatim and every
-# BCF job died at main.nf's `error "Unsupported input type"`.)
-NEXTFLOW_INPUT_TYPE_ALIASES = {"bcf": "vcf"}
+# `bcf` is deliberately absent, and deliberately NOT aliased onto `vcf` either. The
+# alias was tried: it makes main.nf take the vcf branch, but that branch converts
+# nothing - it stages the upload verbatim, so the file reaches docker/pharmcat still
+# named `.bcf`, /genotype gates on that name and answers 400, and the PharmCAT curl's
+# trailing `|| true` swallows it. The run then "completes" with no PharmCAT output: a
+# silent wrong answer replacing a loud one. Renaming an input type is only honest when
+# a lane exists that can finish it, so BCF is refused at ingest instead (see
+# FileProcessor.determine_workflow).
+NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam"})
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
@@ -174,17 +172,21 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     this codebase's own flag for "we did analyse it, provisionally".
 
     What genuinely cannot work is an input that is flagged unsupported and that the
-    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED, gVCF and unrecognised formats.
-    Those used to be accepted, queued, and then failed minutes later with a Nextflow or
-    gatk-api error the user could do nothing with.
+    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED, gVCF, BCF and unrecognised
+    formats. Those used to be accepted, queued, and then failed minutes later with a
+    Nextflow or gatk-api error the user could do nothing with.
 
-    gVCF is the one refusal here that is not about a missing pipeline branch. Mapping it
-    onto the vcf branch would *run*: PharmCAT has simply never been validated against a
-    gVCF's ``<NON_REF>`` reference blocks, so the output would be star alleles nobody has
-    checked. FileProcessor flags it unsupported for that reason and this gate refuses it
-    like the rest. BCF is the opposite call — it is carried, by being renamed to ``vcf``
-    at submission (see ``NEXTFLOW_INPUT_TYPE_ALIASES``), because htslib reads the binary
-    encoding from the file itself and the vcf branch needs no change to handle it.
+    gVCF and BCF are refused for opposite-looking reasons, and both are worth stating
+    because each rules out an obvious-looking shortcut:
+
+    * gVCF onto the vcf branch would *run*. PharmCAT has simply never been validated
+      against a gVCF's ``<NON_REF>`` reference blocks, so the output would be star
+      alleles nobody has checked — a confident wrong answer, not a failure.
+    * BCF onto the vcf branch would *not* run, and would not say so. That branch stages
+      the upload verbatim, so the file reaches docker/pharmcat still named ``.bcf``,
+      /genotype gates on the extension and answers 400, and main.nf's PharmCAT curl ends
+      in ``|| true`` — the run finishes with no PharmCAT output at all. Accepting BCF
+      needs a real conversion step, which ZaroPGx does not ship.
 
     This gate is still not a complete guard, and cannot be one: it only ever sees inputs
     FileProcessor chose to flag.
@@ -1370,10 +1372,11 @@ async def process_file_nextflow_background(
         nextflow_url = os.getenv("NEXTFLOW_RUNNER_URL", "http://nextflow:5055")
 
         try:
-            # Determine input type and reference from workflow. The alias table is what
-            # puts a BCF on the vcf branch instead of main.nf's "Unsupported input type".
-            detected_type = workflow.get("file_type", "vcf")
-            input_type = NEXTFLOW_INPUT_TYPE_ALIASES.get(detected_type, detected_type)
+            # Determine input type and reference from workflow. Passed through as
+            # detected, never renamed: main.nf stages the file verbatim, so a payload
+            # that disagrees with the file on disk buys a swallowed sidecar error
+            # instead of a refusal (see NEXTFLOW_INPUT_TYPES above).
+            input_type = workflow.get("file_type", "vcf")
 
             # Get reference genome from workflow metadata (already set by file_processor)
             reference = workflow.get("reference", "hg38")
@@ -1530,13 +1533,17 @@ async def upload_genomic_data(
     - 23andMe/FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no
       working branch for them, so accepting one could only ever produce a failed job.
       (23andMe would need a VCF converter first; that is not implemented.)
-    - GVCF: rejected with 400, whatever it is named (.gvcf, .g.vcf, either gzipped, or a
-      plain .vcf whose header carries ##GVCFBlock). PharmCAT has not been validated
-      against a gVCF's <NON_REF> reference blocks, so analysing one would produce star
-      alleles nobody has checked rather than an error. Convert to a plain VCF first.
-    - BCF: accepted, and carried on the pipeline's vcf branch — bcftools and pysam read
-      the binary encoding from the file's own magic bytes, so no conversion is needed
-      and main.nf needs no branch of its own (see NEXTFLOW_INPUT_TYPE_ALIASES).
+    - GVCF: rejected with 400. Detected from the name (.gvcf, .g.vcf, either gzipped)
+      and, whatever the name, from a ##GVCFBlock record in the header — the stored name
+      is sanitised, so it can reach disk with no usable extension at all. PharmCAT has
+      not been validated against a gVCF's <NON_REF> reference blocks, so analysing one
+      would produce star alleles nobody has checked rather than an error. Convert to a
+      plain VCF first.
+    - BCF: rejected with 400. Nothing in the stack converts it, and the pipeline stages
+      the upload verbatim, so a BCF reaches the PharmCAT sidecar under a name its
+      /genotype endpoint refuses — and that refusal is swallowed by a `|| true`, ending
+      the run with no results and no error. Convert first:
+      bcftools view -O z sample.bcf > sample.vcf.gz
 
     Only the first uploaded data file is analysed; any further data file is reported as
     ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be

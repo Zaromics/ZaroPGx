@@ -1,25 +1,31 @@
-"""Two input types the upload lane used to accept and then fail on: gVCF and BCF.
+"""Two input types the upload lane accepted and then failed on: gVCF and BCF.
 
 ``upload_router``'s own docstring said it: "GVCF/BCF: accepted today, but main.nf has no
 branch for either, so the job fails at workflow definition." Both were typed, given a
 workflow with ``needs_pypgx``, given a patient row, a job row and a queue slot, and then
-killed at ``pipelines/pgx/main.nf``'s ``error "Unsupported input type"``. The two are only
-superficially the same problem, and they get opposite answers:
+killed at ``pipelines/pgx/main.nf``'s ``error "Unsupported input type"``. Both are now
+refused at ingest, for reasons that are worth keeping apart:
 
-* **gVCF is refused.** A gVCF is not a VCF with extra rows. Its ``<NON_REF>`` symbolic
-  allele and ``##GVCFBlock`` records assert reference confidence over whole spans, and
-  PharmCAT has not been validated against them. Routed onto the vcf lane it would not
-  error — it would emit star alleles nobody has checked. A wrong answer delivered
-  confidently is worse than the failed job it replaces, so the refusal is the fix.
+* **gVCF would run, and lie.** A gVCF is not a VCF with extra rows. Its ``<NON_REF>``
+  symbolic allele and ``##GVCFBlock`` records assert reference confidence over whole
+  spans, and PharmCAT has not been validated against them. Routed onto the vcf lane it
+  would not error — it would emit star alleles nobody has checked. A wrong answer
+  delivered confidently is worse than the failed job it replaces.
 
-  Detection has to look past the extension: GATK writes gVCFs as ``sample.g.vcf[.gz]``,
-  whose last suffix is ``.vcf``, so the extension table typed them VCF and analysed them
-  as one. Name *and* header are consulted.
+  Detection has to look past the extension. GATK writes gVCFs as ``sample.g.vcf[.gz]``,
+  whose last suffix is ``.vcf``; and the stored name is sanitised, so
+  ``образец.gvcf`` reaches disk as ``upload_gvcf`` with no recognisable extension at
+  all. Name *and* header are consulted, the header last and unconditionally.
 
-* **BCF is carried.** BCF is VCF in htslib's binary encoding. Every consumer on main.nf's
-  vcf branch reads it through htslib (bcftools, pysam), which detects the encoding from
-  the file's own magic bytes rather than from ``params.input_type``. So the fix is one
-  alias at submission — no second branch in main.nf that would only duplicate the first.
+* **BCF would not even run.** Carrying it on the vcf branch was tried and reverted: the
+  branch stages the upload verbatim as ``upload_sample.bcf``, and
+  ``docker/pharmcat/pharmcat.py``'s ``/genotype`` rejects any filename that does not end
+  ``.vcf``/``.vcf.gz``/``.vcf.bgz`` with a 400. ``main.nf``'s PharmCAT curl ends in
+  ``|| true``, so that 400 is swallowed and the run "completes" with no PharmCAT output
+  — a *silent* failure, strictly worse than the loud ``error "Unsupported input type"``
+  it replaced. ZaroPGx ships no BCF conversion step, so the honest answer is to refuse
+  and tell the user how to convert. Nothing about the sidecar or main.nf is changed
+  here; the tests below pin the sidecar guard that makes the refusal necessary.
 
 Also pinned here: ``/upload/inspect-header`` saved its temp file under a suffix built from
 the raw client-supplied ``file.filename``, putting a client-controlled string into a
@@ -270,9 +276,214 @@ def test_an_unreadable_file_is_not_guessed_into_a_gvcf(tmp_path):
     assert FileProcessor(temp_dir=str(tmp_path))._detect_file_type(path) is FileType.VCF
 
 
+def test_the_name_rule_does_not_need_a_gvcf_header(tmp_path):
+    """``sample.g.vcf`` is refused on its name alone, header or no header.
+
+    Belt and braces on purpose: a gVCF that has been filtered or re-headered can lose
+    its ``##GVCFBlock`` records while still carrying reference blocks in the body. The
+    name the caller chose is evidence too, and it is the cheaper of the two.
+    """
+    from app.api.models import FileType
+    from app.api.utils.file_processor import FileProcessor
+
+    path = tmp_path / "sample.g.vcf"
+    path.write_bytes(PLAIN_VCF_BYTES)
+
+    assert (
+        FileProcessor(temp_dir=str(tmp_path))._detect_file_type(path) is FileType.GVCF
+    )
+
+
+# The sanitiser that stores the upload keeps ASCII and drops the rest, so a name with no
+# ASCII stem loses its extension entirely: secure_filename("образец.gvcf") == "gvcf",
+# stored as "upload_gvcf". Neither ".gvcf" nor ".vcf" matches that, so the name rule
+# cannot fire and the content sniff is the only thing left looking.
+CYRILLIC_STEM = "образец"
+
+
+@pytest.mark.parametrize(
+    "name,payload",
+    [
+        (f"{CYRILLIC_STEM}.gvcf", GVCF_BYTES),
+        (f"{CYRILLIC_STEM}.gvcf.gz", gzip.compress(GVCF_BYTES)),
+    ],
+    ids=["stem-stripped", "stem-stripped.gz"],
+)
+def test_a_gvcf_is_refused_even_when_its_name_does_not_survive(upload, name, payload):
+    """ "Rejected whatever it is named" has to mean it.
+
+    The stored path is what ``_detect_file_type`` sees, and sanitising the client's
+    filename can leave it with no recognisable extension at all. The header is the only
+    evidence that survives that, so it is consulted on the content-sniff path too — not
+    just when the name already says "VCF".
+    """
+    resp = upload(name, payload)
+
+    assert resp.status_code == 400, resp.text
+    assert "gvcf" in resp.json()["detail"].lower()
+    assert upload.created_patients == []
+
+
+@pytest.mark.parametrize(
+    "stored_name,payload",
+    [
+        ("upload_gvcf", GVCF_BYTES),
+        ("upload_gvcf.gz", gzip.compress(GVCF_BYTES)),
+    ],
+    ids=["no-extension", "gz-only"],
+)
+def test_the_content_sniff_answers_gvcf_not_vcf(tmp_path, stored_name, payload):
+    """The same defect at the detector, where the fix actually lives.
+
+    ``upload_gvcf`` has no extension the table recognises, so detection falls through to
+    the content sniff — which saw ``##fileformat=VCF`` on line one and stopped. Line one
+    of a gVCF says exactly that too.
+    """
+    from app.api.models import FileType
+    from app.api.utils.file_processor import FileProcessor
+
+    path = tmp_path / stored_name
+    path.write_bytes(payload)
+
+    assert (
+        FileProcessor(temp_dir=str(tmp_path))._detect_file_type(path) is FileType.GVCF
+    )
+
+
 # ---------------------------------------------------------------------------
-# BCF: carried on the vcf branch, not refused and not given a branch of its own
+# BCF: refused, because nothing downstream can actually read it
 # ---------------------------------------------------------------------------
+PHARMCAT_SIDECAR = REPO_ROOT / "docker" / "pharmcat" / "pharmcat.py"
+
+
+def test_a_bcf_is_refused_before_a_job_exists(upload):
+    resp = upload("sample.bcf", BCF_BYTES)
+
+    assert resp.status_code == 400, resp.text
+    assert "bcf" in resp.json()["detail"].lower()
+    assert upload.created_patients == [], "refusal must precede any patient/job row"
+
+
+def test_the_bcf_refusal_names_the_conversion(upload):
+    """Refusing is only honest if the user is told the one command that fixes it."""
+    detail = upload("sample.bcf", BCF_BYTES).json()["detail"].lower()
+
+    assert "bcftools" in detail
+    assert "vcf.gz" in detail
+    # and why ZaroPGx cannot do it for them
+    assert "convert" in detail
+
+
+def test_the_bcf_command_stays_copy_pasteable_and_still_cannot_open_a_tag(upload):
+    """The redirect must survive; a ``<`` must never appear. Those are different rules.
+
+    Same innerHTML sink as the gVCF reason, but this one has to carry a shell redirect.
+    A stray ``>`` in innerHTML text is parsed as literal text and renders fine, so it
+    can stay raw and the user can copy the command. A ``<`` would open a tag and eat
+    the rest of the sentence, so it must never appear. HTML-escaping the ``>`` here
+    would be the tempting "fix" that quietly breaks the command in the API's plain-text
+    detail — hence the assertion in both directions.
+
+    (The same command in the *recommendations* list is escaped, and correctly so: those
+    strings are HTML by design. The asymmetry is deliberate.)
+    """
+    detail = upload("sample.bcf", BCF_BYTES).json()["detail"]
+
+    assert "bcftools view -O z sample.bcf > sample.vcf.gz" in detail
+    assert "<" not in detail, detail
+    assert "&gt;" not in detail and "&amp;" not in detail, detail
+
+
+def test_the_bcf_refusal_promises_no_vcf_lane(upload):
+    """The copy this replaced said a BCF rides the VCF path unconverted.
+
+    Quoting that copy verbatim rather than banning the word "conversion": the honest
+    refusal has to say ZaroPGx ships *no* conversion step, so a blunter phrase list
+    would forbid the very sentence it is meant to protect.
+    """
+    detail = upload("sample.bcf", BCF_BYTES).json()["detail"].lower()
+
+    for promise in (
+        "no conversion step is needed",
+        "processed on the vcf path",
+        "accept bcf directly",
+        "will be converted to vcf format if needed",
+    ):
+        assert promise not in detail, promise
+
+
+def test_a_bcf_workflow_plans_no_steps_it_cannot_run():
+    from app.api.models import FileType
+    from app.api.utils.file_processor import FileAnalysis, FileProcessor
+
+    workflow = FileProcessor(temp_dir="/tmp").determine_workflow(
+        FileAnalysis(
+            file_type=FileType.BCF,
+            is_compressed=False,
+            has_index=False,
+            file_size=1,
+            vcf_info=None,
+            is_valid=True,
+            validation_errors=[],
+        )
+    )
+
+    assert workflow["unsupported"] is True
+    assert workflow["is_provisional"] is False
+    for flag in ("needs_alignment", "needs_gatk", "needs_hla", "needs_pypgx"):
+        assert workflow[flag] is False, flag
+
+
+def test_the_preview_marks_a_bcf_as_refused(client):
+    resp = client.post(
+        "/upload/inspect-header",
+        files={"file": ("sample.bcf", BCF_BYTES, "application/octet-stream")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    workflow = resp.json()["compat"]["workflow"]
+    assert workflow["refused"] is True
+    assert "bcf" in (workflow["refusal_reason"] or "").lower()
+
+
+def test_the_pharmcat_sidecar_still_refuses_a_non_vcf_filename():
+    """The reason BCF cannot ride the vcf branch, pinned where it actually lives.
+
+    ``/genotype`` checks the *filename*, and main.nf stages the upload verbatim — a
+    ``.bcf`` reaches the sidecar still called ``.bcf`` and is answered 400. Because
+    that curl ends in ``|| true``, the 400 is swallowed and the run finishes with no
+    PharmCAT output at all. If this guard is ever widened to accept BCF, the ingest
+    refusal is the thing to revisit.
+    """
+    source = PHARMCAT_SIDECAR.read_text(encoding="utf-8")
+    guard = re.search(
+        r"file\.filename\.endswith\(\(([^)]*)\)\)",
+        source,
+    )
+
+    assert guard, "pharmcat.py no longer gates /genotype on the filename extension"
+    accepted = set(re.findall(r"'([^']+)'|\"([^\"]+)\"", guard.group(1)))
+    accepted = {a or b for a, b in accepted}
+    assert ".bcf" not in accepted, (
+        "the PharmCAT sidecar now accepts .bcf; revisit the ingest refusal in "
+        "FileProcessor.determine_workflow"
+    )
+    assert ".vcf" in accepted
+
+
+def test_no_alias_silently_rewrites_the_submitted_input_type():
+    """A rename at submission is how BCF got a lane it could not finish.
+
+    The alias made the payload disagree with the file on disk: main.nf was told ``vcf``
+    while the staged file was still ``upload_sample.bcf``. Nothing may reintroduce that
+    without also making the lane real, so the module must carry no alias table.
+    """
+    assert not hasattr(ur, "NEXTFLOW_INPUT_TYPE_ALIASES"), (
+        "upload_router grew an input-type alias table again; a rename here must be "
+        "backed by a lane that can actually finish"
+    )
+
+
 def _submit(monkeypatch, tmp_path, workflow):
     """Run the real Nextflow submitter and return the payload it POSTs.
 
@@ -346,17 +557,16 @@ def _submit(monkeypatch, tmp_path, workflow):
     return captured["payload"]
 
 
-def test_a_bcf_reaches_the_pipeline_as_a_vcf(monkeypatch, tmp_path):
-    """main.nf has no bcf branch; bcftools and pysam do not need one."""
-    payload = _submit(monkeypatch, tmp_path, {"file_type": "bcf", "reference": "hg38"})
-
-    assert payload["input_type"] == "vcf"
-
-
 @pytest.mark.parametrize("file_type", ["vcf", "bam", "cram", "sam"])
-def test_every_other_input_type_is_passed_through_unchanged(
+def test_the_submitted_input_type_is_the_type_that_was_detected(
     monkeypatch, tmp_path, file_type
 ):
+    """What main.nf is told must match the file that was staged for it.
+
+    The BCF alias broke exactly this: the payload said ``vcf`` while the staged file was
+    still ``upload_sample.bcf``, and the mismatch surfaced as a swallowed 400 from the
+    PharmCAT sidecar instead of a refusal the user could act on.
+    """
     payload = _submit(
         monkeypatch, tmp_path, {"file_type": file_type, "reference": "hg38"}
     )
@@ -364,24 +574,17 @@ def test_every_other_input_type_is_passed_through_unchanged(
     assert payload["input_type"] == file_type
 
 
-def test_a_bcf_upload_is_not_refused(upload):
-    """The gate refuses gVCF; BCF must keep travelling."""
-    resp = upload("sample.bcf", BCF_BYTES)
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["file_type"] == "bcf"
-
-
 def test_main_nf_still_has_no_bcf_branch():
-    """The alias is load-bearing only while the pipeline lacks a branch of its own.
+    """The refusal is the honest answer only while nothing downstream carries a BCF.
 
-    If somebody adds one, the mapping stops being the honest answer and this test says
-    so rather than leaving a silent rewrite of the user's input type in place.
+    Two independent things would have to change before BCF could be accepted: a branch
+    here, *and* the sidecar guard pinned above. If a branch appears, revisit the
+    refusal rather than leaving the user told "convert it yourself" for no reason.
     """
     text = MAIN_NF.read_text(encoding="utf-8")
     branches = set(re.findall(r"input_type\s*==\s*['\"]([a-z]+)['\"]", text))
 
-    assert branches, "main.nf no longer branches on input_type; re-audit the alias"
+    assert branches, "main.nf no longer branches on input_type; re-audit the refusal"
     assert "bcf" not in branches
     assert "vcf" in branches
 
