@@ -46,6 +46,28 @@ from app.services.workflow_registry import (
 
 logger = logging.getLogger(__name__)
 
+
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce a value into something the JSON metadata column accepts.
+
+    ``jobs.job_metadata`` is a ``Column(JSON)`` serialized with ``json.dumps``, which
+    raises ``TypeError: Object of type datetime is not JSON serializable`` on a
+    datetime/date. Report payloads stored under ``metadata["reports"]`` (PharmCAT/PyPGx
+    processed data) can carry those, so normalize datetimes to ISO strings and recurse
+    through dicts/lists before the value reaches the column.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "isoformat") and not isinstance(value, (str, bytes)):
+        # date / time objects
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 # Strong refs for fire-and-forget broadcast tasks (loop only keeps weak refs).
 _background_tasks: set[asyncio.Task] = set()
 # Main app loop — used when sync JobService methods run off the event-loop thread.
@@ -206,7 +228,7 @@ class JobService:
                 status=JobStatus.PENDING,
                 total_steps=len(resolved),
                 completed_steps=0,
-                job_metadata=metadata,
+                job_metadata=_json_safe(metadata),
                 created_by=job_data.created_by,
                 workflow_type=job_data.workflow_type,
                 workflow_snapshot=snapshot,
@@ -369,7 +391,7 @@ class JobService:
             if update_data.completed_steps is not None:
                 job.completed_steps = update_data.completed_steps
             if update_data.metadata is not None:
-                job.job_metadata = update_data.metadata
+                job.job_metadata = _json_safe(update_data.metadata)
 
             # Update timing fields based on status
             if update_data.status == JobStatus.RUNNING and not job.started_at:
@@ -574,9 +596,9 @@ class JobService:
             if update_data.container_name is not None:
                 step.container_name = update_data.container_name
             if update_data.output_data is not None:
-                step.output_data = update_data.output_data
+                step.output_data = _json_safe(update_data.output_data)
             if update_data.error_details is not None:
-                step.error_details = update_data.error_details
+                step.error_details = _json_safe(update_data.error_details)
             if update_data.retry_count is not None:
                 step.retry_count = update_data.retry_count
 
@@ -860,7 +882,7 @@ class JobService:
                 step_name=log_data.step_name,
                 log_level=log_data.log_level,
                 message=log_data.message,
-                log_metadata=log_data.metadata,
+                log_metadata=_json_safe(log_data.metadata),
             )
 
             self.db.add(log_entry)
@@ -1079,7 +1101,7 @@ class JobService:
                 # NOT `metadata=` — that is SQLAlchemy's MetaData class attribute on
                 # every declarative model, so the constructor silently shadows it with
                 # an instance attribute and the payload never reaches the column.
-                log_metadata=metadata or {},
+                log_metadata=_json_safe(metadata or {}),
             )
             self.db.add(log_entry)
             self.db.commit()
