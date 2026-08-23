@@ -66,6 +66,7 @@ import asyncio
 import importlib.util
 import logging
 import sys
+import threading
 import types
 from pathlib import Path
 
@@ -595,6 +596,21 @@ def test_pharmcat_genotype_sanitises_hostile_filename(pharmcat_api, monkeypatch)
 def test_to_thread_semaphore_default_and_shape(gatk_api):
     assert gatk_api.TO_THREAD_CONCURRENCY_LIMIT == 2
     assert isinstance(gatk_api._to_thread_semaphore, asyncio.Semaphore)
+
+
+def test_variant_calling_semaphore_default_and_shape(gatk_api):
+    # HaplotypeCaller runs in its own thread/loop, so this is a threading.Semaphore
+    # (not the loop-bound asyncio one) and defaults to 1 given the Java heap size.
+    assert gatk_api.GATK_VARIANT_CALL_CONCURRENCY == 1
+    assert isinstance(gatk_api._variant_calling_semaphore, threading.Semaphore)
+
+
+def test_both_variant_calling_launch_sites_acquire_the_semaphore():
+    # The BAM path (process_bam_file) and the direct path (run_async_variant_calling)
+    # must each gate the heavy HaplotypeCaller run; a missed site lets concurrent
+    # /variant-call jobs each spawn a full-heap caller.
+    src = GATK_API_SOURCE.read_text(encoding="utf-8")
+    assert src.count("with _variant_calling_semaphore:") == 2
 
 
 def test_to_thread_concurrency_limit_is_env_overridable(tmp_path_factory):

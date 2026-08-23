@@ -1438,8 +1438,11 @@ async def variant_call(
                 # Start variant calling in a background thread
                 import asyncio
                 def run_async_variant_calling():
-                    asyncio.run(run_variant_calling(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id, patient_id))
-                
+                    # Wait for a variant-calling slot so concurrent jobs don't each
+                    # launch a full-heap HaplotypeCaller at once (see the semaphore note).
+                    with _variant_calling_semaphore:
+                        asyncio.run(run_variant_calling(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id, patient_id))
+
                 threading.Thread(
                     target=run_async_variant_calling,
                     daemon=True
@@ -1483,9 +1486,11 @@ def process_bam_file(local_job_id, input_path, output_path, reference_path, regi
                              error=message)
             return
             
-        # If indexing succeeded, continue with variant calling
+        # If indexing succeeded, continue with variant calling. Indexing above is
+        # light; gate only the heavy HaplotypeCaller run on a variant-calling slot.
         logger.info(f"Job {local_job_id}: BAM indexing completed, proceeding to variant calling")
-        asyncio.run(run_variant_calling(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id, patient_id))
+        with _variant_calling_semaphore:
+            asyncio.run(run_variant_calling(local_job_id, input_path, output_path, reference_path, regions, zaro_job_id, patient_id))
         
     except Exception as e:
         logger.exception(f"Job {local_job_id}: Error in BAM file processing: {str(e)}")
@@ -1663,6 +1668,17 @@ SORT_THREADS = os.environ.get("SAMTOOLS_SORT_THREADS", "2")
 # env-overridable for a bigger host.
 TO_THREAD_CONCURRENCY_LIMIT = int(os.environ.get("TO_THREAD_CONCURRENCY_LIMIT", "2"))
 _to_thread_semaphore = asyncio.Semaphore(TO_THREAD_CONCURRENCY_LIMIT)
+
+# /variant-call runs GATK HaplotypeCaller in its own daemon thread with its own event
+# loop (asyncio.run), so the loop-bound _to_thread_semaphore above cannot reach it and
+# concurrent requests would each spawn a HaplotypeCaller with a full Java heap
+# (MAX_MEMORY, 20g by default) -> OOM. This is a threading.Semaphore (loop-agnostic, so
+# it works across those per-job threads) capping how many variant-calling jobs run at
+# once; the default is 1 given the heap size, env-overridable for a bigger host.
+GATK_VARIANT_CALL_CONCURRENCY = int(
+    os.environ.get("GATK_VARIANT_CALL_CONCURRENCY", "1")
+)
+_variant_calling_semaphore = threading.Semaphore(GATK_VARIANT_CALL_CONCURRENCY)
 
 
 def _discard_output(path):
