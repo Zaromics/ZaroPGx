@@ -1216,6 +1216,23 @@ async def startup_event():
         init_db()
         logger.info("Database connection verified")
         print("✅ Database connection verified")
+
+        # Apply any pending SQL migrations. Postgres only runs db/init on a fresh
+        # volume, so without this an existing volume silently drifts behind the schema
+        # (that is how a deployed DB reached a pre-`jobs` schema and 500'd every
+        # upload). The migrations are idempotent, so this is a no-op on a current DB.
+        try:
+            from app.api.db import engine
+            from app.api.db_migrations import apply_pending_migrations
+
+            applied = apply_pending_migrations(engine)
+            if applied:
+                print(
+                    f"✅ Applied {len(applied)} DB migration(s): {', '.join(applied)}"
+                )
+        except Exception as mig_e:
+            logger.error(f"DB migration step failed: {mig_e}")
+            print(f"⚠️  DB migration step failed: {mig_e}")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
         print(f"❌ Database initialization failed: {e}")
