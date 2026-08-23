@@ -53,6 +53,18 @@ now fixed:
   a per-gene failure; report-time `PyPGx per-gene enrichment skipped` warns on a
   `pypgx_result.json` path (`Not a directory`) but the report still generates.
 
+- **Full BAM e2e is now GREEN too** — the BAM→PyPGx→PharmCAT→report lane had never
+  completed and unwound a stack of pre-existing bugs (all fixed): HLA/OptiType ran
+  unconditionally (skip_hla now honored across all alignment branches); pypgx
+  create-input-vcf used the wrong CLI signature + needed FASTA/BAM indexing via pysam;
+  PyPGxBam2Vcf's output glob didn't match the `.vcf.gz` it emits. Fixture:
+  `test_data/pgx_ngs_example.bam` (a real 30-read GRCh38 BAM). Its e2e
+  (`tests/e2e/test_bam_pipeline.py`) is gated on `ZAROPGX_E2E_REFERENCE=1` because the
+  lane needs the multi-GB reference (absent in CI). Run it with the full stack up:
+  `ZAROPGX_E2E=1 ZAROPGX_E2E_REFERENCE=1 ZAROPGX_E2E_BASE_URL=http://127.0.0.1:8765 .venv/Scripts/python.exe -m pytest -m e2e --zaropgx-e2e`.
+  Note: the first BAM run faidx-indexes the GRCh38 FASTA (~1 min, cached after).
+  Still untested: OptiType/HLA with real chr6 HLA reads (optitype_enabled=true).
+
 ## ✅ CURRENT STATE (2026-06-08)
 
 Core stack rebuilt and healthy on refreshed versions (WSL-native docker):
