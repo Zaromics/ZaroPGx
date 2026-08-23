@@ -29,8 +29,12 @@ RUN mkdir -p /app /data /reference /tmp/pypgx
 # Install uv and use it for Python deps
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
-# Install PyPGx and dependencies (ensure compatibility with Python 3.12)
-RUN uv pip install --system setuptools==80.9.0 fuc pypgx==0.26.0 scikit-learn autodocsumm psutil fastapi uvicorn httpx python-multipart
+# Install PyPGx and dependencies (ensure compatibility with Python 3.12).
+# pandas is pinned <3: pypgx 0.26.0 breaks on pandas 3.x with
+# "ValueError: setting an array element with a sequence" in its string handling,
+# which fails every gene in run-ngs-pipeline. The transitive resolver otherwise
+# pulls pandas 3.x. 2.2.3 is the last 2.x and is verified against this pipeline.
+RUN uv pip install --system setuptools==80.9.0 "pandas==2.2.3" fuc pypgx==0.26.0 scikit-learn autodocsumm psutil fastapi uvicorn httpx python-multipart
 
 # Clone the matching PyPGx bundle repository
 # NB: pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81

@@ -551,7 +551,7 @@ def unregister_process(process_key: str):
 app = FastAPI(
     title="PyPGx Wrapper API",
     description="REST API for PyPGx supported star allele calling",
-    version="0.2.8",
+    version="0.3.0",
 )
 
 app.add_middleware(
@@ -597,7 +597,7 @@ def root():
     return {
         "message": "PyPGx Wrapper API",
         "usage": "POST to /genotype with a VCF file to call alleles",
-        "version": "0.2.8",
+        "version": "0.3.0",
         "endpoints": [
             "GET /health - Health check with gene config info",
             "GET /genes - Get supported genes information",
@@ -1130,6 +1130,14 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
             safe_dir = Path(output_dir) / f"{gene}-pipeline-{uuid.uuid4().hex[:6]}"
             pipeline_dir = safe_dir
         
+        # PyPGx's --assembly accepts only 'GRCh37'/'GRCh38'. The caller passes the
+        # build in the app's wording (hg19/hg38 or GRCh37/GRCh38), so normalize here
+        # the same way the create-input-vcf endpoints do - otherwise 'hg38' reaches
+        # --assembly verbatim and every gene fails.
+        pypgx_assembly = (
+            "GRCh37" if str(reference_genome) in ("hg19", "GRCh37") else "GRCh38"
+        )
+
         # Use the appropriate command for NGS pipeline
         # Use the compressed/indexed VCF for PyPGx
         # argv form, no shell - see the note above on why that is only one of
@@ -1138,7 +1146,7 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
             "pypgx", "run-ngs-pipeline",
             str(gene), str(pipeline_dir),
             "--variants", str(vcf_gz),
-            "--assembly", str(reference_genome),
+            "--assembly", pypgx_assembly,
         ]
 
         logger.info(f"Running PyPGx command: {shlex.join(pypgx_cmd)}")
@@ -1194,10 +1202,10 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
                     'job_id': os.path.basename(output_dir),
                     'error': 'No SNV/indel-based star alleles available for this gene'  # For the main loop logic
                 }
-            logger.error(f"PyPGx failed: {process.stderr}")
+            logger.error(f"PyPGx failed: {stderr_str}")
             return {
                 'success': False,
-                'error': f"PyPGx failed: {process.stderr}"
+                'error': f"PyPGx failed: {stderr_str}"
             }
         
         # Extract genotype information from the results
