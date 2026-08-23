@@ -37,6 +37,7 @@ from app.api.models import (
 )
 from app.api.utils.file_utils import has_index_file, is_compressed_file
 from app.api.utils.header_inspector import inspect_header
+from app.utils.env import env_flag
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -666,15 +667,9 @@ class FileProcessor:
             "unsupported_reason": None,
         }
 
-        def str_to_bool(value: Optional[str]) -> bool:
-            """Convert string to boolean, defaulting to False if None or empty."""
-            if value is None:
-                return False
-            return str(value).lower() in ("true", "1", "yes", "on")
-
         # Check GATK status from environment if not provided
         if gatk_enabled is None:
-            gatk_enabled = str_to_bool(os.environ.get("GATK_ENABLED"))
+            gatk_enabled = env_flag("GATK_ENABLED", False)
 
         # FASTQ: refused at upload, not analysed.
         #
@@ -1187,10 +1182,12 @@ class FileProcessor:
             )
 
             try:
-                # Write file content
+                # Stream the upload to disk in chunks rather than buffering the whole
+                # file in memory (a multi-GB BAM would otherwise load entirely), the
+                # same shape the sidecar upload saves use.
                 with open(temp_file_path, "wb") as f:
-                    content = await primary_file.read()
-                    f.write(content)
+                    while chunk := await primary_file.read(8 * 1024 * 1024):
+                        f.write(chunk)
 
                 logger.info(f"Saved uploaded file to: {temp_file_path}")
 
