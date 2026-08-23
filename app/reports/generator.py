@@ -1991,11 +1991,16 @@ def generate_report(
         pypgx_results = None
         if isinstance(data, dict) and "pypgx_results" in data:
             pypgx_results = data.get("pypgx_results")
-        # If not embedded, look for *_pypgx_results.json in the report directory; pick the newest by mtime
+        # If not embedded, look for the PyPGx results file in the report directory and
+        # pick the newest by mtime. Two producers write two names: the sidecar wrapper
+        # writes "<job>_pypgx_results.json" (plural), while the Nextflow lane emits
+        # "pypgx_result.json" (singular). Both carry the same {"results": {...}} shape,
+        # so match either - otherwise a Nextflow run leaves the report with used_pypgx
+        # false and no PyPGx genes.
         if not pypgx_results:
             pypgx_json_candidates = glob.glob(
                 os.path.join(report_dir, "*_pypgx_results.json")
-            )
+            ) + glob.glob(os.path.join(report_dir, "pypgx_result.json"))
             if pypgx_json_candidates:
                 latest_path = max(
                     pypgx_json_candidates, key=lambda p: os.path.getmtime(p)
@@ -2059,7 +2064,13 @@ def generate_report(
         # Deep enrichment from per-gene pipeline artifacts if available
         try:
             # Locate any per-gene pipelines under a pypgx_* directory in this report_dir
-            pipelines_root_candidates = glob.glob(os.path.join(report_dir, "pypgx_*"))
+            # Only directories - "pypgx_*" also matches the singular pypgx_result.json
+            # file the Nextflow lane drops here, and listdir() on a file raises.
+            pipelines_root_candidates = [
+                d
+                for d in glob.glob(os.path.join(report_dir, "pypgx_*"))
+                if os.path.isdir(d)
+            ]
             if pipelines_root_candidates:
                 pipelines_root = pipelines_root_candidates[0]
                 pipeline_dirs = [
@@ -2158,10 +2169,11 @@ def generate_report(
                     )
         except Exception as enrich_e:
             logger.warning(
-                f"PyPGx per-gene enrichment skipped due to error: {enrich_e}"
+                f"PyPGx per-gene enrichment skipped due to error: {enrich_e}",
+                exc_info=True,
             )
     except Exception as e:
-        logger.warning(f"PyPGx enrichment step failed: {e}")
+        logger.warning(f"PyPGx enrichment step failed: {e}", exc_info=True)
 
     # After all enrichment steps, build the canonical, alphabetical full gene list
     try:
