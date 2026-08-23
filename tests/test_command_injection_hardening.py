@@ -51,6 +51,8 @@ actually running in the image.
 import ast
 import re
 import subprocess
+import sys
+import types
 from pathlib import Path
 from typing import Optional
 
@@ -436,13 +438,42 @@ def test_bgzip_and_tabix_helpers_use_argv(tmp_path):
     assert "-f" in tabix_forced
 
 
-def test_create_input_vcf_passes_hostile_path_as_one_argv_element(tmp_path):
-    recorder = _SubprocessRecorder()
-    ns = _load_from_source(
-        PYPGX_WRAPPER,
-        {"run_pypgx_create_input_vcf"},
-        _pypgx_namespace(recorder),
+def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
+    """Namespace + environment for run_pypgx_create_input_vcf.
+
+    It resolves a per-assembly reference FASTA under REFERENCE_DIR and indexes the
+    FASTA/BAM via `import pysam` (there is no standalone samtools in the image). Point
+    REFERENCE_DIR at a temp tree with the FASTA and its .fai present (so no faidx runs),
+    and stub pysam so index() is a no-op on the empty fixture BAM.
+    """
+    ref_dir = tmp_path / "reference"
+    (ref_dir / "grch38").mkdir(parents=True, exist_ok=True)
+    fasta = ref_dir / "grch38" / "Homo_sapiens_assembly38.fasta"
+    fasta.write_bytes(b">chr1\nACGT\n")
+    (fasta.parent / (fasta.name + ".fai")).write_bytes(b"chr1\t4\t6\t4\t5\n")
+
+    fake_pysam = types.SimpleNamespace(
+        faidx=lambda *a, **k: None, index=lambda *a, **k: None
     )
+    monkeypatch.setitem(sys.modules, "pysam", fake_pysam)
+
+    return _load_from_source(
+        PYPGX_WRAPPER,
+        {"run_pypgx_create_input_vcf", "_reference_fasta_for_assembly"},
+        _pypgx_namespace(
+            recorder,
+            REFERENCE_DIR=ref_dir,
+            bgzip_in_place=lambda *a, **k: None,
+            tabix_index=lambda *a, **k: None,
+        ),
+    )
+
+
+def test_create_input_vcf_passes_hostile_path_as_one_argv_element(
+    tmp_path, monkeypatch
+):
+    recorder = _SubprocessRecorder()
+    ns = _create_input_vcf_ns(recorder, tmp_path, monkeypatch)
 
     hostile_bam = tmp_path / PAYLOAD_NAME
     hostile_bam.write_bytes(b"")
@@ -453,33 +484,35 @@ def test_create_input_vcf_passes_hostile_path_as_one_argv_element(tmp_path):
     result = ns["run_pypgx_create_input_vcf"](str(hostile_bam), str(out_vcf), "GRCh38")
 
     assert result["success"] is True
-    assert recorder.calls, "no command was executed"
-    args, kwargs = recorder.calls[0]
+    pypgx_calls = [
+        c for c in recorder.calls if c[0][:2] == ["pypgx", "create-input-vcf"]
+    ]
+    assert pypgx_calls, f"no pypgx create-input-vcf call: {recorder.calls!r}"
+    args, kwargs = pypgx_calls[0]
     _assert_argv_is_safe(args, kwargs, PAYLOAD_MARKER)
-    assert args[:2] == ["pypgx", "create-input-vcf"]
-    # The payload sits behind --bam as a single opaque argument.
-    assert args[args.index("--bam") + 1] == str(hostile_bam)
+    # pypgx 0.26.0 is positional: create-input-vcf [--assembly A] <vcf> <fasta> <bams...>,
+    # so the hostile BAM is the final argv element, opaque and not shell-interpreted.
+    assert args[-1] == str(hostile_bam)
 
 
-def test_create_input_vcf_fallback_form_is_also_argv(tmp_path):
-    """The retry path is a second sink and must be closed too."""
+def test_create_input_vcf_has_a_single_argv_sink(tmp_path, monkeypatch):
+    """A failed conversion is not retried into a second sink; the one call is argv-safe."""
     recorder = _SubprocessRecorder(returncode=1)
-    ns = _load_from_source(
-        PYPGX_WRAPPER,
-        {"run_pypgx_create_input_vcf"},
-        _pypgx_namespace(recorder),
-    )
+    ns = _create_input_vcf_ns(recorder, tmp_path, monkeypatch)
 
     hostile_bam = tmp_path / PAYLOAD_NAME
     hostile_bam.write_bytes(b"")
 
-    ns["run_pypgx_create_input_vcf"](
+    result = ns["run_pypgx_create_input_vcf"](
         str(hostile_bam), str(tmp_path / "out.vcf.gz"), "GRCh38"
     )
 
-    assert len(recorder.calls) == 2, "fallback invocation did not run"
-    for args, kwargs in recorder.calls:
-        _assert_argv_is_safe(args, kwargs, PAYLOAD_MARKER)
+    assert result["success"] is False  # returncode 1, no retry
+    pypgx_calls = [
+        c for c in recorder.calls if c[0][:2] == ["pypgx", "create-input-vcf"]
+    ]
+    assert len(pypgx_calls) == 1, f"expected exactly one pypgx sink: {recorder.calls!r}"
+    _assert_argv_is_safe(pypgx_calls[0][0], pypgx_calls[0][1], PAYLOAD_MARKER)
 
 
 def test_run_ngs_pipeline_is_argv_for_both_path_and_gene(tmp_path):
