@@ -167,6 +167,57 @@ def tabix_index(vcf_gz: str, force: bool = False) -> None:
     subprocess.run(argv, check=True)
 
 
+def normalize_contigs_for_pypgx(vcf_gz: str) -> str:
+    """Return a bgzipped+indexed VCF whose contigs use PyPGx's naming.
+
+    PyPGx's GRCh37/GRCh38 bundles are built on Ensembl-style *unprefixed* contig
+    names ('8', '22', 'X'), and its region fetch raises
+    ``ValueError: invalid contig 'chr8'`` on a UCSC-style ``chr``-prefixed VCF - which
+    is what GATK/UCSC pipelines and PharmCAT's own example VCF emit. PharmCAT tolerates
+    either, so the two lanes are fed the same file and only PyPGx breaks.
+
+    Detect the prefix from the tabix index; if present, rename ``chrN`` -> ``N``
+    (``chrM`` -> ``MT``) with ``bcftools annotate --rename-chrs`` and re-index. An
+    already-unprefixed VCF is passed through untouched, so this can only ever remove a
+    prefix PyPGx rejects, never add one. Returns the path to use for every gene.
+    """
+    try:
+        listed = subprocess.run(
+            ["tabix", "-l", str(vcf_gz)],
+            check=True, capture_output=True, text=True,
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        logger.warning(f"Could not list contigs for {vcf_gz}; using it as-is: {exc}")
+        return str(vcf_gz)
+
+    contigs = [c.strip() for c in listed.splitlines() if c.strip()]
+    prefixed = [c for c in contigs if c.startswith("chr")]
+    if not prefixed:
+        return str(vcf_gz)
+
+    def _unprefixed(name: str) -> str:
+        base = name[len("chr"):]
+        return "MT" if base in ("M", "MT") else base
+
+    rename_path = f"{vcf_gz}.chrmap.txt"
+    with open(rename_path, "w") as fh:
+        for name in prefixed:
+            fh.write(f"{name}\t{_unprefixed(name)}\n")
+
+    renamed = f"{vcf_gz[:-len('.gz')] if vcf_gz.endswith('.gz') else vcf_gz}.pypgx.vcf.gz"
+    logger.info(
+        f"Renaming {len(prefixed)} chr-prefixed contigs to PyPGx's unprefixed naming: "
+        f"{vcf_gz} -> {renamed}"
+    )
+    subprocess.run(
+        ["bcftools", "annotate", "--rename-chrs", rename_path,
+         str(vcf_gz), "-Oz", "-o", renamed],
+        check=True,
+    )
+    tabix_index(renamed, force=True)
+    return renamed
+
+
 # Gene Configuration Management
 class GeneConfig:
     """Manages PyPGx supported genes configuration"""
@@ -393,7 +444,12 @@ async def process_gene_batch_parallel(
     if not os.path.exists(tbi_path):
         logger.info(f"Indexing VCF with tabix: {vcf_gz}")
         tabix_index(vcf_gz)
-    
+
+    # PyPGx wants Ensembl-style unprefixed contigs; a chr-prefixed VCF (GATK/UCSC,
+    # and PharmCAT's own example) makes every gene raise "invalid contig 'chrN'".
+    # Normalize once here, before fanning the genes out, and run them all against it.
+    vcf_gz = normalize_contigs_for_pypgx(vcf_gz)
+
     # Log memory usage before processing
     memory_before = get_memory_usage()
     logger.info(f"Memory before batch processing: {memory_before['used_gb']:.2f}GB used, {memory_before['available_gb']:.2f}GB available")
@@ -997,12 +1053,13 @@ async def genotype(
                         aggregated["results"].update(batch_results["partial_results"])
                     break
                 
-                # Add batch results to aggregated results
+                # Add batch results to aggregated results. A single gene erroring is
+                # gene-specific (an unusual PyPGx edge for that gene's data), not a
+                # reason to fail a 68-gene panel - it is recorded per gene and the
+                # systemic check after the loop decides overall success. Only a
+                # batch-level exception (below) or cancellation flips success here.
                 for gene, result in batch_results.items():
                     aggregated["results"][gene] = result
-                    # Only fail overall if it's a systemic issue, not gene-specific
-                    if not result.get("success", False) and "No SNV/indel-based star alleles" not in str(result.get("error", "")):
-                        aggregated["success"] = False
                 
                 batch_duration = time.time() - batch_start_time
                 genes_completed = (batch_idx + 1) * len(gene_batch)
@@ -1073,6 +1130,19 @@ async def genotype(
             aggregated["output_file"] = output_file
         except Exception:
             logger.warning("Failed to persist aggregated PyPGx results file")
+        # Systemic-failure guard: if the run was not already failed by a batch
+        # exception or cancellation, it succeeds as long as at least one gene came
+        # back. Zero successful genes means something systemic (an unreadable VCF, a
+        # wrong assembly) rather than a per-gene quirk, so fail the step then.
+        if aggregated["success"]:
+            successful = [r for r in aggregated["results"].values() if r.get("success", False)]
+            if not successful:
+                aggregated["success"] = False
+                aggregated["error"] = (
+                    "No gene produced a result - the input VCF could not be read for "
+                    "any PyPGx gene (check the file and its reference assembly)"
+                )
+
         # Complete workflow step
         if job_client:
             if aggregated["success"]:
@@ -1201,6 +1271,25 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
                     'details': {'note': 'No SNV/indel-based star alleles available for this gene'},
                     'job_id': os.path.basename(output_dir),
                     'error': 'No SNV/indel-based star alleles available for this gene'  # For the main loop logic
+                }
+            # Handle case where this gene's chromosome carries no variants in the VCF.
+            # PyPGx fetches the gene's region and pysam raises "invalid contig 'N'" when
+            # the contig is absent from the (indexed) VCF - normal for a targeted or
+            # sparse panel that does not span every PGx gene. That is missing data for
+            # this gene, not a pipeline failure, so treat it like the no-star-allele
+            # case rather than failing the whole step.
+            if "invalid contig" in stderr_str:
+                logger.info(
+                    f"Gene {gene}'s chromosome has no variants in this VCF - "
+                    f"no PyPGx call for it (this is expected for a sparse/targeted panel)"
+                )
+                return {
+                    'success': True,
+                    'gene': gene,
+                    'diplotype': None,
+                    'details': {'note': "Gene's chromosome not present in the input VCF"},
+                    'job_id': os.path.basename(output_dir),
+                    'error': "Gene's chromosome not present in the input VCF"
                 }
             logger.error(f"PyPGx failed: {stderr_str}")
             return {
