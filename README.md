@@ -122,7 +122,7 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 - Pre-built images **are** published to Docker Hub under `zaromicsresearch/zaropgx-*`, and
   `compose.yml` pulls them by default. Pin the tag with `ZAROPGX_TAG` in your `.env` (default
-  `0.2.8`, or `latest` to track the newest). Pre-1.0 tags are development builds — pin one
+  `0.3.0`, or `latest` to track the newest). Pre-1.0 tags are development builds — pin one
   rather than tracking `latest` if you want reproducibility.
 - You still clone this repository: it carries `compose.yml`, the `.env` templates, the database
   initialization SQL and the Nextflow pipeline. What you no longer have to do is build.
@@ -269,7 +269,7 @@ If you prefer more control or want to customize the installation:
    ```bash
    docker compose up -d --build
    ```
-   Set `ZAROPGX_TAG` in `.env` to pin a version (default `0.2.8`) or `latest`.
+   Set `ZAROPGX_TAG` in `.env` to pin a version (default `0.3.0`) or `latest`.
    
    **Using specific environment file:** (Advanced, for multiple configurations)
    ```bash

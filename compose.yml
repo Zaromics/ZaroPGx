@@ -4,7 +4,7 @@ services:
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~
   app:
     # Default: pull the published image. Fallback: `docker compose build` builds locally.
-    image: zaromicsresearch/zaropgx-app:${ZAROPGX_TAG:-0.2.8}
+    image: zaromicsresearch/zaropgx-app:${ZAROPGX_TAG:-0.3.0}
     build:
       context: .
       dockerfile: Dockerfile
@@ -86,7 +86,7 @@ services:
 
   # Reference material downloader service
   genome-downloader:
-    image: zaromicsresearch/zaropgx-genome-downloader:${ZAROPGX_TAG:-0.2.8}
+    image: zaromicsresearch/zaropgx-genome-downloader:${ZAROPGX_TAG:-0.3.0}
     build:
       context: ./docker/genome-downloader
       dockerfile: Dockerfile.downloader
@@ -114,7 +114,7 @@ services:
 
   # PharmCAT Service Wrapper - combines JAR and API
   pharmcat:
-    image: zaromicsresearch/zaropgx-pharmcat:${ZAROPGX_TAG:-0.2.8}
+    image: zaromicsresearch/zaropgx-pharmcat:${ZAROPGX_TAG:-0.3.0}
     build:
       context: .
       dockerfile: docker/pharmcat/Dockerfile
@@ -202,7 +202,7 @@ services:
 
   # GATK Service Wrapper
   gatk-api:
-    image: zaromicsresearch/zaropgx-gatk-api:${ZAROPGX_TAG:-0.2.8}
+    image: zaromicsresearch/zaropgx-gatk-api:${ZAROPGX_TAG:-0.3.0}
     build:
       context: .
       dockerfile: docker/gatk-api/Dockerfile.gatk-api
@@ -238,7 +238,7 @@ services:
 
   # PyPGx Service Wrapper
   pypgx:
-    image: zaromicsresearch/zaropgx-pypgx:${ZAROPGX_TAG:-0.2.8}
+    image: zaromicsresearch/zaropgx-pypgx:${ZAROPGX_TAG:-0.3.0}
     build:
       context: .
       dockerfile: docker/pypgx/Dockerfile.pypgx
@@ -284,7 +284,7 @@ services:
   # submits an HLA job itself. Do not prune this service on the strength of the
   # app's references alone.
   zarohla:
-    image: zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG:-0.2.8}
+    image: zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG:-0.3.0}
     build:
       context: .
       dockerfile: docker/zarohla/Dockerfile
@@ -380,7 +380,7 @@ services:
   # Nextflow executor orchestrating the ZaroPGx pipeline
   nextflow:
     # CORE pipeline orchestrator — the app submits every analysis here (USE_NEXTFLOW=True).
-    image: zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG:-0.2.8}
+    image: zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG:-0.3.0}
     build:
       context: .
       dockerfile: docker/nextflow/Dockerfile.nextflow
