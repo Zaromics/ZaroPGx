@@ -277,7 +277,10 @@ process PyPGxBam2Vcf {
     val outdir
 
     output:
-    path "*.vcf", emit: vcf
+    // create-input-vcf emits a bgzipped VCF, so match .vcf.gz (a bare *.vcf never
+    // matched and nextflow failed the process with "missing output" after a
+    // successful conversion).
+    path "*.vcf.gz", emit: vcf
 
     shell:
     '''
@@ -297,7 +300,14 @@ data=json.load(open('response.json'))
 print(data.get('vcf_path') or data.get('vcf') or '')
 PY
 )
-    test -n "$VCF_PATH" && cp "$VCF_PATH" .
+    if [ -z "$VCF_PATH" ]; then
+      echo "create-input-vcf response carried no vcf_path" >&2
+      cat response.json >&2 || true
+      exit 1
+    fi
+    cp "$VCF_PATH" .
+    # Bring the tabix index along if the sidecar made one (downstream re-indexes otherwise).
+    [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" . || true
     '''
 }
 
@@ -474,48 +484,66 @@ workflow {
     
     // For FASTQ: HLA first (if enabled), then BAM conversion, then PyPGx sequentially
     if (params.input_type == 'fastq') {
-        // Step 1: HLA typing on FASTQ (optimal - no conversion needed)
-        hla_result = OptiTypeHLAFromFastq(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
-        hla_ch = hla_result.hla
-        
-        // Step 2: Convert FASTQ to BAM
+        // Convert FASTQ to BAM (needed for PyPGx regardless of HLA).
         bam_ch = FastqToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
-        
-        // Step 3: PyPGx waits for HLA to complete
-        hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
-        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+
+        if (params.skip_hla) {
+            // HLA typing opted out: no OptiType, PyPGx runs on the converted BAM.
+            hla_ch = empty_file_ch
+            vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        } else {
+            // HLA typing on FASTQ (optimal - no conversion needed for OptiType).
+            hla_result = OptiTypeHLAFromFastq(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+            hla_ch = hla_result.hla
+            // PyPGx waits for HLA to complete
+            hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
+            vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        }
     }
-    // For CRAM: convert to BAM, then HLA + PyPGx sequentially
+    // For CRAM: convert to BAM, then HLA (unless skipped) + PyPGx sequentially
     else if (params.input_type == 'cram') {
         bam_ch = CramToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
-        
-        hla_result = OptiTypeHLAFromBAM(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
-        hla_ch = hla_result.hla
-        
-        // Create a dependency: PyPGx waits for HLA to complete
-        hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
-        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+
+        if (params.skip_hla) {
+            hla_ch = empty_file_ch
+            vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        } else {
+            hla_result = OptiTypeHLAFromBAM(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+            hla_ch = hla_result.hla
+            // Create a dependency: PyPGx waits for HLA to complete
+            hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
+            vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        }
     }
-    // For SAM: convert to BAM, then HLA + PyPGx sequentially
+    // For SAM: convert to BAM, then HLA (unless skipped) + PyPGx sequentially
     else if (params.input_type == 'sam') {
         bam_ch = SamToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
-        
-        hla_result = OptiTypeHLAFromBAM(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
-        hla_ch = hla_result.hla
-        
-        // Create a dependency: PyPGx waits for HLA to complete
-        hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
-        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+
+        if (params.skip_hla) {
+            hla_ch = empty_file_ch
+            vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        } else {
+            hla_result = OptiTypeHLAFromBAM(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+            hla_ch = hla_result.hla
+            // Create a dependency: PyPGx waits for HLA to complete
+            hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }
+            vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        }
     }
-    // For BAM: HLA first, then PyPGx sequentially
+    // For BAM: HLA first (unless skipped), then PyPGx sequentially
     else if (params.input_type == 'bam') {
-        hla_result = OptiTypeHLAFromBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
-        hla_ch = hla_result.hla
-        
-        // Create a dependency: PyPGx waits for HLA to complete
-        // Use the hla_json output as a trigger to start PyPGx with the original BAM
-        hla_complete_ch = hla_result.hla_json.combine(input_ch).map { hla_json, bam_file -> bam_file }
-        vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        if (params.skip_hla) {
+            // HLA typing opted out: no OptiType, PyPGx runs directly on the BAM.
+            hla_ch = empty_file_ch
+            vcf_ch = PyPGxBam2Vcf(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        } else {
+            hla_result = OptiTypeHLAFromBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+            hla_ch = hla_result.hla
+            // Create a dependency: PyPGx waits for HLA to complete
+            // Use the hla_json output as a trigger to start PyPGx with the original BAM
+            hla_complete_ch = hla_result.hla_json.combine(input_ch).map { hla_json, bam_file -> bam_file }
+            vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
+        }
     }
     // For VCF: quick pipeline, no HLA
     else if (params.input_type == 'vcf') {

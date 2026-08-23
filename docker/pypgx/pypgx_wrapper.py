@@ -754,7 +754,9 @@ async def create_input_vcf(
         if not res.get("success"):
             if job_client:
                 await job_client.log_progress(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}", {"error": res.get("error")})
-                await job_client.complete_step(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}")
+                # fail_step, not complete_step: a failed conversion was being reported
+                # as a completed step, so the job showed bam2vcf "completed" then died.
+                await job_client.fail_step(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}", {"error": res.get("error")})
             raise HTTPException(status_code=500, detail=res.get("error", "PyPGx create-input-vcf failed"))
 
         # Update workflow with success
@@ -785,39 +787,51 @@ async def create_input_vcf(
         logger.exception("Error creating VCF from alignment with PyPGx")
         if job_client:
             await job_client.log_progress(f"BAM to VCF conversion failed: {str(e)}", {"error": str(e)})
-            await job_client.complete_step(f"BAM to VCF conversion failed: {str(e)}")
+            await job_client.fail_step(f"BAM to VCF conversion failed: {str(e)}", {"error": str(e)})
         raise HTTPException(status_code=500, detail=f"Error creating VCF from alignment with PyPGx: {str(e)}")
+
+def _reference_fasta_for_assembly(assembly: str) -> Path:
+    """Path to the reference FASTA PyPGx create-input-vcf needs for this assembly."""
+    if str(assembly) == "GRCh37":
+        return REFERENCE_DIR / "grch37" / "human_g1k_v37.fasta"
+    return REFERENCE_DIR / "grch38" / "Homo_sapiens_assembly38.fasta"
+
 
 def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly: str) -> Dict[str, Any]:
     """Run PyPGx create-input-vcf to generate a VCF from an alignment file.
 
-    Tries the documented invocation first; if it fails, tries a fallback form.
-    Ensures the output is bgzipped and tabix-indexed.
+    pypgx 0.26.0's CLI is positional -- ``create-input-vcf [--assembly A] <vcf> <fasta>
+    <bams...>`` -- not the ``--bam``/``--output`` flags an earlier version of this code
+    assumed (which produced "the following arguments are required: bams" and no output).
+    It also drives bcftools mpileup under the hood, which needs a ``.fai`` next to the
+    FASTA and a ``.bai`` next to each BAM; there is no standalone ``samtools`` on PATH in
+    this image, so index via pysam. Ensures the output is bgzipped and tabix-indexed.
     """
     try:
-        # Primary, recommended form (assumed):
-        # pypgx create-input-vcf --assembly GRCh38 --bam <bam> --output <out.vcf.gz>
-        cmd_primary = [
+        import pysam
+
+        fasta = _reference_fasta_for_assembly(assembly)
+        if not fasta.exists():
+            return {
+                "success": False,
+                "error": f"Reference FASTA not found for {assembly}: {fasta}",
+            }
+        if not (fasta.parent / (fasta.name + ".fai")).exists():
+            logger.info(f"Indexing reference FASTA (faidx): {fasta}")
+            pysam.faidx(str(fasta))
+        logger.info(f"Indexing alignment (bai): {alignment_path}")
+        pysam.index(str(alignment_path))
+
+        cmd = [
             "pypgx", "create-input-vcf",
             "--assembly", str(assembly),
-            "--bam", str(alignment_path),
-            "--output", str(output_vcf_gz),
+            str(output_vcf_gz), str(fasta), str(alignment_path),
         ]
-        logger.info(f"Running PyPGx (primary) create-input-vcf: {shlex.join(cmd_primary)}")
-        proc = subprocess.run(cmd_primary, text=True, capture_output=True)
+        logger.info(f"Running PyPGx create-input-vcf: {shlex.join(cmd)}")
+        proc = subprocess.run(cmd, text=True, capture_output=True)
         if proc.returncode != 0:
-            logger.warning(f"Primary create-input-vcf failed (rc={proc.returncode}). stderr: {proc.stderr}\nTrying fallback invocation form.")
-            # Fallback form in case of different CLI signature
-            cmd_fallback = [
-                "pypgx", "create-input-vcf",
-                str(alignment_path), str(output_vcf_gz),
-                "--assembly", str(assembly),
-            ]
-            logger.info(f"Running PyPGx (fallback) create-input-vcf: {shlex.join(cmd_fallback)}")
-            proc = subprocess.run(cmd_fallback, text=True, capture_output=True)
-            if proc.returncode != 0:
-                logger.error(f"PyPGx create-input-vcf failed. stderr: {proc.stderr}")
-                return {"success": False, "error": proc.stderr or "create-input-vcf failed"}
+            logger.error(f"PyPGx create-input-vcf failed. stderr: {proc.stderr}")
+            return {"success": False, "error": proc.stderr or "create-input-vcf failed"}
 
         # Ensure bgzip + tabix index present
         if not os.path.exists(output_vcf_gz):
