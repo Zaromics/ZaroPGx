@@ -39,15 +39,19 @@ now fixed:
   which pypgx 0.26.0 breaks on (`ValueError: setting an array element with a sequence`)
   — pandas is now pinned `==2.2.3`. A per-gene error was also logged as the stderr
   *stream object* instead of its text, masking both.
-- **Still open (pre-existing, pipeline/test-data):** with those fixed, `pharmcat.example.vcf`
-  still fails PyPGx per-gene with `ValueError: invalid contig 'chr8'` — the fixture uses
-  UCSC `chr`-prefixed contigs but PyPGx's GRCh38 bundle expects unprefixed Ensembl names.
-  This is contig-convention handling (a known thorny area here) and/or a test-data issue,
-  not a release-code problem. The unit+integration suite (1540 passed) and live behavior
-  smokes (gVCF/BCF refusal with honest copy, sample-identifier/reference injection refused
-  by the allowlist) all pass; the full VCF→PyPGx→PharmCAT→report e2e is **not yet green**
-  on account of this contig mismatch. Next: strip/normalize the `chr` prefix before PyPGx,
-  or ship a GRCh38-Ensembl-contig fixture.
+- **Full VCF e2e is now GREEN** (first successful live pipeline run). Getting there past
+  the assembly+pandas fixes took four more pre-existing fixes, each only reachable once
+  the prior cleared: PyPGx wants Ensembl-style unprefixed contigs, so a chr-prefixed VCF
+  (GATK/UCSC, and PharmCAT's own example) is now renamed before PyPGx; a gene whose
+  chromosome carries no variants is treated as no-data, not a failure; a single gene
+  error no longer fails the 68-gene step (systemic-only failure); and datetimes are
+  coerced out of the JSON metadata columns (the run finished report generation but was
+  marked failed on `Object of type datetime is not JSON serializable`). Verify:
+  `ZAROPGX_E2E_BASE_URL=http://127.0.0.1:8765 .venv/Scripts/python.exe -m pytest -m e2e`
+  → 1 passed; the job reaches `completed` 4/4 with real HTML/PDF/PharmCAT/FHIR artifacts.
+  Residual (non-blocking): one gene hits a PyPGx-internal `IndexError` and is recorded as
+  a per-gene failure; report-time `PyPGx per-gene enrichment skipped` warns on a
+  `pypgx_result.json` path (`Not a directory`) but the report still generates.
 
 ## ✅ CURRENT STATE (2026-06-08)
 
