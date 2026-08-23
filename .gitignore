@@ -249,3 +249,5 @@ CLAUDE.md
 # Claude Code per-developer settings (a shared .claude/settings.json stays tracked)
 .claude/settings.local.json
 
+
+.worktrees/
