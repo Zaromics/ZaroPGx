@@ -8,9 +8,10 @@ curation: full
 ## Input Format Support Priorities
 
 - **Priority 0   (Supported)**: VCF, GRCh38, NGS-derived
-- **Priority 1   (Development)**: VCF, GRCh37, NGS-derived — accepted today and analysed on
-  its original coordinates (no liftover), so results are provisional and say so. Liftover via
-  bcftools is the outstanding piece.
+- **Priority 1   (Supported)**: VCF, GRCh37, NGS-derived — lifted over to GRCh38
+  automatically before analysis (GATK Picard `LiftoverVcf` in gatk-api, UCSC hg19→hg38
+  chain). Unliftable variants are dropped and counted; an implausibly high reject rate
+  fails the run instead of producing a near-empty result.
 - **Priority 1.5 (Development)**: BAM
 - **Priority 2   (Development)**: CRAM, SAM, BCF (NGS-derived)
 - **Not accepted**: FASTQ. ZaroPGx ships no aligner, so raw reads — single- or paired-end —
@@ -21,11 +22,13 @@ curation: full
 
 ## Pipeline Function
 
-- Add real coordinate-conversion liftover for GRCh37 input (the files are already accepted
-  and analysed on their original coordinates as provisional) via `bcftools +liftover`,
-  CrossMap, or Picard `LiftoverVcf` — plain `bcftools annotate --rename-chrs` was tried and
-  deleted (Aug 2026) because it only renames contigs, it does not convert coordinates;
-  surface accuracy caveats after conversion
+- [DONE Aug 2026] Real coordinate-conversion liftover for GRCh37 input: Picard
+  `LiftoverVcf` (bundled in GATK, `/liftover-vcf` on gatk-api) with UCSC's
+  hg19ToHg38.over.chain.gz, contig-prefix normalisation in front of it, a reject VCF with
+  per-record reasons, and a reject-rate guard. Plain `bcftools annotate --rename-chrs` was
+  tried and deleted earlier (Aug 2026) because it only renames contigs, it does not
+  convert coordinates. Remaining nicety: surface the per-run reject count in the report
+  itself, not only in the job log/step message.
 - Clarify workflow vs job IDs; define single source for workflow definition and per-run job state
 - Represent workflows as finite state matrix, each unique and deterministic workflow should have an assigned ID which can be quickly spot checked 
 - Nextflow orchestration

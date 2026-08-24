@@ -188,6 +188,43 @@ REFERENCE_PATHS = {
     'grch38': os.path.join(REFERENCE_DIR, 'hg38', 'Homo_sapiens_assembly38.fasta')  # symlink
 }
 
+# Liftover chain files, keyed by (source build, target build) -- REFERENCE_PATHS-style,
+# under the same /reference bind mount, so genome-downloader (or an operator fetching
+# by hand) can stage them once and every recreation of this container sees them.
+#
+# There is exactly one entry on purpose. The only liftover ZaroPGx performs is
+# GRCh37 -> GRCh38, with UCSC's hg19ToHg38.over.chain.gz
+# (https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz).
+# htsjdk reads the chain through a decompressing reader, so it stays gzipped on disk.
+#
+# The chain's *source* contig names are UCSC-style (`chr1`) -- see the contig-prefix
+# normalisation in run_liftover_pipeline(), which exists solely because of that fact.
+LIFTOVER_CHAIN_PATHS = {
+    ('GRCh37', 'GRCh38'): os.path.join(REFERENCE_DIR, 'chain', 'hg19ToHg38.over.chain.gz'),
+}
+
+# Builds /liftover-vcf accepts as `source_build`. An allowlist, not a passthrough:
+# source_build is a caller-supplied form field, and everything it selects -- the chain,
+# the log lines, the output naming -- must come from constants in this module, never
+# from the request. Values are compared lowercased; both spellings of the one
+# supported source build are accepted because the app-side detector says "GRCh37"
+# while UCSC tooling and this module's own REFERENCE_PATHS say "hg19".
+LIFTOVER_SOURCE_BUILDS = {
+    'grch37': 'GRCh37',
+    'hg19': 'GRCh37',
+}
+
+# Reject-rate ceiling for /liftover-vcf, as a fraction of all input records. A real
+# GRCh37 -> GRCh38 liftover of NGS data rejects well under 1% of records (the builds
+# differ in coordinates, not in most content), so a majority-rejected run does not
+# mean "difficult file" -- it means the chain did not match the input at all, which
+# in practice is a contig-naming mismatch or a wrong source build. Returning the
+# few survivors as a "successful" VCF would silently drop most of the patient's
+# variants and produce a clinically wrong report, so past this ceiling the run is
+# an error, loudly. Env-overridable for deliberate experiments, never lowered by
+# request fields.
+LIFTOVER_MAX_REJECT_FRACTION = float(os.environ.get('LIFTOVER_MAX_REJECT_FRACTION', '0.5'))
+
 # In-memory GATK run tracker only — not the ORM Job /api/v1/jobs entity (137c).
 jobs = {}  # job_id -> job_info
 
@@ -2090,6 +2127,546 @@ async def _fail_step(job_client, message):
         await job_client.fail_step(message, {"error": message})
     except Exception as exc:
         logger.warning(f"Could not report step failure to job server: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# GRCh37 -> GRCh38 liftover (/liftover-vcf)
+#
+# Real coordinate conversion via Picard's LiftoverVcf (bundled in GATK), not a
+# chromosome rename. The repo's previous liftover module fed the UCSC chain file to
+# `bcftools annotate --rename-chrs`, which only rewrites contig *names* and leaves
+# every position untouched -- a GRCh37 file came out labelled GRCh38 with every
+# coordinate still GRCh37, which is the worst possible outcome for a clinical
+# pipeline. That module was deleted (commit 7b665cc) and this endpoint is its
+# from-scratch replacement: LiftoverVcf maps each record through the chain intervals,
+# re-checks the REF allele against the target FASTA, and writes anything it cannot
+# carry over into a separate reject VCF with the reason in the FILTER column.
+# ---------------------------------------------------------------------------
+
+
+def _open_vcf_text(path):
+    """Open a VCF for line reading, through gzip when it is (b)gzipped.
+
+    Sniffs the magic bytes rather than trusting the extension: the paths handed to
+    the helpers below are intermediate files this module itself named, but the very
+    first one is the upload, and a `.vcf` upload that is secretly bgzipped (or the
+    reverse) should be read correctly rather than parsed as binary noise. BGZF is
+    valid gzip framing, so Python's gzip module reads bgzipped VCFs fine.
+    """
+    with open(path, 'rb') as probe:
+        magic = probe.read(2)
+    opener = gzip.open if magic == b'\x1f\x8b' else open
+    return opener(path, 'rt', errors='ignore')
+
+
+def vcf_contig_naming(job_label, path, sample_lines=200):
+    """Return 'chr' or 'plain' for the contig naming a VCF actually uses.
+
+    THE WHOLE LIFTOVER HINGES ON THIS. Picard LiftoverVcf matches each record's
+    contig name against the chain's *source* contig names, and UCSC's
+    hg19ToHg38.over.chain uses `chr1`-style names throughout. A b37/GRCh37 VCF
+    very commonly names the same chromosome `1`. On a mismatch LiftoverVcf does
+    not error -- it simply finds no chain for any record and rejects every single
+    variant (`NoTarget`), which without the reject-rate guard below would come
+    back as a "successful" near-empty VCF. So the naming is detected here and
+    unprefixed input is renamed to `chr` form BEFORE LiftoverVcf ever sees it.
+
+    Evidence order:
+      1. `##contig=<ID=...>` header records -- the file's own declaration.
+      2. The CHROM column of the first `sample_lines` data lines, for headers
+         that carry no contig records (legal, and common in hand-made VCFs).
+
+    Mixed naming in one file is refused rather than guessed about: half the
+    records would lift and half would not, and no single rename map fixes a file
+    that disagrees with itself.
+    """
+    header_names = []
+    body_names = []
+    try:
+        with _open_vcf_text(path) as handle:
+            body_seen = 0
+            for line in handle:
+                if line.startswith('##'):
+                    if line.startswith('##contig=<'):
+                        for field in line.strip()[len('##contig=<'):].rstrip('>').split(','):
+                            key, sep, value = field.partition('=')
+                            if sep and key.strip() == 'ID' and value.strip():
+                                header_names.append(value.strip())
+                    continue
+                if line.startswith('#'):
+                    continue
+                name = line.split('\t', 1)[0].strip()
+                if name:
+                    body_names.append(name)
+                    body_seen += 1
+                    if body_seen >= sample_lines:
+                        break
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read the VCF to determine its contig naming: {exc}",
+        )
+
+    names = header_names or body_names
+    if not names:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The VCF carries no ##contig records and no data lines, so its "
+                "contig naming cannot be determined and it cannot be lifted over."
+            ),
+        )
+
+    prefixed = [n for n in names if n.lower().startswith('chr')]
+    unprefixed = [n for n in names if not n.lower().startswith('chr')]
+    if prefixed and unprefixed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The VCF mixes chr-prefixed and unprefixed contig names "
+                f"(e.g. {prefixed[0]!r} and {unprefixed[0]!r}). No single rename "
+                "can make such a file match the liftover chain; normalise its "
+                "contig naming and upload it again."
+            ),
+        )
+
+    naming = 'chr' if prefixed else 'plain'
+    logger.info(f"Job {job_label}: input VCF uses {naming!r} contig naming")
+    return naming
+
+
+# GRCh37/b37 -> UCSC hg19 contig spellings, for the pre-liftover rename. Only the
+# primary assembly is mapped: the chain has no entries for GL* unplaced scaffolds
+# anyway, so those keep their names and fall out of LiftoverVcf as individually
+# rejected records (--WARN_ON_MISSING_CONTIG keeps that from being fatal). Both
+# `MT` (b37) and bare `M` map to `chrM`, the UCSC spelling.
+PLAIN_TO_CHR_CONTIGS = {
+    **{str(i): f"chr{i}" for i in range(1, 23)},
+    'X': 'chrX',
+    'Y': 'chrY',
+    'MT': 'chrM',
+    'M': 'chrM',
+}
+
+
+def write_chr_rename_map(work_dir):
+    """Write the bcftools --rename-chrs map (old-name TAB new-name per line)."""
+    map_path = os.path.join(work_dir, 'plain_to_chr.txt')
+    with open(map_path, 'w', encoding='utf-8') as handle:
+        for old, new in PLAIN_TO_CHR_CONTIGS.items():
+            handle.write(f"{old}\t{new}\n")
+    return map_path
+
+
+def rename_vcf_contigs_to_chr(job_label, input_path, output_path, work_dir):
+    """Rename `1`-style contigs to `chr1` so the input matches the UCSC chain.
+
+    `bcftools annotate --rename-chrs` here is doing the one thing it is actually
+    good for -- renaming -- as a *preparation* for the real coordinate conversion,
+    not instead of it. It rewrites both the ##contig header records and the CHROM
+    column, streaming, no index required. Names absent from the map pass through
+    unchanged. List argv, never shell=True: input_path derives from an uploaded
+    filename.
+    """
+    map_path = write_chr_rename_map(work_dir)
+    argv = [
+        'bcftools', 'annotate',
+        '--rename-chrs', map_path,
+        '-O', 'z',
+        '-o', output_path,
+        input_path,
+    ]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"bcftools could not be executed - check container configuration ({exc})",
+        )
+    if result.returncode != 0:
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Contig renaming before liftover failed (bcftools annotate): {stderr}",
+        )
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail="bcftools annotate exited 0 but wrote no renamed VCF",
+        )
+    return output_path
+
+
+def build_liftover_argv(input_path, lifted_path, chain_path, reject_path, reference_path):
+    """Build the Picard LiftoverVcf command as an argv list.
+
+    A list, never a shell string: input_path derives from an uploaded filename.
+    Flag notes (GATK's Barclay wrapper around the Picard tool):
+      -I / -O          input and output VCF; a `.vcf.gz` output is written as BGZF
+                       by htsjdk, i.e. it comes out already bgzipped.
+      -C               the chain file (--CHAIN); may be gzipped.
+      --REJECT         where every unliftable record goes, reason in FILTER.
+      -R               the *target* reference FASTA (--REFERENCE_SEQUENCE); its
+                       .dict supplies the output header's contig records and its
+                       sequence is what each lifted REF allele is checked against.
+      --WARN_ON_MISSING_CONTIG true
+                       records on contigs the chain does not know (b37 GL*
+                       scaffolds, say) become individual rejects instead of
+                       killing the whole run.
+      --RECOVER_SWAPPED_REF_ALT true
+                       the handful of sites where GRCh38 adopted the minor allele
+                       as reference get their REF/ALT (and genotypes) swapped
+                       instead of rejected as MismatchedRefAllele.
+    """
+    return [
+        'gatk', 'LiftoverVcf',
+        '-I', input_path,
+        '-O', lifted_path,
+        '-C', chain_path,
+        '--REJECT', reject_path,
+        '-R', reference_path,
+        '--WARN_ON_MISSING_CONTIG', 'true',
+        '--RECOVER_SWAPPED_REF_ALT', 'true',
+    ]
+
+
+def count_vcf_records(path):
+    """Count data lines in a (possibly bgzipped) VCF. 0 for a missing file."""
+    if not os.path.exists(path):
+        return 0
+    count = 0
+    with _open_vcf_text(path) as handle:
+        for line in handle:
+            if line.strip() and not line.startswith('#'):
+                count += 1
+    return count
+
+
+def summarise_reject_reasons(path, top_n=5):
+    """Tally the FILTER column of LiftoverVcf's reject VCF, most common first.
+
+    LiftoverVcf writes *why* each record failed as the FILTER value (NoTarget,
+    MismatchedRefAllele, IndelStraddlesMultipleIntervals, CannotLiftOver, ...).
+    Surfacing the tally costs one pass and turns "812 variants were dropped" into
+    something an operator can actually act on -- a wall of NoTarget means the
+    chain never matched (naming/build), a spread of MismatchedRefAllele means the
+    file was probably not GRCh37 to begin with.
+    """
+    if not os.path.exists(path):
+        return {}
+    reasons = {}
+    with _open_vcf_text(path) as handle:
+        for line in handle:
+            if not line.strip() or line.startswith('#'):
+                continue
+            fields = line.split('\t')
+            reason = fields[6].strip() if len(fields) > 6 else '.'
+            reasons[reason] = reasons.get(reason, 0) + 1
+    ranked = sorted(reasons.items(), key=lambda item: (-item[1], item[0]))
+    return dict(ranked[:top_n])
+
+
+def run_liftover_pipeline(job_label, input_path, work_dir, lifted_path, reject_path,
+                          chain_path, reference_path):
+    """Normalise contig naming, run LiftoverVcf, index, and vouch for the result.
+
+    Synchronous by design -- the endpoint runs it via asyncio.to_thread under
+    _to_thread_semaphore, exactly like the CRAM/SAM conversions, so a long lift
+    cannot stall the event loop (and with it /health).
+
+    Every failure raises HTTPException, so a caller that returns normally can
+    promise `lifted_path` exists, is BGZF, and passed the reject-rate guard.
+
+    Returns:
+        dict with n_lifted, n_rejected, reject_reasons, renamed_contigs, tbi path.
+    """
+    # Step 1: make the input's contig naming match the chain's (see
+    # vcf_contig_naming's docstring for why every variant is silently rejected
+    # otherwise). A chr-prefixed file is passed to LiftoverVcf untouched.
+    naming = vcf_contig_naming(job_label, input_path)
+    renamed_contigs = naming == 'plain'
+    if renamed_contigs:
+        chr_input = os.path.join(work_dir, 'chr_named_input.vcf.gz')
+        rename_vcf_contigs_to_chr(job_label, input_path, chr_input, work_dir)
+        liftover_input = chr_input
+    else:
+        liftover_input = input_path
+
+    # Step 2: the actual coordinate conversion.
+    argv = build_liftover_argv(
+        liftover_input, lifted_path, chain_path, reject_path, reference_path
+    )
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"GATK could not be executed - check container configuration ({exc})",
+        )
+    if result.returncode != 0:
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        # The tail is where Picard puts its actual complaint; the head is banner.
+        raise HTTPException(
+            status_code=500,
+            detail=f"LiftoverVcf failed with exit code {result.returncode}: {stderr[-2000:]}",
+        )
+
+    if not os.path.exists(lifted_path) or os.path.getsize(lifted_path) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"LiftoverVcf exited 0 but wrote no output to {lifted_path}",
+        )
+    with open(lifted_path, 'rb') as handle:
+        if handle.read(2) != b'\x1f\x8b':
+            raise HTTPException(
+                status_code=500,
+                detail=f"LiftoverVcf produced {lifted_path}, which is not a BGZF-framed VCF",
+            )
+
+    # Step 3: the honesty gate. LiftoverVcf "succeeding" while rejecting nearly
+    # everything is exactly what a chain/prefix mismatch looks like, and the cost
+    # of letting it through is a clinical report computed from a fraction of the
+    # patient's variants. See LIFTOVER_MAX_REJECT_FRACTION.
+    n_lifted = count_vcf_records(lifted_path)
+    n_rejected = count_vcf_records(reject_path)
+    reject_reasons = summarise_reject_reasons(reject_path)
+    total = n_lifted + n_rejected
+    if total == 0:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "LiftoverVcf produced no records at all - the input VCF appears to "
+                "contain no variants, so there is nothing to lift over."
+            ),
+        )
+    reject_fraction = n_rejected / total
+    if reject_fraction > LIFTOVER_MAX_REJECT_FRACTION:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Liftover rejected {n_rejected} of {total} variants "
+                f"({reject_fraction:.0%}), which is implausible for a genuine "
+                f"GRCh37 file (reject reasons: {reject_reasons}). This usually "
+                "means the chain did not match the input - a wrong source build, "
+                "or a contig-naming mismatch. Refusing to hand a near-empty VCF "
+                "to the pipeline as if it were the patient's data."
+            ),
+        )
+
+    # Step 4: tabix index. `bcftools index -t` writes the same .tbi `tabix -p vcf`
+    # would (both are htslib); the standalone bgzip/tabix binaries are not in this
+    # image, bcftools is. Best-effort on purpose: LiftoverVcf already sorted the
+    # output against the target dictionary, and the pipeline re-indexes when no
+    # .tbi travels with the VCF, so a failed index is a warning, not a lost run.
+    tbi_path = f"{lifted_path}.tbi"
+    try:
+        index_result = subprocess.run(
+            ['bcftools', 'index', '-t', '-f', lifted_path],
+            capture_output=True,
+            check=False,
+        )
+        if index_result.returncode != 0 or not os.path.exists(tbi_path):
+            stderr = (index_result.stderr or b'').decode('utf-8', errors='replace').strip()
+            logger.warning(f"Job {job_label}: could not tabix-index {lifted_path}: {stderr}")
+            tbi_path = None
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(f"Job {job_label}: could not tabix-index {lifted_path}: {exc}")
+        tbi_path = None
+
+    logger.info(
+        f"Job {job_label}: lifted {n_lifted} records, rejected {n_rejected} "
+        f"({reject_reasons or 'no rejects'})"
+    )
+    return {
+        'n_lifted': n_lifted,
+        'n_rejected': n_rejected,
+        'reject_reasons': reject_reasons,
+        'renamed_contigs': renamed_contigs,
+        'vcf_index': tbi_path,
+    }
+
+
+@app.post("/liftover-vcf")
+async def liftover_vcf(
+    file: UploadFile = File(...),
+    source_build: str = Form(...),
+    reference_genome: str = Form("hg38"),
+    patient_id: Optional[str] = Form(None),
+    report_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
+    step_name: Optional[str] = Form("liftover")
+):
+    """
+    Lift a GRCh37/hg19 VCF over to GRCh38 coordinates with Picard LiftoverVcf.
+
+    Returns the lifted, bgzipped, tabix-indexed VCF's path on the shared /data
+    volume, plus the reject VCF and honest statistics: how many records made it,
+    how many were dropped and why. Variants that cannot be lifted (no chain
+    interval, REF mismatch after lifting, indel straddling chain gaps) are NOT in
+    the output -- callers surfacing this to a user must say the drop count out
+    loud rather than presenting the lifted file as the complete original.
+
+    A rejection rate above LIFTOVER_MAX_REJECT_FRACTION fails the request: that
+    pattern means the chain never matched the input (wrong build or contig
+    naming), and a near-empty "success" would produce wrong clinical results.
+    """
+    job_client = None
+    work_dir = None
+    output_dir = None
+    try:
+        # Initialize job client if Zaro Job PK is provided
+        if job_id:
+            try:
+                job_client = JobClient(job_id=job_id, step_name=step_name)
+                await job_client.start_step(f"Starting GRCh37->GRCh38 liftover for {file.filename}")
+                await job_client.log_progress(f"Lifting {file.filename} to GRCh38", {
+                    "filename": file.filename,
+                    "source_build": source_build,
+                    "reference_genome": reference_genome
+                })
+            except Exception as e:
+                logger.warning(f"Failed to initialize workflow client: {e}")
+                job_client = None
+
+        # source_build is caller-supplied: allowlist it before it selects anything.
+        canonical_source = LIFTOVER_SOURCE_BUILDS.get((source_build or "").strip().lower())
+        if not canonical_source:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported source_build {source_build!r} for liftover; "
+                    f"supported: {sorted(LIFTOVER_SOURCE_BUILDS)}"
+                ),
+            )
+
+        # The target must be GRCh38: it is the only build a chain exists for, and
+        # the only build the rest of the pipeline accepts. Checked as a *build*
+        # (hg38 and grch38 both pass) the same way the CRAM route reasons about
+        # REFERENCE_BUILDS.
+        target_key = (reference_genome or "hg38").strip().lower()
+        if REFERENCE_BUILDS.get(target_key) != 'GRCh38':
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Liftover targets GRCh38 only; got reference_genome={reference_genome!r}. "
+                    "Post hg38 (or grch38), or omit the field."
+                ),
+            )
+        reference_path = REFERENCE_PATHS[target_key]
+        if not os.path.exists(reference_path):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Liftover requires the GRCh38 reference FASTA, which is not present "
+                    f"at {reference_path}. Fetch the reference before lifting."
+                ),
+            )
+
+        chain_path = LIFTOVER_CHAIN_PATHS[(canonical_source, 'GRCh38')]
+        if not os.path.exists(chain_path):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The {canonical_source}->GRCh38 chain file is not present at "
+                    f"{chain_path}. Stage UCSC's hg19ToHg38.over.chain.gz there "
+                    "(genome-downloader fetches it on a fresh deploy)."
+                ),
+            )
+
+        # Sanitised for the same reason as every other route here: file.filename is
+        # attacker-controlled and this name reaches subprocess argv and the shared
+        # volume. See safe_upload_name's docstring.
+        local_job_id = str(uuid.uuid4())
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        filename = safe_upload_name(file.filename or "input.vcf", local_job_id)
+        input_path = os.path.join(work_dir, filename)
+        # Outputs go on the shared volume, not this container's /tmp -- the caller
+        # is a Nextflow process in another container and the ./data bind mount is
+        # the only filesystem both can see. Same contract as conversion_output_dir's
+        # docstring spells out for the BAM conversions.
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        # stored_stem(), not splitext: a `.vcf.gz` upload would otherwise become
+        # `<name>.vcf.grch38.vcf.gz`.
+        lifted_path = os.path.join(output_dir, f"{stored_stem(filename)}.grch38.vcf.gz")
+        reject_path = os.path.join(output_dir, f"{stored_stem(filename)}.reject.vcf.gz")
+
+        # Chunked for the same reason as the CRAM route: never buffer the upload.
+        with open(input_path, "wb") as f:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
+
+        logger.info(f"Job {local_job_id}: Saved VCF for liftover to {input_path}")
+
+        if job_client:
+            file_size = os.path.getsize(input_path)
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
+                "file_size_bytes": file_size,
+                "input_path": input_path
+            })
+
+        # to_thread under the semaphore, exactly like the CRAM/SAM conversions:
+        # LiftoverVcf on a WGS VCF runs for minutes, and a blocking call here would
+        # take /health (and the container healthcheck) down with it.
+        async with _to_thread_semaphore:
+            stats = await asyncio.to_thread(
+                run_liftover_pipeline,
+                local_job_id,
+                input_path,
+                work_dir,
+                lifted_path,
+                reject_path,
+                chain_path,
+                reference_path,
+            )
+
+        if job_client:
+            await job_client.log_progress("Liftover completed", {
+                "vcf_path": lifted_path,
+                "reject_path": reject_path,
+                "n_lifted": stats["n_lifted"],
+                "n_rejected": stats["n_rejected"],
+                "reject_reasons": stats["reject_reasons"],
+            })
+            await job_client.complete_step(
+                f"Lifted {stats['n_lifted']} variants to GRCh38 "
+                f"({stats['n_rejected']} could not be lifted and were dropped)"
+            )
+
+        return {
+            "success": True,
+            "job_id": local_job_id,
+            "vcf_path": lifted_path,
+            "vcf": lifted_path,  # Alternative field name, matching the BAM routes
+            "vcf_index": stats["vcf_index"],
+            "reject_path": reject_path,
+            "n_lifted": stats["n_lifted"],
+            "n_rejected": stats["n_rejected"],
+            "reject_reasons": stats["reject_reasons"],
+            "renamed_contigs": stats["renamed_contigs"],
+            "source_build": canonical_source,
+            "target_build": "GRCh38",
+            "message": (
+                f"Lifted {filename} to GRCh38: {stats['n_lifted']} variants kept, "
+                f"{stats['n_rejected']} dropped as unliftable"
+            ),
+        }
+
+    except HTTPException as e:
+        # Do not relabel a deliberate 4xx as a 500 on the way out.
+        _cleanup_dir(output_dir)
+        logger.error(f"Liftover failed: {e.detail}")
+        await _fail_step(job_client, f"Liftover failed: {e.detail}")
+        raise
+    except Exception as e:
+        _cleanup_dir(output_dir)
+        logger.exception(f"Error in liftover: {e}")
+        await _fail_step(job_client, f"Liftover failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Liftover failed: {str(e)}")
+    finally:
+        # The input copy (and any renamed intermediate) is never needed again.
+        _cleanup_dir(work_dir)
 
 
 @app.post("/align-fastq")

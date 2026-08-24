@@ -153,6 +153,12 @@ class NextflowRunRequest(BaseModel):
     sample_identifier: Optional[str] = None
     pharmcat_absent_to_ref: str = "false"
     pharmcat_unspecified_to_ref: str = "false"
+    # The build the input file is expressed against, as detected by the app's header
+    # inspector. Empty means "no liftover"; GRCh37/hg19 routes a VCF through main.nf's
+    # LiftoverVCF process. Declared for the same reason skip_gatk/skip_report are
+    # (406): pydantic silently drops undeclared fields, which would turn the liftover
+    # trigger into a no-op with nothing said.
+    source_build: str = ""
 
     @field_validator("reference")
     @classmethod
@@ -160,6 +166,17 @@ class NextflowRunRequest(BaseModel):
         # reference is interpolated verbatim into several curl argv in main.nf; reject
         # anything outside the safe alphabet before it can reach the shell.
         return _require_pipeline_token((v or "").strip(), "reference")
+
+    @field_validator("source_build")
+    @classmethod
+    def _validate_source_build(cls, v: str) -> str:
+        # source_build is interpolated into LiftoverVCF's curl argv in main.nf exactly
+        # as reference is, so it gets the same allowlist. Blank is legal and means
+        # "no liftover" - only a present value must be a safe token.
+        stripped = (v or "").strip()
+        if not stripped:
+            return ""
+        return _require_pipeline_token(stripped, "source_build")
 
     @field_validator("sample_identifier")
     @classmethod
@@ -243,7 +260,7 @@ async def run(request: NextflowRunRequest):
     # Start Nextflow in a separate thread
     thread = threading.Thread(
         target=run_nextflow_job, 
-        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref, request.skip_gatk, request.skip_report)
+        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref, request.skip_gatk, request.skip_report, request.source_build)
     )
     thread.daemon = True
     thread.start()
@@ -275,7 +292,7 @@ def summarize_nextflow_failure(stdout: Optional[str], stderr: Optional[str], tai
             parts.append(f"{label}:\n{stream.strip()[-tail:]}")
     return "\n\n".join(parts) if parts else "Unknown error"
 
-def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false'):
+def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', source_build: str = ''):
     """Build the Nextflow argv. Pure and side-effect free so it can be unit tested.
 
     Every skip flag the request model accepts must be emitted here; a flag that
@@ -316,9 +333,16 @@ def build_nextflow_command(input_path: str, input_type: str, patient_id: str, re
         '--pharmcat_unspecified_to_ref', pharmcat_unspecified_to_ref,
     ])
 
+    # Emitted only when set: an empty --source_build '' is indistinguishable from an
+    # absent one to main.nf (both mean "no liftover"), and a blank argv element buys
+    # nothing. The value is allowlist-validated by NextflowRunRequest before it can
+    # get here - it is interpolated into LiftoverVCF's shell block.
+    if source_build and str(source_build).strip():
+        cmd.extend(['--source_build', str(source_build).strip()])
+
     return cmd
 
-def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false'):
+def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', source_build: str = ''):
     """Run Nextflow job in background thread. Nextflow orchestrates individual containers that report their own progress."""
     try:
         # Update job status
@@ -338,6 +362,7 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
             skip_report=skip_report,
             pharmcat_absent_to_ref=pharmcat_absent_to_ref,
             pharmcat_unspecified_to_ref=pharmcat_unspecified_to_ref,
+            source_build=source_build,
         )
 
         # Set environment variables for job_id passing to individual containers

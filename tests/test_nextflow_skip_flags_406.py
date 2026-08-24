@@ -225,7 +225,7 @@ def _curl_call_sites():
 def test_every_curl_call_site_fails_on_http_errors_or_is_annotated_exempt():
     """Plain curl exits 0 on 4xx/5xx and writes the error doc where a result belongs."""
     text, calls = _curl_call_sites()
-    assert len(calls) == 8, f"curl call-site count changed to {len(calls)}; re-audit"
+    assert len(calls) == 9, f"curl call-site count changed to {len(calls)}; re-audit"
     for call in calls:
         if any(endpoint in call for endpoint in EXEMPT_CURL_ENDPOINTS):
             continue
@@ -238,8 +238,8 @@ def test_guarded_curl_failures_surface_the_server_message():
     """--fail-with-body is only useful if the body and curl's diagnostic get out."""
     text, calls = _curl_call_sites()
     guarded = [call for call in calls if "--fail-with-body" in call]
-    assert len(guarded) == 6, f"{len(guarded)} guarded call sites, expected 6"
-    assert text.count("returned an error:") == 6, "each guarded call must echo the body"
+    assert len(guarded) == 7, f"{len(guarded)} guarded call sites, expected 7"
+    assert text.count("returned an error:") == 7, "each guarded call must echo the body"
     # `2>service.log` buried curl's own error in a work-dir file nobody reads; -sS puts
     # it on stderr, where Nextflow picks it up into .command.err and the error report.
     for swallowed in ("2>gatk.log", "2>hla.log", "2>pypgx_bam2vcf.log"):

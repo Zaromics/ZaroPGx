@@ -10,6 +10,7 @@ nextflow.enable.dsl=2
     CRAM/SAM -> GATK conversion -> BAM -> OptiType/HLA + PyPGx -> PharmCAT
     BAM -> OptiType/HLA + PyPGx -> PharmCAT  
     VCF -> PyPGx -> PharmCAT (quick pipeline, no HLA)
+    GRCh37/hg19 VCF -> GATK LiftoverVcf (via gatk-api) -> GRCh38 VCF -> PyPGx -> PharmCAT
 
   Inputs/Outputs are file-path based; integration with FastAPI will pass params.
 
@@ -61,6 +62,16 @@ params.skip_report    = params.skip_report != null ? params.skip_report : false
 // params.sample_identifier that any shell block interpolates.
 params.pharmcat_absent_to_ref = params.pharmcat_absent_to_ref ?: 'false'
 params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'false'
+// source_build: the build the *input file* is expressed against, as detected by the
+// app's header inspector (empty when it is already GRCh38 or unknown). When it names
+// GRCh37/hg19 and the input is a VCF, the LiftoverVCF process converts the file to
+// GRCh38 coordinates before anything else touches it. This is deliberately separate
+// from params.reference, which names the TARGET build the pipeline analyses against
+// (hg38): conflating the two is how a GRCh37 file used to sail through on its
+// original coordinates. The value is interpolated into a shell block below, so the
+// runner (docker/nextflow/runner.py) allowlist-validates it exactly as it does
+// params.reference; do not widen that alphabet.
+params.source_build   = params.source_build ?: ''
 
 // FASTQ alignment
 process FastqToBAM {
@@ -262,6 +273,62 @@ for gene,call in results.items():
 if lines:
     open('pharmcat.hla_calls.tsv','w',encoding='utf-8').write('\\n'.join(lines)+'\\n')
 PY
+    '''
+}
+
+// GRCh37/hg19 VCF -> GRCh38 VCF, via gatk-api's Picard LiftoverVcf endpoint.
+// Real coordinate conversion, not a contig rename - the sidecar normalises contig
+// naming to match the UCSC chain, runs LiftoverVcf against the GRCh38 reference,
+// and refuses (HTTP 500 -> --fail-with-body -> run failure) when an implausible
+// share of variants fails to lift, so a chain/prefix mismatch can never quietly
+// hand a near-empty VCF to PyPGx/PharmCAT. Variants that genuinely cannot be
+// lifted are dropped; the response carries the counts.
+process LiftoverVCF {
+    tag "liftover_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path vcf
+    val source_build
+    val patient_id
+    val report_id
+    val reference
+    val outdir
+
+    output:
+    // A fixed name, deliberately NOT a bare `*.vcf.gz` glob: the staged INPUT can
+    // itself be a .vcf.gz, and a glob would emit input and output both - sending
+    // the un-lifted GRCh37 file downstream alongside the lifted one. The staged
+    // input can never collide with this name (uploads stage as `upload_*`).
+    path "lifted.grch38.vcf.gz", emit: vcf
+    path "lifted.grch38.vcf.gz.tbi", optional: true, emit: tbi
+
+    shell:
+    '''
+    set -euo pipefail
+    CURL_ARGS=( -X POST -F source_build=!{source_build} -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=liftover )
+    fi
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/liftover-vcf > liftover_response.json; then
+      echo "gatk-api /liftover-vcf returned an error:" >&2
+      cat liftover_response.json >&2 || true
+      exit 1
+    fi
+    VCF_PATH=$(python3 - <<'PY'
+import json
+data = json.load(open('liftover_response.json'))
+print(data.get('vcf_path') or data.get('vcf') or '')
+PY
+)
+    if [ -z "$VCF_PATH" ]; then
+      echo "liftover response carried no vcf_path" >&2
+      cat liftover_response.json >&2 || true
+      exit 1
+    fi
+    cp "$VCF_PATH" lifted.grch38.vcf.gz
+    # Bring the tabix index along if the sidecar made one (downstream re-indexes otherwise).
+    [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" lifted.grch38.vcf.gz.tbi || true
     '''
 }
 
@@ -545,9 +612,23 @@ workflow {
             vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
         }
     }
-    // For VCF: quick pipeline, no HLA
+    // For VCF: quick pipeline, no HLA. A GRCh37/hg19 VCF is lifted over to GRCh38
+    // first; everything downstream (PyPGx, PharmCAT) is GRCh38-only, so skipping
+    // this step for such a file would analyse it on the wrong coordinates.
     else if (params.input_type == 'vcf') {
-        vcf_ch = input_ch
+        def source_build_norm = (params.source_build ?: '').toString().toLowerCase()
+        if (['grch37', 'hg19', 'b37'].contains(source_build_norm)) {
+            vcf_ch = LiftoverVCF(
+                input_ch,
+                Channel.value(params.source_build),
+                patient_id_ch,
+                report_id_ch,
+                reference_ch,
+                outdir_ch
+            ).vcf
+        } else {
+            vcf_ch = input_ch
+        }
         hla_ch = empty_file_ch
     }
     else {

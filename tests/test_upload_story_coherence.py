@@ -259,11 +259,14 @@ def test_23andme_workflow_is_not_flagged_provisional():
     assert workflow["is_provisional"] is False
 
 
-def test_grch37_vcf_is_still_analysed_provisionally():
-    """The gate change must not touch the one input that is genuinely provisional.
+def test_grch37_vcf_is_analysed_supported_via_liftover():
+    """The gate change must not touch the input the pipeline genuinely converts.
 
-    The router refuses on the workflow dict, so the dict the real GRCh37 branch produces
-    is what decides — assert on it directly, then on the gate's verdict for it.
+    A GRCh37 VCF is now lifted over to GRCh38 (GATK Picard LiftoverVcf via gatk-api)
+    before analysis, so it is supported outright: not unsupported, not provisional,
+    and never refused. The router refuses on the workflow dict, so the dict the real
+    GRCh37 branch produces is what decides — assert on it directly, then on the
+    gate's verdict for it.
     """
     from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
     from app.api.routes.upload_router import _unanalysable_upload_reason
@@ -291,8 +294,9 @@ def test_grch37_vcf_is_still_analysed_provisionally():
     )
     workflow["file_type"] = FileType.VCF.value
 
-    assert workflow["unsupported"] is True
-    assert workflow["is_provisional"] is True
+    assert workflow["unsupported"] is False
+    assert workflow["is_provisional"] is False
+    assert workflow["needs_liftover"] is True
     assert _unanalysable_upload_reason(workflow) is None
 
 
@@ -324,10 +328,12 @@ def test_preview_does_not_mark_an_accepted_file_refused(client):
 
 
 def test_preview_of_a_grch37_vcf_is_not_refused():
-    """`unsupported` is not `refused`: a GRCh37 VCF is unsupported and still analysed.
+    """A GRCh37 VCF is supported (lifted over to GRCh38), so no verdict may refuse it.
 
-    Driven through the gate rather than the endpoint, because FileProcessor's VCF path
-    needs pysam or bcftools to read a sample count and neither is on a bare host.
+    It is not even `unsupported` any more — the liftover made it a first-class
+    input — and the gate must agree. Driven through the gate rather than the
+    endpoint, because FileProcessor's VCF path needs pysam or bcftools to read a
+    sample count and neither is on a bare host.
     """
     from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
     from app.api.routes.upload_router import _unanalysable_upload_reason
@@ -355,7 +361,8 @@ def test_preview_of_a_grch37_vcf_is_not_refused():
     )
     workflow["file_type"] = FileType.VCF.value
 
-    assert workflow["unsupported"] is True
+    assert workflow["unsupported"] is False
+    assert workflow["needs_liftover"] is True
     assert _unanalysable_upload_reason(workflow) is None
 
 
@@ -417,8 +424,11 @@ def test_panel_still_draws_the_workflow_for_an_accepted_file(tmp_path):
                     "needs_pypgx": True,
                     "recommendations": [],
                     "warnings": [],
+                    # unsupported+provisional still describes a real input class:
+                    # a named build with no liftover chain (T2T, say). GRCh37 is
+                    # no longer in it — that build is lifted over and supported.
                     "unsupported": True,
-                    "unsupported_reason": "GRCh37: results are provisional.",
+                    "unsupported_reason": "T2T-CHM13: results are provisional.",
                     "is_provisional": True,
                 }
             },

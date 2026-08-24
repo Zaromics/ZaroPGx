@@ -1,44 +1,50 @@
 """GRCh37/hg19 upload copy honesty (BACKLOG 1 / 49 / 120 / 221 -- honesty half).
 
-`FileProcessor.determine_workflow` used to tell GRCh37/hg19 uploaders that
-liftover to GRCh38/hg38 happens ("Step 0 ... (TO DO)", "it will proceed to
-Step 1", "bcftools' liftover is used") even though no liftover step exists
-anywhere in app/, docker/, or pipelines/. Nothing lifts the file over.
+The history of this module is three swings of a pendulum, and the tests exist to
+pin it wherever the copy and the behaviour actually agree:
 
-Round 1 of this fix overcorrected into a second lie: it said the file
-"cannot be analysed" / "will not be analysed". In fact nothing in the repo
-gates on `unsupported` (every read of it -- app/api/models.py,
-upload_router.py, index.html -- is display-only), so a GRCh37 upload still
-runs header_analysis -> pypgx -> PharmCAT -> report_generation and the user
-gets a report. `workflow["is_provisional"] = True`, six lines below the
-reason string, is this codebase's own flag for "we *did* analyse it,
-provisionally" -- the designed intent is "analyse provisionally", not
-"refuse". The copy must be true of *that* behaviour: GRCh38/hg38 is the only
-build ZaroPGx fully supports, so results for any other build are provisional
-and should not be relied on, and the user should convert the file themselves
-for reliable results.
+1. `FileProcessor.determine_workflow` used to *promise* a liftover that did not
+   exist ("Step 0 ... (TO DO)", "bcftools' liftover is used") -- no liftover step
+   existed anywhere in app/, docker/ or pipelines/.
+2. The fix pinned the copy to the then-truth: GRCh37 was analysed on its original
+   coordinates, provisionally, and the user was told to convert it themselves.
+3. NOW THE LIFTOVER IS REAL. gatk-api's /liftover-vcf runs Picard LiftoverVcf
+   (a genuine coordinate conversion against the GRCh38 reference, UCSC
+   hg19ToHg38 chain -- not the contig rename of the deleted first attempt), and
+   pipelines/pgx/main.nf routes a VCF through it whenever the app detects a
+   GRCh37/hg19 build. So a GRCh37 VCF is *supported*: not unsupported, not
+   provisional, `needs_liftover=True`, and the copy says the file will be lifted
+   to GRCh38.
 
-These tests pin the emitted, user-visible strings (recommendations, warnings,
-unsupported_reason) to that truth. They assert on the actual returned
-strings, not on source text, so a future regression back to promise-shaped
-copy -- or back to a false "not analysed" claim -- is caught even if the
-exact wording changes.
+The honesty spirit is unchanged even though the verdict flipped. The copy must
+be true of the behaviour, so it must also say what the liftover costs: variants
+that cannot be mapped onto GRCh38 are dropped, and a lifted file is not the same
+evidence as a natively-GRCh38 one. No overclaiming ("lossless", "identical"),
+no leftover convert-it-yourself demands, no internal markers.
+
+These tests assert on the actual returned strings, not on source text, so a
+regression in either direction -- back to "we don't lift" copy over a pipeline
+that lifts, or ahead to loss-free promises the tool cannot keep -- is caught
+even if the exact wording changes.
 """
 
 from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
 from app.api.utils.file_processor import FileAnalysis, FileProcessor
 
-# Phrases that must never appear in user-visible workflow copy. Each pins down
-# one specific lie that existed at f4e1bb6, or was introduced by round 1 of
-# this very fix, in app/api/utils/file_processor.py.
+# Phrases that must never appear in user-visible workflow copy for a GRCh37
+# upload. Each pins one specific lie: the internal marker and the "not analysed"
+# claim survive from the earlier rounds of this fix, the rest are the
+# overclaiming this round could newly introduce -- liftover drops variants, so
+# nothing may call it lossless or its results equivalent to native GRCh38 data.
 _FORBIDDEN_SUBSTRINGS = [
     "(to do)",  # internal marker leaking into user-visible HTML
-    "will be converted",  # promises ZaroPGx performs the liftover itself
-    "will be re-aligned",
-    "will be realigned",
-    "it will proceed",  # implies an automatic pipeline step that doesn't exist
-    "not be analys",  # catches "will/cannot/won't/should ... be analysed|analyzed":
-    # the pipeline DOES run and DOES produce a (provisional) report
+    "not be analys",  # the pipeline DOES run and DOES produce a report
+    "lossless",  # liftover is not
+    "without loss",
+    "no variants are lost",
+    "identical results",
+    "provisional",  # the GRCh37 verdict is not provisional any more; saying so
+    # over a real liftover would be the old copy over the new behaviour
 ]
 
 
@@ -76,68 +82,109 @@ def _all_user_visible_strings(workflow: dict) -> list:
     return strings
 
 
-def test_grch37_upload_is_marked_unsupported_with_grch38_only_reason():
+def test_grch37_upload_is_supported_via_liftover():
     workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
 
-    assert workflow["unsupported"] is True
-    reason = workflow["unsupported_reason"]
-    assert reason, "unsupported_reason must be set for a non-GRCh38 VCF"
-    assert "GRCh37" in reason  # tells the user which build their file actually is
-    assert "GRCh38" in reason or "hg38" in reason
-    assert "only" in reason.lower()  # names GRCh38-only support, not a mere preference
+    assert workflow["unsupported"] is False
+    assert workflow["unsupported_reason"] is None
+    assert workflow["is_provisional"] is False
+    assert workflow["needs_liftover"] is True
 
 
-def test_grch37_upload_stays_provisional_not_refused():
-    # Pins the property an independent reviewer caught round 1 contradicting:
-    # is_provisional=True means the designed behaviour is "analyse it
-    # anyway, but mark the results provisional" -- not "refuse to analyse".
-    # unsupported_reason must say so, in those terms, not claim analysis
-    # is skipped.
+def test_grch37_upload_carries_the_detected_source_build():
+    # main.nf's LiftoverVCF process is triggered by --source_build, which the
+    # router reads from this key. It must be the DETECTED build -- the
+    # reference_genome form field defaults to hg38 regardless of the file.
     workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
-    assert workflow["unsupported"] is True
-    assert workflow["is_provisional"] is True
-    reason = workflow["unsupported_reason"]
-    assert "provisional" in reason.lower()
-    assert "not be relied on" in reason.lower() or "not be reliable" in reason.lower()
+    assert workflow["source_build"] == "GRCh37"
 
 
-def test_grch37_upload_copy_contains_no_internal_markers_or_false_promises():
+def test_grch37_copy_says_the_file_will_be_lifted_to_grch38():
+    workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
+    all_strings = [s.lower() for s in _all_user_visible_strings(workflow)]
+    assert all_strings, "expected warnings/recommendations for a GRCh37 upload"
+
+    # The one promise the copy now makes must be the one the pipeline keeps:
+    # a lift to GRCh38, named as such.
+    assert any(
+        "lift" in s and ("grch38" in s or "hg38" in s) for s in all_strings
+    ), f"no string says the file will be lifted to GRCh38: {all_strings}"
+
+
+def test_grch37_copy_admits_that_liftover_drops_variants():
+    # The honesty half of the flip: liftover is lossy, and saying so is the
+    # difference between a supported feature and a new overclaim.
+    workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
+    all_strings = [s.lower() for s in _all_user_visible_strings(workflow)]
+
+    assert any(
+        "drop" in s for s in all_strings
+    ), f"no string admits that unliftable variants are dropped: {all_strings}"
+
+
+def test_grch37_copy_contains_no_internal_markers_or_overclaims():
     workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
     all_strings = _all_user_visible_strings(workflow)
-    assert all_strings, "expected warnings/recommendations/reason for a GRCh37 upload"
+    assert all_strings, "expected warnings/recommendations for a GRCh37 upload"
 
     for s in all_strings:
         lowered = s.lower()
         for forbidden in _FORBIDDEN_SUBSTRINGS:
             assert forbidden not in lowered, f"forbidden phrase {forbidden!r} in: {s!r}"
-        if "liftover" in lowered:
-            assert "is used" not in lowered, f"claims a tool 'is used' in: {s!r}"
 
 
-def test_grch37_upload_tells_user_to_convert_before_uploading():
+def test_grch37_copy_no_longer_tells_the_user_to_convert_it_themselves():
+    # The round-2 copy demanded a DIY conversion because ZaroPGx performed none.
+    # Now that it performs one, that demand would be the stale copy over the new
+    # behaviour -- exactly the class of mismatch this module exists to catch.
     workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
     recs = [r.lower() for r in workflow["recommendations"]]
 
-    # The user must be told, in plain language, to lift the file over
-    # themselves before uploading -- not that ZaroPGx will do it for them.
-    assert any(
+    assert not any(
         "convert" in r and "yourself" in r for r in recs
-    ), f"no recommendation tells the user to convert the file themselves: {recs}"
-    assert any("upload" in r for r in recs)
+    ), f"copy still tells the user to convert the file themselves: {recs}"
 
 
-def test_hg19_lowercase_naming_is_also_flagged_unsupported():
+def test_grch37_copy_still_names_the_more_reliable_native_input():
+    # No false promises: a lifted file is not equal evidence to a native GRCh38
+    # one, and the copy should keep steering users with better data toward it.
+    workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
+    all_strings = [s.lower() for s in _all_user_visible_strings(workflow)]
+
+    assert any(
+        "native" in s or "directly against" in s or "sequenced" in s
+        for s in all_strings
+    ), f"nothing steers the user toward natively-GRCh38 data: {all_strings}"
+
+
+def test_hg19_lowercase_naming_also_triggers_the_liftover():
     # Reference-genome detection is case-insensitive and substring-based
-    # (file_processor.py normalizes with .lower()); confirm the honest-copy
-    # path triggers for the "hg19" spelling too, not only "GRCh37".
+    # (file_processor.py normalizes with .lower()); the liftover path must
+    # trigger for the "hg19" spelling too, not only "GRCh37".
     workflow = FileProcessor().determine_workflow(_analysis_for("hg19"))
-    assert workflow["unsupported"] is True
-    assert "hg19" in workflow["unsupported_reason"]
+    assert workflow["unsupported"] is False
+    assert workflow["needs_liftover"] is True
+    assert workflow["source_build"] == "hg19"
 
 
-def test_grch38_upload_is_not_marked_unsupported():
-    # Sanity/regression guard: the honest-copy rewrite must not start
-    # flagging genuinely-supported GRCh38 files as unsupported.
+def test_grch38_upload_is_not_marked_for_liftover():
+    # Sanity/regression guard: the flip must not start lifting files that are
+    # already on GRCh38 coordinates.
     workflow = FileProcessor().determine_workflow(_analysis_for("GRCh38"))
     assert workflow["unsupported"] is False
     assert workflow["unsupported_reason"] is None
+    assert workflow["needs_liftover"] is False
+
+
+def test_other_named_builds_keep_the_honest_provisional_copy():
+    # No chain is staged for anything but GRCh37->GRCh38, so a third build
+    # (T2T, say) keeps the old behaviour AND the old copy: unsupported,
+    # provisional, convert-it-yourself. The flip is scoped to GRCh37/hg19.
+    workflow = FileProcessor().determine_workflow(_analysis_for("T2T-CHM13"))
+    assert workflow["unsupported"] is True
+    assert workflow["is_provisional"] is True
+    assert workflow["needs_liftover"] is False
+    reason = workflow["unsupported_reason"]
+    assert "provisional" in reason.lower()
+    recs = [r.lower() for r in workflow["recommendations"]]
+    assert any("convert" in r and "yourself" in r for r in recs)

@@ -39,6 +39,10 @@ STEP_TO_STAGE: Mapping[str, WorkflowStage] = {
     "header_analysis": WorkflowStage.ANALYSIS,
     "gatk_cram_sam_to_bam": WorkflowStage.GATK,
     "gatk_alignment": WorkflowStage.GATK,
+    # GRCh37->GRCh38 liftover runs inside the gatk-api container (Picard
+    # LiftoverVcf), so it surfaces under the GATK stage rather than falling
+    # through stage_from_step()'s ANALYSIS default.
+    "liftover": WorkflowStage.GATK,
     "hla_typing": WorkflowStage.HLA,
     "pypgx_analysis": WorkflowStage.PYPGX,
     "pypgx_bam2vcf": WorkflowStage.PYPGX,

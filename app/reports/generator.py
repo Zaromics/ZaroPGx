@@ -148,7 +148,7 @@ def _normalize_version_text(version_text: str) -> str:
     """Extract a clean, numeric version string from arbitrary text.
 
     Examples:
-    - "The Genome Analysis Toolkit () v4.6.2.0" -> "4.6.2.0"
+    - "The Genome Analysis Toolkit () v4.7.0.0" -> "4.7.0.0"
     - "v6.8.0" -> "6.8.0"
     - "3.0.0" -> "3.0.0"
     - "N/A" -> "N/A"
@@ -254,7 +254,7 @@ def build_citations() -> List[Dict[str, str]]:
     vmap = _versions_index()
     pypgx_ver = vmap.get("pypgx") or "0.26.0"
     pharmcat_ver = vmap.get("pharmcat") or "3.4.0"
-    gatk_ver = vmap.get("gatk") or "4.6.2.0"
+    gatk_ver = vmap.get("gatk") or "4.7.0.0"
     zarohla_ver = vmap.get("zarohla") or "1.5.0"
     mtdna_server_2_ver = vmap.get("mtdna-server-2") or "2.1.16"
 

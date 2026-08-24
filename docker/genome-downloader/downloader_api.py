@@ -26,7 +26,8 @@ download_status = {
         "grch37": {"progress": 0, "size_mb": 810, "status": "pending"},
         "pharmcat_grch38": {"progress": 0, "size_mb": 150, "status": "pending"},
         "pharmcat_positions": {"progress": 0, "size_mb": 5, "status": "pending"},
-        "pharmcat_regions": {"progress": 0, "size_mb": 1, "status": "pending"}
+        "pharmcat_regions": {"progress": 0, "size_mb": 1, "status": "pending"},
+        "hg19_to_hg38_chain": {"progress": 0, "size_mb": 1, "status": "pending"}
     },
     "overall_progress": 0
 }
@@ -149,7 +150,7 @@ def download_genomes():
     save_status()
     
     # Create required directories
-    for dir_name in ["hg19", "hg38", "grch37", "grch38", "pharmcat"]:
+    for dir_name in ["hg19", "hg38", "grch37", "grch38", "pharmcat", "chain"]:
         os.makedirs(f"/reference/{dir_name}", exist_ok=True)
     
     # Start downloads
@@ -192,6 +193,18 @@ def download_genomes():
             "gz_path": "/reference/pharmcat/pharmcat_regions.bed",
             "fasta_path": "/reference/pharmcat/pharmcat_regions.bed",
             "is_bed": True
+        },
+        {
+            # UCSC hg19 -> hg38 liftover chain, consumed by gatk-api's /liftover-vcf
+            # (Picard LiftoverVcf). Stays gzipped: htsjdk reads .gz chains directly,
+            # and gatk_api.py's LIFTOVER_CHAIN_PATHS points at exactly this path. No
+            # extraction and no indexing, so it is flagged is_chain and treated like
+            # the VCF/BED entries above: downloaded straight to its final path.
+            "name": "hg19_to_hg38_chain",
+            "url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+            "gz_path": "/reference/chain/hg19ToHg38.over.chain.gz",
+            "fasta_path": "/reference/chain/hg19ToHg38.over.chain.gz",
+            "is_chain": True
         }
     ]
     
@@ -218,8 +231,9 @@ def download_genomes():
                 if not extract_tar_file(genome["gz_path"], genome["fasta_path"], genome["name"]):
                     success = False
                     continue
-            elif genome.get("is_vcf") or genome.get("is_bed"):
-                # VCF and BED files don't need extraction, just copy
+            elif genome.get("is_vcf") or genome.get("is_bed") or genome.get("is_chain"):
+                # VCF, BED and chain files don't need extraction, just copy
+                # (the chain deliberately stays gzipped - htsjdk reads it as-is)
                 if not os.path.exists(genome["fasta_path"]):
                     import shutil
                     shutil.copy2(genome["gz_path"], genome["fasta_path"])
@@ -234,8 +248,8 @@ def download_genomes():
                     continue
         
         # Index
-        if genome.get("is_vcf") or genome.get("is_bed"):
-            # VCF and BED files don't need indexing
+        if genome.get("is_vcf") or genome.get("is_bed") or genome.get("is_chain"):
+            # VCF, BED and chain files don't need indexing
             continue
         elif not index_genome(genome["fasta_path"], genome["name"]):
             success = False

@@ -147,6 +147,11 @@ class WorkflowOptions(BaseModel):
     needs_hla: bool = False
     needs_report: bool = True
     needs_conversion: bool = False
+    # GRCh37/hg19 VCF -> lifted to GRCh38 via gatk-api's Picard LiftoverVcf before
+    # analysis (workflow_registry mints the "liftover" step off this flag). Set from
+    # the DETECTED build (header inspection), never from the reference_genome form
+    # field - the form defaults to hg38 regardless of what the file actually is.
+    needs_liftover: bool = False
     is_provisional: bool = False
     unsupported: bool = False
     unsupported_reason: Optional[str] = None

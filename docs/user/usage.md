@@ -30,15 +30,15 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 1. **Select Files**: Choose one or more genomic files
 2. **Configure Options**:
    - **Sample Identifier**: Optional patient/sample name. Letters, digits, dot, underscore and hyphen only, up to 64 characters, starting with a letter or digit — `Sample_01` and `patient-123` are fine, `Patient 001` (space) is rejected with a 400. Leave it blank and the server mints a UUID.
-   - **Reference Genome**: not something you select — ZaroPGx reads the build from the file's own header and tells you what it found. GRCh38/hg38 is the only build it supports; a GRCh37/hg19 file is accepted today, with the caveat below.
+   - **Reference Genome**: not something you select — ZaroPGx reads the build from the file's own header and tells you what it found. GRCh38/hg38 is analysed directly; a GRCh37/hg19 VCF is lifted over to GRCh38 automatically, with the caveats below.
    - **Processing Options**: Enable/disable specific tools
 3. **Start Analysis**: Click "Upload and Analyze"
 
 #### Upload Options
 
 **Reference Genome:**
-- **hg38/GRCh38**: the only build ZaroPGx supports.
-- **hg19/GRCh37**: accepted, but **analysed on its original coordinates**. ZaroPGx performs no liftover: the file is not converted to GRCh38/hg38, and the upload warns you that its results are provisional and should not be relied on. Convert it to GRCh38/hg38 yourself before uploading for reliable results. Converting a VCF between reference genomes can itself introduce coordinate or genotype errors, so a converted file's results may differ from a file sequenced and called directly against GRCh38/hg38.
+- **hg38/GRCh38**: analysed directly — the build every result is reported on.
+- **hg19/GRCh37**: **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. Two honest caveats: variants that cannot be mapped onto GRCh38 are dropped (the job's liftover step reports how many, and the run fails outright if an implausibly large share of the file cannot be lifted), and a lifted-over file's results may differ from a file sequenced and called directly against GRCh38/hg38 — if you have a native GRCh38 VCF or an upstream BAM/CRAM aligned to GRCh38, upload that instead.
 - **T2T**: Not yet supported
 
 **Processing Toggles:**

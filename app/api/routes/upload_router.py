@@ -163,9 +163,12 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     """Why this upload cannot be analysed at all, or ``None`` to let it through.
 
     ``unsupported`` on its own is not a refusal. FileProcessor also sets it on inputs it
-    fully intends to analyse *provisionally* — a GRCh37 VCF is flagged unsupported and
-    then analysed on its original coordinates, saying so via ``is_provisional``, which is
-    this codebase's own flag for "we did analyse it, provisionally".
+    fully intends to analyse *provisionally* — a VCF on a named build with no liftover
+    chain (T2T-CHM13, say) is flagged unsupported and then analysed on its original
+    coordinates, saying so via ``is_provisional``, which is this codebase's own flag for
+    "we did analyse it, provisionally". (A GRCh37/hg19 VCF used to be the canonical
+    example; it is now genuinely supported — lifted over to GRCh38 via GATK Picard
+    LiftoverVcf — and never reaches this gate flagged.)
 
     What genuinely cannot work is an input that is flagged unsupported and that the
     pipeline cannot carry: FASTQ, 23andMe, FASTA, BED, gVCF, BCF and unrecognised
@@ -292,6 +295,26 @@ def sanitize_optional_pipeline_token(value: Optional[str]) -> Optional[str]:
     if stripped and _PIPELINE_TOKEN_RE.match(stripped):
         return stripped
     return None
+
+
+def analysis_reference(workflow: Dict[str, Any]) -> str:
+    """The build the pipeline analyses against -> Nextflow's params.reference.
+
+    A GRCh37/hg19 VCF is lifted to GRCh38 (gatk-api /liftover-vcf) BEFORE PyPGx
+    and PharmCAT ever see it, so the build the analysis runs against is hg38 no
+    matter which reference the uploader picked for the *original* file. Reading
+    the reference_genome form field here would let a GRCh37 upload whose selector
+    was (quite reasonably) left on "hg19" run PyPGx's GRCh37 assembly against the
+    already-lifted GRCh38 coordinates -- silently wrong star alleles, the worst
+    failure mode in the pipeline, with nothing in the output saying so. main.nf
+    documents params.reference as the TARGET build for exactly this reason.
+
+    Non-liftover inputs are unchanged: their coordinates are whatever the
+    reference_genome field says, so that value flows straight through.
+    """
+    if workflow.get("needs_liftover"):
+        return "hg38"
+    return workflow.get("reference", "hg38")
 
 
 # Report generation flags
@@ -1414,8 +1437,27 @@ async def process_file_nextflow_background(
             # instead of a refusal (see NEXTFLOW_INPUT_TYPES above).
             input_type = workflow.get("file_type", "vcf")
 
-            # Get reference genome from workflow metadata (already set by file_processor)
-            reference = workflow.get("reference", "hg38")
+            # The build the pipeline analyses against. For a lifted GRCh37/hg19 VCF
+            # this is forced to hg38 (the file is GRCh38 by the time PyPGx/PharmCAT
+            # run) regardless of the uploader's reference_genome selection -- see
+            # analysis_reference().
+            reference = analysis_reference(workflow)
+
+            # The build the file itself is expressed against, DETECTED from its
+            # header by FileProcessor (which sets source_build alongside
+            # needs_liftover for a GRCh37/hg19 VCF). Deliberately not the
+            # reference_genome form field: that defaults to hg38 no matter what the
+            # file is, and keying the lift off it would mean never lifting anything.
+            # Sent only when a lift is actually planned; blank means "no liftover"
+            # to both the runner and main.nf. Sanitised as defence in depth - the
+            # value is header-derived, but it ends up interpolated into main.nf's
+            # LiftoverVCF shell block, the same trip reference makes.
+            source_build = ""
+            if workflow.get("needs_liftover"):
+                source_build = (
+                    sanitize_optional_pipeline_token(str(workflow.get("source_build") or ""))
+                    or ""
+                )
 
             # Determine skip flags based on workflow needs (after user overrides)
             skip_hla = "true" if not workflow.get("needs_hla", False) else "false"
@@ -1491,6 +1533,7 @@ async def process_file_nextflow_background(
                 "sample_identifier": effective_sample_identifier,
                 "pharmcat_absent_to_ref": "true" if eff_absent else "false",
                 "pharmcat_unspecified_to_ref": "true" if eff_unspec else "false",
+                "source_build": source_build,
             }
 
             # Submit job to Nextflow
@@ -1562,7 +1605,11 @@ async def upload_genomic_data(
     and initiates the Nextflow-based processing pipeline.
 
     Supported file types:
-    - VCF: Direct processing through PyPGx and PharmCAT. There is no liftover step: a GRCh37/hg19 VCF is flagged unsupported and still processed on its original coordinates, so convert it to GRCh38/hg38 first.
+    - VCF: Direct processing through PyPGx and PharmCAT. A GRCh37/hg19 VCF (detected
+      from the file's own header) is lifted over to GRCh38 first — GATK Picard
+      LiftoverVcf in the gatk-api container, UCSC hg19-to-hg38 chain. Variants that
+      cannot be lifted are dropped, and the run fails rather than continuing if an
+      implausibly large share of the file fails to lift.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
     - FASTQ: rejected with 400. ZaroPGx ships no aligner, so raw reads cannot reach a BAM
       (gatk-api's /align-fastq answers 501); align them yourself and upload the BAM/CRAM/SAM.
@@ -1662,6 +1709,7 @@ async def upload_genomic_data(
             needs_hla=wf.get("needs_hla", False),
             needs_report=wf.get("needs_report", True),
             needs_conversion=wf.get("needs_conversion", False),
+            needs_liftover=wf.get("needs_liftover", False),
             is_provisional=wf.get("is_provisional", False),
             unsupported=wf.get("unsupported", False),
             unsupported_reason=wf.get("unsupported_reason"),
@@ -1951,13 +1999,15 @@ async def inspect_file_header(
             # Derive workflow analysis using the same backend logic (no Nextflow)
             # `refused` is the same verdict /upload/genomic-data would reach, so the
             # preview cannot promise a workflow the upload would then refuse. It is not
-            # `unsupported`: a GRCh37 VCF is unsupported *and* analysed, and its plan must
-            # still be drawn. Only the gate can tell those apart, so the gate is asked.
+            # `unsupported`: a VCF on a named build with no liftover chain (T2T, say) is
+            # unsupported *and* analysed provisionally, and its plan must still be drawn.
+            # Only the gate can tell those apart, so the gate is asked.
             compat_workflow = {
                 "recommendations": [],
                 "warnings": [],
                 "unsupported": False,
                 "unsupported_reason": None,
+                "needs_liftover": False,
                 "refused": False,
                 "refusal_reason": None,
             }
@@ -1973,6 +2023,10 @@ async def inspect_file_header(
                         "warnings": wf.get("warnings", []),
                         "unsupported": wf.get("unsupported", False),
                         "unsupported_reason": wf.get("unsupported_reason"),
+                        # Lets the preview panel draw the "Liftover to GRCh38"
+                        # step for a GRCh37/hg19 VCF, the same way the
+                        # post-upload panel does off WorkflowOptions.
+                        "needs_liftover": wf.get("needs_liftover", False),
                         "refused": refusal is not None,
                         "refusal_reason": refusal,
                     }

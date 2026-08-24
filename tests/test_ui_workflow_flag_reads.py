@@ -8,8 +8,8 @@ level, so ``wf.unsupported``, ``wf.recommendations``, ``wf.warnings``,
 ``wf.unsupported_reason`` and the five ``needs_*`` reads in
 ``buildPlannedWorkflowHTML`` all evaluated to ``undefined``: the Workflow
 Details panel silently rendered nothing at all after an upload. The GRCh37/hg19
-copy -- which tells the user ZaroPGx supports GRCh38/hg38 only and that their
-results are provisional -- reached nobody.
+copy -- which now tells the user the file will be lifted over to GRCh38 and
+that unliftable variants are dropped -- reached nobody.
 
 Two tests, deliberately of different kinds:
 
@@ -65,8 +65,8 @@ def _inline_panel_script() -> str:
 
 
 def _grch37_vcf_analysis():
-    """A GRCh37 VCF: sets unsupported, is_provisional, warnings and
-    recommendations all at once -- the worst case for a dead panel."""
+    """A GRCh37 VCF: sets needs_liftover plus warnings and recommendations
+    (liftover drops unliftable variants) -- a panel with real copy to lose."""
     from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
     from app.api.utils.file_processor import FileAnalysis as DcFileAnalysis
 
@@ -223,8 +223,12 @@ def test_panel_renders_grch37_warnings_from_real_upload_response(monkeypatch, tm
         assert flag in workflow["options"]
 
     options = workflow["options"]
-    assert options["unsupported"] is True
-    assert options["is_provisional"] is True
+    # A GRCh37 VCF is supported via the liftover now: not unsupported, not
+    # provisional, needs_liftover set -- but still carrying warnings (dropped
+    # variants) and recommendations (native GRCh38 is better evidence).
+    assert options["unsupported"] is False
+    assert options["is_provisional"] is False
+    assert options["needs_liftover"] is True
     assert options["warnings"] and options["recommendations"]
 
     rendered = _render_panel(payload, tmp_path)
@@ -245,10 +249,10 @@ def test_panel_renders_grch37_warnings_from_real_upload_response(monkeypatch, tm
         assert warning in warn_el["html"], f"missing warning in panel: {warning!r}"
     assert "<strong>Warnings:</strong>" in warn_el["html"]
 
-    # ... the unsupported alert must carry the server's exact reason ...
-    assert "Unsupported:" in warn_el["html"]
-    assert options["unsupported_reason"] in warn_el["html"]
-    assert "alert-danger" in warn_el["html"]
+    # ... and no red Unsupported alert: a lifted-over file is supported, so the
+    # panel must not contradict that verdict beside the liftover warnings.
+    assert options["unsupported_reason"] is None
+    assert "Unsupported:" not in warn_el["html"]
 
     # ... and the recommendations list must render too.
     info_el = els["infoAlertsLeft"]
@@ -259,10 +263,11 @@ def test_panel_renders_grch37_warnings_from_real_upload_response(monkeypatch, tm
     # The panel itself must be revealed.
     assert "d-none" not in els["workflowAnalysisPanel"]["classes"].split()
 
-    # Sanity: the GRCh38-only honesty copy is what actually reached the DOM.
+    # Sanity: the liftover honesty copy is what actually reached the DOM.
     combined = warn_el["html"] + info_el["html"]
     assert "GRCh38" in combined or "hg38" in combined
-    assert "provisional" in combined.lower()
+    assert "lift" in combined.lower()
+    assert "dropped" in combined.lower()
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

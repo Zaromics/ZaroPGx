@@ -506,7 +506,7 @@
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File(s)</label>
                                     <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
-                                    <div class="form-text">Upload one VCF datafile for pharmacogenomic analysis (currently only GRCh38 supported.) One index file may be included alongside it; any further datafile is ignored. Formats BAM, SAM and CRAM are in testing. A GRCh37/hg19 VCF is accepted, but ZaroPGx performs no liftover: it is analysed on its original coordinates, so its results are provisional. FASTQ is not accepted: ZaroPGx ships no aligner, so align your reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM. 23andMe, BED, and other genotyping formats are not accepted: support for them is still in development.</div>
+                                    <div class="form-text">Upload one VCF for pharmacogenomic analysis — GRCh38 preferred; a GRCh37/hg19 VCF is lifted over to GRCh38 automatically (GATK LiftoverVcf — variants that can't be lifted are dropped). An index file may be included; BAM, SAM and CRAM are in testing. FASTQ, BED, 23andMe and other formats are not accepted.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -920,8 +920,10 @@
                 // this file type is not accepted, and here is the pipeline it will run.
                 // `refused` is the upload gate's own verdict, sent by
                 // POST /upload/inspect-header, so this cannot drift from the upload.
-                // Note it is NOT `unsupported`: a GRCh37 VCF is unsupported and still
-                // analysed, and must keep its plan.
+                // Note it is NOT `unsupported`: a VCF on a named build with no
+                // liftover chain (T2T, say) is unsupported and still analysed
+                // provisionally, and must keep its plan. (A GRCh37 VCF used to be
+                // the example here; it is now lifted over and fully supported.)
                 if (wf.refused) {
                     const why = wf.refusal_reason || wf.unsupported_reason || 'This file type is not accepted.';
                     return `
@@ -938,6 +940,12 @@
                 const steps = [];
                 // Always begin with analysis (header inspection)
                 steps.push({ name: 'Analysis (Header Inspection)', icon: 'bi-search' });
+
+                // GRCh37/hg19 VCF: real coordinate liftover to GRCh38 (GATK Picard
+                // LiftoverVcf in the gatk-api container) before anything else runs.
+                if (wf.needs_liftover) {
+                    steps.push({ name: 'Liftover to GRCh38 (GATK)', icon: 'bi-arrow-left-right' });
+                }
 
                 // GATK needed for certain formats or explicit flag. `fastq` is absent:
                 // FASTQ uploads are refused, so there is no FASTQ alignment to draw.

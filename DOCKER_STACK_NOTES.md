@@ -64,6 +64,21 @@ now fixed:
   `ZAROPGX_E2E=1 ZAROPGX_E2E_REFERENCE=1 ZAROPGX_E2E_BASE_URL=http://127.0.0.1:8765 .venv/Scripts/python.exe -m pytest -m e2e --zaropgx-e2e`.
   Note: the first BAM run faidx-indexes the GRCh38 FASTA (~1 min, cached after).
 
+- **GRCh37→GRCh38 liftover is now real** (2026-08-23) — gatk-api grew a
+  `/liftover-vcf` endpoint running Picard `LiftoverVcf` (GATK bumped
+  **4.6.2.0 → 4.7.0.0**, image rebuild required) against the hg38 reference, with the
+  UCSC chain at `reference/chain/hg19ToHg38.over.chain.gz` (genome-downloader now
+  fetches it on fresh deploys). A GRCh37/hg19 VCF upload is no longer
+  unsupported/provisional: main.nf routes it through a new `LiftoverVCF` process
+  (`--source_build`, sent by the app off the *detected* build) before PyPGx/PharmCAT.
+  The sidecar normalises `1`-style contigs to `chr1` first — the UCSC chain is
+  chr-prefixed, and without the rename LiftoverVcf rejects every record — and fails
+  the run when the reject rate is implausible (>50%) instead of returning a
+  near-empty VCF. Unliftable variants are dropped and counted (reject VCF kept
+  beside the output). New Job step: `liftover` (registered in
+  `app/services/workflow_registry.py` — an unregistered step name 404s its status
+  updates and hangs [pending], the same trap the HLA lane hit).
+
 - **CRAM, SAM and BAM+HLA lanes are now GREEN too** (2026-08-23) — every input lane
   runs end to end. CRAM/SAM convert to BAM via gatk-api then rejoin the BAM lane;
   the BAM+HLA lane leaves OptiType on and exercises the full HLA path. Fixtures:
@@ -88,7 +103,7 @@ Core stack rebuilt and healthy on refreshed versions (WSL-native docker):
 | `pgx_db` | **postgres:18** | Fresh DB; data volume mounted at `/var/lib/postgresql` (PG18 layout) |
 | `pgx_pharmcat` | **PharmCAT 3.4.0** | PharmVar data refresh; reporter multi-phenotype fix |
 | `pgx_zarohla` | **ZaroHLA / OptiType v1.5** | Active HLA path on `:5060`; paired-end typing verified |
-| `pgx_gatk_api` | GATK 4.6.2.0 | Uses the `./reference` bind mount |
+| `pgx_gatk_api` | GATK **4.7.0.0** | Uses the `./reference` bind mount; also serves `/liftover-vcf` (Picard LiftoverVcf, GRCh37→GRCh38, chain at `reference/chain/hg19ToHg38.over.chain.gz`) |
 | `pgx_app` | app | DB connects as `zaropgx_user` |
 
 Other refreshed versions: htslib/bcftools **1.24** (pinned release tarballs in the main

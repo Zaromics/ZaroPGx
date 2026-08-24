@@ -71,6 +71,13 @@ runner = _load_runner()
 #   reference                             - user-controlled, kept safe by the boundary
 #                                           allowlist (a reference label has no shell
 #                                           metacharacters); still interpolated on purpose
+#   source_build                          - header-DERIVED build label ("GRCh37"/"hg19"),
+#                                           audited 2026-08-23: the app filters it through
+#                                           sanitize_optional_pipeline_token before posting
+#                                           and NextflowRunRequest._validate_source_build
+#                                           enforces the same allowlist as reference, so
+#                                           only [A-Za-z0-9][A-Za-z0-9._-]{0,63} can reach
+#                                           the LiftoverVCF shell block
 #   params.input_type                     - a fixed FileType enum value
 #   params.pharmcat_absent_to_ref/...     - booleans rendered as "true"/"false"
 # sample_identifier is DELIBERATELY absent: it now travels via the environment.
@@ -83,6 +90,7 @@ EXPECTED_INTERPOLATIONS = {
     "patient_id",
     "report_id",
     "reference",
+    "source_build",
     "params.input_type",
     "params.pharmcat_absent_to_ref",
     "params.pharmcat_unspecified_to_ref",

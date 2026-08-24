@@ -1,0 +1,18 @@
+##fileformat=VCFv4.2
+##source=ZaroPGx-test-fixture-GRCh37-liftover
+##reference=file:///references/hg19/ucsc.hg19.fasta
+##comment="GRCh37/hg19 PGx SNP fixture for the liftover A/B test. chr-prefixed on purpose (UCSC naming). Expected GRCh38 positions after LiftoverVcf: rs12248560 chr10:94761900, rs4244285 chr10:94781859, rs1799853 chr10:94942290, rs1057910 chr10:94981296, rs4149056 chr12:21178615, rs9923231 chr16:31096368, rs3892097 chr22:42128945."
+##contig=<ID=chr1,length=249250621,assembly=hg19>
+##contig=<ID=chr10,length=135534747,assembly=hg19>
+##contig=<ID=chr12,length=133851895,assembly=hg19>
+##contig=<ID=chr16,length=90354753,assembly=hg19>
+##contig=<ID=chr22,length=51304566,assembly=hg19>
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE1
+chr10	96521657	rs12248560	C	T	100	PASS	.	GT	0/1
+chr10	96541616	rs4244285	G	A	100	PASS	.	GT	0/1
+chr10	96702047	rs1799853	C	T	100	PASS	.	GT	0/1
+chr10	96741053	rs1057910	A	C	100	PASS	.	GT	0/1
+chr12	21331549	rs4149056	T	C	100	PASS	.	GT	0/1
+chr16	31107689	rs9923231	C	T	100	PASS	.	GT	1/1
+chr22	42524947	rs3892097	C	T	100	PASS	.	GT	0/1

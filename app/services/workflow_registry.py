@@ -36,11 +36,19 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         "needs_hla",
         "needs_report",
         "needs_conversion",
+        "needs_liftover",
         "is_provisional",
         "unsupported",
     ),
     step_templates=(
         StepTemplate("header_analysis", "header_inspector"),
+        # GRCh37/hg19 VCF -> GRCh38 via gatk-api's Picard LiftoverVcf. Registered
+        # here because main.nf's LiftoverVCF process posts step_name=liftover to the
+        # JobClient: a step name with no template is never minted onto the Job, so
+        # the sidecar's status update 404s and the UI shows the step hanging
+        # [pending] forever. Ordered before the PyPGx/PharmCAT steps because the
+        # lift happens before either ever sees the file.
+        StepTemplate("liftover", "gatk-api", when="needs_liftover"),
         StepTemplate("hla_typing", "zarohla", when="needs_hla"),
         StepTemplate("pypgx_bam2vcf", "pypgx", when="needs_pypgx_bam2vcf"),
         StepTemplate("pypgx_analysis", "pypgx", when="needs_pypgx"),
