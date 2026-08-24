@@ -167,6 +167,28 @@ def test_a_reference_line_cannot_rescue_conflicting_contigs():
     assert result["ambiguous"] is True
 
 
+def test_conflicting_contigs_across_naming_conventions_are_undetectable():
+    """The conflict must be seen even when the two contigs use different prefixes.
+
+    A file that carries `chr1` at its GRCh38 length and an unprefixed `2` at its
+    GRCh37 length only reads as a conflict if both names are normalised into the
+    same table *before* the disagreement is judged. Every other ambiguity test
+    keeps one naming convention throughout; this one crosses it, so a regression
+    that compared raw names would resolve to a single build here and silently
+    analyse against the wrong coordinates.
+    """
+    header = [
+        "##contig=<ID=chr1,length=248956422>",  # GRCh38, chr-prefixed
+        "##contig=<ID=2,length=243199373>",  # GRCh37, unprefixed
+    ]
+
+    result = detect_reference_assembly(header_records=header)
+
+    assert result["assembly"] is None
+    assert result["ambiguous"] is True
+    assert result["candidates"] == ["GRCh37", "GRCh38"]
+
+
 def test_no_evidence_is_undetectable_but_not_ambiguous():
     header = ["##fileformat=VCFv4.2", "##contig=<ID=chrUn_KI270302v1,length=2274>"]
 
