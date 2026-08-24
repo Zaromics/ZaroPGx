@@ -194,7 +194,7 @@ process OptiTypeHLAFromFastq {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
     if [ -n "${JOB_ID:-}" ]; then
-      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=zarohla_fastq )
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=hla_typing )
     fi
     # An HTTP error here used to be swallowed: the error JSON landed in hla_result.json,
     # the parser below found no HLA- keys, and the run completed reporting no HLA calls -
@@ -240,7 +240,7 @@ process OptiTypeHLAFromBAM {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
     if [ -n "${JOB_ID:-}" ]; then
-      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=zarohla_bam )
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=hla_typing )
     fi
     # An HTTP error here used to be swallowed: the error JSON landed in hla_result.json,
     # the parser below found no HLA- keys, and the run completed reporting no HLA calls -

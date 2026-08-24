@@ -300,21 +300,38 @@ async def call_hla(
             if input_path.name.lower().endswith(".bam") or input_path.name.lower().endswith(".sam") or input_path.name.lower().endswith(".cram"):
                 if job_client:
                     await job_client.log_progress(f"Converting BAM to FASTQ using samtools")
-                
+
                 f1_path = job_dir / "read1.fq"
                 f2_path = job_dir / "read2.fq"
-                cmd = ["samtools", "fastq", "-1", str(f1_path), "-2", str(f2_path), "-0", "/dev/null", "-s", "/dev/null", str(input_path)]
-                
+                # `samtools fastq -1/-2` only routes properly-mate-adjacent reads to the
+                # paired outputs; a real BAM is coordinate-sorted with mates far apart,
+                # so it must be name-collated first or most pairs fall through to the
+                # discarded singleton stream and OptiType gets few/no reads. Collate to
+                # a temp BAM first (no shell: this sidecar is command-injection hardened).
+                collated_path = job_dir / "collated.bam"
+                collate_cmd = ["samtools", "collate", "-u", "-o", str(collated_path), str(input_path)]
+                logger.info(f"Running samtools: {' '.join(collate_cmd)}")
+                collate_proc = await asyncio.create_subprocess_exec(*collate_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                if job_id:
+                    running_processes[job_id] = {"pid": collate_proc.pid, "job_dir": str(job_dir)}
+                _, collate_err = await collate_proc.communicate()
+                if job_id and job_id not in running_processes:
+                    raise Exception("Process cancelled by user")
+                if collate_proc.returncode != 0:
+                    raise Exception(f"samtools collate failed: {collate_err.decode()}")
+
+                cmd = ["samtools", "fastq", "-1", str(f1_path), "-2", str(f2_path), "-0", "/dev/null", "-s", "/dev/null", str(collated_path)]
+
                 logger.info(f"Running samtools: {' '.join(cmd)}")
                 process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
                 if job_id:
                     running_processes[job_id] = {"pid": process.pid, "job_dir": str(job_dir)}
-                    
+
                 stdout, stderr = await process.communicate()
-                
+
                 if job_id and job_id not in running_processes:
                     raise Exception("Process cancelled by user")
-                    
+
                 if process.returncode != 0:
                     raise Exception(f"samtools failed: {stderr.decode()}")
             else:
