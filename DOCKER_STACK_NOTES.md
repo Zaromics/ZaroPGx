@@ -157,13 +157,25 @@ database-less `pgx_*` set (0.2.8, partly built from `.worktrees/assume-reference
 appeared on Docker Desktop and thereafter raced the real stack for ports
 5001/5002/5053/5055/5060 on every boot. Removed 2026-08-10; volumes were left intact.
 
+**Permanent fix in place (2026-08-23): the `pgx-native` docker context.** A native
+dockerd `docker.socket` drop-in (`/etc/systemd/system/docker.socket.d/native-secondary.conf`)
+adds a second listener at `/run/docker-native.sock` that Docker Desktop never
+bind-mounts over, and the `pgx-native` context points at it. Run this stack through it:
+`docker --context pgx-native compose ...` (or `export DOCKER_CONTEXT=pgx-native`).
+That reaches the native engine deterministically regardless of Desktop's state, so
+Desktop's WSL integration stays ON and the Desktop-hosted stacks
+(goldflipper-evo/ollama/docs-mcp) keep working from bare `docker`. The context is
+per-user (`~/.docker`), created for `root` and `iliya`; recreate with
+`docker context create pgx-native --docker host=unix:///run/docker-native.sock`. The
+older option — turning off Desktop's WSL integration for Ubuntu-22.04 — also works but
+forces the Desktop stacks to be driven from Windows, so the context is preferred.
+
 Rules:
+- Prefer `docker --context pgx-native` for every command here; bare `docker` in the
+  distro reaches whichever engine currently owns `/var/run/docker.sock` (usually
+  Desktop after a Desktop restart).
 - Run compose only from the repo root, never from a worktree.
 - Docker Desktop must hold **zero** `pgx_*` containers — check with
   `docker ps -a --filter name=pgx_` from Windows.
 - A "port already allocated" error here almost always means a duplicate is starting,
   not that the stack is broken. `curl` the port first.
-- Permanent fix if this keeps happening: turn off Docker Desktop's WSL integration
-  for `Ubuntu-22.04` (Settings → Resources → WSL Integration), which makes `docker`
-  inside the distro reach the native engine deterministically. Note this also means
-  Desktop-hosted stacks must then be driven from Windows.
