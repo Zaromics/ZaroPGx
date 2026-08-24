@@ -63,7 +63,21 @@ now fixed:
   lane needs the multi-GB reference (absent in CI). Run it with the full stack up:
   `ZAROPGX_E2E=1 ZAROPGX_E2E_REFERENCE=1 ZAROPGX_E2E_BASE_URL=http://127.0.0.1:8765 .venv/Scripts/python.exe -m pytest -m e2e --zaropgx-e2e`.
   Note: the first BAM run faidx-indexes the GRCh38 FASTA (~1 min, cached after).
-  Still untested: OptiType/HLA with real chr6 HLA reads (optitype_enabled=true).
+
+- **CRAM, SAM and BAM+HLA lanes are now GREEN too** (2026-08-23) — every input lane
+  runs end to end. CRAM/SAM convert to BAM via gatk-api then rejoin the BAM lane;
+  the BAM+HLA lane leaves OptiType on and exercises the full HLA path. Fixtures:
+  `test_data/pgx_ngs_example.{cram,sam}` (derived from the BAM) and
+  `test_data/pgx_wgs_hla_example.bam` (paired-end, 100% properly paired, CYP2C19
+  reads on chr10 + tiled HLA-A/B/C reads on chr6). E2e:
+  `tests/e2e/test_alignment_conversion_pipeline.py` (CRAM+SAM) and
+  `tests/e2e/test_bam_hla_pipeline.py` (BAM+HLA, 6/6 steps), same
+  `ZAROPGX_E2E_REFERENCE=1` gating. Two lane bugs fixed getting HLA green:
+  main.nf updated the HLA step under the wrong name (`zarohla_bam`/`zarohla_fastq`
+  vs the registry's `hla_typing`), so the step hung [pending]; and zarohla's
+  `/call-hla` ran `samtools fastq` on a coordinate-sorted BAM without collating
+  first, dropping mates and choking OptiType — now `samtools collate -u` runs
+  first. All five lanes (VCF/BAM/CRAM/SAM/BAM+HLA) verified against the live stack.
 
 ## ✅ CURRENT STATE (2026-06-08)
 
