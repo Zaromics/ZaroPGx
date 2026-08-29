@@ -23,7 +23,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 | **CRAM** | `.cram` | Compressed BAM | GATK → HLA typing → Analysis |
 | **SAM** | `.sam` | Text alignment | GATK → HLA typing → Analysis |
 
-**FASTQ is not accepted.** ZaroPGx ships no aligner, so raw reads cannot be turned into the aligned data every later step needs, and a FASTQ upload is refused with an explanatory message rather than accepted and failed partway through. This applies to single- and paired-end reads alike. Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.
+**FASTQ is not accepted**, single- or paired-end: ZaroPGx ships no aligner. Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.
 
 #### Upload Process
 
@@ -38,7 +38,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 
 **Reference Genome:**
 - **hg38/GRCh38**: analysed directly — the build every result is reported on.
-- **hg19/GRCh37**: **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. Two honest caveats: variants that cannot be mapped onto GRCh38 are dropped (the job's liftover step reports how many, and the run fails outright if an implausibly large share of the file cannot be lifted), and a lifted-over file's results may differ from a file sequenced and called directly against GRCh38/hg38 — if you have a native GRCh38 VCF or an upstream BAM/CRAM aligned to GRCh38, upload that instead.
+- **hg19/GRCh37**: **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. Unliftable variants are dropped and the step reports how many. A native GRCh38 file is more reliable if you have one.
 - **T2T**: Not yet supported
 
 **Processing Toggles:**

@@ -25,7 +25,7 @@ Gratis; ZaroPGx is free and open-source software licensed under AGPLv3. You can 
 - **Exceptionally Easy to Use**: The super simple user interface and "click and forget" functionality belie the comprehensiveness of the pipeline. ZaroPGx makes individual pharmacogenomics accessible to an interdisciplinary and lay audience.
 - **Easy Self-Hosted Privacy**: The docker compose based containerized architecture enables anyone with a power enough computer to process pharmacogenomic analyses in the complete privacy of their LAN, after the required references have been fetched on first run. ZaroPGx does not transmit any data without your directive; this refers to usage via API and exporting via HAPI FHIR server. Of course, being open source, any function, can be added, modified, or removed, so long as it complies with the software license.
 - **Dual Clinical + Research Focus**: Unlike tools which focus on either clinical, consumer, and/or research reporting, ZaroPGx differentiates between certainty levels, so reports contain clearly delineated clinically actionable guidelines and investigational insights. 
-- **Just Works, Like a Swiss Army Knife**: Unlike tools with a specific requirement of input file type, sequencing/genotyping platform, or assembly reference alignment, ZaroPGx is designed with ease of use in mind. Although at this time only GRCh38 VCFs are working, most commonly encountered formats will be implemented over the coming months.
+- **Just Works, Like a Swiss Army Knife**: Unlike tools with a specific requirement of input file type, sequencing/genotyping platform, or assembly reference alignment, ZaroPGx is designed with ease of use in mind. Although at this time only VCFs are working (GRCh38 directly, GRCh37/hg19 via automatic liftover), most commonly encountered formats will be implemented over the coming months.
 - **Export Function and Robust Schemas**: Unlike plain PDFs, emails, faxes, and printouts, ZaroPGx will soon support structured FHIR exports, first as XML/JSON, and eventually directly to an EHR/PHR, with HAPI FHIR. Moreover, with Phenopackets schema implemented in the bundled Postgres DB, analysis data will be normalized to both of the industry standard formats (HL7 FHIR, and GA4GH Phenopackets).
 
 ## Technical Questions
@@ -38,7 +38,7 @@ ZaroPGx supports:
 - **CRAM**: Compressed BAM (soon)
 - **SAM**: Sequence Alignment Map (soon)
 
-**FASTQ is not accepted.** ZaroPGx ships no aligner, so raw reads cannot be turned into the aligned data every later step needs, and a FASTQ upload is refused with an explanatory message rather than accepted and failed partway through. This applies to single- and paired-end reads alike. Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.
+**FASTQ is not accepted**, single- or paired-end: ZaroPGx ships no aligner. Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.
 
 ### What reference genomes are supported?
 
@@ -46,7 +46,11 @@ ZaroPGx supports:
 - **GRCh37/hg19 VCF**: Supported — lifted over to GRCh38 automatically, see below
 - **GRCh37/hg19 BAM/CRAM/SAM**: Not accepted — liftover converts already-called variants, so call variants against GRCh37 yourself and upload that VCF (it is then lifted), or realign to GRCh38
 
-**ZaroPGx lifts GRCh37/hg19 VCFs over to GRCh38 automatically.** The conversion is a real coordinate liftover — GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain, run inside the pipeline before any analysis step — not a relabelling. Two things are worth knowing. First, liftover is lossy by nature: variants that cannot be mapped onto GRCh38 are dropped from the analysis, the job's liftover step reports how many, and the run fails outright rather than continuing if an implausibly large share of the file cannot be lifted. Second, a lifted-over file's results may differ from a file sequenced and called directly against GRCh38/hg38 — so if you have a native GRCh38 VCF, or an upstream BAM/CRAM aligned to GRCh38, uploading that instead gives the most reliable results. Builds other than GRCh37 and GRCh38 have no liftover chain: they are analysed on their original coordinates, marked provisional, and the upload says so.
+**ZaroPGx lifts GRCh37/hg19 VCFs over to GRCh38 automatically** — a real coordinate conversion (GATK Picard `LiftoverVcf`, UCSC's hg19→hg38 chain), not a relabelling, run before any analysis step.
+
+Variants that cannot be mapped to GRCh38 are dropped. The liftover step reports how many, and the run fails outright if too much of the file cannot be lifted. A lifted file's results may still differ from one called directly against GRCh38, so prefer a native GRCh38 VCF if you have one.
+
+Other builds have no chain: they are analysed on their original coordinates and marked provisional.
 
 ### What are the computing hardware requirements?
 

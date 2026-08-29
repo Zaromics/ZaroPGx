@@ -267,7 +267,10 @@ def test_panel_renders_grch37_warnings_from_real_upload_response(monkeypatch, tm
     combined = warn_el["html"] + info_el["html"]
     assert "GRCh38" in combined or "hg38" in combined
     assert "lift" in combined.lower()
-    assert "dropped" in combined.lower()
+    # Stem, not "dropped": what must hold is that the copy admits variants are
+    # lost, not which tense it says it in. Pinning the inflection made an
+    # editorial pass over the wording look like a behaviour regression.
+    assert "drop" in combined.lower()
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

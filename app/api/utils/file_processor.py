@@ -818,7 +818,10 @@ class FileProcessor:
                 "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
             )
             workflow["warnings"].append(
-                "<p>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity. (Raw FASTQ reads are not accepted: align them to GRCh38/hg38 yourself first.)</p>"
+                # FASTQ was dropped from this list when the format was refused; the
+                # refusal itself is stated at the upload gate, so restating it here
+                # only padded a sentence that reads fine without it.
+                "<p>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
             )
             workflow["warnings"].append(
                 "<p>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
@@ -876,23 +879,13 @@ class FileProcessor:
                     # main.nf knows to route the VCF through LiftoverVCF.
                     workflow["source_build"] = vcf_info.reference_genome
                     workflow["recommendations"].append(
-                        f"<p>This file is aligned to the {vcf_info.reference_genome} reference genome. "
-                        "ZaroPGx will lift it over to GRCh38/hg38 (GATK Picard LiftoverVcf, "
-                        "UCSC hg19-to-hg38 chain) before analysis, so results are reported "
-                        "on GRCh38 coordinates.</p>"
+                        f"<p>✓ {vcf_info.reference_genome} detected. ZaroPGx will lift this "
+                        "file over to GRCh38/hg38 before analysis.</p>"
                     )
                     workflow["warnings"].append(
-                        "<p>⚠️ Liftover is a coordinate conversion, not a re-sequencing: "
-                        "variants that cannot be mapped onto GRCh38 are dropped from the "
-                        "analysis. The job's liftover step reports how many were dropped, "
-                        "and the run fails rather than continuing if an implausibly large "
-                        "share of the file cannot be lifted.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>⚠️ A lifted-over file's results may differ from a file sequenced "
-                        "and called directly against GRCh38/hg38. If you have a native "
-                        "GRCh38/hg38 VCF, or an upstream BAM/CRAM aligned to GRCh38, "
-                        "uploading that instead gives the most reliable results.</p>"
+                        "<p>⚠️ Liftover drops variants that cannot be mapped to GRCh38. "
+                        "The liftover step reports how many. A native GRCh38/hg38 file "
+                        "is more reliable.</p>"
                     )
                 elif reference != "unknown":
                     # A named build that is neither GRCh38 nor GRCh37 (T2T-CHM13,
@@ -900,24 +893,20 @@ class FileProcessor:
                     # old honest-provisional handling still applies unchanged.
                     workflow["unsupported"] = True
                     workflow["unsupported_reason"] = (
-                        f"ZaroPGx supports GRCh38/hg38 VCF files only. This file is aligned to {vcf_info.reference_genome}, "
-                        "so any results are provisional and should not be relied on. "
-                        "Convert the file to GRCh38/hg38 yourself and upload it again for reliable results."
+                        f"ZaroPGx supports GRCh38/hg38 VCF files only. This file is aligned "
+                        f"to {vcf_info.reference_genome}, so any results are provisional. "
+                        "Convert it to GRCh38/hg38 yourself and upload it again."
                     )
                     workflow["warnings"].append(
-                        f"<p>⚠️ This file is aligned to the {vcf_info.reference_genome} reference genome. ZaroPGx supports GRCh38/hg38 VCF files only, so any results for this file are provisional and should not be relied on.</p>"
+                        f"<p>⚠️ This file is aligned to {vcf_info.reference_genome}. Only "
+                        "GRCh38/hg38 is supported, so these results are provisional.</p>"
                     )
                     workflow["recommendations"].append(
-                        "<p>For reliable results, convert the VCF file to the GRCh38/hg38 reference genome yourself (a process known as liftover) before uploading it.</p>"
-                    )
-                    workflow["recommendations"].append(
-                        "<p>GRCh38/hg38 VCF files are fully supported: upload the GRCh38/hg38 version of this file for non-provisional results.</p>"
+                        "<p>Convert this file to GRCh38/hg38 yourself and upload it again. "
+                        "Automatic liftover covers GRCh37/hg19 only.</p>"
                     )
                     workflow["warnings"].append(
-                        "<p>⚠️ Converting a VCF file between reference genomes (liftover) can introduce coordinate or genotype errors, so a converted file's results may differ from a file sequenced and called directly against GRCh38/hg38.</p>"
-                    )
-                    workflow["warnings"].append(
-                        f"<p>⚠️ ZaroPGx does not perform this conversion for {vcf_info.reference_genome} files (automatic liftover exists for GRCh37/hg19 only).</p>"
+                        "<p>⚠️ Converting between reference genomes may result in a loss of fidelity.</p>"
                     )
                     workflow["is_provisional"] = True
                 elif vcf_info.reference_genome_ambiguous:
@@ -1211,20 +1200,16 @@ class FileProcessor:
                 workflow["is_provisional"] = False
                 workflow["unsupported_reason"] = (
                     f"This {file_label} file is aligned to "
-                    f"{analysis.reference_genome}, and ZaroPGx analyses "
-                    f"pharmacogenomic variants against GRCh38/hg38 only. Calling "
-                    f"variants from it as though it were GRCh38 would read each "
-                    f"gene from the wrong position in the genome and report star "
-                    f"alleles that are not yours, so the file is not analysed. "
-                    f"Automatic liftover covers GRCh37/hg19 VCFs, not aligned "
-                    f"reads: the coordinates have to be converted after the "
-                    f"variants are called, not before."
+                    f"{analysis.reference_genome}. ZaroPGx analyses against "
+                    f"GRCh38/hg38 only, and reading these reads as GRCh38 would "
+                    f"take every gene from the wrong position and report star "
+                    f"alleles that are not yours. Automatic liftover covers VCFs, "
+                    f"not aligned reads."
                 )
                 workflow["recommendations"].append(
-                    "<p>Call variants from this file against GRCh37/hg19 yourself "
-                    "(for example with bcftools mpileup/call or GATK "
-                    "HaplotypeCaller), then upload the resulting VCF — ZaroPGx "
-                    "lifts a GRCh37/hg19 VCF over to GRCh38 automatically.</p>"
+                    "<p>Call variants against GRCh37/hg19 yourself (bcftools or "
+                    "GATK HaplotypeCaller), then upload the resulting VCF. "
+                    "ZaroPGx lifts that over to GRCh38 automatically.</p>"
                 )
                 workflow["recommendations"].append(
                     "<p>Or realign the reads to GRCh38/hg38 and upload the "

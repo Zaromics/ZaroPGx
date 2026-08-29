@@ -40,14 +40,14 @@ SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 ```
 
 ## FASTQ Format — not accepted
-FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. **ZaroPGx does not accept them.** No aligner ships with ZaroPGx, so raw reads cannot be turned into the aligned data every later step needs. A FASTQ upload is refused with an explanatory message rather than accepted and failed later, and this applies to single- and paired-end reads alike.
+FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. **ZaroPGx does not accept them**, single- or paired-end: no aligner ships with ZaroPGx.
 
 Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or an established end-to-end pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM. A GRCh38/hg38 VCF is the fastest input of all.
 
 ## Reference Genome Support
 - **GRCh38/hg38** — analysed directly; the build every result is reported on.
-- **GRCh37/hg19 VCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain (a real coordinate conversion, not a contig relabelling). Variants that cannot be mapped onto GRCh38 are dropped — the job's liftover step reports how many, and the run fails outright if an implausibly large share of the file cannot be lifted. A lifted-over file's results may differ from a file sequenced and called directly against GRCh38/hg38, so a native GRCh38 VCF (or an upstream BAM/CRAM aligned to GRCh38) remains the most reliable input.
-- **GRCh37/hg19 BAM, CRAM or SAM** — **not accepted.** The liftover above converts the coordinates of a file whose variants have already been called; aligned reads reach the analysis only by having variants called out of them first, and that call reads each gene from its GRCh38 position. On GRCh37-aligned reads those positions land in the wrong place entirely (GRCh38's *CYP2D6* window sits roughly 400 kb from GRCh37's), which would produce star alleles that are not yours rather than an error. Either call variants against GRCh37/hg19 yourself and upload the resulting VCF — which is then lifted over automatically — or realign the reads to GRCh38/hg38.
+- **GRCh37/hg19 VCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. A real coordinate conversion, not a contig relabelling. Variants that cannot be mapped are dropped and the step reports how many; the run fails if too much of the file cannot be lifted. A native GRCh38 VCF remains the most reliable input.
+- **GRCh37/hg19 BAM, CRAM or SAM** — **not accepted.** Liftover converts variants that have already been called. Aligned reads are analysed by calling variants out of them first, and that call reads each gene from its GRCh38 position — on GRCh37 reads those positions are wrong (GRCh38's *CYP2D6* window sits roughly 400 kb from GRCh37's), so you would get star alleles that are not yours rather than an error. Call variants against GRCh37/hg19 yourself and upload the VCF, or realign the reads to GRCh38/hg38.
 
 ## File Size Considerations
 

@@ -2,11 +2,14 @@
 
 ``matcherMetadata.genomeBuild`` is the build PharmCAT's *allele definitions* are
 specified on. It is emitted by PharmCAT itself, it is always ``GRCh38.x``, and it
-is never the reference build of the uploaded file -- this pipeline does not lift
-GRCh37 over, so a GRCh37 upload is matched against GRCh38 definitions and is
-flagged provisional for exactly that reason
-(``app/api/utils/file_processor.py``: "any results for this file are provisional
-and should not be relied on").
+is never the reference build of the uploaded file.
+
+A GRCh37 upload no longer reaches this conflict -- it is lifted to GRCh38 before
+analysis -- but a VCF on any other named build (T2T-CHM13, say) has no chain, is
+analysed on its own coordinates and is flagged provisional by
+``app/api/utils/file_processor.py``. That is the alert this module pairs against
+the provenance line, and the contradiction it guards is unchanged: the build in
+the provenance sentence is PharmCAT's, not the file's.
 
 The copy shipped before this module read:
 
@@ -39,11 +42,10 @@ import pytest
 
 TEMPLATES = ["report_template.html", "interactive_report.html"]
 
-# The alert file_processor emits for a non-GRCh38 VCF, verbatim.
-GRCH37_ALERT = (
-    "<p>⚠️ This file is aligned to the GRCh37 reference genome. "
-    "ZaroPGx supports GRCh38/hg38 VCF files only, so any results for this file "
-    "are provisional and should not be relied on.</p>"
+# The alert file_processor emits for a VCF on a build with no liftover chain.
+PROVISIONAL_ALERT = (
+    "<p>⚠️ This file is aligned to T2T-CHM13. Only GRCh38/hg38 is supported, "
+    "so these results are provisional.</p>"
 )
 
 BUILD = "GRCh38.p14"
@@ -110,10 +112,10 @@ def test_the_sentence_attributes_the_build_to_pharmcats_definitions(template_nam
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
 def test_the_alert_and_the_provenance_can_both_be_true_on_one_page(template_name):
-    """A GRCh37 upload: warning and provenance must coexist without conflict."""
-    html = _render(template_name, workflow_warnings=[GRCH37_ALERT])
+    """A no-chain upload: warning and provenance must coexist without conflict."""
+    html = _render(template_name, workflow_warnings=[PROVISIONAL_ALERT])
 
-    assert "are provisional and should not be relied on" in html
+    assert "so these results are provisional" in html
     text = _provenance_text(html)
     assert BUILD in text
     # The reader is pointed at the alert rather than left to reconcile the two.

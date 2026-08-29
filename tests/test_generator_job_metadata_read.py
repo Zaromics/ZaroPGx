@@ -10,7 +10,7 @@ session's writes.
 
     job_row = db_session.query(Job).filter(Job.id == job_uuid).first()
 
--- and it feeds ``workflow_warnings`` (including the GRCh37 "results are
+-- and it feeds ``workflow_warnings`` (including the "results are
 provisional" alert) and the assume-reference methodology paragraph into the
 report. A stale read there would silently delete clinical copy from the page.
 
@@ -50,10 +50,9 @@ import pytest
 
 from app.api.db import Job
 
-GRCH37_ALERT = (
-    "<p>⚠️ This file is aligned to the GRCh37 reference genome. "
-    "ZaroPGx supports GRCh38/hg38 VCF files only, so any results for this file "
-    "are provisional and should not be relied on.</p>"
+PROVISIONAL_ALERT = (
+    "<p>⚠️ This file is aligned to T2T-CHM13. Only GRCh38/hg38 is supported, "
+    "so these results are provisional.</p>"
 )
 
 
@@ -89,7 +88,7 @@ def _stamp_upload_metadata(session, job_id):
     """Write the keys the upload path writes, from its own session."""
     job = session.query(Job).filter(Job.id == job_id).first()
     job.job_metadata = {
-        "workflow": {"warnings": [GRCH37_ALERT]},
+        "workflow": {"warnings": [PROVISIONAL_ALERT]},
         "pharmcat_absent_to_ref": True,
         "pharmcat_unspecified_to_ref": False,
     }
@@ -116,7 +115,7 @@ def test_a_session_opened_at_the_call_site_sees_the_upload_metadata(sessions):
     # for this call, empty identity map, opened after every write this read cares
     # about.
     fresh = sessions()
-    assert _read_like_generate_report(fresh, job_id) == [GRCH37_ALERT]
+    assert _read_like_generate_report(fresh, job_id) == [PROVISIONAL_ALERT]
 
 
 def test_a_session_that_preloaded_the_job_would_go_stale(sessions):
@@ -157,7 +156,7 @@ def test_a_session_that_preloaded_the_job_would_go_stale(sessions):
         .populate_existing()
         .first()
     )
-    assert refreshed.job_metadata["workflow"]["warnings"] == [GRCH37_ALERT]
+    assert refreshed.job_metadata["workflow"]["warnings"] == [PROVISIONAL_ALERT]
 
 
 def test_db_session_stays_optional_with_no_shared_default():
