@@ -611,13 +611,18 @@
                                         <div class="toggle-section assume-ref-toggles" style="text-align:left; margin-top:0.5rem;">
                                           <label class="d-block small mb-1">
                                             <input type="checkbox" id="pharmcatAbsentToRef" data-flag="pharmcat_absent_to_ref">
-                                            Assume absent PGx sites = reference (<code>--absent-to-ref</code>)
+                                            Assume absent sites = reference
                                           </label>
                                           <label class="d-block small mb-1">
                                             <input type="checkbox" id="pharmcatUnspecifiedToRef" data-flag="pharmcat_unspecified_to_ref">
-                                            Assume unspecified (<code>./.</code>) = reference (<code>--unspecified-to-ref</code>)
+                                            Assume unspecified sites = reference
                                           </label>
-                                          <p class="small text-muted mb-0">Research-oriented PharmCAT preprocessor flags (dangerous if coverage is incomplete). Defaults come from stack env.</p>
+                                          <!-- The default is read at runtime from /config's
+                                               services.pharmcat, which carries PHARMCAT_ABSENT_TO_REF /
+                                               PHARMCAT_UNSPECIFIED_TO_REF straight from the stack env.
+                                               Not hardcoded: the whole point of naming a default is that
+                                               it stays true when someone changes the .env. -->
+                                          <p class="small text-muted mb-0">Research-oriented flags. Keep OFF for stricter results. (default = <span id="assumeRefDefault">…</span>)</p>
                                         </div>
                                     </div>
                                 </div>
@@ -2246,6 +2251,19 @@
                   const unspecEl = document.getElementById('pharmcatUnspecifiedToRef');
                   if (absentEl) absentEl.checked = !!pharmcat.absent_to_ref;
                   if (unspecEl) unspecEl.checked = !!pharmcat.unspecified_to_ref;
+
+                  // Name the real default, not a hardcoded "OFF". The two flags
+                  // have separate env vars and can differ, so say which is which
+                  // when they do rather than picking one and being wrong.
+                  const defaultEl = document.getElementById('assumeRefDefault');
+                  if (defaultEl) {
+                    const onOff = (v) => (v ? 'ON' : 'OFF');
+                    const a = !!pharmcat.absent_to_ref;
+                    const u = !!pharmcat.unspecified_to_ref;
+                    defaultEl.textContent = (a === u)
+                      ? onOff(a)
+                      : `absent ${onOff(a)}, unspecified ${onOff(u)}`;
+                  }
                 }
 
                 const assumeRefToggles = document.querySelector('.assume-ref-toggles');

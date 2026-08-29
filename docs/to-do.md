@@ -72,6 +72,25 @@ curation: full
 - Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
 - Add preprocessing glyph (e.g., Liftover) where applicable & mtDNA glyph
 - Unify/clean redundant text
+- **Front-end test harness — nothing renders the page today.** What exists is
+  Node-executed *logic* tests: `tests/test_ui_workflow_flag_reads.py` and
+  `tests/test_upload_story_coherence.py` pull the inline `<script>` out of
+  `index.html`, run it against real API JSON, and assert on the HTML string (CI
+  installs Node 22 so they cannot silently skip). Everything else is source-text
+  assertions. There is no `package.json`, no jsdom, and no browser driver, so
+  nothing computes a style, clicks anything, or looks at the page.
+  That gap produced three bugs in one sitting on 2026-08-29, each invisible to
+  the 1700-test suite:
+  - PharmCAT popup text unreadable in dark mode (a white card inheriting the
+    dark theme's body colour) — needs *computed styles*, not markup.
+  - Progress bar frozen for the whole liftover step — needed a live run watched
+    end to end.
+  - Every completed job deleting its own reports — needed a post-run check that
+    the report links actually resolve.
+  Cheapest useful order, when we get to it: (1) assert report URLs return 200 in
+  the existing compose E2E job — catches the worst class, near-zero cost;
+  (2) Playwright smoke over upload → progress → report in both themes, with a
+  contrast assertion on the popups; (3) only then consider visual snapshots.
 
 ## Data & Database
 
