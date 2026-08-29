@@ -338,10 +338,47 @@ async def call_hla(
                 f1_path = input_path
         else:
             raise HTTPException(status_code=400, detail="Must provide either 'file' or 'file1' and 'file2'")
-            
+
+        # A targeted PGx panel with no HLA capture converts to genuinely empty
+        # FASTQs, and OptiType does not tolerate that: it dies inside pandas with
+        # "Length mismatch: Expected axis has 0 elements", a non-zero exit that
+        # took the whole job down at step 2/6. Having no HLA reads is a property
+        # of the sample, not a failure, so it must not be one.
+        #
+        # The check is here, BEFORE OptiType runs, and that placement is the whole
+        # point. Downgrading OptiType's exit code afterwards cannot distinguish
+        # "nothing to type" from "OptiType is broken", and would resurrect the bug
+        # pipelines/pgx/main.nf still carries a comment about: a failing service
+        # reporting no HLA calls, indistinguishable from a legitimate none. That
+        # matters clinically -- HLA-B*57:01 (abacavir) and HLA-A*31:01
+        # (carbamazepine) are core-23 genes, so "no calls" reads as "nothing to
+        # worry about". Zero bytes out of samtools is an observed fact about the
+        # input; a crash is an inference. Only the first is safe to act on, so a
+        # non-empty FASTQ that OptiType then fails on stays fatal, as before.
+        #
+        # Size, deliberately, not a record parse: samtools writes a 0-byte file
+        # when there were no reads, whereas a file with content but no valid
+        # records is a different and real problem that must keep failing.
+        candidates = [p for p in (f1_path, f2_path) if p and os.path.exists(p)]
+        if candidates and all(os.path.getsize(p) == 0 for p in candidates):
+            message = (
+                "No HLA reads in the input, so there is nothing to type. This is "
+                "normal for a targeted PGx panel that does not capture the HLA "
+                "region; the rest of the analysis is unaffected."
+            )
+            logger.info(f"Job {local_job_id}: {message}")
+            if job_client:
+                # complete_step, not fail_step: the run continues with no HLA
+                # calls. main.nf already handles an absent hla_calls.tsv through
+                # `hla_ch.ifEmpty(empty_file_ch)`, so nothing downstream changes.
+                await job_client.complete_step(
+                    message, output_data={"results": {}, "reason": "no_hla_reads"}
+                )
+            return {"status": "success", "results": {}, "warning": message}
+
         if job_client:
             await job_client.log_progress(f"Running OptiType on {f1_path.name}")
-            
+
         cmd = ["optitype", "run", "-i", str(f1_path)]
         if f2_path and os.path.exists(f2_path) and os.path.getsize(f2_path) > 0:
             # OptiType v1.5 CLI takes each paired-end file as its own -i (not a bare positional)
