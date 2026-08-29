@@ -880,12 +880,10 @@ class FileProcessor:
                     workflow["source_build"] = vcf_info.reference_genome
                     workflow["recommendations"].append(
                         f"<p>✓ {vcf_info.reference_genome} detected. ZaroPGx will lift this "
-                        "file over to GRCh38/hg38 before analysis.</p>"
+                        "file over to GRCh38/hg38 with GATK LiftoverVcf prior to analysis.</p>"
                     )
                     workflow["warnings"].append(
-                        "<p>⚠️ Liftover drops variants that cannot be mapped to GRCh38. "
-                        "The liftover step reports how many. A native GRCh38/hg38 file "
-                        "is more reliable.</p>"
+                        "<p>⚠️ Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
                     )
                 elif reference != "unknown":
                     # A named build that is neither GRCh38 nor GRCh37 (T2T-CHM13,

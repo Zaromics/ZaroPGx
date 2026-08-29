@@ -61,11 +61,11 @@ def liftover_provenance_sentence(
         # The lift ran but did not report usable counts. Still say it happened --
         # the build change is the part the reader cannot afford to miss.
         return (
-            f"This file was uploaded on {source} and lifted over to {target} "
+            f"The input file was uploaded as {source} and then lifted over to {target} "
             "before analysis."
         )
 
     return (
-        f"This file was uploaded on {source} and lifted over to {target} before "
+        f"The input file was uploaded as {source} and then lifted over to {target} before "
         f"analysis: {lifted:,} variants lifted, {rejected:,} dropped as unliftable."
     )

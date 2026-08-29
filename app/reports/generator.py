@@ -256,7 +256,13 @@ def build_citations() -> List[Dict[str, str]]:
     pharmcat_ver = vmap.get("pharmcat") or "3.4.0"
     gatk_ver = vmap.get("gatk") or "4.7.0.0"
     zarohla_ver = vmap.get("zarohla") or "1.5.0"
-    mtdna_server_2_ver = vmap.get("mtdna-server-2") or "2.1.16"
+    # No mtdna_server_2_ver here on purpose. There is no mtDNA service in the
+    # stack -- docker/mtdna-server-2/ holds a 17-byte README, compose.yml declares
+    # no such service and main.nf has no process that calls one -- so
+    # version_manager has nothing to resolve and the old fallback published a
+    # version string ("2.1.16") for software that never ran. The citation below
+    # says so instead. (Supersedes BACKLOG 375, which read the unused variable as
+    # a missing-version bug rather than a missing-service one.)
 
     citations: List[Dict[str, str]] = []
     citations.append(
@@ -302,7 +308,13 @@ def build_citations() -> List[Dict[str, str]]:
     citations.append(
         {
             "name": "mtDNA-server-2",
-            "text": f"mtDNA-server-2-based mitochondrial typing. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
+            # "no call", not "called by PharmCAT": MT-RNR1 is one of the four genes
+            # PharmCAT expects as an *outside* call (config/genes.json,
+            # "outside_calls"), and with no mtDNA service nothing supplies it. A
+            # real run confirms it -- call_source NONE, phenotype "No Result". So
+            # this line also explains an empty row the reader can see for
+            # themselves, rather than only disclaiming the tool.
+            "text": f"mtDNA-server-2-based mitochondrial typing. Not yet enabled in this release, so MT-RNR1 is reported as a no-call. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
             "repo": "https://github.com/genepi/mtdna-server-2",
         }
     )

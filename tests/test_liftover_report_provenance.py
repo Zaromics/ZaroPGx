@@ -98,9 +98,14 @@ def test_builds_fall_back_rather_than_rendering_blank():
 
 
 def test_source_build_from_the_row_is_used_verbatim():
-    """b37 and hg19 are distinct labels; the report must not relabel them."""
+    """b37 and hg19 are distinct labels; the report must not relabel them.
+
+    Asserted as "the row's own label, and not a substituted one" rather than on
+    the surrounding phrasing, which is editorial and has changed once already.
+    """
     sentence = liftover_provenance_sentence({**FULL_STATS, "source_build": "hg19"})
-    assert "uploaded on hg19" in sentence
+    assert "hg19" in sentence
+    assert "GRCh37" not in sentence
 
 
 # --------------------------------------------------------------------------
@@ -145,7 +150,7 @@ def test_the_sentence_reaches_both_report_lanes(template_name):
         )
     )
     assert text is not None
-    assert "uploaded on GRCh37 and lifted over to GRCh38" in text
+    assert "uploaded as GRCh37" in text and "lifted over to GRCh38" in text
     assert "7 variants lifted, 0 dropped as unliftable" in text
 
 
@@ -185,5 +190,5 @@ def test_the_lift_notice_and_pharmcats_build_do_not_contradict(template_name):
             liftover_provenance=liftover_provenance_sentence(FULL_STATS),
         )
     )
-    assert "This file was uploaded on GRCh37" in text
+    assert "uploaded as GRCh37" in text
     assert "not the reference build of the uploaded file" in text

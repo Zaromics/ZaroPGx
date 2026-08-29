@@ -18,9 +18,15 @@ pin it wherever the copy and the behaviour actually agree:
 
 The honesty spirit is unchanged even though the verdict flipped. The copy must
 be true of the behaviour, so it must also say what the liftover costs: variants
-that cannot be mapped onto GRCh38 are dropped, and a lifted file is not the same
-evidence as a natively-GRCh38 one. No overclaiming ("lossless", "identical"),
-no leftover convert-it-yourself demands, no internal markers.
+that cannot be mapped onto GRCh38 are dropped. No overclaiming ("lossless",
+"identical"), no leftover convert-it-yourself demands, no internal markers.
+
+What this module deliberately does NOT require: that the copy actively steer the
+user toward a natively-GRCh38 file. A test did pin that, and it was retired on
+2026-08-29 as stating the obvious to the reader. The distinction is worth keeping
+straight -- the copy still may not claim a lifted file is *equivalent* to native
+GRCh38 data (`_FORBIDDEN_SUBSTRINGS` below enforces that, and is unchanged); it
+simply no longer has to say the preferable thing out loud.
 
 These tests assert on the actual returned strings, not on source text, so a
 regression in either direction -- back to "we don't lift" copy over a pipeline
@@ -143,18 +149,6 @@ def test_grch37_copy_no_longer_tells_the_user_to_convert_it_themselves():
     assert not any(
         "convert" in r and "yourself" in r for r in recs
     ), f"copy still tells the user to convert the file themselves: {recs}"
-
-
-def test_grch37_copy_still_names_the_more_reliable_native_input():
-    # No false promises: a lifted file is not equal evidence to a native GRCh38
-    # one, and the copy should keep steering users with better data toward it.
-    workflow = FileProcessor().determine_workflow(_analysis_for("GRCh37"))
-    all_strings = [s.lower() for s in _all_user_visible_strings(workflow)]
-
-    assert any(
-        "native" in s or "directly against" in s or "sequenced" in s
-        for s in all_strings
-    ), f"nothing steers the user toward natively-GRCh38 data: {all_strings}"
 
 
 def test_hg19_lowercase_naming_also_triggers_the_liftover():
