@@ -560,6 +560,7 @@
                                     <div class="stage-popup">
                                         <h6>GATK Processing</h6>
                                         <p>Genome Analysis Toolkit (GATK) includes functions for filetype conversion and other manipulations. Can be computationally intensive.</p>
+                                        <p>Also lifts a GRCh37/hg19 VCF over to GRCh38.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="gatk">✓ Enabled</button>
                                         </div>
@@ -2276,6 +2277,13 @@
                 'gatk_processing': 'stageGATK',
                 'gatk_cram_sam_to_bam': 'stageGATK',  // GATK CRAM/SAM→BAM conversion
                 'gatk_alignment': 'stageGATK',        // GATK FASTQ→BAM alignment
+                // GRCh37→GRCh38 liftover runs Picard LiftoverVcf inside gatk-api,
+                // so it lights the GATK glyph — the same grouping the backend
+                // already uses (workflow_stages.py maps "liftover" to
+                // WorkflowStage.GATK). Without this entry updateStageIndicators()
+                // resets every glyph, matches nothing, and the row sits dark for
+                // the whole step, which reads as a stalled job.
+                'liftover': 'stageGATK',
                 'pypgx_analysis': 'stagePyPGx',
                 'pypgx_bam2vcf': 'stagePyPGx',       // Both PyPGx steps map to the same stage
                 'pharmcat_analysis': 'stagePharmcat',
@@ -2618,6 +2626,11 @@
                         // Update stage indicators using simple glyph system
                         window.GlyphManager.updateStageIndicators(data.step_name, data.status);
                         window.addLogMessage(`Step ${data.step_name}: ${data.status}`, 'info');
+                        // The sidecar's own account of what the step did. Carries the
+                        // liftover drop count, which is otherwise never shown.
+                        if (data.message) {
+                            window.addLogMessage(`  ${data.message}`, 'info');
+                        }
                         // Also add more detailed step information to the log
                         if (data.container_name) {
                             window.addLogMessage(`  Container: ${data.container_name}`, 'info');

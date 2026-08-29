@@ -951,6 +951,7 @@ def create_interactive_html_report(
     sample_identifier: str | None = None,
     workflow_warnings: List[str] | None = None,
     pharmcat_assume_ref_methodology: str | None = None,
+    liftover_provenance: str | None = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -1131,6 +1132,7 @@ def create_interactive_html_report(
             # Add workflow warnings/alerts for report display
             "workflow_warnings": workflow_warnings or [],
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+            "liftover_provenance": liftover_provenance,
             # 159: run-derived provenance (each rendered only if resolved)
             "genome_build": matcher_meta["genome_build"],
             "named_allele_matcher_version": matcher_meta[
@@ -1552,6 +1554,7 @@ def generate_report(
     data = None
     workflow_warnings = []  # Initialize warnings list
     pharmcat_assume_ref_methodology = None
+    liftover_provenance = None
     if job_id and db_session:
         try:
             logger.info(
@@ -1568,7 +1571,10 @@ def generate_report(
 
             # Prefer Job.job_metadata (upload writes assume-ref flags here)
             try:
-                from app.api.db import Job
+                from app.api.db import Job, JobStep
+                from app.utils.liftover_provenance import (
+                    liftover_provenance_sentence,
+                )
                 from app.utils.pharmcat_assume_ref import (
                     methodology_assume_ref_paragraph,
                 )
@@ -1607,10 +1613,29 @@ def generate_report(
                     bool(meta.get("pharmcat_absent_to_ref")),
                     bool(meta.get("pharmcat_unspecified_to_ref")),
                 )
+
+                # A lifted run reports coordinates the uploaded file never had, so
+                # the report has to say so. Read from the liftover JobStep, not the
+                # upload-time needs_liftover flag: the flag is an intention, the row
+                # is what happened, and only the row carries the counts (gatk-api
+                # writes them as output_data when the step completes). Absent row =
+                # no lift ran, which is the ordinary GRCh38 case.
+                liftover_step = (
+                    db_session.query(JobStep)
+                    .filter(
+                        JobStep.job_id == job_uuid,
+                        JobStep.step_name == "liftover",
+                    )
+                    .first()
+                )
+                liftover_provenance = liftover_provenance_sentence(
+                    liftover_step.output_data if liftover_step is not None else None
+                )
             except Exception as e:
                 logger.warning(f"Failed to retrieve job report metadata: {e}")
                 workflow_warnings = []
                 pharmcat_assume_ref_methodology = None
+                liftover_provenance = None
 
             if not data:
                 logger.warning(
@@ -1898,6 +1923,7 @@ def generate_report(
         # Add workflow warnings/alerts for report display
         "workflow_warnings": workflow_warnings,
         "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+        "liftover_provenance": liftover_provenance,
         # 159: run-derived provenance (each rendered only if resolved)
         "genome_build": matcher_meta["genome_build"],
         "named_allele_matcher_version": matcher_meta["named_allele_matcher_version"],
@@ -2497,6 +2523,7 @@ def generate_report(
                 # Add workflow warnings/alerts for report display
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+                "liftover_provenance": liftover_provenance,
                 # 159: run-derived provenance (each rendered only if resolved).
                 # This dict rebinds `template_data` and is the one actually fed
                 # to report_template.html for both the HTML render below and the
@@ -2674,6 +2701,7 @@ def generate_report(
                 workflow=per_sample_workflow,
                 workflow_warnings=workflow_warnings,
                 pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
+                liftover_provenance=liftover_provenance,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 

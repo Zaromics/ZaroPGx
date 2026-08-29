@@ -2629,9 +2629,20 @@ async def liftover_vcf(
                 "n_rejected": stats["n_rejected"],
                 "reject_reasons": stats["reject_reasons"],
             })
+            # output_data, not just the message: the message is broadcast live and
+            # filed in job_logs, but only output_data lands on the JobStep row, and
+            # the report needs the counts after the run to state on which build --
+            # and at what cost -- these results were produced.
             await job_client.complete_step(
                 f"Lifted {stats['n_lifted']} variants to GRCh38 "
-                f"({stats['n_rejected']} could not be lifted and were dropped)"
+                f"({stats['n_rejected']} could not be lifted and were dropped)",
+                output_data={
+                    "n_lifted": stats["n_lifted"],
+                    "n_rejected": stats["n_rejected"],
+                    "reject_reasons": stats["reject_reasons"],
+                    "source_build": canonical_source,
+                    "target_build": "GRCh38",
+                },
             )
 
         return {

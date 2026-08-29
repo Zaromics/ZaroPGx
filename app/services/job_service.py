@@ -662,6 +662,15 @@ class JobService:
                         {
                             "step_name": step_name,
                             "status": step.status,
+                            # The sidecar's own words for what the step did, e.g.
+                            # gatk-api's "Lifted 7 variants to GRCh38 (0 could not
+                            # be lifted and were dropped)". It is not a column on
+                            # JobStep -- _log_job_event above files it in job_logs,
+                            # which is never broadcast -- so without this key the
+                            # browser cannot show it live and the liftover drop
+                            # count, the one number with clinical weight, only ever
+                            # reached the database.
+                            "message": update_data.message,
                             "container_name": step.container_name,
                             "started_at": (
                                 step.started_at.isoformat() if step.started_at else None

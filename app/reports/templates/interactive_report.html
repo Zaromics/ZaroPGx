@@ -876,9 +876,10 @@
                    build its *allele definitions* are specified on, always GRCh38.x,
                    never the build of the uploaded file. See report_template.html for
                    the full note on why this must not be shortened. #}
-                {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
+                {% if liftover_provenance or genome_build or named_allele_matcher_version or pharmcat_data_version %}
                 <p class="run-provenance">
-                    {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, which are specified on the {{ genome_build }} reference assembly. That is the build of PharmCAT's definition data, not the reference build of the uploaded file; any concern about this file's own build is raised under Alerts and Warnings.{% endif %}
+                    {% if liftover_provenance %}{{ liftover_provenance }}{% endif %}
+                    {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, specified on the {{ genome_build }} assembly. That is PharmCAT's build, not the reference build of the uploaded file; concerns about this file's build are raised under Alerts and Warnings.{% endif %}
                     {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
                     {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
                 </p>

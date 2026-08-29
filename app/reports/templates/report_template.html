@@ -996,16 +996,21 @@
 
            `genome_build` is PharmCAT's `matcherMetadata.genomeBuild` -- the build
            its *allele definitions* are specified on, which is always GRCh38.x. It
-           is NEVER the build of the uploaded file, and this pipeline does not lift
-           over: a GRCh37 upload is matched against GRCh38 definitions and gets the
-           provisional-results alert for exactly that reason. The old copy here
-           ("This sample was analyzed against the {build} reference genome build")
-           read as a claim about the upload and so silently contradicted that alert
-           two pages earlier. Do not shorten it back: the sentence must name whose
-           build this is and disclaim the file's. #}
-        {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
+           is NEVER the build of the uploaded file. The old copy here ("This sample
+           was analyzed against the {build} reference genome build") read as a claim
+           about the upload and so silently contradicted the provisional-results
+           alert two pages earlier. Do not shorten it back: the sentence must name
+           whose build this is and disclaim the file's.
+
+           `liftover_provenance` is the separate, genuine statement about the file's
+           build, and it renders only when a lift actually ran (the liftover step's
+           own counts -- app/utils/liftover_provenance.py). Without it a GRCh37
+           upload and a native GRCh38 upload produce identical reports, and the
+           reader never learns that variants were dropped. #}
+        {% if liftover_provenance or genome_build or named_allele_matcher_version or pharmcat_data_version %}
         <p class="run-provenance">
-            {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, which are specified on the {{ genome_build }} reference assembly. That is the build of PharmCAT's definition data, not the reference build of the uploaded file; any concern about this file's own build is raised under Alerts and Warnings.{% endif %}
+            {% if liftover_provenance %}{{ liftover_provenance }}{% endif %}
+            {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, specified on the {{ genome_build }} assembly. That is PharmCAT's build, not the reference build of the uploaded file; concerns about this file's build are raised under Alerts and Warnings.{% endif %}
             {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
             {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
         </p>
