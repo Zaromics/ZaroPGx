@@ -864,7 +864,7 @@
                             <div class="card-body d-flex flex-column h-100">
                                 <p>This platform uses PharmCAT to generate recommendations based on institutional guidelines.<br>
                                     PharmCAT is now part of the ClinPGx project, which includes CPIC and PharmGKB.
-                                    PharmCAT includes outside calls from <a href="https://github.com/FRED-2/OptiType">ZaroHLA(OptiType)</a> and <a href="https://pypgx.readthedocs.io/en/latest/readme.html">PyPGx</a> when available.
+                                    PharmCAT includes outside calls from <a href="https://github.com/FRED-2/OptiType">OptiType</a> and <a href="https://pypgx.readthedocs.io/en/latest/readme.html">PyPGx</a> when available.
                                     For a full list of software comprising ZaroPGx, please see the documentation.
                                 </p>
                                 <div class="mt-auto d-flex gap-2">
@@ -969,6 +969,29 @@
             const progressBar = document.getElementById('progressBar');
             const progressStatus = document.getElementById('progressStatus');
             const logMessages = document.getElementById('logMessages');
+
+            // Uploads here span six orders of magnitude -- a 1 KB test VCF to a
+            // 100 GB WGS BAM -- so the fixed MB divisor this replaced rendered
+            // everything small as "0.00 MB". Pick the unit from the value, and
+            // keep roughly three significant figures so 1.15 KB and 11.5 KB stay
+            // distinguishable instead of both rounding to nothing.
+            window.formatFileSize = function(bytes) {
+                if (bytes === null || bytes === undefined || bytes === '') return 'Unknown';
+                const n = Number(bytes);
+                // 0 is a real answer ("0 B"), not a missing one, so this checks
+                // finiteness rather than truthiness the way the old code did.
+                if (!Number.isFinite(n) || n < 0) return 'Unknown';
+                if (n < 1024) return `${n} B`;
+                const units = ['KB', 'MB', 'GB', 'TB'];
+                let value = n / 1024;
+                let unit = 0;
+                while (value >= 1024 && unit < units.length - 1) {
+                    value /= 1024;
+                    unit++;
+                }
+                const decimals = value < 10 ? 2 : (value < 100 ? 1 : 0);
+                return `${value.toFixed(decimals)} ${units[unit]}`;
+            };
 
             // Function to add log message - make it globally available
             window.addLogMessage = function(message, type = 'info') {
@@ -1240,8 +1263,13 @@
                     // Stop any ongoing simulation
                     this.stopSimulation();
                     
-                    // Check if we need to enforce minimum stage duration
-                    if (this.currentStage && this.currentStage !== stage) {
+                    // Check if we need to enforce minimum stage duration.
+                    // Never for the terminal update: minStageDuration exists to stop
+                    // intermediate stages flickering past, but queueing the finish
+                    // returns before targetProgress is even assigned below, so the
+                    // bar was left pointing at the previous stage's target while
+                    // onComplete went on to mark the run finished.
+                    if (targetProgress < 100 && this.currentStage && this.currentStage !== stage) {
                         const timeInCurrentStage = now - this.stageStartTime;
                         if (timeInCurrentStage < this.minStageDuration) {
                             // Still in minimum duration for current stage, queue the new stage update
@@ -1536,7 +1564,20 @@
                     }
                     this.isAnimating = false;
                     this.stopSimulation();
-                    
+
+                    // Settle on the target instead of freezing wherever the
+                    // animation happened to be. onComplete calls
+                    // updateProgress(100) and then this, synchronously, on the same
+                    // tick -- so cancelAnimationFrame above killed the very first
+                    // frame before it ran and the bar could never reach 100 at all.
+                    // It stopped at whatever the previous stage had left on screen.
+                    if (typeof this.targetProgress === 'number') {
+                        this.currentProgress = this.targetProgress;
+                        this.progressBar.style.width = `${this.currentProgress}%`;
+                        this.progressBar.textContent = `${this.currentProgress}%`;
+                        this.progressBar.setAttribute('aria-valuenow', this.currentProgress);
+                    }
+
                     // Remove animation classes from progress bar
                     this.progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
                 }
@@ -1975,7 +2016,7 @@
                                 <div class="col-sm-8"><span class="badge bg-info">${headerInfo.file_type ? headerInfo.file_type.toUpperCase() : 'UNKNOWN'}</span></div>
 
                                 <div class="col-sm-4"><strong class="text-muted">File Size:</strong></div>
-                                <div class="col-sm-8">${headerInfo.file_size ? (headerInfo.file_size / 1024 / 1024).toFixed(2) + ' MB' : 'Unknown'}</div>
+                                <div class="col-sm-8">${window.formatFileSize(headerInfo.file_size)}</div>
 
                                 <div class="col-sm-4"><strong class="text-muted">Compressed:</strong></div>
                                 <div class="col-sm-8">
