@@ -73,25 +73,47 @@ class CleanupService:
             if patient_id:
                 cleanup_paths.extend(
                     [
-                        f"/data/temp/{patient_id}",
-                        f"/data/temp/{job_id}",
-                        f"/data/uploads/{patient_id}",
-                        f"/data/results/{patient_id}",
-                        f"/data/results/{job_id}",
-                        # Nested report dir (writers switch in Task 3); flat legacy leftover
-                        f"/data/reports/{patient_id}/{job_id}",
-                        f"/data/reports/{patient_id}",
+                        # Built from self.data_dir/self.temp_dir rather than
+                        # hardcoded "/data/..." literals. The class always declared
+                        # those attributes and then ignored them, which is why this
+                        # method's real behaviour was untestable: pointing it at a
+                        # tmp_path did nothing, so an on-disk assertion passed
+                        # whether or not the bug below was present.
+                        str(self.data_dir / "temp" / patient_id),
+                        str(self.data_dir / "temp" / job_id),
+                        str(self.uploads_dir / patient_id),
+                        str(self.data_dir / "results" / patient_id),
+                        str(self.data_dir / "results" / job_id),
+                        # NOTHING UNDER /data/reports BELONGS HERE.
+                        #
+                        # This method runs on job COMPLETION (job_service.py, the
+                        # progress >= 100 branch), and it used to list
+                        # /data/reports/{patient_id}/{job_id} and, worse,
+                        # /data/reports/{patient_id} -- the whole patient's history.
+                        # main.nf publishes to `data/reports/${patient_id}` and
+                        # app/main.py serves that tree at
+                        # /reports/{patient_id}/{filename}, so every successful run
+                        # deleted its own output the instant it succeeded and every
+                        # report link 404'd. Observed on a real run as 11.7 MB of
+                        # PDF/HTML/JSON removed one second after logging
+                        # "Job completed successfully with reports generated".
+                        #
+                        # Reports are the product of the run, not scratch space. The
+                        # cancellation path (upload_router's
+                        # delayed_cleanup_on_cancellation) does remove them, and that
+                        # is correct there -- a cancelled job has no product to keep.
+                        # This one must not.
                     ]
                 )
 
             # Job-specific paths
             cleanup_paths.extend(
                 [
-                    f"/tmp/pharmcat/{job_id}",
-                    f"/tmp/gatk_temp/{job_id}",
-                    f"/tmp/pypgx/{job_id}",
-                    f"/tmp/zarohla/{job_id}",
-                    f"/data/temp/{job_id}",
+                    str(self.temp_dir / "pharmcat" / job_id),
+                    str(self.temp_dir / "gatk_temp" / job_id),
+                    str(self.temp_dir / "pypgx" / job_id),
+                    str(self.temp_dir / "zarohla" / job_id),
+                    str(self.data_dir / "temp" / job_id),
                 ]
             )
 

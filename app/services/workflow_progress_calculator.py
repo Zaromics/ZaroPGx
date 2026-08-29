@@ -106,6 +106,14 @@ class WorkflowProgressCalculator:
 
     STEP_BASE_BANDS: Dict[str, Tuple[int, int]] = {
         "header_analysis": (1, 9),
+        # Picard LiftoverVcf in the gatk-api container, before anything else on a
+        # GRCh37 VCF. Without a band here _active_ordered_steps() dropped it (it
+        # filters on membership of this dict), so `ranges` had no entry, the
+        # running-step loop in _calculate_stage_progress_with_container_mapping()
+        # hit `continue`, and the bar froze at the end of header_analysis for the
+        # entire lift. Same weight as the other GATK conversion; it never co-occurs
+        # with them (VCF vs aligned input), so the relative order is free.
+        "liftover": (10, 19),
         "gatk_cram_sam_to_bam": (10, 19),
         "hla_typing": (20, 34),
         "gatk_alignment": (35, 49),
@@ -118,6 +126,7 @@ class WorkflowProgressCalculator:
 
     CANONICAL_STEP_ORDER: List[str] = [
         "header_analysis",
+        "liftover",
         "gatk_cram_sam_to_bam",
         "hla_typing",
         "gatk_alignment",
@@ -150,6 +159,8 @@ class WorkflowProgressCalculator:
         needs_bam2vcf = bool(cfg.get("needs_pypgx_bam2vcf", default_bam2vcf))
 
         planned: List[str] = ["header_analysis"]
+        if bool(cfg.get("needs_liftover", False)):
+            planned.append("liftover")
         if needs_gatk:
             if file_type in {"cram", "sam"}:
                 planned.append("gatk_cram_sam_to_bam")
@@ -210,11 +221,22 @@ class WorkflowProgressCalculator:
                 ranges[last] = (rmin, 100)
         return ranges
 
+    # Highest progress already reported per job, so the bar can never run
+    # backwards. CLASS level, not instance: both call sites
+    # (job_service.get_job_progress and upload_router's status endpoint) build a
+    # fresh WorkflowProgressCalculator() on every request, so an instance cache
+    # was empty every time and the no-decrease rule below never fired once. Seen
+    # live as 50% -> 40% mid-PyPGx, where the container's own reported progress
+    # dipped.
+    #
+    # Bounded because it is process-lifetime state keyed by job id: without the
+    # trim a long-running app accumulates one int per job forever.
+    _previous_progress_cache: Dict[str, int] = {}
+    _PROGRESS_CACHE_MAX = 512
+
     def __init__(self):
         """Initialize the progress calculator."""
         self.logger = logging.getLogger(__name__)
-        # Cache to track previous progress for each workflow to prevent decreases
-        self._previous_progress_cache = {}
 
     def calculate_progress_from_steps(
         self,
@@ -259,7 +281,16 @@ class WorkflowProgressCalculator:
                 )
 
             # Update cache with the final progress
-            self._previous_progress_cache[workflow_id] = progress_percentage
+            cache = type(self)._previous_progress_cache
+            if (
+                workflow_id not in cache
+                and len(cache) >= type(self)._PROGRESS_CACHE_MAX
+            ):
+                # Oldest insertion first (dicts preserve insertion order). A job
+                # evicted here can only lose its floor, never its real progress.
+                for stale in list(cache)[: len(cache) // 2]:
+                    del cache[stale]
+            cache[workflow_id] = progress_percentage
         else:
             progress_percentage = calculated_progress
 
@@ -467,10 +498,25 @@ class WorkflowProgressCalculator:
         # If no running step found, return the default step name for the stage
         return stage_to_step_mapping.get(current_stage, "unknown")
 
+    @staticmethod
+    def _is_step_running(steps: List[Dict], step_name: str) -> bool:
+        """True when `step_name` is the step currently running."""
+        return any(
+            normalize_step_name(step.get("step_name") or "") == step_name
+            and step.get("status") == "running"
+            for step in steps or []
+        )
+
     def _should_skip_stage(self, stage: WorkflowStage, workflow_config: Dict) -> bool:
         """Check if a stage should be skipped based on workflow configuration."""
         skip_mapping = {
-            WorkflowStage.GATK: not workflow_config.get("needs_gatk", False),
+            # needs_liftover counts as needing GATK: Picard LiftoverVcf runs in the
+            # gatk-api container and "liftover" maps to WorkflowStage.GATK. Keying
+            # on needs_gatk alone called the stage skipped while it was running.
+            WorkflowStage.GATK: not (
+                workflow_config.get("needs_gatk", False)
+                or workflow_config.get("needs_liftover", False)
+            ),
             WorkflowStage.HLA: not workflow_config.get("needs_hla", False),
             WorkflowStage.PYPGX: not workflow_config.get("needs_pypgx", True),
         }
@@ -493,10 +539,18 @@ class WorkflowProgressCalculator:
         elif stage == WorkflowStage.ANALYSIS:
             return f"{base_message} - Inspecting file headers"
         elif stage == WorkflowStage.GATK:
-            if workflow_config and workflow_config.get("needs_gatk", False):
+            cfg = workflow_config or {}
+            # Step first, config second. A GRCh37 VCF has needs_gatk=False and
+            # needs_liftover=True, so keying on needs_gatk alone announced
+            # "Skipping GATK processing" while Picard LiftoverVcf was running --
+            # the stage is GATK precisely because the liftover step maps to it.
+            if self._is_step_running(steps, "liftover"):
+                return f"{base_message} - Lifting GRCh37/hg19 over to GRCh38"
+            if cfg.get("needs_gatk", False):
                 return f"{base_message} - Converting file format"
-            else:
-                return "Skipping GATK processing - not required"
+            if cfg.get("needs_liftover", False):
+                return f"{base_message} - Liftover to GRCh38"
+            return "Skipping GATK processing - not required"
         elif stage == WorkflowStage.HLA:
             if workflow_config and workflow_config.get("needs_hla", False):
                 return f"{base_message} - Determining HLA types"
