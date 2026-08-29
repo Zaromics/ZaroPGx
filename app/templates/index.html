@@ -134,6 +134,13 @@
             left: 50%;
             transform: translateX(-50%);
             background: white;
+            /* This card is white in BOTH themes, so it has to set its own text
+               colour. Without it, any child without an explicit colour inherits
+               the dark theme's near-white body text and disappears onto the white
+               background -- which is what happened to the PharmCAT popup's
+               assume-ref labels, the only popup content that is neither an h6, a
+               <p>, nor a .toggle-button (all three of which set their own). */
+            color: #495057;
             border: 1px solid #dee2e6;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -185,6 +192,21 @@
             line-height: 1.4;
         }
         
+        /* Bootstrap resolves these from theme variables that flip with
+           data-bs-theme, so on the popup's fixed white background they must be
+           pinned. .text-muted ships as `color: var(--bs-secondary-color)
+           !important`, so matching specificity is not enough -- the override has
+           to carry !important too. */
+        .stage-popup .text-muted {
+            color: #6c757d !important;
+        }
+
+        .stage-popup label,
+        .stage-popup .form-text,
+        .stage-popup small {
+            color: #495057;
+        }
+
         .stage-popup .toggle-section {
             border-top: 1px solid #e9ecef;
             padding-top: 12px;
@@ -559,8 +581,7 @@
                                     <span>GATK</span>
                                     <div class="stage-popup">
                                         <h6>GATK Processing</h6>
-                                        <p>Genome Analysis Toolkit (GATK) includes functions for filetype conversion and other manipulations. Can be computationally intensive.</p>
-                                        <p>Also lifts a GRCh37/hg19 VCF over to GRCh38.</p>
+                                        <p>Genome Analysis Toolkit (GATK) includes functions for filetype conversion, GRCh37/hg19 to GRCh38 liftover, and other manipulations. Can be computationally intensive.</p>
                                         <div class="toggle-section">
                                             <button class="toggle-button enabled" data-stage="gatk">✓ Enabled</button>
                                         </div>
