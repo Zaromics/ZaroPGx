@@ -141,6 +141,13 @@
                assume-ref labels, the only popup content that is neither an h6, a
                <p>, nor a .toggle-button (all three of which set their own). */
             color: #495057;
+            /* And the popup's native controls (its checkboxes) must paint for
+               this white card too. [data-bs-theme='dark'] sets color-scheme:dark
+               on :root, so the browser drew them for a dark surface -- a
+               near-black box on white, which is what the unticked state looked
+               like. Scoping the scheme here fixes the off state at its source
+               and covers any native control added to a popup later. */
+            color-scheme: light;
             border: 1px solid #dee2e6;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -205,6 +212,31 @@
         .stage-popup .form-text,
         .stage-popup small {
             color: #495057;
+        }
+
+        /* The popup is a white card in BOTH themes, but [data-bs-theme='dark']
+           sets color-scheme: dark on :root, so the browser painted these native
+           checkboxes for a dark surface -- a near-black box on white, which is
+           what the unticked state looked like. Scoping the scheme to the card
+           fixes the off state at its source rather than repainting the control
+           by hand, and covers any other native control added here later. */
+        .stage-popup label {
+            cursor: pointer;
+        }
+
+        .stage-popup input[type="checkbox"] {
+            width: 15px;
+            height: 15px;
+            margin-right: 6px;
+            vertical-align: -3px;
+            /* Same green as the "✓ Enabled" buttons in the sibling popups. */
+            accent-color: #198754;
+            cursor: pointer;
+        }
+
+        .stage-popup label:hover input[type="checkbox"] {
+            outline: 2px solid rgba(25, 135, 84, 0.35);
+            outline-offset: 1px;
         }
 
         .stage-popup .toggle-section {
@@ -427,6 +459,31 @@
             }
         }
         
+        /* At 100% the bar just stopped, still bg-info, so nothing marked the
+           moment the run finished. Settle to green with a short colour pulse.
+           Pulsed via background-color rather than box-shadow because Bootstrap's
+           .progress wrapper is overflow:hidden and would clip a glow. */
+        #progressBar.progress-bar-complete {
+            background-color: #198754 !important;
+            background-image: none !important;
+            animation: progress-complete-pulse 0.75s ease-in-out 3;
+        }
+
+        @keyframes progress-complete-pulse {
+            0%, 100% { background-color: #198754; }
+            50%      { background-color: #34c98a; }
+        }
+
+        /* Reduced motion still gets a ping, just not a repeated one. The concern
+           there is movement and flashing, not a single colour settle -- and
+           suppressing it entirely left the only completion cue as a static
+           colour swap, which is easy to miss if you looked away. One slow cycle. */
+        @media (prefers-reduced-motion: reduce) {
+            #progressBar.progress-bar-complete {
+                animation: progress-complete-pulse 1.2s ease-in-out 1;
+            }
+        }
+
         /* Cancellation visual feedback styles */
         .progress-bar-cancelling {
             animation: none !important; /* Stop the stripe animation */
@@ -1463,6 +1520,9 @@
                     this.progressBar.style.width = '0%';
                     this.progressBar.textContent = '0%';
                     this.progressBar.setAttribute('aria-valuenow', 0);
+                    // Drop the completion colour, or the next run starts green.
+                    this.progressBar.classList.remove('progress-bar-complete');
+                    this.progressBar.classList.add('bg-info');
                     if (this.progressStatus) {
                         this.progressStatus.textContent = 'Preparing...';
                     }
@@ -2609,6 +2669,15 @@
                             smoothProgress.updateProgress(100, 'completed', 'Analysis complete!');
                             // Stop progress bar animation at 100%
                             smoothProgress.stopAnimation();
+                        }
+
+                        // Mark the finish visually: bg-info -> green, with a short
+                        // pulse. Without this the bar reached 100% and simply froze
+                        // in the same colour it had been the whole run.
+                        const completedBar = document.getElementById('progressBar');
+                        if (completedBar) {
+                            completedBar.classList.remove('bg-info');
+                            completedBar.classList.add('progress-bar-complete');
                         }
                         
                         // Update stage indicators using simple glyph system

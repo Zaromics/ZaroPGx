@@ -92,3 +92,34 @@ def test_the_assume_ref_controls_are_still_inside_a_stage_popup():
     assert (
         "PharmCAT Analysis" in between
     ), "the assume-ref controls are no longer inside the PharmCAT stage popup"
+
+
+# --------------------------------------------------------------------------
+# The native checkboxes on that same white card
+# --------------------------------------------------------------------------
+
+
+def test_the_popup_forces_a_light_colour_scheme():
+    """The off state fix, and the reason it is one line rather than many.
+
+    ``[data-bs-theme='dark']`` sets ``color-scheme: dark`` on :root, so the
+    browser painted the popup's native checkboxes for a dark surface -- a
+    near-black box on a white card. Scoping the scheme to the popup fixes the
+    unticked state at its source and covers any native control added here later,
+    rather than hand-repainting each one.
+    """
+    assert "color-scheme: light" in _rule_body(".stage-popup")
+
+
+def test_the_checkboxes_are_enlarged_and_green():
+    body = _rule_body('.stage-popup input[type="checkbox"]')
+    assert "accent-color" in body, "checked state falls back to the browser blue"
+    # The same green as the "✓ Enabled" buttons in the sibling popups.
+    assert "#198754" in body
+    assert re.search(r"width:\s*1[3-9]px", body), body
+
+
+def test_the_checkboxes_keep_a_hover_affordance():
+    assert _rule_body(
+        '.stage-popup label:hover input[type="checkbox"]'
+    ).strip(), "hover feedback on the checkboxes was dropped"
