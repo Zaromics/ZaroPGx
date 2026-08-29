@@ -79,6 +79,23 @@ now fixed:
   `app/services/workflow_registry.py` — an unregistered step name 404s its status
   updates and hangs [pending], the same trap the HLA lane hit).
 
+- **A GRCh37/hg19-aligned BAM/CRAM/SAM is now refused** (2026-08-29) — the liftover
+  above converts a *called* file's coordinates, so it does not reach aligned reads:
+  those have variants called out of them first, against gene regions looked up by
+  assembly, so a GRCh37 BAM analysed as GRCh38 reads each gene ~400 kb off (CYP2D6)
+  and reports star alleles that are not the patient's, with nothing erroring. It was
+  silently accepted before, because `FileAnalysis` carried the alignment header's
+  *ambiguity* evidence but not the build it declared. It now carries
+  `reference_genome`, and `determine_workflow` refuses GRCh37-aligned files
+  (`unsupported` + NOT `is_provisional`, so the upload gate returns 400) pointing at
+  the two real ways out: call variants yourself and upload the VCF (which IS lifted),
+  or realign. `CONTIG_LENGTH_ASSEMBLIES` was extended from chr1/2/3/X to the PGx
+  chromosomes (6, 7, 10, 12, 16, 19, 22) so a targeted-panel file — which carries
+  none of the first four — can be identified at all; lengths re-read from the three
+  shipped `.dict` files, hg19 and b37 confirmed identical and no length shared
+  between builds. Verified live: a chr22-only GRCh37 panel SAM → detected GRCh37 →
+  HTTP 400; a GRCh38 BAM → HTTP 200.
+
 - **CRAM, SAM and BAM+HLA lanes are now GREEN too** (2026-08-23) — every input lane
   runs end to end. CRAM/SAM convert to BAM via gatk-api then rejoin the BAM lane;
   the BAM+HLA lane leaves OptiType on and exercises the full HLA path. Fixtures:

@@ -74,6 +74,13 @@ DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 # reference/grch37/human_g1k_v37.dict); reference/ is gitignored, so no test can
 # pin them -- re-read the dictionaries if you touch this table.
 #
+# Re-read 2026-08-29 when the PGx chromosomes were added: all three dictionaries
+# confirmed, the four pre-existing entries included. Two properties were checked
+# rather than assumed, and both are what make one entry per (name, length) sound:
+# ucsc.hg19 and human_g1k_v37 give every chromosome here the SAME length (so one
+# GRCh37 row serves both spellings), and no length is shared between GRCh38 and
+# GRCh37 (so a match is decisive rather than merely suggestive).
+#
 # Unlike gatk-api's copy, this one answers with the *assembly* alone and does not
 # read the `chr` prefix as evidence of which GRCh37 FASTA to align against: the
 # app stores an assembly name in metadata.reference_genome, and no caller here
@@ -87,6 +94,33 @@ CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
     ("3", 198022430): "GRCh37",
     ("X", 156040895): "GRCh38",
     ("X", 155270560): "GRCh37",
+    # The chromosomes the PGx genes actually sit on, added 2026-08-29 because a
+    # targeted panel or gene-slice file carries only these -- chr1/2/3/X above
+    # appear in a WGS header but not in, say, a CYP2D6-only BAM, which then read
+    # as "no evidence" and was analysed as GRCh38 whatever build it was really
+    # on. That gap is what makes the GRCh37-alignment refusal in
+    # file_processor.determine_workflow reachable for panel data at all.
+    #   6  HLA-A/B/C (class-I typing), CYP21A2
+    #   7  CYP3A4, CYP3A5, ABCB1
+    #   10 CYP2C9, CYP2C19
+    #   12 SLCO1B1
+    #   16 VKORC1
+    #   19 CYP4F2, CYP2S1
+    #   22 CYP2D6
+    ("6", 170805979): "GRCh38",
+    ("6", 171115067): "GRCh37",
+    ("7", 159345973): "GRCh38",
+    ("7", 159138663): "GRCh37",
+    ("10", 133797422): "GRCh38",
+    ("10", 135534747): "GRCh37",
+    ("12", 133275309): "GRCh38",
+    ("12", 133851895): "GRCh37",
+    ("16", 90338345): "GRCh38",
+    ("16", 90354753): "GRCh37",
+    ("19", 58617616): "GRCh38",
+    ("19", 59128983): "GRCh37",
+    ("22", 50818468): "GRCh38",
+    ("22", 51304566): "GRCh37",
 }
 
 # Tokens that name an assembly when they appear in a free-text `##reference=`

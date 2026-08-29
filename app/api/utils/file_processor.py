@@ -157,6 +157,14 @@ class FileAnalysis:
     # read by determine_workflow's BAM/CRAM/SAM branches (Task 10 item 5).
     reference_genome_ambiguous: bool = False
     reference_genome_candidates: List[str] = field(default_factory=list)
+    # The build the alignment header actually declares (T6's detect_reference_
+    # assembly over the @SQ records), for the same BAM/CRAM/SAM reason as the two
+    # fields above. Carried because "which build is this file on" decides whether
+    # the pipeline can analyse it at all: every downstream step (PyPGx's region
+    # tables, PharmCAT) is GRCh38, so a GRCh37-aligned file read as GRCh38 pulls
+    # reads from the wrong locus and produces star alleles nobody has checked.
+    # None means the header carried no usable evidence -- not GRCh38.
+    reference_genome: Optional[str] = None
 
 
 def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
@@ -218,6 +226,7 @@ class FileProcessor:
             vcf_info = None
             reference_genome_ambiguous = False
             reference_genome_candidates: List[str] = []
+            alignment_reference_genome: Optional[str] = None
             try:
                 normalized = inspect_header(str(file_path))
                 # Map normalized structure to VCFHeaderInfo when applicable
@@ -277,6 +286,11 @@ class FileProcessor:
                     reference_genome_candidates = (
                         metadata.get("reference_genome_candidates") or []
                     )
+                    # The detected build itself, not merely whether it was
+                    # self-contradictory. Without it the alignment branches
+                    # cannot tell a GRCh37-aligned BAM from a GRCh38 one, and
+                    # analyse both as GRCh38 -- see FileAnalysis.reference_genome.
+                    alignment_reference_genome = metadata.get("reference_genome")
             except Exception as e:
                 logger.warning(
                     f"Independent header inspector failed, falling back for type {file_type}: {e}"
@@ -293,6 +307,7 @@ class FileProcessor:
                 file_size=file_size,
                 reference_genome_ambiguous=reference_genome_ambiguous,
                 reference_genome_candidates=reference_genome_candidates,
+                reference_genome=alignment_reference_genome,
             )
 
             logger.info(f"Analysis complete: {analysis}")
@@ -1163,6 +1178,58 @@ class FileProcessor:
                     analysis.reference_genome_candidates
                 )
             )
+
+        # A GRCh37/hg19-aligned BAM/CRAM/SAM is refused, not analysed.
+        #
+        # The liftover added for VCF input does not reach this case: it converts a
+        # *called* file's coordinates, and these formats reach PharmCAT only by
+        # having variants called out of them first. That call is made against gene
+        # regions PyPGx looks up by assembly, so a GRCh37-aligned file analysed as
+        # GRCh38 reads its variants out of the wrong locus entirely (GRCh38's
+        # CYP2D6 window is ~400 kb away from GRCh37's) and yields star alleles
+        # nobody has checked -- the "confident wrong answer, not a failure" case
+        # that _unanalysable_upload_reason exists to stop, and worse here than for
+        # gVCF because nothing downstream errors.
+        #
+        # Refusing matches how every other unanalysable input is handled (FASTQ,
+        # 23andMe, BCF): say so now, with the fix the user can act on. And the fix
+        # is a real one now -- calling variants against GRCh37 and uploading the
+        # resulting VCF lands on the supported liftover lane.
+        #
+        # Keyed on the DETECTED build only. `None` (no usable @SQ evidence) is left
+        # alone rather than guessed at, exactly as the ambiguity check above does:
+        # refusing a file whose build simply could not be read would reject most
+        # hand-made and minimal BAMs, which is a different defect.
+        if analysis.file_type in (FileType.BAM, FileType.CRAM, FileType.SAM):
+            detected_build = (analysis.reference_genome or "").lower()
+            if any(token in detected_build for token in ("grch37", "hg19", "b37")):
+                file_label = analysis.file_type.value.upper()
+                workflow["unsupported"] = True
+                # Deliberately NOT provisional: nothing is analysed, so the flag
+                # that means "analysed anyway, provisionally" would wave this past
+                # the upload gate (the 23andMe mistake).
+                workflow["is_provisional"] = False
+                workflow["unsupported_reason"] = (
+                    f"This {file_label} file is aligned to "
+                    f"{analysis.reference_genome}, and ZaroPGx analyses "
+                    f"pharmacogenomic variants against GRCh38/hg38 only. Calling "
+                    f"variants from it as though it were GRCh38 would read each "
+                    f"gene from the wrong position in the genome and report star "
+                    f"alleles that are not yours, so the file is not analysed. "
+                    f"Automatic liftover covers GRCh37/hg19 VCFs, not aligned "
+                    f"reads: the coordinates have to be converted after the "
+                    f"variants are called, not before."
+                )
+                workflow["recommendations"].append(
+                    "<p>Call variants from this file against GRCh37/hg19 yourself "
+                    "(for example with bcftools mpileup/call or GATK "
+                    "HaplotypeCaller), then upload the resulting VCF — ZaroPGx "
+                    "lifts a GRCh37/hg19 VCF over to GRCh38 automatically.</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Or realign the reads to GRCh38/hg38 and upload the "
+                    f"resulting {file_label} file.</p>"
+                )
 
         return workflow
 

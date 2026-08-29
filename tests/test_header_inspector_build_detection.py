@@ -167,6 +167,66 @@ def test_a_reference_line_cannot_rescue_conflicting_contigs():
     assert result["ambiguous"] is True
 
 
+@pytest.mark.parametrize(
+    "contig,length,expected",
+    [
+        # chr22/CYP2D6 and chr10/CYP2C19-CYP2C9 are the two that matter most: a
+        # PGx panel that carries nothing else must still resolve to a build.
+        ("chr22", 50818468, "GRCh38"),
+        ("chr22", 51304566, "GRCh37"),
+        ("chr10", 133797422, "GRCh38"),
+        ("chr10", 135534747, "GRCh37"),
+        ("chr12", 133275309, "GRCh38"),  # SLCO1B1
+        ("chr12", 133851895, "GRCh37"),
+        ("chr16", 90338345, "GRCh38"),  # VKORC1
+        ("chr16", 90354753, "GRCh37"),
+        ("chr6", 170805979, "GRCh38"),  # HLA class I
+        ("chr6", 171115067, "GRCh37"),
+        ("chr7", 159345973, "GRCh38"),  # CYP3A4/CYP3A5
+        ("chr7", 159138663, "GRCh37"),
+        ("chr19", 58617616, "GRCh38"),  # CYP4F2
+        ("chr19", 59128983, "GRCh37"),
+    ],
+)
+def test_pgx_chromosomes_alone_identify_the_build(contig, length, expected):
+    """A gene-panel file carries no chr1/2/3/X, only the PGx chromosomes.
+
+    Before these entries such a file read as "no evidence" and was analysed as
+    GRCh38 whatever build it was on. Lengths re-read from the shipped sequence
+    dictionaries on 2026-08-29.
+    """
+    result = detect_reference_assembly(
+        header_records=[f"##contig=<ID={contig},length={length}>"]
+    )
+
+    assert result["assembly"] == expected
+    assert result["source"] == "contig_lengths"
+    assert result["ambiguous"] is False
+
+
+def test_unprefixed_pgx_chromosome_matches_too():
+    """b37 panel data spells it `22`, and must reach the same verdict."""
+    assert (
+        detect_reference_assembly(contig_lengths={"22": 51304566})["assembly"]
+        == "GRCh37"
+    )
+
+
+def test_no_pgx_length_is_shared_between_the_two_builds():
+    """Every entry must be decisive: a length may not name both builds.
+
+    Verified against the dictionaries on 2026-08-29; pinned here so a future
+    addition transcribed from the wrong column cannot make the table ambiguous.
+    """
+    from app.api.utils.header_inspector import CONTIG_LENGTH_ASSEMBLIES
+
+    by_length = {}
+    for (name, length), assembly in CONTIG_LENGTH_ASSEMBLIES.items():
+        by_length.setdefault((name, length), set()).add(assembly)
+    collisions = {k: v for k, v in by_length.items() if len(v) > 1}
+    assert not collisions, f"length names two builds: {collisions}"
+
+
 def test_conflicting_contigs_across_naming_conventions_are_undetectable():
     """The conflict must be seen even when the two contigs use different prefixes.
 

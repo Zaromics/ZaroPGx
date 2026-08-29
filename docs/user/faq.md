@@ -43,7 +43,8 @@ ZaroPGx supports:
 ### What reference genomes are supported?
 
 - **GRCh38/hg38**: Fully supported — analysed directly
-- **GRCh37/hg19**: Supported — lifted over to GRCh38 automatically, see below
+- **GRCh37/hg19 VCF**: Supported — lifted over to GRCh38 automatically, see below
+- **GRCh37/hg19 BAM/CRAM/SAM**: Not accepted — liftover converts already-called variants, so call variants against GRCh37 yourself and upload that VCF (it is then lifted), or realign to GRCh38
 
 **ZaroPGx lifts GRCh37/hg19 VCFs over to GRCh38 automatically.** The conversion is a real coordinate liftover — GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain, run inside the pipeline before any analysis step — not a relabelling. Two things are worth knowing. First, liftover is lossy by nature: variants that cannot be mapped onto GRCh38 are dropped from the analysis, the job's liftover step reports how many, and the run fails outright rather than continuing if an implausibly large share of the file cannot be lifted. Second, a lifted-over file's results may differ from a file sequenced and called directly against GRCh38/hg38 — so if you have a native GRCh38 VCF, or an upstream BAM/CRAM aligned to GRCh38, uploading that instead gives the most reliable results. Builds other than GRCh37 and GRCh38 have no liftover chain: they are analysed on their original coordinates, marked provisional, and the upload says so.
 
