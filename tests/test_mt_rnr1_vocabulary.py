@@ -8,9 +8,12 @@ has to be spelled the way PharmCAT spells it or the call is silently dropped.
 import pytest
 
 from app.mtdna.mt_rnr1 import (
+    BASIS_INFERRED,
+    BASIS_MEASURED,
     MT_RNR1_ALLELES,
     MT_RNR1_SPAN,
     NO_CALL_NO_CHRM_DATA,
+    NO_CALL_REGION_NOT_COVERED,
     NO_CALL_UNRESOLVED_961_DELINS,
     REFERENCE,
     RISK_INCREASED,
@@ -18,6 +21,7 @@ from app.mtdna.mt_rnr1 import (
     RISK_UNCERTAIN,
     VcfRecord,
     has_unresolved_961_deletion,
+    has_variant_in_gene,
     match_alleles,
     resolve_mt_rnr1_call,
     select_call,
@@ -191,20 +195,20 @@ def test_961_overlap_is_true_even_for_a_pure_deletion():
 def test_resolve_a_real_match_wins_regardless_of_evidence():
     """A caller who forgot pharmcat_absent_to_ref does not get to erase a
     variant that is actually there."""
-    call, reason = resolve_mt_rnr1_call(
+    result = resolve_mt_rnr1_call(
         ["m.1555A>G"], [], evidence_reason=NO_CALL_NO_CHRM_DATA
     )
-    assert call == "m.1555A>G"
-    assert reason is None
+    assert result.call == "m.1555A>G"
+    assert result.no_call_reason is None
 
 
 def test_resolve_blocks_on_missing_evidence_before_looking_at_961():
     """No positive evidence at all -- e.g. app/static/demo/pharmcat.example.vcf,
     which has no chrM contig header and no chrM record -- must never reach
     Reference no matter what `records` contains."""
-    call, reason = resolve_mt_rnr1_call([], [], evidence_reason=NO_CALL_NO_CHRM_DATA)
-    assert call is None
-    assert reason == NO_CALL_NO_CHRM_DATA
+    result = resolve_mt_rnr1_call([], [], evidence_reason=NO_CALL_NO_CHRM_DATA)
+    assert result.call is None
+    assert result.no_call_reason == NO_CALL_NO_CHRM_DATA
 
 
 def test_resolve_promotes_to_reference_when_evidence_is_positive_and_961_is_clear():
@@ -213,9 +217,9 @@ def test_resolve_promotes_to_reference_when_evidence_is_positive_and_961_is_clea
     records = [VcfRecord(750, "A", "G"), VcfRecord(1438, "A", "G")]
     matched = match_alleles(records)
     assert matched == []
-    call, reason = resolve_mt_rnr1_call(matched, records, evidence_reason=None)
-    assert call == REFERENCE
-    assert reason is None
+    result = resolve_mt_rnr1_call(matched, records, evidence_reason=None)
+    assert result.call == REFERENCE
+    assert result.no_call_reason is None
 
 
 def test_resolve_withholds_reference_for_an_unresolved_961_delins():
@@ -225,9 +229,94 @@ def test_resolve_withholds_reference_for_an_unresolved_961_delins():
     records = [VcfRecord(960, "CTC", "G")]
     matched = match_alleles(records)
     assert matched == []
-    call, reason = resolve_mt_rnr1_call(matched, records, evidence_reason=None)
-    assert call is None
-    assert reason == NO_CALL_UNRESOLVED_961_DELINS
+    result = resolve_mt_rnr1_call(matched, records, evidence_reason=None)
+    assert result.call is None
+    assert result.no_call_reason == NO_CALL_UNRESOLVED_961_DELINS
+
+
+# --- has_variant_in_gene / the evidence ladder's basis ----------------------
+#
+# HG00096's real haplogroup-defining variants, from this repo's own run.
+# 750 and 1438 are inside MT-RNR1 (648-1601); the rest are not.
+HG00096_RECORDS = [
+    VcfRecord(152, "T", "C"),
+    VcfRecord(263, "A", "G"),
+    VcfRecord(750, "A", "G"),
+    VcfRecord(1438, "A", "G"),
+    VcfRecord(4769, "A", "G"),
+    VcfRecord(8860, "A", "G"),
+    VcfRecord(15326, "A", "G"),
+]
+OUTSIDE_GENE_ONLY = [VcfRecord(263, "A", "G"), VcfRecord(4769, "A", "G")]
+
+
+def test_in_gene_predicate_sees_750_and_1438():
+    """The two near-universal rCRS differences that land inside MT-RNR1."""
+    assert has_variant_in_gene(HG00096_RECORDS) is True
+
+
+def test_in_gene_predicate_rejects_variants_outside_the_span():
+    assert has_variant_in_gene(OUTSIDE_GENE_ONLY) is False
+
+
+def test_in_gene_predicate_on_no_records():
+    assert has_variant_in_gene([]) is False
+
+
+def test_tier_c_promotes_with_in_gene_variant_and_clean_polys():
+    """The case this whole change exists to unlock: a real VCF-input job."""
+    result = resolve_mt_rnr1_call(
+        [], HG00096_RECORDS, evidence_reason=None, basis=BASIS_INFERRED
+    )
+    assert result.call == REFERENCE
+    assert result.no_call_reason is None
+    assert result.basis == BASIS_INFERRED
+
+
+def test_tier_a_promotion_is_labelled_measured():
+    result = resolve_mt_rnr1_call(
+        [], HG00096_RECORDS, evidence_reason=None, basis=BASIS_MEASURED
+    )
+    assert result.call == REFERENCE
+    assert result.basis == BASIS_MEASURED
+
+
+def test_a_denied_tier_carries_its_reason_and_no_basis():
+    result = resolve_mt_rnr1_call(
+        [], OUTSIDE_GENE_ONLY, evidence_reason=NO_CALL_REGION_NOT_COVERED, basis=None
+    )
+    assert result.call is None
+    assert result.no_call_reason == NO_CALL_REGION_NOT_COVERED
+    assert result.basis is None
+
+
+def test_a_real_match_still_wins_over_every_tier():
+    """A variant that is actually there is not erased by thin evidence."""
+    result = resolve_mt_rnr1_call(
+        ["m.1555A>G"],
+        [VcfRecord(1555, "A", "G")],
+        evidence_reason=NO_CALL_REGION_NOT_COVERED,
+        basis=None,
+    )
+    assert result.call == "m.1555A>G"
+    assert result.no_call_reason is None
+
+
+def test_the_961_suppression_still_fires_under_a_licensed_tier():
+    """Tier C must not smuggle past the unresolved-delins guard."""
+    result = resolve_mt_rnr1_call(
+        [], [VcfRecord(960, "CTC", "G")], evidence_reason=None, basis=BASIS_INFERRED
+    )
+    assert result.call is None
+    assert result.no_call_reason == NO_CALL_UNRESOLVED_961_DELINS
+    assert result.basis is None
+
+
+def test_basis_is_never_set_on_a_no_call():
+    """A basis describes how a call was established; there is no call here."""
+    for reason in (NO_CALL_NO_CHRM_DATA, NO_CALL_REGION_NOT_COVERED):
+        result = resolve_mt_rnr1_call([], [], evidence_reason=reason, basis=None)
+        assert result.basis is None
 
 
 import json

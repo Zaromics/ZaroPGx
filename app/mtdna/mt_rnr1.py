@@ -16,7 +16,7 @@ count 1, so the outside call is one name -- never a "A/B" diplotype form.
 
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional
 
 RISK_INCREASED = "increased"
 RISK_UNCERTAIN = "uncertain"
@@ -212,13 +212,65 @@ NO_CALL_UNRESOLVED_961_DELINS = "unresolved_961_delins"
 NO_CALL_COVERAGE_BELOW_FLOOR = "coverage_below_floor"
 NO_CALL_COVERAGE_UNKNOWN = "coverage_unknown"
 
+# How a Reference call was established. This travels with the call because a
+# measured Reference and an inferred one are different claims, and the reader
+# is entitled to know which they are looking at -- the same reasoning that
+# gives every gene a provenance letter rather than an unqualified diplotype.
+#
+# There is deliberately no "declared" basis yet: it belongs to Tier B (gVCF
+# reference blocks), which is not built because gVCF uploads are refused
+# upstream (file_processor.py:653). Adding the constant before the tier that
+# produces it would be a value nothing can ever hold.
+BASIS_MEASURED = "measured"
+BASIS_INFERRED = "inferred"
+
+# Tier D: the file carried mitochondrial data, but nothing established that
+# MT-RNR1 itself was interrogated. Distinct from NO_CALL_NO_CHRM_DATA, which
+# means the file carried none at all -- the two need different report copy
+# because they suggest different remedies to the reader.
+NO_CALL_REGION_NOT_COVERED = "region_not_covered"
+
+
+class MtRnr1Call(NamedTuple):
+    """The resolved call, why it was withheld, and how it was established.
+
+    Exactly one of `call` / `no_call_reason` is set. `basis` is set only
+    alongside a REFERENCE promotion -- a named allele needs no basis (the
+    variant is the evidence), and a no-call has nothing to describe.
+    """
+
+    call: Optional[str]
+    no_call_reason: Optional[str]
+    basis: Optional[str]
+
+
+def has_variant_in_gene(records: List[VcfRecord]) -> bool:
+    """True when any record falls inside MT-RNR1's rCRS span.
+
+    This is Tier C's first half. It works because rCRS is a phylogenetic
+    outlier (an H2a2a1 sequence), so most of humanity differs from it at a
+    near-fixed set of positions -- and two of them, 750 and 1438, land inside
+    648-1601. Both samples this repo has run, one WGS and one exome, carry
+    both. So "a variant inside the gene" is a gate almost every genuinely
+    covered sample passes and almost every uncovered one fails.
+
+    A deletion's anchor sits one base left of the first deleted base, so the
+    window is widened by the record length rather than testing pos alone --
+    the same rule _read_chrm_records uses when subsetting.
+    """
+    low, high = MT_RNR1_SPAN
+    return any(
+        record.pos + len(record.ref) >= low and record.pos <= high for record in records
+    )
+
 
 def resolve_mt_rnr1_call(
     matched: List[str],
     records: List[VcfRecord],
     *,
     evidence_reason: Optional[str],
-) -> Tuple[Optional[str], Optional[str]]:
+    basis: Optional[str] = None,
+) -> MtRnr1Call:
     """The final MT-RNR1 call, and -- when it stays a no-call -- why.
 
     This is the one place the "empty match -> Reference" promotion actually
@@ -253,12 +305,18 @@ def resolve_mt_rnr1_call(
     (a real allele name, or REFERENCE) when a match already existed or the
     promotion is allowed; `no_call_reason` is set to the concrete blocking
     reason otherwise.
+
+    `basis` is how the caller established its evidence -- BASIS_MEASURED for
+    a depth measurement over the gene, BASIS_INFERRED for Tier C's
+    in-gene-variant-plus-clean-haplogroup inference. It is recorded on the
+    promotion and dropped on every other path: a named allele carries its own
+    evidence, and a no-call has nothing to describe.
     """
     call = select_call(matched)
     if call is not None:
-        return call, None
+        return MtRnr1Call(call, None, None)
     if evidence_reason is not None:
-        return None, evidence_reason
+        return MtRnr1Call(None, evidence_reason, None)
     if has_unresolved_961_deletion(records):
-        return None, NO_CALL_UNRESOLVED_961_DELINS
-    return REFERENCE, None
+        return MtRnr1Call(None, NO_CALL_UNRESOLVED_961_DELINS, None)
+    return MtRnr1Call(REFERENCE, None, basis)
