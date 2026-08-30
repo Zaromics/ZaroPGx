@@ -251,3 +251,9 @@ CLAUDE.md
 
 
 .worktrees/
+
+# Upstream mtDNA-Server 2 test data (fetched from the genepi repo at the pinned
+# tag, not authored here). HG00096's chrM BAM is 21 MB and the repo has no
+# chrM-bearing sample of its own, so it is fetched on demand for verification
+# rather than committed. See docker/mtdna-server-2/README.md.
+/data/mtdna-testdata/

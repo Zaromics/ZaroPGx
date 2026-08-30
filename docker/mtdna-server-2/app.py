@@ -3,7 +3,6 @@ import asyncio
 import json
 import logging
 import re
-import subprocess
 import time
 import uuid
 import csv
@@ -231,22 +230,39 @@ async def _run(argv: List[str], cwd: str, job_key: str) -> None:
 _MITO_CONTIG_NAMES = {"chrm", "mt", "m"}
 
 
-def _read_mito_contig_header(vcf_path: str):
+async def _read_mito_contig_header(vcf_path: str, work: str, job_key: str):
     """(name, length) of the VCF's mitochondrial ##contig line, or (None, None).
 
-    Read with `bcftools view -h`. The mito contig may be spelled chrM, MT or M;
-    take the first that appears. Length is parsed from the same line's
-    `length=` field. Returns (None, None) when the header carries no mito
-    contig, which is a real case -- some VCFs omit ##contig entirely -- and the
-    caller then falls back to the build label.
+    Read with `bcftools view -h`, run the same non-blocking way as every other
+    subprocess in this file (see `_run`): the Dockerfile starts exactly one
+    gunicorn worker, so a blocking `subprocess.run()` here would stall
+    /health and the broadcast /cancel for as long as bcftools takes on this
+    file, and an uncaught CalledProcessError would surface as a bare 500
+    instead of this file's consistent HTTPException-with-stderr.
+
+    The mito contig may be spelled chrM, MT or M; take the first that
+    appears. Length is parsed from the same line's `length=` field. Returns
+    (None, None) when the header carries no mito contig, which is a real
+    case -- some VCFs omit ##contig entirely -- and the caller then falls
+    back to the build label.
     """
-    result = subprocess.run(
-        ["bcftools", "view", "-h", vcf_path],
-        capture_output=True,
-        text=True,
-        check=True,
+    proc = await asyncio.create_subprocess_exec(
+        "bcftools",
+        "view",
+        "-h",
+        vcf_path,
+        cwd=work,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    for line in result.stdout.splitlines():
+    running_processes.setdefault(job_key, {})["bcftools-header"] = proc
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"bcftools failed: {stderr.decode(errors='replace')[:2000]}",
+        )
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
         if not line.startswith("##contig="):
             continue
         id_match = re.search(r"ID=([^,>]+)", line)
@@ -298,11 +314,21 @@ async def _call_from_vcf(
     # hand a genuine hg19 file the rename-only plan and never lift its chrM.
     # The contig length is ground truth: 16571 = NC_001807 (hg19), 16569 = rCRS
     # (b37's MT and GRCh38's chrM alike).
-    contig_name, contig_length = _read_mito_contig_header(vcf_path)
-    build = classify_from_mito_contig(contig_name, contig_length)
+    #
+    # build_name IS passed in here, but only classify_from_mito_contig decides
+    # whether it's safe to use: it's consulted internally, and only for the
+    # one case where the contig line exists but carries no length= (a bare
+    # "chrM", which hg19 and GRCh38 both spell identically) -- see that
+    # function's docstring for why that's the only safe direction to trust
+    # the label in.
+    contig_name, contig_length = await _read_mito_contig_header(vcf_path, work, job_key)
+    build = classify_from_mito_contig(contig_name, contig_length, build_name)
     if build == MitoBuild.UNSUPPORTED:
-        # No usable mito contig header -- fall back to the label, which is all
-        # the information there is for such a file.
+        # No usable mito contig header at all (name AND length both absent) --
+        # fall back to the label, which is all the information there is for
+        # such a file. This is NOT the ambiguous-chrM case above: that one
+        # resolves (or refuses, as AMBIGUOUS_CHRM) inside
+        # classify_from_mito_contig itself and never reaches here.
         build = classify_build(build_name)
     plan = plan_for(build)
     if not plan.supported:

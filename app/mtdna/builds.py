@@ -29,6 +29,13 @@ class MitoBuild(Enum):
     B37 = "b37"
     HG19 = "hg19"
     UNSUPPORTED = "unsupported"
+    # A ##contig=<ID=chrM> line with no length= field. Distinct from
+    # UNSUPPORTED (which means "no evidence at all", and is safe to hand to
+    # classify_build as a last resort): here there IS a contig line, but
+    # "chrM" alone is worn by both hg19 (16571 bp) and GRCh38 (16569 bp), and
+    # guessing between them risks a shifted position inside MT-RNR1, not just
+    # a missed call. See classify_from_mito_contig.
+    AMBIGUOUS_CHRM = "ambiguous_chrm"
 
 
 class BuildPlan(NamedTuple):
@@ -58,7 +65,9 @@ def classify_build(reference_genome: str) -> MitoBuild:
     return MitoBuild.UNSUPPORTED
 
 
-def classify_from_mito_contig(name: Optional[str], length: Optional[int]) -> MitoBuild:
+def classify_from_mito_contig(
+    name: Optional[str], length: Optional[int], build_label: Optional[str] = None
+) -> MitoBuild:
     """Identify the mitochondrial sequence from a VCF's own ##contig header.
 
     Ground truth, and the reason it is preferred over the build label:
@@ -72,6 +81,15 @@ def classify_from_mito_contig(name: Optional[str], length: Optional[int]) -> Mit
       16571 -> NC_001807, hg19's chrM  -> needs a real liftover
       16569 -> rCRS (NC_012920)        -> already in target coordinates;
                                           MT vs chrM then says b37 vs GRCh38
+
+    `build_label` is consulted ONLY for the one case where the length itself
+    is missing and the name alone cannot resolve it (see below) -- GATK- and
+    bcftools-written headers normally carry length=, but hand-built and
+    third-party VCFs often don't, and falling through to classify_build(name)
+    unconditionally in that case would silently reintroduce the exact bug
+    this function exists to prevent: a real hg19 file, labelled "GRCh37" by
+    file_processor's collapse, would take the rename-only (never lifted)
+    plan.
     """
     if length == 16571:
         return MitoBuild.HG19
@@ -81,6 +99,30 @@ def classify_from_mito_contig(name: Optional[str], length: Optional[int]) -> Mit
             return MitoBuild.B37
         if contig == "chrm":
             return MitoBuild.GRCH38
+        return MitoBuild.UNSUPPORTED
+    if length is None:
+        contig = (name or "").strip().lower()
+        if contig in ("mt", "m"):
+            # Unambiguous even without a length: hg19 never spells it MT/M,
+            # only chrM. b37's MT is already rCRS, so rename-only is correct
+            # regardless of what the (missing) length would have said.
+            return MitoBuild.B37
+        if contig == "chrm":
+            # Genuinely ambiguous: hg19's chrM is 16571 bp, GRCh38's is
+            # 16569 bp, and "chrM" alone is spelled identically by both.
+            # The label is safe to consult here, but only in the direction
+            # that can't be wrong: nothing collapses INTO "38" -- the lossy
+            # collapse file_processor performs is hg19 -> GRCh37, never the
+            # reverse -- so a label that unambiguously says 38 really does
+            # mean GRCh38. A label that says GRCh37/hg19/b37 (or nothing
+            # usable) must NOT be guessed at: silently assuming GRCh38 there
+            # would report m.1555A>G at 1553, and silently assuming hg19
+            # would lift coordinates that were never hg19's to begin with.
+            # Refusing (AMBIGUOUS_CHRM) is the honest outcome; the caller
+            # turns that into a 422 telling the reader to re-header the file.
+            if classify_build(build_label) == MitoBuild.GRCH38:
+                return MitoBuild.GRCH38
+            return MitoBuild.AMBIGUOUS_CHRM
         return MitoBuild.UNSUPPORTED
     return MitoBuild.UNSUPPORTED
 
@@ -96,6 +138,18 @@ _PLANS = {
         False,
         "Mitochondrial calling needs a build whose chrM is rCRS or hg19's "
         "NC_001807. This file's build could not be matched to either.",
+    ),
+    MitoBuild.AMBIGUOUS_CHRM: BuildPlan(
+        False,
+        False,
+        False,
+        "This VCF's chrM contig header carries no length (##contig=<ID=chrM> "
+        "with no length= field), and hg19's chrM (16571 bp, NC_001807) cannot "
+        "be told apart from rCRS (16569 bp, the sequence GRCh38's chrM and "
+        "b37's MT both carry) without it. Calling anyway risks reporting "
+        "variants at positions shifted by up to 2 bp inside MT-RNR1. "
+        "Re-header the VCF with contig lengths "
+        "(##contig=<ID=chrM,length=...>) and try again.",
     ),
 }
 

@@ -92,9 +92,62 @@ def test_contig_chrm_at_16569_is_grch38():
     assert classify_from_mito_contig("chrM", 16569) == MitoBuild.GRCH38
 
 
-def test_missing_length_is_unsupported():
-    assert classify_from_mito_contig("chrM", None) == MitoBuild.UNSUPPORTED
+def test_no_contig_line_at_all_is_unsupported():
+    """No name and no length -- there is nothing here to classify from, so
+    this is the true "fall back to the build label" case, distinct from the
+    ambiguous-chrM-with-no-length case below."""
     assert classify_from_mito_contig(None, None) == MitoBuild.UNSUPPORTED
+
+
+# -- classify_from_mito_contig: a contig line with no length= --
+
+
+def test_mt_with_no_length_is_still_b37():
+    """MT/M with no length is unambiguous without consulting the label at
+    all: hg19 never spells it MT, only chrM -- and b37's MT is already rCRS,
+    so rename-only is correct regardless of what the missing length would
+    have said."""
+    assert classify_from_mito_contig("MT", None) == MitoBuild.B37
+    assert classify_from_mito_contig("M", None) == MitoBuild.B37
+
+
+def test_chrm_with_no_length_and_a_38_label_is_grch38():
+    """chrM with no length is genuinely ambiguous by itself (hg19 and
+    GRCh38 spell it identically), but a label that unambiguously says "38"
+    is safe to trust: nothing collapses INTO "38", only hg19 -> GRCh37 does.
+    """
+    assert classify_from_mito_contig("chrM", None, build_label="GRCh38") == (
+        MitoBuild.GRCH38
+    )
+    assert classify_from_mito_contig("chrM", None, build_label="hg38") == (
+        MitoBuild.GRCH38
+    )
+
+
+def test_chrm_with_no_length_and_a_37_label_is_refused():
+    """The label collapse this module exists to distrust: a real hg19 file
+    can be labelled "GRCh37", so a chrM-with-no-length header plus that
+    label must NOT be guessed at as GRCh38 -- it must refuse."""
+    assert classify_from_mito_contig("chrM", None, build_label="GRCh37") == (
+        MitoBuild.AMBIGUOUS_CHRM
+    )
+    assert classify_from_mito_contig("chrM", None, build_label="hg19") == (
+        MitoBuild.AMBIGUOUS_CHRM
+    )
+
+
+def test_chrm_with_no_length_and_an_unknown_label_is_refused():
+    assert classify_from_mito_contig("chrM", None, build_label="T2T-CHM13") == (
+        MitoBuild.AMBIGUOUS_CHRM
+    )
+    assert classify_from_mito_contig("chrM", None) == MitoBuild.AMBIGUOUS_CHRM
+
+
+def test_ambiguous_chrm_is_refused_with_a_reason():
+    plan = plan_for(MitoBuild.AMBIGUOUS_CHRM)
+    assert not plan.supported
+    assert plan.reason
+    assert "length" in plan.reason.lower()
 
 
 def test_absurd_length_is_unsupported():
