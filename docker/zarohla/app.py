@@ -14,13 +14,13 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 import sys
 
-sys.path.append('/job-client')
+sys.path.append("/job-client")
 from job_client import JobClient
 
 # Read (and created) before logging is configured because the progress-log handler
 # below writes into DATA_DIR. Same ordering as gatk_api.py.
-DATA_DIR = Path(os.getenv('DATA_DIR', '/data'))
-TEMP_DIR = DATA_DIR / 'temp'
+DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
+TEMP_DIR = DATA_DIR / "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Uploads are streamed to disk in chunks of this size rather than read into memory --
@@ -58,7 +58,7 @@ UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 # broke /cancel about half the time), which removes the hazard at the source and
 # lets this go back to the same single shared path as the other four.
 PROGRESS_LOG_PATH = os.getenv(
-    'ZAROHLA_PROGRESS_LOG', str(DATA_DIR / 'zarohla_progress.log')
+    "ZAROHLA_PROGRESS_LOG", str(DATA_DIR / "zarohla_progress.log")
 )
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
@@ -108,8 +108,8 @@ if _progress_handler is not None:
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=_log_handlers
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=_log_handlers,
 )
 logger = logging.getLogger("zarohla")
 _warn_about_unopened_logs(logger)
@@ -232,10 +232,12 @@ def safe_upload_name(original: Optional[str], default_suffix: str) -> str:
 
 app = FastAPI(title="ZaroHLA API", version="1.0.0")
 
+
 class CancelRequest(BaseModel):
     job_id: str
     patient_id: str
     action: str
+
 
 # Per-process, and that is only correct because docker/zarohla/Dockerfile starts
 # `gunicorn --workers 1`. /cancel below can only kill a pid it finds in here, so
@@ -246,24 +248,23 @@ class CancelRequest(BaseModel):
 # after import and then lets each worker mutate its own copy.
 running_processes: Dict[str, Dict[str, Any]] = {}
 
+
 @app.get("/health")
 def health():
-    return {
-        "status": "healthy",
-        "service": "zarohla"
-    }
+    return {"status": "healthy", "service": "zarohla"}
+
 
 @app.post("/cancel")
 async def cancel_workflow_job(request: CancelRequest):
     job_id = request.job_id
     patient_id = request.patient_id
-    
+
     logger.info(f"Cancelling job {job_id} for patient {patient_id}")
-    
+
     if job_id in running_processes:
         process_info = running_processes[job_id]
         pid = process_info.get("pid")
-        
+
         if pid and psutil.pid_exists(pid):
             try:
                 process = psutil.Process(pid)
@@ -273,9 +274,9 @@ async def cancel_workflow_job(request: CancelRequest):
                 logger.info(f"Terminated process {pid} for job {job_id}")
             except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                 logger.warning(f"Could not terminate process {pid}: {e}")
-                
+
         del running_processes[job_id]
-        
+
     return {"status": "success", "message": f"Cancellation processed for {job_id}"}
 
 
@@ -290,21 +291,23 @@ async def call_hla(
     patient_id: Optional[str] = Form("unknown"),
     report_id: Optional[str] = Form("unknown"),
     job_id: Optional[str] = Form(None),
-    step_name: Optional[str] = Form("zarohla")
+    step_name: Optional[str] = Form("zarohla"),
 ) -> Dict[str, Any]:
-    
+
     job_client = None
     if job_id:
         try:
             job_client = JobClient(job_id=job_id, step_name=step_name)
             if await job_client.is_job_cancelled():
-                logger.info(f"Workflow {job_id} is cancelled, aborting ZaroHLA processing")
+                logger.info(
+                    f"Workflow {job_id} is cancelled, aborting ZaroHLA processing"
+                )
                 return {"success": False, "error": "Workflow has been cancelled"}
-                
+
             await job_client.start_step("Starting HLA typing")
         except Exception as e:
             logger.warning(f"Failed to initialize JobClient: {e}")
-            
+
     local_job_id = str(uuid.uuid4())
     job_dir = TEMP_DIR / local_job_id
     os.makedirs(job_dir, exist_ok=True)
@@ -314,7 +317,7 @@ async def call_hla(
     try:
         f1_path = None
         f2_path = None
-        
+
         if file1 and file2:
             # Never `job_dir / file1.filename` -- see safe_upload_name() above.
             f1_path = job_dir / safe_upload_name(file1.filename, ".fastq")
@@ -339,10 +342,16 @@ async def call_hla(
             with open(input_path, "wb") as f:
                 while chunk := await file.read(UPLOAD_CHUNK_BYTES):
                     f.write(chunk)
-            
-            if input_path.name.lower().endswith(".bam") or input_path.name.lower().endswith(".sam") or input_path.name.lower().endswith(".cram"):
+
+            if (
+                input_path.name.lower().endswith(".bam")
+                or input_path.name.lower().endswith(".sam")
+                or input_path.name.lower().endswith(".cram")
+            ):
                 if job_client:
-                    await job_client.log_progress(f"Converting BAM to FASTQ using samtools")
+                    await job_client.log_progress(
+                        f"Converting BAM to FASTQ using samtools"
+                    )
 
                 f1_path = job_dir / "read1.fq"
                 f2_path = job_dir / "read2.fq"
@@ -352,23 +361,54 @@ async def call_hla(
                 # discarded singleton stream and OptiType gets few/no reads. Collate to
                 # a temp BAM first (no shell: this sidecar is command-injection hardened).
                 collated_path = job_dir / "collated.bam"
-                collate_cmd = ["samtools", "collate", "-u", "-o", str(collated_path), str(input_path)]
+                collate_cmd = [
+                    "samtools",
+                    "collate",
+                    "-u",
+                    "-o",
+                    str(collated_path),
+                    str(input_path),
+                ]
                 logger.info(f"Running samtools: {' '.join(collate_cmd)}")
-                collate_proc = await asyncio.create_subprocess_exec(*collate_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                collate_proc = await asyncio.create_subprocess_exec(
+                    *collate_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
                 if job_id:
-                    running_processes[job_id] = {"pid": collate_proc.pid, "job_dir": str(job_dir)}
+                    running_processes[job_id] = {
+                        "pid": collate_proc.pid,
+                        "job_dir": str(job_dir),
+                    }
                 _, collate_err = await collate_proc.communicate()
                 if job_id and job_id not in running_processes:
                     raise Exception("Process cancelled by user")
                 if collate_proc.returncode != 0:
                     raise Exception(f"samtools collate failed: {collate_err.decode()}")
 
-                cmd = ["samtools", "fastq", "-1", str(f1_path), "-2", str(f2_path), "-0", "/dev/null", "-s", "/dev/null", str(collated_path)]
+                cmd = [
+                    "samtools",
+                    "fastq",
+                    "-1",
+                    str(f1_path),
+                    "-2",
+                    str(f2_path),
+                    "-0",
+                    "/dev/null",
+                    "-s",
+                    "/dev/null",
+                    str(collated_path),
+                ]
 
                 logger.info(f"Running samtools: {' '.join(cmd)}")
-                process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
                 if job_id:
-                    running_processes[job_id] = {"pid": process.pid, "job_dir": str(job_dir)}
+                    running_processes[job_id] = {
+                        "pid": process.pid,
+                        "job_dir": str(job_dir),
+                    }
 
                 stdout, stderr = await process.communicate()
 
@@ -380,7 +420,10 @@ async def call_hla(
             else:
                 f1_path = input_path
         else:
-            raise HTTPException(status_code=400, detail="Must provide either 'file' or 'file1' and 'file2'")
+            raise HTTPException(
+                status_code=400,
+                detail="Must provide either 'file' or 'file1' and 'file2'",
+            )
 
         # A targeted PGx panel with no HLA capture converts to genuinely empty
         # FASTQs, and OptiType does not tolerate that: it dies inside pandas with
@@ -426,65 +469,74 @@ async def call_hla(
         if f2_path and os.path.exists(f2_path) and os.path.getsize(f2_path) > 0:
             # OptiType v1.5 CLI takes each paired-end file as its own -i (not a bare positional)
             cmd.extend(["-i", str(f2_path)])
-            
+
         cmd.extend([f"--{seq_type}", "--mapper", mapper, "-o", str(outdir)])
-        
+
         logger.info(f"Running command: {' '.join(cmd)}")
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
         if job_id:
             running_processes[job_id] = {"pid": process.pid, "job_dir": str(job_dir)}
-            
+
         stdout, stderr = await process.communicate()
-        
+
         if job_id and job_id not in running_processes:
             raise Exception("Process cancelled by user")
-            
+
         if job_id in running_processes:
             del running_processes[job_id]
-            
+
         if process.returncode != 0:
             logger.error(f"OptiType failed: {stderr.decode()}")
             if job_client:
-                await job_client.fail_step("OptiType execution failed", {"error": stderr.decode()})
-            raise HTTPException(status_code=500, detail=f"OptiType failed: {stderr.decode()}")
-            
+                await job_client.fail_step(
+                    "OptiType execution failed", {"error": stderr.decode()}
+                )
+            raise HTTPException(
+                status_code=500, detail=f"OptiType failed: {stderr.decode()}"
+            )
+
         if job_client:
             await job_client.log_progress("Parsing OptiType results")
-            
+
         results = {}
         # OptiType v1.5 writes into a timestamped subdir (outdir/<ts>/<ts>_result.tsv)
         result_files = list(outdir.rglob("*_result.tsv"))
         if not result_files:
             raise Exception("OptiType did not produce a _result.tsv file")
-            
+
         tsv_file = result_files[0]
-        with open(tsv_file, 'r') as f:
-            reader = csv.DictReader(f, delimiter='\t')
+        with open(tsv_file, "r") as f:
+            reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
-                results["HLA-A"] = f"{row.get('A1', '')},{row.get('A2', '')}".strip(',')
-                results["HLA-B"] = f"{row.get('B1', '')},{row.get('B2', '')}".strip(',')
-                results["HLA-C"] = f"{row.get('C1', '')},{row.get('C2', '')}".strip(',')
-                break 
-                
+                results["HLA-A"] = f"{row.get('A1', '')},{row.get('A2', '')}".strip(",")
+                results["HLA-B"] = f"{row.get('B1', '')},{row.get('B2', '')}".strip(",")
+                results["HLA-C"] = f"{row.get('C1', '')},{row.get('C2', '')}".strip(",")
+                break
+
         results = {k: v for k, v in results.items() if v}
-        
+
         if job_client:
-            await job_client.complete_step("HLA typing completed successfully", {"results": results})
-            
+            await job_client.complete_step(
+                "HLA typing completed successfully", {"results": results}
+            )
+
         return {"status": "success", "results": results}
-        
+
     except Exception as e:
         logger.error(f"Error in HLA typing: {str(e)}")
         if job_client:
             await job_client.fail_step("HLA typing failed", {"error": str(e)})
-            
+
         if job_id and job_id in running_processes:
             del running_processes[job_id]
-            
+
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         try:
             import shutil
+
             shutil.rmtree(job_dir, ignore_errors=True)
         except Exception:
             pass
