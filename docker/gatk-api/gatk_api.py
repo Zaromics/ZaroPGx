@@ -2423,6 +2423,12 @@ def split_mt_records(job_label, input_path, work_dir):
       rest_path  everything BUT MT/M. `input_path` itself, unchanged, when the
                  file carries no MT/M records at all -- the common case for a
                  targeted panel -- so nothing is filtered that was never there.
+                 None when the file is MT/M-only: there is then nothing left to
+                 hand to LiftoverVcf at all, which the caller must check for and
+                 skip the conversion entirely (see run_liftover_pipeline) --
+                 handing it a header-only VCF would make LiftoverVcf produce
+                 zero records and trip the "implausible near-empty result"
+                 guard on an input that needed no lifting in the first place.
       mt_path    the held-back MT/M records renamed to `chrM`, coordinates
                  untouched, ready to be spliced back into the lifted output by
                  merge_mt_passthrough(). None when there was nothing to hold back.
@@ -2451,6 +2457,15 @@ def split_mt_records(job_label, input_path, work_dir):
         _discard_output(mt_raw)
         return input_path, None
 
+    # From here on MT/M records definitely exist, so mt_path is needed either
+    # way -- whether or not anything else is left to lift. Rename MT/M -> chrM
+    # now, once. This reuses the same rename map LiftoverVcf's other 26 entries
+    # use -- correct here too, because for this file the map is doing nothing
+    # but the rename its name promises: mt_raw contains only MT/M records, and
+    # their coordinates are left exactly as they were. No chain is involved.
+    mt_path = os.path.join(work_dir, 'mt_chrm.vcf.gz')
+    rename_vcf_contigs_to_chr(job_label, mt_raw, mt_path, work_dir)
+
     rest_path = os.path.join(work_dir, 'non_mt.vcf.gz')
     argv = ['bcftools', 'view', '-t', '^MT,M', '-Oz', '-o', rest_path, input_path]
     logger.info(f"Job {job_label}: running {' '.join(argv)}")
@@ -2473,12 +2488,15 @@ def split_mt_records(job_label, input_path, work_dir):
             detail="bcftools view exited 0 but wrote no non-MT VCF",
         )
 
-    # Rename MT/M -> chrM. This reuses the same rename map LiftoverVcf's other 26
-    # entries use -- correct here too, because for this file the map is doing
-    # nothing but the rename its name promises: mt_raw contains only MT/M records,
-    # and their coordinates are left exactly as they were. No chain is involved.
-    mt_path = os.path.join(work_dir, 'mt_chrm.vcf.gz')
-    rename_vcf_contigs_to_chr(job_label, mt_raw, mt_path, work_dir)
+    if count_vcf_records(rest_path) == 0:
+        # MT/M-only input: a header-only VCF is a nonzero-size file (the header
+        # alone compresses to something), so the size check above does not catch
+        # this -- it has to be a record count. There is nothing left to hand to
+        # LiftoverVcf; the caller skips it entirely rather than running it on an
+        # input guaranteed to come back with zero records.
+        _discard_output(rest_path)
+        return None, mt_path
+
     return rest_path, mt_path
 
 
@@ -2564,6 +2582,7 @@ def run_liftover_pipeline(job_label, input_path, work_dir, lifted_path, reject_p
     naming = vcf_contig_naming(job_label, input_path)
     renamed_contigs = naming == 'plain'
     mt_path = None
+    mt_only_input = False
     if renamed_contigs:
         # b37's MT is already rCRS -- already GRCh38's coordinate system -- so it
         # must never go through this hg19-sourced chain. See MT_IS_ALREADY_RCRS's
@@ -2571,58 +2590,86 @@ def run_liftover_pipeline(job_label, input_path, work_dir, lifted_path, reject_p
         # below) is a genuinely different sequence and is NOT touched by this --
         # it keeps going through LiftoverVcf like every other contig.
         rename_input, mt_path = split_mt_records(job_label, input_path, work_dir)
-        chr_input = os.path.join(work_dir, 'chr_named_input.vcf.gz')
-        rename_vcf_contigs_to_chr(job_label, rename_input, chr_input, work_dir)
-        liftover_input = chr_input
+        if rename_input is None:
+            # MT/M-only input (split_mt_records only returns None here once it
+            # has confirmed mt_path is not). There is nothing left for
+            # LiftoverVcf to do -- see the comment at the honesty gate below for
+            # why this does not, and must not, run LiftoverVcf on a header-only
+            # file just to prove that.
+            mt_only_input = True
+        else:
+            chr_input = os.path.join(work_dir, 'chr_named_input.vcf.gz')
+            rename_vcf_contigs_to_chr(job_label, rename_input, chr_input, work_dir)
+            liftover_input = chr_input
     else:
         liftover_input = input_path
 
-    # Step 2: the actual coordinate conversion.
-    argv = build_liftover_argv(
-        liftover_input, lifted_path, chain_path, reject_path, reference_path
-    )
-    logger.info(f"Job {job_label}: running {' '.join(argv)}")
-    try:
-        result = subprocess.run(argv, capture_output=True, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"GATK could not be executed - check container configuration ({exc})",
+    if mt_only_input:
+        # Every record in the input was MT/M, already rCRS, already renamed to
+        # chrM with coordinates untouched by split_mt_records -- there is
+        # nothing to convert, so LiftoverVcf never runs. shutil.move, not
+        # os.replace: mt_path is under work_dir (TEMP_DIR) and lifted_path is on
+        # the shared /data volume, typically a different filesystem, where a
+        # bare rename raises EXDEV (see merge_mt_passthrough's docstring).
+        shutil.move(mt_path, lifted_path)
+    else:
+        # Step 2: the actual coordinate conversion.
+        argv = build_liftover_argv(
+            liftover_input, lifted_path, chain_path, reject_path, reference_path
         )
-    if result.returncode != 0:
-        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
-        # The tail is where Picard puts its actual complaint; the head is banner.
-        raise HTTPException(
-            status_code=500,
-            detail=f"LiftoverVcf failed with exit code {result.returncode}: {stderr[-2000:]}",
-        )
-
-    if not os.path.exists(lifted_path) or os.path.getsize(lifted_path) == 0:
-        raise HTTPException(
-            status_code=500,
-            detail=f"LiftoverVcf exited 0 but wrote no output to {lifted_path}",
-        )
-    with open(lifted_path, 'rb') as handle:
-        if handle.read(2) != b'\x1f\x8b':
+        logger.info(f"Job {job_label}: running {' '.join(argv)}")
+        try:
+            result = subprocess.run(argv, capture_output=True, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
             raise HTTPException(
                 status_code=500,
-                detail=f"LiftoverVcf produced {lifted_path}, which is not a BGZF-framed VCF",
+                detail=f"GATK could not be executed - check container configuration ({exc})",
+            )
+        if result.returncode != 0:
+            stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+            # The tail is where Picard puts its actual complaint; the head is banner.
+            raise HTTPException(
+                status_code=500,
+                detail=f"LiftoverVcf failed with exit code {result.returncode}: {stderr[-2000:]}",
             )
 
-    # Step 2b: splice the held-back MT/M records (untouched coordinates, renamed
-    # to chrM) back into the lifted output, before the honesty gate below counts
-    # it. That ordering matters: LIFTOVER_MAX_REJECT_FRACTION is a fraction of
-    # *input* records, and MT/M were part of the input, so they must be back in
-    # `n_lifted` before that fraction is computed, or removing them from
-    # LiftoverVcf's view would silently shrink the denominator instead of just
-    # rerouting records that were never going to be rejected anyway.
-    if mt_path:
-        merge_mt_passthrough(job_label, lifted_path, mt_path, work_dir)
+        if not os.path.exists(lifted_path) or os.path.getsize(lifted_path) == 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"LiftoverVcf exited 0 but wrote no output to {lifted_path}",
+            )
+        with open(lifted_path, 'rb') as handle:
+            if handle.read(2) != b'\x1f\x8b':
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"LiftoverVcf produced {lifted_path}, which is not a BGZF-framed VCF",
+                )
+
+        # Step 2b: splice the held-back MT/M records (untouched coordinates,
+        # renamed to chrM) back into the lifted output, before the honesty gate
+        # below counts it. That ordering matters: LIFTOVER_MAX_REJECT_FRACTION is
+        # a fraction of *input* records, and MT/M were part of the input, so they
+        # must be back in `n_lifted` before that fraction is computed, or
+        # removing them from LiftoverVcf's view would silently shrink the
+        # denominator instead of just rerouting records that were never going to
+        # be rejected anyway.
+        if mt_path:
+            merge_mt_passthrough(job_label, lifted_path, mt_path, work_dir)
 
     # Step 3: the honesty gate. LiftoverVcf "succeeding" while rejecting nearly
     # everything is exactly what a chain/prefix mismatch looks like, and the cost
     # of letting it through is a clinical report computed from a fraction of the
     # patient's variants. See LIFTOVER_MAX_REJECT_FRACTION.
+    #
+    # This does not, and must not, fire for `mt_only_input`: LiftoverVcf never
+    # ran, `reject_path` was therefore never written (count_vcf_records treats a
+    # missing file as 0 -- see its docstring), and `n_lifted` is the MT/M
+    # passthrough's own record count, which is > 0 by construction (split_mt_
+    # records only reports an MT-only input once it has confirmed there is at
+    # least one MT/M record to report). This guard exists to catch a
+    # chain/prefix mismatch producing a near-empty *lifted* result -- it is not
+    # "most of the input is missing", it is "every record present needed no
+    # lifting", and those are not the same failure.
     n_lifted = count_vcf_records(lifted_path)
     n_rejected = count_vcf_records(reject_path)
     reject_reasons = summarise_reject_reasons(reject_path)

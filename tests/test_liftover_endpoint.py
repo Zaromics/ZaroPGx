@@ -60,6 +60,28 @@ CHR_GRCH37_VCF = (
     "chr10\t96541616\trs4244285\tG\tA\t100\tPASS\t.\tGT\t0/1\n"
 )
 
+# b37's MT is already rCRS -- these two exist to pin the split-and-passthrough
+# behaviour added for that (see gatk_api.py's MT_IS_ALREADY_RCRS docstring).
+# m.1555A>G is a real MT-RNR1 PGx variant; its position must survive unshifted.
+PLAIN_GRCH37_VCF_WITH_MT = (
+    "##fileformat=VCFv4.2\n"
+    "##reference=file:///refs/human_g1k_v37.fasta\n"
+    "##contig=<ID=1,length=249250621>\n"
+    "##contig=<ID=10,length=135534747>\n"
+    "##contig=<ID=MT,length=16569>\n"
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+    "10\t96541616\trs4244285\tG\tA\t100\tPASS\t.\tGT\t0/1\n"
+    "MT\t1555\t.\tA\tG\t100\tPASS\t.\tGT\t1/1\n"
+)
+
+PLAIN_GRCH37_VCF_MT_ONLY = (
+    "##fileformat=VCFv4.2\n"
+    "##reference=file:///refs/human_g1k_v37.fasta\n"
+    "##contig=<ID=MT,length=16569>\n"
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+    "MT\t1555\t.\tA\tG\t100\tPASS\t.\tGT\t1/1\n"
+)
+
 
 def _fake_psutil():
     module = types.ModuleType("psutil")
@@ -136,9 +158,19 @@ class FakeTools:
     """Stands in for the module's `subprocess` binding, recording every argv.
 
     Emulates just enough of bcftools/gatk for the pipeline to complete:
-    `bcftools annotate` copies its input to the -o path (gzipped), `gatk
+    `bcftools annotate --rename-chrs` applies the real rename map to the CHROM
+    column (it is doing the one thing that name promises, so faking it
+    genuinely is only a few lines), `bcftools view -t`/`-t ^` filters rows by
+    CHROM membership, `bcftools concat` appends inputs under the first file's
+    header, `bcftools sort` orders the result by (CHROM, POS), `gatk
     LiftoverVcf` writes configurable lifted/reject VCFs at -O/--REJECT, and
     `bcftools index -t` touches a .tbi. Everything else exits 0 silently.
+
+    This is deliberately not a real bcftools -- concat/sort do not replicate
+    header-contig-order sorting or any of bcftools' actual merge semantics.
+    Where a call's effect is more than a few lines to fake honestly, prefer
+    asserting on the argv it was issued with (tests below do this for
+    concat/sort's presence and ordering) over growing this fake toward one.
     """
 
     SubprocessError = subprocess.SubprocessError
@@ -172,23 +204,88 @@ class FakeTools:
         with open(path, "wb") as handle:
             handle.write(gzip.compress(body.encode("utf-8")))
 
+    def _read_vcf_lines(self, path):
+        with open(path, "rb") as handle:
+            blob = handle.read()
+        text = (
+            gzip.decompress(blob).decode() if blob[:2] == b"\x1f\x8b" else blob.decode()
+        )
+        return text.splitlines(keepends=True)
+
+    def _write_lines(self, path, lines):
+        with open(path, "wb") as handle:
+            handle.write(gzip.compress("".join(lines).encode("utf-8")))
+
     def run(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
         tool = argv[0] if argv else ""
         sub = argv[1] if len(argv) > 1 else ""
 
         if tool == "bcftools" and sub == "annotate":
-            source = argv[-1]
-            with open(source, "rb") as handle:
-                blob = handle.read()
-            text = (
-                gzip.decompress(blob).decode()
-                if blob[:2] == b"\x1f\x8b"
-                else blob.decode()
-            )
-            with open(self._flag_value(argv, "-o"), "wb") as handle:
-                handle.write(gzip.compress(text.encode("utf-8")))
+            lines = self._read_vcf_lines(argv[-1])
+            rename_map = {}
+            if "--rename-chrs" in argv:
+                map_text = Path(self._flag_value(argv, "--rename-chrs")).read_text(
+                    encoding="utf-8"
+                )
+                for row in map_text.splitlines():
+                    if row.strip():
+                        old, new = row.split("\t")
+                        rename_map[old] = new
+            out_lines = []
+            for line in lines:
+                if line.startswith("#"):
+                    out_lines.append(line)
+                    continue
+                fields = line.split("\t", 1)
+                fields[0] = rename_map.get(fields[0], fields[0])
+                out_lines.append("\t".join(fields))
+            self._write_lines(self._flag_value(argv, "-o"), out_lines)
+        elif tool == "bcftools" and sub == "view" and "-t" in argv:
+            spec = self._flag_value(argv, "-t")
+            negate = spec.startswith("^")
+            targets = set((spec[1:] if negate else spec).split(","))
+            lines = self._read_vcf_lines(argv[-1])
+            out_lines = []
+            for line in lines:
+                if line.startswith("#"):
+                    out_lines.append(line)
+                    continue
+                chrom = line.split("\t", 1)[0]
+                keep = (chrom not in targets) if negate else (chrom in targets)
+                if keep:
+                    out_lines.append(line)
+            self._write_lines(self._flag_value(argv, "-o"), out_lines)
+        elif tool == "bcftools" and sub == "concat":
+            out_index = argv.index("-o")
+            inputs = argv[out_index + 2 :]
+            header = None
+            data_lines = []
+            for path in inputs:
+                lines = self._read_vcf_lines(path)
+                if header is None:
+                    header = [line for line in lines if line.startswith("#")]
+                data_lines.extend(line for line in lines if not line.startswith("#"))
+            self._write_lines(self._flag_value(argv, "-o"), (header or []) + data_lines)
+        elif tool == "bcftools" and sub == "sort":
+            lines = self._read_vcf_lines(argv[-1])
+            header = [line for line in lines if line.startswith("#")]
+            data = [line for line in lines if not line.startswith("#")]
+
+            def _sort_key(line):
+                fields = line.split("\t")
+                pos = int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0
+                return (fields[0], pos)
+
+            data.sort(key=_sort_key)
+            self._write_lines(self._flag_value(argv, "-o"), header + data)
         elif tool == "gatk" and sub == "LiftoverVcf":
+            # Captured now, not re-read later: run_liftover_pipeline's `finally`
+            # deletes work_dir (and everything under it) once the request
+            # returns, before a test gets a chance to inspect it on disk.
+            self.last_liftovervcf_input_lines = self._read_vcf_lines(
+                self._flag_value(argv, "-I")
+            )
             self._write_vcf(self._flag_value(argv, "-O"), self.lifted_rows)
             self._write_vcf(self._flag_value(argv, "--REJECT"), self.reject_rows)
         elif tool == "bcftools" and sub == "index":
@@ -213,6 +310,18 @@ def _post_liftover(
         files={"file": (filename, vcf_text.encode("utf-8"), "text/plain")},
         data=data,
     )
+
+
+def _data_lines(vcf_path):
+    """Data lines (no header) of an actual output VCF this test wrote to disk."""
+    with open(vcf_path, "rb") as handle:
+        blob = handle.read()
+    text = (
+        gzip.decompress(blob).decode("utf-8")
+        if blob[:2] == b"\x1f\x8b"
+        else blob.decode()
+    )
+    return [line for line in text.splitlines() if line and not line.startswith("#")]
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +463,76 @@ def test_plain_input_is_renamed_before_liftover(
         ("gatk", "LiftoverVcf")
     )
     assert resp.json()["renamed_contigs"] is True
+
+
+# ---------------------------------------------------------------------------
+# b37's MT is already rCRS: split out, never lifted, glued back unchanged.
+# See MT_IS_ALREADY_RCRS's docstring above PLAIN_TO_CHR_CONTIGS in gatk_api.py.
+# ---------------------------------------------------------------------------
+
+
+def test_b37_mt_is_split_out_and_rejoined_unshifted(
+    client, fake_tools, hg38_reference, chain_file
+):
+    resp = _post_liftover(client, PLAIN_GRCH37_VCF_WITH_MT)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    # Pin the commands actually issued -- both the include and exclude view
+    # calls, and that the merge (concat) and re-sort (sort) both ran. This is
+    # the "assert on argv" side of the guard: it survives a FakeTools rewrite
+    # that stops trying to emulate real bcftools content transforms.
+    view_calls = fake_tools.ran("bcftools", "view")
+    view_targets = {fake_tools._flag_value(argv, "-t") for argv in view_calls}
+    assert view_targets == {"MT,M", "^MT,M"}
+    assert len(fake_tools.ran("bcftools", "concat")) == 1
+    assert len(fake_tools.ran("bcftools", "sort")) == 1
+    # LiftoverVcf must never see the MT/M record: only the autosomal remainder.
+    # Captured at call time by the fake -- run_liftover_pipeline's `finally`
+    # deletes work_dir (and the file this argv points at) before the response
+    # reaches this test.
+    assert len(fake_tools.ran("gatk", "LiftoverVcf")) == 1
+    assert not any(
+        line.split("\t", 1)[0] in ("MT", "M", "chrM")
+        for line in fake_tools.last_liftovervcf_input_lines
+        if not line.startswith("#")
+    )
+
+    # The content check: chrM must land at its INPUT position, unshifted.
+    lines = _data_lines(body["vcf_path"])
+    chrom_by_line = {line.split("\t")[0]: line for line in lines}
+    assert "chrM" in chrom_by_line
+    mt_fields = chrom_by_line["chrM"].split("\t")
+    assert mt_fields[1] == "1555", "b37 MT must be renamed, never lifted"
+    assert mt_fields[3:5] == ["A", "G"]
+    # The fake's configured autosomal lift result is also present.
+    assert "chr10" in chrom_by_line
+    assert body["n_lifted"] == 2
+    assert body["n_rejected"] == 0
+
+
+def test_mt_only_b37_input_does_not_500(client, fake_tools, hg38_reference, chain_file):
+    """Finding 1: an MT-only remainder must not be handed to LiftoverVcf.
+
+    Before this, split_mt_records left a header-only non-MT file, LiftoverVcf
+    "successfully" lifted zero records from it, and the honesty gate (which
+    exists to catch a chain/prefix mismatch, not a deliberately-emptied
+    remainder) refused the whole request with a 500.
+    """
+    resp = _post_liftover(client, PLAIN_GRCH37_VCF_MT_ONLY)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert fake_tools.ran("gatk", "LiftoverVcf") == [], "nothing left to lift"
+
+    lines = _data_lines(body["vcf_path"])
+    assert len(lines) == 1
+    fields = lines[0].split("\t")
+    assert fields[0] == "chrM"
+    assert fields[1] == "1555"
+    assert body["n_lifted"] == 1
+    assert body["n_rejected"] == 0
 
 
 def test_chr_input_skips_the_rename(client, fake_tools, hg38_reference, chain_file):
