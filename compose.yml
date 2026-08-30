@@ -306,6 +306,36 @@ services:
     networks:
       - pgx-network
 
+  # mtDNA-Server 2 (mutserve + haplogrep3 + haplocheck), wrapped in a ZaroPGx
+  # HTTP sidecar. Built FROM the upstream pipeline's own image; it does NOT run
+  # upstream's Nextflow pipeline -- that needs a mounted Docker socket, the
+  # thing that got the hlatyping service below disabled.
+  mtdna:
+    image: zaromicsresearch/zaropgx-mtdna:${ZAROPGX_TAG:-0.3.0}
+    build:
+      context: .
+      dockerfile: docker/mtdna-server-2/Dockerfile
+    container_name: pgx_mtdna
+    restart: unless-stopped
+    environment:
+      - DATA_DIR=/data
+      - JOB_API_BASE=http://app:8000/api/v1
+    volumes:
+      - ./data:/data
+      # Read-only: it needs chain/hg19ToHg38.over.chain.gz for hg19 input, and
+      # stages no reference of its own (rCRS is vendored into the image).
+      - ./reference:/reference:ro
+    ports:
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5062:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - pgx-network
+
   # nf-core/hlatyping Wrapper Service (HTTP API running Nextflow) — DISABLED
   # The docker/hlatyping/ build context is missing, so this service cannot build.
   # Kept as a restorable placeholder (alternate HLA path, now with HLA-HD support).

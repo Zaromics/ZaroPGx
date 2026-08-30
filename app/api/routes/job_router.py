@@ -664,6 +664,7 @@ async def cancel_container_jobs(job_id: str, job_metadata: dict):
     containers = [
         {"name": "gatk-api", "url": "http://gatk-api:5000"},
         {"name": "zarohla", "url": "http://zarohla:5000"},
+        {"name": "mtdna", "url": "http://mtdna:5000"},
         {"name": "pypgx", "url": "http://pypgx:5000"},
         {"name": "pharmcat", "url": "http://pharmcat:5000"},
     ]

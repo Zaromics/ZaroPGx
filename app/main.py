@@ -134,12 +134,14 @@ GATK_SERVICE_URL = os.getenv("GATK_API_URL", "http://gatk-api:5000")
 PYPGX_SERVICE_URL = os.getenv("PYPGX_API_URL", "http://pypgx:5000")
 PHARMCAT_API_URL = os.getenv("PHARMCAT_API_URL", "http://pharmcat:5000")
 ZAROHLA_API_URL = os.getenv("ZAROHLA_API_URL", "http://zarohla:5000")
+MTDNA_API_URL = os.getenv("MTDNA_API_URL", "http://mtdna:5000")
 
 
 # Service toggle configuration / service enablement flags
 GATK_ENABLED = env_flag("GATK_ENABLED", True)
 PYPGX_ENABLED = env_flag("PYPGX_ENABLED", True)
 OPTITYPE_ENABLED = env_flag("OPTITYPE_ENABLED", True)
+MTDNA_ENABLED = env_flag("MTDNA_ENABLED", True)
 GENOME_DOWNLOADER_ENABLED = env_flag("GENOME_DOWNLOADER_ENABLED", True)
 KROKI_ENABLED = env_flag("KROKI_ENABLED", True)
 HAPI_FHIR_ENABLED = env_flag("HAPI_FHIR_ENABLED", True)
@@ -360,6 +362,7 @@ app.add_middleware(
         "http://localhost:5053",  # pypgx
         "http://localhost:5444",  # PostgreSQL
         "http://localhost:5060",  # zarohla
+        "http://localhost:5062",  # mtdna
         "http://localhost:5055",  # nextflow
         # 127.0.0.1 equivalents
         "http://127.0.0.1:5050",
@@ -370,6 +373,7 @@ app.add_middleware(
         "http://127.0.0.1:5053",
         "http://127.0.0.1:5444",
         "http://127.0.0.1:5060",
+        "http://127.0.0.1:5062",
         "http://127.0.0.1:5055",
     ],
     allow_credentials=True,
@@ -646,6 +650,7 @@ async def home(request: Request):
                 "pypgx": "http://pypgx:5000/health",  # Force to port 5000 directly
                 "zarohla": os.getenv("ZAROHLA_API_URL", "http://zarohla:5000")
                 + "/health",
+                "mtdna": os.getenv("MTDNA_API_URL", "http://mtdna:5000") + "/health",
             }
 
             unhealthy_services = []
@@ -1013,6 +1018,13 @@ async def services_status(
             "enabled": True,
         }
 
+    if MTDNA_ENABLED:
+        services_to_check["mtdna"] = {
+            "url": os.getenv("MTDNA_API_URL", "http://mtdna:5000") + "/health",
+            "timeout": 10,
+            "enabled": True,
+        }
+
     # For debugging - log the URLs we're trying to check
     service_urls = []
     for k, v in services_to_check.items():
@@ -1025,6 +1037,7 @@ async def services_status(
     logger.info(f"GATK_API_URL: {os.getenv('GATK_API_URL', 'not set')}")
     logger.info(f"PHARMCAT_API_URL: {os.getenv('PHARMCAT_API_URL', 'not set')}")
     logger.info(f"ZAROHLA_API_URL: {os.getenv('ZAROHLA_API_URL', 'not set')}")
+    logger.info(f"MTDNA_API_URL: {os.getenv('MTDNA_API_URL', 'not set')}")
 
     # Check each service
     unhealthy_services = {}

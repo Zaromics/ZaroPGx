@@ -113,6 +113,7 @@ class CleanupService:
                     str(self.temp_dir / "gatk_temp" / job_id),
                     str(self.temp_dir / "pypgx" / job_id),
                     str(self.temp_dir / "zarohla" / job_id),
+                    str(self.temp_dir / "mtdna" / job_id),
                     str(self.data_dir / "temp" / job_id),
                 ]
             )
@@ -196,6 +197,7 @@ class CleanupService:
                 Path("/tmp/gatk_temp"),
                 Path("/tmp/pypgx"),
                 Path("/tmp/zarohla"),
+                Path("/tmp/mtdna"),
             ]
 
             for temp_dir in temp_dirs:
@@ -291,6 +293,7 @@ class CleanupService:
             ("/tmp/gatk_temp", Path("/tmp/gatk_temp")),
             ("/tmp/pypgx", Path("/tmp/pypgx")),
             ("/tmp/zarohla", Path("/tmp/zarohla")),
+            ("/tmp/mtdna", Path("/tmp/mtdna")),
         ]
 
         for name, path in temp_dirs:
