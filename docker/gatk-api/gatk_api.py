@@ -2240,6 +2240,49 @@ def vcf_contig_naming(job_label, path, sample_lines=200):
 # anyway, so those keep their names and fall out of LiftoverVcf as individually
 # rejected records (--WARN_ON_MISSING_CONTIG keeps that from being fatal). Both
 # `MT` (b37) and bare `M` map to `chrM`, the UCSC spelling.
+#
+# MT/M stay in this table -- do not delete them -- but on real b37 input they
+# never reach LiftoverVcf through it. Read on before "tidying" that.
+#
+# For every other entry here the rename is purely cosmetic: b37's `1` and
+# hg19's `chr1` name the SAME sequence at the SAME coordinates, so
+# rename-then-lift is correct. MT is the one contig where the spelling
+# difference is also a sequence difference:
+#
+#   build          contig   sequence            length
+#   GRCh38         chrM     NC_012920 (rCRS)     16569
+#   GRCh37 / b37   MT       NC_012920 (rCRS)     16569   <- already the target
+#   hg19           chrM     NC_001807 (Yoruba)   16571   <- genuinely different
+#
+# b37's MT is already rCRS -- already in GRCh38's coordinate system. The chain
+# staged for this lift (UCSC's hg19ToHg38.over.chain.gz) is sourced from
+# hg19's chrM, not b37's MT -- its own header says so:
+#   chain 1560271 chrM 16571 + 0 16571 chrM 16569 + 0 16569
+# so renaming a b37 MT record to chrM and pushing it through that chain
+# applies hg19->rCRS's constant -2bp shift to a record that is already in rCRS
+# coordinates. Inside MT-RNR1 that turns a real variant like m.1555A>G into
+# 1553 -- silently wrong, on a build that never needed lifting to begin with.
+#
+# This was introduced in 93b2878 ("feat(liftover): real GRCh37/hg19 ->
+# GRCh38 VCF liftover"), which added this rename map to fix a real failure:
+# the UCSC chain is chr-prefixed and b37 VCFs are not, so without the rename
+# LiftoverVcf rejected every record. MT was added by pattern-completion with
+# its 26 neighbours. That commit's A/B check was sound and passed -- "7
+# textbook PGx SNPs lift to their exact known GRCh38 positions, 0 rejected"
+# -- but all seven are autosomal, so MT fell outside its scope, and nothing
+# downstream reads chrM to catch the drift later. Found while designing the
+# mtDNA integration (2026-08-30).
+#
+# So: on unprefixed (b37) input, run_liftover_pipeline calls
+# split_mt_records() to hold MT/M out of the file handed to LiftoverVcf
+# entirely, and glues them back into the lifted output afterwards renamed to
+# chrM with coordinates UNTOUCHED -- a pure rename, never a pass through this
+# chain. hg19's chrM is NOT touched by this: it is a genuinely different
+# sequence from GRCh38's chrM and does need converting, and its MT-RNR1
+# window lifts exactly (one ungapped 2796bp block), so the existing
+# rename-then-lift path stays correct for a chr-prefixed (hg19) upload.
+MT_IS_ALREADY_RCRS = frozenset({'MT', 'M'})
+
 PLAIN_TO_CHR_CONTIGS = {
     **{str(i): f"chr{i}" for i in range(1, 23)},
     'X': 'chrX',
@@ -2367,6 +2410,140 @@ def summarise_reject_reasons(path, top_n=5):
     return dict(ranked[:top_n])
 
 
+def split_mt_records(job_label, input_path, work_dir):
+    """Pull MT/M records out of a plain (b37) VCF before LiftoverVcf ever sees them.
+
+    See MT_IS_ALREADY_RCRS's docstring above PLAIN_TO_CHR_CONTIGS for why: b37's MT
+    is already rCRS -- already in the target's coordinate system -- so the correct
+    "lift" for it is a pure rename, never a pass through a chain sourced from
+    hg19's chrM.
+
+    Called only from run_liftover_pipeline's unprefixed ('plain') branch. Returns
+    `(rest_path, mt_path)`:
+      rest_path  everything BUT MT/M. `input_path` itself, unchanged, when the
+                 file carries no MT/M records at all -- the common case for a
+                 targeted panel -- so nothing is filtered that was never there.
+      mt_path    the held-back MT/M records renamed to `chrM`, coordinates
+                 untouched, ready to be spliced back into the lifted output by
+                 merge_mt_passthrough(). None when there was nothing to hold back.
+    """
+    mt_raw = os.path.join(work_dir, 'mt_raw.vcf.gz')
+    argv = ['bcftools', 'view', '-t', 'MT,M', '-Oz', '-o', mt_raw, input_path]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"bcftools could not be executed - check container configuration ({exc})",
+        )
+    if result.returncode != 0:
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Extracting MT/M from the input before liftover failed (bcftools view): {stderr}",
+        )
+
+    if count_vcf_records(mt_raw) == 0:
+        # No MT/M in this file -- nothing to hold back. A real bcftools always
+        # writes a (header-only) output on success, so this is a genuine "zero
+        # records" read, not a mistaken read of a file that was never written.
+        _discard_output(mt_raw)
+        return input_path, None
+
+    rest_path = os.path.join(work_dir, 'non_mt.vcf.gz')
+    argv = ['bcftools', 'view', '-t', '^MT,M', '-Oz', '-o', rest_path, input_path]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"bcftools could not be executed - check container configuration ({exc})",
+        )
+    if result.returncode != 0:
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Removing MT/M from the input before liftover failed (bcftools view): {stderr}",
+        )
+    if not os.path.exists(rest_path) or os.path.getsize(rest_path) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail="bcftools view exited 0 but wrote no non-MT VCF",
+        )
+
+    # Rename MT/M -> chrM. This reuses the same rename map LiftoverVcf's other 26
+    # entries use -- correct here too, because for this file the map is doing
+    # nothing but the rename its name promises: mt_raw contains only MT/M records,
+    # and their coordinates are left exactly as they were. No chain is involved.
+    mt_path = os.path.join(work_dir, 'mt_chrm.vcf.gz')
+    rename_vcf_contigs_to_chr(job_label, mt_raw, mt_path, work_dir)
+    return rest_path, mt_path
+
+
+def merge_mt_passthrough(job_label, lifted_path, mt_path, work_dir):
+    """Splice held-back MT/M records into a lifted VCF, and re-sort.
+
+    `lifted_path` was produced by LiftoverVcf from a file with MT/M already
+    removed, so it carries none. `mt_path` (from split_mt_records) carries only
+    chrM, at its original b37 coordinates. `bcftools concat` unions the two
+    record sets under `lifted_path`'s header -- the one with the real GRCh38
+    sequence dictionary -- and `bcftools sort` puts chrM back in the position
+    that dictionary says it belongs, rather than trailing the file wherever
+    concat happened to append it.
+    """
+    merged = os.path.join(work_dir, 'lifted_with_mt.vcf.gz')
+    argv = ['bcftools', 'concat', '-Oz', '-o', merged, lifted_path, mt_path]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"bcftools could not be executed - check container configuration ({exc})",
+        )
+    if result.returncode != 0:
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Merging MT back into the lifted output failed (bcftools concat): {stderr}",
+        )
+    if not os.path.exists(merged) or os.path.getsize(merged) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail="bcftools concat exited 0 but wrote no merged VCF",
+        )
+
+    sorted_path = os.path.join(work_dir, 'lifted_with_mt.sorted.vcf.gz')
+    argv = ['bcftools', 'sort', '-T', work_dir, '-Oz', '-o', sorted_path, merged]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"bcftools could not be executed - check container configuration ({exc})",
+        )
+    if result.returncode != 0:
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Sorting the MT-merged output failed (bcftools sort): {stderr}",
+        )
+    if not os.path.exists(sorted_path) or os.path.getsize(sorted_path) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail="bcftools sort exited 0 but wrote no sorted VCF",
+        )
+
+    # shutil.move, not os.replace: `sorted_path` is under work_dir (TEMP_DIR) and
+    # `lifted_path` is on the shared /data volume -- typically a different
+    # filesystem, where a bare rename raises EXDEV. shutil.move falls back to a
+    # copy when a same-filesystem rename is not possible.
+    shutil.move(sorted_path, lifted_path)
+
+
 def run_liftover_pipeline(job_label, input_path, work_dir, lifted_path, reject_path,
                           chain_path, reference_path):
     """Normalise contig naming, run LiftoverVcf, index, and vouch for the result.
@@ -2386,9 +2563,16 @@ def run_liftover_pipeline(job_label, input_path, work_dir, lifted_path, reject_p
     # otherwise). A chr-prefixed file is passed to LiftoverVcf untouched.
     naming = vcf_contig_naming(job_label, input_path)
     renamed_contigs = naming == 'plain'
+    mt_path = None
     if renamed_contigs:
+        # b37's MT is already rCRS -- already GRCh38's coordinate system -- so it
+        # must never go through this hg19-sourced chain. See MT_IS_ALREADY_RCRS's
+        # docstring above PLAIN_TO_CHR_CONTIGS. hg19's chrM (the 'chr' branch,
+        # below) is a genuinely different sequence and is NOT touched by this --
+        # it keeps going through LiftoverVcf like every other contig.
+        rename_input, mt_path = split_mt_records(job_label, input_path, work_dir)
         chr_input = os.path.join(work_dir, 'chr_named_input.vcf.gz')
-        rename_vcf_contigs_to_chr(job_label, input_path, chr_input, work_dir)
+        rename_vcf_contigs_to_chr(job_label, rename_input, chr_input, work_dir)
         liftover_input = chr_input
     else:
         liftover_input = input_path
@@ -2424,6 +2608,16 @@ def run_liftover_pipeline(job_label, input_path, work_dir, lifted_path, reject_p
                 status_code=500,
                 detail=f"LiftoverVcf produced {lifted_path}, which is not a BGZF-framed VCF",
             )
+
+    # Step 2b: splice the held-back MT/M records (untouched coordinates, renamed
+    # to chrM) back into the lifted output, before the honesty gate below counts
+    # it. That ordering matters: LIFTOVER_MAX_REJECT_FRACTION is a fraction of
+    # *input* records, and MT/M were part of the input, so they must be back in
+    # `n_lifted` before that fraction is computed, or removing them from
+    # LiftoverVcf's view would silently shrink the denominator instead of just
+    # rerouting records that were never going to be rejected anyway.
+    if mt_path:
+        merge_mt_passthrough(job_label, lifted_path, mt_path, work_dir)
 
     # Step 3: the honesty gate. LiftoverVcf "succeeding" while rejecting nearly
     # everything is exactly what a chain/prefix mismatch looks like, and the cost
