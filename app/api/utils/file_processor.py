@@ -672,6 +672,15 @@ class FileProcessor:
             # analysis. Drives the "liftover" step template in
             # app/services/workflow_registry.py and, via source_build below it,
             # the LiftoverVCF process in pipelines/pgx/main.nf.
+            # NOTE ON ROUTING. A warning carrying class="preflight" is advice for
+            # the person choosing a file -- upload something else, expect this to
+            # take a while, here is what liftover is going to do. It belongs on
+            # the upload screen and nowhere else: app/reports/generator.py drops
+            # those before rendering, because a finished report is not the place
+            # to suggest a different input, and because the report states what
+            # the liftover actually did, past tense, from the step's own counts.
+            # Everything unmarked is a standing caveat that still qualifies the
+            # results after the run, so it appears in both places.
             "needs_liftover": False,
             "needs_conversion": False,
             "needs_hla": False,
@@ -821,10 +830,10 @@ class FileProcessor:
                 # FASTQ was dropped from this list when the format was refused; the
                 # refusal itself is stated at the upload gate, so restating it here
                 # only padded a sentence that reads fine without it.
-                "<p>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
+                "<p class='preflight'>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
             )
             workflow["warnings"].append(
-                "<p>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
+                "<p class='preflight'>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
             )
             workflow["warnings"].append(
                 "<p>⚠️ HLA typing as well as mtDNA typing can not be performed.</p>"
@@ -883,7 +892,7 @@ class FileProcessor:
                         "file over to GRCh38/hg38 with GATK LiftoverVcf prior to analysis.</p>"
                     )
                     workflow["warnings"].append(
-                        "<p>⚠️ Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
+                        "<p class='preflight'>⚠️ Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
                     )
                 elif reference != "unknown":
                     # A named build that is neither GRCh38 nor GRCh37 (T2T-CHM13,

@@ -421,23 +421,47 @@ def test_rendered_legend_explains_every_glyph(template_name):
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
 def test_rendered_call_cell_is_never_blank_and_self_explains(template_name):
+    """Every legend letter must be reachable somewhere on the page.
+
+    report_template.html now tables only the genes that produced a call and names
+    the rest in an appendix, so a letter that attaches to an uncalled gene -- "-"
+    and "?" in practice -- no longer has a table cell to live in. It still has to
+    appear, or the Source Legend would explain glyphs the document never shows;
+    the appendix carries it as "GENE (letter)". The requirement is unchanged, the
+    two places it can be satisfied are not.
+    """
     html = _render(template_name)
-    for letter, label in (
-        (CALLED_BY_PHARMCAT, "Called by PharmCAT"),
-        (CALLED_BY_OUTSIDE, "Outside call - producing tool not recorded by this run"),
-        (CALLED_BY_NO_CALL, "No call made for this gene"),
-        (CALLED_BY_UNKNOWN, "Calling tool not recorded by this run"),
-    ):
+    for row in _ROWS:
+        letter = row["called_by"]
+        label = row.get("called_by_label", "")
         cell = f'<td class="narrow-col tool-source" title="{label}">{letter}</td>'
-        assert cell in html, f"missing Call cell for {letter!r}: {label}"
+        appendix = f'{row["gene"]} ({letter})'
+        assert cell in html or appendix in html, (
+            f"Call provenance {letter!r} for {row['gene']} reached neither the "
+            f"table nor the uncalled-genes appendix"
+        )
 
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
 def test_rendered_guide_cell_is_blank_when_not_recorded(template_name):
     html = _render(template_name)
-    # CYP2C19 recorded "C"; the other three recorded nothing.
+    # CYP2C19 recorded "C"; the rest recorded nothing. Counted over the rows each
+    # lane actually tables, which is no longer the same set: the print report
+    # moves uncalled genes to an appendix (they have no Guide cell to leave
+    # blank), while the interactive report is a scrolling page with tabs and
+    # keeps every row. The divergence is deliberate -- a paginated document pays
+    # four pages for rows that say nothing, a scrolling one does not.
+    from app.reports.generator import gene_was_called
+
+    tabled = (
+        [r for r in _ROWS if gene_was_called(r.get("diplotype"))]
+        if template_name == "report_template.html"
+        else _ROWS
+    )
+    blank_guides = sum(1 for r in tabled if not r.get("guideline_source"))
+
     assert html.count('<td class="narrow-col">C</td>') == 1
-    assert html.count('<td class="narrow-col"></td>') == 3
+    assert html.count('<td class="narrow-col"></td>') == blank_guides
 
 
 # ---------------------------------------------------------------------------

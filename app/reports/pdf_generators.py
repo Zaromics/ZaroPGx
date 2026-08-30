@@ -61,6 +61,7 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 from app.reports.generator import (
     _sanitize_graphviz_svg,
     activity_score_num,
+    register_report_template_helpers,
     build_citations,
     build_platform_info,
     get_author_name,
@@ -710,7 +711,7 @@ class WeasyPrintGenerator(PDFGenerator):
                 # the score, it raises TemplateAssertionError out of get_template()
                 # below and this whole generator fails. Both other renderers of
                 # this template register it (generator.py, both Environments).
-                env.filters["activity_score_num"] = activity_score_num
+                register_report_template_helpers(env)
 
                 # Use the PDF template (report_template.html) for proper PDF generation
                 template = env.get_template("report_template.html")

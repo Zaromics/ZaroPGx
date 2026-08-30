@@ -121,6 +121,24 @@
             break-inside: avoid;
         }
         
+        .uncalled-genes {
+            margin-top: 4px;
+        }
+        .uncalled-genes h4 {
+            margin: 0 0 6px 0;
+            font-size: 0.95em;
+            color: #2c3e50;
+        }
+        .uncalled-genes p {
+            margin: 0 0 8px 0;
+            font-size: 0.85em;
+            color: #6c757d;
+            line-height: 1.4;
+        }
+        .uncalled-genes .uncalled-list {
+            color: #495057;
+        }
+
         .narrow-col {
             width: 1.2em;
             text-align: center;
@@ -892,15 +910,32 @@
         <p>Powered by ZaroPGx, a Zaromics Software Tool</p>
     </div>
     
+    {# Facts about the SAMPLE belong here, at the top, where a reader looks for
+       them. Report ID is gone: it rendered the same UUID as Sample ID on the
+       line above. The liftover line used to sit on the Executive Summary page,
+       buried in a paragraph of PharmCAT tooling facts, which is not where anyone
+       looks to find out what was analysed. #}
     <div class="report-info">
         <p><strong>Sample ID:</strong> {{ sample_identifier or patient_id }}</p>
-        <p><strong>Report ID:</strong> {{ report_id }}</p>
         <p><strong>Report Date:</strong> {{ report_date }}</p>
+        {% if liftover_provenance %}<p><strong>Reference build:</strong> {{ liftover_provenance }}</p>{% endif %}
     </div>
 
     <div class="section">
         <h2>Methodology</h2>
         <p>The sample's genetic data were analyzed with the ZaroPGx pipeline, composed of several analytic tools, culminating in recommendation matching by PharmCAT (the Pharmacogenomics Clinical Annotation Tool), which references clinical guidelines published by CPIC (Clinical Pharmacogenetics Implementation Consortium), DPWG (Dutch Pharmacogenetics Working Group), and FDA (U.S. Food and Drug Administration). Notable pharmacogenetic variants were identified to determine star alleles and diplotypes, which were mapped to phenotypes and ultimately matched with associated recommendations.</p>
+        {# Tooling provenance, moved here from the Executive Summary. It was
+           appended to a run-provenance paragraph on that page because the facts
+           were "provenance-ish", not because a reader looks for them there --
+           the Methodology section is what this section is for. Each sentence
+           still renders only if its value resolved. #}
+        {% if genome_build or named_allele_matcher_version or pharmcat_data_version %}
+        <p class="run-provenance">
+            {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, specified on the {{ genome_build }} assembly. That is PharmCAT's build, not the reference build of the uploaded file; concerns about this file's build are raised under Alerts and Warnings.{% endif %}
+            {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
+            {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
+        </p>
+        {% endif %}
         {% if pharmcat_assume_ref_methodology %}
             {{ pharmcat_assume_ref_methodology|safe }}
         {% endif %}
@@ -1019,32 +1054,18 @@
                 </tbody>
             </table>
         </div>
-        {# 159: run-derived provenance. Outside the execsum_from_tsv branches so it
-           renders on both, and inside #exec-summary so the print page-break that
-           follows this container does not push it onto the Genetic Results page.
-           Each sentence renders only if its own value resolved.
+        {# The run-provenance paragraph that stood here has moved.
 
-           `genome_build` is PharmCAT's `matcherMetadata.genomeBuild` -- the build
-           its *allele definitions* are specified on, which is always GRCh38.x. It
-           is NEVER the build of the uploaded file. The old copy here ("This sample
-           was analyzed against the {build} reference genome build") read as a claim
-           about the upload and so silently contradicted the provisional-results
-           alert two pages earlier. Do not shorten it back: the sentence must name
-           whose build this is and disclaim the file's.
+           It had accreted four facts about three different things -- the
+           liftover counts (about the uploaded file), PharmCAT's definition
+           build, its matcher version and its guideline data version (all about
+           the tooling) -- because each was "provenance-ish" and this paragraph
+           already existed. That is placement by convenience, not by what a
+           reader is looking for on an Executive Summary page.
 
-           `liftover_provenance` is the separate, genuine statement about the file's
-           build, and it renders only when a lift actually ran (the liftover step's
-           own counts -- app/utils/liftover_provenance.py). Without it a GRCh37
-           upload and a native GRCh38 upload produce identical reports, and the
-           reader never learns that variants were dropped. #}
-        {% if liftover_provenance or genome_build or named_allele_matcher_version or pharmcat_data_version %}
-        <p class="run-provenance">
-            {% if liftover_provenance %}{{ liftover_provenance }}{% endif %}
-            {% if genome_build %}Star alleles were matched against PharmCAT's allele definitions, specified on the {{ genome_build }} assembly. That is PharmCAT's build, not the reference build of the uploaded file; concerns about this file's build are raised under Alerts and Warnings.{% endif %}
-            {% if named_allele_matcher_version %}Diplotypes were called by PharmCAT's Named Allele Matcher v{{ named_allele_matcher_version }}.{% endif %}
-            {% if pharmcat_data_version %}Recommendations reflect PharmCAT guideline data version {{ pharmcat_data_version }}.{% endif %}
-        </p>
-        {% endif %}
+           The file's own facts now open the report in the header block; the
+           tooling's now sit under Methodology, which is the section that exists
+           for them. Nothing was deleted, only re-homed. #}
     </div>
 
     <div class="section">
@@ -1057,7 +1078,16 @@
         </div>
         
         <div style="margin-bottom: 15px;"></div>
-        
+
+        {# Split the panel into genes this run actually called and genes it did
+           not. On a typical VCF two thirds of the rows read
+           "Unknown / Unknown / Consult clinical guidelines" -- roughly four pages
+           of a table saying nothing, which buries the rows that do carry a
+           result. The uncalled genes are still named, compactly, below the table:
+           a reader can confirm a gene was examined without paging through it. #}
+        {% set called_genes = diplotypes | sort(attribute='gene') | selectattr('diplotype', 'a_call') | list %}
+        {% set uncalled_genes = diplotypes | sort(attribute='gene') | rejectattr('diplotype', 'a_call') | list %}
+
         <table class="gene-table">
             <colgroup>
                 <col class="c-gene"><col class="c-diplotype"><col class="c-phenotype">
@@ -1076,7 +1106,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for d in diplotypes|sort(attribute='gene') %}
+                {% for d in called_genes %}
                 <tr>
                     <td>{{ d.gene }}</td>
                     <td>{{ d.diplotype }}</td>
@@ -1108,6 +1138,23 @@
                 {% endfor %}
             </tbody>
         </table>
+
+        {% if uncalled_genes %}
+        <div class="uncalled-genes">
+            <h4>Genes examined without a call ({{ uncalled_genes|length }})</h4>
+            <p>These genes were included in the analysis but this sample's data did
+               not support a diplotype call, so no phenotype or guidance follows from
+               them. They are named here rather than tabled above, where they would
+               otherwise fill several pages with empty rows.</p>
+            {# Each gene keeps its Call letter. Without it the move would quietly
+               retire two entries of the Source Legend above -- "-" (no call made)
+               and "?" (not recorded by this run) attach almost exclusively to
+               uncalled genes, so they would appear in the key and nowhere in the
+               document. The provenance is the point of BACKLOG 28/216; it travels
+               with the gene rather than being dropped for tidiness. #}
+            <p class="uncalled-list">{% for d in uncalled_genes %}{{ d.gene }} ({{ d.called_by or '?' }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+        </div>
+        {% endif %}
     </div>
     
     <div class="section">

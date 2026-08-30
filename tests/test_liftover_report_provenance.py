@@ -14,6 +14,14 @@ run, the step row is what actually happened, and only the row carries numbers.
 These tests render the real templates through the app's own Jinja environment --
 source-text assertions have repeatedly proved worthless in this repo -- and pin
 both halves: the sentence builder, and that the sentence reaches both report lanes.
+
+They assert the sentence reaches the *page*, not that it sits in a particular
+paragraph. It originally shared the Executive Summary's run-provenance paragraph
+with three PharmCAT tooling facts; in the print report it now opens the header
+block, where a reader actually looks to find out what was analysed. The two lanes
+diverge here on purpose -- the print report is a paginated document with a header
+block, the interactive one is a tabbed page without -- so pinning a location
+would pin the wrong thing.
 """
 
 from __future__ import annotations
@@ -143,13 +151,11 @@ def _provenance_text(html):
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
 def test_the_sentence_reaches_both_report_lanes(template_name):
-    text = _provenance_text(
-        _render(
-            template_name,
-            liftover_provenance=liftover_provenance_sentence(FULL_STATS),
-        )
+    html = _render(
+        template_name, liftover_provenance=liftover_provenance_sentence(FULL_STATS)
     )
-    assert text is not None
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
     assert "uploaded as GRCh37" in text and "lifted over to GRCh38" in text
     assert "7 variants lifted, 0 dropped as unliftable" in text
 
@@ -166,29 +172,37 @@ def test_a_native_grch38_run_says_nothing_about_liftover(template_name):
 def test_the_paragraph_renders_for_a_lift_even_with_no_pharmcat_metadata(
     template_name,
 ):
-    """v2-shaped reports carry no matcherMetadata; the lift must still be stated."""
-    text = _provenance_text(
-        _render(
-            template_name,
-            genome_build=None,
-            named_allele_matcher_version=None,
-            pharmcat_data_version=None,
-            liftover_provenance=liftover_provenance_sentence(FULL_STATS),
-        )
+    """v2-shaped reports carry no matcherMetadata; the lift must still be stated.
+
+    This is why the two facts had to be separated: they resolve independently, and
+    while they shared a paragraph the absence of PharmCAT metadata could take the
+    liftover notice down with it.
+    """
+    html = _render(
+        template_name,
+        genome_build=None,
+        named_allele_matcher_version=None,
+        pharmcat_data_version=None,
+        liftover_provenance=liftover_provenance_sentence(FULL_STATS),
     )
-    assert text is not None, "paragraph vanished, taking the liftover notice with it"
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
     assert "lifted over to GRCh38" in text
     assert "allele definitions" not in text
 
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
 def test_the_lift_notice_and_pharmcats_build_do_not_contradict(template_name):
-    """Both sentences are about a build; each must name whose."""
-    text = _provenance_text(
-        _render(
-            template_name,
-            liftover_provenance=liftover_provenance_sentence(FULL_STATS),
-        )
+    """Both sentences are about a build; each must name whose.
+
+    They now live in different sections -- the file's build in the header, the
+    tooling's under Methodology -- so this asserts they coexist on the page
+    without contradiction, not that they share a paragraph.
+    """
+    html = _render(
+        template_name, liftover_provenance=liftover_provenance_sentence(FULL_STATS)
     )
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
     assert "uploaded as GRCh37" in text
     assert "not the reference build of the uploaded file" in text

@@ -208,32 +208,54 @@ def _sanitize_graphviz_svg(svg_str: str) -> str:
         return svg_str
 
 
+# The components a reader of a *pharmacogenomic report* has any use for: the
+# ones that called, converted or interpreted this sample's data. Keyed by the
+# version manager's own name, lower-cased, mapped to the display name.
+#
+# This table used to be every service in compose, which meant a clinical report
+# ended with PostgreSQL, a HAPI FHIR server that had not run, Kroki and Kroki
+# Mermaid (a diagram renderer, twice, both at version "latest"), plus a second
+# copy of every tool as its ZaroPGx container wrapper -- "PharmCAT 3.4.0" and
+# "Zaropgx Pharmcat 0.3.0" are the same software listed at two different
+# versions. None of it affected a single call on any preceding page.
+#
+# Exact-match, not substring, precisely so the wrappers do not shadow the tools:
+# "zaropgx pharmcat" != "pharmcat".
+_REPORT_COMPONENTS: Dict[str, str] = {
+    "pharmcat": "PharmCAT",
+    "pypgx": "PyPGx",
+    "gatk": "GATK",
+    "optitype": "OptiType",
+    "zarohla": "ZaroHLA (OptiType)",
+}
+
+
 def build_platform_info() -> List[Dict[str, str]]:
-    """Build platform information using centralized version management."""
-    items = []
+    """The analytic components behind this report, with their versions."""
+    items = [{"name": "ZaroPGx", "version": get_zaropgx_version()}]
 
-    # Add ZaroPGx version
-    items.append({"name": "ZaroPGx", "version": get_zaropgx_version()})
-
-    # Get all versions from centralized manager
-    all_versions = get_all_versions()
-
-    # Add service versions, avoiding duplicates
-    seen_names = {"zaropgx"}
-    for version_info in all_versions:
-        name = version_info.get("name", "").strip()
-        version = version_info.get("version", "N/A").strip()
-        source = version_info.get("source", "unknown")
-
-        if name and name.lower() not in seen_names:
-            seen_names.add(name.lower())
-            items.append(
-                {
-                    "name": name,
-                    "version": _normalize_version_text(version),
-                    "source": source,
-                }
-            )
+    resolved = {}
+    for version_info in get_all_versions():
+        key = (version_info.get("name") or "").strip().lower()
+        display = _REPORT_COMPONENTS.get(key)
+        if not display or display in resolved:
+            continue
+        raw = (version_info.get("version") or "").strip()
+        # A floating tag is not a version. Saying so beats printing "latest",
+        # which tells a reader nothing they could reproduce a run from.
+        version = (
+            "not recorded"
+            if raw.lower() in {"", "latest", "n/a", "none", "unknown"}
+            else _normalize_version_text(raw)
+        )
+        resolved[display] = True
+        items.append(
+            {
+                "name": display,
+                "version": version,
+                "source": version_info.get("source", "unknown"),
+            }
+        )
 
     # Ensure all version strings are normalized
     for item in items:
@@ -252,10 +274,19 @@ def build_citations() -> List[Dict[str, str]]:
     """Build academically styled citations with versions (when available)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     vmap = _versions_index()
-    pypgx_ver = vmap.get("pypgx") or "0.26.0"
-    pharmcat_ver = vmap.get("pharmcat") or "3.4.0"
-    gatk_ver = vmap.get("gatk") or "4.7.0.0"
-    zarohla_ver = vmap.get("zarohla") or "1.5.0"
+
+    # _normalize_version_text, or the citation prints the tool's raw --version
+    # blob: GATK reports "The Genome Analysis Toolkit () v4.7.0.0", which
+    # rendered as "version The Genome Analysis Toolkit () v4.7.0.0" mid-sentence.
+    # The helper's own docstring uses that exact string as its example; it was
+    # simply never called on this path, only on the platform table's.
+    def _ver(key: str, fallback: str) -> str:
+        return _normalize_version_text(vmap.get(key) or fallback)
+
+    pypgx_ver = _ver("pypgx", "0.26.0")
+    pharmcat_ver = _ver("pharmcat", "3.4.0")
+    gatk_ver = _ver("gatk", "4.7.0.0")
+    zarohla_ver = _ver("zarohla", "1.5.0")
     # No mtdna_server_2_ver here on purpose. There is no mtDNA service in the
     # stack -- docker/mtdna-server-2/ holds a 17-byte README, compose.yml declares
     # no such service and main.nf has no process that calls one -- so
@@ -635,7 +666,39 @@ env = Environment(
     loader=FileSystemLoader(TEMPLATE_DIR),
     autoescape=select_autoescape(["html", "xml"]),
 )
-env.filters["activity_score_num"] = activity_score_num
+
+
+def register_report_template_helpers(environment) -> None:
+    """Register everything report_template.html needs to compile.
+
+    Jinja resolves filters and tests at *compile* time, so an Environment missing
+    one does not render a slightly worse report -- ``get_template()`` raises
+    TemplateAssertionError and the caller silently falls back to a stub page. That
+    has now happened twice, once per helper, because three separate Environments
+    render this template and each had to remember to register them by hand
+    (generator.py's two, plus the WeasyPrint lane in pdf_generators.py).
+
+    One function, called by all three, so adding a helper cannot half-land again.
+    """
+    environment.filters["activity_score_num"] = activity_score_num
+    environment.tests["a_call"] = gene_was_called
+
+
+def gene_was_called(diplotype) -> bool:
+    """True when the run actually produced a diplotype for this gene.
+
+    Uncalled genes come back as "Unknown" or "Unknown/Unknown" depending on which
+    tool reported them, so this matches the prefix rather than either literal.
+    Registered as a Jinja *test* so the templates can split the gene list with
+    selectattr/rejectattr -- the environment has no `do` extension, and computing
+    the split in Python would mean threading two more keys through the three
+    places that build a template context.
+    """
+    text = str(diplotype or "").strip().lower()
+    return bool(text) and not text.startswith("unknown")
+
+
+register_report_template_helpers(env)
 
 
 # Custom exceptions
@@ -1617,7 +1680,20 @@ def generate_report(
                     if isinstance(meta.get("workflow"), dict)
                     else {}
                 )
-                workflow_warnings = workflow_config.get("warnings", []) or []
+                # Drop the pre-flight advisories. A warning tagged
+                # class='preflight' by file_processor is guidance for someone
+                # still choosing a file -- "consider uploading a BAM instead",
+                # "this will take a while", "liftover will drop variants". None of
+                # it is actionable in a finished report, and the last one is
+                # actively contradicted a page later by the liftover step's real
+                # counts. Everything unmarked is a standing caveat that still
+                # qualifies these results, and stays.
+                workflow_warnings = [
+                    w
+                    for w in (workflow_config.get("warnings", []) or [])
+                    if "class='preflight'" not in str(w)
+                    and 'class="preflight"' not in str(w)
+                ]
                 logger.info(
                     f"Retrieved {len(workflow_warnings)} workflow warnings from job metadata"
                 )
