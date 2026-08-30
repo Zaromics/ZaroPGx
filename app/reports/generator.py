@@ -225,8 +225,22 @@ _REPORT_COMPONENTS: Dict[str, str] = {
     "pharmcat": "PharmCAT",
     "pypgx": "PyPGx",
     "gatk": "GATK",
+    # OptiType, not "ZaroHLA": zarohla is ZaroPGx's wrapper around it and carries
+    # the ZaroPGx release number, which is the wrapper-shadows-tool problem this
+    # allowlist exists to avoid. docker/zarohla/app.py publishes the real
+    # OptiType version to /data/versions at startup, the way every other sidecar
+    # publishes its own.
     "optitype": "OptiType",
-    "zarohla": "ZaroHLA (OptiType)",
+}
+
+# Components that are part of the platform's design but are not running yet. They
+# are listed so the report does not imply a capability it has, and does not
+# silently omit one a reader may be expecting -- MT-RNR1 comes back as a no-call
+# precisely because this one is absent, and that is worth being able to trace.
+# Kept deliberately separate from the allowlist above: nothing resolves a version
+# for them, because there is nothing installed to resolve one from.
+_PROVISIONAL_COMPONENTS: Dict[str, str] = {
+    "mtDNA-server-2": "not enabled in this release",
 }
 
 
@@ -256,6 +270,9 @@ def build_platform_info() -> List[Dict[str, str]]:
                 "source": version_info.get("source", "unknown"),
             }
         )
+
+    for name, status in _PROVISIONAL_COMPONENTS.items():
+        items.append({"name": name, "version": status, "source": "provisional"})
 
     # Ensure all version strings are normalized
     for item in items:

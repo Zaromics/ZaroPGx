@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -112,6 +113,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger("zarohla")
 _warn_about_unopened_logs(logger)
+
+
+def _publish_version_manifest() -> None:
+    """Record OptiType's version where the report generator can find it.
+
+    Every other sidecar publishes its own manifest into /data/versions -- see
+    docker/pharmcat/start.sh and docker/pypgx/setup_pypgx.sh. zarohla published
+    none, so nothing in the stack knew the version of the tool that actually does
+    the HLA typing: the report's Software Platform table could only see the
+    container wrapper ("Zaropgx Zarohla 0.3.0", the ZaroPGx release number, not
+    OptiType's), and the citation fell back to a version hardcoded in
+    generator.py that nothing verified against the image.
+
+    Read from the installed distribution rather than a constant, so it cannot
+    drift from the pin in this service's Dockerfile.
+
+    data/versions/about.md asks for exactly this: a container's manifest naming
+    the versions of its constituent packages.
+    """
+    try:
+        from importlib.metadata import version as _distribution_version
+
+        optitype_version = _distribution_version("optitype")
+    except Exception as exc:  # pragma: no cover - depends on the image
+        logger.warning(f"Could not read the OptiType version: {exc}")
+        return
+
+    try:
+        versions_dir = DATA_DIR / "versions"
+        versions_dir.mkdir(parents=True, exist_ok=True)
+        (versions_dir / "optitype.json").write_text(
+            json.dumps({"name": "OptiType", "version": optitype_version}),
+            encoding="utf-8",
+        )
+        logger.info(f"Published OptiType version manifest: {optitype_version}")
+    except Exception as exc:
+        # Never fatal: a missing manifest costs the report a version string, not
+        # a run.
+        logger.warning(f"Could not publish the OptiType version manifest: {exc}")
+
+
+_publish_version_manifest()
 
 # --------------------------------------------------------------------------
 # Upload filename sanitising

@@ -119,3 +119,69 @@ def test_the_normaliser_still_handles_the_gatk_shape():
     assert _normalize_version_text("The Genome Analysis Toolkit () v4.7.0.0") == (
         "4.7.0.0"
     )
+
+
+# --------------------------------------------------------------------------
+# OptiType and the provisional mtDNA row
+# --------------------------------------------------------------------------
+
+
+def test_optitype_is_allowlisted_under_its_own_name():
+    """Not "ZaroHLA": that is ZaroPGx's wrapper and carries the ZaroPGx release
+    number, which is the wrapper-shadows-tool problem this list exists to stop.
+    Resolution needs the container's manifest, so the presence of the *key* is
+    what is asserted here; the manifest itself is pinned below.
+    """
+    assert _REPORT_COMPONENTS.get("optitype") == "OptiType"
+    assert not any("zarohla" in k for k in _REPORT_COMPONENTS)
+
+
+def test_zarohla_publishes_the_optitype_version_it_actually_installed():
+    """Every other sidecar writes its own manifest; zarohla wrote none, so the
+    only OptiType version anywhere was a constant in generator.py that nothing
+    checked against the image.
+    """
+    from pathlib import Path
+
+    app_py = (
+        Path(__file__).resolve().parents[1] / "docker" / "zarohla" / "app.py"
+    ).read_text(encoding="utf-8")
+
+    assert "optitype.json" in app_py, "zarohla no longer publishes a manifest"
+    assert 'version("optitype")' in app_py or "_distribution_version" in app_py, (
+        "the OptiType version is hardcoded again; read it from the installed "
+        "distribution so it cannot drift from the Dockerfile pin"
+    )
+
+
+def test_the_pinned_version_matches_the_dockerfile():
+    """The manifest is only trustworthy if the pin it reflects is still there."""
+    from pathlib import Path
+
+    dockerfile = (
+        Path(__file__).resolve().parents[1] / "docker" / "zarohla" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "OptiType.git@v" in dockerfile, (
+        "OptiType is no longer installed from a pinned tag; the reported version "
+        "would become whatever HEAD happened to be at build time"
+    )
+
+
+def test_mtdna_server_2_is_listed_as_not_enabled():
+    """Wired in provisionally: named so the report neither claims a capability it
+    lacks nor silently omits one. MT-RNR1 comes back as a no-call precisely
+    because this component is absent, and that should be traceable from the page.
+    """
+    rows = {i["name"]: i["version"] for i in build_platform_info()}
+
+    assert "mtDNA-server-2" in rows
+    assert "not enabled" in rows["mtDNA-server-2"].lower()
+
+
+def test_a_provisional_component_never_claims_a_version_number():
+    import re as _re
+
+    for item in build_platform_info():
+        if item.get("source") == "provisional":
+            assert not _re.search(r"\d+\.\d+", item["version"]), item
