@@ -1,5 +1,6 @@
 """The alignment path produces upstream's own report, or fails loudly."""
 
+import ast
 from pathlib import Path
 
 from app.mtdna.builds import (
@@ -118,3 +119,166 @@ def test_cram_without_a_staged_reference_is_refused():
     assert "human_g1k_v37.fasta" in source
     assert "Homo_sapiens_assembly38.fasta" in source
     assert "422" in branch
+
+
+def test_the_alignment_path_labels_its_reference_measured():
+    assert "BASIS_MEASURED" in APP_PY.read_text(encoding="utf-8")
+
+
+def test_the_alignment_path_does_not_fall_back_to_tier_c():
+    """Measured-and-below-floor is stronger evidence than Tier C's inference.
+
+    Letting Tier C rescue a call that a depth measurement just refused would
+    invert the ladder: a weaker signal overriding a stronger negative one.
+    Tier C is for inputs where no measurement is possible, not a second
+    chance for inputs where one failed.
+    """
+    branch = _alignment_branch()
+    assert "has_variant_in_gene" not in branch
+    assert "BASIS_INFERRED" not in branch
+
+
+# --- AST-based arity guard --------------------------------------------------
+#
+# Exists because a real arity mismatch shipped green: _classify_haplogroup
+# was changed from a 2-tuple to a 4-tuple return (haplogroup, quality,
+# not_found_polys, range), but the alignment path's only call site kept
+# unpacking two values -- `haplogroup, quality = ...` against a 4-tuple,
+# which raises ValueError at runtime. Nothing in the suite caught it: the
+# alignment tests above are all source-text pins that never construct a call,
+# and the VCF path exercises a *different* call site that happened to already
+# be correct. A whole calling path was non-functional under a fully green
+# suite.
+#
+# This test parses app.py with `ast` (no subprocess, no Docker, no import of
+# the sidecar -- see the VCF path's own fixture docstring for why app.py is
+# not importable in this venv) and checks, structurally, that every call
+# site's unpack target has exactly as many names as the function actually
+# returns. It does not hardcode "4": it reads the arity from
+# _classify_haplogroup's own `return` statements, so it keeps working the
+# next time the tuple's shape changes and stays useful long after this task.
+
+
+def _attach_parents(tree: ast.AST) -> None:
+    """Give every node a `.parent` link so a Call can walk up to the
+    assignment that consumes it -- the stdlib `ast` module builds no such
+    link on its own."""
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+
+
+def _descendants_skipping_nested_defs(node: ast.AST):
+    """Yield every descendant of `node`, except it does not look inside a
+    nested function/lambda/class body -- so a `return` that belongs to some
+    other, inner function is never mistaken for this one's."""
+    for child in ast.iter_child_nodes(node):
+        yield child
+        if not isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            yield from _descendants_skipping_nested_defs(child)
+
+
+def _find_function(tree: ast.AST, name: str) -> ast.AST:
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
+            return node
+    raise AssertionError(f"no function named {name!r} in {APP_PY}")
+
+
+def _return_arities(func_node: ast.AST):
+    """The set of tuple-lengths every `return` inside `func_node` produces
+    (bare `return` counts as 0; `return x` counts as 1)."""
+    arities = set()
+    for node in _descendants_skipping_nested_defs(func_node):
+        if isinstance(node, ast.Return):
+            value = node.value
+            if value is None:
+                arities.add(0)
+            elif isinstance(value, ast.Tuple):
+                arities.add(len(value.elts))
+            else:
+                arities.add(1)
+    return arities
+
+
+def _is_within(node, ancestor) -> bool:
+    current = node
+    while current is not None:
+        if current is ancestor:
+            return True
+        current = getattr(current, "parent", None)
+    return False
+
+
+def _enclosing_assign_targets(call_node: ast.Call):
+    """Walk up from a Call (through `await`, ternaries, etc.) to the nearest
+    enclosing assignment, and return its target list -- or None if this call
+    site is not the value of a plain assignment this guard knows how to
+    check."""
+    node = call_node
+    while node is not None:
+        parent = getattr(node, "parent", None)
+        if isinstance(parent, ast.Assign):
+            return parent.targets
+        if isinstance(parent, ast.AnnAssign) and parent.value is not None:
+            return [parent.target]
+        node = parent
+    return None
+
+
+def _target_arity(target: ast.AST) -> int:
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return len(target.elts)
+    return 1
+
+
+def test_classify_haplogroup_return_arity_matches_every_call_site():
+    """Every place app.py unpacks _classify_haplogroup()'s result must ask
+    for exactly as many values as it actually returns.
+
+    This is a static, structural check -- it parses the module with `ast`
+    rather than importing or running it, so it runs in any environment the
+    rest of this suite runs in (no psutil, no /job-client, no Docker).
+    """
+    tree = ast.parse(APP_PY.read_text(encoding="utf-8"))
+    _attach_parents(tree)
+
+    func_node = _find_function(tree, "_classify_haplogroup")
+    return_arities = _return_arities(func_node)
+    assert return_arities, "_classify_haplogroup has no `return` statements to check"
+    assert len(return_arities) == 1, (
+        "_classify_haplogroup's own `return` statements disagree on how many "
+        f"values they produce: {sorted(return_arities)}"
+    )
+    (arity,) = return_arities
+
+    call_sites = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_classify_haplogroup"
+        and not _is_within(node, func_node)
+    ]
+    assert call_sites, "found no call sites for _classify_haplogroup to check"
+
+    for call in call_sites:
+        targets = _enclosing_assign_targets(call)
+        assert targets is not None, (
+            f"_classify_haplogroup call at line {call.lineno} is not the "
+            "direct value of an assignment this guard knows how to check -- "
+            "extend it rather than silently skipping"
+        )
+        for target in targets:
+            unpack_arity = _target_arity(target)
+            assert unpack_arity == arity, (
+                f"_classify_haplogroup returns a {arity}-tuple but the "
+                f"assignment at line {target.lineno} unpacks {unpack_arity} "
+                "value(s) -- this is exactly the mismatch that shipped green "
+                "before this test existed"
+            )

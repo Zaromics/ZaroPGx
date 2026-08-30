@@ -119,6 +119,7 @@ from mtdna.builds import (  # noqa: E402
 )
 from mtdna.mt_rnr1 import MT_RNR1_ALLELES  # noqa: E402  (path set above)
 from mtdna.mt_rnr1 import (  # noqa: E402
+    BASIS_MEASURED,
     MT_RNR1_SPAN,
     NO_CALL_COVERAGE_BELOW_FLOOR,
     NO_CALL_COVERAGE_UNKNOWN,
@@ -762,20 +763,30 @@ async def _call_from_alignment(
 
     # Positive evidence: the gene was sequenced deeply enough that the
     # absence of a listed variant means absence, not silence.
+    #
+    # Tier A only. Deliberately no Tier C fallback here: coverage was
+    # measured, and a measurement below the floor is stronger evidence than
+    # Tier C's inference is. Rescuing the call with the weaker signal would
+    # invert the ladder -- Tier C exists for inputs where no measurement was
+    # ever possible (the VCF path, which has no depth to read at all), not as
+    # a second chance for an input whose own measurement just said "not
+    # enough". A measured, sub-floor coverage stands.
     if coverage is not None and coverage >= MIN_MEAN_COVERAGE:
-        evidence_reason = None
+        evidence_reason, basis = None, BASIS_MEASURED
     elif coverage is None:
-        evidence_reason = NO_CALL_COVERAGE_UNKNOWN
+        evidence_reason, basis = NO_CALL_COVERAGE_UNKNOWN, None
     else:
-        evidence_reason = NO_CALL_COVERAGE_BELOW_FLOOR
+        evidence_reason, basis = NO_CALL_COVERAGE_BELOW_FLOOR, None
+
     # Even at high coverage, an empty match can mean m.961T>del+Cn -- a real,
     # named allele match_alleles deliberately never matches (no verified
     # normalised-VCF shape for that compound delins -- see mt_rnr1.py). A
     # carrier of only that variant must not be reported as normal risk;
     # resolve_mt_rnr1_call withholds the promotion in exactly that case.
-    call, no_call_reason = resolve_mt_rnr1_call(
-        matched, records, evidence_reason=evidence_reason
+    resolved = resolve_mt_rnr1_call(
+        matched, records, evidence_reason=evidence_reason, basis=basis
     )
+    call, no_call_reason = resolved.call, resolved.no_call_reason
 
     # `query` above (unlike `records`) covers the whole chrM contig, not just
     # MT-RNR1's span -- an empty file means mutserve called literally nothing
@@ -786,10 +797,10 @@ async def _call_from_alignment(
     # defect this feature exists to remove, so skip it rather than let
     # haplogrep3 manufacture a confident answer from nothing.
     carries_variant_data = os.path.getsize(query) > 0
-    haplogroup, quality = (
+    haplogroup, quality, _not_found_polys, hg_range = (
         await _classify_haplogroup(normed, work, job_key)
         if carries_variant_data
-        else (None, None)
+        else (None, None, None, None)
     )
 
     # The four remaining report.Rmd inputs that are this pipeline's own
@@ -802,8 +813,10 @@ async def _call_from_alignment(
     return {
         "haplogroup": haplogroup,
         "haplogroup_quality": quality,
+        "haplogroup_range": hg_range,
         "mt_rnr1": call,
         "mt_rnr1_no_call_reason": no_call_reason,
+        "evidence_basis": resolved.basis,
         "mt_rnr1_all_matches": matched,
         "mean_coverage": coverage,
         "variants": [r._asdict() for r in records],
