@@ -1,11 +1,18 @@
 """The VCF path: haplogroup + MT-RNR1, and honest silence about the rest."""
 
+import asyncio
+import importlib.util
 import json
+import shutil
+import subprocess
+import sys
+import types
 from pathlib import Path
 
 import pytest
 
-APP_PY = Path(__file__).resolve().parent.parent / "docker/mtdna-server-2/app.py"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+APP_PY = REPO_ROOT / "docker/mtdna-server-2/app.py"
 
 
 def _source() -> str:
@@ -67,7 +74,135 @@ def test_an_empty_vcf_match_is_not_promoted_without_chrm_evidence():
     assert "os.path.getsize(query)" in branch
 
 
+def test_a_chrm_contig_header_alone_is_not_accepted_as_evidence():
+    """GATK/DRAGEN/bcftools all write the full sequence dictionary -- chrM
+    included -- whether or not chrM was ever covered, so a declared ##contig
+    chrM line is not proof the sample was sequenced there: a nuclear-only
+    exome/panel VCF from any of those callers still carries one.
+    pharmcat.example.vcf escaping an earlier version of this gate (which did
+    accept the header) was luck -- an unusually minimal header, not the
+    general case -- not a closed case. Pins the exact evidence expression so
+    a well-meaning "let's also accept the header" edit is caught here.
+    See test_a_declared_chrm_header_with_no_chrm_records_stays_a_no_call
+    below for the behavioural version of this same regression. Review round
+    2, finding 1 (2026-08-30).
+    """
+    branch = _vcf_branch()
+    assert "vcf_carried_chrm_data = os.path.getsize(query) > 0" in branch
+    assert "bool(contig_name)" not in branch
+
+
 def test_an_unsupported_build_is_refused_not_silently_skipped():
     source = _source()
     assert "plan.supported" in source
     assert "HTTPException" in source
+
+
+# --- behavioural coverage: import the sidecar out-of-container -------------
+#
+# docker/mtdna-server-2/app.py is not importable the way app.* is: it reads
+# /job-client off sys.path and imports psutil, which the dev venv does not
+# ship (see tests/test_log_rotation_252.py's docstring). The fixture below
+# stubs both, repoints DATA_DIR at a temp tree, and puts this repo's own
+# app/mtdna package on sys.path so app.py's `from mtdna.builds import ...` /
+# `from mtdna.mt_rnr1 import ...` (which the container resolves via
+# /mtdna-lib) resolve to the real, tested module -- the same technique
+# tests/test_gatk_api_no_mock_bam.py's `gatk_api` fixture uses. This buys
+# real behavioural coverage of the evidence gate with an actual bcftools
+# pipeline, rather than a source-text pin alone.
+
+
+def _fake_psutil() -> types.ModuleType:
+    # Imported by app.py but never called anywhere in it -- a plain stand-in
+    # is enough.
+    return types.ModuleType("psutil")
+
+
+def _fake_job_client() -> types.ModuleType:
+    """Stand-in for app/utils/job_client.py, which lives at /job-client in
+    the image. Never actually instantiated here: _call_from_vcf only builds
+    a JobClient when a job_id is passed, and the test below passes none."""
+    module = types.ModuleType("job_client")
+
+    class JobClient:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("no job server in tests")
+
+    module.JobClient = JobClient
+    return module
+
+
+@pytest.fixture(scope="module")
+def mtdna_app(tmp_path_factory):
+    """Import the sidecar module, pointed at a temp data tree and a locally
+    indexed copy of the vendored rCRS FASTA (the image builds this index at
+    build time via `samtools faidx`; the dev venv has neither the image's
+    RCRS_FASTA path nor its index, so both are staged here)."""
+    root = tmp_path_factory.mktemp("mtdna_home")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DATA_DIR", str(root / "data"))
+        mp.setitem(sys.modules, "psutil", _fake_psutil())
+        mp.setitem(sys.modules, "job_client", _fake_job_client())
+        mp.syspath_prepend(str(REPO_ROOT / "app"))
+
+        spec = importlib.util.spec_from_file_location(
+            "zaropgx_mtdna_app_under_test", APP_PY
+        )
+        module = importlib.util.module_from_spec(spec)
+        mp.setitem(sys.modules, spec.name, module)
+        spec.loader.exec_module(module)
+
+        rcrs_fasta = root / "rcrs_mutserve.fasta"
+        shutil.copyfile(
+            REPO_ROOT / "docker/mtdna-server-2/files/rcrs_mutserve.fasta",
+            rcrs_fasta,
+        )
+        subprocess.run(["samtools", "faidx", str(rcrs_fasta)], check=True)
+        module.RCRS_FASTA = str(rcrs_fasta)
+
+        yield module
+
+
+@pytest.mark.skipif(
+    shutil.which("bcftools") is None or shutil.which("samtools") is None,
+    reason="bcftools/samtools not on PATH",
+)
+def test_a_declared_chrm_header_with_no_chrm_records_stays_a_no_call(
+    mtdna_app, tmp_path
+):
+    """The exact regression the evidence gate above exists to prevent: a VCF
+    whose header declares a chrM contig (so `contig_name` is truthy -- the
+    old, wrong evidence source) but that carries zero chrM records -- a
+    realistic nuclear-only exome/panel VCF from GATK/DRAGEN/bcftools, none of
+    which omit chrM from the sequence dictionary just because it was never
+    covered. Even with absent_to_ref=true, this must stay a no-call naming
+    the absent chrM data, never Reference. If `bool(contig_name) or` is
+    restored in docker/mtdna-server-2/app.py, this fails: contig_name is
+    "chrM" here, which used to be sufficient on its own to promote to
+    Reference. See review round 2, finding 1 (2026-08-30).
+    """
+    vcf_path = tmp_path / "no_chrm_data.vcf"
+    vcf_path.write_text(
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=248956422>\n"
+        "##contig=<ID=chrM,length=16569>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "chr1\t100\t.\tA\tG\t.\tPASS\t.\n",
+        encoding="utf-8",
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+
+    result = asyncio.run(
+        mtdna_app._call_from_vcf(
+            str(vcf_path), str(work), "GRCh38", True, "test-no-chrm-data"
+        )
+    )
+
+    assert result["mt_rnr1"] is None
+    assert result["mt_rnr1_no_call_reason"] == "no_chrm_data"
+    # The haplogroup guard added for the same reason (Finding 1, round 1)
+    # must also withhold on this input: no chrM evidence means no root-
+    # haplogroup call either.
+    assert result["haplogroup"] is None

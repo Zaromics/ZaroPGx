@@ -477,23 +477,39 @@ async def _call_from_vcf(
     # Positive evidence the VCF actually carried mitochondrial data, as
     # opposed to a plain nuclear-only PGx VCF that never touched chrM at all
     # (app/static/demo/pharmcat.example.vcf is exactly this: no ##contig
-    # chrM line, zero chrM rows). `query` above is the full bcftools query
-    # over the whole chrM contig -- NOT restricted to MT_RNR1_SPAN the way
-    # `records` is -- so a non-empty file here means the VCF had at least one
-    # chrM record somewhere, even outside MT-RNR1 itself. `contig_name`
-    # covers the complementary real case: a genuinely sequenced sample whose
-    # mitochondrion happened to carry zero variant lines at all (VCFs list
-    # sites, not every position), where the declared ##contig header is the
-    # only evidence left.
+    # chrM line, zero chrM rows -- but that is an unusually minimal header,
+    # not the norm). `query` above is the full bcftools query over the whole
+    # chrM contig -- NOT restricted to MT_RNR1_SPAN the way `records` is --
+    # so a non-empty file here means the VCF had at least one chrM record
+    # somewhere, even outside MT-RNR1 itself.
     #
-    # pharmcat_absent_to_ref is NOT itself that evidence: it is the user's
-    # judgment about positions PharmCAT's own definitions cover, and
+    # `contig_name` (the VCF's own ##contig header, read above) is
+    # deliberately NOT used as evidence, even though an earlier version of
+    # this gate accepted it as a fallback. GATK, DRAGEN and bcftools all
+    # write the full sequence dictionary -- chrM included -- regardless of
+    # whether chrM was ever covered: a nuclear-only exome or panel VCF from
+    # any of those callers still declares a chrM contig line, so treating
+    # the header alone as evidence would let exactly the case this finding
+    # exists to close back in, just narrowed to VCFs with a normal-sized
+    # header instead of pharmcat.example.vcf's unusually minimal one. A
+    # chrM record is real evidence; a chrM contig declaration is not. Review
+    # round 2, finding 1 (2026-08-30).
+    #
+    # The cost of dropping the header: a genuinely sequenced mitochondrion
+    # that is 100% rCRS-identical produces zero chrM records and is now
+    # withheld from Reference too. That is vanishingly rare, and erring
+    # toward withholding a claim this code cannot evidence is the correct
+    # direction -- the alternative is erring toward an unearned positive
+    # claim, which is exactly what this whole feature exists to prevent.
+    #
+    # pharmcat_absent_to_ref is NOT itself that evidence either: it is the
+    # user's judgment about positions PharmCAT's own definitions cover, and
     # pharmcat_positions.vcf carries no chrM position at all (see
     # mt_rnr1.py's module docstring) -- so ticking that box asserts nothing
-    # about chrM. Without a chrM contig header or a chrM record, promoting to
-    # Reference here would report normal aminoglycoside risk for a gene the
-    # sample was never sequenced for, no matter what the user consented to.
-    vcf_carried_chrm_data = bool(contig_name) or os.path.getsize(query) > 0
+    # about chrM. Without a chrM record, promoting to Reference here would
+    # report normal aminoglycoside risk for a gene the sample was never
+    # sequenced for, no matter what the user consented to.
+    vcf_carried_chrm_data = os.path.getsize(query) > 0
 
     if not absent_to_ref:
         evidence_reason = NO_CALL_NOT_CONSENTED
