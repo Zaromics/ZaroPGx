@@ -119,12 +119,15 @@ from mtdna.builds import (  # noqa: E402
 )
 from mtdna.mt_rnr1 import MT_RNR1_ALLELES  # noqa: E402  (path set above)
 from mtdna.mt_rnr1 import (  # noqa: E402
+    BASIS_INFERRED,
     MT_RNR1_SPAN,
     NO_CALL_COVERAGE_BELOW_FLOOR,
     NO_CALL_COVERAGE_UNKNOWN,
     NO_CALL_NO_CHRM_DATA,
     NO_CALL_NOT_CONSENTED,
+    NO_CALL_REGION_NOT_COVERED,
     VcfRecord,
+    has_variant_in_gene,
     match_alleles,
     resolve_mt_rnr1_call,
 )
@@ -511,32 +514,51 @@ async def _call_from_vcf(
     # sequenced for, no matter what the user consented to.
     vcf_carried_chrm_data = os.path.getsize(query) > 0
 
-    if not absent_to_ref:
-        evidence_reason = NO_CALL_NOT_CONSENTED
-    elif not vcf_carried_chrm_data:
-        evidence_reason = NO_CALL_NO_CHRM_DATA
-    else:
-        evidence_reason = None
-    call, no_call_reason = resolve_mt_rnr1_call(
-        matched, records, evidence_reason=evidence_reason
-    )
-
-    # Same "was chrM genuinely examined" evidence gates the haplogroup call:
-    # haplogrep3 given a record-less chrM VCF has no empty-input guard of its
-    # own and would classify the file as a perfect, high-confidence match to
-    # the rCRS reference haplotype purely because nothing contradicts it --
-    # a root-haplogroup call on an unsequenced mitochondrion is the same
-    # unearned-positive-claim defect this whole feature exists to remove.
-    haplogroup, quality = (
+    # Classified BEFORE the MT-RNR1 call now: Tier C reads Not_Found_Polys.
+    # Gated on Tier E's evidence, exactly as before -- haplogrep3 has no
+    # empty-input guard and would call a record-less chrM VCF a perfect match
+    # to the reference haplotype purely because nothing contradicts it.
+    haplogroup, quality, not_found_polys, hg_range = (
         await _classify_haplogroup(normed, work, job_key)
         if vcf_carried_chrm_data
-        else (None, None)
+        else (None, None, None, None)
     )
+
+    # Tier C: the gene window demonstrably produced calls (a variant inside
+    # 648-1601), AND the molecule was not patchily covered (haplogrep3 found
+    # every polymorphism the assigned haplogroup predicts). Both halves are
+    # required -- a single off-target read can yield one in-gene variant, and
+    # an empty Not_Found_Polys on a shallow haplogroup says little on its own.
+    tier_c_holds = (
+        vcf_carried_chrm_data
+        and has_variant_in_gene(records)
+        and haplogroup is not None
+        and not (not_found_polys or "").strip()
+    )
+
+    if not absent_to_ref:
+        evidence_reason, basis = NO_CALL_NOT_CONSENTED, None
+    elif not vcf_carried_chrm_data:
+        evidence_reason, basis = NO_CALL_NO_CHRM_DATA, None
+    elif not tier_c_holds:
+        # Tier D: mitochondrial data is here, but nothing established that
+        # MT-RNR1 itself was interrogated.
+        evidence_reason, basis = NO_CALL_REGION_NOT_COVERED, None
+    else:
+        evidence_reason, basis = None, BASIS_INFERRED
+
+    resolved = resolve_mt_rnr1_call(
+        matched, records, evidence_reason=evidence_reason, basis=basis
+    )
+    call, no_call_reason = resolved.call, resolved.no_call_reason
+
     return {
         "haplogroup": haplogroup,
         "haplogroup_quality": quality,
+        "haplogroup_range": hg_range,
         "mt_rnr1": call,
         "mt_rnr1_no_call_reason": no_call_reason,
+        "evidence_basis": resolved.basis,
         "mt_rnr1_all_matches": matched,
         "variants": [r._asdict() for r in records],
         # Absolute path under DATA_DIR/TEMP_DIR, which the mtdna volume shares
@@ -553,7 +575,16 @@ async def _call_from_vcf(
 
 
 async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
-    """haplogrep3 classify -> (haplogroup, quality). Takes a VCF, not a BAM."""
+    """haplogrep3 classify -> (haplogroup, quality, not_found_polys, range).
+
+    The last two are coverage evidence, not decoration. --extend-report is
+    already passed, so these columns already exist in the output file; they
+    were simply discarded. Not_Found_Polys lists expected haplogroup-defining
+    polymorphisms that were NOT observed -- empty means nothing the phylogeny
+    predicted was missing, which is Tier C's second half. Range is what
+    haplogrep3 worked over; it is recorded for the report but never gated on,
+    because it reflects what the input declared rather than what was measured.
+    """
     out = os.path.join(work, "haplogroups.txt")
     await _run(
         [
@@ -575,7 +606,7 @@ async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
     with open(out, "r", encoding="utf-8") as handle:
         rows = [line.rstrip("\n").split("\t") for line in handle if line.strip()]
     if len(rows) < 2:
-        return None, None
+        return None, None, None, None
     header, first = rows[0], rows[1]
     index = {name.strip('"').lower(): i for i, name in enumerate(header)}
 
@@ -583,7 +614,12 @@ async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
         i = index.get(key)
         return first[i].strip('"') if i is not None and i < len(first) else None
 
-    return field("haplogroup"), field("quality")
+    return (
+        field("haplogroup"),
+        field("quality"),
+        field("not_found_polys"),
+        field("range"),
+    )
 
 
 # Upstream's own floor (nextflow.config params.min_mean_coverage). Below it,

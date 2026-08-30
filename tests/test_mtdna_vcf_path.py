@@ -92,6 +92,32 @@ def test_a_chrm_contig_header_alone_is_not_accepted_as_evidence():
     assert "bool(contig_name)" not in branch
 
 
+def test_classify_haplogroup_returns_the_coverage_columns():
+    """Not_Found_Polys and Range are coverage evidence we already pay for.
+
+    haplogrep3 is already run with --extend-report; the columns were parsed
+    and thrown away. Not_Found_Polys lists expected haplogroup-defining
+    polymorphisms that were NOT observed, so an empty list means nothing the
+    phylogeny predicted was missing -- Tier C's second half.
+    """
+    source = _source()
+    branch = source[source.index("async def _classify_haplogroup") :]
+    assert 'field("not_found_polys")' in branch
+    assert 'field("range")' in branch
+
+
+def test_tier_c_and_d_are_decided_from_real_evidence_not_the_flag_alone():
+    """The VCF branch must consult both halves of Tier C."""
+    branch = _vcf_branch()
+    assert "has_variant_in_gene(" in branch
+    assert "not_found_polys" in branch
+    assert "NO_CALL_REGION_NOT_COVERED" in branch
+
+
+def test_the_response_carries_the_evidence_basis():
+    assert '"evidence_basis"' in _source()
+
+
 def test_an_unsupported_build_is_refused_not_silently_skipped():
     source = _source()
     assert "plan.supported" in source
