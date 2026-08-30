@@ -111,3 +111,48 @@ def test_within_a_tier_the_lowest_position_wins():
 def test_no_matches_is_not_silently_reference():
     """Reference is a positive claim; the caller decides, not this function."""
     assert select_call([]) is None
+
+
+import json
+import shutil
+import subprocess
+
+MT_RNR1_JSON = "org/pharmgkb/pharmcat/phenotype/MT_RNR1.json"
+
+_RISK_FROM_PHENOTYPE = {
+    "increased risk of aminoglycoside-induced hearing loss": RISK_INCREASED,
+    "uncertain risk of aminoglycoside-induced hearing loss": RISK_UNCERTAIN,
+    "normal risk of aminoglycoside-induced hearing loss": RISK_NORMAL,
+}
+
+
+def _haplotypes_from_running_pharmcat():
+    """Read MT_RNR1.json out of the live pharmcat container, or skip."""
+    if shutil.which("docker") is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "docker", "--context", "pgx-native", "exec", "pgx_pharmcat",
+                "sh", "-c",
+                f"cd /tmp && unzip -o -p /pharmcat/pharmcat.jar {MT_RNR1_JSON}",
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return json.loads(proc.stdout)["haplotypes"]
+
+
+@pytest.mark.skipif(
+    _haplotypes_from_running_pharmcat() is None,
+    reason="pgx_pharmcat not reachable on the pgx-native context",
+)
+def test_the_table_matches_the_jar_it_was_transcribed_from():
+    haplotypes = _haplotypes_from_running_pharmcat()
+    assert set(haplotypes) == set(MT_RNR1_ALLELES)
+    for name, phenotype in haplotypes.items():
+        expected = _RISK_FROM_PHENOTYPE[phenotype.strip().lower()]
+        assert MT_RNR1_ALLELES[name].risk == expected, name
