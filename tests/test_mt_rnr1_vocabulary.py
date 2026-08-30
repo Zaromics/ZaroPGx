@@ -282,8 +282,17 @@ def test_tier_a_promotion_is_labelled_measured():
 
 
 def test_a_denied_tier_carries_its_reason_and_no_basis():
+    """A basis passed in on a denied tier must not leak through to the
+    no-call. Catches `return MtRnr1Call(None, evidence_reason, basis)` in
+    the `evidence_reason` branch -- passing `basis=None` here would let that
+    mutation through, since None in, None out is trivially true regardless
+    of the branch's own logic.
+    """
     result = resolve_mt_rnr1_call(
-        [], OUTSIDE_GENE_ONLY, evidence_reason=NO_CALL_REGION_NOT_COVERED, basis=None
+        [],
+        OUTSIDE_GENE_ONLY,
+        evidence_reason=NO_CALL_REGION_NOT_COVERED,
+        basis=BASIS_INFERRED,
     )
     assert result.call is None
     assert result.no_call_reason == NO_CALL_REGION_NOT_COVERED
@@ -302,6 +311,23 @@ def test_a_real_match_still_wins_over_every_tier():
     assert result.no_call_reason is None
 
 
+def test_a_matched_allele_never_carries_a_supplied_basis():
+    """A named allele is its own evidence -- a basis beside it would be
+    noise. Catches `return MtRnr1Call(call, None, basis)` in the
+    already-matched branch: a caller can pass a basis for other reasons (it
+    always sets one on the VCF path, say), and this must still come back
+    None.
+    """
+    result = resolve_mt_rnr1_call(
+        ["m.1555A>G"],
+        [VcfRecord(1555, "A", "G")],
+        evidence_reason=None,
+        basis=BASIS_MEASURED,
+    )
+    assert result.call == "m.1555A>G"
+    assert result.basis is None
+
+
 def test_the_961_suppression_still_fires_under_a_licensed_tier():
     """Tier C must not smuggle past the unresolved-delins guard."""
     result = resolve_mt_rnr1_call(
@@ -313,9 +339,17 @@ def test_the_961_suppression_still_fires_under_a_licensed_tier():
 
 
 def test_basis_is_never_set_on_a_no_call():
-    """A basis describes how a call was established; there is no call here."""
+    """A basis describes how a call was established; there is no call here.
+
+    A non-None basis goes in on purpose: passing basis=None would make this
+    trivially true regardless of what the `evidence_reason` branch does with
+    it. This is the loop form of test_a_denied_tier_carries_its_reason_and_
+    no_basis, covering both NO_CALL_* reasons that branch can be handed.
+    """
     for reason in (NO_CALL_NO_CHRM_DATA, NO_CALL_REGION_NOT_COVERED):
-        result = resolve_mt_rnr1_call([], [], evidence_reason=reason, basis=None)
+        result = resolve_mt_rnr1_call(
+            [], [], evidence_reason=reason, basis=BASIS_INFERRED
+        )
         assert result.basis is None
 
 
