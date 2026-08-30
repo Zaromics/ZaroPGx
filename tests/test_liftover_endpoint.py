@@ -125,7 +125,9 @@ def hg38_reference(gatk_api):
 def chain_file(gatk_api):
     path = Path(gatk_api.LIFTOVER_CHAIN_PATHS[("GRCh37", "GRCh38")])
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(gzip.compress(b"chain 1 chr1 249250621 + 0 1 chr1 248956422 + 0 1 1\n"))
+    path.write_bytes(
+        gzip.compress(b"chain 1 chr1 249250621 + 0 1 chr1 248956422 + 0 1 1\n")
+    )
     yield path
     path.unlink(missing_ok=True)
 
@@ -179,7 +181,11 @@ class FakeTools:
             source = argv[-1]
             with open(source, "rb") as handle:
                 blob = handle.read()
-            text = gzip.decompress(blob).decode() if blob[:2] == b"\x1f\x8b" else blob.decode()
+            text = (
+                gzip.decompress(blob).decode()
+                if blob[:2] == b"\x1f\x8b"
+                else blob.decode()
+            )
             with open(self._flag_value(argv, "-o"), "wb") as handle:
                 handle.write(gzip.compress(text.encode("utf-8")))
         elif tool == "gatk" and sub == "LiftoverVcf":
@@ -198,7 +204,9 @@ def fake_tools(gatk_api, monkeypatch):
     return tools
 
 
-def _post_liftover(client, vcf_text, filename="sample.vcf", source_build="GRCh37", **extra):
+def _post_liftover(
+    client, vcf_text, filename="sample.vcf", source_build="GRCh37", **extra
+):
     data = {"source_build": source_build, "reference_genome": "hg38", **extra}
     return client.post(
         "/liftover-vcf",
@@ -233,7 +241,9 @@ def test_hostile_source_build_is_refused_before_any_tool_runs(
     assert fake_tools.calls == [], "a refused build must never reach a subprocess"
 
 
-def test_grch38_as_source_build_is_refused(client, fake_tools, hg38_reference, chain_file):
+def test_grch38_as_source_build_is_refused(
+    client, fake_tools, hg38_reference, chain_file
+):
     # Lifting a GRCh38 file "to GRCh38" would double-shift coordinates.
     resp = _post_liftover(client, CHR_GRCH37_VCF, source_build="GRCh38")
     assert resp.status_code == 400, resp.text
@@ -245,7 +255,9 @@ def test_target_build_must_be_grch38(client, fake_tools, hg38_reference, chain_f
     assert "GRCh38" in resp.json()["detail"]
 
 
-def test_missing_chain_file_is_a_clear_400(client, fake_tools, hg38_reference, gatk_api):
+def test_missing_chain_file_is_a_clear_400(
+    client, fake_tools, hg38_reference, gatk_api
+):
     chain = Path(gatk_api.LIFTOVER_CHAIN_PATHS[("GRCh37", "GRCh38")])
     chain.unlink(missing_ok=True)
 
@@ -319,7 +331,9 @@ def test_rename_map_covers_the_primary_assembly(gatk_api, tmp_path):
     assert entries["M"] == "chrM"
 
 
-def test_plain_input_is_renamed_before_liftover(client, fake_tools, hg38_reference, chain_file):
+def test_plain_input_is_renamed_before_liftover(
+    client, fake_tools, hg38_reference, chain_file
+):
     resp = _post_liftover(client, PLAIN_GRCH37_VCF)
 
     assert resp.status_code == 200, resp.text
@@ -346,14 +360,18 @@ def test_chr_input_skips_the_rename(client, fake_tools, hg38_reference, chain_fi
     resp = _post_liftover(client, CHR_GRCH37_VCF)
 
     assert resp.status_code == 200, resp.text
-    assert fake_tools.ran("bcftools", "annotate") == [], "chr-named input needs no rename"
+    assert (
+        fake_tools.ran("bcftools", "annotate") == []
+    ), "chr-named input needs no rename"
     assert len(fake_tools.ran("gatk", "LiftoverVcf")) == 1
     assert resp.json()["renamed_contigs"] is False
 
 
 def test_liftover_argv_shape(gatk_api):
     """Pin the exact flag set so a GATK bump that renames one is a loud failure."""
-    argv = gatk_api.build_liftover_argv("in.vcf", "out.vcf.gz", "c.chain.gz", "rej.vcf.gz", "ref.fa")
+    argv = gatk_api.build_liftover_argv(
+        "in.vcf", "out.vcf.gz", "c.chain.gz", "rej.vcf.gz", "ref.fa"
+    )
     assert argv[:2] == ["gatk", "LiftoverVcf"]
     for flag, value in (
         ("-I", "in.vcf"),
@@ -416,7 +434,9 @@ def test_reject_reason_summary_ranks_most_common_first(gatk_api, tmp_path):
     assert summary["MismatchedRefAllele"] == 2
 
 
-def test_implausible_reject_rate_fails_loudly(client, fake_tools, hg38_reference, chain_file):
+def test_implausible_reject_rate_fails_loudly(
+    client, fake_tools, hg38_reference, chain_file
+):
     # 9 of 10 rejected: the signature of a chain/prefix mismatch, not of data.
     fake_tools.lifted_rows = [("chr10", 94781859, "PASS")]
     fake_tools.reject_rows = [("chr10", 96500000 + i, "NoTarget") for i in range(9)]
@@ -457,14 +477,18 @@ def test_hostile_filename_cannot_inject_into_any_argv(
         assert isinstance(argv, list), f"shell-string command: {argv!r}"
         assert kwargs.get("shell") is not True, "a call still runs with shell=True"
         for element in argv:
-            assert ";" not in str(element), f"metacharacter survived into argv: {element!r}"
+            assert ";" not in str(
+                element
+            ), f"metacharacter survived into argv: {element!r}"
     # The stored name is rebuilt from allowlisted parts, not sanitised in place.
     gatk_argv = fake_tools.ran("gatk", "LiftoverVcf")[0]
     stored = os.path.basename(gatk_argv[gatk_argv.index("-I") + 1])
     assert re.fullmatch(r"[A-Za-z0-9_-]+\.vcf(\.gz)?", stored), stored
 
 
-def test_outputs_land_on_the_shared_data_volume(client, fake_tools, hg38_reference, chain_file, gatk_api):
+def test_outputs_land_on_the_shared_data_volume(
+    client, fake_tools, hg38_reference, chain_file, gatk_api
+):
     # The caller is a Nextflow process in another container; a path on this
     # container's private /tmp would be unreadable there (the exact defect the
     # BAM conversions were fixed for).
@@ -532,7 +556,9 @@ def _load_runner():
         "NEXTFLOW_PROGRESS_LOG",
         str(Path(tempfile.gettempdir()) / "zaropgx_nextflow_progress_test.log"),
     )
-    spec = _ilu.spec_from_file_location(name, REPO_ROOT / "docker" / "nextflow" / "runner.py")
+    spec = _ilu.spec_from_file_location(
+        name, REPO_ROOT / "docker" / "nextflow" / "runner.py"
+    )
     module = _ilu.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -567,7 +593,10 @@ def test_runner_request_allowlists_source_build():
     runner = _load_runner()
     base = dict(input="/data/x.vcf", input_type="vcf", patient_id="p")
 
-    assert runner.NextflowRunRequest(**base, source_build="GRCh37").source_build == "GRCh37"
+    assert (
+        runner.NextflowRunRequest(**base, source_build="GRCh37").source_build
+        == "GRCh37"
+    )
     assert runner.NextflowRunRequest(**base, source_build="  ").source_build == ""
     assert runner.NextflowRunRequest(**base).source_build == ""
 

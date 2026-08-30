@@ -1455,7 +1455,9 @@ async def process_file_nextflow_background(
             source_build = ""
             if workflow.get("needs_liftover"):
                 source_build = (
-                    sanitize_optional_pipeline_token(str(workflow.get("source_build") or ""))
+                    sanitize_optional_pipeline_token(
+                        str(workflow.get("source_build") or "")
+                    )
                     or ""
                 )
 

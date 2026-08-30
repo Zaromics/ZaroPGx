@@ -695,10 +695,10 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
     driven = set()
     for call in guarded_to_thread_calls:
         first_arg = call.args[0]
-        assert isinstance(first_arg, ast.Name) and first_arg.id in allowed_workers, (
-            "a semaphore-guarded to_thread() call drives an unaudited worker"
-        )
+        assert (
+            isinstance(first_arg, ast.Name) and first_arg.id in allowed_workers
+        ), "a semaphore-guarded to_thread() call drives an unaudited worker"
         driven.add(first_arg.id)
-    assert driven == allowed_workers, (
-        f"expected both audited workers to be guarded, found {sorted(driven)}"
-    )
+    assert (
+        driven == allowed_workers
+    ), f"expected both audited workers to be guarded, found {sorted(driven)}"
