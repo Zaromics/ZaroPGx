@@ -119,17 +119,13 @@ from mtdna.builds import (  # noqa: E402
 )
 from mtdna.mt_rnr1 import MT_RNR1_ALLELES  # noqa: E402  (path set above)
 from mtdna.mt_rnr1 import (  # noqa: E402
-    BASIS_INFERRED,
     MT_RNR1_SPAN,
     NO_CALL_COVERAGE_BELOW_FLOOR,
     NO_CALL_COVERAGE_UNKNOWN,
-    NO_CALL_NO_CHRM_DATA,
-    NO_CALL_NOT_CONSENTED,
-    NO_CALL_REGION_NOT_COVERED,
     VcfRecord,
-    has_variant_in_gene,
     match_alleles,
     resolve_mt_rnr1_call,
+    vcf_evidence,
 )
 
 MUTSERVE_JAR = "/opt/mutserve/mutserve.jar"
@@ -524,28 +520,18 @@ async def _call_from_vcf(
         else (None, None, None, None)
     )
 
-    # Tier C: the gene window demonstrably produced calls (a variant inside
-    # 648-1601), AND the molecule was not patchily covered (haplogrep3 found
-    # every polymorphism the assigned haplogroup predicts). Both halves are
-    # required -- a single off-target read can yield one in-gene variant, and
-    # an empty Not_Found_Polys on a shallow haplogroup says little on its own.
-    tier_c_holds = (
-        vcf_carried_chrm_data
-        and has_variant_in_gene(records)
-        and haplogroup is not None
-        and not (not_found_polys or "").strip()
+    # The Tier C/D/E decision itself is not made here: it lives in
+    # app/mtdna/mt_rnr1.py's vcf_evidence, which is importable by the unit
+    # suite (this module is not -- see vcf_evidence's docstring) and is the
+    # only place the conjunction, the absent_to_ref ordering, and the Tier
+    # D/E distinction are actually exercised rather than merely referenced.
+    evidence_reason, basis = vcf_evidence(
+        absent_to_ref=absent_to_ref,
+        carried_chrm_data=vcf_carried_chrm_data,
+        records=records,
+        haplogroup=haplogroup,
+        not_found_polys=not_found_polys,
     )
-
-    if not absent_to_ref:
-        evidence_reason, basis = NO_CALL_NOT_CONSENTED, None
-    elif not vcf_carried_chrm_data:
-        evidence_reason, basis = NO_CALL_NO_CHRM_DATA, None
-    elif not tier_c_holds:
-        # Tier D: mitochondrial data is here, but nothing established that
-        # MT-RNR1 itself was interrogated.
-        evidence_reason, basis = NO_CALL_REGION_NOT_COVERED, None
-    else:
-        evidence_reason, basis = None, BASIS_INFERRED
 
     resolved = resolve_mt_rnr1_call(
         matched, records, evidence_reason=evidence_reason, basis=basis

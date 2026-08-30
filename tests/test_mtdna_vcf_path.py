@@ -54,14 +54,17 @@ def test_reference_is_gated_on_absent_to_ref():
     Scoped to the VCF branch's actual gating expression, not a bare
     substring anywhere in the file -- "absent_to_ref" also appears in the
     function signature and docstrings, which would stay green even if the
-    gate itself were deleted. The real behaviour (a real match always wins;
-    without positive evidence the call stays a no-call; an unresolved delins
-    at 961 blocks the promotion even with evidence) is exercised directly
-    against real VcfRecord inputs in test_mt_rnr1_vocabulary.py's
-    resolve_mt_rnr1_call tests -- see review round 1, finding 4 (2026-08-30).
+    gate itself were deleted. The gating decision itself now lives in
+    vcf_evidence() (app/mtdna/mt_rnr1.py), checked ahead of every other
+    tier -- exercised directly against real inputs in
+    test_mt_rnr1_vocabulary.py's test_vcf_evidence_checks_consent_before_
+    every_other_tier. This only pins that the VCF branch actually passes
+    absent_to_ref through to that function rather than dropping it. See
+    review round 1, findings 1 and 4 (2026-08-30).
     """
     branch = _vcf_branch()
-    assert "if not absent_to_ref:" in branch
+    assert "vcf_evidence(" in branch
+    assert "absent_to_ref=absent_to_ref" in branch
     assert "resolve_mt_rnr1_call(" in branch
 
 
@@ -106,12 +109,29 @@ def test_classify_haplogroup_returns_the_coverage_columns():
     assert 'field("range")' in branch
 
 
-def test_tier_c_and_d_are_decided_from_real_evidence_not_the_flag_alone():
-    """The VCF branch must consult both halves of Tier C."""
+def test_the_vcf_branch_delegates_the_evidence_decision():
+    """The Tier C/D/E decision must be made by vcf_evidence(), not hand-rolled
+    inline.
+
+    docker/mtdna-server-2/app.py is not importable in the unit suite (see the
+    fixture docstring below), so a test against its source text can only pin
+    substrings -- which cannot fail if a conjunction quietly degrades to a
+    disjunction, or absent_to_ref stops being checked first. That is exactly
+    the failure shape review round 1 caught here: the previous version of
+    this test asserted "has_variant_in_gene(" / "not_found_polys" /
+    "NO_CALL_REGION_NOT_COVERED" were present in the branch, all of which
+    stay true even if `and` becomes `or` in the conjunction. The fix is to
+    keep the logic itself in app/mtdna/mt_rnr1.py's vcf_evidence(), which IS
+    importable, and exercise it directly with real inputs -- see
+    test_mt_rnr1_vocabulary.py's vcf_evidence tests for that coverage
+    (including a mutation check: `and` -> `or` in the conjunction, and the
+    absent_to_ref ordering, both confirmed to turn a test red). This test
+    only pins that the sidecar actually delegates to that function rather
+    than re-implementing the decision locally.
+    """
     branch = _vcf_branch()
-    assert "has_variant_in_gene(" in branch
-    assert "not_found_polys" in branch
-    assert "NO_CALL_REGION_NOT_COVERED" in branch
+    assert "vcf_evidence(" in branch
+    assert "resolve_mt_rnr1_call(" in branch
 
 
 def test_the_response_carries_the_evidence_basis():

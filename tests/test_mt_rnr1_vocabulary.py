@@ -13,6 +13,7 @@ from app.mtdna.mt_rnr1 import (
     MT_RNR1_ALLELES,
     MT_RNR1_SPAN,
     NO_CALL_NO_CHRM_DATA,
+    NO_CALL_NOT_CONSENTED,
     NO_CALL_REGION_NOT_COVERED,
     NO_CALL_UNRESOLVED_961_DELINS,
     REFERENCE,
@@ -25,6 +26,7 @@ from app.mtdna.mt_rnr1 import (
     match_alleles,
     resolve_mt_rnr1_call,
     select_call,
+    vcf_evidence,
 )
 
 # Verbatim from org/pharmgkb/pharmcat/phenotype/MT_RNR1.json (PharmCAT 3.4.0).
@@ -351,6 +353,128 @@ def test_basis_is_never_set_on_a_no_call():
             [], [], evidence_reason=reason, basis=BASIS_INFERRED
         )
         assert result.basis is None
+
+
+# --- vcf_evidence: the VCF path's Tier C/D/E decision -----------------------
+#
+# Lifted out of docker/mtdna-server-2/app.py's _call_from_vcf (review round 1,
+# finding 1, 2026-08-30) because that module is not importable here (see
+# tests/test_mtdna_vcf_path.py's fixture docstring), so a test pinned against
+# its source text can only assert substrings are present -- which cannot fail
+# when a conjunction silently degrades to a disjunction, or when
+# absent_to_ref stops being checked first. These tests exercise the real
+# function with real inputs instead.
+
+
+def test_vcf_evidence_promotes_when_both_tier_c_halves_hold():
+    """The case this whole change exists to unlock: an in-gene variant and a
+    clean haplogroup, with consent given."""
+    reason, basis = vcf_evidence(
+        absent_to_ref=True,
+        carried_chrm_data=True,
+        records=HG00096_RECORDS,
+        haplogroup="H16a1",
+        not_found_polys="",
+    )
+    assert reason is None
+    assert basis == BASIS_INFERRED
+
+
+def test_vcf_evidence_tier_d_on_a_dirty_not_found_polys():
+    """An in-gene variant alone is not enough: a non-empty Not_Found_Polys
+    means the assigned haplogroup predicted variants that were not observed,
+    so coverage was patchy. This is the case a conjunction-turned-disjunction
+    would wrongly promote."""
+    reason, basis = vcf_evidence(
+        absent_to_ref=True,
+        carried_chrm_data=True,
+        records=HG00096_RECORDS,
+        haplogroup="H16a1",
+        not_found_polys="16234, 16311",
+    )
+    assert reason == NO_CALL_REGION_NOT_COVERED
+    assert basis is None
+
+
+def test_vcf_evidence_tier_d_on_no_in_gene_variant():
+    """A clean Not_Found_Polys alone is not enough: nothing establishes that
+    MT-RNR1 itself was ever interrogated without a variant inside the gene's
+    own span. The other half of the same conjunction-turned-disjunction
+    case."""
+    reason, basis = vcf_evidence(
+        absent_to_ref=True,
+        carried_chrm_data=True,
+        records=OUTSIDE_GENE_ONLY,
+        haplogroup="H16a1",
+        not_found_polys="",
+    )
+    assert reason == NO_CALL_REGION_NOT_COVERED
+    assert basis is None
+
+
+def test_vcf_evidence_tier_d_on_no_haplogroup_is_not_a_vacuous_pass():
+    """haplogroup=None must fail the conjunction, not pass it by accident --
+    e.g. `not (not_found_polys or "").strip()` alone, without the
+    `haplogroup is not None` guard, would treat a never-classified sample as
+    clean."""
+    reason, basis = vcf_evidence(
+        absent_to_ref=True,
+        carried_chrm_data=True,
+        records=HG00096_RECORDS,
+        haplogroup=None,
+        not_found_polys=None,
+    )
+    assert reason == NO_CALL_REGION_NOT_COVERED
+    assert basis is None
+
+
+def test_vcf_evidence_tier_e_when_no_chrm_data_beats_everything_else():
+    """No chrM data at all is Tier E, not Tier D -- and wins even when the
+    caller (wrongly) supplied evidence that would otherwise satisfy Tier C,
+    because a real sidecar never would with carried_chrm_data=False (haplogrep3
+    never runs), but the function's own gate must not depend on that."""
+    reason, basis = vcf_evidence(
+        absent_to_ref=True,
+        carried_chrm_data=False,
+        records=HG00096_RECORDS,
+        haplogroup="H16a1",
+        not_found_polys="",
+    )
+    assert reason == NO_CALL_NO_CHRM_DATA
+    assert basis is None
+
+
+def test_vcf_evidence_checks_consent_before_every_other_tier():
+    """absent_to_ref is gated first: full Tier C evidence must still
+    withhold without the user's consent."""
+    reason, basis = vcf_evidence(
+        absent_to_ref=False,
+        carried_chrm_data=True,
+        records=HG00096_RECORDS,
+        haplogroup="H16a1",
+        not_found_polys="",
+    )
+    assert reason == NO_CALL_NOT_CONSENTED
+    assert basis is None
+
+
+def test_vcf_evidence_checks_consent_before_the_chrm_data_gate_too():
+    """Pins the actual ordering between the two earliest checks: with both
+    absent_to_ref and carried_chrm_data false, the reason reported is still
+    NOT_CONSENTED, not NO_CHRM_DATA. Reversing that order (checking
+    carried_chrm_data first) leaves every other test in this file green --
+    none of them exercise both gates failing at once -- so this is the one
+    that actually pins the ordering rather than just the presence of the
+    absent_to_ref check."""
+    reason, basis = vcf_evidence(
+        absent_to_ref=False,
+        carried_chrm_data=False,
+        records=[],
+        haplogroup=None,
+        not_found_polys=None,
+    )
+    assert reason == NO_CALL_NOT_CONSENTED
+    assert basis is None
 
 
 import json

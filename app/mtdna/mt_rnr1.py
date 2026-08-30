@@ -16,7 +16,7 @@ count 1, so the outside call is one name -- never a "A/B" diplotype form.
 
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 RISK_INCREASED = "increased"
 RISK_UNCERTAIN = "uncertain"
@@ -320,3 +320,75 @@ def resolve_mt_rnr1_call(
     if has_unresolved_961_deletion(records):
         return MtRnr1Call(None, NO_CALL_UNRESOLVED_961_DELINS, None)
     return MtRnr1Call(REFERENCE, None, basis)
+
+
+def vcf_evidence(
+    *,
+    absent_to_ref: bool,
+    carried_chrm_data: bool,
+    records: List[VcfRecord],
+    haplogroup: Optional[str],
+    not_found_polys: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """(evidence_reason, basis) for the VCF path's Tier C / D / E decision.
+
+    Lifted out of the sidecar (docker/mtdna-server-2/app.py's
+    `_call_from_vcf`) so this decision is exercised directly in the unit
+    suite: app.py is not importable there (it reads /job-client off sys.path
+    and imports psutil, which the dev venv does not ship), so a test against
+    it can only pin substrings of the source text -- which cannot fail on a
+    conjunction silently degrading to a disjunction, or on `absent_to_ref`
+    being checked out of order. This module has no such constraint; the same
+    fix already applied once to `resolve_mt_rnr1_call` for the same reason.
+
+    `carried_chrm_data` is Tier E's evidence: whether the file carried any
+    chrM record at all, as opposed to a plain nuclear-only PGx VCF that never
+    touched chrM (app/static/demo/pharmcat.example.vcf is exactly this).
+    Deliberately not a chrM ##contig header alone -- GATK, DRAGEN and
+    bcftools all write the full sequence dictionary regardless of whether
+    chrM was ever covered, so a declared contig line is not proof the sample
+    was sequenced there. The caller computes this from its own VCF (a
+    non-empty bcftools query over the whole chrM contig); see
+    `_call_from_vcf`'s `vcf_carried_chrm_data` for that computation and its
+    reasoning.
+
+    `absent_to_ref` is checked first, ahead of every other tier: it is the
+    user's own consent to read an empty match as "no PGx allele present"
+    rather than "untested". Without it, the call stays a no-call regardless
+    of how strong the rest of the evidence is -- consent is a precondition
+    for treating an empty match as a promotion candidate at all, not a fact
+    this function may infer from the data.
+
+    Tier C: the gene window demonstrably produced calls (a variant inside
+    MT_RNR1_SPAN, via `has_variant_in_gene`), AND the molecule was not
+    patchily covered (haplogrep3 assigned a haplogroup, AND its
+    Not_Found_Polys came back empty -- every polymorphism the assigned
+    haplogroup predicts was actually found). Both halves are required: a
+    single off-target read can produce one in-gene variant on its own, and an
+    empty Not_Found_Polys on a shallow haplogroup says little on its own.
+    `haplogroup is None` (no chrM data, or classification never ran) fails
+    this conjunction rather than passing it vacuously -- the same as a
+    non-empty Not_Found_Polys would.
+
+    Tier D: mitochondrial data is present, but Tier C's conjunction did not
+    hold -- nothing established that MT-RNR1 itself was interrogated.
+    Distinct from Tier E (`NO_CALL_NO_CHRM_DATA`, no chrM data at all): the
+    two need different report copy, since they suggest different remedies to
+    the reader.
+
+    Returns `(None, BASIS_INFERRED)` when Tier C holds; otherwise
+    `(NO_CALL_*, None)`. The caller passes this straight through to
+    `resolve_mt_rnr1_call` as `evidence_reason` / `basis`.
+    """
+    if not absent_to_ref:
+        return NO_CALL_NOT_CONSENTED, None
+    if not carried_chrm_data:
+        return NO_CALL_NO_CHRM_DATA, None
+    tier_c_holds = (
+        has_variant_in_gene(records)
+        and haplogroup is not None
+        and not (not_found_polys or "").strip()
+    )
+    if not tier_c_holds:
+        return NO_CALL_REGION_NOT_COVERED, None
+    return None, BASIS_INFERRED
