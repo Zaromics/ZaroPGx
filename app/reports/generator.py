@@ -55,6 +55,10 @@ from app.reports.provenance import (
 from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.utils.env import env_flag
+from app.utils.literature import (
+    format_literature_reference,
+    format_literature_references,
+)
 from app.visualizations.workflow_diagram import (
     build_simple_html_from_workflow,
     render_kroki_mermaid_svg,
@@ -722,6 +726,7 @@ def register_report_template_helpers(environment) -> None:
     One function, called by all three, so adding a helper cannot half-land again.
     """
     environment.filters["activity_score_num"] = activity_score_num
+    environment.filters["literature_references"] = format_literature_references
     environment.tests["a_call"] = gene_was_called
 
 

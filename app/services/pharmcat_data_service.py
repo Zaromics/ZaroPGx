@@ -17,6 +17,7 @@ from app.api.db import Job
 from app.pharmcat.pharmcat_parser import PharmCATParser, get_pharmcat_summary
 from app.reports.evidence import classify_evidence
 from app.reports.provenance import resolve_called_by, resolve_guideline_source
+from app.utils.literature import format_literature_reference
 
 logger = logging.getLogger(__name__)
 
@@ -405,14 +406,28 @@ class PharmCATDataService:
                 rec.get("guideline_source")
             )
 
-            # Format citations if available
+            # Format citations if available.
+            #
+            # format_literature_reference, not str(). PharmCAT's citations are
+            # objects -- {pmid, year, title, journal, _sameAs} -- and str() on one
+            # yields its Python repr, braces and quoted keys and all. Because the
+            # collapse happened here rather than at render time, that repr was
+            # what every downstream consumer stored and displayed: the report
+            # printed roughly thirty-five pages of dicts, and the model contract
+            # (ReportRecommendation.literature_references: List[str]) made it look
+            # intentional. Formatting at the point of conversion keeps that
+            # contract and makes the string worth reading.
             citations = rec.get("citations", [])
             literature_references = []
             if citations:
                 if isinstance(citations, list):
-                    literature_references = [str(c) for c in citations]
+                    literature_references = [
+                        text
+                        for text in (format_literature_reference(c) for c in citations)
+                        if text
+                    ]
                 else:
-                    literature_references = [str(citations)]
+                    literature_references = [format_literature_reference(citations)]
 
             # Create individual recommendation entry
             # Use strength_of_evidence (CPIC levels A/B/C) if available, fallback to classification

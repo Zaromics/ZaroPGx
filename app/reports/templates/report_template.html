@@ -1233,7 +1233,7 @@
                         <p><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
                         <p><strong>Strength of Recommendation:</strong> {{ group_data['rec'].classification }}</p>
                         {% if group_data['rec'].literature_references %}
-                        <p><strong>References:</strong> {{ group_data['rec'].literature_references|join(", ") }}</p>
+                        <p><strong>References:</strong> {{ group_data['rec'].literature_references|literature_references }}</p>
                         {% endif %}
                     </div>
                 {% endfor %}
