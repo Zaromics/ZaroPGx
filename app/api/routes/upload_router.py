@@ -1466,21 +1466,22 @@ async def process_file_nextflow_background(
             skip_pypgx = "true" if not workflow.get("needs_pypgx", False) else "false"
             skip_gatk = "true" if not workflow.get("needs_gatk", False) else "false"
             skip_report = "true" if not workflow.get("needs_report", True) else "false"
+            skip_mtdna = "true" if not workflow.get("needs_mtdna", False) else "false"
 
             # Debug logging for service states
             logger.info(
                 f"User toggle states: optitype={workflow.get('optitype_enabled')}, "
                 f"gatk={workflow.get('gatk_enabled')}, pypgx={workflow.get('pypgx_enabled')}, "
-                f"report={workflow.get('report_enabled')}"
+                f"report={workflow.get('report_enabled')}, mtdna={workflow.get('mtdna_enabled')}"
             )
             logger.info(
                 f"Workflow needs (after user overrides): needs_hla={workflow.get('needs_hla')}, "
                 f"needs_gatk={workflow.get('needs_gatk')}, needs_pypgx={workflow.get('needs_pypgx')}, "
-                f"needs_report={workflow.get('needs_report')}"
+                f"needs_report={workflow.get('needs_report')}, needs_mtdna={workflow.get('needs_mtdna')}"
             )
             logger.info(
                 f"Skip flags: skip_hla={skip_hla}, skip_pypgx={skip_pypgx}, "
-                f"skip_gatk={skip_gatk}, skip_report={skip_report}"
+                f"skip_gatk={skip_gatk}, skip_report={skip_report}, skip_mtdna={skip_mtdna}"
             )
 
             # Prepare Nextflow payload matching NextflowRunRequest
@@ -1532,6 +1533,7 @@ async def process_file_nextflow_background(
                 "skip_pypgx": skip_pypgx,
                 "skip_gatk": skip_gatk,
                 "skip_report": skip_report,
+                "skip_mtdna": skip_mtdna,
                 "sample_identifier": effective_sample_identifier,
                 "pharmcat_absent_to_ref": "true" if eff_absent else "false",
                 "pharmcat_unspecified_to_ref": "true" if eff_unspec else "false",
@@ -1596,6 +1598,7 @@ async def upload_genomic_data(
     gatk_enabled: Optional[str] = Form(None),
     pypgx_enabled: Optional[str] = Form(None),
     report_enabled: Optional[str] = Form(None),
+    mtdna_enabled: Optional[str] = Form(None),
     pharmcat_absent_to_ref: Optional[str] = Form(None),
     pharmcat_unspecified_to_ref: Optional[str] = Form(None),
     db: Session = Depends(get_db),
@@ -1655,6 +1658,7 @@ async def upload_genomic_data(
             gatk_enabled=gatk_enabled,
             pypgx_enabled=pypgx_enabled,
             report_enabled=report_enabled,
+            mtdna_enabled=mtdna_enabled,
         )
 
         if not result["success"]:
@@ -1709,6 +1713,7 @@ async def upload_genomic_data(
             needs_pypgx=wf.get("needs_pypgx", False),
             needs_pypgx_bam2vcf=wf.get("needs_pypgx_bam2vcf", False),
             needs_hla=wf.get("needs_hla", False),
+            needs_mtdna=wf.get("needs_mtdna", False),
             needs_report=wf.get("needs_report", True),
             needs_conversion=wf.get("needs_conversion", False),
             needs_liftover=wf.get("needs_liftover", False),

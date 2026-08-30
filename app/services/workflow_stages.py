@@ -46,6 +46,12 @@ STEP_TO_STAGE: Mapping[str, WorkflowStage] = {
     "hla_typing": WorkflowStage.HLA,
     "pypgx_analysis": WorkflowStage.PYPGX,
     "pypgx_bam2vcf": WorkflowStage.PYPGX,
+    # mtDNA calling (its own "mtdna" sidecar) supplies PharmCAT's MT-RNR1
+    # outside call and runs immediately before it in the registry -- no
+    # dedicated stage exists for it, so it groups with PHARMCAT rather than
+    # falling through to the ANALYSIS default. Keep in sync with index.html's
+    # GlyphManager.stepMapping.
+    "mtdna_analysis": WorkflowStage.PHARMCAT,
     "pharmcat_analysis": WorkflowStage.PHARMCAT,
     "diagram_generation": WorkflowStage.REPORT,
     "report_generation": WorkflowStage.REPORT,

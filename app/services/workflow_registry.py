@@ -34,6 +34,7 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         "needs_pypgx",
         "needs_pypgx_bam2vcf",
         "needs_hla",
+        "needs_mtdna",
         "needs_report",
         "needs_conversion",
         "needs_liftover",
@@ -52,6 +53,15 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         StepTemplate("hla_typing", "zarohla", when="needs_hla"),
         StepTemplate("pypgx_bam2vcf", "pypgx", when="needs_pypgx_bam2vcf"),
         StepTemplate("pypgx_analysis", "pypgx", when="needs_pypgx"),
+        # Mitochondrial calling via the mtdna sidecar. Registered here because
+        # main.nf's MtdnaCall process posts step_name=mtdna_analysis to the
+        # JobClient -- same rule as "liftover" above: a step name with no
+        # template is never minted onto the Job, so the sidecar's status
+        # update 404s and the UI shows the step hanging [pending] forever.
+        # Ordered before pharmcat_analysis because its outside call
+        # (pharmcat.mtdna.tsv) has to exist before PharmCAT reads
+        # combined_outside.tsv.
+        StepTemplate("mtdna_analysis", "mtdna", when="needs_mtdna"),
         StepTemplate("pharmcat_analysis", "pharmcat"),
         StepTemplate("report_generation", "report_generator", when="needs_report"),
     ),

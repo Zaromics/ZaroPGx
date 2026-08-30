@@ -684,6 +684,13 @@ class FileProcessor:
             "needs_liftover": False,
             "needs_conversion": False,
             "needs_hla": False,
+            # mtDNA calling via the mtdna sidecar (mutserve + haplogrep3 +
+            # haplocheck). Set True on every input type the sidecar can be
+            # handed directly or via a BAM the pipeline already produces --
+            # vcf, bam, cram, sam. Left False for fastq (refused below, no
+            # aligner ships) and every other unsupported/refused file type,
+            # matching the other needs_* flags for those branches.
+            "needs_mtdna": False,
             "needs_pypgx": False,
             "needs_pypgx_bam2vcf": False,
             "is_provisional": False,
@@ -738,6 +745,9 @@ class FileProcessor:
         elif analysis.file_type == FileType.CRAM:
             workflow["needs_gatk"] = True
             workflow["needs_pypgx"] = True
+            # main.nf hands the sidecar the already-converted BAM (bam_ch), not the
+            # raw CRAM, so this can run alongside the GATK conversion above.
+            workflow["needs_mtdna"] = True
             workflow["recommendations"].append(
                 "<p>CRAM files will be converted to BAM using samtools:</p>"
             )
@@ -764,6 +774,8 @@ class FileProcessor:
         elif analysis.file_type == FileType.SAM:
             workflow["needs_gatk"] = True
             workflow["needs_pypgx"] = True
+            # Same as CRAM above: the sidecar sees the converted BAM, not the raw SAM.
+            workflow["needs_mtdna"] = True
             workflow["recommendations"].append(
                 "<p>SAM file will be converted to BAM using GATK or samtools:</p>"
             )
@@ -785,6 +797,8 @@ class FileProcessor:
             workflow["needs_hla"] = True
             workflow["needs_pypgx"] = True
             workflow["needs_pypgx_bam2vcf"] = True  # Use PyPGx create-input-vcf
+            # BAM is exactly what the sidecar wants for its alignment path.
+            workflow["needs_mtdna"] = True
 
             workflow["recommendations"].append(
                 "<p>BAM files will be processed with the complete pipeline:</p>"
@@ -820,6 +834,14 @@ class FileProcessor:
         # VCF | "quick pipeline" (curated on 2025-09-27)
         elif analysis.file_type == FileType.VCF:
             workflow["needs_pypgx"] = True
+            # main.nf hands the sidecar the ORIGINAL upload (never a lifted copy --
+            # see its comment on mtdna_variants_ch) and reads whatever chrM/MT
+            # records it finds; a VCF with none simply produces a no-call, the
+            # same outcome PharmCAT already reports for MT-RNR1 with no outside
+            # call. NOTE: the warning below ("mtDNA typing can not be performed")
+            # predates this wiring and is now stale for this branch -- left as-is
+            # here since updating that copy is a later task's call.
+            workflow["needs_mtdna"] = True
             workflow["warnings"].append(
                 "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis.</p>"
             )
@@ -1233,6 +1255,7 @@ class FileProcessor:
         gatk_enabled: Optional[str] = None,
         pypgx_enabled: Optional[str] = None,
         report_enabled: Optional[str] = None,
+        mtdna_enabled: Optional[str] = None,
     ) -> Dict:
         """
         Process multiple uploaded files and determine the appropriate workflow.
@@ -1244,6 +1267,7 @@ class FileProcessor:
             gatk_enabled: Whether GATK processing is enabled
             pypgx_enabled: Whether PyPGx analysis is enabled
             report_enabled: Whether custom report generation is enabled
+            mtdna_enabled: Whether mtDNA calling (mtdna sidecar) is enabled
 
         Returns:
             Dictionary with analysis results and workflow configuration
@@ -1341,6 +1365,9 @@ class FileProcessor:
                 workflow["report_enabled"] = bool(
                     report_enabled and report_enabled.lower() == "true"
                 )
+                workflow["mtdna_enabled"] = bool(
+                    mtdna_enabled and mtdna_enabled.lower() == "true"
+                )
 
                 # Apply user toggle overrides to workflow flags
                 # User can only disable services, not enable what the workflow doesn't need
@@ -1357,21 +1384,26 @@ class FileProcessor:
                 if report_enabled is not None and not workflow["report_enabled"]:
                     # User disabled custom reports, so disable report generation
                     workflow["needs_report"] = False
+                if mtdna_enabled is not None and not workflow["mtdna_enabled"]:
+                    # User disabled mtDNA calling, so disable it even if the
+                    # input type would otherwise support it
+                    workflow["needs_mtdna"] = False
 
                 # Debug logging for service states
                 logger.info(
                     f"User toggle states received: optitype='{optitype_enabled}', "
-                    f"gatk='{gatk_enabled}', pypgx='{pypgx_enabled}', report='{report_enabled}'"
+                    f"gatk='{gatk_enabled}', pypgx='{pypgx_enabled}', report='{report_enabled}', "
+                    f"mtdna='{mtdna_enabled}'"
                 )
                 logger.info(
                     f"User toggle states set: optitype={workflow['optitype_enabled']}, "
                     f"gatk={workflow['gatk_enabled']}, pypgx={workflow['pypgx_enabled']}, "
-                    f"report={workflow['report_enabled']}"
+                    f"report={workflow['report_enabled']}, mtdna={workflow['mtdna_enabled']}"
                 )
                 logger.info(
                     f"Final workflow needs (after user overrides): needs_hla={workflow.get('needs_hla')}, "
                     f"needs_gatk={workflow.get('needs_gatk')}, needs_pypgx={workflow.get('needs_pypgx')}, "
-                    f"needs_report={workflow.get('needs_report')}"
+                    f"needs_report={workflow.get('needs_report')}, needs_mtdna={workflow.get('needs_mtdna')}"
                 )
 
                 return {

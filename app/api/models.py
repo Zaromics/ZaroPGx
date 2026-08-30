@@ -145,6 +145,11 @@ class WorkflowOptions(BaseModel):
     needs_pypgx: bool = False
     needs_pypgx_bam2vcf: bool = False
     needs_hla: bool = False
+    # mtDNA calling via the mtdna sidecar (mutserve + haplogrep3 + haplocheck,
+    # mtDNA-Server 2). Drives the "mtdna_analysis" step template in
+    # workflow_registry and, via --skip_mtdna, the MtdnaCall process in
+    # pipelines/pgx/main.nf.
+    needs_mtdna: bool = False
     needs_report: bool = True
     needs_conversion: bool = False
     # GRCh37/hg19 VCF -> lifted to GRCh38 via gatk-api's Picard LiftoverVcf before

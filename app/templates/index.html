@@ -2426,6 +2426,13 @@
                 'liftover': 'stageGATK',
                 'pypgx_analysis': 'stagePyPGx',
                 'pypgx_bam2vcf': 'stagePyPGx',       // Both PyPGx steps map to the same stage
+                // mtDNA calling runs in its own "mtdna" sidecar, immediately before
+                // PharmCAT in the registry, and supplies PharmCAT's MT-RNR1 outside
+                // call -- there is no dedicated stage indicator for it, so it lights
+                // the PharmCAT glyph rather than leaving the row dark for the whole
+                // step (the same reasoning "liftover" -> stageGATK above follows).
+                // Keep in sync with workflow_stages.STEP_TO_STAGE.
+                'mtdna_analysis': 'stagePharmcat',
                 'pharmcat_analysis': 'stagePharmcat',
                 'diagram_generation': 'stageReport',  // Report diagram generation
                 'report_generation': 'stageReport',
