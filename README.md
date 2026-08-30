@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 *Features*
 - [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
 - [o] Priority 1 (*Development*): **FHIR offline export** as JSON, XML; Custom PharmCAT definitions for outside calls. *Projected release in v0.3*
-- [...] Priority 2 (*Development*): Wiring-in mtDNA-server-2 container. *Projected release in v0.4.*
+- [X] Priority 2 (*Supported*): **mtDNA-server-2 container**, wired into the pipeline. Mitochondrial variant/haplogroup calling and the MT-RNR1 outside call, gated by a toggle in the UI; the full upstream `report.html` is available for BAM/CRAM/FASTQ inputs.
 - [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.4-0.5*
 - [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
 - [...] Priority 5 (*Early research*): In-depth and targeted analytics, with specialty curation to reduce cognitive load
@@ -69,6 +69,10 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 - **ZaroHLA** - (Custom FastAPI wrapped OptiType implementation)
   - Performs HLA Calling from BAM inputs (OptiType also reads FASTQ, but FASTQ uploads are refused, so that path is unreachable from the app)
   - (Needs Testing)
+- **mtDNA-Server 2** - (Custom FastAPI wrapper, built FROM the upstream `quay.io/genepi/mtdna-server-2:v2.1.16` image)
+  - Mitochondrial variant calling and haplogroup assignment (mutserve, haplogrep3, haplocheck), supplying the MT-RNR1 outside call PharmCAT cannot produce on its own
+  - VCF input gets haplogroup + MT-RNR1 only; BAM/CRAM/FASTQ input additionally renders upstream's own `report.html` with coverage and contamination metrics
+  - Service Ports (Host → Container) 5062 → 5000
 - **PyPGx service** - (FastAPI wrapped)
   - Performs allele calling for up to 87 total pharmacogenes
   - Provides comprehensive allele calling (including Structural Variants and Copy Number Variants) for such genes as CYP2D6 when possible with BAM input.

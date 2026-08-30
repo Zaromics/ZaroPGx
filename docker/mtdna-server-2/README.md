@@ -63,18 +63,22 @@ format `VersionManager` reads for report citations.
   hg19's `chrM` is a different sequence (`NC_001807`, 16571 bp) from rCRS, and
   there is no alignment-level liftover in this stack.
 
-Calling logic for both modes lands in later tasks; this image currently
-exposes only the health/version surface below.
+Both modes are implemented and wired into the pipeline (`pipelines/pgx/main.nf`'s
+`MtdnaCall` process, gated on `--skip_mtdna`); the app's upload form exposes a
+`mtdna_enabled` toggle, and a completed job's report includes a dedicated mtDNA section,
+a versioned citation, and a "mtDNA Reports" download group (report/haplogroups/chrM VCF,
+whichever the calling mode produced).
 
 ## Endpoints
 
 - `GET /health` — `{"status": "healthy", "service": "mtdna-server-2", "versions": {...}, "alleles_known": 25}`,
   or `503` with the list of missing required paths (mutserve/haplogrep3/haplocheck
   jars, vendored rCRS FASTA) if the image is incomplete.
-- `POST /call-mtdna` *(later task)* — submit a VCF or BAM/CRAM for mitochondrial
-  calling.
-- `POST /cancel` *(later task)* — cancel a running job, mirroring the other
-  sidecars.
+- `POST /call-mtdna` — submit a VCF or BAM/CRAM (`file`, `build`, `absent_to_ref`) for
+  mitochondrial calling. Returns haplogroup, MT-RNR1 call, matched allele names, the
+  extracted chrM VCF path, and — for an alignment input — the rendered `report.html`
+  path (`null` for a VCF-only call, with `report_unavailable_reason` explaining why).
+- `POST /cancel/{job_key}` — cancel a running job, mirroring the other sidecars.
 
 ## Scratch directory
 
@@ -86,6 +90,17 @@ is bind-mounted into both; anything written to `/tmp` would vanish silently.
 
 ## Building and running
 
+As part of the stack (the normal path — always the `pgx-native` context, never bare
+`docker`, and always from the repo root):
+
+```bash
+docker --context pgx-native compose build mtdna
+docker --context pgx-native compose up -d mtdna
+curl -s http://localhost:5062/health
+```
+
+Standalone, for iterating on this image alone:
+
 ```bash
 docker --context pgx-native build -f docker/mtdna-server-2/Dockerfile -t zaropgx-mtdna:dev .
 docker --context pgx-native run --rm -d --name mtdna_probe -p 15062:5000 zaropgx-mtdna:dev
@@ -93,4 +108,20 @@ curl -s http://localhost:15062/health
 docker --context pgx-native rm -f mtdna_probe
 ```
 
-The compose service for this sidecar arrives in a later task.
+## Test fixture
+
+`tests/e2e` and manual verification of the alignment path use a real BAM,
+`data/mtdna-testdata/HG00096.chrM.bam` — **not** committed (matches the rest of
+`data/`'s convention; see `.gitignore`). Re-fetch it from upstream's own test data at
+the pinned `v2.1.16` tag if it's missing:
+
+```bash
+mkdir -p data/mtdna-testdata
+curl -fsSL -o data/mtdna-testdata/HG00096.chrM.bam \
+  https://raw.githubusercontent.com/genepi/mtdna-server-2/v2.1.16/tests/data/bam/HG00096.chrM.bam
+```
+
+It's a 1000 Genomes sample, b37-headered (`SN:MT LN:16569`, ~270k reads on MT) — the
+Ruling-16 case this sidecar exists to get right: `MT`/rCRS-length naming classifies as
+B37 (rename-only, no liftover), never hg19. At last verification it produced haplogroup
+`H16a1` and `MT-RNR1: Reference` at 1331x mean coverage.

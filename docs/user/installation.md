@@ -175,6 +175,7 @@ them from elsewhere is deliberately an SSH tunnel away
 | **GATK API** | 127.0.0.1:5002 | 5000 | GATK preprocessing service |
 | **PyPGx** | 127.0.0.1:5053 | 5000 | PyPGx allele calling service |
 | **ZaroHLA** | 127.0.0.1:5060 | 5000 | OptiType HLA class I typing |
+| **mtDNA-Server 2** | 127.0.0.1:5062 | 5000 | Mitochondrial variant/haplogroup calling, MT-RNR1 outside call |
 | **FHIR Server** | 127.0.0.1:8090 | 8080 | HAPI FHIR R4 server |
 | **Kroki** | 127.0.0.1:8001 | 8000 | Diagram rendering service |
 | **Docs** | 127.0.0.1:5070 | 8000 | Sphinx preview; `--profile optional` only |
@@ -184,9 +185,6 @@ them from elsewhere is deliberately an SSH tunnel away
 `nextflow` has no host mapping by design — its `POST /run` is unauthenticated and it
 bind-mounts the Docker socket, so publishing it would be remote code execution. The app calls
 it as `http://nextflow:5055` inside the Compose network.
-
-`docker/mtdna-server-2/` exists in the repository but is not yet a Compose service; mtDNA
-calling is roadmap work, not a running container.
 
 ## Initial Setup
 
