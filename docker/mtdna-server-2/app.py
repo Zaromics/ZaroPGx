@@ -484,6 +484,11 @@ async def _call_from_vcf(
         "mt_rnr1": call,
         "mt_rnr1_all_matches": matched,
         "variants": [r._asdict() for r in records],
+        # Absolute path under DATA_DIR/TEMP_DIR, which the mtdna volume shares
+        # with every other container in the stack (compose.yml mounts ./data
+        # at /data everywhere) -- the same route report_html below relies on
+        # to be readable from the Nextflow task's own container.
+        "chrm_vcf": normed,
         "report_html": None,
         "report_unavailable_reason": (
             "mtDNA-Server 2's report needs coverage and contamination metrics, "
@@ -699,6 +704,7 @@ async def _call_from_alignment(
         "mt_rnr1_all_matches": matched,
         "mean_coverage": coverage,
         "variants": [r._asdict() for r in records],
+        "chrm_vcf": normed,
         "report_html": report_html,
         "report_unavailable_reason": None,
     }

@@ -143,8 +143,9 @@ class GenomeDownloadProgress {
                 // Map UI stage names to backend service names
                 const serviceMapping = {
                     'hla': 'optitype_enabled',
-                    'gatk': 'gatk_enabled', 
+                    'gatk': 'gatk_enabled',
                     'pypgx': 'pypgx_enabled',
+                    'mtdna': 'mtdna_enabled',
                     'report': 'report_enabled' // Custom report generation toggle
                 };
                 

@@ -26,6 +26,7 @@ class WorkflowStage(str, Enum):
     GATK = "gatk"
     HLA = "hla"
     PYPGX = "pypgx"
+    MTDNA = "mtdna"
     PHARMCAT = "pharmcat"
     REPORT = "report"
     COMPLETED = "completed"
@@ -47,11 +48,11 @@ STEP_TO_STAGE: Mapping[str, WorkflowStage] = {
     "pypgx_analysis": WorkflowStage.PYPGX,
     "pypgx_bam2vcf": WorkflowStage.PYPGX,
     # mtDNA calling (its own "mtdna" sidecar) supplies PharmCAT's MT-RNR1
-    # outside call and runs immediately before it in the registry -- no
-    # dedicated stage exists for it, so it groups with PHARMCAT rather than
-    # falling through to the ANALYSIS default. Keep in sync with index.html's
-    # GlyphManager.stepMapping.
-    "mtdna_analysis": WorkflowStage.PHARMCAT,
+    # outside call and runs immediately before it in the registry. It had no
+    # dedicated stage at first and grouped with PHARMCAT so the glyph row
+    # would not go dark; now it has its own stage/glyph (BACKLOG 46, 78).
+    # Keep in sync with index.html's GlyphManager.stepMapping.
+    "mtdna_analysis": WorkflowStage.MTDNA,
     "pharmcat_analysis": WorkflowStage.PHARMCAT,
     "diagram_generation": WorkflowStage.REPORT,
     "report_generation": WorkflowStage.REPORT,
@@ -64,6 +65,7 @@ _STAGE_DISPLAY: Mapping[WorkflowStage, str] = {
     WorkflowStage.GATK: "GATK",
     WorkflowStage.HLA: "OptiType",
     WorkflowStage.PYPGX: "PyPGx",
+    WorkflowStage.MTDNA: "mtDNA",
     WorkflowStage.PHARMCAT: "PharmCAT",
     WorkflowStage.REPORT: "Report",
     WorkflowStage.COMPLETED: "Complete",

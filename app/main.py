@@ -945,6 +945,7 @@ async def services_config():
             "gatk": {"enabled": GATK_ENABLED},
             "pypgx": {"enabled": PYPGX_ENABLED},
             "optitype": {"enabled": OPTITYPE_ENABLED},
+            "mtdna": {"enabled": MTDNA_ENABLED},
             "genome_downloader": {"enabled": GENOME_DOWNLOADER_ENABLED},
             "kroki": {"enabled": KROKI_ENABLED},
             "hapi_fhir": {"enabled": HAPI_FHIR_ENABLED},

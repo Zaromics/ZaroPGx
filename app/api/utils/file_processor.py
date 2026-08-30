@@ -838,9 +838,7 @@ class FileProcessor:
             # see its comment on mtdna_variants_ch) and reads whatever chrM/MT
             # records it finds; a VCF with none simply produces a no-call, the
             # same outcome PharmCAT already reports for MT-RNR1 with no outside
-            # call. NOTE: the warning below ("mtDNA typing can not be performed")
-            # predates this wiring and is now stale for this branch -- left as-is
-            # here since updating that copy is a later task's call.
+            # call.
             workflow["needs_mtdna"] = True
             workflow["warnings"].append(
                 "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis.</p>"
@@ -857,9 +855,7 @@ class FileProcessor:
             workflow["warnings"].append(
                 "<p class='preflight'>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
             )
-            workflow["warnings"].append(
-                "<p>⚠️ HLA typing as well as mtDNA typing can not be performed.</p>"
-            )
+            workflow["warnings"].append("<p>⚠️ HLA typing can not be performed.</p>")
             workflow["warnings"].append(
                 "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>"
             )

@@ -311,6 +311,7 @@ process MtdnaCall {
     path "pharmcat.mtdna.tsv", optional: true, emit: mtdna
     path "mtdna_result.json", emit: mtdna_json
     path "mtdna_report.html", optional: true, emit: mtdna_report
+    path "mtdna_variants.vcf.gz", optional: true, emit: mtdna_vcf
 
     shell:
     '''
@@ -340,6 +341,12 @@ if call:
 src = data.get('report_html')
 if src and os.path.exists(src):
     shutil.copy(src, 'mtdna_report.html')
+# The normalised chrM VCF (bcftools norm output), present on both the VCF and
+# alignment paths -- unlike report_html, it does not depend on coverage or
+# contamination metrics, so it is available regardless of input type.
+src_vcf = data.get('chrm_vcf')
+if src_vcf and os.path.exists(src_vcf):
+    shutil.copy(src_vcf, 'mtdna_variants.vcf.gz')
 PY
     '''
 }

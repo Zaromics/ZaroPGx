@@ -1042,6 +1042,11 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                         "pharmcat_tsv_report_url": response_data.get(
                             "pharmcat_tsv_path"
                         ),
+                        "mtdna_report_url": response_data.get("mtdna_report_path"),
+                        "mtdna_haplogroups_url": response_data.get(
+                            "mtdna_haplogroups_path"
+                        ),
+                        "mtdna_vcf_url": response_data.get("mtdna_vcf_path"),
                     },
                 )
             )
@@ -1932,6 +1937,12 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
                 report_urls["pharmcat_tsv_report_url"] = reports[
                     "pharmcat_tsv_report_url"
                 ]
+            if "mtdna_report_url" in reports:
+                report_urls["mtdna_report_url"] = reports["mtdna_report_url"]
+            if "mtdna_haplogroups_url" in reports:
+                report_urls["mtdna_haplogroups_url"] = reports["mtdna_haplogroups_url"]
+            if "mtdna_vcf_url" in reports:
+                report_urls["mtdna_vcf_url"] = reports["mtdna_vcf_url"]
 
         # Create response
         response = {
@@ -2130,6 +2141,24 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
                     if pharmcat_tsv.exists():
                         reports["pharmcat_tsv_report_url"] = (
                             f"/reports/{patient_id}/{job.id}/{pharmcat_tsv.name}"
+                        )
+
+                    # mtDNA-Server 2 artifacts, published under fixed names (no
+                    # job.id prefix) -- see app/reports/generator.py.
+                    mtdna_report = patient_dir / "mtdna_report.html"
+                    mtdna_haplogroups = patient_dir / "mtdna_result.json"
+                    mtdna_vcf = patient_dir / "mtdna_variants.vcf.gz"
+                    if mtdna_report.exists():
+                        reports["mtdna_report_url"] = (
+                            f"/reports/{patient_id}/{job.id}/{mtdna_report.name}"
+                        )
+                    if mtdna_haplogroups.exists():
+                        reports["mtdna_haplogroups_url"] = (
+                            f"/reports/{patient_id}/{job.id}/{mtdna_haplogroups.name}"
+                        )
+                    if mtdna_vcf.exists():
+                        reports["mtdna_vcf_url"] = (
+                            f"/reports/{patient_id}/{job.id}/{mtdna_vcf.name}"
                         )
 
         return {

@@ -3170,6 +3170,45 @@ def generate_report(
                 "PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable"
             )
 
+        # mtDNA-Server 2 artifacts. MtdnaCall (pipelines/pgx/main.nf) publishDir
+        # -copies these straight into report_dir under fixed names -- no
+        # report_id-prefixed rename step, unlike the PharmCAT files above -- so
+        # existence is all there is to check.
+        #
+        # mtdna_report.html exists only on an alignment input (BAM/CRAM/FASTQ):
+        # upstream's report needs coverage and contamination metrics a VCF-only
+        # call cannot produce, so its absence here is expected, not an error
+        # (see mtdna-server-2's own report_unavailable_reason). Leaving the key
+        # unset when the file is absent is what keeps the frontend's "mtDNA
+        # Reports" group from offering a dead link.
+        mtdna_report_file = os.path.join(report_dir, "mtdna_report.html")
+        if os.path.exists(mtdna_report_file):
+            server_mtdna_report_path = f"{reports_url_prefix}/mtdna_report.html"
+            report_paths["mtdna_report_path"] = server_mtdna_report_path
+            data["mtdna_report_url"] = server_mtdna_report_path
+            logger.info(f"mtDNA-Server 2 report URL added: {server_mtdna_report_path}")
+
+        # mtdna_result.json carries the haplogroup call, its quality, and the
+        # matched MT-RNR1 variants, on both input paths -- the closest thing to
+        # a "haplogroup report" this pipeline produces today.
+        mtdna_haplogroups_file = os.path.join(report_dir, "mtdna_result.json")
+        if os.path.exists(mtdna_haplogroups_file):
+            server_mtdna_haplogroups_path = f"{reports_url_prefix}/mtdna_result.json"
+            report_paths["mtdna_haplogroups_path"] = server_mtdna_haplogroups_path
+            data["mtdna_haplogroups_url"] = server_mtdna_haplogroups_path
+            logger.info(
+                f"mtDNA haplogroup result URL added: {server_mtdna_haplogroups_path}"
+            )
+
+        # Normalised chrM VCF (bcftools norm output) -- available on both input
+        # paths, unlike the HTML report above.
+        mtdna_vcf_file = os.path.join(report_dir, "mtdna_variants.vcf.gz")
+        if os.path.exists(mtdna_vcf_file):
+            server_mtdna_vcf_path = f"{reports_url_prefix}/mtdna_variants.vcf.gz"
+            report_paths["mtdna_vcf_path"] = server_mtdna_vcf_path
+            data["mtdna_vcf_url"] = server_mtdna_vcf_path
+            logger.info(f"mtDNA chrM VCF URL added: {server_mtdna_vcf_path}")
+
         # FHIR Export - Generate FHIR R4 compliant exports if enabled.
         # Resolved here, per report, not read out of an import-time snapshot.
         if fhir_export_enabled():

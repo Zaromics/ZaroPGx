@@ -632,6 +632,19 @@
                                     </div>
                                 </div>
                                 
+                                <!-- mtDNA Stage -->
+                                <div id="stageMtDNA" class="stage-indicator text-center text-muted" data-stage="mtdna" data-toggleable="true" data-enabled="true" data-flag="mtdna_enabled">
+                                    <div class="mb-1"><i class="bi bi-diagram-3"></i></div>
+                                    <span>mtDNA</span>
+                                    <div class="stage-popup">
+                                        <h6>mtDNA-Server 2</h6>
+                                        <p>Mitochondrial variant calling and haplogroup assignment with mtDNA-Server 2. Supplies MT-RNR1, which PharmCAT cannot call on its own. The full mtDNA-Server 2 report requires an alignment (BAM/CRAM/FASTQ).</p>
+                                        <div class="toggle-section">
+                                            <button class="toggle-button enabled" data-stage="mtdna">✓ Enabled</button>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- GATK Stage -->
                                 <div id="stageGATK" class="stage-indicator text-center text-muted" data-stage="gatk" data-toggleable="true" data-enabled="true">
                                     <div class="mb-1"><i class="bi bi-cpu"></i></div>
@@ -1071,6 +1084,13 @@
                 const needsBam2Vcf = !!wf.needs_pypgx_bam2vcf || ['bam', 'cram', 'sam'].includes(fileType);
                 if (needsBam2Vcf) {
                     steps.push({ name: 'PyPGx BAM→VCF Conversion', icon: 'bi-shuffle' });
+                }
+
+                // mtDNA calling runs immediately before PharmCAT, matching
+                // workflow_registry.py's step order -- it supplies PharmCAT's
+                // MT-RNR1 outside call.
+                if (wf.needs_mtdna) {
+                    steps.push({ name: 'mtDNA-Server 2 Calling', icon: 'bi-diagram-3' });
                 }
 
                 // PharmCAT and Report are core terminal steps
@@ -1642,7 +1662,10 @@
                     'interactive_html_report_url': data.interactive_html_report_url,
                     'pharmcat_html_report_url': data.pharmcat_html_report_url,
                     'pharmcat_json_report_url': data.pharmcat_json_report_url,
-                    'pharmcat_tsv_report_url': data.pharmcat_tsv_report_url
+                    'pharmcat_tsv_report_url': data.pharmcat_tsv_report_url,
+                    'mtdna_report_url': data.mtdna_report_url,
+                    'mtdna_haplogroups_url': data.mtdna_haplogroups_url,
+                    'mtdna_vcf_url': data.mtdna_vcf_url
                 };
                 
                 console.log("Report URLs:", reportUrls);
@@ -1679,30 +1702,57 @@
                                     { key: 'pharmcat_json_report_url', label: 'View PharmCAT JSON Report', icon: 'bi-filetype-json', color: 'btn-warning' },
                                     { key: 'pharmcat_tsv_report_url', label: 'View PharmCAT TSV Report', icon: 'bi-filetype-csv', color: 'btn-secondary' }
                                 ]
+                            },
+                            {
+                                title: "mtDNA Reports",
+                                reports: [
+                                    {
+                                        key: 'mtdna_report_url', label: 'View mtDNA-Server 2 Report', icon: 'bi-file-earmark-medical', color: 'btn-primary',
+                                        // VCF-only jobs never produce report.html (upstream's report needs
+                                        // coverage/contamination metrics an alignment supplies); say why
+                                        // instead of leaving the entry silently missing.
+                                        missingNote: 'The mtDNA-Server 2 report requires an alignment (BAM/CRAM/FASTQ) as input.'
+                                    },
+                                    { key: 'mtdna_haplogroups_url', label: 'View Haplogroup Report', icon: 'bi-diagram-3', color: 'btn-info' },
+                                    { key: 'mtdna_vcf_url', label: 'Download chrM VCF', icon: 'bi-filetype-txt', color: 'btn-secondary' }
+                                ]
                             }
                         ];
                 
                 // Add report links by group
                 reportGroups.forEach(group => {
-                    // Check if there are any reports in this group
+                    // Check if there are any reports in this group. A group with
+                    // nothing available at all is omitted entirely -- e.g. mtDNA
+                    // disabled means none of its three keys were ever emitted.
                     const availableReports = group.reports.filter(report => reportUrls[report.key]);
-                    
+
                     if (availableReports.length > 0) {
                         resultsHtml += `
                             <div class="mt-3">
                                 <h5>${group.title}</h5>
                         `;
-                        
-                        availableReports.forEach(report => {
-                            resultsHtml += `
-                                <div class="mt-2">
-                                    <a href="${reportUrls[report.key]}" class="btn ${report.color}" target="_blank">
-                                        <i class="bi ${report.icon}"></i> ${report.label}
-                                    </a>
-                                </div>
-                            `;
+
+                        // Iterate every report in the group, not just the available
+                        // ones: a report that is missing but carries a missingNote
+                        // (e.g. mtdna_report_url on a VCF-only job) says why instead
+                        // of a dead link or silence. A missing report with no note
+                        // is skipped, same as before.
+                        group.reports.forEach(report => {
+                            if (reportUrls[report.key]) {
+                                resultsHtml += `
+                                    <div class="mt-2">
+                                        <a href="${reportUrls[report.key]}" class="btn ${report.color}" target="_blank">
+                                            <i class="bi ${report.icon}"></i> ${report.label}
+                                        </a>
+                                    </div>
+                                `;
+                            } else if (report.missingNote) {
+                                resultsHtml += `
+                                    <div class="mt-2 text-muted small">${report.missingNote}</div>
+                                `;
+                            }
                         });
-                        
+
                         resultsHtml += `</div>`;
                     }
                 });
@@ -1732,8 +1782,12 @@
                     workflowPanel.classList.add('d-none');
                 }
                 
-                // Log the completion in the log panel
-                addLogMessage("Analysis complete! 5 reports are available: 2 custom Reports (PDF, Interactive HTML) and 3 PharmCAT reports (HTML, JSON, TSV).", "success");
+                // Log the completion in the log panel. Computed from the URL keys
+                // actually present, not a hardcoded count -- that count was already
+                // wrong the moment a group was added, and stayed wrong silently.
+                const availableCount = reportGroups.reduce(
+                    (total, group) => total + group.reports.filter(r => reportUrls[r.key]).length, 0);
+                addLogMessage(`Analysis complete! ${availableCount} report${availableCount === 1 ? '' : 's'} available.`, "success");
             }
 
             // Function to show error
@@ -1825,8 +1879,9 @@
                     const toggleStates = window.getStageToggleStates();
                     const serviceMapping = {
                         'hla': 'optitype_enabled',
-                        'gatk': 'gatk_enabled', 
+                        'gatk': 'gatk_enabled',
                         'pypgx': 'pypgx_enabled',
+                        'mtdna': 'mtdna_enabled',
                         'report': 'report_enabled' // Custom report generation toggle
                     };
                     
@@ -2313,6 +2368,7 @@
                     'optitype': 'hla',
                     'gatk': 'gatk',
                     'pypgx': 'pypgx',
+                    'mtdna': 'mtdna',
                     'kroki': 'report'  // Needs to be changed, kroki is not synonymous with report
                 };
                 
@@ -2428,11 +2484,10 @@
                 'pypgx_bam2vcf': 'stagePyPGx',       // Both PyPGx steps map to the same stage
                 // mtDNA calling runs in its own "mtdna" sidecar, immediately before
                 // PharmCAT in the registry, and supplies PharmCAT's MT-RNR1 outside
-                // call -- there is no dedicated stage indicator for it, so it lights
-                // the PharmCAT glyph rather than leaving the row dark for the whole
-                // step (the same reasoning "liftover" -> stageGATK above follows).
+                // call. It used to light the PharmCAT glyph as an interim (so the
+                // row would not go dark); now it has its own glyph (BACKLOG 46, 78).
                 // Keep in sync with workflow_stages.STEP_TO_STAGE.
-                'mtdna_analysis': 'stagePharmcat',
+                'mtdna_analysis': 'stageMtDNA',
                 'pharmcat_analysis': 'stagePharmcat',
                 'diagram_generation': 'stageReport',  // Report diagram generation
                 'report_generation': 'stageReport',
@@ -2757,7 +2812,10 @@
                                 interactive_html_report_url: data.interactive_html_report_url,
                                 pharmcat_html_report_url: data.pharmcat_html_report_url,
                                 pharmcat_json_report_url: data.pharmcat_json_report_url,
-                                pharmcat_tsv_report_url: data.pharmcat_tsv_report_url
+                                pharmcat_tsv_report_url: data.pharmcat_tsv_report_url,
+                                mtdna_report_url: data.mtdna_report_url,
+                                mtdna_haplogroups_url: data.mtdna_haplogroups_url,
+                                mtdna_vcf_url: data.mtdna_vcf_url
                             };
                             
                             // Call the existing showResults function

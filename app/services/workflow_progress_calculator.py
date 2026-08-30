@@ -15,7 +15,8 @@ The progress calculation follows the workflow stages defined in updated workflow
 - 35-49% - GATK: Conversion to BAM from FASTQ (skip if n/a)
 - 50-64% - PYPGX: PyPGx main step (skip if n/a)
 - 65-74% - PYPGX: PyPGx bam2vcf conversion step (skip if n/a)
-- 75-89% - PHARMCAT: PharmCAT step
+- 75-79% - MTDNA: mtDNA-Server 2 calling (skip if n/a)
+- 80-89% - PHARMCAT: PharmCAT step
 - 90-94% - REPORT: Generating workflow diagram
 - 95-99% - REPORT: Generating PDF and HTML reports
 - 100% - COMPLETE: Processing complete!
@@ -84,8 +85,14 @@ class WorkflowProgressCalculator:
             "message": "PyPGx processing",
             "is_skippable": True,
         },
-        WorkflowStage.PHARMCAT: {
+        WorkflowStage.MTDNA: {
             "min_progress": 75,
+            "max_progress": 79,
+            "message": "mtDNA-Server 2 processing",
+            "is_skippable": True,
+        },
+        WorkflowStage.PHARMCAT: {
+            "min_progress": 80,
             "max_progress": 89,
             "message": "PharmCAT processing",
             "is_skippable": False,
@@ -119,6 +126,11 @@ class WorkflowProgressCalculator:
         "gatk_alignment": (35, 49),
         "pypgx_analysis": (50, 64),
         "pypgx_bam2vcf": (65, 74),
+        # Same weight as liftover/gatk_cram_sam_to_bam above: mtDNA calling
+        # (mutserve + haplogrep3 + haplocheck, or the lighter VCF-only path)
+        # runs after PyPGx and immediately before PharmCAT, matching
+        # workflow_registry.py's step order.
+        "mtdna_analysis": (75, 84),
         "pharmcat_analysis": (75, 89),
         "diagram_generation": (90, 94),
         "report_generation": (90, 100),
@@ -132,6 +144,7 @@ class WorkflowProgressCalculator:
         "gatk_alignment",
         "pypgx_analysis",
         "pypgx_bam2vcf",
+        "mtdna_analysis",
         "pharmcat_analysis",
         "diagram_generation",
         "report_generation",
@@ -157,6 +170,7 @@ class WorkflowProgressCalculator:
         needs_pypgx = bool(cfg.get("needs_pypgx", True))
         default_bam2vcf = bool(needs_pypgx and not is_vcf)
         needs_bam2vcf = bool(cfg.get("needs_pypgx_bam2vcf", default_bam2vcf))
+        needs_mtdna = bool(cfg.get("needs_mtdna", False))
 
         planned: List[str] = ["header_analysis"]
         if bool(cfg.get("needs_liftover", False)):
@@ -172,6 +186,8 @@ class WorkflowProgressCalculator:
             planned.append("pypgx_analysis")
         if needs_bam2vcf:
             planned.append("pypgx_bam2vcf")
+        if needs_mtdna:
+            planned.append("mtdna_analysis")
         planned.extend(["pharmcat_analysis", "diagram_generation", "report_generation"])
         return planned
 
@@ -483,6 +499,7 @@ class WorkflowProgressCalculator:
             WorkflowStage.GATK: "gatk_processing",  # Generic fallback for GATK stage
             WorkflowStage.HLA: "hla_typing",
             WorkflowStage.PYPGX: "pypgx_analysis",
+            WorkflowStage.MTDNA: "mtdna_analysis",
             WorkflowStage.PHARMCAT: "pharmcat_analysis",
             WorkflowStage.REPORT: "report_generation",
             WorkflowStage.COMPLETED: "completed",
@@ -519,6 +536,7 @@ class WorkflowProgressCalculator:
             ),
             WorkflowStage.HLA: not workflow_config.get("needs_hla", False),
             WorkflowStage.PYPGX: not workflow_config.get("needs_pypgx", True),
+            WorkflowStage.MTDNA: not workflow_config.get("needs_mtdna", False),
         }
 
         return skip_mapping.get(stage, False)
@@ -561,6 +579,11 @@ class WorkflowProgressCalculator:
                 return f"{base_message} - Analyzing pharmacogenomic variants"
             else:
                 return "Skipping PyPGx analysis - not required"
+        elif stage == WorkflowStage.MTDNA:
+            if workflow_config and workflow_config.get("needs_mtdna", False):
+                return f"{base_message} - Calling mitochondrial variants and haplogroup"
+            else:
+                return "Skipping mtDNA calling - not required"
         elif stage == WorkflowStage.PHARMCAT:
             return f"{base_message} - Generating drug recommendations"
         elif stage == WorkflowStage.REPORT:
