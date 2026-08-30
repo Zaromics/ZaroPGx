@@ -1,19 +1,19 @@
-import os
 import asyncio
+import csv
 import json
 import logging
+import os
 import re
+import sys
 import time
 import uuid
-import csv
-import psutil
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+import psutil
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-import sys
 
 sys.path.append("/job-client")
 from job_client import JobClient
@@ -109,8 +109,6 @@ logger = logging.getLogger("mtdna")
 _warn_about_unopened_logs(logger)
 
 sys.path.append("/mtdna-lib")
-from mtdna.mt_rnr1 import MT_RNR1_ALLELES  # noqa: E402  (path set above)
-
 # MitoBuild is imported here (not only in the alignment branch) because Task 8's
 # _call_from_alignment compares against MitoBuild.HG19 and MitoBuild.GRCH38.
 from mtdna.builds import (  # noqa: E402
@@ -119,6 +117,7 @@ from mtdna.builds import (  # noqa: E402
     classify_from_mito_contig,
     plan_for,
 )
+from mtdna.mt_rnr1 import MT_RNR1_ALLELES  # noqa: E402  (path set above)
 from mtdna.mt_rnr1 import (  # noqa: E402
     MT_RNR1_SPAN,
     REFERENCE,
@@ -274,6 +273,49 @@ async def _read_mito_contig_header(vcf_path: str, work: str, job_key: str):
     return None, None
 
 
+async def _read_mito_sq_header(bam_path: str, work: str, job_key: str):
+    """(name, length) of the alignment's mitochondrial @SQ header line, or
+    (None, None).
+
+    The BAM/CRAM/SAM equivalent of `_read_mito_contig_header` above: `SN:` is
+    the contig name, `LN:` its length -- the same two inputs
+    `classify_from_mito_contig` already takes for the VCF path. The alignment
+    path needs this too, for the same reason: `reference_genome` alone cannot
+    distinguish hg19's chrM (NC_001807, 16571 bp) from b37's MT / GRCh38's
+    chrM (both rCRS, 16569 bp) -- file_processor._normalize_reference_genome
+    deliberately collapses "hg19" -> "GRCh37" before this service ever sees
+    the label (file_processor.py:611-612). Without reading the header, a
+    genuinely hg19-aligned BAM labelled "GRCh37" upstream would take the b37
+    rename-only plan instead of being refused.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "samtools",
+        "view",
+        "-H",
+        bam_path,
+        cwd=work,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    running_processes.setdefault(job_key, {})["samtools-header"] = proc
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"samtools view -H failed: {stderr.decode(errors='replace')[:2000]}",
+        )
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        if not line.startswith("@SQ"):
+            continue
+        sn_match = re.search(r"SN:(\S+)", line)
+        if not sn_match or sn_match.group(1).strip().lower() not in _MITO_CONTIG_NAMES:
+            continue
+        ln_match = re.search(r"LN:(\d+)", line)
+        length = int(ln_match.group(1)) if ln_match else None
+        return sn_match.group(1), length
+    return None, None
+
+
 def _read_chrm_records(vcf_path: str) -> List[VcfRecord]:
     """Normalised chrM records inside MT-RNR1, from a bcftools query TSV."""
     low, high = MT_RNR1_SPAN
@@ -346,8 +388,18 @@ async def _call_from_vcf(
             handle.write("MT\tchrM\nM\tchrM\n")
         renamed = os.path.join(work, "renamed.vcf.gz")
         await _run(
-            ["bcftools", "annotate", "--rename-chrs", rename_map, "-Oz", "-o", renamed, current],
-            work, job_key,
+            [
+                "bcftools",
+                "annotate",
+                "--rename-chrs",
+                rename_map,
+                "-Oz",
+                "-o",
+                renamed,
+                current,
+            ],
+            work,
+            job_key,
         )
         current = renamed
 
@@ -365,11 +417,24 @@ async def _call_from_vcf(
             )
         lifted = os.path.join(work, "lifted.vcf.gz")
         await _run(
-            ["gatk", "LiftoverVcf", "-I", current, "-O", lifted,
-             "-C", CHAIN_PATH, "-R", RCRS_FASTA,
-             "--REJECT", os.path.join(work, "rejected.vcf"),
-             "--WARN_ON_MISSING_CONTIG", "true"],
-            work, job_key,
+            [
+                "gatk",
+                "LiftoverVcf",
+                "-I",
+                current,
+                "-O",
+                lifted,
+                "-C",
+                CHAIN_PATH,
+                "-R",
+                RCRS_FASTA,
+                "--REJECT",
+                os.path.join(work, "rejected.vcf"),
+                "--WARN_ON_MISSING_CONTIG",
+                "true",
+            ],
+            work,
+            job_key,
         )
         current = lifted
 
@@ -379,19 +444,27 @@ async def _call_from_vcf(
     # not write one, and the plain-copy branch above it never builds one either).
     # -t streams instead and needs no index, at the cost of a linear scan --
     # fine for a single chrM lookup.
-    await _run(["bcftools", "view", "-t", "chrM", "-Oz", "-o", subset, current], work, job_key)
+    await _run(
+        ["bcftools", "view", "-t", "chrM", "-Oz", "-o", subset, current], work, job_key
+    )
     normed = os.path.join(work, "chrM.norm.vcf.gz")
     await _run(
         ["bcftools", "norm", "-m-any", "-f", RCRS_FASTA, "-Oz", "-o", normed, subset],
-        work, job_key,
+        work,
+        job_key,
     )
     await _run(["bcftools", "index", "-t", normed], work, job_key)
 
     query = os.path.join(work, "chrM.tsv")
     with open(query, "w", encoding="utf-8") as handle:
         proc = await asyncio.create_subprocess_exec(
-            "bcftools", "query", "-f", "%POS\t%REF\t%ALT\n", normed,
-            stdout=handle, stderr=asyncio.subprocess.PIPE,
+            "bcftools",
+            "query",
+            "-f",
+            "%POS\t%REF\t%ALT\n",
+            normed,
+            stdout=handle,
+            stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
 
@@ -423,9 +496,21 @@ async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
     """haplogrep3 classify -> (haplogroup, quality). Takes a VCF, not a BAM."""
     out = os.path.join(work, "haplogroups.txt")
     await _run(
-        ["java", "-jar", HAPLOGREP_JAR, "classify", "--tree", PHYLOTREE,
-         "--in", vcf_gz, "--out", out, "--extend-report"],
-        work, job_key,
+        [
+            "java",
+            "-jar",
+            HAPLOGREP_JAR,
+            "classify",
+            "--tree",
+            PHYLOTREE,
+            "--in",
+            vcf_gz,
+            "--out",
+            out,
+            "--extend-report",
+        ],
+        work,
+        job_key,
     )
     with open(out, "r", encoding="utf-8") as handle:
         rows = [line.rstrip("\n").split("\t") for line in handle if line.strip()]
@@ -447,12 +532,35 @@ async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
 # positive evidence.
 MIN_MEAN_COVERAGE = float(os.getenv("MTDNA_MIN_MEAN_COVERAGE", "50"))
 
+# CRAM stores no base sequence of its own -- decoding it needs the exact
+# reference it was compressed against, and this image bakes in no
+# REF_CACHE/REF_PATH to fetch one automatically. These are the two FASTAs the
+# `reference` volume (compose.yml) actually stages; a build this service
+# calls but has no entry for here (e.g. hg19, already refused earlier) never
+# reaches this lookup.
+_CRAM_REFERENCE_FASTA = {
+    MitoBuild.GRCH38: "/reference/grch38/Homo_sapiens_assembly38.fasta",
+    MitoBuild.B37: "/reference/grch37/human_g1k_v37.fasta",
+}
+
 
 async def _call_from_alignment(
-    bam_path: str, work: str, build_name: str, job_key: str
+    bam_path: str, work: str, build_name: str, job_key: str, input_type: str = "bam"
 ) -> Dict[str, Any]:
     """Full mode: mutserve -> haplogrep3 + haplocheck -> upstream's report.html."""
-    build = classify_build(build_name)
+    # Ground truth from the alignment's own @SQ header, not just the label --
+    # the same rule `_call_from_vcf` already follows via
+    # classify_from_mito_contig. Must run before the hg19 refusal below: a
+    # BAM genuinely aligned to hg19 but labelled "GRCh37" upstream (the label
+    # alone cannot tell them apart -- see _read_mito_sq_header's docstring)
+    # has to be caught on the header's LN:16571, not waved through on the
+    # label.
+    contig_name, contig_length = await _read_mito_sq_header(bam_path, work, job_key)
+    build = classify_from_mito_contig(contig_name, contig_length, build_name)
+    if build == MitoBuild.UNSUPPORTED:
+        # No usable mito @SQ line at all -- fall back to the label, exactly
+        # as _call_from_vcf does for the equivalent VCF case.
+        build = classify_build(build_name)
     if build == MitoBuild.HG19:
         # hg19's chrM is NC_001807 (16571 bp), not rCRS, so mutserve's positions
         # would be silently wrong against the rCRS reference. The stack has no
@@ -470,27 +578,68 @@ async def _call_from_alignment(
     if not plan_for(build).supported:
         raise HTTPException(status_code=422, detail=plan_for(build).reason)
 
+    reference_arg: List[str] = []
+    if input_type.lower() == "cram":
+        reference_fasta = _CRAM_REFERENCE_FASTA.get(build)
+        if reference_fasta is None or not os.path.exists(reference_fasta):
+            # Refuse up front with the expected path, rather than letting
+            # samtools fail obscurely -- a network fetch attempt against the
+            # EBI reference server (this image has no route out for one), or
+            # a bare "Failed to populate sequence" error naming nothing.
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "CRAM input needs the reference it was compressed "
+                    "against. Expected it staged at "
+                    f"{reference_fasta or '(no known path for this build)'}, "
+                    "which is not present on this service's /reference "
+                    "mount. Upload a BAM instead, or stage that FASTA."
+                ),
+            )
+        reference_arg = ["--reference", reference_fasta]
+
     await _run(["samtools", "index", bam_path], work, job_key)
     region = "chrM" if build == MitoBuild.GRCH38 else "MT"
     chrm_bam = os.path.join(work, "chrM.bam")
+    # --reference only matters for decoding a CRAM's actual sequence; empty
+    # (a no-op) for BAM/SAM, which already carry their own bases.
     await _run(
-        ["samtools", "view", "-b", "-o", chrm_bam, bam_path, region], work, job_key
+        ["samtools", "view", "-b"] + reference_arg + ["-o", chrm_bam, bam_path, region],
+        work,
+        job_key,
     )
     await _run(["samtools", "index", chrm_bam], work, job_key)
 
     called = os.path.join(work, "chrM.vcf.gz")
     await _run(
         [
-            "java", "-jar", MUTSERVE_JAR, "call", "--level", "0.01",
-            "--reference", RCRS_FASTA, "--mapQ", "20", "--baseQ", "20",
-            "--output", called, "--no-ansi", "--strand-bias", "1.6", chrm_bam,
+            "java",
+            "-jar",
+            MUTSERVE_JAR,
+            "call",
+            "--level",
+            "0.01",
+            "--reference",
+            RCRS_FASTA,
+            "--mapQ",
+            "20",
+            "--baseQ",
+            "20",
+            "--output",
+            called,
+            "--no-ansi",
+            "--strand-bias",
+            "1.6",
+            chrm_bam,
         ],
-        work, job_key,
+        work,
+        job_key,
     )
     normed = os.path.join(work, "chrM.norm.vcf.gz")
     await _run(
         ["bcftools", "norm", "-m-any", "-f", RCRS_FASTA, "-Oz", "-o", normed, called],
-        work, job_key,
+        work,
+        job_key,
     )
     await _run(["bcftools", "index", "-t", normed], work, job_key)
 
@@ -504,7 +653,8 @@ async def _call_from_alignment(
     haplocheck_txt = os.path.join(work, "haplocheck.txt")
     await _run(
         ["java", "-jar", HAPLOCHECK_JAR, "--out", haplocheck_txt, "--raw", normed],
-        work, job_key,
+        work,
+        job_key,
     )
     # `region`, not a hardcoded "chrM": samtools view keeps the input's contig
     # name, so a GRCh37 extraction is still called MT. Asking depth for
@@ -515,8 +665,13 @@ async def _call_from_alignment(
     query = os.path.join(work, "chrM.tsv")
     with open(query, "w", encoding="utf-8") as handle:
         proc = await asyncio.create_subprocess_exec(
-            "bcftools", "query", "-f", "%POS\t%REF\t%ALT\n", normed,
-            stdout=handle, stderr=asyncio.subprocess.PIPE,
+            "bcftools",
+            "query",
+            "-f",
+            "%POS\t%REF\t%ALT\n",
+            normed,
+            stdout=handle,
+            stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
 
@@ -562,8 +717,14 @@ async def _mean_coverage(
     out = os.path.join(work, "depth.txt")
     with open(out, "w", encoding="utf-8") as handle:
         proc = await asyncio.create_subprocess_exec(
-            "samtools", "depth", "-a", "-r", f"{contig}:{low}-{high}", bam,
-            stdout=handle, stderr=asyncio.subprocess.PIPE,
+            "samtools",
+            "depth",
+            "-a",
+            "-r",
+            f"{contig}:{low}-{high}",
+            bam,
+            stdout=handle,
+            stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
     depths = []
@@ -586,8 +747,13 @@ async def _vcf_sample_name(vcf_gz: str, work: str, job_key: str) -> str:
     every row.
     """
     proc = await asyncio.create_subprocess_exec(
-        "bcftools", "query", "-l", vcf_gz,
-        cwd=work, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        "bcftools",
+        "query",
+        "-l",
+        vcf_gz,
+        cwd=work,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     running_processes.setdefault(job_key, {})["bcftools-query-l"] = proc
     stdout, stderr = await proc.communicate()
@@ -596,7 +762,9 @@ async def _vcf_sample_name(vcf_gz: str, work: str, job_key: str) -> str:
             status_code=500,
             detail=f"bcftools query -l failed: {stderr.decode(errors='replace')[:2000]}",
         )
-    names = [n for n in stdout.decode("utf-8", errors="replace").splitlines() if n.strip()]
+    names = [
+        n for n in stdout.decode("utf-8", errors="replace").splitlines() if n.strip()
+    ]
     if not names:
         raise HTTPException(
             status_code=500,
@@ -618,8 +786,14 @@ async def _bam_statistics(
     `_mean_coverage`: never a hardcoded constant.
     """
     proc = await asyncio.create_subprocess_exec(
-        "samtools", "coverage", "-r", contig, bam,
-        cwd=work, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        "samtools",
+        "coverage",
+        "-r",
+        contig,
+        bam,
+        cwd=work,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     running_processes.setdefault(job_key, {})["samtools-coverage"] = proc
     stdout, stderr = await proc.communicate()
@@ -628,7 +802,11 @@ async def _bam_statistics(
             status_code=500,
             detail=f"samtools coverage failed: {stderr.decode(errors='replace')[:2000]}",
         )
-    lines = [line for line in stdout.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    lines = [
+        line
+        for line in stdout.decode("utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
     if len(lines) < 2:
         raise HTTPException(
             status_code=500,
@@ -684,14 +862,20 @@ async def _write_report_support_files(
     filters_path = os.path.join(work, "variants_filter.tmp")
     with open(filters_path, "w", encoding="utf-8") as handle:
         proc = await asyncio.create_subprocess_exec(
-            "bcftools", "query", "-f", "%FILTER\n", normed_vcf,
-            stdout=handle, stderr=asyncio.subprocess.PIPE,
+            "bcftools",
+            "query",
+            "-f",
+            "%FILTER\n",
+            normed_vcf,
+            stdout=handle,
+            stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
     variants_path = os.path.join(work, "variants.txt")
-    with open(filters_path, "r", encoding="utf-8") as src, open(
-        variants_path, "w", encoding="utf-8"
-    ) as dst:
+    with (
+        open(filters_path, "r", encoding="utf-8") as src,
+        open(variants_path, "w", encoding="utf-8") as dst,
+    ):
         dst.write("ID\tFilter\n")
         for line in src:
             line = line.strip()
@@ -798,7 +982,7 @@ async def call_mtdna(
     try:
         if input_type.lower() in {"bam", "cram", "sam"}:
             result = await _call_from_alignment(
-                upload_path, work, reference_genome, job_key
+                upload_path, work, reference_genome, job_key, input_type
             )
         else:
             result = await _call_from_vcf(
@@ -812,7 +996,9 @@ async def call_mtdna(
         running_processes.pop(job_key, None)
 
     if result.get("mt_rnr1"):
-        with open(os.path.join(work, "pharmcat.mtdna.tsv"), "w", encoding="utf-8") as fh:
+        with open(
+            os.path.join(work, "pharmcat.mtdna.tsv"), "w", encoding="utf-8"
+        ) as fh:
             # Haploid: one name, never an "A/B" diplotype form.
             fh.write(f"MT-RNR1\t{result['mt_rnr1']}\n")
 
