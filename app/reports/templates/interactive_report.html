@@ -177,7 +177,11 @@
             font-size: 0.9em;
         }
         
-        .narrow-col th {
+        /* th.narrow-col, NOT .narrow-col th -- the class is on the <th> itself, so
+           the descendant form matched nothing and the rotation never applied. Same
+           defect as report_template.html, where it clipped the Guide column off
+           the printed page; here it only made the columns wider than intended. */
+        th.narrow-col {
             writing-mode: vertical-rl;
             text-orientation: mixed;
             transform: rotate(180deg);

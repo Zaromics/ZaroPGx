@@ -67,6 +67,33 @@
         .gene-table {
             margin-left: 0;
             margin-right: 0;
+            /* Fixed layout with explicit widths, because `auto` let the long
+               Implications text and the "Activity Score" header set a minimum
+               width wider than the page: WeasyPrint has nowhere to scroll, so it
+               simply ran the last column off the right edge and the Guide column
+               was invisible in every PDF. Percentages sum to 100. */
+            table-layout: fixed;
+            width: 100%;
+        }
+
+        /* Widths chosen against the real content, not guessed: the longest gene
+           symbol is 8 characters (CACNA1S, CYP19A1), and "Guide" has to sit on
+           one line or the header reads "Guid/e". Sums to 100. */
+        .gene-table col.c-gene       { width: 13%; }
+        .gene-table col.c-diplotype  { width: 17%; }
+        .gene-table col.c-phenotype  { width: 17%; }
+        .gene-table col.c-activity   { width: 11%; }
+        .gene-table col.c-implication{ width: 26%; }
+        .gene-table col.c-call       { width: 7%;  }
+        .gene-table col.c-guide      { width: 9%;  }
+
+        /* Long diplotype strings ("rs2231142 reference (G)/...") have no spaces
+           to break at, and under table-layout:fixed an unbreakable word overflows
+           its cell rather than widening it. */
+        .gene-table td,
+        .gene-table th {
+            overflow-wrap: break-word;
+            word-wrap: break-word;
         }
         
         .gene-table th:first-child,
@@ -101,11 +128,14 @@
             font-size: 0.9em;
         }
         
-        .narrow-col th {
-            writing-mode: vertical-rl;
-            text-orientation: mixed;
-            transform: rotate(180deg);
-            height: 3em;
+        /* No rotation. It was written as `.narrow-col th` -- a descendant
+           selector, while the class is on the <th> itself -- so it never applied
+           at all; and when corrected to `th.narrow-col`, WeasyPrint renders
+           `vertical-rl` + `rotate(180deg)` upside down rather than bottom-to-top
+           the way browsers do. The columns have explicit widths now, so "Call"
+           and "Guide" fit horizontally and no trick is needed. */
+        th.narrow-col {
+            text-align: center;
             vertical-align: bottom;
             padding: 0.5em 0.2em;
         }
@@ -1029,6 +1059,11 @@
         <div style="margin-bottom: 15px;"></div>
         
         <table class="gene-table">
+            <colgroup>
+                <col class="c-gene"><col class="c-diplotype"><col class="c-phenotype">
+                <col class="c-activity"><col class="c-implication">
+                <col class="c-call"><col class="c-guide">
+            </colgroup>
             <thead>
                 <tr>
                     <th>Gene</th>
