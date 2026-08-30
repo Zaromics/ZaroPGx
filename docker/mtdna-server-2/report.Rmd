@@ -1,0 +1,366 @@
+---
+title: "mtDNA-Server 2"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    navbar:
+      # - { title: "MultiQC", target: "_blank", href: "multiqc/index.html" }
+      - { title: "About",  target: "_blank", href: "https://mitoverse.i-med.ac.at/#!pages/contact", align: right }
+params:
+  haplogroups: ../tests/data/report/haplogroups.txt
+  haplocheck: ../tests/data/report/haplocheck.txt
+  variants:  ../tests/data/report/variants_ann.txt
+  statistics:  ../tests/data/report/sample_statistics.txt
+  mapping:  ../tests/data/report/sample_mappings.txt  
+  excluded_samples:  ../tests/data/report/excluded_samples.txt
+  pipeline_parameters:  ../tests/data/report/params.txt
+---
+
+```{r setup, include=FALSE}
+
+
+MIN_COVERAGE_PERCENTAGE = 0.90;
+MIN_MEAN_BASE_QUALITY = 15;
+MIN_MEAN_DEPTH = 50
+
+library(ggplot2)
+library(DT)
+library(tidyverse)
+library(data.table)
+library(plotly)
+library(flexdashboard)
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+
+PRIMARY <- "#2780e3"
+PRIMARY_DARK <- "#1a68be"
+RED <- "#dc3545"
+GREEN <- "#28a745"
+ORANGE <- "#ff8800"
+
+link_to_sample <- function(sample) {
+  paste0('<a target=_blank href="samples/', sample, '.html">', sample,'</a>' )
+}
+
+
+formatStyleTresholdValue <- function(datatable, column, threshold) {
+  formatStyle(
+    datatable,
+    column,
+    color = styleInterval(threshold, c(RED, ""))
+  )
+}
+
+formatStyleSample <- function(datatable) {
+    formatStyle(datatable, 'Sample_Link', fontWeight = 'bold')
+}
+
+variants <- read.delim(params$variants)
+contamination <- read.delim(params$haplocheck)
+haplogroups <- read.delim(params$haplogroups)
+statistics <- read.delim(params$statistics)
+pipeline_params <- read.delim(params$pipeline_parameters)
+
+excluded_samples <- try(read.delim(params$excluded_samples, header = FALSE))
+if(inherits(excluded_samples, "try-error")) {
+  excluded_samples = data.frame(V1=c())
+}
+
+
+mapping <- read.delim(params$mapping)
+mapping <- mapping %>%
+  rename(Sample_Label = Sample)
+mapping <- mapping %>%
+  mutate(
+    qc = case_when(
+        Filename %in% excluded_samples$V1 ~ "FAILED",
+        TRUE ~ "PASSED"
+      )
+  )
+
+statistics <- spread(statistics, key = Parameter, value = Value)
+statistics$MeanCoverage <- as.numeric(statistics$MeanDepth)
+statistics$MeanBaseQuality <- as.numeric(statistics$MeanBaseQuality)
+statistics$CoveredBases <- as.numeric(statistics$CoveredBases)
+statistics$MeanMapQuality <- as.numeric(statistics$MeanMapQuality)
+statistics <- merge(statistics, mapping, by.x="Sample", by.y="Filename")
+
+
+haplogroups <- merge(haplogroups, mapping, by.x="SampleID", by.y="Filename") %>%
+  arrange(Sample_Label)
+
+contamination <- merge(contamination, mapping, by.x="Sample", by.y="Filename") %>%
+  arrange(Sample_Label)
+
+contaminated_samples = contamination %>%
+  rename("Contamination_Status" = "Contamination.Status") %>%
+  filter(Contamination_Status == "YES");
+#variants_count <- data.table(t(table(variants$ID)))
+#variants_count <- merge(variants_count, mapping, by.x="V2", by.y="Filename") %>%
+#  arrange(Sample_Label)
+
+variants <- merge(variants, mapping, by.x="ID", by.y="Filename") %>%
+  arrange(Sample_Label)
+
+variants_count <- variants %>% group_by(Sample_Label) %>% 
+  summarise(
+    N = n(),
+    Filtered = sum(Filter != "PASS")
+  ) %>%
+  arrange(Sample_Label)
+
+
+variant_caller <- pipeline_params %>%
+  filter(Parameter == "Variant Caller")
+
+```
+
+
+# Samples
+
+Row
+-----------------------------------------------------------------------
+
+### Number of Samples
+
+```{r}
+valueBox(nrow(statistics), icon = "fa-users")
+```
+
+### Excluded Samples
+
+```{r}
+valueBox(nrow(excluded_samples), icon = "fa-filter")
+```
+
+### Variant Caller
+
+```{r}
+valueBox(paste(variant_caller$Value), icon = "fa-cog")
+```
+
+
+### Contaminated Samples
+
+```{r}
+valueBox(nrow(contaminated_samples), icon = "fa-flask")
+```
+
+
+
+Row
+-------------------------------------
+    
+    
+### Summary  {data-width=750}
+
+```{r}
+
+colors <- c(GREEN, RED)
+names(colors) <- c("PASSED", "FAILED")
+
+colors_contamination <- c("", GREEN, RED)
+names(colors_contamination) <- c("-", "NO", "YES")
+
+statistics %>%
+  mutate (
+    Sample_Link = link_to_sample(Sample_Label),
+    contamination = case_when(
+      qc == "FAILED" ~ "",
+      Sample_Label %in% contaminated_samples$Sample_Label ~ "YES",
+      TRUE ~ "NO"
+    )
+  ) %>%
+  select("Sample_Link", "MeanDepth", "CoveragePercentage", "CoveredBases", "MeanBaseQuality", "MeanMapQuality", "qc", "contamination") %>%
+  datatable(
+    colnames=c("Sample", "Mean Coverage", "Covered Bases (%)", "Covered Bases", "Mean Base Quality", "Mean Mapping Quality", "QC", "Cont."),
+    options = list(
+      bPaginate = FALSE
+    ),
+    escape = FALSE,
+    rowname = FALSE,
+    class = 'cell-border stripe'
+  ) %>%
+  formatStyleSample() %>%
+  formatStyleTresholdValue('MeanDepth', MIN_MEAN_DEPTH) %>%
+  formatStyleTresholdValue('CoveragePercentage', MIN_COVERAGE_PERCENTAGE) %>%
+  formatStyleTresholdValue('MeanBaseQuality', MIN_MEAN_BASE_QUALITY) %>%
+  formatStyle(
+    'qc',
+    backgroundColor = styleEqual(c("PASSED", "FAILED"), colors),
+    color = 'white'
+  ) %>% 
+  formatStyle(
+    'contamination',
+    backgroundColor = styleEqual(c("-", "NO", "YES"), colors_contamination),
+    color = 'white'
+  )
+```
+
+
+### Workflow parameters and Software versions {data-width=250}
+
+```{r}
+pipeline_params %>%
+  kable()
+```
+
+# Quality Control
+
+Row
+-----------------------------------------------------------------------
+    
+
+### Mean Coverage
+
+```{r}
+
+ggplotly(
+  ggplot(statistics) +
+    geom_histogram(aes(x=MeanCoverage), fill=PRIMARY) +
+    geom_vline(xintercept=MIN_MEAN_DEPTH, color=RED, linetype="dashed") +
+    ylab("Samples") +
+    xlab("Mean Coverage") +
+    theme_bw()
+)
+```
+
+### Covered Bases
+
+```{r}
+
+ggplotly(
+  ggplot(statistics) +
+    geom_histogram(aes(x=CoveredBases), fill=PRIMARY) +
+    geom_vline(xintercept=MIN_COVERAGE_PERCENTAGE*16569, color=RED, linetype="dashed") +
+    ylab("Samples") +
+    xlab("Covered Bases (%)") +
+    theme_bw()
+)
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Mean Base Quality
+
+```{r}
+ggplotly(
+  ggplot(statistics) +
+    geom_histogram(aes(x=MeanBaseQuality), fill=PRIMARY) +
+    geom_vline(xintercept=MIN_MEAN_BASE_QUALITY, color=RED, linetype="dashed") +
+    ylab("Samples") +
+    xlab("Mean Base Quality") +
+    theme_bw()
+)
+```
+
+
+### Mean Map Quality
+
+```{r}
+ggplotly(
+  ggplot(statistics) +
+    geom_histogram(aes(x=MeanMapQuality), fill=PRIMARY) +
+    ylab("Samples") +
+    xlab("Mean Mapping Quality") +
+    theme_bw()
+)
+```
+
+# Contamination
+
+```{r}
+contaminated_samples %>%
+  mutate (Sample_Link = link_to_sample(Sample_Label)) %>%
+  select("Sample_Link", "Contamination_Status", "Contamination.Level") %>%
+  datatable(
+    colnames=c("Sample", "Contamination","Level"),
+    options = list(
+      bPaginate = FALSE
+    ),
+    escape = FALSE,
+    rowname = FALSE,
+    class = 'cell-border stripe'
+  ) %>%
+  formatStyleSample()
+```
+
+---
+
+# Variants and Heteroplasmies
+
+Row
+-------------------------------------
+
+### Summary
+
+```{r}
+variants_count %>%
+  mutate (Sample_Link = link_to_sample(Sample_Label)) %>%
+  select("Sample_Link", "N", "Filtered") %>%
+  datatable(
+    colnames=c("Sample", "Number of Variants", "Flagged Variants"),
+    options = list(
+      bPaginate = FALSE
+    ),
+    escape = FALSE,
+    rowname = FALSE,
+    class = 'cell-border stripe'
+  ) %>%
+  formatStyleSample()
+```
+
+---
+
+
+# Haplogroups
+
+
+Row
+-------------------------------------
+
+### Summary
+
+```{r}
+haplogroups %>%
+  mutate (Sample_Link = link_to_sample(Sample_Label)) %>%
+  select("Sample_Link", "Haplogroup", "Quality") %>%
+  datatable(
+    colnames=c("Sample", "Haplogroup", "Quality"),
+    options = list(
+      bPaginate = FALSE
+    ),
+    escape = FALSE,
+    rowname = FALSE,
+    class = 'cell-border stripe'
+  ) %>%
+  formatStyleSample() %>%
+  formatStyle(
+    "Quality",
+    backgroundColor = styleInterval(c(0.8,0.9), c(RED, ORANGE, GREEN)),
+    color ="white"
+  )
+```
+
+Row
+-------------------------------------
+
+### Quality per Sample
+
+```{r}
+ggplotly(
+  ggplot(haplogroups) +
+    geom_histogram(aes(x=Quality), fill=PRIMARY) +
+    geom_vline(xintercept=0.90, color=GREEN, linetype="dashed") +
+    geom_vline(xintercept=0.80, color="orange", linetype="dashed") +
+    geom_vline(xintercept=0.70, color=RED, linetype="dashed") +
+    ylab("Samples") +
+    xlab("Haplogroup Quality") +
+    theme_bw()
+)
+```
