@@ -30,8 +30,8 @@ pypgx, zarohla).
 | haplocheck | 1.3.3 |
 | phylotree | fu-rcrs@1.2 |
 
-The vendored `files/rcrs_mutserve.fasta`, `files/rCRS_annotation.txt` and
-`report.Rmd` are fetched from the `v2.1.16` tag of the upstream repository
+The vendored `files/rcrs_mutserve.fasta` and `report.Rmd` are fetched from
+the `v2.1.16` tag of the upstream repository
 (see the `Dockerfile` build args / fetch step) and must be bumped together
 with the base image tag — `report.Rmd` reads fields that mutserve/haplocheck
 output, and a version skew between them fails silently, rendering a page with
