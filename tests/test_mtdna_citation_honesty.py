@@ -1,11 +1,11 @@
 """The mtDNA-server-2 citation must not read as a tool that ran.
 
-There is no mtDNA service in this stack: ``docker/mtdna-server-2/`` holds a
-17-byte README, ``compose.yml`` declares no such service, and
-``pipelines/pgx/main.nf`` has no process that calls one. ``needs_mtdna`` is never
-set anywhere -- it is only *read*, with a ``False`` default, at
-``upload_router.py`` -- so ``used_mtdna`` is always False and the workflow
-diagram's mtDNA node never renders.
+The stack is half-landed: ``compose.yml`` now declares an ``mtdna`` service
+(Task 5) -- built, healthy, reachable at ``http://mtdna:5000`` -- but nothing
+calls it yet. ``pipelines/pgx/main.nf`` has no process that invokes it,
+``needs_mtdna`` is never set anywhere -- it is only *read*, with a ``False``
+default, at ``upload_router.py`` -- so ``used_mtdna`` is always False and the
+workflow diagram's mtDNA node never renders.
 
 Every report nonetheless listed mtDNA-server-2 in "Platform and Citations",
 unqualified, beside PyPGx/PharmCAT/GATK/ZaroHLA, which do run. The old code also
@@ -19,10 +19,15 @@ verified behaviour, not an assumption -- a real GRCh37 run returns
 ``call_source: "NONE"``, ``called_by: "–"``, ``phenotype: "No Result"`` for
 MT-RNR1, because MT-RNR1 is one of the four genes PharmCAT expects as an
 *outside* call (``config/genes.json``, ``categories.pharmcat_outside_callers``) and nothing
-supplies it.
+supplies it. That stays true with the container running but uncalled -- the
+citation is still accurate.
 
-These tests fail the day the service lands, which is the point: the citation has
-to be revisited then, not left claiming the feature is off after it is on.
+``test_there_is_now_an_mtdna_service_in_the_stack`` records that the service
+half of the premise changed. ``test_the_pipeline_still_has_no_mtdna_process``
+is what's left of the old tripwire: it fails the day ``main.nf`` gains a
+process that calls the service, which is the correct moment to revisit the
+citation -- not before, because until the pipeline calls it, "not yet enabled"
+is still the true state of the reader's own report.
 """
 
 from __future__ import annotations
@@ -81,19 +86,35 @@ def test_every_other_cited_tool_that_claims_a_version_actually_ships_one():
 
 
 # --------------------------------------------------------------------------
-# The premise: no mtDNA service exists
+# The premise: the service exists, but nothing calls it yet
 # --------------------------------------------------------------------------
 
 
-def test_there_is_still_no_mtdna_service_in_the_stack():
-    """When this fails, the service landed -- go update the citation."""
-    assert "mtdna" not in COMPOSE.read_text(encoding="utf-8").lower(), (
-        "compose.yml now declares an mtDNA service; the citation still says "
-        "mitochondrial typing is not enabled"
+def test_there_is_now_an_mtdna_service_in_the_stack():
+    """The service landed in Task 5; this is the record that it did.
+
+    Compose declaring the service is not the thing the citation is about --
+    the citation is about whether a run actually calls it and produces an
+    MT-RNR1 result. That's still no. This test just retires the half of the
+    old premise that's now false, so it stops muddying the real tripwire
+    below.
+    """
+    assert "mtdna" in COMPOSE.read_text(encoding="utf-8").lower(), (
+        "compose.yml no longer declares an mtDNA service; the service Task 5 "
+        "landed appears to have been removed"
     )
+
+
+def test_the_pipeline_still_has_no_mtdna_process():
+    """The surviving tripwire: fails the day Task 9 wires the pipeline.
+
+    That's the correct moment to revisit the citation -- not this one. Until
+    main.nf actually calls the service, "not yet enabled" stays true of every
+    report a reader can generate, no matter what compose.yml declares.
+    """
     assert "mtdna" not in MAIN_NF.read_text(encoding="utf-8").lower(), (
         "main.nf now has an mtDNA process; the citation still says mitochondrial "
-        "typing is not enabled"
+        "typing is not enabled -- go update it (Task 12)"
     )
 
 
