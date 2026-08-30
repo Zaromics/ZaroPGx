@@ -5,12 +5,16 @@ is shared with the app container and with the user's own filesystem. An
 unrotated handler there grows for the life of the container and eventually
 takes the host disk with it.
 
-**One rule, five modules.** The item was closed three different ways by three
+**One rule, six modules.** The item was closed three different ways by three
 different changes -- 5 MiB x 3 at DEBUG in gatk-api, 10 MB x 5 at INFO in
 nextflow/pharmcat/pypgx, nothing at all in zarohla -- and two different failure
 behaviours: gatk-api and nextflow guarded the handler and degraded to console,
 while pharmcat and pypgx built theirs inline in ``basicConfig`` and so *died at
-import* when ``/data`` was absent. This module now pins the converged shape:
+import* when ``/data`` was absent. mtdna (docker/mtdna-server-2/app.py) is the
+sixth: built after the rule converged, so it follows the same shape from the
+start rather than needing its own fix -- but nothing pinned that fact against
+regression until it joined this module's parametrization. This module now
+pins the converged shape:
 
   * exactly one ``RotatingFileHandler`` construction per module,
   * ``maxBytes``/``backupCount`` taken from module-level ``LOG_MAX_BYTES`` /
@@ -31,14 +35,15 @@ degrades, is imported for real by tests/test_gatk_api_no_mock_bam.py and gets
 runtime coverage as a result.
 
 Why AST instead of a direct import or a text grep:
-All five modules are Docker container entry points and none is importable
+All six modules are Docker container entry points and none is importable
 under the host interpreter as-is -- ``import psutil`` (pharmcat.py,
-pypgx_wrapper.py, zarohla/app.py) raises ModuleNotFoundError on the dev venv,
-and they ``sys.path.append('/job-client')`` for a helper that only exists
-inside the image. So this test parses each module's source and asserts on the
-actual handler-construction Call node rather than skipping, or doing a
-plain-text substring grep that could not distinguish a real bounded value from
-a stray comment mentioning "RotatingFileHandler".
+pypgx_wrapper.py, zarohla/app.py, mtdna-server-2/app.py) raises
+ModuleNotFoundError on the dev venv, and they ``sys.path.append('/job-client')``
+for a helper that only exists inside the image. So this test parses each
+module's source and asserts on the actual handler-construction Call node
+rather than skipping, or doing a plain-text substring grep that could not
+distinguish a real bounded value from a stray comment mentioning
+"RotatingFileHandler".
 
 Complementary runtime coverage, deliberately not duplicated here:
   * tests/test_gatk_api_no_mock_bam.py imports gatk_api.py with stubbed
@@ -85,6 +90,10 @@ MODULES = {
         "path": Path("docker/zarohla/app.py"),
         "log_files": ["zarohla_progress.log"],
     },
+    "mtdna": {
+        "path": Path("docker/mtdna-server-2/app.py"),
+        "log_files": ["/data/mtdna_progress.log"],
+    },
 }
 
 # Sidecars that run more than one process, and therefore cannot share one
@@ -110,6 +119,7 @@ SIDECAR_DOCKERFILES = {
     "pharmcat": Path("docker/pharmcat/Dockerfile"),
     "pypgx_wrapper": Path("docker/pypgx/Dockerfile.pypgx"),
     "zarohla": Path("docker/zarohla/Dockerfile"),
+    "mtdna": Path("docker/mtdna-server-2/Dockerfile"),
 }
 
 # Every spelling gunicorn accepts, so the rule does not depend on how the CMD is

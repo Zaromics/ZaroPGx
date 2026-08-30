@@ -795,6 +795,10 @@
                 <div class="tab active" onclick="showTab('alerts')">Alerts</div>
                 <div class="tab" onclick="showTab('summary')">Summary</div>
                 <div class="tab" onclick="showTab('genes')">Genes</div>
+                {# Only when this run actually called mtDNA -- generator.py's
+                   mtdna_report_context() returns {"used": False} for any job
+                   that never touched Task 11's toggle. #}
+                {% if mtdna and mtdna.used %}<div class="tab" onclick="showTab('mtdna')">mtDNA</div>{% endif %}
                 <div class="tab" onclick="showTab('drugs')">Drugs</div>
                 <div class="tab" onclick="showTab('recs')">Recs</div>
                 <div class="tab" onclick="showTab('visualizations')">Visualizations</div>
@@ -948,7 +952,41 @@
                 
                 <div id="geneInfoSection"></div>
             </div>
-            
+
+            {% if mtdna and mtdna.used %}
+            <div id="mtdna" class="tab-content">
+                <h3>Mitochondrial DNA</h3>
+                <div class="card">
+                    <p>Mitochondrial variant calling and haplogroup assignment via mtDNA-Server 2, supplying the MT-RNR1 outside call: PharmCAT's own allele definitions carry no mitochondrial position, so nothing in its own pipeline can call this gene.</p>
+                    <table>
+                        <tbody>
+                            <tr><th>Haplogroup</th><td>{{ mtdna.haplogroup or 'Not determined' }}</td></tr>
+                            <tr><th>Haplogroup quality</th><td>{{ mtdna.haplogroup_quality or '–' }}</td></tr>
+                            <tr><th>MT-RNR1</th><td>{{ mtdna.mt_rnr1 or 'No call' }}</td></tr>
+                            <tr><th>Phenotype</th><td>{{ mtdna.phenotype or '–' }}</td></tr>
+                        </tbody>
+                    </table>
+                    {% if not mtdna.mt_rnr1 and mtdna.no_call_reason %}
+                        {# Say why, rather than leaving the reader to guess at an
+                           empty row -- an unexplained empty cell is the thing
+                           this whole effort removes. #}
+                        <p class="header-note">{{ mtdna.no_call_reason }}</p>
+                    {% endif %}
+                </div>
+                {% if mtdna.all_matches %}
+                <div class="card">
+                    {# Every allele mtDNA-Server 2 matched, not just the one name
+                       handed to PharmCAT -- select_call() (app/mtdna/mt_rnr1.py)
+                       picks the single highest-risk allele to report as the
+                       outside call, and this is where the others stay visible
+                       instead of being silently dropped. #}
+                    <h4>Detected MT-RNR1 variants</h4>
+                    <ul>{% for name in mtdna.all_matches %}<li>{{ name }}</li>{% endfor %}</ul>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
             <div id="drugs" class="tab-content">
                 <h3>Drugs</h3>
                 <p>The following drugs have pharmacogenomic guidance available based on this sample's genetic profile:</p>

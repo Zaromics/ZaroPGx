@@ -122,7 +122,9 @@ def test_the_normaliser_still_handles_the_gatk_shape():
 
 
 # --------------------------------------------------------------------------
-# OptiType and the provisional mtDNA row
+# OptiType and mtDNA-Server 2 -- both manifest-resolved rows, not the compose
+# fallback. mtDNA-server-2 was the provisional row until Task 12; it is not
+# anymore (see below).
 # --------------------------------------------------------------------------
 
 
@@ -168,15 +170,39 @@ def test_the_pinned_version_matches_the_dockerfile():
     )
 
 
-def test_mtdna_server_2_is_listed_as_not_enabled():
-    """Wired in provisionally: named so the report neither claims a capability it
-    lacks nor silently omits one. MT-RNR1 comes back as a no-call precisely
-    because this component is absent, and that should be traceable from the page.
-    """
-    rows = {i["name"]: i["version"] for i in build_platform_info()}
+def test_mtdna_server_2_is_now_allowlisted_under_its_own_name():
+    """The inverse of what this test used to assert. mtDNA-server-2 was wired
+    in provisionally -- named so the report neither claimed a capability it
+    lacked nor silently omitted one, while MT-RNR1 came back as a no-call
+    precisely because this component was absent from the running stack.
 
-    assert "mtDNA-server-2" in rows
-    assert "not enabled" in rows["mtDNA-server-2"].lower()
+    Task 12 gave the mtdna sidecar a real manifest
+    (docker/mtdna-server-2/app.py's _publish_version_manifest), the same way
+    every other row in this table already has one, so it graduated out of
+    _PROVISIONAL_COMPONENTS into _REPORT_COMPONENTS instead of staying a
+    placeholder forever. See tests/test_mtdna_citation_honesty.py for the
+    citation-side half of the same change, including proof the version is a
+    real lookup and not a hardcoded fallback -- resolution needs the
+    container's manifest, which is not present on a bare dev host, so (like
+    the OptiType test above) only the *key* is asserted here.
+    """
+    assert _REPORT_COMPONENTS.get("mtdna-server-2") == "mtDNA-Server 2"
+
+
+def test_mtdna_server_2_publishes_its_own_manifest():
+    """The manifest the row above depends on actually exists in the sidecar,
+    the same way test_zarohla_publishes_the_optitype_version_it_actually_
+    installed pins OptiType's.
+    """
+    from pathlib import Path
+
+    app_py = (
+        Path(__file__).resolve().parents[1] / "docker" / "mtdna-server-2" / "app.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "mtdna-server-2.json" in app_py
+    ), "docker/mtdna-server-2/app.py no longer publishes a version manifest"
 
 
 def test_a_provisional_component_never_claims_a_version_number():

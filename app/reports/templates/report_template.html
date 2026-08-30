@@ -1156,7 +1156,39 @@
         </div>
         {% endif %}
     </div>
-    
+
+    {# Rendered only when this run actually called mtDNA -- generator.py's
+       mtdna_report_context() returns {"used": False} for any job that never
+       touched Task 11's toggle, so an ordinary report looks exactly as it did
+       before this feature existed rather than showing an empty panel. #}
+    {% if mtdna and mtdna.used %}
+    <div class="section" style="page-break-inside: avoid;">
+        <h2>Mitochondrial DNA</h2>
+        <p>Mitochondrial variant calling and haplogroup assignment via mtDNA-Server 2, supplying the MT-RNR1 outside call: PharmCAT's own allele definitions carry no mitochondrial position, so nothing in its own pipeline can call this gene.</p>
+        <table>
+            <tbody>
+                <tr><th>Haplogroup</th><td>{{ mtdna.haplogroup or 'Not determined' }}</td></tr>
+                <tr><th>Haplogroup quality</th><td>{{ mtdna.haplogroup_quality or '–' }}</td></tr>
+                <tr><th>MT-RNR1</th><td>{{ mtdna.mt_rnr1 or 'No call' }}</td></tr>
+                <tr><th>Phenotype</th><td>{{ mtdna.phenotype or '–' }}</td></tr>
+            </tbody>
+        </table>
+        {% if not mtdna.mt_rnr1 and mtdna.no_call_reason %}
+            {# Say why, rather than leaving the reader to guess at an empty row --
+               an unexplained empty cell is the thing this whole effort removes. #}
+            <p class="header-note">{{ mtdna.no_call_reason }}</p>
+        {% endif %}
+        {% if mtdna.all_matches %}
+            {# Every allele mtDNA-Server 2 matched, not just the one name handed to
+               PharmCAT -- select_call() (app/mtdna/mt_rnr1.py) picks the single
+               highest-risk allele to report as the outside call, and this is where
+               the others stay visible instead of being silently dropped. #}
+            <h3>Detected MT-RNR1 variants</h3>
+            <ul>{% for name in mtdna.all_matches %}<li>{{ name }}</li>{% endfor %}</ul>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <div class="section">
         <h2>Drugs</h2>
         <p>The following drugs have pharmacogenomic guidance available based on this sample's genetic profile:</p>

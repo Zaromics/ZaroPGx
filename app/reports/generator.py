@@ -235,17 +235,24 @@ _REPORT_COMPONENTS: Dict[str, str] = {
     # OptiType version to /data/versions at startup, the way every other sidecar
     # publishes its own.
     "optitype": "OptiType",
+    # Graduated out of _PROVISIONAL_COMPONENTS below in Task 12: the mtdna
+    # sidecar now publishes its own manifest (docker/mtdna-server-2/app.py's
+    # _publish_version_manifest) the same way every other row here does, so it
+    # belongs in the resolved allowlist rather than the placeholder one.
+    "mtdna-server-2": "mtDNA-Server 2",
 }
 
 # Components that are part of the platform's design but are not running yet. They
 # are listed so the report does not imply a capability it has, and does not
-# silently omit one a reader may be expecting -- MT-RNR1 comes back as a no-call
-# precisely because this one is absent, and that is worth being able to trace.
-# Kept deliberately separate from the allowlist above: nothing resolves a version
-# for them, because there is nothing installed to resolve one from.
-_PROVISIONAL_COMPONENTS: Dict[str, str] = {
-    "mtDNA-server-2": "not enabled in this release",
-}
+# silently omit one a reader may be expecting. Kept deliberately separate from
+# the allowlist above: nothing resolves a version for them, because there is
+# nothing installed to resolve one from.
+#
+# mtDNA-server-2 lived here until the mtdna sidecar actually started resolving
+# a version and producing calls (Task 12) -- see build_citations below, which
+# now resolves a real one instead of publishing a status string for software
+# that never ran.
+_PROVISIONAL_COMPONENTS: Dict[str, str] = {}
 
 
 def report_branding_context() -> Dict[str, Any]:
@@ -332,13 +339,16 @@ def build_citations() -> List[Dict[str, str]]:
     pharmcat_ver = _ver("pharmcat", "3.4.0")
     gatk_ver = _ver("gatk", "4.7.0.0")
     zarohla_ver = _ver("zarohla", "1.5.0")
-    # No mtdna_server_2_ver here on purpose. There is no mtDNA service in the
-    # stack -- docker/mtdna-server-2/ holds a 17-byte README, compose.yml declares
-    # no such service and main.nf has no process that calls one -- so
-    # version_manager has nothing to resolve and the old fallback published a
-    # version string ("2.1.16") for software that never ran. The citation below
-    # says so instead. (Supersedes BACKLOG 375, which read the unused variable as
-    # a missing-version bug rather than a missing-service one.)
+    # BACKLOG 375, closed properly: resolved from the manifest the mtdna
+    # sidecar publishes at /data/versions/mtdna-server-2.json
+    # (docker/mtdna-server-2/app.py:_publish_version_manifest), not a
+    # hardcoded literal masquerading as one. get_versions_dict() lowercases
+    # the manifest's own "name" field ("mtDNA-server-2") to build its key, so
+    # the lookup key here is "mtdna-server-2" -- see
+    # VersionManager.get_versions_dict's docstring. The fallback below is what
+    # prints if that lookup ever misses (service not yet run this session, or
+    # /data/versions unmounted), same as every other _ver() call on this page.
+    mtdna_ver = _ver("mtdna-server-2", "v2.1.16")
 
     citations: List[Dict[str, str]] = []
     citations.append(
@@ -384,13 +394,16 @@ def build_citations() -> List[Dict[str, str]]:
     citations.append(
         {
             "name": "mtDNA-server-2",
-            # "no call", not "called by PharmCAT": MT-RNR1 is one of the four genes
-            # PharmCAT expects as an *outside* call (config/genes.json,
-            # "outside_calls"), and with no mtDNA service nothing supplies it. A
-            # real run confirms it -- call_source NONE, phenotype "No Result". So
-            # this line also explains an empty row the reader can see for
-            # themselves, rather than only disclaiming the tool.
-            "text": f"mtDNA-server-2-based mitochondrial typing. Not yet enabled in this release, so MT-RNR1 is reported as a no-call. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
+            # Names the pipeline release and its three component tools, the
+            # same shape as the ZaroHLA citation below names OptiType --
+            # mutserve/haplogrep3/haplocheck versions are pinned to this
+            # image build (docker/mtdna-server-2/app.py:_tool_versions) rather
+            # than resolved individually, since none of the three publishes
+            # its own manifest. "Supplying the MT-RNR1 outside call" is the
+            # same fact the old wording explained from the other direction
+            # (an empty row); PharmCAT still cannot call MT-RNR1 itself
+            # (config/genes.json, categories.pharmcat_outside_callers).
+            "text": f"mtDNA-Server 2, version {mtdna_ver} (mutserve 2.0.3, haplogrep3 3.2.2, haplocheck 1.3.3). Mitochondrial variant calling and haplogroup assignment, supplying the MT-RNR1 outside call. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
             "repo": "https://github.com/genepi/mtdna-server-2",
         }
     )
@@ -690,6 +703,99 @@ def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optiona
             logger.debug("Swallowed exception: %s", e, exc_info=True)
 
     return dict(_EMPTY_MATCHER_METADATA)
+
+
+# Upstream's own floor (docker/mtdna-server-2/app.py's MIN_MEAN_COVERAGE,
+# nextflow.config params.min_mean_coverage upstream). Repeated here only for
+# the no-call explanation below -- not read back from the sidecar, which
+# never echoes the threshold it used, only the coverage it measured.
+_MTDNA_MIN_MEAN_COVERAGE = 50
+
+
+def mtdna_report_context(
+    report_dir: str, genes: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """The mtDNA report section's context, from the run's own mtdna_result.json.
+
+    MtdnaCall (pipelines/pgx/main.nf) publishDir-copies the sidecar's own
+    /call-mtdna response, unmodified, into report_dir as mtdna_result.json.
+    Its presence is what "mtDNA actually ran" means for this report: Task
+    11's toggle can be on with no completed run yet (params.skip_mtdna
+    still defaults true -- see tests/test_mtdna_citation_honesty.py), but
+    this file only exists once a call has finished, successfully or as an
+    explicit no-call.
+
+    "used": False is what makes both templates render nothing at all --
+    a job that never touched the mtDNA toggle must look exactly as it did
+    before this feature existed, not show an empty mtDNA panel.
+
+    When MT-RNR1 comes back empty, "no_call_reason" names the concrete cause
+    rather than leaving a blank row for the reader to guess at -- the thing
+    this whole effort exists to remove (see docker/mtdna-server-2/app.py's
+    _call_from_alignment and _call_from_vcf, the only two places this
+    service itself declines to promote an empty match to Reference):
+      - alignment input (BAM/CRAM/FASTQ): mean coverage across MT-RNR1 fell
+        below the MIN_MEAN_COVERAGE floor (or coverage could not be
+        computed at all);
+      - VCF input: the job did not set pharmcat_absent_to_ref, so an absent
+        record stayed ambiguous between "reference here" and "never covered
+        here" instead of being resolved to Reference.
+    Distinguished by whether "mean_coverage" is a key in the sidecar's own
+    response -- only the alignment path ever returns one.
+
+    Never raises: a report with a malformed or unreadable mtdna_result.json
+    renders no mtDNA section, the same as a run that never called it.
+    """
+    result_path = os.path.join(report_dir, "mtdna_result.json")
+    if not os.path.exists(result_path):
+        return {"used": False}
+    try:
+        with open(result_path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception as exc:
+        logger.warning(f"Could not read mtdna_result.json: {exc}")
+        return {"used": False}
+
+    mt_rnr1 = raw.get("mt_rnr1")
+    no_call_reason = None
+    if not mt_rnr1:
+        if "mean_coverage" in raw:
+            coverage = raw.get("mean_coverage")
+            if coverage is None:
+                no_call_reason = (
+                    "No MT-RNR1 variant was detected, and mean coverage across "
+                    "the gene could not be determined, so the absence could not "
+                    "be confirmed as Reference."
+                )
+            else:
+                no_call_reason = (
+                    "No MT-RNR1 variant was detected, and mean coverage across "
+                    f"the gene ({coverage:.1f}x) was below the "
+                    f"{_MTDNA_MIN_MEAN_COVERAGE}x floor needed to call Reference "
+                    "from absence."
+                )
+        else:
+            no_call_reason = (
+                "No MT-RNR1 variant was detected, and this VCF job did not set "
+                "pharmcat_absent_to_ref, so an absent record could not be "
+                "resolved to Reference."
+            )
+
+    phenotype = None
+    for gene in genes or []:
+        if str(gene.get("gene", "")).strip().upper() == "MT-RNR1":
+            phenotype = gene.get("phenotype")
+            break
+
+    return {
+        "used": True,
+        "haplogroup": raw.get("haplogroup"),
+        "haplogroup_quality": raw.get("haplogroup_quality"),
+        "mt_rnr1": mt_rnr1,
+        "phenotype": phenotype,
+        "no_call_reason": no_call_reason,
+        "all_matches": raw.get("mt_rnr1_all_matches") or [],
+    }
 
 
 # Initialize Jinja2 environment.
@@ -1225,6 +1331,11 @@ def create_interactive_html_report(
         # did not, for the same run.
         matcher_meta = probe_matcher_metadata(report_dir, str(report_id))
 
+        # Task 12: the mtDNA section's context, resolved the same way as the
+        # provenance facts above -- from a file this same report_dir already
+        # holds, not from a value threaded in through the caller.
+        mtdna_context = mtdna_report_context(report_dir, diplotypes)
+
         # Prepare the report data
         report_data = {
             "patient_id": patient_id,
@@ -1236,6 +1347,7 @@ def create_interactive_html_report(
             "organized_recommendations": json.dumps(
                 organize_gene_drug_recommendations(template_recommendations)
             ),
+            "mtdna": mtdna_context,
             "disclaimer": get_disclaimer(),
             "workflow_png_url": workflow_png_url,
             "workflow_png_data_uri": workflow_png_data_uri,
@@ -2094,6 +2206,13 @@ def generate_report(
     os.makedirs(report_dir, exist_ok=True)
     logger.info(f"Using report directory: {report_dir}")
 
+    # Task 12: the mtDNA section's context, from this run's own
+    # mtdna_result.json if MtdnaCall produced one. Set here too, not only on
+    # the template_data the write_html branch below rebuilds from scratch --
+    # this dict is what any caller reading generate_report's own template_data
+    # sees, independent of that branch running.
+    template_data["mtdna"] = mtdna_report_context(report_dir, data.get("genes", []))
+
     # Server URL prefix under nested patient/job layout
     reports_url_prefix = f"/reports/{patient_id}/{report_id}"
 
@@ -2630,6 +2749,13 @@ def generate_report(
                 ),
                 "diplotypes": data.get("genes", []),
                 "recommendations": template_recommendations,
+                # Task 12: rebuilt here too, not inherited from the earlier
+                # template_data above -- this dict rebinds template_data and is
+                # the one actually rendered into the HTML and PDF (see
+                # report_branding_context's docstring for why that distinction
+                # is load-bearing: a key set only on the first dict silently
+                # never reaches the page).
+                "mtdna": mtdna_report_context(report_dir, data.get("genes", [])),
                 "disclaimer": get_disclaimer(),
                 "platform_info": platform,
                 "citations": build_citations(),
