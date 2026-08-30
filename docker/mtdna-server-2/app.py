@@ -441,24 +441,319 @@ async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
     return field("haplogroup"), field("quality")
 
 
+# Upstream's own floor (nextflow.config params.min_mean_coverage). Below it,
+# MT-RNR1 stays a no-call rather than being reported as Reference: "normal risk
+# of aminoglycoside-induced hearing loss" is a positive claim and needs
+# positive evidence.
+MIN_MEAN_COVERAGE = float(os.getenv("MTDNA_MIN_MEAN_COVERAGE", "50"))
+
+
 async def _call_from_alignment(
     bam_path: str, work: str, build_name: str, job_key: str
 ) -> Dict[str, Any]:
-    """Full mode: mutserve -> haplogrep3 + haplocheck -> upstream's report.html.
+    """Full mode: mutserve -> haplogrep3 + haplocheck -> upstream's report.html."""
+    build = classify_build(build_name)
+    if build == MitoBuild.HG19:
+        # hg19's chrM is NC_001807 (16571 bp), not rCRS, so mutserve's positions
+        # would be silently wrong against the rCRS reference. The stack has no
+        # alignment-level liftover and realigning chrM reads is out of scope, so
+        # refuse rather than produce a plausible-looking wrong haplogroup.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "hg19 alignments are not supported for mitochondrial calling: "
+                "hg19's chrM is NC_001807 (16571 bp), not rCRS, and this stack "
+                "has no alignment-level liftover. Upload a GRCh38 or GRCh37 "
+                "alignment, or a VCF (which can be lifted)."
+            ),
+        )
+    if not plan_for(build).supported:
+        raise HTTPException(status_code=422, detail=plan_for(build).reason)
 
-    Not implemented yet -- this is Task 8. Task 7 wires only the VCF path
-    (haplogrep3 accepts a VCF directly, which is what makes that path possible
-    without an alignment at all). Refusing loudly here rather than attempting
-    something partial: a BAM/CRAM/SAM upload is a real, expected input shape
-    for this endpoint (see call_mtdna's input_type branch below), so it must
-    fail with a clear "not yet" rather than silently doing the wrong thing.
+    await _run(["samtools", "index", bam_path], work, job_key)
+    region = "chrM" if build == MitoBuild.GRCH38 else "MT"
+    chrm_bam = os.path.join(work, "chrM.bam")
+    await _run(
+        ["samtools", "view", "-b", "-o", chrm_bam, bam_path, region], work, job_key
+    )
+    await _run(["samtools", "index", chrm_bam], work, job_key)
+
+    called = os.path.join(work, "chrM.vcf.gz")
+    await _run(
+        [
+            "java", "-jar", MUTSERVE_JAR, "call", "--level", "0.01",
+            "--reference", RCRS_FASTA, "--mapQ", "20", "--baseQ", "20",
+            "--output", called, "--no-ansi", "--strand-bias", "1.6", chrm_bam,
+        ],
+        work, job_key,
+    )
+    normed = os.path.join(work, "chrM.norm.vcf.gz")
+    await _run(
+        ["bcftools", "norm", "-m-any", "-f", RCRS_FASTA, "-Oz", "-o", normed, called],
+        work, job_key,
+    )
+    await _run(["bcftools", "index", "-t", normed], work, job_key)
+
+    # The join key every report support file below is keyed on: whatever
+    # sample name mutserve wrote into the VCF's own genotype column.
+    # haplogrep3 and haplocheck are handed this same VCF below, so they read
+    # that same name back out as their own SampleID/Sample column -- matching
+    # by construction rather than by guessing mutserve's naming convention.
+    sample_key = await _vcf_sample_name(normed, work, job_key)
+
+    haplocheck_txt = os.path.join(work, "haplocheck.txt")
+    await _run(
+        ["java", "-jar", HAPLOCHECK_JAR, "--out", haplocheck_txt, "--raw", normed],
+        work, job_key,
+    )
+    # `region`, not a hardcoded "chrM": samtools view keeps the input's contig
+    # name, so a GRCh37 extraction is still called MT. Asking depth for
+    # chrM:648-1601 there returns no rows, coverage reads None, and MT-RNR1
+    # silently never reaches Reference no matter how deep the sequencing was.
+    coverage = await _mean_coverage(chrm_bam, region, work, job_key)
+
+    query = os.path.join(work, "chrM.tsv")
+    with open(query, "w", encoding="utf-8") as handle:
+        proc = await asyncio.create_subprocess_exec(
+            "bcftools", "query", "-f", "%POS\t%REF\t%ALT\n", normed,
+            stdout=handle, stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+
+    records = _read_chrm_records(query)
+    matched = match_alleles(records)
+    call = select_call(matched)
+    if call is None and coverage is not None and coverage >= MIN_MEAN_COVERAGE:
+        # Positive evidence: the gene was sequenced deeply enough that the
+        # absence of a listed variant means absence, not silence.
+        call = REFERENCE
+
+    haplogroup, quality = await _classify_haplogroup(normed, work, job_key)
+
+    # The four remaining report.Rmd inputs that are this pipeline's own
+    # responsibility (not mutserve/haplogrep3/haplocheck output) -- one row
+    # each, since this endpoint calls a single BAM at a time.
+    stats_row = await _bam_statistics(chrm_bam, region, work, job_key)
+    await _write_report_support_files(work, job_key, sample_key, stats_row, normed)
+
+    report_html = await _render_report(work, job_key)
+    return {
+        "haplogroup": haplogroup,
+        "haplogroup_quality": quality,
+        "mt_rnr1": call,
+        "mt_rnr1_all_matches": matched,
+        "mean_coverage": coverage,
+        "variants": [r._asdict() for r in records],
+        "report_html": report_html,
+        "report_unavailable_reason": None,
+    }
+
+
+async def _mean_coverage(
+    bam: str, contig: str, work: str, job_key: str
+) -> Optional[float]:
+    """Mean depth across MT-RNR1 (rCRS 648-1601) via samtools depth.
+
+    `contig` is the name in THIS bam's header -- chrM on GRCh38, MT on b37 --
+    not a constant. Getting it wrong returns zero rows rather than an error,
+    which reads as "no coverage" and quietly withholds a Reference call.
     """
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "Mitochondrial calling from an alignment (BAM/CRAM/SAM) is not yet "
-            "implemented. Upload a VCF instead."
-        ),
+    low, high = MT_RNR1_SPAN
+    out = os.path.join(work, "depth.txt")
+    with open(out, "w", encoding="utf-8") as handle:
+        proc = await asyncio.create_subprocess_exec(
+            "samtools", "depth", "-a", "-r", f"{contig}:{low}-{high}", bam,
+            stdout=handle, stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+    depths = []
+    with open(out, "r", encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                depths.append(int(parts[2]))
+    return (sum(depths) / len(depths)) if depths else None
+
+
+async def _vcf_sample_name(vcf_gz: str, work: str, job_key: str) -> str:
+    """The sample name mutserve embedded in the VCF's own genotype column.
+
+    Read back rather than assumed: haplogrep3 and haplocheck are about to be
+    handed this same VCF and will report that exact name as their own
+    SampleID/Sample column. Using it here -- instead of trying to reproduce
+    mutserve's naming convention in Python -- is what makes report.Rmd's
+    per-sample `merge()` calls actually match instead of silently dropping
+    every row.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "bcftools", "query", "-l", vcf_gz,
+        cwd=work, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    running_processes.setdefault(job_key, {})["bcftools-query-l"] = proc
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"bcftools query -l failed: {stderr.decode(errors='replace')[:2000]}",
+        )
+    names = [n for n in stdout.decode("utf-8", errors="replace").splitlines() if n.strip()]
+    if not names:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "mutserve's VCF carries no sample column; cannot build the "
+                "per-sample report tables."
+            ),
+        )
+    return names[0]
+
+
+async def _bam_statistics(
+    bam: str, contig: str, work: str, job_key: str
+) -> Dict[str, str]:
+    """samtools coverage over `contig` -- upstream's own calculate_statistics.nf
+    module reads exactly this table for the report's per-sample statistics
+    row: numreads, covbases, coverage%, meandepth, meanbaseq, meanmapq.
+    `contig` is the caller's region name (chrM/MT), same rule as
+    `_mean_coverage`: never a hardcoded constant.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "samtools", "coverage", "-r", contig, bam,
+        cwd=work, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    running_processes.setdefault(job_key, {})["samtools-coverage"] = proc
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"samtools coverage failed: {stderr.decode(errors='replace')[:2000]}",
+        )
+    lines = [line for line in stdout.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    if len(lines) < 2:
+        raise HTTPException(
+            status_code=500,
+            detail=f"samtools coverage produced no row for {contig}.",
+        )
+    header = lines[0].lstrip("#").split("\t")
+    values = lines[1].split("\t")
+    return dict(zip(header, values))
+
+
+async def _write_report_support_files(
+    work: str,
+    job_key: str,
+    sample_key: str,
+    stats_row: Dict[str, str],
+    normed_vcf: str,
+) -> None:
+    """The four report.Rmd inputs this pipeline (not mutserve/haplogrep3/
+    haplocheck) is responsible for producing -- one row each, since this
+    endpoint calls a single sample at a time.
+
+    Keyed throughout on `sample_key`: the exact sample name mutserve wrote
+    into the VCF, which is also what haplogrep3's SampleID and haplocheck's
+    Sample columns carry (see `_vcf_sample_name`). Get this wrong and
+    report.Rmd's `merge()` calls drop every row silently -- report.html still
+    renders 200, with every panel blank.
+    """
+    mapping_path = os.path.join(work, "sample_mappings.txt")
+    with open(mapping_path, "w", encoding="utf-8") as handle:
+        handle.write("Sample\tFilename\n")
+        handle.write(f"{job_key}\t{sample_key}\n")
+
+    stats_path = os.path.join(work, "sample_statistics.txt")
+    with open(stats_path, "w", encoding="utf-8") as handle:
+        handle.write("Sample\tParameter\tValue\n")
+        for parameter, key in (
+            ("Contig", "rname"),
+            ("NumberofReads", "numreads"),
+            ("CoveredBases", "covbases"),
+            ("CoveragePercentage", "coverage"),
+            ("MeanDepth", "meandepth"),
+            ("MeanBaseQuality", "meanbaseq"),
+            ("MeanMapQuality", "meanmapq"),
+        ):
+            handle.write(f"{sample_key}\t{parameter}\t{stats_row.get(key, '')}\n")
+
+    # No coverage-based exclusion happens in this single-BAM-at-a-time
+    # endpoint -- a genuinely empty file (0 bytes, no header: report.Rmd
+    # reads this one with header=FALSE), not one line that read.delim would
+    # misread as a spurious excluded sample.
+    open(os.path.join(work, "excluded_samples.txt"), "w", encoding="utf-8").close()
+
+    filters_path = os.path.join(work, "variants_filter.tmp")
+    with open(filters_path, "w", encoding="utf-8") as handle:
+        proc = await asyncio.create_subprocess_exec(
+            "bcftools", "query", "-f", "%FILTER\n", normed_vcf,
+            stdout=handle, stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+    variants_path = os.path.join(work, "variants.txt")
+    with open(filters_path, "r", encoding="utf-8") as src, open(
+        variants_path, "w", encoding="utf-8"
+    ) as dst:
+        dst.write("ID\tFilter\n")
+        for line in src:
+            line = line.strip()
+            if line:
+                dst.write(f"{sample_key}\t{line}\n")
+
+
+async def _render_report(work: str, job_key: str) -> Optional[str]:
+    """Render upstream's report.Rmd -- the genuine mtDNA-Server 2 report.
+
+    Vendored from the same v2.1.16 tag as the image, because an .Rmd that
+    disagrees with the tool output it reads fails by rendering empty panels
+    rather than by erroring.
+    """
+    params = os.path.join(work, "params.txt")
+    versions = _tool_versions()
+    with open(params, "w", encoding="utf-8") as handle:
+        handle.write("Parameter\tValue\n")
+        # Shaped like upstream's own modules/local/report.nf, not
+        # `_tool_versions()`'s {name: version} dict: report.Rmd's "Variant
+        # Caller" valueBox filters pipeline_params for a row literally named
+        # "Variant Caller" (`filter(Parameter == "Variant Caller")`), which a
+        # {name: version} dict never has -- that box renders 200 and empty.
+        # Confirmed against a real render: see task-8-report.md.
+        for key, value in (
+            ("Version", versions["mtdna-server-2"]),
+            ("Job", job_key),
+            ("Date", time.strftime("%a %b %d %H:%M:%S UTC %Y", time.gmtime())),
+            ("Repository", "https://github.com/genepi/mtdna-server-2"),
+            # This sidecar runs mutserve alone, never upstream's optional
+            # mutserve+mutect2 "fusion" mode -- "mutserve" is the honest
+            # value for what actually produced these calls.
+            ("Variant Caller", "mutserve"),
+            ("Detection Limit", "0.01"),  # same --level value passed below
+            ("Reference", "rcrs"),
+            ("Base Quality", "20"),  # same --baseQ value passed below
+            ("Map Quality", "20"),  # same --mapQ value passed below
+            ("Alignment Quality", "30"),  # mutserve's own default; not overridden
+            ("Mutserve", versions["mutserve"]),
+            ("Haplocheck", versions["haplocheck"]),
+            ("Haplogrep", versions["haplogrep3"]),
+        ):
+            handle.write(f"{key}\t{value}\n")
+    script = (
+        "require('rmarkdown'); render('/app/report.Rmd', params = list("
+        f"pipeline_parameters = '{params}', variants = '{work}/variants.txt', "
+        f"haplogroups = '{work}/haplogroups.txt', haplocheck = '{work}/haplocheck.txt', "
+        f"statistics = '{work}/sample_statistics.txt', mapping = '{work}/sample_mappings.txt', "
+        f"excluded_samples = '{work}/excluded_samples.txt'"
+        f"), knit_root_dir='{work}', output_file='{work}/report.html')"
+    )
+    try:
+        await _run(["Rscript", "-e", script], work, job_key)
+    except HTTPException as exc:
+        # A failed render costs the download, not the call: the haplogroup and
+        # the MT-RNR1 result are already in hand and are what PharmCAT needs.
+        logger.warning(f"mtDNA report render failed: {exc.detail}")
+        return None
+    return (
+        os.path.join(work, "report.html")
+        if os.path.exists(f"{work}/report.html")
+        else None
     )
 
 
