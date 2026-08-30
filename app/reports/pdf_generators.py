@@ -61,8 +61,6 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 from app.reports.generator import (
     _sanitize_graphviz_svg,
     activity_score_num,
-    register_report_template_helpers,
-    report_branding_context,
     build_citations,
     build_platform_info,
     get_author_name,
@@ -70,6 +68,8 @@ from app.reports.generator import (
     get_license_name,
     get_license_url,
     get_source_url,
+    register_report_template_helpers,
+    report_branding_context,
 )
 from app.reports.provenance import resolve_called_by
 from app.visualizations.workflow_diagram import read_workflow_mermaid, render_with_kroki

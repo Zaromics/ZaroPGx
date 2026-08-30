@@ -79,7 +79,7 @@ def test_liftover_lights_the_gatk_glyph():
     groups it that way (``app/services/workflow_stages.py`` maps ``liftover`` to
     ``WorkflowStage.GATK``). The two must not drift apart.
     """
-    from app.services.workflow_stages import WorkflowStage, STEP_TO_STAGE
+    from app.services.workflow_stages import STEP_TO_STAGE, WorkflowStage
 
     assert _step_mapping()["liftover"] == "stageGATK"
     assert STEP_TO_STAGE["liftover"] is WorkflowStage.GATK
