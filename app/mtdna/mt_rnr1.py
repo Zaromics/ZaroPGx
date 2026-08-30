@@ -84,8 +84,19 @@ MT_RNR1_ALLELES: Dict[str, Allele] = {
 }
 
 
-def _is_single_base_deletion(record: VcfRecord) -> bool:
-    return len(record.ref) == len(record.alt) + 1 and record.ref.startswith(record.alt)
+def _is_pure_deletion(record: VcfRecord) -> bool:
+    """True when nothing is inserted: ALT is exactly a prefix of REF.
+
+    This is the shape bcftools norm emits for a plain deletion after
+    left-alignment: an anchor base kept, the deleted base(s) dropped off the
+    end of REF. m.960C>del and m.961T>del (ALT="") are plain deletions and
+    can only match a record shaped like this.
+
+    m.961T>del+Cn is not a plain deletion -- it also carries an inserted C,
+    so a record that satisfies this check is never that allele. See
+    match_alleles.
+    """
+    return len(record.ref) > len(record.alt) and record.ref.startswith(record.alt)
 
 
 def _deleted_span(record: VcfRecord) -> range:
@@ -113,11 +124,31 @@ def match_alleles(records: List[VcfRecord]) -> List[str]:
             continue
         for record in records:
             if allele.is_deletion:
-                if _is_single_base_deletion(record) and allele.pos in _deleted_span(
-                    record
-                ):
-                    matched.append(name)
-                    break
+                if allele.alt == "":
+                    # m.960C>del / m.961T>del: a plain deletion, nothing
+                    # inserted. Only a pure-deletion record can name these --
+                    # position alone is not enough, since m.961T>del and
+                    # m.961T>del+Cn share a position (see the else branch).
+                    if _is_pure_deletion(record) and allele.pos in _deleted_span(
+                        record
+                    ):
+                        matched.append(name)
+                        break
+                else:
+                    # m.961T>del+Cn: the T at 961 deleted *and* an extra C
+                    # inserted into the adjoining poly-C tract -- a delins,
+                    # not a pure deletion. bcftools norm's left-aligned shape
+                    # for a compound variant inside a homopolymer run isn't
+                    # something this module has a verified example of, and a
+                    # repeat-tract insertion is exactly the kind of variant
+                    # that can be represented more than one way depending on
+                    # the normaliser. Guessing a matching rule risks naming
+                    # this allele for a record that is really something
+                    # else, so until a real normalised-VCF shape for this
+                    # allele is confirmed, it matches nothing here rather
+                    # than the wrong thing. Tracked: review round 1, finding
+                    # 1 (2026-08-30).
+                    continue
             elif (record.pos, record.ref, record.alt) == (
                 allele.pos,
                 allele.ref,

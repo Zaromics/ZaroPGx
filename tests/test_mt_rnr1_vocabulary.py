@@ -94,6 +94,31 @@ def test_a_single_base_deletion_matches_exactly_one_allele():
     assert len(match_alleles([VcfRecord(959, "AC", "A")])) == 1
 
 
+def test_a_pure_deletion_at_961_names_only_the_plain_deletion():
+    """m.961T>del and m.961T>del+Cn share a position; only REF/ALT tells them apart.
+
+    (960, "CT", "C") is exactly the shape bcftools norm emits for a plain
+    deletion of the T at 961, left-aligned onto the preceding C. Naming
+    m.961T>del+Cn here would report an inserted C the record does not carry.
+    Both alleles share the "uncertain" risk tier, so PharmCAT's phenotype
+    would come out identical either way and nothing downstream would catch
+    the mistake.
+    """
+    assert match_alleles([VcfRecord(960, "CT", "C")]) == ["m.961T>del"]
+
+
+def test_a_pure_deletion_never_names_the_insertion_allele():
+    """m.961T>del+Cn requires an inserted C; a plain deletion never has one.
+
+    Same failure mode as above, checked directly and across more than one
+    pure-deletion shape: a record with nothing inserted (ALT exactly a
+    prefix of REF) must never be reported as m.961T>del+Cn, however many
+    positions it spans.
+    """
+    for record in [VcfRecord(960, "CT", "C"), VcfRecord(959, "ACT", "A")]:
+        assert "m.961T>del+Cn" not in match_alleles([record])
+
+
 def test_increased_risk_outranks_uncertain():
     call = select_call(["m.663A>G", "m.1555A>G"])
     assert call == "m.1555A>G"
@@ -133,11 +158,18 @@ def _haplotypes_from_running_pharmcat():
     try:
         proc = subprocess.run(
             [
-                "docker", "--context", "pgx-native", "exec", "pgx_pharmcat",
-                "sh", "-c",
+                "docker",
+                "--context",
+                "pgx-native",
+                "exec",
+                "pgx_pharmcat",
+                "sh",
+                "-c",
                 f"cd /tmp && unzip -o -p /pharmcat/pharmcat.jar {MT_RNR1_JSON}",
             ],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
     except (OSError, subprocess.SubprocessError):
         return None
