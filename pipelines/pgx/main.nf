@@ -74,17 +74,15 @@ params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'fals
 params.source_build   = params.source_build ?: ''
 // mtDNA calling via the mtdna sidecar (mutserve + haplogrep3 + haplocheck, from
 // mtDNA-Server 2 v2.1.16). DEFAULT TRUE (skipped) -- deliberately the odd one out
-// among the skip_* flags above, which all default to false. Wiring MtdnaCall
-// below makes the pipeline genuinely call the service and produce a real
-// MT-RNR1 result, but upload_router does not yet expose a user-facing toggle for
-// it (that lands in a later task) and the report's "Platform and Citations" text
-// still says mitochondrial typing is "not yet enabled in this release"
-// (app/reports/generator.py, pinned by tests/test_mtdna_citation_honesty.py). A
-// false default here would make that citation a lie the moment this lands: real
-// jobs would silently start producing mtDNA results while the report claims the
-// feature doesn't run yet. Leave this true until the task that adds the UI
-// toggle flips the default and updates the citation together -- do not "fix"
-// this default in isolation.
+// among the skip_* flags above, which all default to false. The UI toggle
+// (needs_mtdna, WorkflowOptions) and upload_router's own skip_mtdna computation
+// (app/api/routes/upload_router.py) now exist and default the same way: off
+// unless the user opts in. This default is the fallback for any caller that
+// posts to the runner without setting the field at all -- e.g. a direct
+// nextflow /run call that bypasses upload_router -- which must land on the
+// same safe "skipped" state a real job gets when its toggle is unchecked, not
+// silently start producing mtDNA results. Keep this true in lockstep with
+// upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
 // FASTQ alignment

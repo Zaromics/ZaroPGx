@@ -10,11 +10,16 @@ import pytest
 from app.mtdna.mt_rnr1 import (
     MT_RNR1_ALLELES,
     MT_RNR1_SPAN,
+    NO_CALL_NO_CHRM_DATA,
+    NO_CALL_UNRESOLVED_961_DELINS,
+    REFERENCE,
     RISK_INCREASED,
     RISK_NORMAL,
     RISK_UNCERTAIN,
     VcfRecord,
+    has_unresolved_961_deletion,
     match_alleles,
+    resolve_mt_rnr1_call,
     select_call,
 )
 
@@ -136,6 +141,93 @@ def test_within_a_tier_the_lowest_position_wins():
 def test_no_matches_is_not_silently_reference():
     """Reference is a positive claim; the caller decides, not this function."""
     assert select_call([]) is None
+
+
+# --- has_unresolved_961_deletion / resolve_mt_rnr1_call ---------------------
+#
+# These back the actual "empty match -> Reference" promotion the sidecar
+# performs (docker/mtdna-server-2/app.py's _call_from_vcf and
+# _call_from_alignment both call resolve_mt_rnr1_call rather than
+# hand-rolling this). Real inputs, not substring checks on app.py's source --
+# see review round 1, finding 4 (2026-08-30).
+
+
+def test_961_overlap_is_false_with_no_records():
+    assert has_unresolved_961_deletion([]) is False
+
+
+def test_961_overlap_is_false_for_snvs_that_are_not_pgx_alleles():
+    """HG00096's own variants: real, but not deletions, not near 961."""
+    records = [VcfRecord(750, "A", "G"), VcfRecord(1438, "A", "G")]
+    assert has_unresolved_961_deletion(records) is False
+
+
+def test_961_overlap_is_false_for_a_deletion_elsewhere_in_the_gene():
+    assert has_unresolved_961_deletion([VcfRecord(700, "AC", "A")]) is False
+
+
+def test_961_overlap_is_true_for_a_delins_touching_961():
+    """A synthetic delins shape (ref longer than alt, alt not a prefix of
+    ref -- so not a plain deletion) whose deleted span includes 961. Stands
+    in for m.961T>del+Cn, whose real normalised-VCF shape match_alleles
+    deliberately does not claim to know (see its own comment) -- this test
+    exercises the overlap *mechanism*, not a claim about mutserve's actual
+    output shape.
+    """
+    assert has_unresolved_961_deletion([VcfRecord(960, "CTC", "G")]) is True
+
+
+def test_961_overlap_is_true_even_for_a_pure_deletion():
+    """The helper alone does not distinguish pure vs. delins -- it only
+    reports footprint overlap. That is fine: resolve_mt_rnr1_call only ever
+    consults it when `matched` is already empty, and a pure deletion at 961
+    always matches m.961T>del (see
+    test_a_pure_deletion_at_961_names_only_the_plain_deletion), so `matched`
+    is never empty for this case in practice.
+    """
+    assert has_unresolved_961_deletion([VcfRecord(960, "CT", "C")]) is True
+
+
+def test_resolve_a_real_match_wins_regardless_of_evidence():
+    """A caller who forgot pharmcat_absent_to_ref does not get to erase a
+    variant that is actually there."""
+    call, reason = resolve_mt_rnr1_call(
+        ["m.1555A>G"], [], evidence_reason=NO_CALL_NO_CHRM_DATA
+    )
+    assert call == "m.1555A>G"
+    assert reason is None
+
+
+def test_resolve_blocks_on_missing_evidence_before_looking_at_961():
+    """No positive evidence at all -- e.g. app/static/demo/pharmcat.example.vcf,
+    which has no chrM contig header and no chrM record -- must never reach
+    Reference no matter what `records` contains."""
+    call, reason = resolve_mt_rnr1_call([], [], evidence_reason=NO_CALL_NO_CHRM_DATA)
+    assert call is None
+    assert reason == NO_CALL_NO_CHRM_DATA
+
+
+def test_resolve_promotes_to_reference_when_evidence_is_positive_and_961_is_clear():
+    """HG00096 at ~1331x: real variants, none of them PGx alleles, none of
+    them near 961 -- this must still reach Reference."""
+    records = [VcfRecord(750, "A", "G"), VcfRecord(1438, "A", "G")]
+    matched = match_alleles(records)
+    assert matched == []
+    call, reason = resolve_mt_rnr1_call(matched, records, evidence_reason=None)
+    assert call == REFERENCE
+    assert reason is None
+
+
+def test_resolve_withholds_reference_for_an_unresolved_961_delins():
+    """Even with positive evidence, an unmatched delins at 961 must not
+    silently become 'normal risk' -- a carrier of only m.961T>del+Cn is a
+    no-call, not a guess."""
+    records = [VcfRecord(960, "CTC", "G")]
+    matched = match_alleles(records)
+    assert matched == []
+    call, reason = resolve_mt_rnr1_call(matched, records, evidence_reason=None)
+    assert call is None
+    assert reason == NO_CALL_UNRESOLVED_961_DELINS
 
 
 import json

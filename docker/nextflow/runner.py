@@ -160,13 +160,17 @@ class NextflowRunRequest(BaseModel):
     # trigger into a no-op with nothing said.
     source_build: str = ""
     # mtDNA calling toggle. Defaults to "true" (skipped) -- NOT "false" like the
-    # other skip_* flags above -- to match main.nf's own params.skip_mtdna default
-    # and for the same reason: upload_router does not send this field yet (that
-    # lands in a later task, alongside the user-facing toggle), so leaving pydantic's
-    # default at "false" would make every real job silently start calling the mtDNA
-    # sidecar and producing MT-RNR1 results while the report's citation still says
-    # mitochondrial typing is "not yet enabled" -- see
-    # tests/test_mtdna_citation_honesty.py. Do not "fix" this default in isolation.
+    # other skip_* flags above -- to match main.nf's own params.skip_mtdna default.
+    # upload_router now computes and sends this field on every real job (based on
+    # the needs_mtdna UI toggle, WorkflowOptions -- see
+    # app/api/routes/upload_router.py), so this default is only ever used by a
+    # caller that posts to this runner without setting the field at all, e.g. a
+    # direct /run call that bypasses upload_router. Leaving pydantic's default at
+    # "false" would make such a caller silently start calling the mtDNA sidecar and
+    # producing MT-RNR1 results with no toggle ever having been set -- the same
+    # unearned-claim failure mode this field exists to prevent. Keep this in
+    # lockstep with main.nf's params.skip_mtdna default; do not "fix" this default
+    # in isolation.
     skip_mtdna: str = "true"
 
     @field_validator("reference")

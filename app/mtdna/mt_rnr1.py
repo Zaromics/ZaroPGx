@@ -16,7 +16,7 @@ count 1, so the outside call is one name -- never a "A/B" diplotype form.
 
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 RISK_INCREASED = "increased"
 RISK_UNCERTAIN = "uncertain"
@@ -173,3 +173,92 @@ def select_call(names: List[str]) -> Optional[str]:
         names,
         key=lambda n: (_TIER_ORDER[MT_RNR1_ALLELES[n].risk], -MT_RNR1_ALLELES[n].pos),
     )
+
+
+def has_unresolved_961_deletion(records: List[VcfRecord]) -> bool:
+    """True when some record's deletion/delins footprint touches position 961.
+
+    m.961T>del+Cn is a real, named MT-RNR1 allele that `match_alleles`
+    deliberately never matches -- there is no verified normalised-VCF shape
+    for that compound delins yet (see match_alleles's comment). So a carrier
+    of only that variant produces the same `matched == []` as a carrier with
+    nothing at 961 at all: `select_call` returns None either way, and the two
+    are indistinguishable from `matched` alone.
+
+    Anything that calls `select_call` and would otherwise promote an empty
+    match straight to Reference must check this first. True here means "a
+    deletion or delins sits on top of 961 and nothing named it" -- which
+    could be the unresolvable m.961T>del+Cn -- so the honest result is a
+    no-call, not a guess at Reference. A pure deletion that DOES resolve to
+    m.960C>del or m.961T>del is already a match in `matched`, so `call` is
+    never None for that case and this function is never consulted for it.
+    """
+    for record in records:
+        if len(record.ref) <= len(record.alt):
+            continue  # no deletion component -- cannot be what masks 961
+        if 961 in _deleted_span(record):
+            return True
+    return False
+
+
+# Reason codes for an MT-RNR1 result that stayed a no-call. Shared between the
+# sidecar (docker/mtdna-server-2/app.py, which decides which applies) and the
+# report (app/reports/generator.py's mtdna_report_context, which turns the
+# code into reader-facing text) so the two never have to independently derive
+# the same fact -- see "give every fact one home" in this branch's history.
+NO_CALL_NO_CHRM_DATA = "no_chrm_data"
+NO_CALL_NOT_CONSENTED = "absent_to_ref_not_set"
+NO_CALL_UNRESOLVED_961_DELINS = "unresolved_961_delins"
+NO_CALL_COVERAGE_BELOW_FLOOR = "coverage_below_floor"
+NO_CALL_COVERAGE_UNKNOWN = "coverage_unknown"
+
+
+def resolve_mt_rnr1_call(
+    matched: List[str],
+    records: List[VcfRecord],
+    *,
+    evidence_reason: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """The final MT-RNR1 call, and -- when it stays a no-call -- why.
+
+    This is the one place the "empty match -> Reference" promotion actually
+    happens. Both `_call_from_vcf` and `_call_from_alignment` in the sidecar
+    route their promotion decision through this function instead of each
+    hand-rolling it, so their tests can no longer stay green on a substring
+    match alone (e.g. "absent_to_ref" appearing anywhere in app.py) -- they
+    exercise this function's real behaviour with real VcfRecord inputs
+    instead (see test_mt_rnr1_vocabulary.py).
+
+    `matched` is `match_alleles()`'s output. A real match always wins,
+    regardless of `evidence_reason`: a caller who forgot to set
+    pharmcat_absent_to_ref, or whose coverage was thin, does not get to erase
+    a variant that is actually there.
+
+    `evidence_reason` is the caller's own judgment of whether it has positive
+    evidence this sample's mitochondrion was genuinely examined -- None means
+    "yes"; otherwise it is the NO_CALL_* reason to report when `matched` is
+    empty. An empty match is not itself evidence of anything: it is equally
+    what "genuinely reference" and "never sequenced" look like from here,
+    which is exactly why the caller, not this function, supplies that
+    judgment (VCF path: a chrM contig header or a chrM record, gated on the
+    user's own pharmcat_absent_to_ref consent; alignment path: mean coverage
+    across the gene at or above MIN_MEAN_COVERAGE).
+
+    Even with positive evidence, `has_unresolved_961_deletion` can still
+    block the promotion: an empty match caused by m.961T>del+Cn's
+    deliberately-unmatched shape must not read the same as a confirmed
+    reference call.
+
+    Returns (call, no_call_reason). Exactly one is falsy: `call` is set
+    (a real allele name, or REFERENCE) when a match already existed or the
+    promotion is allowed; `no_call_reason` is set to the concrete blocking
+    reason otherwise.
+    """
+    call = select_call(matched)
+    if call is not None:
+        return call, None
+    if evidence_reason is not None:
+        return None, evidence_reason
+    if has_unresolved_961_deletion(records):
+        return None, NO_CALL_UNRESOLVED_961_DELINS
+    return REFERENCE, None

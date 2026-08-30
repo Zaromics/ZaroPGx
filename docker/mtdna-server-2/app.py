@@ -120,10 +120,13 @@ from mtdna.builds import (  # noqa: E402
 from mtdna.mt_rnr1 import MT_RNR1_ALLELES  # noqa: E402  (path set above)
 from mtdna.mt_rnr1 import (  # noqa: E402
     MT_RNR1_SPAN,
-    REFERENCE,
+    NO_CALL_COVERAGE_BELOW_FLOOR,
+    NO_CALL_COVERAGE_UNKNOWN,
+    NO_CALL_NO_CHRM_DATA,
+    NO_CALL_NOT_CONSENTED,
     VcfRecord,
     match_alleles,
-    select_call,
+    resolve_mt_rnr1_call,
 )
 
 MUTSERVE_JAR = "/opt/mutserve/mutserve.jar"
@@ -470,18 +473,54 @@ async def _call_from_vcf(
 
     records = _read_chrm_records(query)
     matched = match_alleles(records)
-    call = select_call(matched)
-    if call is None and absent_to_ref:
-        # Only on the user's explicit say-so: in a plain VCF an absent record is
-        # ambiguous between "reference here" and "never covered here", and the
-        # project already exposes that judgment as pharmcat_absent_to_ref.
-        call = REFERENCE
 
-    haplogroup, quality = await _classify_haplogroup(normed, work, job_key)
+    # Positive evidence the VCF actually carried mitochondrial data, as
+    # opposed to a plain nuclear-only PGx VCF that never touched chrM at all
+    # (app/static/demo/pharmcat.example.vcf is exactly this: no ##contig
+    # chrM line, zero chrM rows). `query` above is the full bcftools query
+    # over the whole chrM contig -- NOT restricted to MT_RNR1_SPAN the way
+    # `records` is -- so a non-empty file here means the VCF had at least one
+    # chrM record somewhere, even outside MT-RNR1 itself. `contig_name`
+    # covers the complementary real case: a genuinely sequenced sample whose
+    # mitochondrion happened to carry zero variant lines at all (VCFs list
+    # sites, not every position), where the declared ##contig header is the
+    # only evidence left.
+    #
+    # pharmcat_absent_to_ref is NOT itself that evidence: it is the user's
+    # judgment about positions PharmCAT's own definitions cover, and
+    # pharmcat_positions.vcf carries no chrM position at all (see
+    # mt_rnr1.py's module docstring) -- so ticking that box asserts nothing
+    # about chrM. Without a chrM contig header or a chrM record, promoting to
+    # Reference here would report normal aminoglycoside risk for a gene the
+    # sample was never sequenced for, no matter what the user consented to.
+    vcf_carried_chrm_data = bool(contig_name) or os.path.getsize(query) > 0
+
+    if not absent_to_ref:
+        evidence_reason = NO_CALL_NOT_CONSENTED
+    elif not vcf_carried_chrm_data:
+        evidence_reason = NO_CALL_NO_CHRM_DATA
+    else:
+        evidence_reason = None
+    call, no_call_reason = resolve_mt_rnr1_call(
+        matched, records, evidence_reason=evidence_reason
+    )
+
+    # Same "was chrM genuinely examined" evidence gates the haplogroup call:
+    # haplogrep3 given a record-less chrM VCF has no empty-input guard of its
+    # own and would classify the file as a perfect, high-confidence match to
+    # the rCRS reference haplotype purely because nothing contradicts it --
+    # a root-haplogroup call on an unsequenced mitochondrion is the same
+    # unearned-positive-claim defect this whole feature exists to remove.
+    haplogroup, quality = (
+        await _classify_haplogroup(normed, work, job_key)
+        if vcf_carried_chrm_data
+        else (None, None)
+    )
     return {
         "haplogroup": haplogroup,
         "haplogroup_quality": quality,
         "mt_rnr1": call,
+        "mt_rnr1_no_call_reason": no_call_reason,
         "mt_rnr1_all_matches": matched,
         "variants": [r._asdict() for r in records],
         # Absolute path under DATA_DIR/TEMP_DIR, which the mtdna volume shares
@@ -682,13 +721,38 @@ async def _call_from_alignment(
 
     records = _read_chrm_records(query)
     matched = match_alleles(records)
-    call = select_call(matched)
-    if call is None and coverage is not None and coverage >= MIN_MEAN_COVERAGE:
-        # Positive evidence: the gene was sequenced deeply enough that the
-        # absence of a listed variant means absence, not silence.
-        call = REFERENCE
 
-    haplogroup, quality = await _classify_haplogroup(normed, work, job_key)
+    # Positive evidence: the gene was sequenced deeply enough that the
+    # absence of a listed variant means absence, not silence.
+    if coverage is not None and coverage >= MIN_MEAN_COVERAGE:
+        evidence_reason = None
+    elif coverage is None:
+        evidence_reason = NO_CALL_COVERAGE_UNKNOWN
+    else:
+        evidence_reason = NO_CALL_COVERAGE_BELOW_FLOOR
+    # Even at high coverage, an empty match can mean m.961T>del+Cn -- a real,
+    # named allele match_alleles deliberately never matches (no verified
+    # normalised-VCF shape for that compound delins -- see mt_rnr1.py). A
+    # carrier of only that variant must not be reported as normal risk;
+    # resolve_mt_rnr1_call withholds the promotion in exactly that case.
+    call, no_call_reason = resolve_mt_rnr1_call(
+        matched, records, evidence_reason=evidence_reason
+    )
+
+    # `query` above (unlike `records`) covers the whole chrM contig, not just
+    # MT-RNR1's span -- an empty file means mutserve called literally nothing
+    # on this chrM extraction. haplogrep3 has no empty-input guard of its own
+    # and would classify that as a perfect match to the rCRS reference
+    # haplotype purely because nothing contradicts it; a root-haplogroup call
+    # on an effectively unsequenced mitochondrion is the same unearned-claim
+    # defect this feature exists to remove, so skip it rather than let
+    # haplogrep3 manufacture a confident answer from nothing.
+    carries_variant_data = os.path.getsize(query) > 0
+    haplogroup, quality = (
+        await _classify_haplogroup(normed, work, job_key)
+        if carries_variant_data
+        else (None, None)
+    )
 
     # The four remaining report.Rmd inputs that are this pipeline's own
     # responsibility (not mutserve/haplogrep3/haplocheck output) -- one row
@@ -701,6 +765,7 @@ async def _call_from_alignment(
         "haplogroup": haplogroup,
         "haplogroup_quality": quality,
         "mt_rnr1": call,
+        "mt_rnr1_no_call_reason": no_call_reason,
         "mt_rnr1_all_matches": matched,
         "mean_coverage": coverage,
         "variants": [r._asdict() for r in records],

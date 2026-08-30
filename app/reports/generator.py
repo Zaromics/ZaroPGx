@@ -36,6 +36,13 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
     )
 
 from app.core.version_manager import get_all_versions, get_versions_dict
+from app.mtdna.mt_rnr1 import (
+    NO_CALL_COVERAGE_BELOW_FLOOR,
+    NO_CALL_COVERAGE_UNKNOWN,
+    NO_CALL_NO_CHRM_DATA,
+    NO_CALL_NOT_CONSENTED,
+    NO_CALL_UNRESOLVED_961_DELINS,
+)
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
 from app.pharmcat.report_json import (
     SUPPORTED_VERSION_SERIES,
@@ -731,17 +738,30 @@ def mtdna_report_context(
 
     When MT-RNR1 comes back empty, "no_call_reason" names the concrete cause
     rather than leaving a blank row for the reader to guess at -- the thing
-    this whole effort exists to remove (see docker/mtdna-server-2/app.py's
-    _call_from_alignment and _call_from_vcf, the only two places this
-    service itself declines to promote an empty match to Reference):
+    this whole effort exists to remove. The cause is read directly off
+    "mt_rnr1_no_call_reason", a reason code the sidecar itself decides
+    (docker/mtdna-server-2/app.py's _call_from_alignment and _call_from_vcf,
+    via app.mtdna.mt_rnr1.resolve_mt_rnr1_call -- the one place the
+    "empty match -> Reference" promotion happens, and the only place that
+    knows which of several distinct reasons actually applied):
+      - VCF input, no chrM data at all: the VCF never had a chrM contig
+        header or a chrM record, so an absent MT-RNR1 record is
+        indistinguishable from "never sequenced" -- e.g. an ordinary
+        nuclear-only PGx VCF (NO_CALL_NO_CHRM_DATA);
+      - VCF input, chrM data present: the job did not set
+        pharmcat_absent_to_ref, so an absent record stayed ambiguous between
+        "reference here" and "never covered here" (NO_CALL_NOT_CONSENTED);
+      - either input: an unresolved deletion/delins sits on top of position
+        961 and matched no named allele -- could be the real, but
+        deliberately unmatchable, m.961T>del+Cn (NO_CALL_UNRESOLVED_961_DELINS);
       - alignment input (BAM/CRAM/FASTQ): mean coverage across MT-RNR1 fell
-        below the MIN_MEAN_COVERAGE floor (or coverage could not be
-        computed at all);
-      - VCF input: the job did not set pharmcat_absent_to_ref, so an absent
-        record stayed ambiguous between "reference here" and "never covered
-        here" instead of being resolved to Reference.
-    Distinguished by whether "mean_coverage" is a key in the sidecar's own
-    response -- only the alignment path ever returns one.
+        below the MIN_MEAN_COVERAGE floor (NO_CALL_COVERAGE_BELOW_FLOOR) or
+        could not be computed at all (NO_CALL_COVERAGE_UNKNOWN).
+    A result produced before this reason code existed, or carrying an
+    unrecognised one, falls back to a generic explanation rather than
+    re-deriving the reason from indirect signals (e.g. "mean_coverage" being
+    a key at all) -- that re-derivation is exactly the bug this replaced:
+    it could not tell "no chrM data" apart from "consent not given".
 
     Never raises: a report with a malformed or unreadable mtdna_result.json
     renders no mtDNA section, the same as a run that never called it.
@@ -759,26 +779,50 @@ def mtdna_report_context(
     mt_rnr1 = raw.get("mt_rnr1")
     no_call_reason = None
     if not mt_rnr1:
-        if "mean_coverage" in raw:
-            coverage = raw.get("mean_coverage")
-            if coverage is None:
-                no_call_reason = (
-                    "No MT-RNR1 variant was detected, and mean coverage across "
-                    "the gene could not be determined, so the absence could not "
-                    "be confirmed as Reference."
-                )
-            else:
-                no_call_reason = (
-                    "No MT-RNR1 variant was detected, and mean coverage across "
-                    f"the gene ({coverage:.1f}x) was below the "
-                    f"{_MTDNA_MIN_MEAN_COVERAGE}x floor needed to call Reference "
-                    "from absence."
-                )
-        else:
+        reason_code = raw.get("mt_rnr1_no_call_reason")
+        coverage = raw.get("mean_coverage")
+        if reason_code == NO_CALL_NO_CHRM_DATA:
             no_call_reason = (
-                "No MT-RNR1 variant was detected, and this VCF job did not set "
-                "pharmcat_absent_to_ref, so an absent record could not be "
-                "resolved to Reference."
+                "No MT-RNR1 variant was detected, and this VCF contained no "
+                "mitochondrial (chrM) data at all -- no chrM contig header "
+                "and no chrM record anywhere in the file -- so the absence "
+                "could not be confirmed as Reference."
+            )
+        elif reason_code == NO_CALL_NOT_CONSENTED:
+            no_call_reason = (
+                "No MT-RNR1 variant was detected, and this VCF job did not "
+                "set pharmcat_absent_to_ref, so an absent record could not "
+                "be resolved to Reference."
+            )
+        elif reason_code == NO_CALL_UNRESOLVED_961_DELINS:
+            no_call_reason = (
+                "No MT-RNR1 variant was detected as a named allele, but "
+                "this sample carries an unresolved deletion or insertion "
+                "at position 961 that cannot be confidently distinguished "
+                "from m.961T>del+Cn, so it was not called Reference."
+            )
+        elif reason_code == NO_CALL_COVERAGE_BELOW_FLOOR and coverage is not None:
+            no_call_reason = (
+                "No MT-RNR1 variant was detected, and mean coverage across "
+                f"the gene ({coverage:.1f}x) was below the "
+                f"{_MTDNA_MIN_MEAN_COVERAGE}x floor needed to call Reference "
+                "from absence."
+            )
+        elif reason_code == NO_CALL_COVERAGE_UNKNOWN:
+            no_call_reason = (
+                "No MT-RNR1 variant was detected, and mean coverage across "
+                "the gene could not be determined, so the absence could not "
+                "be confirmed as Reference."
+            )
+        else:
+            # Defensive fallback only -- a result missing this reason code
+            # (older format) or carrying one this report does not recognise.
+            # Never re-derive the reason from indirect signals like whether
+            # "mean_coverage" is a key: that inference is what conflated
+            # "no chrM data" with "consent not given" in the first place.
+            no_call_reason = (
+                "No MT-RNR1 variant was detected, and it could not be "
+                "confirmed as Reference."
             )
 
     phenotype = None

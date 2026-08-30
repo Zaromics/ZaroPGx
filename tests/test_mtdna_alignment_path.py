@@ -51,7 +51,23 @@ def test_hg19_alignment_input_is_refused():
 
 
 def test_reference_is_coverage_gated_on_this_path():
-    assert "MIN_MEAN_COVERAGE" in APP_PY.read_text(encoding="utf-8")
+    """Scoped to the alignment branch's actual gating expression, not a bare
+    substring anywhere in the file -- MIN_MEAN_COVERAGE is also just a
+    constant *definition*, which would stay green even if every use of it
+    were deleted. The real behaviour (a real match always wins; without
+    positive coverage evidence the call stays a no-call; an unresolved
+    delins at 961 blocks the promotion even at high coverage) is exercised
+    directly against real VcfRecord inputs in test_mt_rnr1_vocabulary.py's
+    resolve_mt_rnr1_call tests -- see review round 1, finding 4 (2026-08-30).
+    """
+    branch = _alignment_branch()
+    assert "coverage >= MIN_MEAN_COVERAGE" in branch
+    # `records` (not just `matched`) has to reach resolve_mt_rnr1_call: it is
+    # what lets that function's own has_unresolved_961_deletion check block
+    # promotion for an unmatched delins overlapping 961, even at high
+    # coverage -- see test_resolve_withholds_reference_for_an_unresolved_961_delins.
+    assert "resolve_mt_rnr1_call(" in branch
+    assert "matched, records, evidence_reason=evidence_reason" in branch
 
 
 def test_it_reads_the_bam_header_for_ground_truth():
