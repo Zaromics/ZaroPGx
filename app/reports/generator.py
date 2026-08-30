@@ -244,6 +244,30 @@ _PROVISIONAL_COMPONENTS: Dict[str, str] = {
 }
 
 
+def report_branding_context() -> Dict[str, Any]:
+    """The footer/branding keys every renderer of these templates must supply.
+
+    Four separate dicts feed report_template.html and interactive_report.html,
+    and each listed these keys by hand. One of them -- the dict that rebinds
+    `template_data` further down and is the one actually rendered into the PDF --
+    listed author_name, license_name, license_url and source_url but not
+    current_year, so the PDF footer read "(c) 2024- Iliya Yaroshevskiy" while the
+    other three lanes were fine.
+
+    That is why this has been "fixed" repeatedly without staying fixed: the fix
+    kept landing on whichever dict someone happened to open, and three of the four
+    do not render that page. Returning the set from one place removes the choice.
+    Missing a key here is a KeyError at the call site, not a blank in a footer.
+    """
+    return {
+        "author_name": get_author_name(),
+        "license_name": get_license_name(),
+        "license_url": get_license_url(),
+        "source_url": get_source_url(),
+        "current_year": datetime.now().year,
+    }
+
+
 def build_platform_info() -> List[Dict[str, str]]:
     """The analytic components behind this report, with their versions."""
     items = [{"name": "ZaroPGx", "version": get_zaropgx_version()}]
@@ -1215,11 +1239,7 @@ def create_interactive_html_report(
             "workflow_kroki_svg": workflow_kroki_svg_inline,  # Added for interactive report
             "platform_info": build_platform_info(),
             "citations": build_citations(),
-            "author_name": get_author_name(),
-            "license_name": get_license_name(),
-            "license_url": get_license_url(),
-            "source_url": get_source_url(),
-            "current_year": datetime.now().year,
+            **report_branding_context(),
             "header_text": header_text,
             # Add workflow warnings/alerts for report display
             "workflow_warnings": workflow_warnings or [],
@@ -1999,11 +2019,7 @@ def generate_report(
         "version": get_zaropgx_version(),
         "platform_info": platform,
         "citations": build_citations(),
-        "author_name": get_author_name(),
-        "license_name": get_license_name(),
-        "license_url": get_license_url(),
-        "source_url": get_source_url(),
-        "current_year": datetime.now().year,
+        **report_branding_context(),
         "disclaimer": get_disclaimer(),  # Add missing disclaimer variable
         # Add missing fields that PDF generators expect
         "sample_id": patient_info.get("id", "unknown") if patient_info else "unknown",
@@ -2612,10 +2628,7 @@ def generate_report(
                 "disclaimer": get_disclaimer(),
                 "platform_info": platform,
                 "citations": build_citations(),
-                "author_name": get_author_name(),
-                "license_name": get_license_name(),
-                "license_url": get_license_url(),
-                "source_url": get_source_url(),
+                **report_branding_context(),
                 "workflow": per_sample_workflow,
                 "workflow_diagrams": True,
                 "header_text": header_text,
@@ -2702,11 +2715,17 @@ def generate_report(
                         "used_html_fallback": bool(workflow_html_fallback_html),
                     },
                     "platform_info": platform,
+                    # current_year included deliberately. This diagnostic exists
+                    # to show what the footer was rendered from, and it omitted
+                    # the one key that was actually missing -- so the tool built
+                    # to debug the footer could not have revealed the "(c) 2024-"
+                    # bug it was looking at.
                     "footer_context": {
                         "author_name": template_data.get("author_name"),
                         "license_name": template_data.get("license_name"),
                         "license_url": template_data.get("license_url"),
                         "source_url": template_data.get("source_url"),
+                        "current_year": template_data.get("current_year"),
                     },
                     "template_data_keys": list(template_data.keys()),
                     "template_data_sample": {
