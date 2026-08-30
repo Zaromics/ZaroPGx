@@ -72,6 +72,20 @@ params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'fals
 // runner (docker/nextflow/runner.py) allowlist-validates it exactly as it does
 // params.reference; do not widen that alphabet.
 params.source_build   = params.source_build ?: ''
+// mtDNA calling via the mtdna sidecar (mutserve + haplogrep3 + haplocheck, from
+// mtDNA-Server 2 v2.1.16). DEFAULT TRUE (skipped) -- deliberately the odd one out
+// among the skip_* flags above, which all default to false. Wiring MtdnaCall
+// below makes the pipeline genuinely call the service and produce a real
+// MT-RNR1 result, but upload_router does not yet expose a user-facing toggle for
+// it (that lands in a later task) and the report's "Platform and Citations" text
+// still says mitochondrial typing is "not yet enabled in this release"
+// (app/reports/generator.py, pinned by tests/test_mtdna_citation_honesty.py). A
+// false default here would make that citation a lie the moment this lands: real
+// jobs would silently start producing mtDNA results while the report claims the
+// feature doesn't run yet. Leave this true until the task that adds the UI
+// toggle flips the default and updates the citation together -- do not "fix"
+// this default in isolation.
+params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
 // FASTQ alignment
 process FastqToBAM {
@@ -276,6 +290,60 @@ PY
     '''
 }
 
+// Mitochondrial calling via the mtdna sidecar (mutserve + haplogrep3 +
+// haplocheck, from mtDNA-Server 2 v2.1.16). Supplies MT-RNR1, which PharmCAT
+// cannot call itself -- pharmcat_positions.vcf has no chrM position, which is
+// why MT-RNR1 is configured as an outside call in config/genes.json.
+process MtdnaCall {
+    tag "mtdna_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path variants_file
+    val patient_id
+    val report_id
+    val input_type
+    val source_build
+    val absent_to_ref
+    val outdir
+
+    output:
+    path "pharmcat.mtdna.tsv", optional: true, emit: mtdna
+    path "mtdna_result.json", emit: mtdna_json
+    path "mtdna_report.html", optional: true, emit: mtdna_report
+
+    shell:
+    '''
+    set -euo pipefail
+    CURL_ARGS=( -X POST -F patient_id=!{patient_id} -F report_id=!{report_id} \
+                -F input_type=!{input_type} -F reference_genome=!{source_build} \
+                -F absent_to_ref=!{absent_to_ref} -F file=@!{variants_file} )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=mtdna_analysis )
+    fi
+    # --fail-with-body for the same reason as the OptiType processes above: an
+    # error JSON landing in the result file, parsed for keys that are not there,
+    # is indistinguishable from a sample with no mitochondrial variants. Untick
+    # mtDNA (--skip_mtdna) to opt out; a failing service is not that.
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://mtdna:5000/call-mtdna > mtdna_result.json; then
+      echo "mtdna /call-mtdna returned an error:" >&2
+      cat mtdna_result.json >&2 || true
+      exit 1
+    fi
+    python3 - <<'PY'
+import json, shutil, os
+data = json.load(open('mtdna_result.json'))
+call = data.get('mt_rnr1')
+if call:
+    with open('pharmcat.mtdna.tsv', 'w', encoding='utf-8') as fh:
+        fh.write(f"MT-RNR1\\t{call}\\n")
+src = data.get('report_html')
+if src and os.path.exists(src):
+    shutil.copy(src, 'mtdna_report.html')
+PY
+    '''
+}
+
 // GRCh37/hg19 VCF -> GRCh38 VCF, via gatk-api's Picard LiftoverVcf endpoint.
 // Real coordinate conversion, not a contig rename - the sidecar normalises contig
 // naming to match the UCSC chain, runs LiftoverVcf against the GRCh38 reference,
@@ -466,6 +534,7 @@ process PharmCATRun {
     path vcf
     path outside_tsv, stageAs: 'pypgx_outside.tsv'
     path hla_tsv, stageAs: 'hla_outside.tsv'
+    path mtdna_tsv, stageAs: 'mtdna_outside.tsv'
     val patient_id
     val report_id
     val outdir
@@ -479,11 +548,12 @@ process PharmCATRun {
     '''
     set -euo pipefail
     
-    # Combine PyPGx and HLA outside calls into single file
+    # Combine PyPGx, HLA and mtDNA outside calls into a single file
     cat /dev/null > combined_outside.tsv
     [ -f "pypgx_outside.tsv" ] && cat pypgx_outside.tsv >> combined_outside.tsv
     [ -f "hla_outside.tsv" ] && cat hla_outside.tsv >> combined_outside.tsv
-    
+    [ -f "mtdna_outside.tsv" ] && cat mtdna_outside.tsv >> combined_outside.tsv
+
     CURL_ARGS=( -s -X POST -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} )
     # SAMPLE_IDENTIFIER is passed through the environment (see runner.py), NOT spliced
     # in by Nextflow interpolation. A shell variable expansion is inert data regardless
@@ -533,9 +603,15 @@ workflow {
         )
     }
 
-    // Create input channels
-    input_ch = Channel.fromPath(params.input)
-    
+    // Create input channels. .first() turns the single-item queue channel
+    // Channel.fromPath emits into a reusable value channel: input_ch is read once
+    // by whichever per-input-type branch below consumes it, and a second time by
+    // the mtDNA wiring further down (see that block's comment) -- a queue channel
+    // would be drained by the first reader and the second would see nothing, the
+    // same class of problem the empty_file_ch comment just below records for
+    // optional outside-call inputs.
+    input_ch = Channel.fromPath(params.input).first()
+
     // Create parameter channels  
     patient_id_ch = Channel.value(params.patient_id)
     report_id_ch = Channel.value(params.report_id)
@@ -551,8 +627,10 @@ workflow {
     
     // For FASTQ: HLA first (if enabled), then BAM conversion, then PyPGx sequentially
     if (params.input_type == 'fastq') {
-        // Convert FASTQ to BAM (needed for PyPGx regardless of HLA).
-        bam_ch = FastqToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
+        // Convert FASTQ to BAM (needed for PyPGx regardless of HLA). .first() makes
+        // this reusable by the mtDNA wiring below too -- see input_ch's comment above
+        // for why a plain queue channel can't feed two consumers.
+        bam_ch = FastqToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam.first()
 
         if (params.skip_hla) {
             // HLA typing opted out: no OptiType, PyPGx runs on the converted BAM.
@@ -569,7 +647,8 @@ workflow {
     }
     // For CRAM: convert to BAM, then HLA (unless skipped) + PyPGx sequentially
     else if (params.input_type == 'cram') {
-        bam_ch = CramToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
+        // .first(): see input_ch's comment above -- reused by the mtDNA wiring below.
+        bam_ch = CramToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam.first()
 
         if (params.skip_hla) {
             hla_ch = empty_file_ch
@@ -584,7 +663,8 @@ workflow {
     }
     // For SAM: convert to BAM, then HLA (unless skipped) + PyPGx sequentially
     else if (params.input_type == 'sam') {
-        bam_ch = SamToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam
+        // .first(): see input_ch's comment above -- reused by the mtDNA wiring below.
+        bam_ch = SamToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam.first()
 
         if (params.skip_hla) {
             hla_ch = empty_file_ch
@@ -635,6 +715,45 @@ workflow {
         error "Unsupported input type: ${params.input_type}. Supported: vcf, bam, cram, sam, fastq"
     }
 
+    // mtDNA calling. Which channel feeds it depends on input type:
+    //   - vcf: the ORIGINAL upload (input_ch), never vcf_ch. On a b37/GRCh37 file
+    //     vcf_ch may have been through LiftoverVCF above, whose chain's source is
+    //     hg19's chrM (NC_001807, 16571bp) -- but b37's MT is already rCRS, so
+    //     pushing it through that chain shifts positions by 2 inside MT-RNR1 and
+    //     would report a pathogenic m.1555A>G at 1553. The sidecar does its own
+    //     build-appropriate normalisation from the untouched input instead.
+    //   - bam/cram/sam/fastq: the already-CONVERTED BAM (bam_ch, or input_ch
+    //     itself for 'bam' input, which needs no conversion) -- never the raw
+    //     cram/sam/fastq upload. There is no liftover concern on these paths, the
+    //     pipeline already produced a BAM above, and reusing it avoids re-decoding
+    //     CRAM inside the sidecar. FASTQ cannot be called by the sidecar directly
+    //     at all, which is why every alignment-input branch sends "bam" as the
+    //     input_type it tells the sidecar, regardless of what was actually
+    //     uploaded.
+    // input_ch and bam_ch were both made reusable with .first() above precisely so
+    // they can feed this second consumer without being drained by the per-type
+    // branch's own use of them -- see input_ch's comment near its declaration.
+    if (params.skip_mtdna) {
+        mtdna_outside = empty_file_ch
+    } else {
+        mtdna_variants_ch = (params.input_type in ['fastq', 'cram', 'sam']) ? bam_ch : input_ch
+        mtdna_input_type = (params.input_type == 'vcf') ? 'vcf' : 'bam'
+        mtdna_result = MtdnaCall(
+            mtdna_variants_ch,
+            patient_id_ch,
+            report_id_ch,
+            Channel.value(mtdna_input_type),
+            // The DETECTED source build, never params.reference alone (which
+            // defaults to hg38 regardless of what the file actually is) -- falls
+            // back to it only when source_build was never populated, e.g. no
+            // liftover was needed/detected for this input.
+            Channel.value(params.source_build ?: params.reference),
+            Channel.value(params.pharmcat_absent_to_ref),
+            outdir_ch
+        )
+        mtdna_outside = mtdna_result.mtdna.ifEmpty(empty_file_ch)
+    }
+
     // Run PyPGx genotyping on VCF (if enabled)
     if (params.skip_pypgx) {
         pypgx_outside = empty_file_ch
@@ -644,6 +763,7 @@ workflow {
             vcf_ch,
             pypgx_outside,
             hla_outside,
+            mtdna_outside,
             patient_id_ch,
             report_id_ch,
             outdir_ch
@@ -667,6 +787,7 @@ workflow {
             pypgx_complete_ch,
             pypgx_outside,
             hla_outside,
+            mtdna_outside,
             patient_id_ch,
             report_id_ch,
             outdir_ch

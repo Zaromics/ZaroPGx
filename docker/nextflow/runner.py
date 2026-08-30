@@ -159,6 +159,15 @@ class NextflowRunRequest(BaseModel):
     # (406): pydantic silently drops undeclared fields, which would turn the liftover
     # trigger into a no-op with nothing said.
     source_build: str = ""
+    # mtDNA calling toggle. Defaults to "true" (skipped) -- NOT "false" like the
+    # other skip_* flags above -- to match main.nf's own params.skip_mtdna default
+    # and for the same reason: upload_router does not send this field yet (that
+    # lands in a later task, alongside the user-facing toggle), so leaving pydantic's
+    # default at "false" would make every real job silently start calling the mtDNA
+    # sidecar and producing MT-RNR1 results while the report's citation still says
+    # mitochondrial typing is "not yet enabled" -- see
+    # tests/test_mtdna_citation_honesty.py. Do not "fix" this default in isolation.
+    skip_mtdna: str = "true"
 
     @field_validator("reference")
     @classmethod
@@ -260,7 +269,7 @@ async def run(request: NextflowRunRequest):
     # Start Nextflow in a separate thread
     thread = threading.Thread(
         target=run_nextflow_job, 
-        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref, request.skip_gatk, request.skip_report, request.source_build)
+        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref, request.skip_gatk, request.skip_report, request.source_build, request.skip_mtdna)
     )
     thread.daemon = True
     thread.start()
@@ -292,7 +301,7 @@ def summarize_nextflow_failure(stdout: Optional[str], stderr: Optional[str], tai
             parts.append(f"{label}:\n{stream.strip()[-tail:]}")
     return "\n\n".join(parts) if parts else "Unknown error"
 
-def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', source_build: str = ''):
+def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', source_build: str = '', skip_mtdna: str = 'true'):
     """Build the Nextflow argv. Pure and side-effect free so it can be unit tested.
 
     Every skip flag the request model accepts must be emitted here; a flag that
@@ -319,6 +328,10 @@ def build_nextflow_command(input_path: str, input_type: str, patient_id: str, re
         '--skip_pypgx', skip_pypgx,
         '--skip_gatk', skip_gatk,
         '--skip_report', skip_report,
+        # Defaults to 'true' (see NextflowRunRequest.skip_mtdna) -- always emitted,
+        # unlike --source_build below, so main.nf's own default never has to be
+        # trusted alone: the runner is explicit about it on every invocation.
+        '--skip_mtdna', skip_mtdna,
         '-with-report', f"{outdir}/report.html",
         '-with-trace', f"{outdir}/trace.txt",
         '-with-timeline', f"{outdir}/timeline.html",
@@ -342,7 +355,7 @@ def build_nextflow_command(input_path: str, input_type: str, patient_id: str, re
 
     return cmd
 
-def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', source_build: str = ''):
+def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', source_build: str = '', skip_mtdna: str = 'true'):
     """Run Nextflow job in background thread. Nextflow orchestrates individual containers that report their own progress."""
     try:
         # Update job status
@@ -363,6 +376,7 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
             pharmcat_absent_to_ref=pharmcat_absent_to_ref,
             pharmcat_unspecified_to_ref=pharmcat_unspecified_to_ref,
             source_build=source_build,
+            skip_mtdna=skip_mtdna,
         )
 
         # Set environment variables for job_id passing to individual containers

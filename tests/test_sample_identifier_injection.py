@@ -80,6 +80,22 @@ runner = _load_runner()
 #                                           the LiftoverVCF shell block
 #   params.input_type                     - a fixed FileType enum value
 #   params.pharmcat_absent_to_ref/...     - booleans rendered as "true"/"false"
+#   variants_file                         - MtdnaCall's own `path` input (audited
+#                                           2026-08-30, Task 9): same class as the
+#                                           bam/cram/fastq/sam/vcf path inputs above
+#                                           - Nextflow escapes path-typed inputs.
+#   input_type (MtdnaCall's local var)    - audited 2026-08-30: computed in the
+#                                           workflow block as a Groovy ternary over
+#                                           params.input_type with only two possible
+#                                           literal outputs, 'vcf' or 'bam' - never a
+#                                           value read through from user input, so
+#                                           even more constrained than the
+#                                           params.input_type enum case above.
+#   absent_to_ref (MtdnaCall's local var) - audited 2026-08-30: the same
+#                                           params.pharmcat_absent_to_ref boolean
+#                                           ("true"/"false") already audited above,
+#                                           just referenced through the process's
+#                                           own local parameter name.
 # sample_identifier is DELIBERATELY absent: it now travels via the environment.
 EXPECTED_INTERPOLATIONS = {
     "bam",
@@ -87,10 +103,13 @@ EXPECTED_INTERPOLATIONS = {
     "fastq",
     "sam",
     "vcf",
+    "variants_file",
     "patient_id",
     "report_id",
     "reference",
     "source_build",
+    "input_type",
+    "absent_to_ref",
     "params.input_type",
     "params.pharmcat_absent_to_ref",
     "params.pharmcat_unspecified_to_ref",

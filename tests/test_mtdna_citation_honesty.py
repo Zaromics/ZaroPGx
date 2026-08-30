@@ -24,10 +24,16 @@ citation is still accurate.
 
 ``test_there_is_now_an_mtdna_service_in_the_stack`` records that the service
 half of the premise changed. ``test_the_pipeline_still_has_no_mtdna_process``
-is what's left of the old tripwire: it fails the day ``main.nf`` gains a
-process that calls the service, which is the correct moment to revisit the
-citation -- not before, because until the pipeline calls it, "not yet enabled"
-is still the true state of the reader's own report.
+was the other half of the old tripwire: it failed the day ``main.nf`` gained a
+process that calls the service (Task 9) -- which is the correct moment to
+revisit the citation. That day is this one for the pipeline wiring, but NOT yet
+for the citation text: ``params.skip_mtdna`` defaults to ``true``, so no real
+job produces an mtDNA result until a later task adds the user-facing toggle.
+The test below now pins both halves of that: the process exists, AND the
+pipeline still ships with mtDNA off by default -- so "not yet enabled" stays
+true of every report a reader can generate today, and a future accidental
+default flip (without updating the citation) is caught here instead of
+silently making the citation a lie.
 """
 
 from __future__ import annotations
@@ -105,16 +111,32 @@ def test_there_is_now_an_mtdna_service_in_the_stack():
     )
 
 
-def test_the_pipeline_still_has_no_mtdna_process():
-    """The surviving tripwire: fails the day Task 9 wires the pipeline.
+def test_the_pipeline_now_calls_mtdna_but_stays_default_off():
+    """Task 9 landed: main.nf gained an mtDNA process. The citation is not
+    updated in this same task (that's Task 12) -- it stays honest only because
+    the process is wired but switched off by default.
 
-    That's the correct moment to revisit the citation -- not this one. Until
-    main.nf actually calls the service, "not yet enabled" stays true of every
-    report a reader can generate, no matter what compose.yml declares.
+    Two assertions, both load-bearing:
+      - the process exists (the old tripwire, inverted -- this IS the moment
+        Task 9 was supposed to arrive at);
+      - params.skip_mtdna still defaults to true, so a real run produces no
+        mtDNA result unless something explicitly opts in. If a later change
+        flips that default without updating the citation together, this catches
+        it instead of letting "not yet enabled" quietly become false.
     """
-    assert "mtdna" not in MAIN_NF.read_text(encoding="utf-8").lower(), (
-        "main.nf now has an mtDNA process; the citation still says mitochondrial "
-        "typing is not enabled -- go update it (Task 12)"
+    text = MAIN_NF.read_text(encoding="utf-8")
+    assert (
+        "process MtdnaCall" in text
+    ), "main.nf has no mtDNA process; Task 9 has not landed yet"
+    match = re.search(
+        r"params\.skip_mtdna\s*=.*?\?\s*params\.skip_mtdna\s*:\s*(\w+)", text
+    )
+    assert match, "could not find params.skip_mtdna's default-value expression"
+    assert match.group(1) == "true", (
+        "params.skip_mtdna no longer defaults to true -- real jobs would start "
+        "producing mtDNA results while the citation still says the feature is "
+        "not yet enabled. Update the citation (and this test) together with "
+        "the default, in the task that adds the user-facing toggle."
     )
 
 
