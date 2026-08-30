@@ -27,6 +27,17 @@ COPY docker/mtdna-server-2/files/ /opt/mtdna-files/
 COPY app/utils/job_client.py /job-client/
 COPY app/mtdna/ /mtdna-lib/mtdna/
 
+# Pre-built here, as root: /opt/mtdna-files stays root-owned below (only /app,
+# /data, /job-client and /mtdna-lib are chowned to mtuser), and bcftools/gatk
+# cannot lazily create a .fai/.dict next to the FASTA at request time -- the
+# directory itself isn't group/other-writable, so the attempt fails with
+# "Permission denied" the first time the VCF path's `bcftools norm -f` or a
+# hg19 `gatk LiftoverVcf -R` runs. samtools dict, not gatk
+# CreateSequenceDictionary: identical output GATK reads, one fewer JVM start.
+RUN samtools faidx /opt/mtdna-files/rcrs_mutserve.fasta \
+    && samtools dict /opt/mtdna-files/rcrs_mutserve.fasta \
+       -o /opt/mtdna-files/rcrs_mutserve.dict
+
 RUN mkdir -p /data && chown -R mtuser:mtuser /app /data /job-client /mtdna-lib
 
 ENV HOME=/tmp
