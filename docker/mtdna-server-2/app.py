@@ -569,8 +569,12 @@ async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
     were simply discarded. Not_Found_Polys lists expected haplogroup-defining
     polymorphisms that were NOT observed -- empty means nothing the phylogeny
     predicted was missing, which is Tier C's second half. Range is what
-    haplogrep3 worked over; it is recorded for the report but never gated on,
-    because it reflects what the input declared rather than what was measured.
+    haplogrep3 worked over; it is carried in this sidecar's response for
+    possible future use, never gated on (it reflects what the input
+    declared rather than what was measured), and not currently rendered
+    anywhere in the report -- mtdna_report_context (app/reports/generator.py)
+    does not read "haplogroup_range" off the result. Review round 2, finding
+    7 (2026-08-30).
     """
     out = os.path.join(work, "haplogroups.txt")
     await _run(

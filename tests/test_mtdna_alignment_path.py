@@ -122,7 +122,13 @@ def test_cram_without_a_staged_reference_is_refused():
 
 
 def test_the_alignment_path_labels_its_reference_measured():
-    assert "BASIS_MEASURED" in APP_PY.read_text(encoding="utf-8")
+    """Scoped to _alignment_branch(), not the whole file -- a whole-file grep
+    for "BASIS_MEASURED" is satisfied by the import at the top of app.py and
+    would stay green even if this path's own promotion stopped setting a
+    basis at all. Assert the actual assignment the coverage-gate makes, not
+    just the token's presence somewhere in the module."""
+    branch = _alignment_branch()
+    assert "evidence_reason, basis = None, BASIS_MEASURED" in branch
 
 
 def test_the_alignment_path_does_not_fall_back_to_tier_c():
@@ -237,6 +243,32 @@ def _target_arity(target: ast.AST) -> int:
     return 1
 
 
+def _enclosing_ternary_else_arity(call_node: ast.Call):
+    """Walk up from a Call (through `await`, etc.) and, if it is the `body`
+    of a ternary whose `orelse` is a tuple literal, return that literal's
+    element count -- or None if there is no enclosing ternary here, or its
+    `orelse` is not literally a tuple this guard can measure.
+
+    Exists because both real call sites are ternaries with an
+    `else (None, None, None, None)` fallback: shrinking or growing that
+    fallback tuple changes what the assignment actually produces on the
+    false branch without touching the unpack target at all, so
+    `_enclosing_assign_targets`/`_target_arity` alone cannot see it -- the
+    VCF call site would only be caught behaviourally where bcftools is on
+    PATH, and the alignment call site by nothing at all. Review round 2,
+    finding 4 (2026-08-30).
+    """
+    node = call_node
+    while node is not None:
+        parent = getattr(node, "parent", None)
+        if isinstance(parent, ast.IfExp) and parent.body is node:
+            if isinstance(parent.orelse, ast.Tuple):
+                return len(parent.orelse.elts)
+            return None
+        node = parent
+    return None
+
+
 def test_classify_haplogroup_return_arity_matches_every_call_site():
     """Every place app.py unpacks _classify_haplogroup()'s result must ask
     for exactly as many values as it actually returns.
@@ -281,4 +313,14 @@ def test_classify_haplogroup_return_arity_matches_every_call_site():
                 f"assignment at line {target.lineno} unpacks {unpack_arity} "
                 "value(s) -- this is exactly the mismatch that shipped green "
                 "before this test existed"
+            )
+
+        else_arity = _enclosing_ternary_else_arity(call)
+        if else_arity is not None:
+            assert else_arity == arity, (
+                f"_classify_haplogroup returns a {arity}-tuple but the "
+                f"ternary fallback at line {call.lineno} supplies a "
+                f"{else_arity}-tuple on its `else` branch -- that literal, "
+                "not the unpack target, is what the assignment actually "
+                "produces on the false branch"
             )

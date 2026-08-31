@@ -44,8 +44,23 @@ def test_an_inferred_reference_is_not_described_as_measured(tmp_path):
 
 
 def test_a_named_allele_gets_no_basis_line(tmp_path):
-    """The variant is its own evidence; a basis sentence would be noise."""
-    ctx = _context(tmp_path, {"mt_rnr1": "m.1555A>G", "evidence_basis": None})
+    """The variant is its own evidence; a basis sentence would be noise.
+
+    evidence_basis is deliberately "measured" (with a mean_coverage to match
+    -- see test_a_measured_reference_says_so_with_its_depth), not None: a
+    None-in/None-out payload would pass this assertion whether or not the
+    generator actually gates the basis line on mt_rnr1 == REFERENCE, since
+    neither BASIS_MEASURED nor BASIS_INFERRED would match a None basis
+    regardless. This shape only passes if the REFERENCE gate is real.
+    """
+    ctx = _context(
+        tmp_path,
+        {
+            "mt_rnr1": "m.1555A>G",
+            "evidence_basis": "measured",
+            "mean_coverage": 1331.37,
+        },
+    )
     assert not ctx.get("call_basis_text")
 
 
