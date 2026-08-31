@@ -87,7 +87,12 @@ params.source_build   = params.source_build ?: ''
 // upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
-// FASTQ alignment
+// FASTQ alignment. Unreachable today: FASTQ is refused at ingest (no aligner ships, and
+// gatk-api's /align-fastq answers HTTP 501), so no job ever reaches this process. Its
+// step_name=gatk_alignment nevertheless has a StepTemplate in
+// app/services/workflow_registry.py, gated on needs_alignment, which nothing sets --
+// registered so the pipeline and the app agree on the name rather than disagreeing
+// silently, NOT because FASTQ works.
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -124,7 +129,23 @@ PY
     '''
 }
 
-// CRAM to BAM conversion
+// CRAM to BAM conversion.
+//
+// Posts step_name=gatk_cram_sam_to_bam -- ONE name shared with SamToBAM below, not the
+// per-process gatk_cram_to_bam/gatk_sam_to_bam this used to send. The app mints a Job's
+// steps from the StepTemplates in app/services/workflow_registry.py and then looks each
+// incoming status update up by EXACT step_name (app/services/job_service.py); a name
+// with no minted step 404s and the UI leaves that step at [pending] for as long as the
+// conversion runs. The app-side vocabulary has only ever carried the single name --
+// workflow_stages.STEP_TO_STAGE, the progress calculator's bands and canonical order,
+// and index.html's glyph map all say gatk_cram_sam_to_bam -- so every CRAM and SAM
+// upload hung there, on two supported, shipping input lanes.
+//
+// One name is also the honest model, not just the smaller diff: a job has exactly one
+// input type, so at most one of these two processes can ever run in it, and both land in
+// the same GATK progress band. Two names would be two spellings of a step that can never
+// co-occur. If a future process needs its own name, add the StepTemplate first --
+// tests/test_pipeline_step_names_are_registered.py fails the build if it does not exist.
 process CramToBAM {
     tag "cram2bam_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -144,7 +165,7 @@ process CramToBAM {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{cram} )
     if [ -n "${JOB_ID:-}" ]; then
-      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_to_bam )
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
     if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam > cram_response.json; then
       echo "gatk-api /cram-to-bam returned an error:" >&2
@@ -161,7 +182,8 @@ PY
     '''
 }
 
-// SAM to BAM conversion
+// SAM to BAM conversion. Posts the same step_name as CramToBAM above -- see that
+// process's comment for why the two share one name and what the mismatch broke.
 process SamToBAM {
     tag "sam2bam_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -181,7 +203,7 @@ process SamToBAM {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{sam} )
     if [ -n "${JOB_ID:-}" ]; then
-      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_sam_to_bam )
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
     if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam > sam_response.json; then
       echo "gatk-api /sam-to-bam returned an error:" >&2

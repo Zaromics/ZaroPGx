@@ -50,14 +50,22 @@ def test_resolve_steps_respects_toggles():
         needs_pypgx=True,
         needs_pypgx_bam2vcf=True,
         needs_report=False,
-        needs_gatk=True,  # orchestration only — no Job step
+        needs_gatk=True,
     )
     names = [s.step_name for s in resolve_steps("genomic_analysis", opts)]
     assert "hla_typing" in names
     assert "pypgx_bam2vcf" in names
     assert "pypgx_analysis" in names
     assert "report_generation" not in names
-    assert "gatk" not in "".join(names)
+    # needs_gatk DOES mint a step now. It was "orchestration only" here because the
+    # registry had no GATK conversion template at all -- which is precisely why
+    # main.nf's CramToBAM/SamToBAM status updates 404'd and the CRAM and SAM lanes
+    # hung at [pending]. See tests/test_pipeline_step_names_are_registered.py.
+    assert "gatk_cram_sam_to_bam" in names
+    # ...but only the CRAM/SAM conversion. FASTQ alignment is gated on
+    # needs_alignment, which nothing sets, and the BCF conversion on needs_conversion.
+    assert "gatk_alignment" not in names
+    assert "bcf_to_vcf" not in names
 
 
 def test_resolve_steps_unknown_key_raises():

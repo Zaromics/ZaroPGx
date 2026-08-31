@@ -30,10 +30,20 @@ class FileType(str, Enum):
 
 
 class SequencingProfile(str, Enum):
+    """How the sample was sequenced. Only WGS/WES/UNKNOWN are ever assigned
+    today (file_processor.analyze_file infers them from the contig count); the
+    rest are profiles the detector does not yet distinguish.
+
+    ``T2T = "telomere-to-telomere_seq"`` was removed on 2026-08-31. It was never
+    assigned, and it was a category error besides: T2T-CHM13 is an assembly, not
+    a sequencing profile, and it now travels as a reference_genome value that
+    determine_workflow refuses. Leaving it here invited someone to wire the two
+    together.
+    """
+
     WGS = "whole_genome_seq"
     WES = "whole_exome_seq"
     TARGETED = "targeted_seq"
-    T2T = "telomere-to-telomere_seq"
     SHORT_READ = "short_read_seq"
     LONG_READ = "long_read_seq"
     NGS = "next_gen_seq"

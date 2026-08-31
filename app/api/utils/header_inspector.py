@@ -81,6 +81,20 @@ DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 # GRCh37 row serves both spellings), and no length is shared between GRCh38 and
 # GRCh37 (so a match is decisive rather than merely suggestive).
 #
+# The T2T-CHM13v2 rows added 2026-08-31 are the one group NOT read out of a
+# shipped dictionary, because this deployment stages no CHM13 reference and is
+# never going to align against one -- they exist so a CHM13 file can be REFUSED
+# instead of analysed on GRCh38 coordinates (file_processor.determine_workflow).
+# They were taken from UCSC's hs1.chrom.sizes and cross-checked against NCBI
+# GCF_009914755.1, and every one was checked against both builds above: no
+# CHM13 length collides with a GRCh37 or GRCh38 length here, which is what
+# tests/test_header_inspector_build_detection.py's collision test now pins.
+#
+# chrM is deliberately absent from the CHM13 rows. It is 16569 in CHM13 and in
+# GRCh38 alike, so it discriminates nothing and would turn every GRCh38 file
+# into an ambiguous one. (It is not interchangeable either: CHM13's chrM is
+# rCRS rotated by 576 bp -- see app/mtdna/builds.py, which refuses it.)
+#
 # Unlike gatk-api's copy, this one answers with the *assembly* alone and does not
 # read the `chr` prefix as evidence of which GRCh37 FASTA to align against: the
 # app stores an assembly name in metadata.reference_genome, and no caller here
@@ -121,6 +135,22 @@ CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
     ("19", 59128983): "GRCh37",
     ("22", 50818468): "GRCh38",
     ("22", 51304566): "GRCh37",
+    # T2T-CHM13v2 (UCSC hs1), for the same eleven chromosomes: a CHM13 file has
+    # to be recognised before it can be refused, and a CHM13 PGx panel carries
+    # only the gene-bearing chromosomes for exactly the reason the block above
+    # exists. Names are the canonical build string that travels through
+    # determine_workflow, source_build and the pipeline token allowlist.
+    ("1", 248387328): "T2T-CHM13v2",
+    ("2", 242696752): "T2T-CHM13v2",
+    ("3", 201105948): "T2T-CHM13v2",
+    ("6", 172126628): "T2T-CHM13v2",
+    ("7", 160567428): "T2T-CHM13v2",
+    ("10", 134758134): "T2T-CHM13v2",
+    ("12", 133324548): "T2T-CHM13v2",
+    ("16", 96330374): "T2T-CHM13v2",
+    ("19", 61707364): "T2T-CHM13v2",
+    ("22", 51324926): "T2T-CHM13v2",
+    ("X", 154259566): "T2T-CHM13v2",
 }
 
 # Tokens that name an assembly when they appear in a free-text `##reference=`
@@ -131,9 +161,17 @@ CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
 #
 # Deliberately no bare `b37` / `b38`: three characters is a substring, not a
 # token, and this value is a path that may carry a hash or a project name.
+#
+# The T2T-CHM13v2 tokens follow that same rule, which is why neither bare `t2t`
+# nor bare `hs1` is here: `hs1` matches `HS1_run3.fasta`, and `t2t` is three
+# characters. The spellings seen in the wild are covered by `chm13`
+# (chm13v2.0.fa, chm13v2.0_maskedY.fa, chm13v2.0_maskedY_rCRS.fa,
+# chm13v2.0_noY.fa, T2T-CHM13v2.0), by `hs1.fa` (which also matches hs1.fasta),
+# and by the two assembly accessions.
 ASSEMBLY_NAME_TOKENS: Dict[str, tuple] = {
     "GRCh38": ("grch38", "hg38", "assembly38"),
     "GRCh37": ("grch37", "hg19", "g1k_v37", "assembly19"),
+    "T2T-CHM13v2": ("chm13", "hs1.fa", "gca_009914755", "gcf_009914755"),
 }
 
 
@@ -245,10 +283,14 @@ def detect_reference_assembly(header_records=None, contig_lengths=None) -> Dict:
 
     Returns::
 
-        {"assembly": "GRCh38" | "GRCh37" | None,
+        {"assembly": "GRCh38" | "GRCh37" | "T2T-CHM13v2" | None,
          "source": "contig_lengths" | "reference_line" | None,
          "ambiguous": bool,
          "candidates": [assembly, ...]}
+
+    Naming an assembly is not the same as supporting it: T2T-CHM13v2 is here so
+    that a CHM13 file is *recognised*, and determine_workflow refuses it. This
+    function reports what the header says and nothing about what can be run.
 
     `assembly` is None whenever the answer is not established -- either no
     evidence at all, or evidence that contradicts itself. A caller must treat

@@ -38,7 +38,16 @@ STEP_ALIASES: Mapping[str, str] = {
 
 STEP_TO_STAGE: Mapping[str, WorkflowStage] = {
     "header_analysis": WorkflowStage.ANALYSIS,
+    # One name for both alignment-format conversions: main.nf's CramToBAM and
+    # SamToBAM both post gatk_cram_sam_to_bam (a job has one input type, so only
+    # one of them can ever run). They used to post gatk_cram_to_bam /
+    # gatk_sam_to_bam, which this map, the progress calculator and the registry
+    # all had no entry for, so CRAM and SAM uploads 404'd their status updates and
+    # sat at [pending] for the whole conversion. Do not re-split the name without
+    # adding StepTemplates and glyphs for both halves.
     "gatk_cram_sam_to_bam": WorkflowStage.GATK,
+    # FASTQ->BAM. Mapped, banded and registered, but unreachable: FASTQ is refused
+    # at ingest (no aligner ships). See workflow_registry's template comment.
     "gatk_alignment": WorkflowStage.GATK,
     # BCF -> bgzipped VCF runs inside the gatk-api container (bcftools), so it
     # surfaces under the GATK stage rather than falling through

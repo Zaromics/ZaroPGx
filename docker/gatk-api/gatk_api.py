@@ -946,15 +946,30 @@ def list_jobs(status: Optional[str] = None):
 # cannot be pinned by a test -- reference/ is gitignored (.gitignore:203), the
 # same reason tests/test_pharmcat_schema_gate_265.py's data/reports glob is empty
 # in a fresh checkout -- so re-read them if you touch this table.
+#
+# The T2T-CHM13v2 rows are the exception, and the exception is the point: this
+# deployment stages no CHM13 reference, so those values came from UCSC's
+# hs1.chrom.sizes cross-checked against NCBI GCF_009914755.1 (added 2026-08-31,
+# mirroring app/api/utils/header_inspector.py's CONTIG_LENGTH_ASSEMBLIES -- a
+# separate image cannot import from the app, so the duplication is deliberate).
+# They cover the same four chromosomes the rows above do, because that is what
+# this table is for; the app's copy carries eleven, and the app is what refuses
+# the upload. None of the four collides with a GRCh37 or GRCh38 length here.
+# chrM is excluded on purpose: 16569 in CHM13 and GRCh38 alike, so it names
+# nothing.
 SQ_LENGTH_ASSEMBLIES = {
     ('1', 248956422): 'GRCh38',
     ('1', 249250621): 'GRCh37',
+    ('1', 248387328): 'T2T-CHM13v2',
     ('2', 242193529): 'GRCh38',
     ('2', 243199373): 'GRCh37',
+    ('2', 242696752): 'T2T-CHM13v2',
     ('3', 198295559): 'GRCh38',
     ('3', 198022430): 'GRCh37',
+    ('3', 201105948): 'T2T-CHM13v2',
     ('X', 156040895): 'GRCh38',
     ('X', 155270560): 'GRCh37',
+    ('X', 154259566): 'T2T-CHM13v2',
 }
 
 # (assembly, sequences are chr-prefixed) -> the REFERENCE_PATHS key whose FASTA
@@ -975,6 +990,11 @@ SQ_LENGTH_ASSEMBLIES = {
 # GRCh38 has one entry because it has one file: REFERENCE_PATHS['grch38'] is the
 # same path string as REFERENCE_PATHS['hg38'], and reference/grch38/ holds a
 # symlink to it. There is no un-prefixed GRCh38 FASTA here to point at.
+#
+# T2T-CHM13v2 has NO entry, deliberately: no CHM13 FASTA is staged, so there is
+# nothing to point at and inventing a key would mean running a CHM13 file
+# against GRCh38. reference_from_sam_header therefore reports a recognised
+# CHM13 header as *undetectable* and says so in the log -- see the .get() there.
 ASSEMBLY_REFERENCE_KEYS = {
     ('GRCh38', True): 'hg38',
     ('GRCh38', False): 'hg38',
@@ -1052,7 +1072,19 @@ def reference_from_sam_header(header):
             seen.add((assembly, is_chr_prefixed(raw_name)))
 
     if len(seen) == 1:
-        detected = ASSEMBLY_REFERENCE_KEYS[seen.pop()]
+        # .get(), not [] : SQ_LENGTH_ASSEMBLIES names T2T-CHM13v2 so that a CHM13
+        # header is recognised, and no CHM13 FASTA is staged for it to map onto.
+        # A KeyError here would turn a recognised-but-unrunnable build into a 500;
+        # "undetectable" is the same honest answer the >1 case gives.
+        assembly, chr_prefixed = seen.pop()
+        detected = ASSEMBLY_REFERENCE_KEYS.get((assembly, chr_prefixed))
+        if detected is None:
+            logger.warning(
+                f"Header @SQ records describe {assembly}, which this deployment "
+                f"stages no reference for; reporting it as undetectable rather "
+                f"than aligning it against a different assembly"
+            )
+            return None
         logger.info(f"Detected {detected} from the @SQ records in the header")
         return detected
     if len(seen) > 1:
@@ -2991,7 +3023,16 @@ async def cram_to_bam(
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
     job_id: Optional[str] = Form(None),
-    step_name: Optional[str] = Form("gatk_cram_to_bam")
+    # gatk_cram_sam_to_bam, not gatk_cram_to_bam: one step name serves both this
+    # endpoint and /sam-to-bam, because a job has one input type and only one of
+    # them can ever run. That single name is what the app registers a template for
+    # and maps to a stage -- a name nothing app-side knows makes the JobClient's
+    # status update 404 and leaves the step at [pending] for its whole duration,
+    # which is exactly what these two defaults used to spell. Latent rather than
+    # live (main.nf always sends step_name alongside job_id, and no JobClient is
+    # built without job_id), but a default that names a step nobody registers is a
+    # trap for the next caller.
+    step_name: Optional[str] = Form("gatk_cram_sam_to_bam")
 ):
     """
     Convert CRAM to a coordinate-sorted, indexed BAM.
@@ -3145,7 +3186,8 @@ async def sam_to_bam(
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
     job_id: Optional[str] = Form(None),
-    step_name: Optional[str] = Form("gatk_sam_to_bam")
+    # Shares gatk_cram_sam_to_bam with /cram-to-bam -- see that endpoint's note.
+    step_name: Optional[str] = Form("gatk_cram_sam_to_bam")
 ):
     """
     Convert SAM to a coordinate-sorted, indexed BAM.

@@ -125,8 +125,14 @@ class WorkflowProgressCalculator:
         # entire lift. Same weight as the other GATK conversion; it never co-occurs
         # with them (VCF vs aligned input), so the relative order is free.
         "liftover": (10, 19),
+        # Both CRAM->BAM and SAM->BAM report under this one name (main.nf's CramToBAM
+        # and SamToBAM post it; only one can run in a job, since a job has one input
+        # type). It had a band and a registry with no template to match, which is how
+        # the CRAM/SAM lanes ended up reporting a step the Job had never minted.
         "gatk_cram_sam_to_bam": (10, 19),
         "hla_typing": (20, 34),
+        # Unreachable while FASTQ is refused at ingest -- kept so the band, the stage
+        # map and the registry agree on the name rather than disagreeing silently.
         "gatk_alignment": (35, 49),
         "pypgx_analysis": (50, 64),
         "pypgx_bam2vcf": (65, 74),

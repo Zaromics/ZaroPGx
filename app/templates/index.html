@@ -585,7 +585,7 @@
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File(s)</label>
                                     <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.bcf,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
-                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38.) Index file may be included. A BCF is converted to a bgzipped VCF with bcftools first, then analysed as one. Formats BAM, SAM, CRAM, and BCF are in testing. Support for FASTQ, BED, 23andMe, and others is in development.</div>
+                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38; a file aligned to T2T-CHM13 is detected and refused.) Index file may be included. A BCF is converted to a bgzipped VCF with bcftools first, then analysed as one. Formats BAM, SAM, CRAM, and BCF are in testing. 23andMe and AncestryDNA exports are not accepted — a decision, not pending work: a chip carries under a third of the positions PharmCAT calls on and cannot show a gene duplication. Support for BED and others is in development.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -1040,10 +1040,10 @@
                 // this file type is not accepted, and here is the pipeline it will run.
                 // `refused` is the upload gate's own verdict, sent by
                 // POST /upload/inspect-header, so this cannot drift from the upload.
-                // Note it is NOT `unsupported`: a VCF on a named build with no
-                // liftover chain (T2T, say) is unsupported and still analysed
-                // provisionally, and must keep its plan. (A GRCh37 VCF used to be
-                // the example here; it is now lifted over and fully supported.)
+                // Note it is NOT `unsupported`: that flag only means "flagged", and
+                // whether a flagged input still runs is the gate's call alone (see
+                // _unanalysable_upload_reason). Reading `unsupported` here would
+                // blank the plan for anything the gate lets through.
                 if (wf.refused) {
                     const why = wf.refusal_reason || wf.unsupported_reason || 'This file type is not accepted.';
                     return `
@@ -1063,9 +1063,10 @@
 
                 // BCF: re-encoded to a bgzipped VCF (bcftools, in the gatk-api
                 // container) before anything else runs, and before the liftover
-                // below -- a GRCh37 BCF is converted first, lifted second. This is
-                // the only conversion that reaches this panel: the other flag that
-                // sets needs_conversion (23andMe) is refused above.
+                // below -- a GRCh37 BCF is converted first, lifted second. BCF is
+                // now the only thing that sets needs_conversion at all: the 23andMe
+                // branch used to set it for a conversion that does not exist, and
+                // stopped when that flag started minting a real bcf_to_vcf step.
                 if (wf.needs_conversion) {
                     steps.push({ name: 'Convert BCF to VCF (bcftools)', icon: 'bi-file-earmark-binary' });
                 }

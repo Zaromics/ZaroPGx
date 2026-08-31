@@ -70,6 +70,18 @@ def safe_upload_basename(filename: Optional[str]) -> str:
     return cleaned or f"{uuid.uuid4().hex}.dat"
 
 
+# Tokens that name T2T-CHM13 inside a DETECTED build string. header_inspector
+# reports the canonical `T2T-CHM13v2`; the bare `t2t` spelling is included because
+# these are matched against a short build label, not against the free-text
+# `##reference=` path header_inspector.ASSEMBLY_NAME_TOKENS reads (where three
+# characters would be a substring rather than a token, which is why that table
+# deliberately carries neither `t2t` nor bare `hs1`).
+T2T_BUILD_TOKENS = ("chm13", "t2t")
+
+# The three spellings a GRCh37-aligned file's build label arrives under. `b37` is
+# safe here for the same reason `t2t` is: a build label, not a path.
+GRCH37_BUILD_TOKENS = ("grch37", "hg19", "b37")
+
 # The two spellings a gVCF arrives under. GATK writes `sample.g.vcf[.gz]`, whose last
 # suffix is `.vcf`; other callers write `sample.gvcf[.gz]`. Only the second pair ever
 # reached the extension table in _detect_file_type, so the GATK spelling was typed VCF
@@ -226,6 +238,72 @@ def _is_gvcf(file_path: Path) -> bool:
     return _bcf_header_declares_gvcf_blocks(file_path)
 
 
+# --- Consumer genotyping arrays (23andMe / AncestryDNA) ----------------------
+#
+# Both are refused (see determine_workflow), and telling them apart still matters:
+# an AncestryDNA export used to fall through every sniff below and be refused as
+# "Unrecognized file format: unknown", which told the user we could not recognise
+# a file we can name exactly, and left them nothing to act on.
+#
+# Two signals, in this order:
+#
+# 1. The vendor banner on line 1 - "23andMe" or "AncestryDNA". Present on every
+#    unedited export from either vendor, and unambiguous.
+# 2. The column-header row, for a file whose banner has been stripped (a
+#    spreadsheet round-trip does this). This is where the two formats genuinely
+#    differ in shape: 23andMe comments its header row (`# rsid<TAB>chromosome...`)
+#    and AncestryDNA does not. The column names alone cannot decide it - 23andMe
+#    ships BOTH a 4-column `genotype` layout and a 5-column `allele1`/`allele2`
+#    one, and the second is spelled exactly like AncestryDNA's - so the `#` is the
+#    discriminator rather than the field list.
+#
+# Bounded and non-raising for the same reasons as _header_declares_gvcf_blocks:
+# this runs inside _detect_file_type, and deciding a file's type must not be what
+# turns an unreadable upload into a 500.
+ARRAY_HEADER_SCAN_LINES = 200
+ARRAY_HEADER_MAX_LINE_BYTES = 64 * 1024
+_ARRAY_VENDOR_BANNERS = (
+    ("23andme", FileType.TWENTYTHREE_AND_ME),
+    ("ancestrydna", FileType.ANCESTRY_DNA),
+)
+
+
+def _detect_consumer_array(file_path: Path) -> Optional[FileType]:
+    """Which consumer array export this is, or None if it is not one."""
+    try:
+        with open(file_path, "r", errors="ignore") as handle:
+            for _ in range(ARRAY_HEADER_SCAN_LINES):
+                raw = handle.readline(ARRAY_HEADER_MAX_LINE_BYTES)
+                if not raw:
+                    return None
+                line = raw.strip()
+                if not line:
+                    continue
+                commented = line.startswith("#")
+                lowered = line.lower()
+                if commented:
+                    for banner, file_type in _ARRAY_VENDOR_BANNERS:
+                        if banner in lowered:
+                            return file_type
+                # The column-header row: first field `rsid`, with `chromosome`
+                # and `position` after it. Its comment marker decides the vendor.
+                fields = [f.strip() for f in lowered.lstrip("#").strip().split("\t")]
+                if fields[:3] == ["rsid", "chromosome", "position"]:
+                    return (
+                        FileType.TWENTYTHREE_AND_ME
+                        if commented
+                        else FileType.ANCESTRY_DNA
+                    )
+                if not commented:
+                    # Past the comment block and this is not a header row, so
+                    # there is no header row to find. A data row on its own says
+                    # nothing: both vendors write `rsID<TAB>chrom<TAB>pos<TAB>...`.
+                    return None
+    except Exception as e:
+        logger.debug(f"Could not read {file_path} as a consumer array export: {e}")
+    return None
+
+
 # Companion index files. The upload form invites one alongside the data file, and
 # process_files does not use it yet (see the TODO there) - but it is not a second
 # dataset either, so it must not raise the "extra files were not analysed" warning.
@@ -264,6 +342,66 @@ class FileAnalysis:
     # reads from the wrong locus and produces star alleles nobody has checked.
     # None means the header carried no usable evidence -- not GRCh38.
     reference_genome: Optional[str] = None
+
+
+# PharmCAT's own position list, as shipped: 1,226 records across 22 genes in
+# pharmcat_positions.vcf, 157 of them CYP2D6. The denominator for every coverage
+# figure quoted to the user below.
+PHARMCAT_POSITIONS = 1226
+PHARMCAT_CYP2D6_POSITIONS = 157
+
+
+@dataclass(frozen=True)
+class ConsumerArrayCoverage:
+    """How much of PharmCAT's position list one vendor's best chip carries.
+
+    Counted on 2026-08-31 against each vendor's published manifest. Those
+    manifests are the union of every revision of a chip, so each figure is an
+    UPPER BOUND on any one customer's file, and each is the vendor's BEST
+    version rather than a typical one -- quoting the best case is what makes the
+    refusal argument hold for every case.
+    """
+
+    vendor: str
+    # Written out rather than derived from the first letter: "23andMe" takes "a"
+    # and "AncestryDNA" takes "an", so no rule over the spelling gets both right.
+    article: str
+    best_chip: str
+    positions: int
+    positions_pct: str
+    cyp2d6_positions: int
+    # Star-allele-defining variants absent from that chip, named. None where no
+    # per-variant audit of that vendor exists -- the counts above are measured,
+    # and naming variants we have not checked for would not be.
+    missing_core: Optional[str] = None
+
+
+CONSUMER_ARRAY_COVERAGE: Dict[FileType, ConsumerArrayCoverage] = {
+    FileType.TWENTYTHREE_AND_ME: ConsumerArrayCoverage(
+        vendor="23andMe",
+        article="A",
+        best_chip="v5",
+        # 229 records match, but only 222 of them are SNVs (the I/D-coded
+        # insertion and deletion rows are not representable), so 18.7% is
+        # itself generous by a further ~0.6 points.
+        positions=229,
+        positions_pct="18.7%",
+        cyp2d6_positions=25,
+        missing_core=(
+            "rs3892097 (*4, around 20% allele frequency in Europeans), "
+            "rs1065852 (*10, the most common East Asian allele), and rs16947 "
+            "and rs1135840, both core to *2"
+        ),
+    ),
+    FileType.ANCESTRY_DNA: ConsumerArrayCoverage(
+        vendor="AncestryDNA",
+        article="An",
+        best_chip="v2",
+        positions=380,
+        positions_pct="31.0%",
+        cyp2d6_positions=14,
+    ),
+}
 
 
 def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
@@ -445,7 +583,7 @@ class FileProcessor:
         - GVCF (.gvcf, .gvcf.gz, .g.vcf, .g.vcf.gz, or a ##GVCFBlock header)
         - BCF (.bcf, or the BCF magic bytes)
         - BED (.bed)
-        - 23andMe (.txt)
+        - 23andMe and AncestryDNA (.txt, .csv)
         """
         # Debug logging
         logger.info(f"Detecting file type for: {file_path}")
@@ -519,15 +657,14 @@ class FileProcessor:
             logger.info("Identified as BED file")
             return FileType.BED
         elif ext in [".txt", ".csv"]:
-            # Check if it's a 23andMe file by examining the header
-            try:
-                with open(file_path, "r") as f:
-                    header = f.readline()
-                    if "23andMe" in header:
-                        logger.info("Identified as 23andMe file")
-                        return FileType.TWENTYTHREE_AND_ME
-            except Exception as e:
-                logger.debug(f"Error checking for 23andMe format: {str(e)}")
+            # Both consumer arrays, not just 23andMe. AncestryDNA was never
+            # detected here, so an AncestryDNA export fell through to
+            # FileType.UNKNOWN and was refused as "Unrecognized file format" -
+            # a file we can name exactly, reported as unrecognisable.
+            array_type = _detect_consumer_array(file_path)
+            if array_type is not None:
+                logger.info(f"Identified as {array_type.value} genotyping array file")
+                return array_type
 
         # If extension doesn't match, try to determine from content first
         try:
@@ -849,27 +986,66 @@ class FileProcessor:
                     "<p class='preflight'>⚠️ Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
                 )
             elif reference != "unknown":
-                # A named build that is neither GRCh38 nor GRCh37 (T2T-CHM13,
-                # say): no chain is staged for it, so no liftover exists and the
-                # old honest-provisional handling still applies unchanged.
+                # A named build that is neither GRCh38 nor GRCh37 -- today that
+                # means T2T-CHM13v2, the only third assembly header_inspector can
+                # name. REFUSED, not analysed provisionally.
+                #
+                # This branch used to set is_provisional=True next to unsupported,
+                # and until CHM13 detection existed nothing could reach it, so that
+                # was never exercised. It is the wrong verdict now that it can be:
+                # is_provisional means "analysed anyway, provisionally" and exempts
+                # a vcf from the upload gate (upload_router._unanalysable_upload_
+                # reason), which here would mean analysing CHM13 coordinates as
+                # GRCh38. The PGx loci sit hundreds of kb from their GRCh38
+                # positions, and nothing downstream errors on it: PharmCAT's VCF
+                # preprocessor has no assembly check at all -- it runs
+                # `bcftools norm -c ws` against GRCh38.p13, and `s` *swaps* a
+                # mismatched REF/ALT rather than failing. So the output would be
+                # star alleles nobody has checked, the same confident-wrong-answer
+                # class the GRCh37-alignment refusal below exists to stop.
+                #
+                # Refusal rather than a liftover lane is a deliberate decision, not
+                # a gap waiting to be filled: the published T2T chains exclude
+                # GRCh38's ALT contigs by construction (GSTT1 lives on one), only
+                # ~60% of T2T's segmental duplications have a clear GRCh38
+                # orthologue -- CYP2D6/2D7/2D8 sits in exactly such a cluster --
+                # and no published work characterises CYP2D6 or CYP2C19 in CHM13
+                # at all. See the two caveats named in the copy below.
                 workflow["unsupported"] = True
+                workflow["is_provisional"] = False
                 workflow["unsupported_reason"] = (
-                    f"ZaroPGx supports GRCh38/hg38 VCF files only. This file is aligned "
-                    f"to {vcf_info.reference_genome}, so any results are provisional. "
-                    "Convert it to GRCh38/hg38 yourself and upload it again."
+                    f"ZaroPGx analyses against GRCh38/hg38 only. This file is "
+                    f"aligned to {vcf_info.reference_genome}, where the "
+                    f"pharmacogenes sit at different coordinates, and nothing "
+                    f"downstream would catch that: PharmCAT normalises against "
+                    f"GRCh38.p13 without checking which assembly the file is on, "
+                    f"so it would rewrite the mismatched reference alleles and "
+                    f"report star alleles that are not yours. Automatic liftover "
+                    f"covers GRCh37/hg19 only. Call your variants against "
+                    f"GRCh38/hg38 and upload that VCF, or realign the reads to "
+                    f"GRCh38/hg38 and call from the realigned data."
                 )
                 workflow["warnings"].append(
-                    f"<p>⚠️ This file is aligned to {vcf_info.reference_genome}. Only "
-                    "GRCh38/hg38 is supported, so these results are provisional.</p>"
+                    f"<p>⚠️ This file is aligned to {vcf_info.reference_genome}. "
+                    "ZaroPGx analyses GRCh38/hg38 only, so it is refused rather "
+                    "than analysed on coordinates that are not GRCh38's.</p>"
                 )
                 workflow["recommendations"].append(
-                    "<p>Convert this file to GRCh38/hg38 yourself and upload it again. "
-                    "Automatic liftover covers GRCh37/hg19 only.</p>"
+                    "<p>Call your variants against GRCh38/hg38 and upload the "
+                    "resulting VCF, or realign the reads to GRCh38/hg38 first and "
+                    "call from the realigned data.</p>"
                 )
-                workflow["warnings"].append(
-                    "<p>⚠️ Converting between reference genomes may result in a loss of fidelity.</p>"
-                )
-                workflow["is_provisional"] = True
+                if any(token in reference for token in T2T_BUILD_TOKENS):
+                    workflow["recommendations"].append(
+                        "<p>Lifting a T2T-CHM13 file over to GRCh38 yourself is not "
+                        "a substitute, and it is worth knowing why before you try: "
+                        "the published T2T chains exclude GRCh38's alternate "
+                        "haplotype contigs, so GSTT1 (which sits on "
+                        "chr22_KI270879v1_alt in GRCh38) cannot come across at all, "
+                        "and CYP2D6's representation in CHM13 is undocumented — no "
+                        "published work compares CYP2D6 or CYP2C19 between the two "
+                        "assemblies.</p>"
+                    )
             elif vcf_info.reference_genome_ambiguous:
                 # reference == "unknown" here, but not every "unknown" is
                 # the same: this one is a header that contradicts itself
@@ -926,6 +1102,76 @@ class FileProcessor:
                 "<p>Note: Although an existing index file can be uploaded along with the main VCF file, at the moment, its functionality is not yet supported. (TO DO)</p>"
             )
 
+    def _refuse_consumer_array(
+        self, workflow: Dict, coverage: ConsumerArrayCoverage
+    ) -> None:
+        """Refuse a 23andMe or AncestryDNA upload, in place, with the numbers.
+
+        One helper rather than a branch each, for the reason
+        _plan_variant_call_workflow gives: the two refusals make the same
+        argument from the same measurements, and two copies of clinical copy
+        edited months apart WILL drift into disagreeing about why we say no.
+        Everything that genuinely differs between the vendors is in `coverage`.
+
+        No needs_* flag is set, and needs_conversion in particular is NOT set:
+        that flag now mints a real bcf_to_vcf step (workflow_registry), so
+        setting it here would plan a BCF conversion for a file that is not a BCF
+        and is not being analysed at all. It was set by the old 23andMe branch to
+        mean "a conversion ought to exist one day", which is exactly the
+        aspirational flag this repo forbids.
+        """
+        workflow["unsupported"] = True
+        # Deliberately NOT provisional: nothing is analysed. is_provisional means
+        # "analysed anyway, provisionally" and exempts a runnable input type from
+        # the upload gate -- setting it here is the original 23andMe bug.
+        workflow["is_provisional"] = False
+        workflow["unsupported_reason"] = (
+            f"ZaroPGx cannot analyse {coverage.vendor} genotyping files, and that "
+            f"is a decision rather than a missing converter. {coverage.article} "
+            f"{coverage.vendor} {coverage.best_chip} file carries "
+            f"{coverage.positions} of the "
+            f"{PHARMCAT_POSITIONS:,} positions PharmCAT calls on "
+            f"({coverage.positions_pct}), and {coverage.cyp2d6_positions} of the "
+            f"{PHARMCAT_CYP2D6_POSITIONS} that define CYP2D6. ZaroPGx runs PyPGx "
+            f"alongside PharmCAT, and PyPGx reads a position the file does not "
+            f"carry as homozygous reference rather than as a no-call; that call "
+            f"then overrides PharmCAT's. A CYP2D6 poor metaboliser would be "
+            f"reported as a normal metaboliser, for codeine and tamoxifen, "
+            f"rather than as an incomplete result. Upload a sequencing-derived "
+            f"GRCh38/hg38 VCF, or a BAM, CRAM or SAM file, instead."
+        )
+        if coverage.missing_core:
+            workflow["warnings"].append(
+                "<p>⚠️ The variants that define the common CYP2D6 star alleles are "
+                f"absent from {coverage.vendor} {coverage.best_chip} by name: "
+                f"{coverage.missing_core}.</p>"
+            )
+        workflow["warnings"].append(
+            "<p>⚠️ rs35742686 (CYP2D6*3) and rs3064744 (the UGT1A1*28 TA repeat) "
+            "are absent from every version of every consumer array.</p>"
+        )
+        workflow["warnings"].append(
+            "<p>⚠️ Genotyping chips cannot detect gene duplications or deletions "
+            "at all, by any method — and those decide the phenotype for CYP2D6 "
+            "and for several other pharmacogenes.</p>"
+        )
+        workflow["warnings"].append(
+            "<p>⚠️ The coverage above is counted from the vendor's published "
+            "manifest, which is the union of every revision of the chip, so it is "
+            "an upper bound on any individual file rather than a typical one.</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>PharmCAT's own maintainers say the same of consumer-array data: it "
+            "has “limited overlap with most of the gene definitions used by "
+            "PharmCAT, which will result in very few callable alleles and "
+            "therefore not very useful reports”.</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>Upload sequencing data instead. A GRCh38/hg38 VCF is the fastest "
+            "input; a BAM, CRAM or SAM additionally carries the read depth PyPGx "
+            "needs to call the CYP2D6 copy-number changes no chip can see.</p>"
+        )
+
     def determine_workflow(
         self, analysis: FileAnalysis, gatk_enabled: Optional[bool] = None
     ) -> Dict:
@@ -937,12 +1183,19 @@ class FileProcessor:
         - CRAM files: conversion to BAM with specific tools and considerations
         - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
         - VCF files: direct PyPGx + PharmCAT with outside calls
+        - 23andMe / AncestryDNA files: refused (a chip carries too little of
+          PharmCAT's position list, and PyPGx reads the gaps as reference)
         - GVCF files: refused (PharmCAT is not validated against reference blocks)
         - BCF files: converted to a bgzipped VCF (gatk-api's /bcf-to-vcf, bcftools),
           then the same quick pipeline a VCF gets, liftover included
         - SAM files: conversion to BAM using GATK or samtools
         - FASTA files: reference genome files (unsupported for direct analysis)
         - BED files: genomic interval files (unsupported for direct analysis)
+
+        Independently of the format, an input whose DETECTED build is neither
+        GRCh38 nor GRCh37 is refused -- T2T-CHM13 is the one such build the
+        header inspector can name today -- and a GRCh37/hg19 BAM, CRAM or SAM
+        is refused too, because liftover converts called variants and not reads.
 
         Args:
             analysis: FileAnalysis object containing file type and characteristics
@@ -1122,28 +1375,35 @@ class FileProcessor:
         elif analysis.file_type == FileType.VCF:
             self._plan_variant_call_workflow(workflow, analysis)
 
-        # 23andMe: refused at upload, not analysed.
+        # 23andMe and AncestryDNA: refused at upload, not analysed.
+        #
+        # The old copy here refused 23andMe for the wrong reason - "converted to VCF
+        # first, and that conversion is not implemented yet" - which promises the
+        # feature by describing its absence, and is not what is actually wrong. The
+        # coordinates in these files are fine (build 37, plus strand, real positions)
+        # and `bcftools convert --tsv2vcf` would happily produce a VCF. What is wrong
+        # is downstream: ZaroPGx does not run PharmCAT alone, and PharmCAT alone is
+        # the only configuration in which chip data degrades honestly. main.nf
+        # concatenates PyPGx's output into combined_outside.tsv and posts it as
+        # PharmCAT's outside_tsv, and an outside call OVERRIDES PharmCAT's no-call.
+        # PyPGx's own maintainer on array input (pypgx#142): missing loci "will be
+        # falsely treated as homozygous reference even though there might be
+        # variants". So a 23andMe v5 file with no rs3892097 yields CYP2D6 *1/*1 and
+        # the report tells a *4/*4 poor metaboliser they metabolise codeine and
+        # tamoxifen normally. That is the confident-wrong-answer class.
         #
         # `is_provisional` used to be set here alongside `unsupported`, which read as
-        # "analysed anyway, provisionally" -- the meaning it genuinely carries for a
-        # GRCh37 VCF -- and waved 23andMe past the upload refusal gate. Nothing here is
-        # provisional: no converter exists, and pipelines/pgx/main.nf has no `23andme`
-        # branch, so the run hit `error "Unsupported input type"` and the job failed.
-        # The flag was aspirational, describing an intent rather than a behaviour.
-        elif analysis.file_type == FileType.TWENTYTHREE_AND_ME:
-            workflow["needs_conversion"] = True
-            workflow["unsupported"] = True
-            workflow["unsupported_reason"] = (
-                "ZaroPGx cannot analyse 23andMe genotyping files. They must be "
-                "converted to VCF first, and that conversion is not implemented yet, so "
-                "there is nothing ZaroPGx can run on this file. Upload a GRCh38/hg38 VCF "
-                "from sequencing, or a BAM, CRAM or SAM file, instead."
-            )
-            workflow["recommendations"].append(
-                "<p>23andMe format conversion needed - create schema reference and translation</p>"
-            )
-            workflow["warnings"].append(
-                "<p>⚠️ Even once conversion exists, 23andMe data has limited variant coverage compared to clinical sequencing: results would be provisional and may miss important variants.</p>"
+        # "analysed anyway, provisionally" -- the meaning it genuinely carried for a
+        # VCF -- and waved 23andMe past the upload refusal gate.
+        #
+        # AncestryDNA reaches its own branch as of 2026-08-31. Before that
+        # FileType.ANCESTRY_DNA existed but was never produced by _detect_file_type,
+        # so an AncestryDNA export fell through to the unknown-format branch and was
+        # refused as "Unrecognized file format: unknown" -- a file we can name
+        # exactly, and measure, reported as unrecognisable.
+        elif analysis.file_type in CONSUMER_ARRAY_COVERAGE:
+            self._refuse_consumer_array(
+                workflow, CONSUMER_ARRAY_COVERAGE[analysis.file_type]
             )
 
         # FASTA - reference genome files
@@ -1290,13 +1550,20 @@ class FileProcessor:
                 "<p>Not accepted: FASTQ. ZaroPGx ships no aligner — align the reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM.</p>"
             )
             workflow["recommendations"].append(
+                "<p>Not accepted: 23andMe and AncestryDNA genotyping exports. That is "
+                "a decision rather than pending work — they carry under a third of "
+                "the positions PharmCAT calls on, and no chip can show a gene "
+                "duplication or deletion.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Not accepted: files aligned to T2T-CHM13. ZaroPGx detects them "
+                "and refuses them; it analyses against GRCh38/hg38 only.</p>"
+            )
+            workflow["recommendations"].append(
                 "<p>Priority 3 (Research): Other sequencing and genotyping formats.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 4 (Research): BED, gVCF, 23andMe, AncestryDNA, various TXT formats.</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>Priority 5 (Early research): T2T format, and all else.</p>"
+                "<p>Priority 4 (Research): BED, gVCF, various TXT formats.</p>"
             )
             workflow["recommendations"].append(
                 "<p>If you happen to have a supported datafile, please try again and upload that file(s) instead.</p>"
@@ -1322,7 +1589,7 @@ class FileProcessor:
                 )
             )
 
-        # A GRCh37/hg19-aligned BAM/CRAM/SAM is refused, not analysed.
+        # A BAM/CRAM/SAM aligned to anything but GRCh38 is refused, not analysed.
         #
         # The liftover added for VCF input does not reach this case: it converts a
         # *called* file's coordinates, and these formats reach PharmCAT only by
@@ -1335,9 +1602,16 @@ class FileProcessor:
         # gVCF because nothing downstream errors.
         #
         # Refusing matches how every other unanalysable input is handled (FASTQ,
-        # 23andMe, BCF): say so now, with the fix the user can act on. And the fix
-        # is a real one now -- calling variants against GRCh37 and uploading the
-        # resulting VCF lands on the supported liftover lane.
+        # consumer arrays, BCF): say so now, with the fix the user can act on. And
+        # for GRCh37 the fix is a real one -- calling variants against GRCh37 and
+        # uploading the resulting VCF lands on the supported liftover lane.
+        #
+        # T2T-CHM13 joined this check when CONTIG_LENGTH_ASSEMBLIES learned to name
+        # it (2026-08-31); before that a CHM13 alignment was simply undetected and
+        # analysed as GRCh38. It gets its own copy rather than sharing GRCh37's,
+        # because GRCh37's way out -- call variants yourself, we lift the VCF -- is
+        # not available: there is no CHM13 chain here, and the VCF branch above
+        # refuses a CHM13 VCF for the same reason. Realigning is the only way out.
         #
         # Keyed on the DETECTED build only. `None` (no usable @SQ evidence) is left
         # alone rather than guessed at, exactly as the ambiguity check above does:
@@ -1345,7 +1619,9 @@ class FileProcessor:
         # hand-made and minimal BAMs, which is a different defect.
         if analysis.file_type in (FileType.BAM, FileType.CRAM, FileType.SAM):
             detected_build = (analysis.reference_genome or "").lower()
-            if any(token in detected_build for token in ("grch37", "hg19", "b37")):
+            is_grch37 = any(token in detected_build for token in GRCH37_BUILD_TOKENS)
+            is_t2t = any(token in detected_build for token in T2T_BUILD_TOKENS)
+            if is_grch37 or is_t2t:
                 file_label = analysis.file_type.value.upper()
                 workflow["unsupported"] = True
                 # Deliberately NOT provisional: nothing is analysed, so the flag
@@ -1360,15 +1636,30 @@ class FileProcessor:
                     f"alleles that are not yours. Automatic liftover covers VCFs, "
                     f"not aligned reads."
                 )
-                workflow["recommendations"].append(
-                    "<p>Call variants against GRCh37/hg19 yourself (bcftools or "
-                    "GATK HaplotypeCaller), then upload the resulting VCF. "
-                    "ZaroPGx lifts that over to GRCh38 automatically.</p>"
-                )
-                workflow["recommendations"].append(
-                    "<p>Or realign the reads to GRCh38/hg38 and upload the "
-                    f"resulting {file_label} file.</p>"
-                )
+                if is_grch37:
+                    workflow["recommendations"].append(
+                        "<p>Call variants against GRCh37/hg19 yourself (bcftools or "
+                        "GATK HaplotypeCaller), then upload the resulting VCF. "
+                        "ZaroPGx lifts that over to GRCh38 automatically.</p>"
+                    )
+                    workflow["recommendations"].append(
+                        "<p>Or realign the reads to GRCh38/hg38 and upload the "
+                        f"resulting {file_label} file.</p>"
+                    )
+                else:
+                    workflow["recommendations"].append(
+                        "<p>Realign the reads to GRCh38/hg38 and upload the "
+                        f"resulting {file_label} file, or call variants from the "
+                        "realigned data and upload that VCF.</p>"
+                    )
+                    workflow["recommendations"].append(
+                        "<p>Calling variants against T2T-CHM13 and uploading that "
+                        "VCF will not help: ZaroPGx refuses a T2T-CHM13 VCF too, "
+                        "and lifting one over to GRCh38 yourself drops GSTT1 "
+                        "(it sits on a GRCh38 alternate haplotype contig the T2T "
+                        "chains exclude) and leaves CYP2D6 on a representation "
+                        "nobody has characterised in CHM13.</p>"
+                    )
 
         return workflow
 

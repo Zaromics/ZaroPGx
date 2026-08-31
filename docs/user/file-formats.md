@@ -56,10 +56,35 @@ FASTQ files contain raw sequencing reads with quality scores and are the startin
 
 Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or an established end-to-end pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM. A GRCh38/hg38 VCF is the fastest input of all.
 
+## Consumer genotyping arrays (23andMe, AncestryDNA) — not accepted
+
+ZaroPGx recognises a 23andMe or AncestryDNA raw-data export and refuses it by name. **This is a decision, not a missing converter.** The coordinates in those files are perfectly good — build 37, plus strand, real positions — and turning one into a VCF is a one-line `bcftools convert --tsv2vcf`. What is wrong is what happens next.
+
+Measured against the 1,226 positions in PharmCAT's own `pharmcat_positions.vcf` (22 genes, 157 of the positions *CYP2D6*), counting each vendor's published manifest — which is the union of every revision of that chip, and therefore an upper bound on any individual file:
+
+| | 23andMe v3 | v4 | v5 | AncestryDNA v1 | v2 |
+|---|---:|---:|---:|---:|---:|
+| **All positions** | 183 (14.9%) | 193 (15.7%) | 229 (18.7%) | 43 (3.5%) | 380 (31.0%) |
+| **CYP2D6** (157) | 22 | 23 | 25 | 2 | 14 |
+| CYP2C9 (88) | 15 | 16 | 22 | 2 | 7 |
+| CYP2C19 (35) | 17 | 19 | 17 | 5 | 8 |
+| NUDT15 (20) | 0 | 0 | 1 | 0 | 0 |
+
+Only 222 of 23andMe v5's 229 are SNVs, so its real ceiling is 18.1%. A newer chip is not a better pharmacogenomic chip: v5 covers fewer *CYP2D6* markers in the gene window than v4 does.
+
+The variants that define the common star alleles are absent by name. 23andMe v5 has no `rs3892097` (`CYP2D6*4`, roughly 20% allele frequency in Europeans), no `rs1065852` (`*10`, the most common East Asian allele), and neither `rs16947` nor `rs1135840` (both core to `*2`); it also lacks `rs28371686` (`CYP2C9*5`) and `rs7900194` (`CYP2C9*8`). `rs35742686` (`CYP2D6*3`) and `rs3064744` (the `UGT1A1*28` TA repeat) are absent from every version of every vendor. And no chip, by any method, can detect the gene duplications and deletions that decide the phenotype for *CYP2D6* and several other genes.
+
+PharmCAT alone would degrade honestly — it reports a position it cannot see as a no-call. **ZaroPGx does not run PharmCAT alone.** It runs PyPGx too and hands PyPGx's calls to PharmCAT as outside calls, and an outside call overrides a no-call. PyPGx's maintainer, on array input ([pypgx#142](https://github.com/sbslee/pypgx/issues/142)): missing loci "will be falsely treated as homozygous reference even though there might be variants." So a 23andMe v5 file with no `rs3892097` yields `CYP2D6 *1/*1`, and the report tells a `CYP2D6 *4/*4` poor metaboliser they metabolise codeine and tamoxifen normally. That is a confident wrong answer, not an incomplete one.
+
+PharmCAT's own FAQ reaches the same conclusion: consumer-array data has "limited overlap with most of the gene definitions used by PharmCAT, which will result in very few callable alleles and therefore not very useful reports."
+
+Upload sequencing data instead: a GRCh38/hg38 VCF, or a BAM, CRAM or SAM.
+
 ## Reference Genome Support
 - **GRCh38/hg38** — analysed directly; the build every result is reported on.
 - **GRCh37/hg19 VCF or BCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. A real coordinate conversion, not a contig relabelling. Variants that cannot be mapped are dropped and the step reports how many; the run fails if too much of the file cannot be lifted. A BCF is converted to a VCF first, then lifted. A native GRCh38 VCF remains the most reliable input.
 - **GRCh37/hg19 BAM, CRAM or SAM** — **not accepted.** Liftover converts variants that have already been called. Aligned reads are analysed by calling variants out of them first, and that call reads each gene from its GRCh38 position — on GRCh37 reads those positions are wrong (GRCh38's *CYP2D6* window sits roughly 400 kb from GRCh37's), so you would get star alleles that are not yours rather than an error. Call variants against GRCh37/hg19 yourself and upload the VCF, or realign the reads to GRCh38/hg38.
+- **T2T-CHM13 (any format)** — **detected and refused.** ZaroPGx reads the assembly out of the file's own contig lengths, or out of its `##reference=` line, and declines the upload. Nothing downstream would catch a CHM13 file: PharmCAT's preprocessor normalises against GRCh38.p13 without checking which assembly the input is on, and `bcftools norm -c ws` *swaps* a mismatched reference allele rather than failing — so the report would carry confidently wrong star alleles. There is no automatic liftover for it, and doing one yourself is not a workaround either: the published T2T chains exclude GRCh38's alternate haplotype contigs, so *GSTT1* (on `chr22_KI270879v1_alt`) cannot come across at all, only about 60% of T2T's segmental duplications have a clear GRCh38 orthologue — the *CYP2D6*/*CYP2D7*/*CYP2D8* cluster is one such region — and no published work characterises *CYP2D6* or *CYP2C19* in CHM13. Call your variants against GRCh38/hg38, or realign to it, and upload that.
 
 ## File Size Considerations
 

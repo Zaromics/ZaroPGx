@@ -209,18 +209,27 @@ render its pre-flight summary.
 2. **Unreadable file.** `FileProcessor.process_files` returned `success: false` —
    the file could not be read or parsed at all.
 3. **Unanalysable input.** `_unanalysable_upload_reason` rejected the derived
-   workflow. This fires when the workflow is flagged `unsupported`, is **not**
-   flagged `is_provisional`, and the detected `file_type` is outside
-   `NEXTFLOW_INPUT_TYPES` (`vcf`, `bam`, `cram`, `sam`) — i.e. FASTQ, 23andMe,
-   FASTA, BED, gVCF, BCF and unrecognised formats. The reason string is the
+   workflow. This fires whenever the workflow is flagged `unsupported`, *unless*
+   the detected `file_type` is in `NEXTFLOW_INPUT_TYPES` (`vcf`, `bam`, `cram`,
+   `sam`) **and** the workflow is flagged `is_provisional` — that pair is the only
+   exemption, and as of 2026-08-31 nothing sets `is_provisional`, so every flagged
+   input is refused. Two groups reach it: whole formats the pipeline cannot carry
+   (FASTQ, 23andMe, AncestryDNA, FASTA, BED, gVCF, BCF and unrecognised ones), and
+   otherwise-runnable formats on the wrong genome build — a GRCh37/hg19 BAM, CRAM
+   or SAM, and anything on T2T-CHM13. The reason string is the
    workflow's `unsupported_reason` when it has one, otherwise
    `"Files of type '<file_type>' cannot be analysed."`
 
    Accepting any of these could only ever mint a job that fails, but not all for
    the same reason, and the differences are the point:
 
-   - **FASTA, BED, 23andMe, unrecognised** — `main.nf` has no branch, so the run
+   - **FASTA, BED, unrecognised** — `main.nf` has no branch, so the run
      dies at `error "Unsupported input type"`.
+   - **23andMe, AncestryDNA** — refused by decision rather than for want of a
+     branch. A chip carries under a third of PharmCAT's positions and cannot show
+     a gene duplication, and PyPGx reads the positions it lacks as homozygous
+     reference, so the report would be confidently wrong rather than incomplete.
+     See `docs/user/file-formats.md` for the measured coverage.
    - **FASTQ** — `main.nf` *has* a branch, but its first step POSTs to gatk-api's
      `/align-fastq`, which answers HTTP 501 because the image ships no aligner.
      A branch existing is not the same as the branch working.

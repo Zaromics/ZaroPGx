@@ -212,19 +212,165 @@ def test_unprefixed_pgx_chromosome_matches_too():
     )
 
 
-def test_no_pgx_length_is_shared_between_the_two_builds():
-    """Every entry must be decisive: a length may not name both builds.
+def test_no_length_is_shared_between_the_builds():
+    """Every entry must be decisive: a length may not name two builds.
 
-    Verified against the dictionaries on 2026-08-29; pinned here so a future
-    addition transcribed from the wrong column cannot make the table ambiguous.
+    Checked as a MISSING ROW rather than as a duplicate, which is the only shape
+    the defect can take. CONTIG_LENGTH_ASSEMBLIES is keyed on (name, length), so
+    a collision cannot be *expressed*: two literals with the same key make one
+    dict entry and the earlier build silently disappears. The previous version of
+    this test grouped by that same key and could therefore never fail.
+
+    Every chromosome in the table carries one row per build. If a future length
+    were transcribed from the wrong column and happened to equal another build's,
+    that chromosome would come up one build short here.
+
+    GRCh37/GRCh38 verified against the shipped sequence dictionaries on
+    2026-08-29; T2T-CHM13v2 against UCSC hs1.chrom.sizes and NCBI GCF_009914755.1
+    on 2026-08-31.
     """
     from app.api.utils.header_inspector import CONTIG_LENGTH_ASSEMBLIES
 
-    by_length = {}
-    for (name, length), assembly in CONTIG_LENGTH_ASSEMBLIES.items():
-        by_length.setdefault((name, length), set()).add(assembly)
-    collisions = {k: v for k, v in by_length.items() if len(v) > 1}
-    assert not collisions, f"length names two builds: {collisions}"
+    builds = sorted(set(CONTIG_LENGTH_ASSEMBLIES.values()))
+    by_name = {}
+    for (name, _length), assembly in CONTIG_LENGTH_ASSEMBLIES.items():
+        by_name.setdefault(name, []).append(assembly)
+
+    for name, assemblies in sorted(by_name.items()):
+        assert sorted(assemblies) == builds, (
+            f"contig {name} names {sorted(assemblies)}, not {builds}: a length "
+            f"collision has swallowed a row"
+        )
+
+
+# ---------------------------------------------------------------------------
+# T2T-CHM13v2: recognised so that it can be refused
+# ---------------------------------------------------------------------------
+T2T_CONTIGS = [
+    "##contig=<ID=chr1,length=248387328>",
+    "##contig=<ID=chr2,length=242696752>",
+    "##contig=<ID=chr3,length=201105948>",
+    "##contig=<ID=chrX,length=154259566>",
+]
+
+
+def test_t2t_contig_set_is_detected_from_the_lengths_alone():
+    """A CHM13 file used to match nothing here and read as "no evidence", which
+    determine_workflow treats as "not GRCh37, carry on" -- i.e. analysed as
+    GRCh38, on coordinates hundreds of kb from the pharmacogenes' real ones."""
+    result = detect_reference_assembly(header_records=T2T_CONTIGS)
+
+    assert result["assembly"] == "T2T-CHM13v2"
+    assert result["source"] == "contig_lengths"
+    assert result["ambiguous"] is False
+
+
+@pytest.mark.parametrize(
+    "contig,length",
+    [
+        ("chr22", 51324926),  # CYP2D6
+        ("chr10", 134758134),  # CYP2C19/CYP2C9
+        ("chr12", 133324548),  # SLCO1B1
+        ("chr16", 96330374),  # VKORC1
+        ("chr6", 172126628),  # HLA class I
+        ("chr7", 160567428),  # CYP3A4/CYP3A5
+        ("chr19", 61707364),  # CYP4F2
+    ],
+)
+def test_a_t2t_pgx_chromosome_alone_identifies_the_build(contig, length):
+    """Same reason the GRCh37/38 PGx rows exist: a panel carries no chr1/2/3/X."""
+    result = detect_reference_assembly(
+        header_records=[f"##contig=<ID={contig},length={length}>"]
+    )
+
+    assert result["assembly"] == "T2T-CHM13v2"
+    assert result["ambiguous"] is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "/references/chm13/chm13v2.0.fa",
+        "file:///refs/chm13v2.0_maskedY_rCRS.fa",
+        "/refs/T2T-CHM13v2.0.fasta",
+        "/data/hs1.fa",
+        "/refs/GCA_009914755.4.fna",
+        "/refs/GCF_009914755.1.fna",
+    ],
+)
+def test_t2t_reference_line_spellings_seen_in_the_wild(value):
+    """No contig lengths to go on, so the reference line breaks the tie."""
+    result = detect_reference_assembly(header_records=[f"##reference={value}"])
+
+    assert result["assembly"] == "T2T-CHM13v2"
+    assert result["source"] == "reference_line"
+
+
+def test_t2t_chrm_is_not_evidence_of_anything():
+    """chrM is 16569 in CHM13 and GRCh38 alike, so it is deliberately absent from
+    the table: adding it would make every GRCh38 file ambiguous, and it does not
+    mean the two are interchangeable -- CHM13's chrM is rCRS rotated 576 bp (see
+    app/mtdna/builds.py, which refuses it on the build label)."""
+    result = detect_reference_assembly(
+        header_records=["##contig=<ID=chrM,length=16569>"]
+    )
+
+    assert result["assembly"] is None
+    assert result["candidates"] == []
+
+
+def test_grch38_detection_is_unchanged_by_the_t2t_rows():
+    """The negative control for the whole table addition."""
+    assert (
+        detect_reference_assembly(header_records=GRCH38_CONTIGS)["assembly"] == "GRCh38"
+    )
+    assert (
+        detect_reference_assembly(header_records=GRCH37_CONTIGS)["assembly"] == "GRCh37"
+    )
+    assert detect_reference_assembly(header_records=B37_CONTIGS)["assembly"] == "GRCh37"
+
+
+def test_a_header_naming_grch38_and_t2t_is_undetectable():
+    header = [
+        "##contig=<ID=chr1,length=248956422>",  # GRCh38
+        "##contig=<ID=chr2,length=242696752>",  # T2T-CHM13v2
+    ]
+
+    result = detect_reference_assembly(header_records=header)
+
+    assert result["assembly"] is None
+    assert result["ambiguous"] is True
+    assert result["candidates"] == ["GRCh38", "T2T-CHM13v2"]
+
+
+def test_the_shipped_t2t_fixture_is_detected_as_t2t():
+    """test_data/t2t_chm13_pgx_snps.vcf is the file the refusal tests upload."""
+    from pathlib import Path
+
+    from app.api.utils.header_inspector import (
+        parse_vcf_contig_lengths,
+        reference_values_from_header,
+    )
+
+    fixture = (
+        Path(__file__).resolve().parents[1] / "test_data" / "t2t_chm13_pgx_snps.vcf"
+    )
+    records = fixture.read_text(encoding="utf-8").splitlines()
+
+    # Both kinds of evidence are present, and either alone must be enough.
+    assert reference_values_from_header(records)
+    assert parse_vcf_contig_lengths(records)
+    assert detect_reference_assembly(header_records=records)["assembly"] == (
+        "T2T-CHM13v2"
+    )
+    contigs_only = [r for r in records if not r.startswith("##reference=")]
+    assert detect_reference_assembly(header_records=contigs_only)["assembly"] == (
+        "T2T-CHM13v2"
+    )
+    reference_only = [r for r in records if not r.startswith("##contig=")]
+    result = detect_reference_assembly(header_records=reference_only)
+    assert result["assembly"] == "T2T-CHM13v2"
+    assert result["source"] == "reference_line"
 
 
 def test_conflicting_contigs_across_naming_conventions_are_undetectable():
