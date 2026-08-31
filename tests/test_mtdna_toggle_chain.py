@@ -23,9 +23,23 @@ verification exercised but nothing in the test suite previously covered:
 The third hop -- needs_mtdna -> whether the mtdna_analysis step is minted --
 is already pinned by test_mtdna_workflow_flags.py; this module does not
 repeat it.
+
+A fourth hop was added 2026-08-30, upstream of hop 1: the ``/genomic-data``
+endpoint (upload_router.py) used to forward an absent ``mtdna_enabled`` form
+field straight through as ``None``, which hop 1's ``is not None`` guard
+always treats as "no override" -- so an operator's own MTDNA_ENABLED server
+setting was never consulted, and CI's MTDNA_ENABLED=false (mtdna is not
+started in e2e, to keep the runner's disk usage down) did nothing. The
+endpoint now defaults an absent form field to MTDNA_ENABLED before calling
+process_files, so a present field still wins unchanged, and an absent one
+falls through to the server's own configuration instead of silently
+defaulting to "on". test_form_field_wins_over_env_default and
+test_absent_form_field_falls_through_to_env_default below pin that,
+end-to-end through the real endpoint.
 """
 
 import re
+import uuid
 from pathlib import Path
 
 import pytest
@@ -85,6 +99,131 @@ async def _process_with_toggle(tmp_path, monkeypatch, mtdna_enabled):
     )
     assert result["success"], result.get("error")
     return result["workflow"]
+
+
+# --------------------------------------------------------------------------
+# Hop 0: the /genomic-data endpoint's MTDNA_ENABLED fallback (added
+# 2026-08-30) -> the mtdna_enabled value handed to FileProcessor.process_files
+# --------------------------------------------------------------------------
+@pytest.fixture
+def upload_capturing_mtdna_kwarg(client, monkeypatch, tmp_path):
+    """POST /upload/genomic-data through the real endpoint and capture the
+    ``mtdna_enabled`` kwarg it forwards to FileProcessor.process_files --
+    everything else about the upload (patient/job creation, background
+    Nextflow submission, file analysis) is stubbed the same way
+    test_upload_unsupported_enforcement.py's ``upload`` fixture does it, so
+    only the endpoint's own fallback logic is under test."""
+    from app.api.routes import upload_router
+
+    monkeypatch.setattr(
+        upload_router, "create_patient", lambda db, identifier: uuid.uuid4()
+    )
+    monkeypatch.setattr(
+        upload_router,
+        "register_genetic_data",
+        lambda db, patient_id, file_type, file_path, is_supplementary: uuid.uuid4(),
+    )
+
+    class _FakeJob:
+        def __init__(self):
+            self.id = uuid.uuid4()
+            self.status = "pending"
+            self.job_metadata = {}
+
+    class _FakeJobService:
+        def __init__(self, db):
+            self.job = _FakeJob()
+
+        def create_job(self, job_create):
+            return self.job
+
+        def update_job(self, job_id, job_update):
+            return self.job
+
+    monkeypatch.setattr(upload_router, "JobService", _FakeJobService)
+
+    async def _noop_background(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        upload_router, "process_file_nextflow_background_with_db", _noop_background
+    )
+
+    captured = {}
+
+    async def _fake_process_files(files, reference_genome, **kwargs):
+        captured["mtdna_enabled"] = kwargs.get("mtdna_enabled")
+        stored = []
+        for f in files:
+            p = tmp_path / f.filename
+            p.write_bytes(await f.read())
+            stored.append(str(p))
+        workflow = {
+            "workflow_type": "genomic_analysis",
+            "file_type": "bam",
+            "reference": reference_genome or "hg38",
+            "recommendations": [],
+            "warnings": [],
+            "unsupported": False,
+            "unsupported_reason": None,
+            "is_provisional": False,
+            "needs_mtdna": True,
+        }
+        return {
+            "success": True,
+            "file_paths": stored,
+            "file_analysis": _bam_analysis(),
+            "workflow": workflow,
+        }
+
+    monkeypatch.setattr(
+        upload_router.file_processor, "process_files", _fake_process_files
+    )
+
+    def _post(mtdna_form_value=None):
+        data = {"reference_genome": "hg38"}
+        if mtdna_form_value is not None:
+            data["mtdna_enabled"] = mtdna_form_value
+        resp = client.post(
+            "/upload/genomic-data",
+            files={"files": ("sample.bam", b"BAM\x01", "application/octet-stream")},
+            data=data,
+        )
+        return resp, captured.get("mtdna_enabled")
+
+    return _post
+
+
+@pytest.mark.parametrize(
+    "form_value,env_default",
+    [("true", False), ("false", True), ("true", True), ("false", False)],
+)
+def test_form_field_wins_over_env_default(
+    upload_capturing_mtdna_kwarg, monkeypatch, form_value, env_default
+):
+    """A present mtdna_enabled form field must reach process_files unchanged,
+    regardless of what MTDNA_ENABLED says -- the user's explicit choice wins,
+    exactly as before this fix."""
+    monkeypatch.setattr("app.main.MTDNA_ENABLED", env_default)
+    resp, captured = upload_capturing_mtdna_kwarg(mtdna_form_value=form_value)
+    assert resp.status_code == 200, resp.text
+    assert captured == form_value
+
+
+@pytest.mark.parametrize("env_default,expected", [(True, "true"), (False, "false")])
+def test_absent_form_field_falls_through_to_env_default(
+    upload_capturing_mtdna_kwarg, monkeypatch, env_default, expected
+):
+    """No mtdna_enabled field at all (e.g. e2e's client, or any caller that
+    omits it) must fall through to the server's own MTDNA_ENABLED, in both
+    directions -- this is the fix: previously it always reached
+    process_files as None, so file_processor.py:1383's `is not None` guard
+    never applied a server-side override and MTDNA_ENABLED=false did
+    nothing."""
+    monkeypatch.setattr("app.main.MTDNA_ENABLED", env_default)
+    resp, captured = upload_capturing_mtdna_kwarg(mtdna_form_value=None)
+    assert resp.status_code == 200, resp.text
+    assert captured == expected
 
 
 # --------------------------------------------------------------------------

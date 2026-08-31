@@ -1655,6 +1655,22 @@ async def upload_genomic_data(
                 sample_identifier, "sample_identifier"
             )
 
+        # When the caller doesn't send the mtdna_enabled form field at all, fall
+        # back to the operator's own MTDNA_ENABLED setting rather than silently
+        # defaulting to "on". Without this, an operator who disables the mtdna
+        # service (MTDNA_ENABLED=false, e.g. because it isn't deployed) still
+        # gets jobs that try to call it -- MTDNA_ENABLED previously only fed the
+        # services-config payload and the health check, never needs_mtdna. An
+        # explicit form field (present, either value) still wins unchanged;
+        # deferred import avoids a circular import with app.main.
+        from app.main import MTDNA_ENABLED
+
+        effective_mtdna_enabled = (
+            mtdna_enabled
+            if mtdna_enabled is not None
+            else ("true" if MTDNA_ENABLED else "false")
+        )
+
         # Process uploaded files
         result = await file_processor.process_files(
             files,
@@ -1663,7 +1679,7 @@ async def upload_genomic_data(
             gatk_enabled=gatk_enabled,
             pypgx_enabled=pypgx_enabled,
             report_enabled=report_enabled,
-            mtdna_enabled=mtdna_enabled,
+            mtdna_enabled=effective_mtdna_enabled,
         )
 
         if not result["success"]:
