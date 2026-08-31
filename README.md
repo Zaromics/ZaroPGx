@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 *Input formats*
 - [X] Priority 0 (*Supported*): **VCF, GRCh38**/hg38, NGS-derived.
 - [X] Priority 1 (*Supported*): **VCF, GRCh37**/hg19, NGS-derived. *Lifted over to GRCh38 automatically before analysis — GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. Unliftable variants are dropped and the step reports how many.*
-- [...] Priority 2 (*Development*): **BAM, CRAM, SAM, BCF**, all NGS-derived. *Scaffolded, needs testing. Projected release in v0.4, with BAM support first and foremost.*
+- [...] Priority 2 (*Development*): **BAM, CRAM, SAM, BCF**, all NGS-derived. *Scaffolded, needs testing. Projected release in v0.4, with BAM support first and foremost. A BCF is converted to a bgzipped VCF with bcftools before analysis and then follows the VCF lane, liftover included — the conversion is lossless, but every VCF caveat then applies.*
 - [ ] Not accepted: **FASTQ**. ZaroPGx ships no aligner, so raw reads (single- or paired-end) are refused at upload. *Align to GRCh38/hg38 yourself — bwa-mem2/BWA, minimap2, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.*
 - [...] Priority 3 (*Research*): Other sequencing and genotyping formats.
 - [...] Priority 4 (*Research*): BED, detailed gVCF, 23andMe, AncestryDNA, various TXT formats.

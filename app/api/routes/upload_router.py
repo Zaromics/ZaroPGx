@@ -148,15 +148,20 @@ def _nextflow_max_wait_seconds() -> float:
 # ships no aligner, and main.nf's curls use --fail-with-body, so the 501 kills the run.
 # A branch existing is not the same as the branch working.
 #
-# `bcf` is deliberately absent, and deliberately NOT aliased onto `vcf` either. The
-# alias was tried: it makes main.nf take the vcf branch, but that branch converts
-# nothing - it stages the upload verbatim, so the file reaches docker/pharmcat still
-# named `.bcf`, /genotype gates on that name and answers 400, and the PharmCAT curl's
-# trailing `|| true` swallows it. The run then "completes" with no PharmCAT output: a
-# silent wrong answer replacing a loud one. Renaming an input type is only honest when
-# a lane exists that can finish it, so BCF is refused at ingest instead (see
-# FileProcessor.determine_workflow).
-NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bam", "cram", "sam"})
+# `bcf` is present, and it must still never be ALIASED onto `vcf`. That alias was tried
+# and reverted, and the reason it was wrong has not gone away: it made main.nf take the
+# vcf branch, which converts nothing - it stages the upload verbatim, so the file
+# reached docker/pharmcat still named `.bcf`, /genotype gated on that name and answered
+# 400, and the PharmCAT curl's trailing `|| true` swallowed it. The run then "completed"
+# with no PharmCAT output: a silent wrong answer replacing a loud one. Renaming an input
+# type is only honest when a lane exists that can finish it.
+#
+# `bcf` is here because that lane now exists: main.nf has a `bcf` branch whose first
+# step is the BcfToVCF process, which POSTs the file to gatk-api's /bcf-to-vcf
+# (`bcftools view -O z` plus a tabix index) and refuses to return anything it cannot
+# vouch for as a non-empty BGZF VCF. The file that reaches the filename-gating sidecars
+# is a genuinely different, genuinely converted one - which is what the alias never was.
+NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bcf", "bam", "cram", "sam"})
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
@@ -171,21 +176,23 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     LiftoverVcf — and never reaches this gate flagged.)
 
     What genuinely cannot work is an input that is flagged unsupported and that the
-    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED, gVCF, BCF and unrecognised
-    formats. Those used to be accepted, queued, and then failed minutes later with a
-    Nextflow or gatk-api error the user could do nothing with.
+    pipeline cannot carry: FASTQ, 23andMe, FASTA, BED, gVCF and unrecognised formats.
+    Those used to be accepted, queued, and then failed minutes later with a Nextflow or
+    gatk-api error the user could do nothing with.
 
-    gVCF and BCF are refused for opposite-looking reasons, and both are worth stating
-    because each rules out an obvious-looking shortcut:
+    gVCF is the one worth stating at length, because it rules out an obvious-looking
+    shortcut: routed onto the vcf branch it would *run*. PharmCAT has simply never been
+    validated against a gVCF's ``<NON_REF>`` reference blocks, so the output would be
+    star alleles nobody has checked — a confident wrong answer, not a failure.
 
-    * gVCF onto the vcf branch would *run*. PharmCAT has simply never been validated
-      against a gVCF's ``<NON_REF>`` reference blocks, so the output would be star
-      alleles nobody has checked — a confident wrong answer, not a failure.
-    * BCF onto the vcf branch would *not* run, and would not say so. That branch stages
-      the upload verbatim, so the file reaches docker/pharmcat still named ``.bcf``,
-      /genotype gates on the extension and answers 400, and main.nf's PharmCAT curl ends
-      in ``|| true`` — the run finishes with no PharmCAT output at all. Accepting BCF
-      needs a real conversion step, which ZaroPGx does not ship.
+    BCF used to sit in that list and no longer does. It was never refused for the gVCF
+    reason: a BCF onto the *vcf* branch would not run and would not say so, because that
+    branch stages the upload verbatim and docker/pharmcat's /genotype gates on the
+    ``.bcf`` filename behind a ``|| true``. What it needed was a real conversion step,
+    and it has one — main.nf's own ``bcf`` branch converts the file with bcftools
+    (gatk-api's /bcf-to-vcf) before anything downstream sees it. A gVCF that happens to
+    be *written* as a BCF is still refused, on the gVCF reason above; FileProcessor
+    reads ``##GVCFBlock`` out of the binary header to catch it.
 
     This gate is still not a complete guard, and cannot be one: it only ever sees inputs
     FileProcessor chose to flag.
@@ -1632,11 +1639,14 @@ async def upload_genomic_data(
       not been validated against a gVCF's <NON_REF> reference blocks, so analysing one
       would produce star alleles nobody has checked rather than an error. Convert to a
       plain VCF first.
-    - BCF: rejected with 400. Nothing in the stack converts it, and the pipeline stages
-      the upload verbatim, so a BCF reaches the PharmCAT sidecar under a name its
-      /genotype endpoint refuses — and that refusal is swallowed by a `|| true`, ending
-      the run with no results and no error. Convert first:
-      bcftools view -O z sample.bcf > sample.vcf.gz
+    - BCF: converted, then processed exactly like a VCF. The pipeline's `bcf` branch
+      POSTs the file to gatk-api's /bcf-to-vcf (`bcftools view -O z`, then a tabix
+      index) and only continues once that endpoint has vouched for a non-empty BGZF
+      result — a real re-encode, not a rename, because the PharmCAT sidecar gates on
+      the filename and swallows its own 400 behind a `|| true`. BCF and VCF hold the
+      same records, so the conversion costs no accuracy; every VCF caveat then applies,
+      liftover of a GRCh37/hg19 BCF included. A gVCF written as a BCF is still refused
+      (##GVCFBlock is read out of the binary header).
 
     Only the first uploaded data file is analysed; any further data file is reported as
     ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be
@@ -2041,6 +2051,7 @@ async def inspect_file_header(
                 "warnings": [],
                 "unsupported": False,
                 "unsupported_reason": None,
+                "needs_conversion": False,
                 "needs_liftover": False,
                 "refused": False,
                 "refusal_reason": None,
@@ -2057,6 +2068,11 @@ async def inspect_file_header(
                         "warnings": wf.get("warnings", []),
                         "unsupported": wf.get("unsupported", False),
                         "unsupported_reason": wf.get("unsupported_reason"),
+                        # Lets the preview panel draw the "Convert BCF to VCF"
+                        # step for a BCF, the same way needs_liftover below does
+                        # for a GRCh37 file. Without it the preview drew a plan
+                        # one step shorter than the plan that runs.
+                        "needs_conversion": wf.get("needs_conversion", False),
                         # Lets the preview panel draw the "Liftover to GRCh38"
                         # step for a GRCh37/hg19 VCF, the same way the
                         # post-upload panel does off WorkflowOptions.

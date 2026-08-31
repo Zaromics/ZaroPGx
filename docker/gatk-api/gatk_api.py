@@ -3253,6 +3253,267 @@ async def sam_to_bam(
         _cleanup_dir(work_dir)
 
 
+# ---------------------------------------------------------------------------
+# BCF -> bgzipped VCF (/bcf-to-vcf)
+#
+# BCF is the binary encoding of a VCF and holds exactly the same records, so this
+# conversion is lossless: there is no reference to decode against (unlike CRAM),
+# no sort decision to get wrong (unlike SAM) and no coordinate arithmetic
+# (unlike the liftover above). It exists because the rest of the stack reads
+# filenames rather than content -- docker/pharmcat's /genotype refuses any name
+# that does not end .vcf/.vcf.gz/.vcf.bgz, and main.nf's PharmCAT curl ends in
+# `|| true`, so a `.bcf` carried that far produces no PharmCAT output AND no
+# error. Renaming the file was tried and reverted for exactly that reason; the
+# bytes have to actually change, which is what this endpoint does.
+# ---------------------------------------------------------------------------
+
+
+def _looks_like_bgzf(path):
+    """A bgzipped VCF opens with the gzip magic bytes, the same as a BAM.
+
+    The VCF-shaped counterpart of _looks_like_bam() above, and here for the same
+    reason: `bcftools view -O z` that somehow wrote plain text (or an error
+    document) where the compressed VCF belongs must not be reported as a
+    successful conversion.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def vcf_has_records(path):
+    """True as soon as one data line is found; stops reading there.
+
+    Deliberately not count_vcf_records() above. That one reads the file to the
+    end because the liftover needs an exact number for its reject-rate
+    arithmetic; here the only question is "is this empty", and a whole-genome
+    VCF is millions of lines of which none after the first changes the answer.
+    """
+    if not os.path.exists(path):
+        return False
+    with _open_vcf_text(path) as handle:
+        for line in handle:
+            if line.strip() and not line.startswith('#'):
+                return True
+    return False
+
+
+def convert_bcf_to_vcf(job_label, input_path, output_vcf):
+    """Convert a BCF to a bgzipped VCF, index it, and vouch for the result.
+
+    Blocking -- call it through asyncio.to_thread under _to_thread_semaphore,
+    exactly like the CRAM/SAM conversions and the liftover: `bcftools view` on a
+    whole-genome BCF runs for minutes, and a blocking subprocess on the event
+    loop would take /health (and with it the container healthcheck) down with it.
+
+    Every failure path raises HTTPException and removes the output, so a caller
+    that returns normally can promise `output_vcf` exists, is BGZF-framed and
+    holds at least one variant record. An empty-but-valid VCF is a 422 rather
+    than a success for the same reason convert_to_indexed_bam() refuses a
+    zero-record BAM: downstream it reads as "no variants found", which is a
+    clinical statement, not the truncated-or-wrong-input it actually is.
+
+    argv lists, never shell=True: input_path derives from an uploaded filename.
+
+    Deliberately NOT run through _fatal_stderr(): those markers were written for
+    samtools' CRAM decoding, where htslib downgrades a wrong-reference decode to
+    a warning and exits 0. Nothing in a BCF->VCF conversion has a reference to be
+    wrong about, and the module's other bcftools call
+    (rename_vcf_contigs_to_chr) does not use them either. The gates below --
+    exit code, existence, non-empty, BGZF framing, at least one record -- are
+    what a re-encode can actually fail.
+
+    Returns:
+        tuple: (VCF size in bytes, tabix index path or None)
+    """
+    argv = ['bcftools', 'view', '-O', 'z', '-o', output_vcf, input_path]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _discard_output(output_vcf)
+        message = f"bcftools could not be executed - check container configuration ({exc})"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+
+    if result.returncode != 0:
+        _discard_output(output_vcf)
+        message = f"bcftools view failed with exit code {result.returncode}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not os.path.exists(output_vcf) or os.path.getsize(output_vcf) == 0:
+        _discard_output(output_vcf)
+        message = f"bcftools view exited 0 but wrote no VCF to {output_vcf}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not _looks_like_bgzf(output_vcf):
+        _discard_output(output_vcf)
+        message = (
+            f"bcftools view produced {output_vcf}, which is not a BGZF-framed VCF. "
+            "Everything downstream opens it as bgzip, so refusing to treat this as "
+            "a valid conversion."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not vcf_has_records(output_vcf):
+        _discard_output(output_vcf)
+        message = (
+            f"The conversion produced a valid but empty VCF (no variant records) "
+            f"from {os.path.basename(input_path)}. That is a truncated or wrong "
+            f"input, not a negative result -- shipping it would read downstream as "
+            f"'no variants found'."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=422, detail=message)
+
+    if stderr:
+        logger.warning(f"Job {job_label}: bcftools stderr: {stderr}")
+
+    # Tabix index. Best effort for the same reason as the liftover's step 4: the
+    # pipeline re-indexes when no .tbi travels with the VCF, so a failed index is
+    # a warning rather than a lost run. `bcftools index -t` writes the same .tbi
+    # `tabix -p vcf` would (both are htslib); the standalone tabix binary is not
+    # in this image, bcftools is.
+    tbi_path = f"{output_vcf}.tbi"
+    try:
+        index_result = subprocess.run(
+            ['bcftools', 'index', '-t', '-f', output_vcf],
+            capture_output=True,
+            check=False,
+        )
+        if index_result.returncode != 0 or not os.path.exists(tbi_path):
+            index_stderr = (index_result.stderr or b'').decode('utf-8', errors='replace').strip()
+            logger.warning(f"Job {job_label}: could not tabix-index {output_vcf}: {index_stderr}")
+            tbi_path = None
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(f"Job {job_label}: could not tabix-index {output_vcf}: {exc}")
+        tbi_path = None
+
+    size = os.path.getsize(output_vcf)
+    logger.info(f"Job {job_label}: wrote {output_vcf} ({size} bytes)")
+    return size, tbi_path
+
+
+@app.post("/bcf-to-vcf")
+async def bcf_to_vcf(
+    file: UploadFile = File(...),
+    reference_genome: str = Form("hg38"),
+    patient_id: Optional[str] = Form(None),
+    report_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
+    step_name: Optional[str] = Form("bcf_to_vcf")
+):
+    """
+    Convert a BCF to a bgzipped, tabix-indexed VCF.
+
+    `bcftools view -O z`, then `bcftools index -t`. BCF and VCF encode the same
+    records, so nothing is lost and there is no accuracy caveat to report -- the
+    output is the same call set the caller uploaded, in the encoding every other
+    service in this stack can actually read.
+
+    No reference FASTA is involved, so unlike the CRAM route this conversion is
+    self-contained and cannot be pointed at the wrong build. `reference_genome`
+    is accepted only because callers post the same form to every conversion
+    route; it is not read. (Nor is the build checked here: a GRCh37 BCF is meant
+    to arrive, be converted, and then go through /liftover-vcf, which does its
+    own source_build validation.)
+    """
+    job_client = None
+    work_dir = None
+    output_dir = None
+    try:
+        # Initialize job client if Zaro Job PK is provided
+        if job_id:
+            try:
+                job_client = JobClient(job_id=job_id, step_name=step_name)
+                await job_client.start_step(f"Starting BCF to VCF conversion for {file.filename}")
+                await job_client.log_progress(f"Converting {file.filename} to a bgzipped VCF", {
+                    "filename": file.filename
+                })
+            except Exception as e:
+                logger.warning(f"Failed to initialize workflow client: {e}")
+                job_client = None
+
+        # Sanitised for the same reason as every other route here: file.filename
+        # is attacker-controlled and this name reaches subprocess argv and the
+        # shared volume. See safe_upload_name's docstring.
+        local_job_id = str(uuid.uuid4())
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        filename = safe_upload_name(file.filename or "input.bcf", local_job_id)
+        input_path = os.path.join(work_dir, filename)
+        # Output goes on the shared volume, not this container's /tmp -- the
+        # caller is a Nextflow process in another container and the ./data bind
+        # mount is the only filesystem both can see. See conversion_output_dir().
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        # stored_stem(), not splitext: a misdirected `.vcf.gz` post here would
+        # otherwise yield `<name>.vcf.vcf.gz`.
+        output_vcf = os.path.join(output_dir, f"{stored_stem(filename)}.vcf.gz")
+
+        # Chunked for the same reason as the CRAM route: never buffer the upload.
+        with open(input_path, "wb") as f:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
+
+        logger.info(f"Job {local_job_id}: Saved BCF file to {input_path}")
+
+        if job_client:
+            file_size = os.path.getsize(input_path)
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
+                "file_size_bytes": file_size,
+                "input_path": input_path
+            })
+
+        # to_thread under the semaphore, exactly like the CRAM/SAM conversions
+        # and the liftover: a whole-genome re-encode runs for minutes and must
+        # not stall the event loop, and therefore /health.
+        async with _to_thread_semaphore:
+            vcf_size, index_path = await asyncio.to_thread(
+                convert_bcf_to_vcf,
+                local_job_id,
+                input_path,
+                output_vcf,
+            )
+
+        if job_client:
+            await job_client.log_progress("BCF to VCF conversion completed", {
+                "vcf_path": output_vcf,
+                "vcf_size_bytes": vcf_size,
+                "vcf_index": index_path
+            })
+            await job_client.complete_step("BCF to VCF conversion completed successfully")
+
+        return {
+            "success": True,
+            "job_id": local_job_id,
+            "vcf_path": output_vcf,
+            "vcf": output_vcf,  # Alternative field name, matching the other routes
+            "vcf_index": index_path,
+            "vcf_size_bytes": vcf_size,
+            "message": f"Converted {filename} to a bgzipped VCF"
+        }
+
+    except HTTPException as e:
+        # Do not relabel a deliberate 4xx as a 500 on the way out.
+        _cleanup_dir(output_dir)
+        logger.error(f"BCF to VCF conversion failed: {e.detail}")
+        await _fail_step(job_client, f"BCF to VCF conversion failed: {e.detail}")
+        raise
+    except Exception as e:
+        _cleanup_dir(output_dir)
+        logger.exception(f"Error in BCF to VCF conversion: {e}")
+        await _fail_step(job_client, f"BCF to VCF conversion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"BCF to VCF conversion failed: {str(e)}")
+    finally:
+        _cleanup_dir(work_dir)
+
+
 @app.post("/cancel")
 async def cancel_workflow_job(request: CancelRequest):
     """

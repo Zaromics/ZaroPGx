@@ -40,6 +40,11 @@ STEP_TO_STAGE: Mapping[str, WorkflowStage] = {
     "header_analysis": WorkflowStage.ANALYSIS,
     "gatk_cram_sam_to_bam": WorkflowStage.GATK,
     "gatk_alignment": WorkflowStage.GATK,
+    # BCF -> bgzipped VCF runs inside the gatk-api container (bcftools), so it
+    # surfaces under the GATK stage rather than falling through
+    # stage_from_step()'s ANALYSIS default -- same grouping as "liftover" below.
+    # Keep in sync with index.html's GlyphManager.stepMapping.
+    "bcf_to_vcf": WorkflowStage.GATK,
     # GRCh37->GRCh38 liftover runs inside the gatk-api container (Picard
     # LiftoverVcf), so it surfaces under the GATK stage rather than falling
     # through stage_from_step()'s ANALYSIS default.

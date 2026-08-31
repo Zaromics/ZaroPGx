@@ -121,14 +121,109 @@ def _header_declares_gvcf_blocks(file_path: Path) -> bool:
     return False
 
 
+# BCF2's container magic: the (decompressed) stream opens with `BCF` plus a major and
+# a minor version byte. htslib has written major version 2 since 2013; BCF1 is not
+# produced by anything in this stack's lifetime and is not recognised here.
+BCF_MAGIC = b"BCF\x02"
+
+# Cap on the BCF header text read below, for the same reason as
+# GVCF_HEADER_MAX_LINE_BYTES: the length field is read out of the file itself, so a
+# corrupt or hostile one could otherwise ask for an arbitrary allocation. Far above any
+# real header (a few hundred kilobytes even with every ALT contig declared).
+BCF_HEADER_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _open_bcf_stream(file_path: Path):
+    """Open a possibly-BGZF file as a binary stream, deciding from the magic bytes.
+
+    A BCF written by htslib is BGZF-framed, which is valid gzip, so Python's gzip
+    module reads it; `bcftools view -Ou` writes the same container uncompressed. The
+    extension decides nothing here on purpose - the stored upload name is sanitised
+    and can reach disk with no usable suffix at all.
+    """
+    with open(file_path, "rb") as probe:
+        magic = probe.read(2)
+    return gzip.open(file_path, "rb") if magic == b"\x1f\x8b" else open(file_path, "rb")
+
+
+def _read_bcf_header_text(file_path: Path) -> Optional[str]:
+    """Return a BCF's own header text, or None when the file is not a BCF.
+
+    After the magic above, BCF2 carries a little-endian uint32 giving the length of the
+    VCF-style header text that follows. Reading those nine bytes is what lets a
+    *binary* file answer the same question `_header_declares_gvcf_blocks` asks of a
+    text VCF: that function opens the file as gzip-or-text and scans for `##` lines, so
+    it answers False for every BCF no matter what the header actually says.
+
+    Deliberately not pysam and not `bcftools view -h`. Both are optional in this
+    process (see the pysam import at the top of this module, and header_inspector's
+    bcftools fallback), and this runs inside `_detect_file_type`, which must reach a
+    verdict on a host that has neither.
+
+    Never raises: an unreadable, truncated or non-BCF file is simply "not a BCF here",
+    and falls through to the ordinary extension logic. Deciding a file's type must not
+    be the thing that turns an unreadable upload into a 500.
+
+    The byte cap fails closed in the same direction as `_header_declares_gvcf_blocks`'s
+    line caps: a header longer than BCF_HEADER_MAX_BYTES is read only up to it, so a
+    `##GVCFBlock` beyond that point is missed rather than raised.
+    """
+    try:
+        with _open_bcf_stream(file_path) as handle:
+            if handle.read(len(BCF_MAGIC)) != BCF_MAGIC:
+                return None
+            handle.read(1)  # minor version byte
+            length_bytes = handle.read(4)
+            if len(length_bytes) < 4:
+                return None
+            text_length = int.from_bytes(length_bytes, "little")
+            text = handle.read(min(text_length, BCF_HEADER_MAX_BYTES))
+        return text.decode("utf-8", errors="ignore")
+    except Exception as e:
+        logger.debug(f"Could not read {file_path} as a BCF: {e}")
+        return None
+
+
+def _looks_like_bcf(file_path: Path) -> bool:
+    """True when the file's first bytes say BCF, whatever it is named.
+
+    Four bytes, bounded, never raises - the same shape as the BAM/CRAM magic reads in
+    `_detect_file_type`, which cannot see a BCF because it is BGZF-compressed and they
+    read the raw file.
+    """
+    try:
+        with _open_bcf_stream(file_path) as handle:
+            return handle.read(len(BCF_MAGIC)) == BCF_MAGIC
+    except Exception as e:
+        logger.debug(f"Could not read {file_path} for BCF magic bytes: {e}")
+        return False
+
+
+def _bcf_header_declares_gvcf_blocks(file_path: Path) -> bool:
+    """The BCF-shaped counterpart of `_header_declares_gvcf_blocks` above."""
+    text = _read_bcf_header_text(file_path)
+    if text is None:
+        return False
+    return any(line.startswith(GVCF_HEADER_MARKER) for line in text.splitlines())
+
+
 def _is_gvcf(file_path: Path) -> bool:
-    """Decide gVCF from the name, and from the header when the name says only "VCF"."""
+    """Decide gVCF from the name, and from the header when the name says only "VCF".
+
+    The BCF arm is keyed on the file's magic bytes rather than on a `.bcf` name, for
+    the same reason the VCF arm consults the header at all: the stored name is
+    sanitised and can arrive with no usable extension. A gVCF written as a BCF is
+    still a gVCF, and now that BCF is converted and analysed rather than refused, one
+    that slipped through would be re-encoded and analysed as a plain VCF - exactly the
+    confident wrong answer the gVCF refusal exists to prevent, with the conversion
+    step making it look deliberate.
+    """
     name = str(file_path).lower()
     if name.endswith(GVCF_NAME_SUFFIXES):
         return True
     if name.endswith((".vcf", ".vcf.gz")):
         return _header_declares_gvcf_blocks(file_path)
-    return False
+    return _bcf_header_declares_gvcf_blocks(file_path)
 
 
 # Companion index files. The upload form invites one alongside the data file, and
@@ -145,14 +240,18 @@ class FileAnalysis:
     read_type: Optional[str] = (
         None  # WGS / WES / Short-read / Long-read / NGS / Sanger / Chip , etc.
     )
-    vcf_info: Optional[VCFHeaderInfo] = None  # ONLY for VCF files
+    # ONLY for variant-call files: VCF and BCF. (BCF joined it when BCF became a real
+    # input type - it is the same header, in the binary encoding, read by the same
+    # inspector, so it fills the same fields. Alignment files still do not have one;
+    # see reference_genome* below.)
+    vcf_info: Optional[VCFHeaderInfo] = None
     file_size: Optional[int] = None
     error: Optional[str] = None
     is_valid: bool = True
     validation_errors: Optional[List[str]] = None
     # Same evidence VCFHeaderInfo.reference_genome_ambiguous/candidates carry for
-    # VCF (Task 6/8), but for BAM/CRAM/SAM: vcf_info stays VCF-only (see above),
-    # so a self-contradicting alignment header's @SQ evidence travels through
+    # VCF/BCF (Task 6/8), but for BAM/CRAM/SAM: vcf_info stays variant-call-only
+    # (see above), so a self-contradicting alignment header's @SQ evidence travels through
     # these fields instead, populated by analyze_file's alignment branch and
     # read by determine_workflow's BAM/CRAM/SAM branches (Task 10 item 5).
     reference_genome_ambiguous: bool = False
@@ -222,7 +321,13 @@ class FileProcessor:
             file_type = self._detect_file_type(file_path)
             logger.info(f"Detected file type: {file_type.value}")
 
-            # If it's a VCF or alignment, use the independent header inspector
+            # If it's a variant-call file or an alignment, use the independent header
+            # inspector. BCF is read here for the same reason VCF is, and by the same
+            # code: inspect_header dispatches `.bcf` to _inspect_vcf_bcf, so a BCF
+            # yields the same build detection, contig profile and sample count. Without
+            # it a BCF reached determine_workflow with vcf_info=None, which reads as
+            # "no evidence about the build" - so a GRCh37 BCF would have been analysed
+            # on GRCh37 coordinates as if they were GRCh38.
             vcf_info = None
             reference_genome_ambiguous = False
             reference_genome_candidates: List[str] = []
@@ -230,7 +335,9 @@ class FileProcessor:
             try:
                 normalized = inspect_header(str(file_path))
                 # Map normalized structure to VCFHeaderInfo when applicable
-                if file_type == FileType.VCF and isinstance(normalized, dict):
+                if file_type in (FileType.VCF, FileType.BCF) and isinstance(
+                    normalized, dict
+                ):
                     metadata = normalized.get("metadata") or {}
                     # Reference genome inference
                     reference_genome = metadata.get("reference_genome") or "unknown"
@@ -275,8 +382,8 @@ class FileProcessor:
                 ) and isinstance(normalized, dict):
                     # Alignment headers carry the same ambiguity evidence
                     # (Task 6's @SQ-record detection) but have no VCFHeaderInfo
-                    # to live in -- vcf_info stays VCF-only (see FileAnalysis's
-                    # dataclass comment), so it travels on FileAnalysis itself
+                    # to live in -- vcf_info stays variant-call-only (see
+                    # FileAnalysis's dataclass comment), so it travels on FileAnalysis itself
                     # instead, for determine_workflow's BAM/CRAM/SAM branches
                     # to read (Task 10 item 5).
                     metadata = normalized.get("metadata") or {}
@@ -336,7 +443,7 @@ class FileProcessor:
         - FASTQ (.fastq, .fq, .fastq.gz, .fq.gz)
         - FASTA (.fasta, .fa, .fna)
         - GVCF (.gvcf, .gvcf.gz, .g.vcf, .g.vcf.gz, or a ##GVCFBlock header)
-        - BCF (.bcf)
+        - BCF (.bcf, or the BCF magic bytes)
         - BED (.bed)
         - 23andMe (.txt)
         """
@@ -507,6 +614,15 @@ class FileProcessor:
         except Exception as e:
             logger.debug(f"Error detecting file type from content: {str(e)}")
 
+        # BCF, from its magic bytes. Checked here rather than in either arm below
+        # because neither can see it: a BCF is BGZF-framed, so the `.gz` arm reads it
+        # as text and finds noise, and the plain arm's BAM/CRAM magic reads look at the
+        # still-compressed bytes. A mis-named BCF was therefore typed UNKNOWN and
+        # refused as "Unrecognized file format", which is not what happened to it.
+        if _looks_like_bcf(file_path):
+            logger.info("Identified as BCF from content")
+            return FileType.BCF
+
         # If content-based detection failed, try filename patterns as fallback
         if ext == ".gz":
             filename = file_path.name.lower()
@@ -639,6 +755,177 @@ class FileProcessor:
             )
             return "unknown"
 
+    def _plan_variant_call_workflow(
+        self, workflow: Dict, analysis: FileAnalysis
+    ) -> None:
+        """Plan the quick pipeline for an already-called variant file, in place.
+
+        Shared verbatim by the VCF and BCF branches of determine_workflow, because a
+        BCF is a VCF: the pipeline re-encodes it with bcftools and everything after
+        that point - the liftover decision, the sequencing profile, the HLA/CYP2D6
+        caveats, the index advice - is the same reasoning about the same records. Two
+        copies of clinical build-detection copy WILL drift: the branches would be
+        edited months apart, and the half that stopped setting needs_liftover would
+        analyse a GRCh37 file on GRCh38 coordinates without saying anything.
+
+        Only the BCF-specific part - that the file is converted first, and that the
+        conversion itself costs no accuracy - lives in the BCF branch, so nothing
+        here has to be phrased twice or hedged for two formats.
+        """
+        workflow["needs_pypgx"] = True
+        # main.nf hands the sidecar the ORIGINAL upload (never a lifted copy --
+        # see its comment on mtdna_variants_ch; for a BCF, the converted-but-
+        # unlifted VCF, which is that lane's equivalent) and reads whatever
+        # chrM/MT records it finds; a file with none simply produces a no-call,
+        # the same outcome PharmCAT already reports for MT-RNR1 with no outside
+        # call.
+        workflow["needs_mtdna"] = True
+        workflow["warnings"].append(
+            "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis.</p>"
+        )
+        workflow["warnings"].append(
+            "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
+        )
+        workflow["warnings"].append(
+            # FASTQ was dropped from this list when the format was refused; the
+            # refusal itself is stated at the upload gate, so restating it here
+            # only padded a sentence that reads fine without it.
+            "<p class='preflight'>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
+        )
+        workflow["warnings"].append(
+            "<p class='preflight'>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
+        )
+        workflow["warnings"].append("<p>⚠️ HLA typing can not be performed.</p>")
+        workflow["warnings"].append(
+            "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>"
+        )
+        workflow["warnings"].append(
+            "<p>⚠️ All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
+        )
+
+        workflow["recommendations"].append("<p>VCF files use the quick pipeline:</p>")
+        workflow["recommendations"].append(
+            "<p>Step 1: Run PyPGx for star allele calling on all available pharmacogenes.</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>Step 2: Run PharmCAT with outside calls from PyPGx.</p>"
+        )
+        # Check reference genome compatibility
+        if analysis.vcf_info:
+            vcf_info = analysis.vcf_info
+            reference = vcf_info.reference_genome.lower()
+
+            # Normalize reference genome string for comparison
+            is_hg38 = any(ref_id in reference for ref_id in ["hg38", "grch38", "38"])
+            if is_hg38:
+                workflow["recommendations"].append(
+                    f"<p>✓ Compatible GRCh38 reference genome detected: {vcf_info.reference_genome}</p>"
+                )
+            elif reference != "unknown" and any(
+                ref_id in reference for ref_id in ["grch37", "hg19", "37"]
+            ):
+                # GRCh37/hg19: supported via a real liftover. The pipeline runs
+                # GATK Picard LiftoverVcf (gatk-api's /liftover-vcf, UCSC
+                # hg19ToHg38 chain) to convert the file to GRCh38 coordinates
+                # before PyPGx/PharmCAT see it. This branch keys off the
+                # DETECTED build (vcf_info.reference_genome comes from header
+                # inspection), never off the reference_genome form field, which
+                # defaults to hg38 regardless of what the file actually is.
+                #
+                # Deliberately NOT unsupported and NOT provisional: the analysis
+                # runs on genuine GRCh38 coordinates. The honest caveats are
+                # different ones - liftover drops the variants it cannot map,
+                # and a converted file is not byte-identical to a natively
+                # GRCh38 one - and the copy below says exactly that, no more.
+                workflow["needs_liftover"] = True
+                # Carried through to the Nextflow run as --source_build so
+                # main.nf knows to route the VCF through LiftoverVCF.
+                workflow["source_build"] = vcf_info.reference_genome
+                workflow["recommendations"].append(
+                    f"<p>✓ {vcf_info.reference_genome} detected. ZaroPGx will lift this "
+                    "file over to GRCh38/hg38 with GATK LiftoverVcf prior to analysis.</p>"
+                )
+                workflow["warnings"].append(
+                    "<p class='preflight'>⚠️ Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
+                )
+            elif reference != "unknown":
+                # A named build that is neither GRCh38 nor GRCh37 (T2T-CHM13,
+                # say): no chain is staged for it, so no liftover exists and the
+                # old honest-provisional handling still applies unchanged.
+                workflow["unsupported"] = True
+                workflow["unsupported_reason"] = (
+                    f"ZaroPGx supports GRCh38/hg38 VCF files only. This file is aligned "
+                    f"to {vcf_info.reference_genome}, so any results are provisional. "
+                    "Convert it to GRCh38/hg38 yourself and upload it again."
+                )
+                workflow["warnings"].append(
+                    f"<p>⚠️ This file is aligned to {vcf_info.reference_genome}. Only "
+                    "GRCh38/hg38 is supported, so these results are provisional.</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Convert this file to GRCh38/hg38 yourself and upload it again. "
+                    "Automatic liftover covers GRCh37/hg19 only.</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ Converting between reference genomes may result in a loss of fidelity.</p>"
+                )
+                workflow["is_provisional"] = True
+            elif vcf_info.reference_genome_ambiguous:
+                # reference == "unknown" here, but not every "unknown" is
+                # the same: this one is a header that contradicts itself
+                # (e.g. ##contig records naming two builds), not a header
+                # with no evidence at all. The latter stays silent -- see
+                # detect_reference_assembly's contract in header_inspector.py.
+                workflow["warnings"].append(
+                    _ambiguous_reference_genome_warning(
+                        vcf_info.reference_genome_candidates
+                    )
+                )
+
+            # Enhanced sequencing profile recommendations
+            if vcf_info.sequencing_profile == SequencingProfile.WGS:
+                workflow["recommendations"].append(
+                    "<p>✓ Uploaded VCF file is detected as: Whole Genome Sequencing. Full pharmacogene coverage is available (with VCF-related limitations).</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results.</p>"
+                )
+            elif vcf_info.sequencing_profile == SequencingProfile.WES:
+                workflow["recommendations"].append(
+                    "<p>Uploaded VCF file is detected as: Whole Exome Sequencing. Unknown pharmacogene coverage.</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ Whole Exome Sequencing can vary in coverage. The analysis may have degraded completeness, accuracy, and precision, compared to Whole Genome Sequencing.</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
+                )
+            else:
+                workflow["recommendations"].append(
+                    "<p>Uploaded VCF file is detected as: Unknown, or, Targeted Sequencing. Unknown pharmacogene coverage.</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ Depending on the sequencing platform and methodology, the uploaded VCF datafile may have limited pharmacogene coverage.</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
+                )
+
+        # Check if index exists
+        if analysis.vcf_info and not analysis.vcf_info.has_index:
+            workflow["recommendations"].append(
+                "<p>Create index for uploaded VCF file to speed up processing.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Note: Although an existing index file can be uploaded along with the main VCF file, at the moment, its functionality is not yet supported. (TO DO)</p>"
+            )
+
     def determine_workflow(
         self, analysis: FileAnalysis, gatk_enabled: Optional[bool] = None
     ) -> Dict:
@@ -651,8 +938,8 @@ class FileProcessor:
         - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
         - VCF files: direct PyPGx + PharmCAT with outside calls
         - GVCF files: refused (PharmCAT is not validated against reference blocks)
-        - BCF files: refused (no conversion step ships, and the sidecars gate on the
-          filename, so a BCF job ends with no results rather than an error)
+        - BCF files: converted to a bgzipped VCF (gatk-api's /bcf-to-vcf, bcftools),
+          then the same quick pipeline a VCF gets, liftover included
         - SAM files: conversion to BAM using GATK or samtools
         - FASTA files: reference genome files (unsupported for direct analysis)
         - BED files: genomic interval files (unsupported for direct analysis)
@@ -833,162 +1120,7 @@ class FileProcessor:
 
         # VCF | "quick pipeline" (curated on 2025-09-27)
         elif analysis.file_type == FileType.VCF:
-            workflow["needs_pypgx"] = True
-            # main.nf hands the sidecar the ORIGINAL upload (never a lifted copy --
-            # see its comment on mtdna_variants_ch) and reads whatever chrM/MT
-            # records it finds; a VCF with none simply produces a no-call, the
-            # same outcome PharmCAT already reports for MT-RNR1 with no outside
-            # call.
-            workflow["needs_mtdna"] = True
-            workflow["warnings"].append(
-                "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis.</p>"
-            )
-            workflow["warnings"].append(
-                "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
-            )
-            workflow["warnings"].append(
-                # FASTQ was dropped from this list when the format was refused; the
-                # refusal itself is stated at the upload gate, so restating it here
-                # only padded a sentence that reads fine without it.
-                "<p class='preflight'>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>"
-            )
-            workflow["warnings"].append(
-                "<p class='preflight'>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
-            )
-            workflow["warnings"].append("<p>⚠️ HLA typing can not be performed.</p>")
-            workflow["warnings"].append(
-                "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>"
-            )
-            workflow["warnings"].append(
-                "<p>⚠️ All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
-            )
-
-            workflow["recommendations"].append(
-                "<p>VCF files use the quick pipeline:</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>Step 1: Run PyPGx for star allele calling on all available pharmacogenes.</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>Step 2: Run PharmCAT with outside calls from PyPGx.</p>"
-            )
-            # Check reference genome compatibility
-            if analysis.vcf_info:
-                vcf_info = analysis.vcf_info
-                reference = vcf_info.reference_genome.lower()
-
-                # Normalize reference genome string for comparison
-                is_hg38 = any(
-                    ref_id in reference for ref_id in ["hg38", "grch38", "38"]
-                )
-                if is_hg38:
-                    workflow["recommendations"].append(
-                        f"<p>✓ Compatible GRCh38 reference genome detected: {vcf_info.reference_genome}</p>"
-                    )
-                elif reference != "unknown" and any(
-                    ref_id in reference for ref_id in ["grch37", "hg19", "37"]
-                ):
-                    # GRCh37/hg19: supported via a real liftover. The pipeline runs
-                    # GATK Picard LiftoverVcf (gatk-api's /liftover-vcf, UCSC
-                    # hg19ToHg38 chain) to convert the file to GRCh38 coordinates
-                    # before PyPGx/PharmCAT see it. This branch keys off the
-                    # DETECTED build (vcf_info.reference_genome comes from header
-                    # inspection), never off the reference_genome form field, which
-                    # defaults to hg38 regardless of what the file actually is.
-                    #
-                    # Deliberately NOT unsupported and NOT provisional: the analysis
-                    # runs on genuine GRCh38 coordinates. The honest caveats are
-                    # different ones - liftover drops the variants it cannot map,
-                    # and a converted file is not byte-identical to a natively
-                    # GRCh38 one - and the copy below says exactly that, no more.
-                    workflow["needs_liftover"] = True
-                    # Carried through to the Nextflow run as --source_build so
-                    # main.nf knows to route the VCF through LiftoverVCF.
-                    workflow["source_build"] = vcf_info.reference_genome
-                    workflow["recommendations"].append(
-                        f"<p>✓ {vcf_info.reference_genome} detected. ZaroPGx will lift this "
-                        "file over to GRCh38/hg38 with GATK LiftoverVcf prior to analysis.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p class='preflight'>⚠️ Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
-                    )
-                elif reference != "unknown":
-                    # A named build that is neither GRCh38 nor GRCh37 (T2T-CHM13,
-                    # say): no chain is staged for it, so no liftover exists and the
-                    # old honest-provisional handling still applies unchanged.
-                    workflow["unsupported"] = True
-                    workflow["unsupported_reason"] = (
-                        f"ZaroPGx supports GRCh38/hg38 VCF files only. This file is aligned "
-                        f"to {vcf_info.reference_genome}, so any results are provisional. "
-                        "Convert it to GRCh38/hg38 yourself and upload it again."
-                    )
-                    workflow["warnings"].append(
-                        f"<p>⚠️ This file is aligned to {vcf_info.reference_genome}. Only "
-                        "GRCh38/hg38 is supported, so these results are provisional.</p>"
-                    )
-                    workflow["recommendations"].append(
-                        "<p>Convert this file to GRCh38/hg38 yourself and upload it again. "
-                        "Automatic liftover covers GRCh37/hg19 only.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>⚠️ Converting between reference genomes may result in a loss of fidelity.</p>"
-                    )
-                    workflow["is_provisional"] = True
-                elif vcf_info.reference_genome_ambiguous:
-                    # reference == "unknown" here, but not every "unknown" is
-                    # the same: this one is a header that contradicts itself
-                    # (e.g. ##contig records naming two builds), not a header
-                    # with no evidence at all. The latter stays silent -- see
-                    # detect_reference_assembly's contract in header_inspector.py.
-                    workflow["warnings"].append(
-                        _ambiguous_reference_genome_warning(
-                            vcf_info.reference_genome_candidates
-                        )
-                    )
-
-                # Enhanced sequencing profile recommendations
-                if vcf_info.sequencing_profile == SequencingProfile.WGS:
-                    workflow["recommendations"].append(
-                        "<p>✓ Uploaded VCF file is detected as: Whole Genome Sequencing. Full pharmacogene coverage is available (with VCF-related limitations).</p>"
-                    )
-                    workflow["recommendations"].append(
-                        "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results.</p>"
-                    )
-                elif vcf_info.sequencing_profile == SequencingProfile.WES:
-                    workflow["recommendations"].append(
-                        "<p>Uploaded VCF file is detected as: Whole Exome Sequencing. Unknown pharmacogene coverage.</p>"
-                    )
-                    workflow["recommendations"].append(
-                        "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>⚠️ Whole Exome Sequencing can vary in coverage. The analysis may have degraded completeness, accuracy, and precision, compared to Whole Genome Sequencing.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
-                    )
-                else:
-                    workflow["recommendations"].append(
-                        "<p>Uploaded VCF file is detected as: Unknown, or, Targeted Sequencing. Unknown pharmacogene coverage.</p>"
-                    )
-                    workflow["recommendations"].append(
-                        "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>⚠️ Depending on the sequencing platform and methodology, the uploaded VCF datafile may have limited pharmacogene coverage.</p>"
-                    )
-                    workflow["warnings"].append(
-                        "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
-                    )
-
-            # Check if index exists
-            if analysis.vcf_info and not analysis.vcf_info.has_index:
-                workflow["recommendations"].append(
-                    "<p>Create index for uploaded VCF file to speed up processing.</p>"
-                )
-                workflow["recommendations"].append(
-                    "<p>Note: Although an existing index file can be uploaded along with the main VCF file, at the moment, its functionality is not yet supported. (TO DO)</p>"
-                )
+            self._plan_variant_call_workflow(workflow, analysis)
 
         # 23andMe: refused at upload, not analysed.
         #
@@ -1072,43 +1204,43 @@ class FileProcessor:
                 "ZaroPGx call the variants.</p>"
             )
 
-        # BCF: refused at upload, not analysed.
+        # BCF: converted to a bgzipped VCF, then analysed as one.
         #
-        # Renaming it onto the pipeline's vcf branch was tried and reverted, because the
-        # branch does not convert anything - it stages the upload verbatim, so the file
-        # arrives downstream still called `upload_sample.bcf`. docker/pharmcat's
+        # Renaming a BCF onto the pipeline's vcf branch was tried and reverted, and that
+        # is still the wrong answer: the branch stages the upload verbatim, so the file
+        # arrives downstream still called `upload_sample.bcf`; docker/pharmcat's
         # /genotype gates on that name (`.vcf`/`.vcf.gz`/`.vcf.bgz`) and answers 400,
         # and main.nf's PharmCAT curl ends in `|| true`, so the 400 is swallowed and the
-        # run "completes" with no PharmCAT output at all. That is a silent wrong answer
-        # where there used to be a loud `error "Unsupported input type"` - strictly
-        # worse. (docker/pypgx stores it as {uuid}.vcf and feeds it to PyPGx unchecked,
-        # which is its own unvalidated path.)
+        # run "completes" with no PharmCAT output at all. What changed is not the
+        # naming: main.nf now has a `bcf` branch whose first step POSTs the file to
+        # gatk-api's /bcf-to-vcf (`bcftools view -O z`, then a tabix index), which
+        # vouches for a non-empty BGZF result before the run continues. The bytes are
+        # genuinely different by the time anything gates on a filename.
         #
-        # Accepting BCF honestly needs a real conversion step. ZaroPGx ships none, so
-        # until it does, the user is told the one command that fixes it. None of the
-        # needs_* flags are set, because there is no workflow to plan.
+        # needs_gatk, not just needs_conversion: that conversion runs in the gatk-api
+        # container, and needs_gatk is what upload_router turns into --skip_gatk. Left
+        # False, every BCF job would be submitted with --skip_gatk=true and refused by
+        # main.nf's own guard. It also means unticking GATK in the UI refuses the job
+        # loudly instead of starving the lane, which is what that guard is for.
         elif analysis.file_type == FileType.BCF:
-            workflow["unsupported"] = True
-            workflow["unsupported_reason"] = (
-                "ZaroPGx cannot analyse BCF files. BCF is the binary encoding of a VCF, "
-                "but ZaroPGx ships no conversion step, and the analysis tools are handed "
-                "the file under its original name - so a BCF job would end with no "
-                "results rather than an error. Convert it to a bgzipped VCF first and "
-                "upload that: bcftools view -O z sample.bcf > sample.vcf.gz"
+            workflow["needs_conversion"] = True
+            workflow["needs_gatk"] = True
+            workflow["recommendations"].append(
+                "<p>BCF files are converted to a bgzipped VCF before analysis:</p>"
             )
             workflow["recommendations"].append(
-                "<p>Convert the BCF to a bgzipped VCF, then upload that:</p>"
+                "<p>Step 0: bcftools view -O z, run inside ZaroPGx. BCF is the binary "
+                "encoding of a VCF and carries exactly the same variant records, so "
+                "the conversion itself costs no accuracy - the analysis runs on your "
+                "calls unchanged.</p>"
             )
             workflow["recommendations"].append(
-                "<p>• bcftools view -O z sample.bcf &gt; sample.vcf.gz</p>"
+                "<p>Everything below therefore describes a VCF analysis, and every "
+                "VCF caveat applies: no HLA typing, and degraded accuracy for CYP2D6 "
+                "and for genes whose phenotypes depend on structural or copy-number "
+                "variants.</p>"
             )
-            workflow["recommendations"].append(
-                "<p>• Index it if you have one to spare: bcftools index -t "
-                "sample.vcf.gz</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>• A GRCh38/hg38 VCF is the fastest input ZaroPGx accepts.</p>"
-            )
+            self._plan_variant_call_workflow(workflow, analysis)
 
         # BED - genome interval/annotation files
         elif analysis.file_type == FileType.BED:
@@ -1152,13 +1284,10 @@ class FileProcessor:
                 "<p>Priority 1 (Development): VCF, GRCh37/hg19, NGS-derived.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 2 (Development): BAM, CRAM, SAM, all NGS-derived.</p>"
+                "<p>Priority 2 (Development): BAM, CRAM, SAM, BCF, all NGS-derived.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Not accepted: FASTQ. ZaroPGx ships no aligner — align the reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM.</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>Not accepted: BCF. Convert it first: bcftools view -O z sample.bcf &gt; sample.vcf.gz</p>"
             )
             workflow["recommendations"].append(
                 "<p>Priority 3 (Research): Other sequencing and genotyping formats.</p>"
@@ -1450,11 +1579,17 @@ class FileProcessor:
             logger.info("Analyzing uploaded file...")
             analysis = await self.analyze_file(file_path)
 
-            # Enforce exactly-one-sample policy for VCF
-            if analysis.file_type == FileType.VCF and analysis.vcf_info:
+            # Enforce exactly-one-sample policy for variant-call files. BCF is held to
+            # it as well as VCF: the pipeline converts a BCF to a VCF and analyses that,
+            # so a multi-sample BCF would reach PyPGx/PharmCAT as a multi-sample VCF -
+            # the case this check exists to stop, arriving by a different door.
+            if analysis.file_type in (FileType.VCF, FileType.BCF) and analysis.vcf_info:
+                label = analysis.file_type.value.upper()
                 sc = analysis.vcf_info.sample_count
                 if sc is None or sc != 1:
-                    error_msg = f"VCF must contain exactly one sample; found {sc or 0}."
+                    error_msg = (
+                        f"{label} must contain exactly one sample; found {sc or 0}."
+                    )
                     logger.error(error_msg)
                     return {"status": "error", "error": error_msg}
 

@@ -584,8 +584,8 @@
                             <form action="/upload/genomic-data" method="post" enctype="multipart/form-data" id="uploadForm">
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File(s)</label>
-                                    <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
-                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38.) Index file may be included. Formats BAM, SAM, and CRAM are in testing. Support for FASTQ, BED, 23andMe, and others is in development.</div>
+                                    <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.bcf,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
+                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38.) Index file may be included. A BCF is converted to a bgzipped VCF with bcftools first, then analysed as one. Formats BAM, SAM, CRAM, and BCF are in testing. Support for FASTQ, BED, 23andMe, and others is in development.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -1060,6 +1060,15 @@
                 const steps = [];
                 // Always begin with analysis (header inspection)
                 steps.push({ name: 'Analysis (Header Inspection)', icon: 'bi-search' });
+
+                // BCF: re-encoded to a bgzipped VCF (bcftools, in the gatk-api
+                // container) before anything else runs, and before the liftover
+                // below -- a GRCh37 BCF is converted first, lifted second. This is
+                // the only conversion that reaches this panel: the other flag that
+                // sets needs_conversion (23andMe) is refused above.
+                if (wf.needs_conversion) {
+                    steps.push({ name: 'Convert BCF to VCF (bcftools)', icon: 'bi-file-earmark-binary' });
+                }
 
                 // GRCh37/hg19 VCF: real coordinate liftover to GRCh38 (GATK Picard
                 // LiftoverVcf in the gatk-api container) before anything else runs.
@@ -2480,6 +2489,11 @@
                 // resets every glyph, matches nothing, and the row sits dark for
                 // the whole step, which reads as a stalled job.
                 'liftover': 'stageGATK',
+                // BCF->VCF is bcftools, but it runs in the gatk-api container and
+                // the backend groups it the same way (workflow_stages.py maps
+                // "bcf_to_vcf" to WorkflowStage.GATK). Same trap as 'liftover'
+                // above if it is missing: the row goes dark for the whole step.
+                'bcf_to_vcf': 'stageGATK',
                 'pypgx_analysis': 'stagePyPGx',
                 'pypgx_bam2vcf': 'stagePyPGx',       // Both PyPGx steps map to the same stage
                 // mtDNA calling runs in its own "mtdna" sidecar, immediately before

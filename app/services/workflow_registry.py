@@ -43,6 +43,18 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
     ),
     step_templates=(
         StepTemplate("header_analysis", "header_inspector"),
+        # BCF -> bgzipped VCF via gatk-api's bcftools endpoint (/bcf-to-vcf).
+        # Registered for the same reason as "liftover" below -- main.nf's BcfToVCF
+        # process posts step_name=bcf_to_vcf, and a step name with no template is
+        # never minted onto the Job, so the sidecar's status update 404s and the UI
+        # hangs that step at [pending] forever. Ordered first among the conversions
+        # because a GRCh37 BCF is converted and *then* lifted; the liftover only ever
+        # sees the VCF this step produced.
+        #
+        # needs_conversion is also set by the 23andMe branch of
+        # FileProcessor.determine_workflow, which is refused at ingest, so no job
+        # exists for it to mint this step onto.
+        StepTemplate("bcf_to_vcf", "gatk-api", when="needs_conversion"),
         # GRCh37/hg19 VCF -> GRCh38 via gatk-api's Picard LiftoverVcf. Registered
         # here because main.nf's LiftoverVCF process posts step_name=liftover to the
         # JobClient: a step name with no template is never minted onto the Job, so

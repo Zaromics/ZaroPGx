@@ -202,7 +202,8 @@ def test_main_nf_declares_all_four_skip_params():
 
 
 def test_main_nf_rejects_skip_gatk_for_conversion_inputs():
-    """fastq/cram/sam cannot reach a BAM without GATK; that must error, not hang."""
+    """fastq/cram/sam cannot reach a BAM, and bcf cannot reach a readable VCF,
+    without the gatk-api container; that must error, not hang."""
     text = MAIN_NF.read_text(encoding="utf-8")
     assert "params.skip_gatk" in text
     guard = re.search(r"if \(params\.skip_gatk[^\n]*\n[^\n]*error", text)
@@ -225,8 +226,9 @@ def _curl_call_sites():
 def test_every_curl_call_site_fails_on_http_errors_or_is_annotated_exempt():
     """Plain curl exits 0 on 4xx/5xx and writes the error doc where a result belongs."""
     text, calls = _curl_call_sites()
-    # 10 since Task 9 added MtdnaCall's call to http://mtdna:5000/call-mtdna.
-    assert len(calls) == 10, f"curl call-site count changed to {len(calls)}; re-audit"
+    # 11: 10 after Task 9 added MtdnaCall's call to http://mtdna:5000/call-mtdna,
+    # plus BcfToVCF's call to gatk-api's /bcf-to-vcf.
+    assert len(calls) == 11, f"curl call-site count changed to {len(calls)}; re-audit"
     for call in calls:
         if any(endpoint in call for endpoint in EXEMPT_CURL_ENDPOINTS):
             continue
@@ -239,10 +241,10 @@ def test_guarded_curl_failures_surface_the_server_message():
     """--fail-with-body is only useful if the body and curl's diagnostic get out."""
     text, calls = _curl_call_sites()
     guarded = [call for call in calls if "--fail-with-body" in call]
-    # 8 since Task 9 added MtdnaCall, which is guarded like every other call site
+    # 9: MtdnaCall (Task 9) and BcfToVCF are guarded like every other call site
     # except the two DELIBERATELY EXEMPT ones.
-    assert len(guarded) == 8, f"{len(guarded)} guarded call sites, expected 8"
-    assert text.count("returned an error:") == 8, "each guarded call must echo the body"
+    assert len(guarded) == 9, f"{len(guarded)} guarded call sites, expected 9"
+    assert text.count("returned an error:") == 9, "each guarded call must echo the body"
     # `2>service.log` buried curl's own error in a work-dir file nobody reads; -sS puts
     # it on stderr, where Nextflow picks it up into .command.err and the error report.
     for swallowed in ("2>gatk.log", "2>hla.log", "2>pypgx_bam2vcf.log"):

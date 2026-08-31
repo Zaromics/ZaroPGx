@@ -19,6 +19,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 | Format | Extension | Description | Processing |
 | --- | --- | --- | --- |
 | **VCF** | `.vcf`, `.vcf.gz` | Variant calls | Direct analysis |
+| **BCF** | `.bcf` | Binary variant calls | bcftools (VCF conversion) → Analysis |
 | **BAM** | `.bam` | Aligned reads | HLA typing → Analysis |
 | **CRAM** | `.cram` | Compressed BAM | GATK → HLA typing → Analysis |
 | **SAM** | `.sam` | Text alignment | GATK → HLA typing → Analysis |

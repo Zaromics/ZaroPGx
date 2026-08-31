@@ -113,6 +113,10 @@ class WorkflowProgressCalculator:
 
     STEP_BASE_BANDS: Dict[str, Tuple[int, int]] = {
         "header_analysis": (1, 9),
+        # bcftools in the gatk-api container, before anything else on a BCF. Same
+        # weight as the liftover it may be followed by, and needing a band here for
+        # the same reason -- see that entry below.
+        "bcf_to_vcf": (10, 19),
         # Picard LiftoverVcf in the gatk-api container, before anything else on a
         # GRCh37 VCF. Without a band here _active_ordered_steps() dropped it (it
         # filters on membership of this dict), so `ranges` had no entry, the
@@ -138,6 +142,9 @@ class WorkflowProgressCalculator:
 
     CANONICAL_STEP_ORDER: List[str] = [
         "header_analysis",
+        # Before "liftover": a GRCh37 BCF is converted first and lifted second, and
+        # this list is what _renormalized_ranges() lays the bar out in.
+        "bcf_to_vcf",
         "liftover",
         "gatk_cram_sam_to_bam",
         "hla_typing",
@@ -173,6 +180,10 @@ class WorkflowProgressCalculator:
         needs_mtdna = bool(cfg.get("needs_mtdna", False))
 
         planned: List[str] = ["header_analysis"]
+        # BCF -> VCF first, then the liftover that may follow it: a GRCh37 BCF runs
+        # both, in this order.
+        if bool(cfg.get("needs_conversion", False)):
+            planned.append("bcf_to_vcf")
         if bool(cfg.get("needs_liftover", False)):
             planned.append("liftover")
         if needs_gatk:
@@ -530,9 +541,12 @@ class WorkflowProgressCalculator:
             # needs_liftover counts as needing GATK: Picard LiftoverVcf runs in the
             # gatk-api container and "liftover" maps to WorkflowStage.GATK. Keying
             # on needs_gatk alone called the stage skipped while it was running.
+            # needs_conversion is here for the same reason: the BCF->VCF step runs
+            # in that container too and maps to the same stage.
             WorkflowStage.GATK: not (
                 workflow_config.get("needs_gatk", False)
                 or workflow_config.get("needs_liftover", False)
+                or workflow_config.get("needs_conversion", False)
             ),
             WorkflowStage.HLA: not workflow_config.get("needs_hla", False),
             WorkflowStage.PYPGX: not workflow_config.get("needs_pypgx", True),
@@ -562,6 +576,8 @@ class WorkflowProgressCalculator:
             # needs_liftover=True, so keying on needs_gatk alone announced
             # "Skipping GATK processing" while Picard LiftoverVcf was running --
             # the stage is GATK precisely because the liftover step maps to it.
+            if self._is_step_running(steps, "bcf_to_vcf"):
+                return f"{base_message} - Converting BCF to a bgzipped VCF"
             if self._is_step_running(steps, "liftover"):
                 return f"{base_message} - Lifting GRCh37/hg19 over to GRCh38"
             if cfg.get("needs_gatk", False):

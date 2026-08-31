@@ -14,8 +14,19 @@ LABEL description="GATK 4.7.0.0 service for the ZaroPGx pipeline"
 #
 # samtools is version-pinned because it produces clinical output here. Bump it
 # deliberately, together with the FROM line above; a Debian point release that
-# revises the package will fail this build loudly, which is the intent. bcftools and
-# bedtools are left unpinned: nothing in gatk_api.py invokes them.
+# revises the package will fail this build loudly, which is the intent.
+#
+# bcftools produces clinical output here too and SHOULD be pinned the same way:
+# gatk_api.py shells out to it for the pre-liftover contig rename, for every
+# tabix index it writes, and -- since /bcf-to-vcf -- for the BCF->VCF conversion
+# whose output is what PyPGx and PharmCAT then analyse. (The older claim that
+# "nothing in gatk_api.py invokes bcftools" was already false when the liftover
+# landed.) It is still unpinned only because the exact trixie package version
+# string could not be verified from this workstation, and pinning a guessed
+# version would fail the build outright. Pin it -- `bcftools=<version>` -- the
+# next time this image is built somewhere `apt-cache policy bcftools` can be run.
+#
+# bedtools is genuinely unused: nothing in gatk_api.py invokes it.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
