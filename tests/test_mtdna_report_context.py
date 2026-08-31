@@ -50,10 +50,44 @@ def test_a_named_allele_gets_no_basis_line(tmp_path):
 
 
 def test_region_not_covered_reads_differently_from_no_chrm_data(tmp_path):
-    """Different causes, different remedies -- the reader must be able to tell."""
+    """Different causes, different remedies -- the reader must be able to tell.
+
+    Pins each branch's substantive claim, not just their inequality: many wrong
+    answers are also unequal, so an inequality-only assertion would still pass
+    if region_not_covered silently fell through to the generic fallback (which
+    reads differently from no_chrm_data too, but says nothing about coverage).
+    """
     a = _context(
         tmp_path, {"mt_rnr1": None, "mt_rnr1_no_call_reason": "region_not_covered"}
     )
     b = _context(tmp_path, {"mt_rnr1": None, "mt_rnr1_no_call_reason": "no_chrm_data"})
-    assert a["no_call_reason"]
-    assert a["no_call_reason"] != b["no_call_reason"]
+    region_text = a["no_call_reason"].lower()
+    chrm_text = b["no_call_reason"].lower()
+
+    # Tier D's claim: mitochondrial data IS present, but MT-RNR1 coverage
+    # specifically could not be established -- not "no mtDNA data at all".
+    assert "mitochondrial data is present" in region_text
+    assert "coverage could not be established" in region_text
+    assert "no mitochondrial" not in region_text
+
+    # no_chrm_data's claim: the opposite -- no chrM data anywhere in the file.
+    assert "no" in chrm_text and "mitochondrial" in chrm_text and "chrm" in chrm_text
+    assert "coverage could not be established" not in chrm_text
+
+    assert region_text != chrm_text
+
+
+def test_an_unrecognized_reason_code_hits_the_generic_fallback(tmp_path):
+    """The fallback is its own case, not just a silent escape hatch.
+
+    A result carrying a reason code this report does not recognise (e.g. an
+    older format, or a future sidecar addition) must not be mistaken for one
+    of the named tiers -- it gets the generic, non-specific sentence.
+    """
+    ctx = _context(
+        tmp_path, {"mt_rnr1": None, "mt_rnr1_no_call_reason": "some_future_reason_code"}
+    )
+    text = ctx["no_call_reason"].lower()
+    assert "could not be confirmed as reference" in text
+    assert "mitochondrial data is present" not in text
+    assert "chrm" not in text
