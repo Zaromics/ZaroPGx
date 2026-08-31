@@ -1,6 +1,13 @@
 # Bake targets aligned with compose.yml buildable services used by e2e.
 # Keep contexts/dockerfiles/args in sync with compose.yml when those change.
 # Pre-built Hub images (db, kroki, …) are not baked — compose pulls them.
+#
+# mtdna is intentionally NOT a bake target and is NOT in e2e's SERVICES list
+# (scripts/e2e-up.sh): its image (built FROM upstream's
+# quay.io/genepi/mtdna-server-2:v2.1.16) is ~4.5 GB and would exhaust a
+# GitHub Actions runner's disk. compose.e2e.yml sets MTDNA_ENABLED=false on
+# the app service to match. Do not add an mtdna bake target without solving
+# the disk-budget problem first.
 
 variable "ZAROPGX_TAG" {
   default = "0.2.8"

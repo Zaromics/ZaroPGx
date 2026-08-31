@@ -8,6 +8,15 @@ services:
       # Prevents sync Chromium renders from starving /health and GET /jobs.
       - KROKI_ENABLED=false
       - KROKI_TIMEOUT=5
+      # The mtdna sidecar is deliberately excluded from e2e's SERVICES list
+      # (scripts/e2e-up.sh) and from docker-bake.hcl: its image is built FROM
+      # upstream's quay.io/genepi/mtdna-server-2:v2.1.16 and weighs ~4.5 GB,
+      # which would exhaust a GitHub Actions runner's disk budget. With the
+      # service absent, leaving MTDNA_ENABLED at its app default (true) makes
+      # every pipeline run's MtdnaCall step curl a host that never resolves
+      # and fail. So: mtDNA is NOT covered by e2e in CI — it is verified
+      # locally against the real stack instead.
+      - MTDNA_ENABLED=false
   db:
     ports: !reset []
   genome-downloader:
