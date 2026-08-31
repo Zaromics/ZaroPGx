@@ -1173,6 +1173,12 @@
                 <tr><th>Phenotype</th><td>{{ mtdna.phenotype or '–' }}</td></tr>
             </tbody>
         </table>
+        {% if mtdna.call_basis_text %}
+            {# How a Reference call was established -- measured or inferred.
+               A named allele carries no such line: the variant is its own
+               evidence, and a basis sentence beside it would be noise. #}
+            <p class="header-note">{{ mtdna.call_basis_text }}</p>
+        {% endif %}
         {% if not mtdna.mt_rnr1 and mtdna.no_call_reason %}
             {# Say why, rather than leaving the reader to guess at an empty row --
                an unexplained empty cell is the thing this whole effort removes. #}

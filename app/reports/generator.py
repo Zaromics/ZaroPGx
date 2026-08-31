@@ -37,11 +37,15 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 
 from app.core.version_manager import get_all_versions, get_versions_dict
 from app.mtdna.mt_rnr1 import (
+    BASIS_INFERRED,
+    BASIS_MEASURED,
     NO_CALL_COVERAGE_BELOW_FLOOR,
     NO_CALL_COVERAGE_UNKNOWN,
     NO_CALL_NO_CHRM_DATA,
     NO_CALL_NOT_CONSENTED,
+    NO_CALL_REGION_NOT_COVERED,
     NO_CALL_UNRESOLVED_961_DELINS,
+    REFERENCE,
 )
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
 from app.pharmcat.report_json import (
@@ -756,12 +760,25 @@ def mtdna_report_context(
         deliberately unmatchable, m.961T>del+Cn (NO_CALL_UNRESOLVED_961_DELINS);
       - alignment input (BAM/CRAM/FASTQ): mean coverage across MT-RNR1 fell
         below the MIN_MEAN_COVERAGE floor (NO_CALL_COVERAGE_BELOW_FLOOR) or
-        could not be computed at all (NO_CALL_COVERAGE_UNKNOWN).
+        could not be computed at all (NO_CALL_COVERAGE_UNKNOWN);
+      - VCF input, chrM data present: mitochondrial data is present but
+        nothing established that MT-RNR1 itself was interrogated -- an empty
+        match with no in-gene variant, or one with no clean haplogroup to
+        back it (NO_CALL_REGION_NOT_COVERED). Distinct from
+        NO_CALL_NO_CHRM_DATA (no chrM data at all): the two suggest different
+        remedies to the reader.
     A result produced before this reason code existed, or carrying an
     unrecognised one, falls back to a generic explanation rather than
     re-deriving the reason from indirect signals (e.g. "mean_coverage" being
     a key at all) -- that re-derivation is exactly the bug this replaced:
     it could not tell "no chrM data" apart from "consent not given".
+
+    When "mt_rnr1" resolved to Reference, "evidence_basis" (set by the
+    sidecar's resolve_mt_rnr1_call, via app/mtdna/mt_rnr1.py's
+    BASIS_MEASURED / BASIS_INFERRED) says how: a real depth measurement over
+    the gene, or Tier C's in-gene-variant-plus-clean-haplogroup inference.
+    That distinction becomes "call_basis_text" here -- a named allele gets
+    no such line, since the variant is its own evidence.
 
     Never raises: a report with a malformed or unreadable mtdna_result.json
     renders no mtDNA section, the same as a run that never called it.
@@ -814,6 +831,11 @@ def mtdna_report_context(
                 "the gene could not be determined, so the absence could not "
                 "be confirmed as Reference."
             )
+        elif reason_code == NO_CALL_REGION_NOT_COVERED:
+            no_call_reason = (
+                "No call — mitochondrial data is present, but MT-RNR1 "
+                "coverage could not be established from this file."
+            )
         else:
             # Defensive fallback only -- a result missing this reason code
             # (older format) or carrying one this report does not recognise.
@@ -823,6 +845,26 @@ def mtdna_report_context(
             no_call_reason = (
                 "No MT-RNR1 variant was detected, and it could not be "
                 "confirmed as Reference."
+            )
+
+    # How a Reference call was established -- only meaningful alongside
+    # Reference itself. A named allele needs no basis line (the variant is
+    # its own evidence), and a no-call has nothing to describe.
+    call_basis_text = None
+    if mt_rnr1 == REFERENCE:
+        basis = raw.get("evidence_basis")
+        if basis == BASIS_MEASURED:
+            coverage = raw.get("mean_coverage")
+            if coverage is not None:
+                call_basis_text = (
+                    "Reference — mitochondrial coverage measured at "
+                    f"{coverage:.0f}x across MT-RNR1."
+                )
+        elif basis == BASIS_INFERRED:
+            call_basis_text = (
+                "Reference — inferred: mitochondrial variants were called "
+                "within MT-RNR1 and no expected haplogroup marker was "
+                "missing."
             )
 
     phenotype = None
@@ -838,6 +880,7 @@ def mtdna_report_context(
         "mt_rnr1": mt_rnr1,
         "phenotype": phenotype,
         "no_call_reason": no_call_reason,
+        "call_basis_text": call_basis_text,
         "all_matches": raw.get("mt_rnr1_all_matches") or [],
     }
 
