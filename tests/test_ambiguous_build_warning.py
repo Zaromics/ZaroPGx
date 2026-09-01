@@ -407,7 +407,7 @@ def test_analyze_file_threads_alignment_ambiguity_into_file_analysis(
     path = tmp_path / "sample.bam"
     path.write_bytes(b"not a real bam -- inspect_header is stubbed below")
 
-    def _fake_inspect_header(filepath):
+    def _fake_inspect_header(filepath, **kwargs):
         return {
             "metadata": {
                 "reference_genome": None,
@@ -433,7 +433,7 @@ def test_analyze_file_unambiguous_alignment_leaves_fields_false(monkeypatch, tmp
     path = tmp_path / "sample.bam"
     path.write_bytes(b"not a real bam -- inspect_header is stubbed below")
 
-    def _fake_inspect_header(filepath):
+    def _fake_inspect_header(filepath, **kwargs):
         return {
             "metadata": {
                 "reference_genome": "GRCh38",

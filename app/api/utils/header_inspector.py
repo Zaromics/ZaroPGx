@@ -344,8 +344,33 @@ def detect_reference_assembly(header_records=None, contig_lengths=None) -> Dict:
     }
 
 
+# Every format string the dispatch in inspect_header below actually branches on.
+# Kept beside that dispatch because it exists only to answer "did the suffix tell
+# us anything usable?" -- if a branch there gains a format, add it here too, or a
+# caller's format_hint will override a suffix this module can in fact handle.
+DISPATCHABLE_FORMATS = frozenset(
+    {
+        ".vcf",
+        ".bcf",
+        ".gvcf",
+        ".bam",
+        ".sam",
+        ".cram",
+        ".fastq",
+        ".fq",
+        ".fasta",
+        ".fa",
+        ".fas",
+        ".fna",
+    }
+)
+
+
 def inspect_header(
-    filepath: str, max_bytes: Optional[int] = None, timeout_sec: Optional[int] = None
+    filepath: str,
+    max_bytes: Optional[int] = None,
+    timeout_sec: Optional[int] = None,
+    format_hint: Optional[str] = None,
 ) -> Dict:
     """
     Inspect genomic file header and return normalized JSON:
@@ -381,8 +406,30 @@ def inspect_header(
         if time.time() - start_time > timeout_sec:
             raise TimeoutError(f"Header inspection exceeded {timeout_sec}s")
 
-    # Determine format via existing helper
+    # Determine format from the path suffix, with the caller's answer as fallback.
+    #
+    # _get_file_format reads the suffix and nothing else, and the suffix is not
+    # always there to read: safe_upload_basename runs the stored name through
+    # werkzeug's secure_filename, which DROPS non-ASCII characters -- so
+    # "obrazets.vcf" spelled in Cyrillic is stored as `upload_vcf`, extension
+    # consumed into the basename, no suffix left. This function then dispatched to
+    # no inspector at all, returned no header, and the caller read
+    # reference_genome="unknown".
+    #
+    # That is not a cosmetic loss. Every build-keyed decision reads that value, so
+    # a GRCh37 VCF stopped being lifted and was analysed on GRCh38 coordinates, a
+    # T2T-CHM13 VCF stopped being refused, and the self-contradicting-header
+    # warning stopped firing -- each silently, on a file whose only peculiarity
+    # was a non-Latin name. FileProcessor._detect_file_type has already decided
+    # the real type by this point (it sniffs content, not just the name), so it
+    # passes that answer in.
+    #
+    # Fallback rather than override, deliberately: for a normally-named file the
+    # suffix and the hint agree, so preferring the suffix leaves this function's
+    # behaviour for every existing caller exactly as it was.
     file_format = inspector._get_file_format(filepath)
+    if format_hint and file_format not in DISPATCHABLE_FORMATS:
+        file_format = format_hint
     _ensure_time()
 
     # Dispatch to specific inspectors with minimal I/O

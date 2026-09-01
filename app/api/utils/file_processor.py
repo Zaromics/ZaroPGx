@@ -456,6 +456,28 @@ def _detect_consumer_array(file_path: Path) -> Optional[FileType]:
 INDEX_FILE_SUFFIXES = (".bai", ".crai", ".csi", ".tbi", ".idx")
 
 
+# What to tell inspect_header when the stored filename has no usable suffix to
+# dispatch on. Keys are what _detect_file_type answers; values are the format
+# strings inspect_header's dispatch branches on.
+#
+# GVCF maps to ".vcf" because a gVCF IS VCF-shaped -- the inspector has no gVCF
+# branch and needs none, since what we want from it here is the header (build,
+# contigs, sample count), which it reads the same way for both. The gVCF/VCF
+# distinction is _detect_file_type's job and is already made by the time this
+# table is read. BED and the array formats are absent because the inspector has
+# no branch for them, so a hint would buy nothing.
+_HEADER_FORMAT_HINTS = {
+    FileType.VCF: ".vcf",
+    FileType.GVCF: ".vcf",
+    FileType.BCF: ".bcf",
+    FileType.BAM: ".bam",
+    FileType.CRAM: ".cram",
+    FileType.SAM: ".sam",
+    FileType.FASTQ: ".fastq",
+    FileType.FASTA: ".fasta",
+}
+
+
 @dataclass
 class FileAnalysis:
     file_type: FileType
@@ -654,7 +676,18 @@ class FileProcessor:
             reference_genome_candidates: List[str] = []
             alignment_reference_genome: Optional[str] = None
             try:
-                normalized = inspect_header(str(file_path))
+                # Hand the inspector the type we just decided, so a stored name
+                # with no usable suffix still gets its header read. See
+                # inspect_header's own note: safe_upload_basename drops non-ASCII
+                # characters, so a Cyrillic- or CJK-named VCF is stored as
+                # `upload_vcf` with nothing after the underscore, the inspector
+                # dispatched on the empty suffix and read no header, and every
+                # build-keyed decision downstream -- liftover, the T2T refusal,
+                # the contradictory-header warning -- silently saw
+                # reference_genome="unknown".
+                normalized = inspect_header(
+                    str(file_path), format_hint=_HEADER_FORMAT_HINTS.get(file_type)
+                )
                 # Map normalized structure to VCFHeaderInfo when applicable
                 if file_type in (
                     FileType.VCF,

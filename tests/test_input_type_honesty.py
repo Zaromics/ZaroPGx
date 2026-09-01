@@ -691,19 +691,32 @@ CYRILLIC_STEM = "образец"
     ],
     ids=["stem-stripped", "stem-stripped.gz"],
 )
-def test_a_gvcf_is_refused_even_when_its_name_does_not_survive(upload, name, payload):
-    """ "Rejected whatever it is named" has to mean it.
+def test_a_gvcf_gets_the_same_verdict_whatever_it_is_named(upload, name, payload):
+    """The verdict has to come from the file, not from the filename.
 
     The stored path is what ``_detect_file_type`` sees, and sanitising the client's
     filename can leave it with no recognisable extension at all. The header is the only
     evidence that survives that, so it is consulted on the content-sniff path too — not
     just when the name already says "VCF".
+
+    This test used to assert a flat 400, and passed for the wrong reason: with the
+    extension gone, ``inspect_header`` dispatched on an empty suffix, read no header,
+    and the flavour check could not confirm ``##GVCFBlock``, so the file was refused as
+    "flavour unconfirmed". The identical bytes under an ASCII name were accepted by
+    ``test_a_gatk_gvcf_reaches_the_pipeline_instead_of_a_refusal`` — so the suite
+    asserted both verdicts for one file and called the disagreement a pin. What was
+    really being pinned was a Cyrillic-named upload taking a different lane from a
+    Latin-named one.
+
+    ``inspect_header`` now takes the type ``_detect_file_type`` already determined, so
+    the header is read either way, and the assertion is the one the docstring always
+    meant: same bytes, same answer.
     """
     resp = upload(name, payload)
 
-    assert resp.status_code == 400, resp.text
-    assert "gvcf" in resp.json()["detail"].lower()
-    assert upload.created_patients == []
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["file_type"] == "gvcf"
+    assert upload.created_patients, "an accepted upload must reach a patient row"
 
 
 @pytest.mark.parametrize(
