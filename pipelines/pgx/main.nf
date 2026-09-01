@@ -12,6 +12,7 @@ nextflow.enable.dsl=2
     VCF -> PyPGx -> PharmCAT (quick pipeline, no HLA)
     GRCh37/hg19 VCF -> GATK LiftoverVcf (via gatk-api) -> GRCh38 VCF -> PyPGx -> PharmCAT
     BCF -> bcftools view (via gatk-api) -> bgzipped VCF -> the vcf lane above, liftover included
+    gVCF -> GATK GenotypeGVCFs x2 (via gatk-api) -> plain bgzipped VCF -> the vcf lane above
 
   Inputs/Outputs are file-path based; integration with FastAPI will pass params.
 
@@ -28,7 +29,7 @@ nextflow.enable.dsl=2
 */
 
 params.input          = params.input ?: ''
-params.input_type     = params.input_type ?: ''  // vcf|bcf|bam|cram|sam|fastq
+params.input_type     = params.input_type ?: ''  // vcf|bcf|gvcf|bam|cram|sam|fastq
 params.patient_id     = params.patient_id ?: ''
 params.report_id      = params.report_id ?: ''
 params.reference      = params.reference ?: 'hg38'
@@ -36,9 +37,10 @@ params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 // skip_gatk covers the conversions that run inside the gatk-api container
-// (FastqToBAM/CramToBAM/SamToBAM, and BcfToVCF). It is a no-op for vcf/bam input (no
-// gatk-api process is invoked) and rejected for fastq/cram/sam/bcf, where there is no
-// other route to a file the rest of the pipeline can read - see the guard below.
+// (FastqToBAM/CramToBAM/SamToBAM, BcfToVCF and GVCFToVCF). It is a no-op for vcf/bam
+// input (no gatk-api process is invoked) and rejected for fastq/cram/sam/bcf/gvcf, where
+// there is no other route to a file the rest of the pipeline can read - see the guard
+// below.
 params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
 // skip_report is the ZaroPGx custom-report toggle. It is honoured, but app-side,
 // not here: no process in this pipeline reads the param below. It is carried this
@@ -425,6 +427,63 @@ PY
     '''
 }
 
+// gVCF -> plain genotyped bgzipped VCF, via gatk-api's GATK GenotypeGVCFs endpoint.
+// Not a re-encode like BcfToVCF above: PharmCAT 3.4.0 DETECTS and REFUSES a gVCF (by
+// filename, by ##GVCFBlock header, or by a reference-block data row), so the bytes have
+// to stop being a gVCF's. Two GenotypeGVCFs passes joined with `bcftools concat -a`:
+// PharmCAT's own positions emitted with --include-non-variant-sites, so the hom-ref
+// calls at PGx loci are the gVCF's own reference-confidence data rather than PharmCAT's
+// --absent-to-ref fabrication, plus every other variant for PyPGx and the mtDNA sidecar.
+// The endpoint refuses (HTTP 4xx/5xx -> --fail-with-body -> run failure) rather than
+// returning a file it cannot vouch for as non-empty BGZF with at least one record.
+process GVCFToVCF {
+    tag "gvcf2vcf_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path gvcf
+    val patient_id
+    val report_id
+    val reference
+    val outdir
+
+    output:
+    // A fixed name, for the same reason BcfToVCF and LiftoverVCF use one: a bare
+    // `*.vcf.gz` glob would also match the staged input. It must also never be
+    // `*.g.vcf*` -- PharmCAT condemns that filename as a gVCF whatever the content --
+    // which is a second reason not to derive it from the upload's name.
+    path "genotyped.vcf.gz", emit: vcf
+    path "genotyped.vcf.gz.tbi", optional: true, emit: tbi
+
+    shell:
+    '''
+    set -euo pipefail
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{gvcf} )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gvcf_to_vcf )
+    fi
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/gvcf-to-vcf > gvcf_response.json; then
+      echo "gatk-api /gvcf-to-vcf returned an error:" >&2
+      cat gvcf_response.json >&2 || true
+      exit 1
+    fi
+    VCF_PATH=$(python3 - <<'PY'
+import json
+data = json.load(open('gvcf_response.json'))
+print(data.get('vcf_path') or data.get('vcf') or '')
+PY
+)
+    if [ -z "$VCF_PATH" ]; then
+      echo "gvcf-to-vcf response carried no vcf_path" >&2
+      cat gvcf_response.json >&2 || true
+      exit 1
+    fi
+    cp "$VCF_PATH" genotyped.vcf.gz
+    # Bring the tabix index along if the sidecar made one (downstream re-indexes otherwise).
+    [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" genotyped.vcf.gz.tbi || true
+    '''
+}
+
 // GRCh37/hg19 VCF -> GRCh38 VCF, via gatk-api's Picard LiftoverVcf endpoint.
 // Real coordinate conversion, not a contig rename - the sidecar normalises contig
 // naming to match the UCSC chain, runs LiftoverVcf against the GRCh38 reference,
@@ -448,8 +507,9 @@ process LiftoverVCF {
     // A fixed name, deliberately NOT a bare `*.vcf.gz` glob: the staged INPUT can
     // itself be a .vcf.gz, and a glob would emit input and output both - sending
     // the un-lifted GRCh37 file downstream alongside the lifted one. The staged
-    // input can never collide with this name: an upload stages as `upload_*`, and
-    // a BCF that came through BcfToVCF above stages as `converted.vcf.gz`.
+    // input can never collide with this name: an upload stages as `upload_*`, a BCF
+    // that came through BcfToVCF above stages as `converted.vcf.gz`, and a gVCF that
+    // came through GVCFToVCF stages as `genotyped.vcf.gz`.
     path "lifted.grch38.vcf.gz", emit: vcf
     path "lifted.grch38.vcf.gz.tbi", optional: true, emit: tbi
 
@@ -537,13 +597,13 @@ process PyPGxGenotypeAll {
     val patient_id
     val report_id
     // The type of the file PyPGx is actually handed, which is NOT always
-    // params.input_type: a `bcf` run reaches here holding the converted VCF, and
-    // docker/pypgx's determine_pypgx_gene_set() branches on this value (VCF input
-    // prefers PharmCAT's calls for overlapping genes, everything else prefers
-    // PyPGx's). Telling it "bcf" would give the same call set a different gene
-    // selection than the identical VCF gets, from a lossless re-encode. Passed as
-    // a val input rather than read off params inside the shell block, because the
-    // corrected value only exists in the workflow body.
+    // params.input_type: a `bcf` or `gvcf` run reaches here holding the converted
+    // VCF, and docker/pypgx's determine_pypgx_gene_set() branches on this value (VCF
+    // input prefers PharmCAT's calls for overlapping genes, everything else prefers
+    // PyPGx's). Telling it "bcf"/"gvcf" would give the same call set a different gene
+    // selection than the identical VCF gets. Passed as a val input rather than read
+    // off params inside the shell block, because the corrected value only exists in
+    // the workflow body.
     val input_type
     val reference
     val outdir
@@ -678,16 +738,16 @@ process PharmCATRun {
 workflow {
     main:
     assert params.input : 'Missing --input path'
-    assert params.input_type : 'Missing --input_type (vcf|bcf|bam|cram|sam|fastq)'
+    assert params.input_type : 'Missing --input_type (vcf|bcf|gvcf|bam|cram|sam|fastq)'
 
-    // GATK gate. fastq/cram/sam only reach a BAM, and bcf only reaches a readable
+    // GATK gate. fastq/cram/sam only reach a BAM, and bcf/gvcf only reach a readable
     // VCF, through the gatk-api container, so gating FastqToBAM/CramToBAM/SamToBAM/
-    // BcfToVCF off would leave bam_ch (or vcf_ch) empty and starve every downstream
-    // channel - the pipeline would "succeed" having produced nothing, which is worse
-    // than the silent-override it replaces. Refuse the combination instead. For
+    // BcfToVCF/GVCFToVCF off would leave bam_ch (or vcf_ch) empty and starve every
+    // downstream channel - the pipeline would "succeed" having produced nothing, which
+    // is worse than the silent-override it replaces. Refuse the combination instead. For
     // vcf/bam input no gatk-api process runs at all, so skip_gatk is correctly a
     // no-op there.
-    if (params.skip_gatk && ['fastq', 'cram', 'sam', 'bcf'].contains(params.input_type)) {
+    if (params.skip_gatk && ['fastq', 'cram', 'sam', 'bcf', 'gvcf'].contains(params.input_type)) {
         error(
             "--skip_gatk is not compatible with --input_type ${params.input_type}: " +
             "converting ${params.input_type} into something the rest of the pipeline " +
@@ -785,20 +845,31 @@ workflow {
             vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
         }
     }
-    // For VCF and BCF: quick pipeline, no HLA. A BCF is re-encoded to a bgzipped VCF
-    // first (BcfToVCF), because everything downstream gates on the filename; from
-    // there it is the same lane as a VCF upload, liftover included. A GRCh37/hg19
-    // file is lifted over to GRCh38 next; everything downstream (PyPGx, PharmCAT) is
-    // GRCh38-only, so skipping that step would analyse it on the wrong coordinates.
-    // The two share one branch deliberately: a BCF is a VCF once converted, and a
-    // second copy of the liftover decision is a second copy to drift.
-    else if (params.input_type in ['vcf', 'bcf']) {
+    // For VCF, BCF and gVCF: quick pipeline, no HLA. A BCF is re-encoded to a bgzipped
+    // VCF first (BcfToVCF) because everything downstream gates on the filename; a gVCF
+    // is GENOTYPED into a plain VCF first (GVCFToVCF) because PharmCAT detects and
+    // refuses a gVCF outright. From there both are the same lane as a VCF upload,
+    // liftover included. A GRCh37/hg19 file is lifted over to GRCh38 next; everything
+    // downstream (PyPGx, PharmCAT) is GRCh38-only, so skipping that step would analyse
+    // it on the wrong coordinates. The three share one branch deliberately: each of the
+    // other two IS a VCF once converted, and a second copy of the liftover decision is a
+    // second copy to drift.
+    //
+    // The liftover is unreachable on the gvcf arm today and that is not an oversight: a
+    // GRCh37 gVCF is refused at upload, because PharmCAT's position list -- the interval
+    // list GVCFToVCF emits its reference calls over -- exists in GRCh38 coordinates
+    // only. The arm is written as part of the shared branch anyway rather than special-
+    // cased, so that if a GRCh37 interval list is ever staged the order is already
+    // genotype-then-lift, which is the only correct order.
+    else if (params.input_type in ['vcf', 'bcf', 'gvcf']) {
         // Assigned without `def` on purpose: the mtDNA wiring below reads it, and a
         // `def` here would scope it to this branch. Same pattern as vcf_ch/bam_ch.
         // .first() makes it reusable by that second consumer -- see input_ch's
         // comment above for why a plain queue channel cannot feed two.
         if (params.input_type == 'bcf') {
             converted_vcf_ch = BcfToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
+        } else if (params.input_type == 'gvcf') {
+            converted_vcf_ch = GVCFToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
         } else {
             converted_vcf_ch = input_ch
         }
@@ -818,7 +889,7 @@ workflow {
         hla_ch = empty_file_ch
     }
     else {
-        error "Unsupported input type: ${params.input_type}. Supported: vcf, bcf, bam, cram, sam, fastq"
+        error "Unsupported input type: ${params.input_type}. Supported: vcf, bcf, gvcf, bam, cram, sam, fastq"
     }
 
     // mtDNA calling. Which channel feeds it depends on input type:
@@ -828,14 +899,16 @@ workflow {
     //     pushing it through that chain shifts positions by 2 inside MT-RNR1 and
     //     would report a pathogenic m.1555A>G at 1553. The sidecar does its own
     //     build-appropriate normalisation from the untouched input instead.
-    //   - bcf: the CONVERTED but NOT LIFTED VCF (converted_vcf_ch). That file is
-    //     this lane's equivalent of "the original upload" -- BcfToVCF only re-encodes
-    //     the same records, so its chrM coordinates are exactly the upload's, while
-    //     the liftover that may follow is the very step the paragraph above says the
-    //     sidecar must not see. It is sent as mtdna_input_type 'vcf', because that
-    //     is what the sidecar is now holding. Sending the raw .bcf instead would
-    //     hand the sidecar a file it reads by name, the same trap this whole lane
-    //     exists to avoid.
+    //   - bcf/gvcf: the CONVERTED but NOT LIFTED VCF (converted_vcf_ch). That file is
+    //     these lanes' equivalent of "the original upload" -- BcfToVCF only re-encodes
+    //     the same records and GVCFToVCF only genotypes them, so its chrM coordinates
+    //     are exactly the upload's, while the liftover that may follow is the very step
+    //     the paragraph above says the sidecar must not see. It is sent as
+    //     mtdna_input_type 'vcf', because that is what the sidecar is now holding.
+    //     Sending the raw .bcf/.g.vcf.gz instead would hand the sidecar a file it reads
+    //     by name, the same trap this whole lane exists to avoid. (chrM survives the
+    //     gVCF conversion: pharmcat_positions.vcf carries no chrM at all -- see
+    //     app/mtdna/mt_rnr1.py -- so every chrM variant lands in GVCFToVCF's -XL pass.)
     //   - bam/cram/sam/fastq: the already-CONVERTED BAM (bam_ch, or input_ch
     //     itself for 'bam' input, which needs no conversion) -- never the raw
     //     cram/sam/fastq upload. There is no liftover concern on these paths, the
@@ -852,12 +925,12 @@ workflow {
     } else {
         if (params.input_type in ['fastq', 'cram', 'sam']) {
             mtdna_variants_ch = bam_ch
-        } else if (params.input_type == 'bcf') {
+        } else if (params.input_type in ['bcf', 'gvcf']) {
             mtdna_variants_ch = converted_vcf_ch
         } else {
             mtdna_variants_ch = input_ch
         }
-        mtdna_input_type = (params.input_type in ['vcf', 'bcf']) ? 'vcf' : 'bam'
+        mtdna_input_type = (params.input_type in ['vcf', 'bcf', 'gvcf']) ? 'vcf' : 'bam'
         mtdna_result = MtdnaCall(
             mtdna_variants_ch,
             patient_id_ch,
@@ -874,12 +947,13 @@ workflow {
         mtdna_outside = mtdna_result.mtdna.ifEmpty(empty_file_ch)
     }
 
-    // What the file PyPGx and the HLA wiring see actually is. For a `bcf` run that is
-    // a VCF by this point (BcfToVCF re-encoded it above), and saying otherwise would
-    // give the same variants a different PyPGx gene set - see PyPGxGenotypeAll's
-    // `input_type` input - and would send the vcf lane's `hla_ch` (a plain path, not a
-    // channel) down the `.ifEmpty()` arm below, which only a channel has.
-    analysed_input_type = (params.input_type == 'bcf') ? 'vcf' : params.input_type
+    // What the file PyPGx and the HLA wiring see actually is. For a `bcf` or `gvcf` run
+    // that is a VCF by this point (BcfToVCF re-encoded it above; GVCFToVCF genotyped
+    // it), and saying otherwise would give the same variants a different PyPGx gene set
+    // - see PyPGxGenotypeAll's `input_type` input - and would send the vcf lane's
+    // `hla_ch` (a plain path, not a channel) down the `.ifEmpty()` arm below, which only
+    // a channel has.
+    analysed_input_type = (params.input_type in ['bcf', 'gvcf']) ? 'vcf' : params.input_type
 
     // Run PyPGx genotyping on VCF (if enabled)
     if (params.skip_pypgx) {

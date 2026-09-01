@@ -14,19 +14,23 @@ class StepTemplate:
     container_name: str
     when: Optional[str] = None  # WorkflowOptions field name, or None = always
     # A second WorkflowOptions field name that VETOES the step when truthy, checked
-    # after `when`. Exists because two different conversions share one flag:
-    # FileProcessor.determine_workflow sets needs_gatk for CRAM, SAM *and* BCF, but a
-    # BCF's gatk-api work is bcf_to_vcf, not the CRAM/SAM->BAM conversion. Gating
-    # gatk_cram_sam_to_bam on needs_gatk alone would mint it onto every BCF job, where
-    # no process ever posts it -- the same [pending]-forever symptom this file's
-    # comments keep recording, arrived at from the opposite direction. Kept as a plain
-    # field name rather than a predicate so the recipe stays declarative and
-    # serialisable. NOTE: the read-only recipe API
+    # after `when`. Exists because different conversions share one flag:
+    # FileProcessor.determine_workflow sets needs_gatk for CRAM, SAM, BCF *and* gVCF,
+    # but a BCF's gatk-api work is bcf_to_vcf and a gVCF's is gvcf_to_vcf, not the
+    # CRAM/SAM->BAM conversion. Gating gatk_cram_sam_to_bam on needs_gatk alone would
+    # mint it onto every BCF and gVCF job, where no process ever posts it -- the same
+    # [pending]-forever symptom this file's comments keep recording, arrived at from
+    # the opposite direction. It is used a second time to split needs_conversion
+    # between the two VCF-lane conversions. Kept as a plain field name rather than a
+    # predicate so the recipe stays declarative and serialisable. NOTE: the read-only
+    # recipe API
     # (app/api/routes/workflow_recipe_router.py) still emits only step_name /
-    # container_name / when, so a client reading it sees this step as gated on
-    # needs_gatk alone. Harmless today -- nothing consumes that endpoint to decide
-    # anything -- but add "unless" there (and to models.WorkflowStepTemplate) before
-    # anything starts planning from it.
+    # container_name / when, so a client reading it sees every step that uses this
+    # field as gated on its `when` alone. Harmless today -- nothing consumes that
+    # endpoint to decide anything -- but add "unless" there (and to
+    # models.WorkflowStepTemplate) before anything starts planning from it. Two
+    # templates rely on it now (gatk_cram_sam_to_bam and bcf_to_vcf), so the gap is
+    # wider than when it was written.
     unless: Optional[str] = None
 
 
@@ -52,6 +56,7 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         "needs_mtdna",
         "needs_report",
         "needs_conversion",
+        "needs_gvcf_genotyping",
         "needs_liftover",
         "is_provisional",
         "unsupported",
@@ -66,13 +71,39 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         # because a GRCh37 BCF is converted and *then* lifted; the liftover only ever
         # sees the VCF this step produced.
         #
-        # needs_conversion means one thing only: a BCF that /bcf-to-vcf will convert.
-        # The 23andMe branch of FileProcessor.determine_workflow used to set it too,
-        # for a conversion that has never existed -- harmless while nothing read the
-        # flag, and a mint-a-step-nobody-posts bug the moment this template landed.
-        # That branch no longer sets it. Keep it that way: a flag that names a step
-        # must only be set by an input that step can actually finish.
-        StepTemplate("bcf_to_vcf", "gatk-api", when="needs_conversion"),
+        # needs_conversion means "a gatk-api conversion into the VCF lane". It meant
+        # "a BCF" and nothing else until the gVCF lane landed; it was WIDENED rather
+        # than left alone with a third independent flag beside it, because the
+        # gatk_cram_sam_to_bam veto below is `unless="needs_conversion"` and a
+        # conversion flag that veto does not know about mints that step onto a job no
+        # process posts it for -- the [pending]-forever failure this file's comments
+        # keep recording. One general flag, vetoed once; the specific converter is
+        # chosen by needs_gvcf_genotyping.
+        #
+        # The 23andMe branch of FileProcessor.determine_workflow used to set
+        # needs_conversion too, for a conversion that has never existed -- harmless
+        # while nothing read the flag, and a mint-a-step-nobody-posts bug the moment
+        # this template landed. That branch no longer sets it. Keep it that way: a flag
+        # that names a step must only be set by an input that step can actually finish.
+        # The two gVCF refusals (_refuse_non_gatk_gvcf, _refuse_grch37_gvcf) follow the
+        # same rule and set neither flag.
+        StepTemplate(
+            "bcf_to_vcf",
+            "gatk-api",
+            when="needs_conversion",
+            unless="needs_gvcf_genotyping",
+        ),
+        # gVCF -> plain genotyped VCF via gatk-api's GATK GenotypeGVCFs endpoint
+        # (/gvcf-to-vcf). Registered for the same reason as every conversion here --
+        # main.nf's GVCFToVCF process posts step_name=gvcf_to_vcf, and a step name with
+        # no template is never minted onto the Job, so the sidecar's status update 404s
+        # and the UI hangs that step at [pending] forever.
+        #
+        # It never co-occurs with bcf_to_vcf (a job has one input type, and the two
+        # flags are set by mutually exclusive branches), so the pair above and here is
+        # a two-armed switch rather than an ordering. Both sit before "liftover" for
+        # the same reason: a file that needs converting is converted and THEN lifted.
+        StepTemplate("gvcf_to_vcf", "gatk-api", when="needs_gvcf_genotyping"),
         # GRCh37/hg19 VCF -> GRCh38 via gatk-api's Picard LiftoverVcf. Registered
         # here because main.nf's LiftoverVCF process posts step_name=liftover to the
         # JobClient: a step name with no template is never minted onto the Job, so
@@ -92,9 +123,9 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         # because a job has one input type, so only one of those processes can ever run.
         #
         # unless="needs_conversion" is load-bearing: determine_workflow sets needs_gatk
-        # for BCF too (its /bcf-to-vcf work runs in the same container), and without the
-        # veto every BCF job would mint this step as well as bcf_to_vcf and hang on the
-        # one no process posts.
+        # for BCF and gVCF too (their /bcf-to-vcf and /gvcf-to-vcf work runs in the same
+        # container), and without the veto every such job would mint this step as well
+        # as its own conversion and hang on the one no process posts.
         #
         # Ordered after the VCF-lane conversions and before hla_typing/pypgx_bam2vcf: the
         # BAM this produces is what OptiType and PyPGx are handed. It never co-occurs

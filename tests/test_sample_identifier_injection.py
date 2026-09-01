@@ -113,6 +113,7 @@ EXPECTED_INTERPOLATIONS = {
     "bcf",
     "cram",
     "fastq",
+    "gvcf",
     "sam",
     "vcf",
     "variants_file",

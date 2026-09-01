@@ -256,9 +256,9 @@ def test_gatk_api_upload_sites_no_longer_buffer_whole_file(gatk_api_source):
         "gatk_api.py reads an entire upload into memory with a bare "
         "await file.read(); every save site must stream via UPLOAD_CHUNK_BYTES"
     )
-    # /variant-call, /cram-to-bam, /sam-to-bam, /liftover-vcf, /bcf-to-vcf: one
-    # chunked read loop each.
-    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 5
+    # /variant-call, /cram-to-bam, /sam-to-bam, /liftover-vcf, /bcf-to-vcf,
+    # /gvcf-to-vcf: one chunked read loop each.
+    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 6
 
 
 def test_pypgx_upload_sites_no_longer_buffer_whole_file(pypgx_source):
@@ -657,10 +657,10 @@ def test_to_thread_semaphore_caps_concurrency(gatk_api):
 
 def test_to_thread_semaphore_wraps_the_heavy_call_sites():
     """Every heavy to_thread() call - cram_to_bam and sam_to_bam's
-    convert_to_indexed_bam, liftover_vcf's run_liftover_pipeline, and
-    bcf_to_vcf's convert_bcf_to_vcf - must sit inside
-    `async with _to_thread_semaphore:` -- a semaphore that exists but does not
-    wrap the call site it was added for caps nothing.
+    convert_to_indexed_bam, liftover_vcf's run_liftover_pipeline,
+    bcf_to_vcf's convert_bcf_to_vcf and gvcf_to_vcf's convert_gvcf_to_vcf - must
+    sit inside `async with _to_thread_semaphore:` -- a semaphore that exists but
+    does not wrap the call site it was added for caps nothing.
     """
     tree = ast.parse(
         GATK_API_SOURCE.read_text(encoding="utf-8"), filename=str(GATK_API_SOURCE)
@@ -685,9 +685,9 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
             ):
                 guarded_to_thread_calls.append(call)
 
-    assert len(guarded_to_thread_calls) == 4, (
-        f"expected 4 semaphore-guarded asyncio.to_thread() calls "
-        f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf), "
+    assert len(guarded_to_thread_calls) == 5, (
+        f"expected 5 semaphore-guarded asyncio.to_thread() calls "
+        f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf, gvcf_to_vcf), "
         f"found {len(guarded_to_thread_calls)}"
     )
     # The audited set of heavy workers each guarded call may drive. Anything
@@ -697,6 +697,7 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
         "convert_to_indexed_bam",
         "run_liftover_pipeline",
         "convert_bcf_to_vcf",
+        "convert_gvcf_to_vcf",
     }
     driven = set()
     for call in guarded_to_thread_calls:

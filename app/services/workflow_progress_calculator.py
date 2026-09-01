@@ -117,6 +117,10 @@ class WorkflowProgressCalculator:
         # weight as the liftover it may be followed by, and needing a band here for
         # the same reason -- see that entry below.
         "bcf_to_vcf": (10, 19),
+        # Two GATK GenotypeGVCFs passes in the gatk-api container, before anything else
+        # on a gVCF. Same weight as the other VCF-lane conversion; it can never
+        # co-occur with it (a job has one input type).
+        "gvcf_to_vcf": (10, 19),
         # Picard LiftoverVcf in the gatk-api container, before anything else on a
         # GRCh37 VCF. Without a band here _active_ordered_steps() dropped it (it
         # filters on membership of this dict), so `ranges` had no entry, the
@@ -151,6 +155,7 @@ class WorkflowProgressCalculator:
         # Before "liftover": a GRCh37 BCF is converted first and lifted second, and
         # this list is what _renormalized_ranges() lays the bar out in.
         "bcf_to_vcf",
+        "gvcf_to_vcf",
         "liftover",
         "gatk_cram_sam_to_bam",
         "hla_typing",
@@ -177,7 +182,10 @@ class WorkflowProgressCalculator:
         cfg = workflow_config or {}
         fa = cfg.get("file_analysis") or {}
         file_type = str(fa.get("file_type") or cfg.get("file_type") or "").lower()
-        is_vcf = file_type in {"vcf", "vcf.gz", "bcf", "bcf.gz"}
+        # "the analysed file is already a variant call set", which decides whether PyPGx
+        # needs its BAM->VCF step. A gVCF belongs here for the same reason a BCF does:
+        # what PyPGx is handed is the converted VCF, not the upload.
+        is_vcf = file_type in {"vcf", "vcf.gz", "bcf", "bcf.gz", "gvcf"}
         needs_gatk = bool(cfg.get("needs_gatk", False))
         needs_hla = bool(cfg.get("needs_hla", False))
         needs_pypgx = bool(cfg.get("needs_pypgx", True))
@@ -186,10 +194,16 @@ class WorkflowProgressCalculator:
         needs_mtdna = bool(cfg.get("needs_mtdna", False))
 
         planned: List[str] = ["header_analysis"]
-        # BCF -> VCF first, then the liftover that may follow it: a GRCh37 BCF runs
-        # both, in this order.
+        # The VCF-lane conversion first, then the liftover that may follow it: a GRCh37
+        # BCF runs both, in this order. needs_conversion says a conversion is planned;
+        # needs_gvcf_genotyping says which of the two it is. (A gVCF is never lifted --
+        # a GRCh37 one is refused at upload -- but the ordering is written once for
+        # both rather than special-cased.)
         if bool(cfg.get("needs_conversion", False)):
-            planned.append("bcf_to_vcf")
+            if bool(cfg.get("needs_gvcf_genotyping", False)):
+                planned.append("gvcf_to_vcf")
+            else:
+                planned.append("bcf_to_vcf")
         if bool(cfg.get("needs_liftover", False)):
             planned.append("liftover")
         if needs_gatk:
@@ -547,8 +561,10 @@ class WorkflowProgressCalculator:
             # needs_liftover counts as needing GATK: Picard LiftoverVcf runs in the
             # gatk-api container and "liftover" maps to WorkflowStage.GATK. Keying
             # on needs_gatk alone called the stage skipped while it was running.
-            # needs_conversion is here for the same reason: the BCF->VCF step runs
-            # in that container too and maps to the same stage.
+            # needs_conversion is here for the same reason: the VCF-lane conversions
+            # (BCF->VCF via bcftools, gVCF->VCF via GATK GenotypeGVCFs) run in that
+            # container too and map to the same stage. One flag covers both, which is
+            # why widening its meaning did not need a second entry here.
             WorkflowStage.GATK: not (
                 workflow_config.get("needs_gatk", False)
                 or workflow_config.get("needs_liftover", False)
@@ -584,6 +600,8 @@ class WorkflowProgressCalculator:
             # the stage is GATK precisely because the liftover step maps to it.
             if self._is_step_running(steps, "bcf_to_vcf"):
                 return f"{base_message} - Converting BCF to a bgzipped VCF"
+            if self._is_step_running(steps, "gvcf_to_vcf"):
+                return f"{base_message} - Genotyping gVCF into a plain VCF"
             if self._is_step_running(steps, "liftover"):
                 return f"{base_message} - Lifting GRCh37/hg19 over to GRCh38"
             if cfg.get("needs_gatk", False):

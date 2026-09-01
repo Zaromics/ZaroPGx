@@ -93,10 +93,18 @@ GVCF_NAME_SUFFIXES = (".gvcf", ".gvcf.gz", ".g.vcf", ".g.vcf.gz")
 # reference-confidence band, e.g. `##GVCFBlock0-1=minGQ=0(inclusive),...`.
 GVCF_HEADER_MARKER = "##GVCFBlock"
 
-# Bounds on the header read below. A VCF header is a few hundred lines of a few hundred
-# bytes; these caps exist so a hostile or corrupt file cannot turn a type check into an
-# unbounded read.
-GVCF_HEADER_SCAN_LINES = 2000
+# Bounds on the header reads below, so a hostile or corrupt file cannot turn a type
+# check into an unbounded read.
+#
+# The line cap was 2000, justified as "far above any real VCF header (a few hundred
+# lines)". That is false for the build this pipeline actually runs on:
+# Homo_sapiens_assembly38.fasta - the GRCh38 full analysis set that genome-downloader
+# stages and that /gvcf-to-vcf genotypes against - has 3,366 contigs, so a VCF called
+# against it carries ~3,400 `##contig` records before the first data row. At 2000 the
+# scans below ran out of budget inside the contig block, which is not a corner case,
+# it is the ordinary GRCh38 file. 20000 clears that with an order of magnitude spare
+# and still cannot be turned into an unbounded read.
+GVCF_HEADER_SCAN_LINES = 20000
 GVCF_HEADER_MAX_LINE_BYTES = 64 * 1024
 
 
@@ -116,8 +124,14 @@ def _header_declares_gvcf_blocks(file_path: Path) -> bool:
     GVCF_HEADER_SCAN_LINES lines, or a single line past GVCF_HEADER_MAX_LINE_BYTES,
     ends the scan as "not a gVCF" rather than as an error. That is the safe direction
     for a malformed file and the wrong one for a pathological gVCF, so the caps are set
-    far above any real VCF header (a few hundred lines of a few hundred bytes) and the
-    name rule in _is_gvcf covers the ordinary case without reading anything at all.
+    well clear of a real GRCh38 header (see GVCF_HEADER_SCAN_LINES, which had to be
+    raised once already for exactly this reason) and the name rule in _is_gvcf covers
+    the ordinary case without reading anything at all.
+
+    In practice this returns almost immediately on a real gVCF: htsjdk sorts
+    ``##GVCFBlock`` into the general metadata block, ahead of the INFO/FORMAT/contig
+    records, so the marker is within the first few lines. The budget only matters for
+    files that are NOT gVCFs, where the whole header is read before answering False.
     """
     try:
         opener = gzip.open if str(file_path).lower().endswith(".gz") else open
@@ -219,22 +233,154 @@ def _bcf_header_declares_gvcf_blocks(file_path: Path) -> bool:
     return any(line.startswith(GVCF_HEADER_MARKER) for line in text.splitlines())
 
 
+# The symbolic ALT allele a gVCF uses for "any other allele", and the only thing that
+# decides whether ZaroPGx can genotype it.
+#
+# GATK writes `<NON_REF>` and declares it as `##ALT=<ID=NON_REF,...>`. DeepVariant,
+# bcftools and some Illumina callers write `<*>` instead. That is not cosmetic:
+# GenotypeGVCFs -- the entire conversion -- hard-fails on a `<*>` file with
+#   "A USER ERROR has occurred: The list of input alleles must contain <NON_REF> as an
+#    allele but that is not the case at position ..."
+# so accepting one would buy the uploader a job that dies minutes in. It is refused at
+# the door instead, which is the same rule the FASTQ and 23andMe branches follow.
+GVCF_GATK_ALLELE = "NON_REF"
+GVCF_STAR_ALLELE = "*"
+
+# How many DATA rows the flavour read below looks at. Its own budget, NOT shared with
+# the header budget: they used to share one counter, and on a GRCh38 file the ~3,400
+# `##contig` records consumed the whole allowance before the first data row, so the
+# record scan never ran at all. See GVCF_HEADER_SCAN_LINES.
+#
+# 200 is generous for the question: a gVCF's reference blocks are its bulk, so the very
+# first rows are normally blocks.
+GVCF_ALLELE_SCAN_RECORDS = 200
+
+
+def _gvcf_symbolic_allele(file_path: Path) -> Optional[str]:
+    """Which reference-confidence allele this gVCF uses: NON_REF, *, or None.
+
+    None means "the evidence does not say", which every caller treats as "not a
+    convertible gVCF" -- the fail-closed direction, and the only honest one: the
+    conversion needs `<NON_REF>` specifically, so a file we cannot confirm carries it is
+    a file we cannot promise to convert.
+
+    TWO signals, and `##ALT=<ID=NON_REF>` is deliberately NOT one of them:
+
+    * ``##GVCFBlock`` in the header. GATK-only, and decisive -- ``GenotypeGVCFs`` strips
+      these records from its output (``GenotypeGVCFsEngine.setupVCFWriter`` removes
+      exactly the keys starting ``GVCFBlock``), so their presence means the file still
+      is a gVCF.
+    * The symbolic allele in a DATA row's ALT column. This is what the reference blocks
+      are actually made of, and it is the ONLY signal a DeepVariant gVCF gives -- it
+      writes no ``##GVCFBlock`` at all.
+
+    The ``##ALT=<ID=NON_REF,...>`` header declaration was read here and it was WRONG,
+    severely: ``GenotypeGVCFs`` carries that declaration through into its plain-VCF
+    output while stripping the blocks, so the single most ordinary GATK germline
+    file -- HaplotypeCaller ``-ERC GVCF`` genotyped into ``sample.vcf.gz`` -- declared
+    NON_REF in its header with no such allele in any record. On GRCh38 it was typed
+    GVCF and routed to /gvcf-to-vcf, where GenotypeGVCFs died on it with "The list of
+    input alleles must contain <NON_REF>"; on GRCh37 it was refused by
+    _refuse_grch37_gvcf, whose way out is "run GenotypeGVCFs yourself and upload the
+    VCF" -- i.e. the file just refused. ``##ALT=<ID=*,...>`` is not evidence either,
+    for the milder version of the same reason: bcftools writes it into ordinary VCFs
+    whenever a spanning deletion is present.
+
+    A BCF gets the header arm only. Its records are binary and reading them needs pysam,
+    which is optional in this process (see the import at the top of this module) and
+    must not be what decides a file's type -- so a `<*>`-flavoured BCF gVCF reads as
+    "does not say" here, and is refused for not being confirmably GATK rather than for
+    being DeepVariant's. Same verdict, less precise wording; no BCF-writing caller in
+    this class is known to exist.
+
+    Bounded and never raising, exactly like `_header_declares_gvcf_blocks`: deciding a
+    file's flavour must not be the thing that turns an unreadable upload into a 500.
+    The header and record budgets are separate -- see GVCF_ALLELE_SCAN_RECORDS.
+    """
+    bcf_header = _read_bcf_header_text(file_path)
+    if bcf_header is not None:
+        blocks = any(
+            line.startswith(GVCF_HEADER_MARKER) for line in bcf_header.splitlines()
+        )
+        return GVCF_GATK_ALLELE if blocks else None
+
+    try:
+        opener = gzip.open if str(file_path).lower().endswith(".gz") else open
+        with opener(file_path, "rt", errors="ignore") as handle:
+            header_lines_seen = 0
+            records_seen = 0
+            while True:
+                line = handle.readline(GVCF_HEADER_MAX_LINE_BYTES)
+                if not line:
+                    break
+                if line.startswith("##"):
+                    if line.startswith(GVCF_HEADER_MARKER):
+                        return GVCF_GATK_ALLELE
+                    header_lines_seen += 1
+                    if header_lines_seen >= GVCF_HEADER_SCAN_LINES:
+                        break
+                    continue
+                if line.startswith("#"):
+                    continue
+                # A data row. ALT is the fifth tab-separated column, and a GATK gVCF's
+                # variant rows spell it `A,<NON_REF>` -- so this is a containment test,
+                # not an equality one. The angle brackets are required: a bare `*` is
+                # VCF 4.2's spanning-deletion allele and says nothing about gVCFs.
+                fields = line.split("\t", 5)
+                if len(fields) >= 5:
+                    alt = fields[4]
+                    if f"<{GVCF_GATK_ALLELE}>" in alt:
+                        return GVCF_GATK_ALLELE
+                    if f"<{GVCF_STAR_ALLELE}>" in alt:
+                        return GVCF_STAR_ALLELE
+                records_seen += 1
+                if records_seen >= GVCF_ALLELE_SCAN_RECORDS:
+                    break
+    except Exception as e:
+        logger.debug(f"Could not read {file_path} for its gVCF symbolic allele: {e}")
+    return None
+
+
+def _text_content_says_gvcf(file_path: Path) -> bool:
+    """True when a VCF-shaped file's CONTENT says gVCF.
+
+    One helper rather than a `##GVCFBlock` check repeated at three sites, because that
+    record alone cannot see a DeepVariant gVCF -- it writes none -- and a site that
+    consults only it types one as an ordinary VCF.
+
+    Delegates entirely to `_gvcf_symbolic_allele`, which reads BOTH signals in one pass
+    (the `##GVCFBlock` record and the reference-block ALT allele) and is the same
+    function `analyze_file` calls for the flavour. One reader, so "is this a gVCF" and
+    "which gVCF is it" can never answer inconsistently -- they are now literally the
+    same answer, present or absent.
+    """
+    return _gvcf_symbolic_allele(file_path) is not None
+
+
 def _is_gvcf(file_path: Path) -> bool:
-    """Decide gVCF from the name, and from the header when the name says only "VCF".
+    """Decide gVCF from the name, and from the content when the name says only "VCF".
 
     The BCF arm is keyed on the file's magic bytes rather than on a `.bcf` name, for
     the same reason the VCF arm consults the header at all: the stored name is
     sanitised and can arrive with no usable extension. A gVCF written as a BCF is
-    still a gVCF, and now that BCF is converted and analysed rather than refused, one
-    that slipped through would be re-encoded and analysed as a plain VCF - exactly the
-    confident wrong answer the gVCF refusal exists to prevent, with the conversion
-    step making it look deliberate.
+    still a gVCF, and routed onto the BCF lane it would be re-encoded and handed to
+    PharmCAT still carrying its reference blocks, which PharmCAT refuses.
+
+    The `<*>` arm is why the symbolic-allele read is consulted here and not only in
+    determine_workflow: a DeepVariant gVCF carries no `##GVCFBlock` record at all, so
+    the header rule cannot see it, and one named `sample.vcf.gz` used to be typed VCF
+    and analysed as a plain call set. PharmCAT would then refuse it mid-run (its own
+    detector reads the data rows), which is a loud failure in the wrong place --
+    minutes into a job, behind main.nf's `|| true`, rather than at the door.
     """
     name = str(file_path).lower()
     if name.endswith(GVCF_NAME_SUFFIXES):
         return True
     if name.endswith((".vcf", ".vcf.gz")):
-        return _header_declares_gvcf_blocks(file_path)
+        return _text_content_says_gvcf(file_path)
+    # No `_looks_like_bcf` arm beside this one: for a BCF `_gvcf_symbolic_allele` reads
+    # the same `##GVCFBlock` record this line does and nothing more (its records are
+    # binary), so a second call could only ever repeat this answer.
     return _bcf_header_declares_gvcf_blocks(file_path)
 
 
@@ -342,6 +488,12 @@ class FileAnalysis:
     # reads from the wrong locus and produces star alleles nobody has checked.
     # None means the header carried no usable evidence -- not GRCh38.
     reference_genome: Optional[str] = None
+    # ONLY for FileType.GVCF: which symbolic reference-confidence allele the file uses
+    # ("NON_REF", "*", or None for "the evidence does not say"). It decides whether the
+    # file can be converted at all -- GATK GenotypeGVCFs, the whole gVCF lane, hard-
+    # fails on anything but <NON_REF> -- so determine_workflow needs it, and
+    # determine_workflow never sees a path. See _gvcf_symbolic_allele.
+    gvcf_symbolic_allele: Optional[str] = None
 
 
 # PharmCAT's own position list, as shipped: 1,226 records across 22 genes in
@@ -466,6 +618,11 @@ class FileProcessor:
             # it a BCF reached determine_workflow with vcf_info=None, which reads as
             # "no evidence about the build" - so a GRCh37 BCF would have been analysed
             # on GRCh37 coordinates as if they were GRCh38.
+            #
+            # GVCF joined them when the gVCF lane landed, and the build matters MORE
+            # there than anywhere else: the lane genotypes over PharmCAT's position
+            # list, which exists in GRCh38 coordinates only, so a GRCh37 gVCF has to be
+            # recognised as one and refused rather than genotyped at GRCh38 loci.
             vcf_info = None
             reference_genome_ambiguous = False
             reference_genome_candidates: List[str] = []
@@ -473,9 +630,11 @@ class FileProcessor:
             try:
                 normalized = inspect_header(str(file_path))
                 # Map normalized structure to VCFHeaderInfo when applicable
-                if file_type in (FileType.VCF, FileType.BCF) and isinstance(
-                    normalized, dict
-                ):
+                if file_type in (
+                    FileType.VCF,
+                    FileType.BCF,
+                    FileType.GVCF,
+                ) and isinstance(normalized, dict):
                     metadata = normalized.get("metadata") or {}
                     # Reference genome inference
                     reference_genome = metadata.get("reference_genome") or "unknown"
@@ -543,6 +702,13 @@ class FileProcessor:
                 # No fallback exists: inspector failure leaves vcf_info at its
                 # None initialization above, regardless of file_type.
 
+            # Read only for a gVCF: it is a bounded extra pass over the file, and for
+            # every other type the answer would be meaningless rather than merely
+            # absent.
+            gvcf_symbolic_allele = (
+                _gvcf_symbolic_allele(file_path) if file_type == FileType.GVCF else None
+            )
+
             # Create the file analysis object with all the gathered information
             analysis = FileAnalysis(
                 file_type=file_type,
@@ -553,6 +719,7 @@ class FileProcessor:
                 reference_genome_ambiguous=reference_genome_ambiguous,
                 reference_genome_candidates=reference_genome_candidates,
                 reference_genome=alignment_reference_genome,
+                gvcf_symbolic_allele=gvcf_symbolic_allele,
             )
 
             logger.info(f"Analysis complete: {analysis}")
@@ -594,12 +761,14 @@ class FileProcessor:
         logger.info(f"File extension: {ext}")
 
         # gVCF is decided ahead of the extension table, because the extension table
-        # cannot decide it: `sample.g.vcf[.gz]` ends in `.vcf` and was typed VCF, and
-        # a gVCF handed to the VCF lane is a wrong *answer*, not a wrong label. Its
-        # <NON_REF> allele and ##GVCFBlock records assert reference confidence over
-        # whole spans, which PharmCAT has not been validated against - so it would
-        # emit star alleles nobody has checked rather than fail. determine_workflow
-        # refuses gVCF outright; getting the type right is what lets it.
+        # cannot decide it: `sample.g.vcf[.gz]` ends in `.vcf` and was typed VCF, so a
+        # gVCF went down the VCF lane. That is not a wrong label, it is a lost run:
+        # PharmCAT 3.4.0 DETECTS a gVCF -- by filename, by ##GVCFBlock header, or by a
+        # reference-block data row -- and refuses it, and main.nf's PharmCAT curl ends
+        # in `|| true`, so the refusal is swallowed and the job "completes" with no
+        # PharmCAT output. determine_workflow now routes a GATK GRCh38 gVCF to the
+        # genotyping lane and refuses the two shapes that lane cannot convert; getting
+        # the type right is what lets it do either.
         if _is_gvcf(file_path):
             logger.info("Identified as GVCF file")
             return FileType.GVCF
@@ -678,7 +847,7 @@ class FileProcessor:
                         # nothing - and the stored name often tells us nothing, because
                         # safe_upload_basename drops non-ASCII: `образец.gvcf` is
                         # stored as `upload_gvcf`, which matches no extension rule.
-                        if _header_declares_gvcf_blocks(file_path):
+                        if _text_content_says_gvcf(file_path):
                             logger.info("Identified as gzipped GVCF from content")
                             return FileType.GVCF
                         logger.info("Identified as gzipped VCF from content")
@@ -707,7 +876,7 @@ class FileProcessor:
                             # Same reasoning as the gzipped arm above: line one does not
                             # distinguish a VCF from a gVCF, and this branch is reached
                             # only when the name has stopped being evidence.
-                            if _header_declares_gvcf_blocks(file_path):
+                            if _text_content_says_gvcf(file_path):
                                 logger.info("Identified as GVCF from content")
                                 return FileType.GVCF
                             logger.info("Identified as VCF from content")
@@ -897,22 +1066,28 @@ class FileProcessor:
     ) -> None:
         """Plan the quick pipeline for an already-called variant file, in place.
 
-        Shared verbatim by the VCF and BCF branches of determine_workflow, because a
-        BCF is a VCF: the pipeline re-encodes it with bcftools and everything after
-        that point - the liftover decision, the sequencing profile, the HLA/CYP2D6
-        caveats, the index advice - is the same reasoning about the same records. Two
-        copies of clinical build-detection copy WILL drift: the branches would be
-        edited months apart, and the half that stopped setting needs_liftover would
-        analyse a GRCh37 file on GRCh38 coordinates without saying anything.
+        Shared verbatim by the VCF, BCF and GVCF branches of determine_workflow,
+        because each of the other two is a VCF by the time anything downstream reads
+        it: the pipeline re-encodes a BCF with bcftools and genotypes a gVCF with
+        GenotypeGVCFs, and everything after that point - the liftover decision, the
+        sequencing profile, the HLA/CYP2D6 caveats, the index advice - is the same
+        reasoning about the same records. Three copies of clinical build-detection copy
+        WILL drift: the branches would be edited months apart, and the one that stopped
+        setting needs_liftover would analyse a GRCh37 file on GRCh38 coordinates
+        without saying anything.
 
-        Only the BCF-specific part - that the file is converted first, and that the
-        conversion itself costs no accuracy - lives in the BCF branch, so nothing
-        here has to be phrased twice or hedged for two formats.
+        Only the format-specific part - that the file is converted first, and what that
+        conversion does or does not cost - lives in each branch, so nothing here has to
+        be phrased three times or hedged for three formats.
+
+        The liftover arm is unreachable from the GVCF branch, and that is checked
+        there rather than hedged here: a GRCh37 gVCF is refused before this runs (see
+        _refuse_grch37_gvcf).
         """
         workflow["needs_pypgx"] = True
         # main.nf hands the sidecar the ORIGINAL upload (never a lifted copy --
-        # see its comment on mtdna_variants_ch; for a BCF, the converted-but-
-        # unlifted VCF, which is that lane's equivalent) and reads whatever
+        # see its comment on mtdna_variants_ch; for a BCF or gVCF, the converted-
+        # but-unlifted VCF, which is those lanes' equivalent) and reads whatever
         # chrM/MT records it finds; a file with none simply produces a no-call,
         # the same outcome PharmCAT already reports for MT-RNR1 with no outside
         # call.
@@ -1172,6 +1347,131 @@ class FileProcessor:
             "needs to call the CYP2D6 copy-number changes no chip can see.</p>"
         )
 
+    def _refuse_non_gatk_gvcf(
+        self, workflow: Dict, symbolic_allele: Optional[str]
+    ) -> None:
+        """Refuse a gVCF whose reference blocks GenotypeGVCFs cannot read, in place.
+
+        Not a policy choice and not a gap: `gatk GenotypeGVCFs` -- the whole conversion
+        -- exits with "A USER ERROR has occurred: The list of input alleles must contain
+        <NON_REF> as an allele" on a file whose blocks use `<*>` instead, which
+        DeepVariant, bcftools and some Illumina callers write. Accepting one would buy
+        the uploader a job that dies minutes in, which is the thing this codebase
+        refuses to do.
+
+        `symbolic_allele` is None when the file is a gVCF by name or by ##GVCFBlock
+        record but nothing in the scanned window confirmed which allele it uses. That is
+        refused on the same sentence: the conversion needs <NON_REF> specifically, so a
+        file we cannot confirm carries it is a file we cannot promise to convert.
+
+        No needs_* flag is set. In particular needs_conversion is NOT set: it mints a
+        real conversion step (workflow_registry), and a flag that names a step must only
+        be set by an input that step can finish -- the rule the 23andMe branch broke.
+        """
+        workflow["unsupported"] = True
+        # Deliberately NOT provisional: nothing is analysed.
+        workflow["is_provisional"] = False
+        # No angle brackets around NON_REF, deliberately. This string is the 400's
+        # plain-text `detail` *and* the panel's red alert, and the panel assigns it with
+        # innerHTML - a literal "<NON_REF>" would be parsed as a tag and vanish from the
+        # sentence. Escaping instead would fix the panel and leave "&lt;NON_REF&gt;" in
+        # the API error. The bare name reads correctly in both.
+        observed = (
+            "an unrecognised reference-confidence allele"
+            if symbolic_allele is None
+            else f"the {symbolic_allele} reference-confidence allele"
+        )
+        workflow["unsupported_reason"] = (
+            f"ZaroPGx converts a gVCF by running GATK GenotypeGVCFs on it, and "
+            f"GenotypeGVCFs reads only GATK's NON_REF reference blocks. This file uses "
+            f"{observed}, which DeepVariant, bcftools and some Illumina callers write, "
+            f"and GenotypeGVCFs stops on it with 'The list of input alleles must "
+            f"contain NON_REF as an allele'. Accepting it would start a job that fails "
+            f"partway through instead of producing a report. Genotype it yourself with "
+            f"your caller's own tool and upload the resulting plain single-sample "
+            f"GRCh38/hg38 VCF, or upload the BAM, CRAM or SAM it was called from and "
+            f"let ZaroPGx call the variants."
+        )
+        workflow["recommendations"].append(
+            "<p>Turn the gVCF into a plain VCF with the tool that wrote it, then "
+            "upload that:</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>• DeepVariant: the same run writes a plain VCF alongside the gVCF "
+            "(<code>--output_vcf</code>) — upload that one.</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>• bcftools: <code>bcftools convert --gvcf2vcf -f &lt;reference.fa&gt; "
+            "input.g.vcf.gz</code></p>"
+        )
+        workflow["recommendations"].append(
+            "<p>• Or upload the BAM, CRAM or SAM the gVCF was called from and let "
+            "ZaroPGx call the variants.</p>"
+        )
+        workflow["warnings"].append(
+            "<p>⚠️ Do not filter the reference blocks out by hand. "
+            "<code>bcftools view -e 'ALT=\"&lt;NON_REF&gt;\"'</code> and its "
+            "equivalents delete your real variants too — a gVCF's variant rows carry "
+            "the reference allele alongside the alternate one, so the expression "
+            "matches them as well.</p>"
+        )
+
+    def _refuse_grch37_gvcf(self, workflow: Dict, detected_build: str) -> None:
+        """Refuse a GRCh37/hg19 gVCF, in place, and say what is actually missing.
+
+        A GRCh37 VCF is supported (lifted to GRCh38 with Picard LiftoverVcf), so this
+        is the one refusal here a user is entitled to find surprising. What differs is
+        the interval list: the gVCF lane's whole value is the reference-confidence pass
+        emitted over pharmcat_positions.vcf, and that file exists in GRCh38 coordinates
+        only, because PharmCAT is a GRCh38-only tool. There is no GRCh37 position list
+        to run the pass over.
+
+        The two ways to pretend otherwise are both worse than saying no:
+
+        * Genotype the GRCh37 file at GRCh38 positions. Selects the wrong loci --
+          silently, because GATK checks the interval list against the reference
+          dictionary, not against biology.
+        * Genotype variant sites only, then lift. Correct, but it throws away every
+          reference block, so the result is exactly the plain VCF the user could have
+          made themselves, reported under copy that says its hom-ref calls are called
+          data. That copy would be false for half the lane, and a second honesty story
+          in the same feature is a second one to drift.
+
+        So the way out is the one the user can act on now: genotype it themselves and
+        upload the GRCh37 VCF, which ZaroPGx does lift.
+        """
+        workflow["unsupported"] = True
+        workflow["is_provisional"] = False
+        build = detected_build or "GRCh37"
+        workflow["unsupported_reason"] = (
+            f"ZaroPGx cannot analyse a {build} gVCF. Converting a gVCF is worth doing "
+            f"only because ZaroPGx can emit reference calls over PharmCAT's own list "
+            f"of pharmacogene positions, and that list exists in GRCh38 coordinates "
+            f"only — PharmCAT is a GRCh38-only tool — so there is nothing to run that "
+            f"pass against for a {build} file. Run GATK GenotypeGVCFs on it yourself "
+            f"and upload the resulting plain single-sample VCF: a {build} VCF IS "
+            f"supported, and ZaroPGx lifts it over to GRCh38 with Picard LiftoverVcf "
+            f"before analysis."
+        )
+        workflow["recommendations"].append(
+            f"<p>Genotype the gVCF yourself, then upload the {build} VCF — ZaroPGx "
+            f"lifts that over to GRCh38 for you:</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>• <code>gatk GenotypeGVCFs -R &lt;reference.fa&gt; -V input.g.vcf.gz "
+            "-O genotyped.vcf.gz</code></p>"
+        )
+        workflow["recommendations"].append(
+            "<p>• Or call your variants against GRCh38/hg38 and upload the gVCF from "
+            "that run, which ZaroPGx converts itself.</p>"
+        )
+        workflow["warnings"].append(
+            "<p>⚠️ A gVCF genotyped by hand loses the reference-confidence blocks at "
+            "pharmacogene positions, so those positions become no-calls rather than "
+            "the called homozygous-reference genotypes a GRCh38 gVCF upload would "
+            "get.</p>"
+        )
+
     def determine_workflow(
         self, analysis: FileAnalysis, gatk_enabled: Optional[bool] = None
     ) -> Dict:
@@ -1185,7 +1485,11 @@ class FileProcessor:
         - VCF files: direct PyPGx + PharmCAT with outside calls
         - 23andMe / AncestryDNA files: refused (a chip carries too little of
           PharmCAT's position list, and PyPGx reads the gaps as reference)
-        - GVCF files: refused (PharmCAT is not validated against reference blocks)
+        - GVCF files: genotyped into a plain VCF (gatk-api's /gvcf-to-vcf, two GATK
+          GenotypeGVCFs passes), then the same quick pipeline a VCF gets. A gVCF whose
+          reference blocks are not GATK's <NON_REF>, and a GRCh37/hg19 gVCF, are
+          refused -- see _refuse_non_gatk_gvcf and _refuse_grch37_gvcf for why each is
+          a fact rather than a policy
         - BCF files: converted to a bgzipped VCF (gatk-api's /bcf-to-vcf, bcftools),
           then the same quick pipeline a VCF gets, liftover included
         - SAM files: conversion to BAM using GATK or samtools
@@ -1222,7 +1526,19 @@ class FileProcessor:
             # Everything unmarked is a standing caveat that still qualifies the
             # results after the run, so it appears in both places.
             "needs_liftover": False,
+            # "this input needs a gatk-api conversion before it can enter the VCF
+            # lane". Two inputs set it -- a BCF (/bcf-to-vcf) and a gVCF
+            # (/gvcf-to-vcf) -- and needs_gvcf_genotyping below is what says which. It
+            # used to mean "a BCF" and nothing else; it was widened rather than joined
+            # by a third independent flag so that workflow_registry's
+            # gatk_cram_sam_to_bam veto (unless="needs_conversion") keeps being right
+            # without learning about every conversion that gets added.
             "needs_conversion": False,
+            # gVCF -> plain VCF via GATK GenotypeGVCFs (gatk-api's /gvcf-to-vcf). Drives
+            # the "gvcf_to_vcf" step template in app/services/workflow_registry.py and
+            # the GVCFToVCF process in pipelines/pgx/main.nf. Always set together with
+            # needs_conversion above.
+            "needs_gvcf_genotyping": False,
             "needs_hla": False,
             # mtDNA calling via the mtdna sidecar (mutserve + haplogrep3 +
             # haplocheck). Set True on every input type the sidecar can be
@@ -1425,44 +1741,101 @@ class FileProcessor:
                 "<p>• Then use the resulting BAM for pharmacogenomic analysis</p>"
             )
 
-        # GVCF: refused at upload, not analysed.
+        # GVCF: genotyped into a plain VCF, then analysed as one.
         #
-        # A gVCF is not a VCF with extra rows. Its <NON_REF> symbolic allele and its
-        # ##GVCFBlock records assert reference confidence over whole spans, and PharmCAT
-        # has not been validated against either. That makes it worse than the formats
-        # refused above rather than better: routed onto the vcf lane it would not error,
-        # it would emit star alleles nobody has checked. Until the validation exists,
-        # saying so at upload beats publishing a confident wrong answer. None of the
-        # needs_* flags are set, because there is no workflow to plan.
+        # What this branch used to say was wrong on both counts, and the copy is worth
+        # recording because the wrong version was more plausible than the right one.
+        # It claimed PharmCAT "has not been validated against" reference blocks and
+        # would therefore "produce star alleles nobody has checked". Measured against
+        # PharmCAT 3.4.0: it produces no star alleles at all. It DETECTS a gVCF and
+        # refuses it -- pcat/utilities.py:is_gvcf_file fires on a `.g.vcf`-shaped
+        # filename, on a ##GVCFBlock header record, or on a data row whose ALT is
+        # <NON_REF>/<*>/. spanning more than one base, and the pipeline exits with
+        # "... is a gVCF file, which is not currently supported". So the risk was never
+        # a confident wrong answer; it was a loud failure at the wrong end of the run.
+        #
+        # The branch also shipped a way out that DESTROYS the user's data:
+        # `bcftools view -e 'ALT="<NON_REF>"'` produced ZERO records when measured,
+        # because a GATK gVCF's variant rows carry ALT `A,<NON_REF>` -- the expression
+        # deletes the real variants along with the reference blocks, and leaves the
+        # ##GVCFBlock headers that would get the result refused anyway. It is gone.
+        #
+        # A converted gVCF is BETTER than the plain VCF the user would otherwise
+        # upload, which is why there is a lane rather than a nicer refusal: its
+        # reference-confidence blocks are CALLED data, so genotyping them over
+        # PharmCAT's own position list yields real hom-ref genotypes at the PGx
+        # positions -- the thing the plain-VCF lane can only fabricate with PharmCAT's
+        # --absent-to-ref. gatk-api's /gvcf-to-vcf does exactly that (two GATK
+        # GenotypeGVCFs passes joined with `bcftools concat -a`), and main.nf's
+        # GVCFToVCF process runs it before anything downstream sees the file.
+        #
+        # Two shapes are still refused, and both are refusals of fact rather than of
+        # policy -- see the helpers below.
         elif analysis.file_type == FileType.GVCF:
-            workflow["unsupported"] = True
-            # No angle brackets around NON_REF, deliberately. This string is the 400's
-            # plain-text `detail` *and* the panel's red alert, and the panel assigns it
-            # with innerHTML - a literal "<NON_REF>" would be parsed as a tag and vanish
-            # from the sentence. Escaping instead would fix the panel and leave
-            # "&lt;NON_REF&gt;" in the API error. The bare name reads correctly in both.
-            workflow["unsupported_reason"] = (
-                "ZaroPGx cannot analyse gVCF files. A gVCF records reference-confidence "
-                "blocks (the NON_REF allele and ##GVCFBlock header records) alongside "
-                "its variant calls, and PharmCAT has not been validated against them, so "
-                "analysing one would produce star alleles nobody has checked rather than "
-                "a clear failure. Convert it to a plain single-sample GRCh38/hg38 VCF "
-                "first, or upload the BAM, CRAM or SAM it was called from."
-            )
-            workflow["recommendations"].append(
-                "<p>Convert the gVCF to a plain VCF, then upload that:</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>• GATK: GenotypeGVCFs turns a gVCF into a genotyped VCF</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>• bcftools: drop the reference blocks, e.g. "
-                "bcftools view -e 'ALT=\"&lt;NON_REF&gt;\"' input.g.vcf.gz</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>• Or upload the BAM, CRAM or SAM the gVCF was called from and let "
-                "ZaroPGx call the variants.</p>"
-            )
+            detected_build = (
+                (analysis.vcf_info.reference_genome or "") if analysis.vcf_info else ""
+            ).lower()
+            if analysis.gvcf_symbolic_allele != GVCF_GATK_ALLELE:
+                self._refuse_non_gatk_gvcf(workflow, analysis.gvcf_symbolic_allele)
+            elif any(token in detected_build for token in GRCH37_BUILD_TOKENS):
+                self._refuse_grch37_gvcf(workflow, analysis.vcf_info.reference_genome)
+            else:
+                # needs_gatk, not just the two conversion flags: GenotypeGVCFs runs in
+                # the gatk-api container, and needs_gatk is what upload_router turns
+                # into --skip_gatk. Left False, every gVCF job would be submitted with
+                # --skip_gatk=true and refused by main.nf's own guard. Same reasoning
+                # as the BCF branch below.
+                #
+                # needs_conversion means "this input needs a gatk-api conversion before
+                # it can enter the VCF lane"; needs_gvcf_genotyping says WHICH
+                # conversion. Keeping the general flag set is what lets
+                # workflow_registry's gatk_cram_sam_to_bam veto (unless=needs_conversion)
+                # go on being right without learning about a third flag.
+                workflow["needs_conversion"] = True
+                workflow["needs_gvcf_genotyping"] = True
+                workflow["needs_gatk"] = True
+                workflow["recommendations"].append(
+                    "<p>gVCF files are genotyped into a plain VCF before analysis:</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Step 0: GATK GenotypeGVCFs, run inside ZaroPGx, twice: once "
+                    "over PharmCAT's own position list with "
+                    "--include-non-variant-sites, and once over everything else. The "
+                    "first pass is why uploading the gVCF is better than converting it "
+                    "yourself — the reference genotypes at the pharmacogene positions "
+                    "come from your file's own reference-confidence blocks, so they "
+                    "are called data rather than assumed.</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>ZaroPGx does not use PharmCAT's --absent-to-ref on this lane, "
+                    "and does not need to.</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ GenotypeGVCFs re-genotypes each site from the recorded "
+                    "likelihoods rather than copying the original caller's genotype. "
+                    "ZaroPGx runs it with the calling-confidence threshold set to zero "
+                    "so that nothing is dropped for failing a cutoff you did not "
+                    "choose, but the emitted genotypes are still not guaranteed "
+                    "identical to your caller's.</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ Positions your gVCF does not cover stay no-calls: a "
+                    "reference block that is absent is not a reference call. The run "
+                    "reports how many of PharmCAT's positions carried a call.</p>"
+                )
+                workflow["warnings"].append(
+                    "<p>⚠️ PharmCAT discards positions whose indel representation does "
+                    "not match its own definitions, and those stay no-calls too. That "
+                    "is the same outcome a plain VCF gets, not a cost of this "
+                    "conversion.</p>"
+                )
+                workflow["recommendations"].append(
+                    "<p>Everything below therefore describes a VCF analysis, and every "
+                    "VCF caveat applies: no HLA typing, and degraded accuracy for "
+                    "CYP2D6 and for genes whose phenotypes depend on structural or "
+                    "copy-number variants.</p>"
+                )
+                self._plan_variant_call_workflow(workflow, analysis)
 
         # BCF: converted to a bgzipped VCF, then analysed as one.
         #
@@ -1874,7 +2247,16 @@ class FileProcessor:
             # it as well as VCF: the pipeline converts a BCF to a VCF and analyses that,
             # so a multi-sample BCF would reach PyPGx/PharmCAT as a multi-sample VCF -
             # the case this check exists to stop, arriving by a different door.
-            if analysis.file_type in (FileType.VCF, FileType.BCF) and analysis.vcf_info:
+            #
+            # GVCF likewise, and it needs the check more than either: a multi-sample
+            # gVCF is the ordinary output of a joint-calling workflow, and GenotypeGVCFs
+            # would happily genotype all of them into one multi-sample VCF. Refusing
+            # here is also what keeps the lane from needing a sample-selection form
+            # field nobody asked for.
+            if (
+                analysis.file_type in (FileType.VCF, FileType.BCF, FileType.GVCF)
+                and analysis.vcf_info
+            ):
                 label = analysis.file_type.value.upper()
                 sc = analysis.vcf_info.sample_count
                 if sc is None or sc != 1:

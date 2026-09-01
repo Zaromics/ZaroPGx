@@ -161,7 +161,17 @@ def _nextflow_max_wait_seconds() -> float:
 # (`bcftools view -O z` plus a tabix index) and refuses to return anything it cannot
 # vouch for as a non-empty BGZF VCF. The file that reaches the filename-gating sidecars
 # is a genuinely different, genuinely converted one - which is what the alias never was.
-NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bcf", "bam", "cram", "sam"})
+#
+# `gvcf` is here on the same terms and for a sharper version of the same reason: aliasing
+# a gVCF onto `vcf` would not merely fail to convert it, it would hand PharmCAT a file
+# PharmCAT itself detects and refuses ("... is a gVCF file, which is not currently
+# supported"), behind the same swallowing `|| true`. main.nf's `gvcf` branch runs
+# GVCFToVCF first, which POSTs to gatk-api's /gvcf-to-vcf: two GATK GenotypeGVCFs passes
+# joined with `bcftools concat -a`, published under a name that is deliberately not
+# `*.g.vcf*` because PharmCAT condemns that filename before reading a byte. Not every
+# gVCF is accepted -- a non-GATK (`<*>`) flavour and a GRCh37 one are refused at
+# FileProcessor, each for a reason the conversion cannot get past.
+NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bcf", "gvcf", "bam", "cram", "sam"})
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
@@ -182,23 +192,40 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     stops a mis-set one from waving an input past.
 
     What genuinely cannot work is an input that is flagged unsupported and that the
-    pipeline cannot carry: FASTQ, 23andMe, AncestryDNA, FASTA, BED, gVCF and
-    unrecognised formats. Those used to be accepted, queued, and then failed minutes
-    later with a Nextflow or gatk-api error the user could do nothing with.
+    pipeline cannot carry: FASTQ, 23andMe, AncestryDNA, FASTA, BED and unrecognised
+    formats. Those used to be accepted, queued, and then failed minutes later with a
+    Nextflow or gatk-api error the user could do nothing with.
 
-    gVCF is the one worth stating at length, because it rules out an obvious-looking
-    shortcut: routed onto the vcf branch it would *run*. PharmCAT has simply never been
-    validated against a gVCF's ``<NON_REF>`` reference blocks, so the output would be
-    star alleles nobody has checked — a confident wrong answer, not a failure.
+    BCF and gVCF used to sit in that list and no longer do, each for its own reason.
 
-    BCF used to sit in that list and no longer does. It was never refused for the gVCF
-    reason: a BCF onto the *vcf* branch would not run and would not say so, because that
-    branch stages the upload verbatim and docker/pharmcat's /genotype gates on the
-    ``.bcf`` filename behind a ``|| true``. What it needed was a real conversion step,
-    and it has one — main.nf's own ``bcf`` branch converts the file with bcftools
-    (gatk-api's /bcf-to-vcf) before anything downstream sees it. A gVCF that happens to
-    be *written* as a BCF is still refused, on the gVCF reason above; FileProcessor
-    reads ``##GVCFBlock`` out of the binary header to catch it.
+    A BCF onto the *vcf* branch would not run and would not say so, because that branch
+    stages the upload verbatim and docker/pharmcat's /genotype gates on the ``.bcf``
+    filename behind a ``|| true``. What it needed was a real conversion step, and it has
+    one — main.nf's own ``bcf`` branch converts the file with bcftools (gatk-api's
+    /bcf-to-vcf) before anything downstream sees it.
+
+    A gVCF's old refusal was justified with a sentence that was simply false: that
+    PharmCAT "has never been validated against a gVCF's ``<NON_REF>`` reference blocks,
+    so the output would be star alleles nobody has checked". PharmCAT 3.4.0 emits no
+    star alleles from a gVCF at all — it DETECTS one (filename, ``##GVCFBlock`` header,
+    or a reference-block data row) and refuses it outright. The risk was a loud failure
+    minutes into a run, not a quiet wrong answer. gVCFs now have a real lane too:
+    main.nf's ``gvcf`` branch genotypes the file with GATK GenotypeGVCFs (gatk-api's
+    /gvcf-to-vcf) over PharmCAT's own position list, which makes the converted file
+    *better* than an ordinary VCF rather than merely acceptable — its reference
+    genotypes at pharmacogene positions are called data instead of PharmCAT's
+    ``--absent-to-ref`` fabrication.
+
+    Two gVCF shapes still reach this gate, and both are refused on facts the conversion
+    cannot get past: one whose reference blocks are ``<*>`` rather than GATK's
+    ``<NON_REF>`` (GenotypeGVCFs stops on it), and a GRCh37/hg19 one (PharmCAT's
+    position list exists in GRCh38 coordinates only, so the pass that makes the lane
+    worthwhile has nothing to run against). See FileProcessor's ``_refuse_non_gatk_gvcf``
+    and ``_refuse_grch37_gvcf``.
+
+    A gVCF that happens to be *written* as a BCF is routed to the gVCF lane, not the BCF
+    one; FileProcessor reads ``##GVCFBlock`` out of the binary header to catch it, and
+    the gVCF conversion's staging step is bcftools, so it reads a BCF for free.
 
     This gate is still not a complete guard, and cannot be one: it only ever sees inputs
     FileProcessor chose to flag.
@@ -1641,20 +1668,32 @@ async def upload_genomic_data(
       converter. A chip carries under a third of PharmCAT's positions and cannot show
       a gene duplication, and PyPGx reads the positions it lacks as homozygous
       reference — so the report would be confidently wrong rather than incomplete.
-    - GVCF: rejected with 400. Detected from the name (.gvcf, .g.vcf, either gzipped)
-      and, whatever the name, from a ##GVCFBlock record in the header — the stored name
-      is sanitised, so it can reach disk with no usable extension at all. PharmCAT has
-      not been validated against a gVCF's <NON_REF> reference blocks, so analysing one
-      would produce star alleles nobody has checked rather than an error. Convert to a
-      plain VCF first.
+    - GVCF: genotyped, then processed exactly like a VCF. Detected from the name
+      (.gvcf, .g.vcf, either gzipped) and, whatever the name, from a ##GVCFBlock record
+      or the reference-confidence ALT allele in the content — the stored name is
+      sanitised, so it can reach disk with no usable extension at all, and a DeepVariant
+      gVCF carries no ##GVCFBlock whatever it is called. The pipeline's `gvcf` branch
+      POSTs the file to gatk-api's /gvcf-to-vcf, which runs GATK GenotypeGVCFs twice —
+      once with --include-non-variant-sites over PharmCAT's own position list, once
+      with -XL of the same file — and joins them with `bcftools concat -a`. The first
+      pass is why this beats converting it yourself: the homozygous-reference genotypes
+      at pharmacogene positions come from the file's own reference-confidence blocks, so
+      they are called data rather than PharmCAT's --absent-to-ref fabrication. The
+      output is never named *.g.vcf*, because PharmCAT condemns that filename before
+      reading a byte. Two shapes are still rejected with 400: reference blocks that are
+      <*> rather than <NON_REF> (GenotypeGVCFs stops on them), and a GRCh37/hg19 gVCF
+      (PharmCAT's position list is GRCh38-only, so the pass that makes the lane
+      worthwhile has nothing to run against — genotype it yourself and upload the
+      GRCh37 VCF, which IS lifted).
     - BCF: converted, then processed exactly like a VCF. The pipeline's `bcf` branch
       POSTs the file to gatk-api's /bcf-to-vcf (`bcftools view -O z`, then a tabix
       index) and only continues once that endpoint has vouched for a non-empty BGZF
       result — a real re-encode, not a rename, because the PharmCAT sidecar gates on
       the filename and swallows its own 400 behind a `|| true`. BCF and VCF hold the
       same records, so the conversion costs no accuracy; every VCF caveat then applies,
-      liftover of a GRCh37/hg19 BCF included. A gVCF written as a BCF is still refused
-      (##GVCFBlock is read out of the binary header).
+      liftover of a GRCh37/hg19 BCF included. A gVCF written as a BCF takes the gVCF
+      lane instead (##GVCFBlock is read out of the binary header); that lane's staging
+      step is bcftools, so it reads a BCF for free.
 
     Only the first uploaded data file is analysed; any further data file is reported as
     ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be
@@ -1755,6 +1794,7 @@ async def upload_genomic_data(
             needs_mtdna=wf.get("needs_mtdna", False),
             needs_report=wf.get("needs_report", True),
             needs_conversion=wf.get("needs_conversion", False),
+            needs_gvcf_genotyping=wf.get("needs_gvcf_genotyping", False),
             needs_liftover=wf.get("needs_liftover", False),
             is_provisional=wf.get("is_provisional", False),
             unsupported=wf.get("unsupported", False),
@@ -2060,6 +2100,7 @@ async def inspect_file_header(
                 "unsupported": False,
                 "unsupported_reason": None,
                 "needs_conversion": False,
+                "needs_gvcf_genotyping": False,
                 "needs_liftover": False,
                 "refused": False,
                 "refusal_reason": None,
@@ -2076,11 +2117,14 @@ async def inspect_file_header(
                         "warnings": wf.get("warnings", []),
                         "unsupported": wf.get("unsupported", False),
                         "unsupported_reason": wf.get("unsupported_reason"),
-                        # Lets the preview panel draw the "Convert BCF to VCF"
-                        # step for a BCF, the same way needs_liftover below does
-                        # for a GRCh37 file. Without it the preview drew a plan
-                        # one step shorter than the plan that runs.
+                        # Lets the preview panel draw the conversion step for a BCF
+                        # or a gVCF, the same way needs_liftover below does for a
+                        # GRCh37 file. Without it the preview drew a plan one step
+                        # shorter than the plan that runs. The second flag is what
+                        # decides which of the two conversions is named, matching
+                        # buildPlannedWorkflowHTML and workflow_registry.
                         "needs_conversion": wf.get("needs_conversion", False),
+                        "needs_gvcf_genotyping": wf.get("needs_gvcf_genotyping", False),
                         # Lets the preview panel draw the "Liftover to GRCh38"
                         # step for a GRCh37/hg19 VCF, the same way the
                         # post-upload panel does off WorkflowOptions.

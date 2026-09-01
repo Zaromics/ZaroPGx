@@ -16,6 +16,12 @@ import uvicorn
 
 app = FastAPI(title="Genome Downloader API", version="0.3.0", description="REST API wrapper around genome downloader for the ZaroPGx pipeline")
 
+# The PharmCAT release whose artefacts this service stages. Must track compose.yml's
+# PHARMCAT_VERSION (which the pharmcat image is built from), because
+# pharmcat_positions.vcf is version-specific: see the pharmcat_positions entry below.
+# Defaulted rather than required so a bare `python downloader_api.py` still runs.
+PHARMCAT_VERSION = os.environ.get("PHARMCAT_VERSION", "3.4.0")
+
 # Global variable to track download progress
 download_status = {
     "in_progress": False,
@@ -62,8 +68,18 @@ def download_file(url, dest_path, genome_name):
         
         # Download with progress tracking
         response = requests.get(url, stream=True)
+        # raise_for_status() was missing entirely, and the pharmcat_positions entry made
+        # that reachable: its URL is templated on PHARMCAT_VERSION, so a bump to a
+        # release whose asset is named differently 404s -- and without this check the
+        # 9-byte error body was written to /reference/pharmcat/pharmcat_positions.vcf,
+        # returned True, and (because gz_path == fasta_path for that entry, so nothing
+        # extracts or indexes) the genome was reported "ready". gatk-api's /gvcf-to-vcf
+        # then found a file at the expected path and got an opaque GATK parse error
+        # instead of the 400 that names the file and the fix. Fail here, where the
+        # status field can say so.
+        response.raise_for_status()
         downloaded = 0
-        
+
         with open(dest_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=1024*1024):
                 if chunk:
@@ -181,8 +197,35 @@ def download_genomes():
             "is_tar": True
         },
         {
+            # PharmCAT's own position list. Consumed by gatk-api's /gvcf-to-vcf as the
+            # interval list its --include-non-variant-sites pass is emitted over, so a
+            # gVCF upload's reference genotypes land at exactly the positions PharmCAT
+            # genotypes -- see PHARMCAT_POSITIONS_PATH in docker/gatk-api/gatk_api.py,
+            # which points at exactly this path.
+            #
+            # PINNED TO THE PHARMCAT VERSION THE STACK RUNS, not to the `development`
+            # branch it used to fetch. This file is the matcher's definition of which
+            # positions matter and it changes between releases: fetching `development`
+            # against a pinned 3.4.0 image means the reference calls are emitted at one
+            # release's positions while PharmCAT genotypes another's, and the
+            # difference surfaces as no-calls nobody ordered rather than as an error.
+            # The release asset carries the version in its own filename
+            # (pharmcat_positions_3.4.0.vcf), which is why the URL and the destination
+            # differ here where they match everywhere else in this list.
+            #
+            # RE-STAGE THIS ON EVERY PHARMCAT BUMP. Bumping PHARMCAT_VERSION alone is
+            # not enough on an existing deployment: download_genomes() is short-
+            # circuited by /reference/.download_complete (see schedule_download), so a
+            # reference tree populated before this entry existed -- or before the bump
+            # -- keeps whatever it already has, or nothing. Delete
+            # /reference/.download_complete to force a re-fetch, or copy the file out
+            # of the pgx_pharmcat image, where it lives at
+            # /pharmcat/pharmcat_positions.vcf.
             "name": "pharmcat_positions",
-            "url": "https://github.com/PharmGKB/PharmCAT/raw/development/pharmcat_positions.vcf",
+            "url": (
+                f"https://github.com/PharmGKB/PharmCAT/releases/download/"
+                f"v{PHARMCAT_VERSION}/pharmcat_positions_{PHARMCAT_VERSION}.vcf"
+            ),
             "gz_path": "/reference/pharmcat/pharmcat_positions.vcf",
             "fasta_path": "/reference/pharmcat/pharmcat_positions.vcf",
             "is_vcf": True

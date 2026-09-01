@@ -95,6 +95,15 @@ services:
       - ./reference:/reference
     environment:
       - DOWNLOAD_ON_STARTUP=${DOWNLOAD_ON_STARTUP:-true}
+      # Same pin as the pharmcat service below, and it has to stay the same: this
+      # service fetches pharmcat_positions.vcf, which gatk-api's /gvcf-to-vcf uses as
+      # its interval list, and that file is version-specific. A mismatch emits a gVCF
+      # upload's reference calls at one PharmCAT release's positions while PharmCAT
+      # genotypes another's -- which shows up as no-calls, not as an error. NOTE that
+      # bumping this alone does NOT re-stage an existing ./reference tree: the
+      # downloader short-circuits on /reference/.download_complete. Delete that file to
+      # force a re-fetch after a PharmCAT bump.
+      - PHARMCAT_VERSION=${PHARMCAT_VERSION:-3.4.0}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
       interval: 10s

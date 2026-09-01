@@ -58,10 +58,15 @@ def _templates() -> dict[str, object]:
 def test_the_parser_actually_finds_the_posts():
     """Guard the parser: a silent parse failure would pass every test below."""
     posted = _posted_step_names()
-    # The floor is the count at the time of writing (9 distinct names across 11 curl
+    # The floor is the count at the time of writing (10 distinct names across 12 curl
     # call sites); it only ever grows.
-    assert len(posted) >= 9, posted
-    assert {"pharmcat_analysis", "liftover", "gatk_cram_sam_to_bam"} <= posted
+    assert len(posted) >= 10, posted
+    assert {
+        "pharmcat_analysis",
+        "liftover",
+        "gatk_cram_sam_to_bam",
+        "gvcf_to_vcf",
+    } <= posted
 
 
 @pytest.mark.parametrize("step_name", sorted(_posted_step_names()))
@@ -186,6 +191,113 @@ def test_a_cram_job_does_not_mint_bcf_to_vcf():
     assert "bcf_to_vcf" not in names
 
 
+# --- the two VCF-lane conversions, which share one flag --------------------------
+
+
+def _gvcf_options() -> WorkflowOptions:
+    """What FileProcessor.determine_workflow's GVCF branch sets.
+
+    needs_conversion AND needs_gvcf_genotyping: the first says a gatk-api conversion is
+    planned, the second says which one. needs_gatk because GenotypeGVCFs runs in the
+    gatk-api container and upload_router turns that flag into --skip_gatk.
+    """
+    return WorkflowOptions(
+        needs_conversion=True,
+        needs_gvcf_genotyping=True,
+        needs_gatk=True,
+        needs_pypgx=True,
+        needs_mtdna=True,
+    )
+
+
+def test_a_gvcf_job_mints_gvcf_to_vcf_and_neither_other_conversion():
+    """Three conversions, two shared flags, and only one may ever mint.
+
+    needs_conversion is shared with BCF and needs_gatk with CRAM/SAM, so a gVCF job
+    that minted any of the other two would hang that step at [pending] forever -- no
+    process posts it, so its status updates 404. This is the same failure the CRAM and
+    SAM lanes shipped with, reached from a third direction.
+    """
+    names = [s.step_name for s in resolve_steps("genomic_analysis", _gvcf_options())]
+
+    assert "gvcf_to_vcf" in names
+    assert "bcf_to_vcf" not in names
+    assert "gatk_cram_sam_to_bam" not in names
+
+
+def test_a_bcf_job_still_mints_bcf_to_vcf_and_not_the_gvcf_conversion():
+    """The veto in the other direction: bcf_to_vcf is needs_conversion MINUS gVCF."""
+    names = [
+        s.step_name
+        for s in resolve_steps(
+            "genomic_analysis",
+            WorkflowOptions(needs_conversion=True, needs_gatk=True, needs_pypgx=True),
+        )
+    ]
+
+    assert "bcf_to_vcf" in names
+    assert "gvcf_to_vcf" not in names
+
+
+def test_the_gvcf_conversion_runs_before_the_steps_that_read_its_vcf():
+    ordered = [s.step_name for s in resolve_steps("genomic_analysis", _gvcf_options())]
+
+    assert ordered.index("gvcf_to_vcf") < ordered.index("pypgx_analysis")
+    assert ordered.index("gvcf_to_vcf") < ordered.index("mtdna_analysis")
+    assert ordered.index("gvcf_to_vcf") < ordered.index("pharmcat_analysis")
+
+
+def test_the_gvcf_conversion_step_lands_in_the_gatk_stage():
+    """GenotypeGVCFs runs in the gatk-api container, so the glyph row must light there.
+
+    Without this entry stage_from_step() silently answers ANALYSIS and the progress bar
+    names the wrong stage for the whole step.
+    """
+    assert STEP_TO_STAGE["gvcf_to_vcf"] is WorkflowStage.GATK
+
+
+def test_the_gvcf_conversion_is_banded_and_ordered_like_the_other_conversions():
+    """A step with no band is dropped by _active_ordered_steps(), which filters on
+    membership of STEP_BASE_BANDS -- the defect that froze the bar for the whole
+    liftover."""
+    from app.services.workflow_progress_calculator import WorkflowProgressCalculator
+
+    assert "gvcf_to_vcf" in WorkflowProgressCalculator.STEP_BASE_BANDS
+    assert "gvcf_to_vcf" in WorkflowProgressCalculator.CANONICAL_STEP_ORDER
+
+
+def test_the_progress_calculator_plans_the_conversion_the_registry_mints():
+    """Two independent readers of the same pair of flags; they must not disagree."""
+    from app.services.workflow_progress_calculator import WorkflowProgressCalculator
+
+    calculator = WorkflowProgressCalculator()
+    gvcf_plan = calculator._planned_steps_from_config(
+        {
+            "file_type": "gvcf",
+            "needs_conversion": True,
+            "needs_gvcf_genotyping": True,
+            "needs_gatk": True,
+            "needs_pypgx": True,
+        }
+    )
+    assert "gvcf_to_vcf" in gvcf_plan
+    assert "bcf_to_vcf" not in gvcf_plan
+    # A gVCF is a variant call set by the time PyPGx sees it, so it must not be given
+    # the BAM->VCF step, exactly as a BCF is not.
+    assert "pypgx_bam2vcf" not in gvcf_plan
+
+    bcf_plan = calculator._planned_steps_from_config(
+        {
+            "file_type": "bcf",
+            "needs_conversion": True,
+            "needs_gatk": True,
+            "needs_pypgx": True,
+        }
+    )
+    assert "bcf_to_vcf" in bcf_plan
+    assert "gvcf_to_vcf" not in bcf_plan
+
+
 # --- gatk_alignment: registered, and still unreachable ------------------------
 
 
@@ -212,6 +324,7 @@ def test_gatk_alignment_is_gated_on_a_flag_no_real_upload_sets():
         WorkflowOptions(
             needs_conversion=True, needs_gatk=True, needs_pypgx=True
         ),  # BCF
+        _gvcf_options(),  # gVCF
         WorkflowOptions(needs_liftover=True, needs_pypgx=True),  # GRCh37 VCF
         _cram_or_sam_options(),  # CRAM / SAM
         WorkflowOptions(  # BAM

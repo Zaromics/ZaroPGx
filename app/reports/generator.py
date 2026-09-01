@@ -1266,6 +1266,7 @@ def create_interactive_html_report(
     workflow_warnings: List[str] | None = None,
     pharmcat_assume_ref_methodology: str | None = None,
     liftover_provenance: str | None = None,
+    gvcf_provenance: str | None = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -1448,6 +1449,7 @@ def create_interactive_html_report(
             # Add workflow warnings/alerts for report display
             "workflow_warnings": workflow_warnings or [],
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+            "gvcf_provenance": gvcf_provenance,
             "liftover_provenance": liftover_provenance,
             # 159: run-derived provenance (each rendered only if resolved)
             "genome_build": matcher_meta["genome_build"],
@@ -1871,6 +1873,7 @@ def generate_report(
     workflow_warnings = []  # Initialize warnings list
     pharmcat_assume_ref_methodology = None
     liftover_provenance = None
+    gvcf_provenance = None
     if job_id and db_session:
         try:
             logger.info(
@@ -1888,6 +1891,7 @@ def generate_report(
             # Prefer Job.job_metadata (upload writes assume-ref flags here)
             try:
                 from app.api.db import Job, JobStep
+                from app.utils.gvcf_provenance import gvcf_provenance_paragraph
                 from app.utils.liftover_provenance import (
                     liftover_provenance_sentence,
                 )
@@ -1960,11 +1964,30 @@ def generate_report(
                 liftover_provenance = liftover_provenance_sentence(
                     liftover_step.output_data if liftover_step is not None else None
                 )
+
+                # Same contract as the liftover row above, for the same reason: a
+                # genotyped gVCF's reference calls are the one thing about this run
+                # the reader cannot infer from the results, and only the step row
+                # carries how much of PharmCAT's position list the file covered
+                # (gatk-api's /gvcf-to-vcf writes it as output_data on completion).
+                # Absent row = no gVCF genotyping ran, which is every other input.
+                gvcf_step = (
+                    db_session.query(JobStep)
+                    .filter(
+                        JobStep.job_id == job_uuid,
+                        JobStep.step_name == "gvcf_to_vcf",
+                    )
+                    .first()
+                )
+                gvcf_provenance = gvcf_provenance_paragraph(
+                    gvcf_step.output_data if gvcf_step is not None else None
+                )
             except Exception as e:
                 logger.warning(f"Failed to retrieve job report metadata: {e}")
                 workflow_warnings = []
                 pharmcat_assume_ref_methodology = None
                 liftover_provenance = None
+                gvcf_provenance = None
 
             if not data:
                 logger.warning(
@@ -2248,6 +2271,7 @@ def generate_report(
         # Add workflow warnings/alerts for report display
         "workflow_warnings": workflow_warnings,
         "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+        "gvcf_provenance": gvcf_provenance,
         "liftover_provenance": liftover_provenance,
         # 159: run-derived provenance (each rendered only if resolved)
         "genome_build": matcher_meta["genome_build"],
@@ -2859,6 +2883,7 @@ def generate_report(
                 # Add workflow warnings/alerts for report display
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+                "gvcf_provenance": gvcf_provenance,
                 "liftover_provenance": liftover_provenance,
                 # 159: run-derived provenance (each rendered only if resolved).
                 # This dict rebinds `template_data` and is the one actually fed
@@ -3044,6 +3069,7 @@ def generate_report(
                 workflow_warnings=workflow_warnings,
                 pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
                 liftover_provenance=liftover_provenance,
+                gvcf_provenance=gvcf_provenance,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 

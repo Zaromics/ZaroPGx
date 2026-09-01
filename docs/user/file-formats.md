@@ -20,11 +20,34 @@ BCF is the binary encoding of a VCF. It holds exactly the same variant records, 
 
 Because the file that gets analysed is a VCF, every VCF caveat applies to a BCF upload: no HLA typing, degraded accuracy for *CYP2D6*, and degraded accuracy for genes whose phenotypes depend on structural or copy-number variants. A GRCh37/hg19 BCF is converted first and then lifted over to GRCh38, exactly as a GRCh37 VCF is.
 
-A gVCF that has been written as a BCF is still refused, for the reason gVCFs are refused generally — the `##GVCFBlock` records are read out of the binary header to catch it.
+A gVCF that has been written as a BCF is routed to the gVCF lane below rather than this one — the `##GVCFBlock` records are read out of the binary header to catch it.
 
 ### Processing Path — BCF
 ```
 BCF → bcftools (VCF conversion) → Header Analysis → PyPGx → PharmCAT → Reports
+```
+
+## Genomic VCF (gVCF)
+A gVCF records *reference-confidence blocks* — spans the caller is confident match the reference — alongside the variant calls. PharmCAT cannot read one: PharmCAT 3.4.0 detects a gVCF (from the filename, from a `##GVCFBlock` header record, or from a reference-block data row) and refuses it outright, so a gVCF handed to it produces an error, not a wrong answer.
+
+ZaroPGx converts it instead, and the conversion makes a gVCF a **better** input than a plain VCF rather than merely an acceptable one. It runs GATK `GenotypeGVCFs` twice: once over PharmCAT's own position list with `--include-non-variant-sites`, and once over everything else, joining the two with `bcftools concat -a`. The first pass is the point — the homozygous-reference genotypes at the pharmacogene positions come from *your file's own reference-confidence blocks*, so they are called data. The plain-VCF lane has no such information and can only fill those positions in with PharmCAT's `--absent-to-ref`, which fabricates them; on the gVCF lane that flag is not used and is not needed.
+
+What the report tells you, and why:
+
+- **How much of PharmCAT's position list your file actually covered.** A gVCF that omits a region has no reference block there, so those positions are no-calls — absent is not reference.
+- **That `GenotypeGVCFs` re-derives each genotype** from the recorded likelihoods rather than copying your caller's. ZaroPGx sets the calling-confidence threshold to zero so nothing is dropped for failing a cutoff you did not choose, but the genotypes analysed are still not guaranteed identical to your caller's output.
+- Positions PharmCAT discards because their indel representation does not match its own definitions stay no-calls. That is the same outcome a plain VCF gets, not a cost of the conversion.
+
+Two kinds of gVCF are refused, each because the conversion genuinely cannot proceed:
+
+- **Non-GATK reference blocks.** DeepVariant, bcftools and some Illumina callers write `<*>` where GATK writes `<NON_REF>`, and `GenotypeGVCFs` stops on such a file with "The list of input alleles must contain `<NON_REF>` as an allele". Genotype it with your own caller's tool and upload the resulting plain VCF. **Do not** filter the reference blocks out by hand: `bcftools view -e 'ALT="<NON_REF>"'` and its equivalents delete your real variants too, because a gVCF's variant rows carry the reference allele alongside the alternate one.
+- **GRCh37/hg19 gVCFs.** PharmCAT's position list — the interval list the reference pass is emitted over — exists in GRCh38 coordinates only, so there is nothing to run that pass against. Run `gatk GenotypeGVCFs` on it yourself and upload the resulting GRCh37 VCF: that *is* supported, and ZaroPGx lifts it over to GRCh38 for you.
+
+Because the file that gets analysed is a VCF, every VCF caveat applies: no HLA typing, degraded accuracy for *CYP2D6*, and degraded accuracy for genes whose phenotypes depend on structural or copy-number variants. Exactly one sample, as for VCF and BCF — a joint-called multi-sample gVCF is refused.
+
+### Processing Path — gVCF
+```
+gVCF → GATK GenotypeGVCFs ×2 (VCF conversion) → Header Analysis → PyPGx → PharmCAT → Reports
 ```
 
 ## Binary Alignment Map (BAM)
@@ -83,6 +106,7 @@ Upload sequencing data instead: a GRCh38/hg38 VCF, or a BAM, CRAM or SAM.
 ## Reference Genome Support
 - **GRCh38/hg38** — analysed directly; the build every result is reported on.
 - **GRCh37/hg19 VCF or BCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. A real coordinate conversion, not a contig relabelling. Variants that cannot be mapped are dropped and the step reports how many; the run fails if too much of the file cannot be lifted. A BCF is converted to a VCF first, then lifted. A native GRCh38 VCF remains the most reliable input.
+- **GRCh37/hg19 gVCF** — **not accepted.** The gVCF lane's value is the reference pass it emits over PharmCAT's own position list, and that list exists in GRCh38 coordinates only. Run `gatk GenotypeGVCFs` on it yourself and upload the resulting GRCh37 VCF, which *is* lifted. See the gVCF section above.
 - **GRCh37/hg19 BAM, CRAM or SAM** — **not accepted.** Liftover converts variants that have already been called. Aligned reads are analysed by calling variants out of them first, and that call reads each gene from its GRCh38 position — on GRCh37 reads those positions are wrong (GRCh38's *CYP2D6* window sits roughly 400 kb from GRCh37's), so you would get star alleles that are not yours rather than an error. Call variants against GRCh37/hg19 yourself and upload the VCF, or realign the reads to GRCh38/hg38.
 - **T2T-CHM13 (any format)** — **detected and refused.** ZaroPGx reads the assembly out of the file's own contig lengths, or out of its `##reference=` line, and declines the upload. Nothing downstream would catch a CHM13 file: PharmCAT's preprocessor normalises against GRCh38.p13 without checking which assembly the input is on, and `bcftools norm -c ws` *swaps* a mismatched reference allele rather than failing — so the report would carry confidently wrong star alleles. There is no automatic liftover for it, and doing one yourself is not a workaround either: the published T2T chains exclude GRCh38's alternate haplotype contigs, so *GSTT1* (on `chr22_KI270879v1_alt`) cannot come across at all, only about 60% of T2T's segmental duplications have a clear GRCh38 orthologue — the *CYP2D6*/*CYP2D7*/*CYP2D8* cluster is one such region — and no published work characterises *CYP2D6* or *CYP2C19* in CHM13. Call your variants against GRCh38/hg38, or realign to it, and upload that.
 

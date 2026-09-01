@@ -1131,6 +1131,11 @@
                     {% if pharmcat_assume_ref_methodology %}
                         {{ pharmcat_assume_ref_methodology|safe }}
                     {% endif %}
+                    {# Adjacent to the assume-ref paragraph on purpose -- see the same
+                       block in report_template.html. #}
+                    {% if gvcf_provenance %}
+                        {{ gvcf_provenance|safe }}
+                    {% endif %}
                 </div>
                 <div class="card workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
                     <h4>Workflow</h4>

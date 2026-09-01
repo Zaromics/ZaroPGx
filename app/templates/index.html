@@ -584,8 +584,8 @@
                             <form action="/upload/genomic-data" method="post" enctype="multipart/form-data" id="uploadForm">
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File(s)</label>
-                                    <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.bcf,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
-                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38; a file aligned to T2T-CHM13 is detected and refused.) Index file may be included. A BCF is converted to a bgzipped VCF with bcftools first, then analysed as one. Formats BAM, SAM, CRAM, and BCF are in testing. 23andMe and AncestryDNA exports are not accepted — a decision, not pending work: a chip carries under a third of the positions PharmCAT calls on and cannot show a gene duplication. Support for BED and others is in development.</div>
+                                    <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.gvcf,.gvcf.gz,.bcf,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
+                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38; a file aligned to T2T-CHM13 is detected and refused.) Index file may be included. A BCF is converted to a bgzipped VCF with bcftools first, then analysed as one. A GRCh38 gVCF from GATK is genotyped with GenotypeGVCFs over PharmCAT's own positions first, which makes it a better input than a plain VCF — the reference calls at pharmacogene positions come from your file's reference-confidence blocks rather than being assumed; gVCFs from callers that write &lt;*&gt; instead of &lt;NON_REF&gt;, and GRCh37 gVCFs, are refused with the reason. Formats BAM, SAM, CRAM, BCF and gVCF are in testing. 23andMe and AncestryDNA exports are not accepted — a decision, not pending work: a chip carries under a third of the positions PharmCAT calls on and cannot show a gene duplication. Support for BED and others is in development.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -1061,14 +1061,20 @@
                 // Always begin with analysis (header inspection)
                 steps.push({ name: 'Analysis (Header Inspection)', icon: 'bi-search' });
 
-                // BCF: re-encoded to a bgzipped VCF (bcftools, in the gatk-api
-                // container) before anything else runs, and before the liftover
-                // below -- a GRCh37 BCF is converted first, lifted second. BCF is
-                // now the only thing that sets needs_conversion at all: the 23andMe
-                // branch used to set it for a conversion that does not exist, and
-                // stopped when that flag started minting a real bcf_to_vcf step.
+                // A gatk-api conversion into the VCF lane, before anything else runs
+                // and before the liftover below -- a GRCh37 BCF is converted first,
+                // lifted second. needs_conversion says a conversion is planned;
+                // needs_gvcf_genotyping says which one, matching the two mutually
+                // exclusive StepTemplates in workflow_registry.py. Only real inputs
+                // set these: the 23andMe branch used to set needs_conversion for a
+                // conversion that does not exist, and stopped when that flag started
+                // minting a real step.
                 if (wf.needs_conversion) {
-                    steps.push({ name: 'Convert BCF to VCF (bcftools)', icon: 'bi-file-earmark-binary' });
+                    if (wf.needs_gvcf_genotyping) {
+                        steps.push({ name: 'Genotype gVCF to VCF (GATK GenotypeGVCFs)', icon: 'bi-file-earmark-binary' });
+                    } else {
+                        steps.push({ name: 'Convert BCF to VCF (bcftools)', icon: 'bi-file-earmark-binary' });
+                    }
                 }
 
                 // GRCh37/hg19 VCF: real coordinate liftover to GRCh38 (GATK Picard
@@ -2495,6 +2501,10 @@
                 // "bcf_to_vcf" to WorkflowStage.GATK). Same trap as 'liftover'
                 // above if it is missing: the row goes dark for the whole step.
                 'bcf_to_vcf': 'stageGATK',
+                // gVCF->VCF is GATK GenotypeGVCFs, in the gatk-api container, grouped
+                // the same way by the backend (workflow_stages.py maps "gvcf_to_vcf"
+                // to WorkflowStage.GATK). Same trap as the two above if missing.
+                'gvcf_to_vcf': 'stageGATK',
                 'pypgx_analysis': 'stagePyPGx',
                 'pypgx_bam2vcf': 'stagePyPGx',       // Both PyPGx steps map to the same stage
                 // mtDNA calling runs in its own "mtdna" sidecar, immediately before

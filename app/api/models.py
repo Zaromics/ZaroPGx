@@ -161,7 +161,15 @@ class WorkflowOptions(BaseModel):
     # pipelines/pgx/main.nf.
     needs_mtdna: bool = False
     needs_report: bool = True
+    # "this input needs a gatk-api conversion before it can enter the VCF lane". A BCF
+    # (/bcf-to-vcf) and a gVCF (/gvcf-to-vcf) both set it; needs_gvcf_genotyping below
+    # says which. workflow_registry's gatk_cram_sam_to_bam template vetoes on this one
+    # flag, which is why the general meaning is kept general.
     needs_conversion: bool = False
+    # gVCF -> plain VCF via GATK GenotypeGVCFs (gatk-api's /gvcf-to-vcf). Mints the
+    # "gvcf_to_vcf" step in workflow_registry and vetoes "bcf_to_vcf" there; drives the
+    # GVCFToVCF process in pipelines/pgx/main.nf. Always set with needs_conversion.
+    needs_gvcf_genotyping: bool = False
     # GRCh37/hg19 VCF -> lifted to GRCh38 via gatk-api's Picard LiftoverVcf before
     # analysis (workflow_registry mints the "liftover" step off this flag). Set from
     # the DETECTED build (header inspection), never from the reference_genome form

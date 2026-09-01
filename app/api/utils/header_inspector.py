@@ -389,6 +389,14 @@ def inspect_header(
     if file_format in (
         ".vcf",
         ".bcf",
+        # `sample.gvcf[.gz]`. The GATK spelling `sample.g.vcf[.gz]` already lands on
+        # ".vcf" above (_get_file_format returns only the final suffix), so only this
+        # one needed adding -- and it needed it once gVCFs were analysed rather than
+        # refused: without it a `.gvcf` upload got no header read at all, which reads
+        # downstream as "no evidence about the build", and a GRCh37 gVCF would have
+        # been genotyped at GRCh38 positions instead of refused. pysam and the bcftools
+        # fallback both read a gVCF as an ordinary VCF, so nothing else changes.
+        ".gvcf",
         "vcf.gz",
         "bcf.gz",
         "vcf.bz2",
