@@ -2102,6 +2102,12 @@ async def inspect_file_header(
                 "needs_conversion": False,
                 "needs_gvcf_genotyping": False,
                 "needs_liftover": False,
+                "needs_gatk": False,
+                "needs_alignment": False,
+                "needs_hla": False,
+                "needs_pypgx": False,
+                "needs_pypgx_bam2vcf": False,
+                "needs_mtdna": False,
                 "refused": False,
                 "refusal_reason": None,
             }
@@ -2125,6 +2131,27 @@ async def inspect_file_header(
                         # buildPlannedWorkflowHTML and workflow_registry.
                         "needs_conversion": wf.get("needs_conversion", False),
                         "needs_gvcf_genotyping": wf.get("needs_gvcf_genotyping", False),
+                        # The rest of the needs_* flags the planned-workflow panel
+                        # reads. They are forwarded because this endpoint has already
+                        # run the real determine_workflow -- the same call the upload
+                        # makes -- so withholding its answer only forced the panel to
+                        # re-derive it in JavaScript from the file extension.
+                        #
+                        # That guessing is what this fixes. The panel's fallbacks
+                        # ("bam/cram/sam implies HLA", and so on) are a second copy of
+                        # a decision that lives in FileProcessor.determine_workflow,
+                        # and the two drifted: CRAM and SAM did not set needs_hla for
+                        # a long time while the panel drew the HLA step for them
+                        # regardless. needs_mtdna was worse -- it has no fallback at
+                        # all, so the pre-upload plan silently omitted a step that runs
+                        # on every VCF, BAM, CRAM and SAM job, and the plan the user
+                        # approved was one step shorter than the plan that ran.
+                        "needs_gatk": wf.get("needs_gatk", False),
+                        "needs_alignment": wf.get("needs_alignment", False),
+                        "needs_hla": wf.get("needs_hla", False),
+                        "needs_pypgx": wf.get("needs_pypgx", False),
+                        "needs_pypgx_bam2vcf": wf.get("needs_pypgx_bam2vcf", False),
+                        "needs_mtdna": wf.get("needs_mtdna", False),
                         # Lets the preview panel draw the "Liftover to GRCh38"
                         # step for a GRCh37/hg19 VCF, the same way the
                         # post-upload panel does off WorkflowOptions.

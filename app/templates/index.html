@@ -1103,10 +1103,18 @@
                 // OptiType and PyPGx are both handed the same BAM and PyPGx waits for
                 // OptiType (main.nf's hla_complete_ch). Drawn for CRAM and SAM as well
                 // as BAM because all three reach OptiTypeHLAFromBAM: a CRAM/SAM is
-                // converted first, and its reads are the same reads. The fileType
-                // fallback is for the PRE-upload shape, which carries only the handful
-                // of flags /upload/inspect-header returns (see its compat_workflow) --
-                // same reason the PyPGx and bam2vcf lines below have one.
+                // converted first, and its reads are the same reads.
+                //
+                // The fileType fallback is now only a floor for a payload that predates
+                // /upload/inspect-header forwarding the full needs_* set: that endpoint
+                // runs the same determine_workflow the upload does, so wf.needs_hla is
+                // present on both shapes and the guess below should never be reached.
+                // It is kept rather than deleted because it is the safe direction, but
+                // it must not be treated as the mechanism -- deriving the plan from the
+                // extension here is a second copy of a decision that lives in
+                // FileProcessor, and the two DID drift: CRAM and SAM went a long time
+                // without setting needs_hla while this line drew the step for them
+                // anyway. Same reason the PyPGx and bam2vcf lines below keep theirs.
                 const needsHla = (typeof wf.needs_hla === 'boolean') ? wf.needs_hla : ['bam', 'cram', 'sam'].includes(fileType);
                 if (needsHla) {
                     steps.push({ name: 'OptiType HLA Typing', icon: 'bi-diagram-2' });

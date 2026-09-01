@@ -138,8 +138,16 @@ class WorkflowProgressCalculator:
         # Unreachable while FASTQ is refused at ingest -- kept so the band, the stage
         # map and the registry agree on the name rather than disagreeing silently.
         "gatk_alignment": (35, 49),
-        "pypgx_analysis": (50, 64),
-        "pypgx_bam2vcf": (65, 74),
+        # bam2vcf before analysis, in this order and with these numbers, because
+        # PyPGxBam2Vcf PRODUCES the VCF that PyPGxGenotypeAll consumes. Only the
+        # widths of these bands reach the bar (_base_weight returns hi - lo, and
+        # _renormalized_ranges lays the active steps out end to end), so the
+        # absolute values are documentation -- but documentation a reader compares
+        # against CANONICAL_STEP_ORDER below, and they used to disagree. Widths are
+        # unchanged from when they were the other way round: 9 for the conversion,
+        # 14 for the genotyping it feeds.
+        "pypgx_bam2vcf": (50, 59),
+        "pypgx_analysis": (60, 74),
         # Same weight as liftover/gatk_cram_sam_to_bam above: mtDNA calling
         # (mutserve + haplogrep3 + haplocheck, or the lighter VCF-only path)
         # runs after PyPGx and immediately before PharmCAT, matching
@@ -160,8 +168,15 @@ class WorkflowProgressCalculator:
         "gatk_cram_sam_to_bam",
         "hla_typing",
         "gatk_alignment",
-        "pypgx_analysis",
+        # Before "pypgx_analysis": PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll
+        # reads, so it runs first on every alignment lane. This list was the other
+        # way round, and _renormalized_ranges lays the bar out in exactly this
+        # order -- so on every BAM, CRAM and SAM job the bar jumped forward to
+        # bam2vcf's range and then fell BACK ~17 points when the genotyping it had
+        # already fed started reporting. Measured on a BAM job before the swap:
+        # bam2vcf 44-54, then pypgx_analysis 27-43.
         "pypgx_bam2vcf",
+        "pypgx_analysis",
         "mtdna_analysis",
         "pharmcat_analysis",
         "diagram_generation",
@@ -213,10 +228,17 @@ class WorkflowProgressCalculator:
                 planned.append("gatk_alignment")
         if needs_hla:
             planned.append("hla_typing")
-        if needs_pypgx:
-            planned.append("pypgx_analysis")
+        # bam2vcf before analysis, matching CANONICAL_STEP_ORDER and the registry:
+        # PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll reads. The order here is
+        # membership-only -- the single production caller (_active_ordered_steps)
+        # re-sorts this list through CANONICAL_STEP_ORDER before it reaches the bar --
+        # but the two were written in opposite orders, and one of them WAS the bar.
+        # Keeping all three lists in one order is what stops the next reader having to
+        # work out which one is load-bearing.
         if needs_bam2vcf:
             planned.append("pypgx_bam2vcf")
+        if needs_pypgx:
+            planned.append("pypgx_analysis")
         if needs_mtdna:
             planned.append("mtdna_analysis")
         planned.extend(["pharmcat_analysis", "diagram_generation", "report_generation"])
