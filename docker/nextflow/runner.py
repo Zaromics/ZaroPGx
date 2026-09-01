@@ -93,7 +93,7 @@ logging.basicConfig(
 logger = logging.getLogger("nextflow")
 _warn_about_unopened_logs(logger)
 
-app = FastAPI(title="Nextflow Pipeline Runner", version="0.3.0", description="REST API wrapper around Nextflow for the ZaroPGx pipeline")
+app = FastAPI(title="Nextflow Pipeline Runner", version="0.3.1", description="REST API wrapper around Nextflow for the ZaroPGx pipeline")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -14,7 +14,7 @@ import requests
 from tqdm import tqdm
 import uvicorn
 
-app = FastAPI(title="Genome Downloader API", version="0.3.0", description="REST API wrapper around genome downloader for the ZaroPGx pipeline")
+app = FastAPI(title="Genome Downloader API", version="0.3.1", description="REST API wrapper around genome downloader for the ZaroPGx pipeline")
 
 # The PharmCAT release whose artefacts this service stages. Must track compose.yml's
 # PHARMCAT_VERSION (which the pharmcat image is built from), because

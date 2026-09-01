@@ -1667,7 +1667,7 @@ wheels = [
 
 [[package]]
 name = "zaropgx"
-version = "0.2.8"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
