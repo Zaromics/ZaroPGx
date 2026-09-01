@@ -37,10 +37,17 @@ params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 // skip_gatk covers the conversions that run inside the gatk-api container
-// (FastqToBAM/CramToBAM/SamToBAM, BcfToVCF and GVCFToVCF). It is a no-op for vcf/bam
-// input (no gatk-api process is invoked) and rejected for fastq/cram/sam/bcf/gvcf, where
-// there is no other route to a file the rest of the pipeline can read - see the guard
-// below.
+// (FastqToBAM/CramToBAM/SamToBAM, BcfToVCF and GVCFToVCF). It is rejected outright for
+// fastq/cram/sam/bcf/gvcf, where there is no other route to a file the rest of the
+// pipeline can read - see the guard below.
+//
+// It is NOT, however, a no-op for vcf/bam: LiftoverVCF is a gatk-api process too, and
+// the vcf lane invokes it on source_build grch37/hg19/b37 whatever skip_gatk says. So
+// unticking GATK on a GRCh37 VCF still lifts the file. That is the safe direction -
+// everything downstream is GRCh38-only, and honouring the toggle here would analyse the
+// file on the wrong coordinates - but it is not what the toggle promises, and this
+// comment used to claim the opposite. Making the toggle refuse a GRCh37 VCF the way it
+// refuses a BCF is the change to consider, not making it skip the lift.
 params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
 // skip_report is the ZaroPGx custom-report toggle. It is honoured, but app-side,
 // not here: no process in this pipeline reads the param below. It is carried this
@@ -744,9 +751,11 @@ workflow {
     // VCF, through the gatk-api container, so gating FastqToBAM/CramToBAM/SamToBAM/
     // BcfToVCF/GVCFToVCF off would leave bam_ch (or vcf_ch) empty and starve every
     // downstream channel - the pipeline would "succeed" having produced nothing, which
-    // is worse than the silent-override it replaces. Refuse the combination instead. For
-    // vcf/bam input no gatk-api process runs at all, so skip_gatk is correctly a
-    // no-op there.
+    // is worse than the silent-override it replaces. Refuse the combination instead.
+    //
+    // vcf/bam are let through, which is not the same as skip_gatk doing nothing on them:
+    // a GRCh37 vcf still goes through LiftoverVCF below, which is a gatk-api process.
+    // See params.skip_gatk's comment at the top of this file.
     if (params.skip_gatk && ['fastq', 'cram', 'sam', 'bcf', 'gvcf'].contains(params.input_type)) {
         error(
             "--skip_gatk is not compatible with --input_type ${params.input_type}: " +

@@ -24,16 +24,32 @@ SNVs, and no published work characterises CYP2D6 or CYP2C19 in CHM13 at all.
 
 These tests assert on the workflow dict the real ``FileProcessor`` emits and on
 the real upload gate's verdict, not on source text.
+
+Most of them hand the build in as a string, because what they are about is what the
+workflow does with a build once it is named. That leaves the detector unexercised, and
+for a while nothing else joined the two: every T2T row could be deleted from
+``CONTIG_LENGTH_ASSEMBLIES`` and all twelve refusal tests stayed green while a real
+CHM13 upload went back to being analysed as GRCh38. The two tests at the bottom of this
+module close that gap by starting from the shipped fixture's header instead.
 """
+
+from pathlib import Path
 
 import pytest
 
 from app.api.models import FileType, SequencingProfile, VCFHeaderInfo
 from app.api.routes.upload_router import _unanalysable_upload_reason
 from app.api.utils.file_processor import FileAnalysis, FileProcessor
+from app.api.utils.header_inspector import (
+    detect_reference_assembly,
+    parse_vcf_contig_lengths,
+)
 
 ALIGNMENT_TYPES = [FileType.BAM, FileType.CRAM, FileType.SAM]
 T2T = "T2T-CHM13v2"
+T2T_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "test_data" / "t2t_chm13_pgx_snps.vcf"
+)
 
 
 def _vcf_workflow(build: str) -> dict:
@@ -196,3 +212,60 @@ def test_the_grch37_alignment_refusal_still_offers_its_own_way_out(file_type):
 
     assert "lifts that over to grch38 automatically" in recs
     assert "will not help" not in recs
+
+
+# --- detection joined to refusal ---------------------------------------------
+#
+# Every test above is handed the string "T2T-CHM13v2". Nothing above notices if the
+# detector stops producing it, which is the half that actually protects a user: the
+# workflow only ever sees a build the header inspector named.
+
+
+def _fixture_contig_records() -> list:
+    """The shipped CHM13 fixture's ##contig lines, and nothing else.
+
+    The ##reference= line is dropped on purpose. It is a second, independent route to
+    the same verdict (a filename containing "chm13"), so leaving it in would let the
+    contig-length table rot undetected -- which is the exact gap these two tests exist
+    to close. Most real VCFs carry contigs; many carry no ##reference at all.
+    """
+    records = T2T_FIXTURE.read_text(encoding="utf-8").splitlines()
+    return [r for r in records if r.startswith("##contig=")]
+
+
+def test_a_real_chm13_vcf_header_is_detected_and_then_refused():
+    """Fixture header -> detect_reference_assembly -> determine_workflow -> the gate."""
+    detected = detect_reference_assembly(header_records=_fixture_contig_records())
+
+    assert detected["assembly"] == T2T, (
+        "the shipped CHM13 fixture's contig lengths no longer name T2T-CHM13v2, so a "
+        "real CHM13 VCF is back to being analysed as GRCh38"
+    )
+    assert detected["source"] == "contig_lengths"
+
+    workflow = _vcf_workflow(detected["assembly"])
+
+    assert workflow["unsupported"] is True
+    assert _unanalysable_upload_reason(workflow)
+
+
+@pytest.mark.parametrize("file_type", ALIGNMENT_TYPES)
+def test_a_real_chm13_alignment_header_is_detected_and_then_refused(file_type):
+    """The same chain for BAM/CRAM/SAM, which had no fixture of their own at all.
+
+    ``inspect_header``'s alignment branch calls
+    ``detect_reference_assembly(contig_lengths={@SQ name: length})``, so the evidence is
+    the same numbers a VCF's ##contig records carry -- which is why the VCF fixture's
+    lengths stand in for a binary CHM13 BAM this repo does not ship.
+    """
+    detected = detect_reference_assembly(
+        contig_lengths=parse_vcf_contig_lengths(_fixture_contig_records())
+    )
+
+    assert detected["assembly"] == T2T
+
+    workflow = _alignment_workflow(file_type, detected["assembly"])
+
+    assert workflow["unsupported"] is True
+    reason = _unanalysable_upload_reason(workflow)
+    assert reason and T2T in reason

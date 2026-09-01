@@ -35,11 +35,24 @@ from pathlib import Path
 
 import pytest
 
-from app.api.models import WorkflowOptions
+from app.api.models import FileType, SequencingProfile, VCFHeaderInfo, WorkflowOptions
+from app.api.utils.file_processor import GVCF_GATK_ALLELE, FileAnalysis, FileProcessor
 from app.services.workflow_registry import GENOMIC_ANALYSIS, resolve_steps
 from app.services.workflow_stages import STEP_TO_STAGE, WorkflowStage
 
 MAIN_NF = Path(__file__).resolve().parents[1] / "pipelines" / "pgx" / "main.nf"
+
+# Every input type a job can exist for. FASTQ is absent on purpose: it is refused at
+# ingest, determine_workflow sets no needs_* flag for it, and no Job is ever created --
+# there is no lane to check.
+ANALYSED_TYPES = [
+    FileType.VCF,
+    FileType.BCF,
+    FileType.GVCF,
+    FileType.BAM,
+    FileType.CRAM,
+    FileType.SAM,
+]
 
 # Deliberately anchored on the curl form flag: `-F step_name=`. Prose in this file's
 # comments mentions step names too, and matching those would let a comment satisfy the
@@ -52,7 +65,78 @@ def _posted_step_names() -> set[str]:
 
 
 def _templates() -> dict[str, object]:
+    """The registry's templates by step_name -- and a real dict, not a silent merge.
+
+    ``{t.step_name: t for t in ...}`` keeps the LAST template of a duplicated name and
+    drops the rest, so the two tests below that iterate template names could never
+    observe a duplicate: the parametrize list would carry one entry and the lookup
+    would answer with one object. ``resolve_steps`` has no such forgiveness -- it
+    returns a LIST -- so a name registered twice mints two JobStep rows with two
+    step_orders, and ``JobService.update_job_step`` looks a step up by name.
+    """
+    names = [t.step_name for t in GENOMIC_ANALYSIS.step_templates]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    assert not duplicates, (
+        f"workflow_registry.py registers {duplicates} more than once: resolve_steps "
+        f"returns a list, so each duplicate mints a second JobStep row for the same "
+        f"name and every status update for it resolves to whichever row the query "
+        f"returns first."
+    )
     return {t.step_name: t for t in GENOMIC_ANALYSIS.step_templates}
+
+
+def _analysis_for(file_type: FileType) -> FileAnalysis:
+    """A GRCh38 FileAnalysis of `file_type`, minimal but real.
+
+    GRCh38 throughout because that is the only build every one of these types is
+    analysed on: a GRCh37 BAM/CRAM/SAM and a T2T anything are refused, and a refused
+    upload has no Job and therefore no steps.
+    """
+    vcf_types = (FileType.VCF, FileType.BCF, FileType.GVCF)
+    return FileAnalysis(
+        file_type=file_type,
+        is_compressed=True,
+        has_index=True,
+        file_size=1,
+        is_valid=True,
+        validation_errors=[],
+        vcf_info=(
+            VCFHeaderInfo(
+                reference_genome="GRCh38",
+                sequencing_platform="Illumina",
+                sequencing_profile=SequencingProfile.WGS,
+                has_index=True,
+                is_bgzipped=True,
+                contigs=["chr1"],
+                sample_count=1,
+                variant_count=None,
+            )
+            if file_type in vcf_types
+            else None
+        ),
+        reference_genome=None if file_type in vcf_types else "GRCh38",
+        # The gVCF lane converts with GATK GenotypeGVCFs, which reads <NON_REF> blocks
+        # and nothing else; anything else is refused before a workflow is planned.
+        gvcf_symbolic_allele=GVCF_GATK_ALLELE if file_type is FileType.GVCF else None,
+    )
+
+
+def _options_for(file_type: FileType) -> WorkflowOptions:
+    """The WorkflowOptions a real upload of `file_type` produces.
+
+    determine_workflow's own output, mapped the way upload_router maps it (which is
+    where the needs_report default of True comes from -- no branch sets that key). Not
+    a transcription of what the branches are believed to set: the CRAM/SAM lanes shipped
+    for months posting a step their flags never minted, and every hand-written option
+    set in this module agreed with the bug rather than with main.nf.
+    """
+    workflow = FileProcessor(temp_dir="/tmp").determine_workflow(
+        _analysis_for(file_type)
+    )
+    values = {f: workflow.get(f, False) for f in GENOMIC_ANALYSIS.option_fields}
+    # No branch of determine_workflow sets needs_report; upload_router defaults it on.
+    values["needs_report"] = workflow.get("needs_report", True)
+    return WorkflowOptions(**values)
 
 
 def test_the_parser_actually_finds_the_posts():
@@ -119,10 +203,13 @@ def test_every_gate_names_a_real_option_field(step_name):
 def _cram_or_sam_options() -> WorkflowOptions:
     """What FileProcessor.determine_workflow's CRAM and SAM branches set.
 
-    Both set needs_gatk / needs_pypgx / needs_mtdna and nothing else; needs_hla is
-    left False there.
+    Derived, not transcribed. The hand-written version of this said "needs_gatk /
+    needs_pypgx / needs_mtdna and nothing else; needs_hla is left False there" -- which
+    was an accurate description of a bug (main.nf runs PyPGxBam2Vcf and
+    OptiTypeHLAFromBAM on both lanes) written down as if it were the design, in a helper
+    the one test that would have caught it did not use.
     """
-    return WorkflowOptions(needs_gatk=True, needs_pypgx=True, needs_mtdna=True)
+    return _options_for(FileType.CRAM)
 
 
 def test_a_cram_or_sam_job_mints_the_conversion_step():
@@ -133,19 +220,15 @@ def test_a_cram_or_sam_job_mints_the_conversion_step():
 
 
 def test_the_conversion_runs_before_the_steps_that_read_its_bam():
-    """PyPGx (and OptiType, when enabled) are handed the BAM this step produces."""
+    """PyPGx and OptiType are handed the BAM this step produces.
+
+    On the options a real CRAM/SAM job actually has, deliberately: this test used to
+    hand-build a set no such job ever carried (needs_hla and needs_pypgx_bam2vcf were
+    both False on those lanes), so it asserted an ordering among steps that lane never
+    minted.
+    """
     ordered = [
-        s.step_name
-        for s in resolve_steps(
-            "genomic_analysis",
-            WorkflowOptions(
-                needs_gatk=True,
-                needs_pypgx=True,
-                needs_pypgx_bam2vcf=True,
-                needs_hla=True,
-                needs_mtdna=True,
-            ),
-        )
+        s.step_name for s in resolve_steps("genomic_analysis", _cram_or_sam_options())
     ]
     assert ordered.index("gatk_cram_sam_to_bam") < ordered.index("hla_typing")
     assert ordered.index("gatk_cram_sam_to_bam") < ordered.index("pypgx_bam2vcf")
@@ -201,13 +284,7 @@ def _gvcf_options() -> WorkflowOptions:
     planned, the second says which one. needs_gatk because GenotypeGVCFs runs in the
     gatk-api container and upload_router turns that flag into --skip_gatk.
     """
-    return WorkflowOptions(
-        needs_conversion=True,
-        needs_gvcf_genotyping=True,
-        needs_gatk=True,
-        needs_pypgx=True,
-        needs_mtdna=True,
-    )
+    return _options_for(FileType.GVCF)
 
 
 def test_a_gvcf_job_mints_gvcf_to_vcf_and_neither_other_conversion():
@@ -336,3 +413,140 @@ def test_gatk_alignment_is_gated_on_a_flag_no_real_upload_sets():
     ):
         names = [s.step_name for s in resolve_steps("genomic_analysis", options)]
         assert "gatk_alignment" not in names, options
+
+
+# --- what each LANE posts vs. what that lane's job actually mints -----------------
+#
+# The tests above ask whether a posted name has a template ANYWHERE. That is the weaker
+# half of the question and it passed throughout the CRAM/SAM bug: pypgx_bam2vcf has had
+# a template all along, gated on needs_pypgx_bam2vcf, which the CRAM and SAM branches
+# did not set -- so main.nf posted it on both lanes, no row existed, every update 404'd
+# and the step sat [pending] for its whole duration. hla_typing was the same shape with
+# a worse symptom: needs_hla left False becomes --skip_hla=true, so OptiType simply never
+# ran and a CRAM silently got no HLA typing where a BAM holding the same reads did.
+#
+# So this section asks the real question per input type: run determine_workflow, mint
+# the steps upload_router would mint, and compare against the processes main.nf runs on
+# that lane. The lane -> process mapping below is the one hand-written part; the step
+# names come from main.nf's own source, and every process named is checked to exist
+# there, so a renamed or deleted process fails here rather than drifting quietly.
+
+
+_PROCESS = re.compile(r"^process\s+([A-Za-z0-9_]+)\s*\{", re.M)
+
+# Steps app-side code mints and posts for itself; no Nextflow process posts them.
+APP_SIDE_STEPS = {"header_analysis", "report_generation"}
+
+LANE_PROCESSES = {
+    # The quick lane: no HLA, no BAM->VCF -- the file is already a call set.
+    FileType.VCF: ("PyPGxGenotypeAll", "MtdnaCall", "PharmCATRun"),
+    FileType.BCF: ("BcfToVCF", "PyPGxGenotypeAll", "MtdnaCall", "PharmCATRun"),
+    FileType.GVCF: ("GVCFToVCF", "PyPGxGenotypeAll", "MtdnaCall", "PharmCATRun"),
+    # The alignment lanes. CRAM and SAM are the BAM lane with a conversion in front:
+    # main.nf hands OptiTypeHLAFromBAM and PyPGxBam2Vcf the BAM the conversion made.
+    FileType.BAM: (
+        "OptiTypeHLAFromBAM",
+        "PyPGxBam2Vcf",
+        "PyPGxGenotypeAll",
+        "MtdnaCall",
+        "PharmCATRun",
+    ),
+    FileType.CRAM: (
+        "CramToBAM",
+        "OptiTypeHLAFromBAM",
+        "PyPGxBam2Vcf",
+        "PyPGxGenotypeAll",
+        "MtdnaCall",
+        "PharmCATRun",
+    ),
+    FileType.SAM: (
+        "SamToBAM",
+        "OptiTypeHLAFromBAM",
+        "PyPGxBam2Vcf",
+        "PyPGxGenotypeAll",
+        "MtdnaCall",
+        "PharmCATRun",
+    ),
+}
+
+
+def _step_name_by_process() -> dict[str, str]:
+    """Each main.nf process -> the step_name it posts, read out of main.nf."""
+    text = MAIN_NF.read_text(encoding="utf-8")
+    starts = [(m.group(1), m.start()) for m in _PROCESS.finditer(text)]
+    posted: dict[str, str] = {}
+    for index, (name, start) in enumerate(starts):
+        end = starts[index + 1][1] if index + 1 < len(starts) else len(text)
+        names = set(_POSTED.findall(text[start:end]))
+        if not names:
+            continue
+        assert len(names) == 1, (
+            f"process {name} posts more than one step_name ({sorted(names)}); the "
+            f"lane mapping below assumes one process reports as one step."
+        )
+        posted[name] = names.pop()
+    return posted
+
+
+def test_every_process_named_in_the_lane_map_exists_in_main_nf():
+    """The hand-written half, checked. A renamed process must fail here, not drift."""
+    posted = _step_name_by_process()
+
+    for file_type, processes in LANE_PROCESSES.items():
+        for process in processes:
+            assert process in posted, (
+                f"{file_type.value}: main.nf has no process {process!r} that posts a "
+                f"step_name. Known: {sorted(posted)}"
+            )
+
+
+@pytest.mark.parametrize("file_type", ANALYSED_TYPES, ids=lambda t: t.value)
+def test_a_real_job_mints_exactly_the_steps_its_lane_posts(file_type):
+    """The guard the CRAM/SAM bug needed: flags, registry and pipeline as one claim.
+
+    Posted-but-not-minted is the [pending]-forever 404. Minted-but-not-posted is a step
+    that never leaves [pending] either, because nothing ever reports it finished.
+    """
+    posted = _step_name_by_process()
+    expected = {posted[p] for p in LANE_PROCESSES[file_type]} | APP_SIDE_STEPS
+    minted = {
+        s.step_name for s in resolve_steps("genomic_analysis", _options_for(file_type))
+    }
+
+    assert minted == expected, (
+        f"{file_type.value}: main.nf posts {sorted(expected - minted)} that this job "
+        f"never mints, and mints {sorted(minted - expected)} that nothing on this lane "
+        f"ever posts."
+    )
+
+
+@pytest.mark.parametrize("file_type", ANALYSED_TYPES, ids=lambda t: t.value)
+def test_no_analysed_input_type_is_planned_as_unsupported(file_type):
+    """Negative control for the fixtures above: these are all GRCh38 and all runnable,
+    so a fixture that accidentally trips a refusal would empty the minted set and make
+    the comparison above meaningless."""
+    options = _options_for(file_type)
+
+    assert options.unsupported is False
+    assert options.is_provisional is False
+
+
+def test_the_alignment_lanes_all_get_hla_typing():
+    """A CRAM and a SAM hold the same reads a BAM does, and main.nf runs
+    OptiTypeHLAFromBAM on all three -- on the BAM the conversion produced, for the two
+    that need converting. needs_hla is what upload_router turns into --skip_hla, so
+    leaving it False on those two lanes did not merely mis-draw the plan: OptiType never
+    ran, and the docs promised it did."""
+    for file_type in (FileType.BAM, FileType.CRAM, FileType.SAM):
+        options = _options_for(file_type)
+        assert options.needs_hla is True, file_type
+        assert options.needs_pypgx_bam2vcf is True, file_type
+
+
+def test_the_variant_call_lanes_get_neither():
+    """The other half of that claim: a VCF/BCF/gVCF is already a call set, so there is
+    no BAM to type HLA from and nothing for PyPGx's BAM->VCF step to do."""
+    for file_type in (FileType.VCF, FileType.BCF, FileType.GVCF):
+        options = _options_for(file_type)
+        assert options.needs_hla is False, file_type
+        assert options.needs_pypgx_bam2vcf is False, file_type

@@ -344,7 +344,15 @@ def test_a_header_naming_grch38_and_t2t_is_undetectable():
 
 
 def test_the_shipped_t2t_fixture_is_detected_as_t2t():
-    """test_data/t2t_chm13_pgx_snps.vcf is the file the refusal tests upload."""
+    """test_data/t2t_chm13_pgx_snps.vcf, read by the detector that has to name it.
+
+    This is the DETECTION half only. The refusal half lives in
+    tests/test_t2t_chm13_refusal.py, which drives this same fixture's header through
+    detect_reference_assembly and into determine_workflow -- deliberately, because for a
+    while the two halves were joined by nothing: the refusal tests passed the build name
+    in as a string, so every T2T row could be deleted from CONTIG_LENGTH_ASSEMBLIES and
+    all twelve of them stayed green.
+    """
     from pathlib import Path
 
     from app.api.utils.header_inspector import (

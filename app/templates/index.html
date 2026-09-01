@@ -1085,9 +1085,31 @@
 
                 // GATK needed for certain formats or explicit flag. `fastq` is absent:
                 // FASTQ uploads are refused, so there is no FASTQ alignment to draw.
-                const needsGatk = !!wf.needs_gatk || !!wf.needs_alignment || !!wf.needs_conversion || ['sam', 'cram'].includes(fileType);
+                //
+                // The `&& !wf.needs_conversion` mirrors workflow_registry.py's
+                // gatk_cram_sam_to_bam template exactly (when="needs_gatk",
+                // unless="needs_conversion"). needs_conversion used to be an OR-term
+                // here instead, so every BCF and gVCF drew a "GATK Processing" step --
+                // the one class of input the registry explicitly vetoes it for, and one
+                // that already has its own conversion row two blocks above. A BCF/gVCF
+                // does set needs_gatk (its conversion runs in the gatk-api container),
+                // which is why the veto is needed on this side too.
+                const needsGatk = (!!wf.needs_gatk || !!wf.needs_alignment || ['sam', 'cram'].includes(fileType)) && !wf.needs_conversion;
                 if (needsGatk) {
                     steps.push({ name: 'GATK Processing', icon: 'bi-cpu' });
+                }
+
+                // HLA typing, before PyPGx, matching workflow_registry.py's order --
+                // OptiType and PyPGx are both handed the same BAM and PyPGx waits for
+                // OptiType (main.nf's hla_complete_ch). Drawn for CRAM and SAM as well
+                // as BAM because all three reach OptiTypeHLAFromBAM: a CRAM/SAM is
+                // converted first, and its reads are the same reads. The fileType
+                // fallback is for the PRE-upload shape, which carries only the handful
+                // of flags /upload/inspect-header returns (see its compat_workflow) --
+                // same reason the PyPGx and bam2vcf lines below have one.
+                const needsHla = (typeof wf.needs_hla === 'boolean') ? wf.needs_hla : ['bam', 'cram', 'sam'].includes(fileType);
+                if (needsHla) {
+                    steps.push({ name: 'OptiType HLA Typing', icon: 'bi-diagram-2' });
                 }
 
                 // PyPGx is generally part of the pipeline unless explicitly disabled

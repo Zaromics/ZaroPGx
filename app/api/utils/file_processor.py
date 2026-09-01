@@ -578,6 +578,32 @@ def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
     )
 
 
+def _clear_needs_flags(workflow: Dict) -> None:
+    """Unset every ``needs_*`` flag on a workflow that is being REFUSED.
+
+    The rule the refusal helpers below state twice -- a flag that names a step must
+    only be set by an input that step can actually finish -- applied to the two
+    refusals that reach their verdict AFTER the plan has been written.
+    ``_plan_variant_call_workflow`` sets needs_pypgx/needs_mtdna before it inspects
+    the build, and the BAM/CRAM/SAM branches set their whole plan before the
+    alignment-build check at the end of ``determine_workflow`` runs. Both left a
+    refused workflow carrying flags that mint real steps.
+
+    Latent, not live: ``upload_router._unanalysable_upload_reason`` refuses the
+    upload before a Job exists, so nothing has ever minted from these. It is fixed
+    anyway because "unsupported is set, so the flags do not matter" is exactly the
+    assumption the 23andMe branch was making when needs_conversion started minting a
+    step nothing posts.
+
+    Generic rather than a named list, so a ``needs_*`` flag added later is covered
+    without anyone remembering this function exists. It touches only ``needs_*``:
+    ``unsupported``/``is_provisional``/``unsupported_reason`` are the refusal itself,
+    and the recommendations and warnings are what the user is owed.
+    """
+    for key in [k for k in workflow if k.startswith("needs_")]:
+        workflow[key] = False
+
+
 class FileProcessor:
     def __init__(self, temp_dir: str = "/tmp"):
         # Created lazily in process_files(), not here: upload_router instantiates this at
@@ -1188,6 +1214,11 @@ class FileProcessor:
                 # at all. See the two caveats named in the copy below.
                 workflow["unsupported"] = True
                 workflow["is_provisional"] = False
+                # Nothing is analysed, so nothing is planned. This function set
+                # needs_pypgx/needs_mtdna at the top before it knew the build, and a
+                # T2T BCF or gVCF arrives here with its caller's conversion flags set
+                # too. See _clear_needs_flags.
+                _clear_needs_flags(workflow)
                 workflow["unsupported_reason"] = (
                     f"ZaroPGx analyses against GRCh38/hg38 only. This file is "
                     f"aligned to {vcf_info.reference_genome}, where the "
@@ -1598,9 +1629,27 @@ class FileProcessor:
             )
 
         # CRAM -> to be converted to BAM (lossy)
+        #
+        # Everything below the conversion is the BAM branch's plan, and it is set here
+        # because main.nf runs the BAM branch's processes on this lane: once CramToBAM
+        # has produced bam_ch, OptiTypeHLAFromBAM and PyPGxBam2Vcf are invoked on it
+        # exactly as they are for a BAM upload. Two flags used to be missing, with two
+        # different symptoms:
+        #
+        # * needs_pypgx_bam2vcf. main.nf's PyPGxBam2Vcf posts step_name=pypgx_bam2vcf
+        #   on this lane, workflow_registry gates that template on this flag, and a
+        #   step name with no row 404s every status update and sits [pending] for the
+        #   whole step -- the identical bug gatk_cram_sam_to_bam had here.
+        # * needs_hla. It is what upload_router turns into --skip_hla, so leaving it
+        #   False sent --skip_hla=true and OptiType never ran: a CRAM or SAM silently
+        #   got no HLA typing while a BAM holding the same reads did, with the docs
+        #   (docs/user/file-formats.md) and the pipeline both saying otherwise.
         elif analysis.file_type == FileType.CRAM:
             workflow["needs_gatk"] = True
             workflow["needs_pypgx"] = True
+            workflow["needs_pypgx_bam2vcf"] = True  # PyPGx create-input-vcf on the BAM
+            # OptiType reads the converted BAM (OptiTypeHLAFromBAM), not the raw CRAM.
+            workflow["needs_hla"] = True
             # main.nf hands the sidecar the already-converted BAM (bam_ch), not the
             # raw CRAM, so this can run alongside the GATK conversion above.
             workflow["needs_mtdna"] = True
@@ -1617,6 +1666,11 @@ class FileProcessor:
                 "<p>Alternative: Use nf-core/bamtofastq pipeline for CRAM to FASTQ conversion</p>"
             )
             workflow["recommendations"].append(
+                "<p>Once converted, the BAM gets the full BAM pipeline: OptiType/HLA "
+                "typing, PyPGx create-input-vcf, PyPGx star allele calling, then "
+                "PharmCAT with those outside calls.</p>"
+            )
+            workflow["recommendations"].append(
                 "<p>See: https://pharmcat.clinpgx.org/using/Calling-HLA/</p>"
             )
 
@@ -1626,10 +1680,13 @@ class FileProcessor:
                     "<p>Creating index for CRAM file for faster processing</p>"
                 )
 
-        # SAM -> to be converted to BAM
+        # SAM -> to be converted to BAM. Same plan as CRAM above, for the same reason
+        # and with the same two flags that were missing; see that branch's comment.
         elif analysis.file_type == FileType.SAM:
             workflow["needs_gatk"] = True
             workflow["needs_pypgx"] = True
+            workflow["needs_pypgx_bam2vcf"] = True
+            workflow["needs_hla"] = True
             # Same as CRAM above: the sidecar sees the converted BAM, not the raw SAM.
             workflow["needs_mtdna"] = True
             workflow["recommendations"].append(
@@ -1640,6 +1697,11 @@ class FileProcessor:
             )
             workflow["recommendations"].append(
                 "<p>Alternative: samtools view -b -o output.bam input.sam</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Once converted, the BAM gets the full BAM pipeline: OptiType/HLA "
+                "typing, PyPGx create-input-vcf, PyPGx star allele calling, then "
+                "PharmCAT with those outside calls.</p>"
             )
 
             # Check if index exists
@@ -1806,9 +1868,23 @@ class FileProcessor:
                     "come from your file's own reference-confidence blocks, so they "
                     "are called data rather than assumed.</p>"
                 )
+                # Not "--absent-to-ref is not used on this lane". That was asserted
+                # here, in the report paragraph and in the docs, and it is not this
+                # branch's to assert: the two assume-reference checkboxes are GLOBAL
+                # (index.html), resolved once per upload after this function has
+                # returned, and forwarded to PharmCAT with no input-type branch
+                # anywhere on the way. What IS true unconditionally is that the lane
+                # does not need them -- and which one would bite, which is the
+                # counter-intuitive half.
                 workflow["recommendations"].append(
-                    "<p>ZaroPGx does not use PharmCAT's --absent-to-ref on this lane, "
-                    "and does not need to.</p>"
+                    "<p>ZaroPGx needs neither of PharmCAT's assume-reference flags on "
+                    "this lane and adds neither itself. The two checkboxes under "
+                    "PharmCAT still apply if you tick them, and on this lane the one "
+                    "that changes the answer is <code>--unspecified-to-ref</code>, not "
+                    "<code>--absent-to-ref</code>: the reference pass emits a row at "
+                    "every position in PharmCAT's list, so a position your file did "
+                    "not cover arrives as a present <code>./.</code> row rather than "
+                    "as a missing one.</p>"
                 )
                 workflow["warnings"].append(
                     "<p>⚠️ GenotypeGVCFs re-genotypes each site from the recorded "
@@ -1819,9 +1895,12 @@ class FileProcessor:
                     "identical to your caller's.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ Positions your gVCF does not cover stay no-calls: a "
+                    "<p>⚠️ Positions your gVCF does not cover are no-calls: a "
                     "reference block that is absent is not a reference call. The run "
-                    "reports how many of PharmCAT's positions carried a call.</p>"
+                    "reports how many of PharmCAT's positions carried a call. "
+                    "Ticking “Assume unspecified sites = reference” reverses that — "
+                    "it turns the very positions that count reports as uncovered into "
+                    "fabricated <code>0/0</code> calls.</p>"
                 )
                 workflow["warnings"].append(
                     "<p>⚠️ PharmCAT discards positions whose indel representation does "
@@ -2001,6 +2080,11 @@ class FileProcessor:
                 # that means "analysed anyway, provisionally" would wave this past
                 # the upload gate (the 23andMe mistake).
                 workflow["is_provisional"] = False
+                # And nothing is planned either: the BAM/CRAM/SAM branches above set
+                # their whole plan (needs_hla / needs_pypgx / needs_pypgx_bam2vcf /
+                # needs_mtdna / needs_gatk) before this check could know the build.
+                # See _clear_needs_flags.
+                _clear_needs_flags(workflow)
                 workflow["unsupported_reason"] = (
                     f"This {file_label} file is aligned to "
                     f"{analysis.reference_genome}. ZaroPGx analyses against "

@@ -3333,13 +3333,22 @@ async def sam_to_bam(
 # ---------------------------------------------------------------------------
 
 
-def _looks_like_bgzf(path):
-    """A bgzipped VCF opens with the gzip magic bytes, the same as a BAM.
+def _looks_gzipped(path):
+    """The gzip magic bytes, which every BGZF file starts with -- and so does plain gzip.
 
     The VCF-shaped counterpart of _looks_like_bam() above, and here for the same
     reason: `bcftools view -O z` that somehow wrote plain text (or an error
     document) where the compressed VCF belongs must not be reported as a
     successful conversion.
+
+    Named for what it CHECKS, not for what the caller wants to be true. It was
+    `_looks_like_bgzf`, which it never verified: BGZF is gzip with a `BC` extra
+    subfield carrying the block size, and nothing here reads past byte 2. Both callers
+    pass a `bcftools ... -O z` output, which is always genuinely BGZF, so the gap has no
+    live consequence -- but a test named "a non-BGZF output is refused" was really
+    pinning "plain text is refused", and neither the name nor the caller's message may
+    claim a check that is not made. Verifying the framing means reading the extra field;
+    do that here if a plain-gzip VCF ever reaches these paths.
     """
     try:
         with open(path, "rb") as handle:
@@ -3417,10 +3426,10 @@ def convert_bcf_to_vcf(job_label, input_path, output_vcf):
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
-    if not _looks_like_bgzf(output_vcf):
+    if not _looks_gzipped(output_vcf):
         _discard_output(output_vcf)
         message = (
-            f"bcftools view produced {output_vcf}, which is not a BGZF-framed VCF. "
+            f"bcftools view produced {output_vcf}, which is not compressed at all. "
             "Everything downstream opens it as bgzip, so refusing to treat this as "
             "a valid conversion."
         )
@@ -3888,10 +3897,10 @@ def convert_gvcf_to_vcf(
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
-    if not _looks_like_bgzf(output_vcf):
+    if not _looks_gzipped(output_vcf):
         _discard_output(output_vcf)
         message = (
-            f"The genotyped output {output_vcf} is not a BGZF-framed VCF. Everything "
+            f"The genotyped output {output_vcf} is not compressed at all. Everything "
             "downstream opens it as bgzip, so refusing to treat this as a valid "
             "conversion."
         )
@@ -4124,6 +4133,18 @@ async def gvcf_to_vcf(
             f"{stats['n_pgx_positions_called']} of {stats['n_pharmcat_positions']} "
             f"PharmCAT positions carried a call"
         )
+        # ONE dict, read twice below: the JobStep's output_data and this endpoint's own
+        # response body. It used to be two identical literals, and only the response one
+        # was ever executed by a test (JobClient is stubbed to raise in the unit
+        # environment), so renaming a key in the complete_step copy would have stripped
+        # the coverage figures from every gVCF report -- app/utils/gvcf_provenance.py
+        # reads exactly these names off the step row -- with the suite still green.
+        coverage_data = {
+            "n_pharmcat_positions": stats['n_pharmcat_positions'],
+            "n_pgx_positions_called": stats['n_pgx_positions_called'],
+            "n_positions_absent": stats['n_positions_absent'],
+            "target_build": "GRCh38",
+        }
         if job_client:
             await job_client.log_progress("gVCF genotyping completed", {
                 "vcf_path": stats['vcf_path'],
@@ -4136,12 +4157,7 @@ async def gvcf_to_vcf(
             # liftover step's counts.
             await job_client.complete_step(
                 f"Genotyped {file.filename} into a plain VCF ({coverage})",
-                output_data={
-                    "n_pharmcat_positions": stats['n_pharmcat_positions'],
-                    "n_pgx_positions_called": stats['n_pgx_positions_called'],
-                    "n_positions_absent": stats['n_positions_absent'],
-                    "target_build": "GRCh38",
-                },
+                output_data=dict(coverage_data),
             )
 
         return {
@@ -4151,10 +4167,7 @@ async def gvcf_to_vcf(
             "vcf": stats['vcf_path'],  # Alternative field name, matching the other routes
             "vcf_index": stats['vcf_index'],
             "vcf_size_bytes": stats['vcf_size_bytes'],
-            "n_pharmcat_positions": stats['n_pharmcat_positions'],
-            "n_pgx_positions_called": stats['n_pgx_positions_called'],
-            "n_positions_absent": stats['n_positions_absent'],
-            "target_build": "GRCh38",
+            **coverage_data,
             "message": f"Genotyped {filename} into a plain VCF ({coverage})",
         }
 

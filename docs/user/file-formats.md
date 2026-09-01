@@ -30,11 +30,13 @@ BCF → bcftools (VCF conversion) → Header Analysis → PyPGx → PharmCAT →
 ## Genomic VCF (gVCF)
 A gVCF records *reference-confidence blocks* — spans the caller is confident match the reference — alongside the variant calls. PharmCAT cannot read one: PharmCAT 3.4.0 detects a gVCF (from the filename, from a `##GVCFBlock` header record, or from a reference-block data row) and refuses it outright, so a gVCF handed to it produces an error, not a wrong answer.
 
-ZaroPGx converts it instead, and the conversion makes a gVCF a **better** input than a plain VCF rather than merely an acceptable one. It runs GATK `GenotypeGVCFs` twice: once over PharmCAT's own position list with `--include-non-variant-sites`, and once over everything else, joining the two with `bcftools concat -a`. The first pass is the point — the homozygous-reference genotypes at the pharmacogene positions come from *your file's own reference-confidence blocks*, so they are called data. The plain-VCF lane has no such information and can only fill those positions in with PharmCAT's `--absent-to-ref`, which fabricates them; on the gVCF lane that flag is not used and is not needed.
+ZaroPGx converts it instead, and the conversion makes a gVCF a **better** input than a plain VCF rather than merely an acceptable one. It runs GATK `GenotypeGVCFs` twice: once over PharmCAT's own position list with `--include-non-variant-sites`, and once over everything else, joining the two with `bcftools concat -a`. The first pass is the point — the homozygous-reference genotypes at the pharmacogene positions come from *your file's own reference-confidence blocks*, so they are called data. The plain-VCF lane has no such information and can only fill those positions in with PharmCAT's `--absent-to-ref`, which fabricates them; the gVCF lane needs no such flag, and ZaroPGx adds none of its own.
+
+It does not *forbid* one either, and that is worth a paragraph of its own. The two assume-reference checkboxes under PharmCAT are global — they apply to every input type, this one included — and on the gVCF lane the one that changes the answer is **`--unspecified-to-ref`**, not `--absent-to-ref`. The reference pass runs with `--include-non-variant-sites`, which emits a row at *every* position in PharmCAT's list, so a position your file did not cover arrives as a present `./.` row rather than as a missing one; `--absent-to-ref` acts on positions missing from the VCF and has little to act on here, while `--unspecified-to-ref` rewrites exactly those `./.` rows to `0/0`. Tick it and the positions the report counts as uncovered are reported as reference calls you did not make. The report says so when it happens.
 
 What the report tells you, and why:
 
-- **How much of PharmCAT's position list your file actually covered.** A gVCF that omits a region has no reference block there, so those positions are no-calls — absent is not reference.
+- **How much of PharmCAT's position list your file actually covered.** A gVCF that omits a region has no reference block there, so those positions are no-calls — absent is not reference. Unless you ticked "Assume unspecified sites = reference", in which case they are not no-calls at all, and the report says that instead.
 - **That `GenotypeGVCFs` re-derives each genotype** from the recorded likelihoods rather than copying your caller's. ZaroPGx sets the calling-confidence threshold to zero so nothing is dropped for failing a cutoff you did not choose, but the genotypes analysed are still not guaranteed identical to your caller's output.
 - Positions PharmCAT discards because their indel representation does not match its own definitions stay no-calls. That is the same outcome a plain VCF gets, not a cost of the conversion.
 
@@ -93,7 +95,7 @@ Measured against the 1,226 positions in PharmCAT's own `pharmcat_positions.vcf` 
 | CYP2C19 (35) | 17 | 19 | 17 | 5 | 8 |
 | NUDT15 (20) | 0 | 0 | 1 | 0 | 0 |
 
-Only 222 of 23andMe v5's 229 are SNVs, so its real ceiling is 18.1%. A newer chip is not a better pharmacogenomic chip: v5 covers fewer *CYP2D6* markers in the gene window than v4 does.
+Only 222 of 23andMe v5's 229 are SNVs, so its real ceiling is 18.1%. A newer chip is not uniformly a better pharmacogenomic chip: v5 covers fewer *CYP2C19* markers in the gene window than v4 does (17 against 19).
 
 The variants that define the common star alleles are absent by name. 23andMe v5 has no `rs3892097` (`CYP2D6*4`, roughly 20% allele frequency in Europeans), no `rs1065852` (`*10`, the most common East Asian allele), and neither `rs16947` nor `rs1135840` (both core to `*2`); it also lacks `rs28371686` (`CYP2C9*5`) and `rs7900194` (`CYP2C9*8`). `rs35742686` (`CYP2D6*3`) and `rs3064744` (the `UGT1A1*28` TA repeat) are absent from every version of every vendor. And no chip, by any method, can detect the gene duplications and deletions that decide the phenotype for *CYP2D6* and several other genes.
 

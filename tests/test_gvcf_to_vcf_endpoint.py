@@ -156,10 +156,18 @@ class FakeTools:
     Models just enough of gatk and bcftools for the four-step conversion:
 
     * `bcftools view -O z -o OUT IN` writes a gzipped VCF (the staging re-encode).
-    * `gatk GenotypeGVCFs ... -O OUT` writes `pgx_rows` when the argv carries
+    * `gatk GenotypeGVCFs -V IN ... -O OUT` writes `pgx_rows` when the argv carries
       `--include-non-variant-sites`, and `variant_rows` otherwise.
     * `bcftools concat -a ... -o OUT A B` writes the union of what A and B hold.
     * `bcftools index -t X` touches `X.tbi`.
+
+    EVERY INPUT PATH IS OPENED, and a missing one fails the call the way the real tool
+    would (exit 2, stderr naming the file). Without that the fake decided its output
+    purely from the subcommand and never looked at what it was pointed at: rewriting
+    every `-V` and every positional input to `/nonexistent` left 30 of this module's 31
+    tests green, so nothing here pinned that the four steps are actually chained -- that
+    GenotypeGVCFs reads the STAGED, indexed copy rather than the raw upload, or that
+    concat reads the two files the passes just wrote.
 
     `failing`, `payload` and the row lists exist so a non-zero exit, a
     not-actually-BGZF output and an empty result can each be provoked.
@@ -201,10 +209,33 @@ class FakeTools:
         self.rows_by_path[path] = list(rows)
         Path(path).write_bytes(gzip.compress(_vcf_text(rows).encode("utf-8")))
 
+    @staticmethod
+    def _inputs(argv):
+        """The paths this command READS, so a broken chain cannot go unnoticed."""
+        tool, sub = argv[0], (argv[1] if len(argv) > 1 else "")
+        if tool == "gatk" and sub == "GenotypeGVCFs":
+            return [FakeTools._flag_value(argv, flag) for flag in ("-R", "-V")]
+        if tool == "bcftools" and sub == "view":
+            return [argv[-1]]
+        if tool == "bcftools" and sub == "concat":
+            return argv[argv.index("-o") + 2 :]
+        if tool == "bcftools" and sub == "index":
+            return [argv[-1]]
+        return []
+
     def run(self, argv, **kwargs):
         self.calls.append(argv)
         tool = argv[0]
         sub = argv[1] if len(argv) > 1 else ""
+
+        for path in self._inputs(argv):
+            if not os.path.exists(path):
+                return subprocess.CompletedProcess(
+                    argv,
+                    2,
+                    b"",
+                    f"{tool}: {path}: No such file or directory".encode("utf-8"),
+                )
 
         code = self.failing.get((tool, sub), self.failing.get((tool, None), 0))
         if code:
@@ -302,7 +333,14 @@ def test_both_passes_disable_the_calling_confidence_cutoff(client, tools):
     a call the original caller emitted can come back as ./. . Zero keeps the
     re-genotyping faithful rather than silently dropping sites the uploader never chose
     a threshold for. The report copy still says the re-derivation itself remains."""
-    _post(client)
+    resp = _post(client)
+
+    # The status assertion is not decoration: a bare `for argv in ...: assert` over an
+    # EMPTY list passes. Pointing PHARMCAT_POSITIONS_PATH at the regions BED 400s this
+    # endpoint before a single tool runs, and this test and three of its neighbours
+    # went on passing over nothing.
+    assert resp.status_code == 200, resp.text
+    assert len(tools.genotype_calls()) == 2, tools.argvs()
 
     for argv in tools.genotype_calls():
         flag = "--standard-min-confidence-threshold-for-calling"
@@ -315,7 +353,10 @@ def test_the_regions_bed_is_not_the_interval_list(client, tools):
     (4.8 MB vs 13 KB) and ~30x the PyPGx runtime per gene (2m29s vs 5.1s) -- which over
     ZaroPGx's ~20 genes is roughly 45 minutes of nothing. The BED is not a more
     thorough alternative; it is the same answer, slower."""
-    _post(client)
+    resp = _post(client)
+
+    assert resp.status_code == 200, resp.text
+    assert tools.argvs(), "nothing ran, so this loop would assert over nothing"
 
     for argv in tools.argvs():
         assert not any("pharmcat_regions" in str(token) for token in argv), argv
@@ -337,6 +378,11 @@ def test_the_two_passes_are_merged_into_one_file(client, tools):
         "it satisfies both -L and -XL and is emitted by both passes. `concat -a` alone "
         "keeps both copies and the duplicate reaches PyPGx and PharmCAT."
     )
+    # And it merges THE TWO PASSES, not two paths that happen to be named plausibly.
+    merged = concat[0][concat[0].index("-o") + 2 :]
+    assert sorted(merged) == sorted(
+        argv[argv.index("-O") + 1] for argv in tools.genotype_calls()
+    ), merged
 
 
 def test_the_upload_is_staged_and_indexed_before_genotyping(client, tools):
@@ -345,8 +391,9 @@ def test_the_upload_is_staged_and_indexed_before_genotyping(client, tools):
     in SAFE_UPLOAD_EXTENSIONS, so `sample.gvcf` reaches disk with no extension at all.
     The unconditional `bcftools view -Oz` is also what lets a gVCF written as a BCF use
     this lane rather than needing one of its own."""
-    _post(client, filename="sample.gvcf")
+    resp = _post(client, filename="sample.gvcf")
 
+    assert resp.status_code == 200, resp.text
     staged = tools.ran("bcftools", "view")
     assert len(staged) == 1, tools.argvs()
     output = staged[0][staged[0].index("-o") + 1]
@@ -355,6 +402,15 @@ def test_the_upload_is_staged_and_indexed_before_genotyping(client, tools):
     indexed = [argv[-1] for argv in tools.ran("bcftools", "index", "-t", "-f")]
     assert output in indexed, indexed
 
+    # And GATK is handed THAT file, not the raw upload. This was the unpinned half:
+    # every assertion here was about the staging command, none about what the passes
+    # were then pointed at, so handing GenotypeGVCFs the unindexed, extension-less
+    # upload would have passed.
+    upload = staged[0][-1]
+    assert upload != output
+    for argv in tools.genotype_calls():
+        assert argv[argv.index("-V") + 1] == output, argv
+
     # Order matters: the index has to exist before GATK reads the file.
     order = tools.argvs()
     assert order.index(staged[0]) < order.index(tools.genotype_calls()[0])
@@ -362,7 +418,10 @@ def test_the_upload_is_staged_and_indexed_before_genotyping(client, tools):
 
 def test_every_call_is_an_argv_list(client, tools):
     """The input path derives from an uploaded filename; no shell may re-parse it."""
-    _post(client, filename="x;touch pwned;.g.vcf.gz")
+    resp = _post(client, filename="x;touch pwned;.g.vcf.gz")
+
+    assert resp.status_code == 200, resp.text
+    assert tools.argvs(), "nothing ran, so this loop would assert over nothing"
 
     for argv in tools.argvs():
         assert isinstance(argv, list), argv
@@ -426,7 +485,11 @@ def test_a_failed_index_is_a_warning_not_a_lost_run(client, tools):
 
 def test_the_input_copy_is_not_left_on_the_container(client, tools, gatk_api):
     """A whole-genome gVCF arrives here, and it is re-encoded into a second copy."""
-    _post(client)
+    resp = _post(client)
+
+    # A run that never got as far as writing anything would leave nothing behind
+    # either, and this assertion would be about that instead.
+    assert resp.status_code == 200, resp.text
 
     leftovers = list(Path(gatk_api.TEMP_DIR).glob("**/*.vcf.gz"))
     assert leftovers == [], leftovers
@@ -482,6 +545,53 @@ def test_the_inflated_rows_cannot_hide_real_missing_coverage(client, tools):
 
     assert body["n_pgx_positions_called"] == 2
     assert body["n_positions_absent"] == 2
+
+
+def test_the_step_row_carries_the_same_counts_the_response_does(
+    client, tools, gatk_api, monkeypatch
+):
+    """The JobStep's output_data is the report's ONLY source for these numbers.
+
+    ``app/utils/gvcf_provenance.py`` reads n_pharmcat_positions / n_pgx_positions_called
+    / n_positions_absent off the step row -- never off this response, which no one
+    stores. The endpoint built a second literal dict for ``complete_step`` and nothing
+    executed it: the module-level ``job_client`` stub raises on construction, so every
+    test in this file ran with ``job_client = None`` and skipped the branch entirely.
+    Renaming a key there would have deleted the coverage sentence from every gVCF report
+    with the suite green. This drives the branch for real.
+    """
+    completed = {}
+
+    class RecordingJobClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def start_step(self, *args, **kwargs):
+            return None
+
+        async def log_progress(self, *args, **kwargs):
+            return None
+
+        async def complete_step(self, message, output_data=None):
+            completed["message"] = message
+            completed["output_data"] = output_data
+
+    monkeypatch.setattr(gatk_api, "JobClient", RecordingJobClient)
+    tools.pgx_rows = PHARMCAT_POSITION_ROWS[:3]
+
+    body = _post(client, job_id="job-42").json()
+
+    assert completed, "complete_step was never called; the branch is still unexercised"
+    output_data = completed["output_data"]
+    for key in (
+        "n_pharmcat_positions",
+        "n_pgx_positions_called",
+        "n_positions_absent",
+        "target_build",
+    ):
+        assert output_data[key] == body[key], key
+    assert output_data["n_pgx_positions_called"] == 3
+    assert output_data["n_positions_absent"] == 1
 
 
 def test_a_no_call_row_is_not_counted_as_coverage(client, tools):
@@ -615,14 +725,21 @@ def test_a_discarded_output_does_not_survive_the_refusal(client, tools):
     assert not output.exists(), output
 
 
-def test_a_non_bgzf_output_is_refused(client, tools):
-    """Everything downstream opens this file as bgzip; plain text is not a conversion."""
+def test_an_uncompressed_output_is_refused(client, tools):
+    """Everything downstream opens this file as bgzip; plain text is not a conversion.
+
+    Named for what it pins. As `test_a_non_bgzf_output_is_refused` it claimed more than
+    the code checks: `_looks_gzipped` reads the two gzip magic bytes and nothing else,
+    so a plain-gzip (non-BGZF) VCF would pass. Both callers hand it a `bcftools -O z`
+    output, which is genuinely BGZF, so what is actually guarded against -- and what is
+    pinned here -- is plain text or an error document where the VCF belongs.
+    """
     tools.payload = b"##fileformat=VCFv4.2\nnot compressed at all\n"
 
     resp = _post(client)
 
     assert resp.status_code == 500, resp.text
-    assert "bgzf" in resp.json()["detail"].lower()
+    assert "not compressed at all" in resp.json()["detail"].lower()
 
 
 def test_an_empty_output_file_is_refused(client, tools):

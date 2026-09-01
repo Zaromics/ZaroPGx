@@ -99,7 +99,13 @@ class FakeBcftools:
     `bcftools view -O z -o OUT IN` writes a gzipped VCF holding `self.rows`; setting
     `rows` to `[]` produces the header-only file that must be refused rather than
     shipped. `bcftools index -t` touches a .tbi. `returncode` and `payload` exist so a
-    non-zero exit and a not-actually-BGZF output can each be provoked.
+    non-zero exit and an uncompressed output can each be provoked.
+
+    THE INPUT PATH IS OPENED, and a missing one fails the call the way bcftools would
+    (exit 2, stderr naming the file). Without that the fake wrote its output from the
+    subcommand alone and never looked at what it was pointed at: rewriting the input
+    argument to `/nonexistent` left 11 of this module's 13 tests green, so nothing here
+    pinned that bcftools is handed the staged upload at all.
     """
 
     SubprocessError = subprocess.SubprocessError
@@ -132,6 +138,16 @@ class FakeBcftools:
     def run(self, argv, **kwargs):
         self.calls.append(argv)
         sub = argv[1] if len(argv) > 1 else ""
+
+        # Both commands read their last positional argument: `view ... IN` and
+        # `index -t -f VCF`.
+        if not os.path.exists(argv[-1]):
+            return subprocess.CompletedProcess(
+                argv,
+                2,
+                b"",
+                f"bcftools: {argv[-1]}: No such file or directory".encode("utf-8"),
+            )
 
         if self.returncode == 0 and sub == "view":
             out = self._flag_value(argv, "-o")
@@ -180,7 +196,12 @@ def test_the_conversion_is_bcftools_view_to_bgzip(client, bcftools):
 
 def test_every_bcftools_call_is_an_argv_list(client, bcftools):
     """The input path derives from an uploaded filename; no shell may re-parse it."""
-    _post(client, filename="x;touch pwned;.bcf")
+    resp = _post(client, filename="x;touch pwned;.bcf")
+
+    # A bare `for argv in ...: assert` over an EMPTY list passes, so a run that 400s
+    # before bcftools is reached would satisfy this test without testing anything.
+    assert resp.status_code == 200, resp.text
+    assert bcftools.argvs(), "nothing ran, so this loop would assert over nothing"
 
     for argv in bcftools.argvs():
         assert isinstance(argv, list), argv
@@ -264,14 +285,19 @@ def test_a_discarded_output_does_not_survive_the_refusal(client, bcftools):
     assert not output.exists(), output
 
 
-def test_a_non_bgzf_output_is_refused(client, bcftools):
-    """Everything downstream opens this file as bgzip; plain text is not a conversion."""
+def test_an_uncompressed_output_is_refused(client, bcftools):
+    """Everything downstream opens this file as bgzip; plain text is not a conversion.
+
+    Named for what it pins, for the reason the gVCF module's copy of this test gives:
+    `_looks_gzipped` reads the two gzip magic bytes only, so this is "plain text is
+    refused", not "non-BGZF framing is refused".
+    """
     bcftools.payload = b"##fileformat=VCFv4.2\nnot compressed at all\n"
 
     resp = _post(client)
 
     assert resp.status_code == 500, resp.text
-    assert "bgzf" in resp.json()["detail"].lower()
+    assert "not compressed at all" in resp.json()["detail"].lower()
 
 
 def test_an_empty_output_file_is_refused(client, bcftools):
