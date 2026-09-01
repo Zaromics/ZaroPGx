@@ -586,12 +586,23 @@ async def process_genotype(
                 # The default pipeline runs: Named Allele Matcher → Phenotyper → Reporter
                 # To get drug recommendations, we need the Reporter step
                 #
-                # No "-G": PharmCAT's own gVCF check is left switched on deliberately.
-                # A gVCF is refused at upload (app/api/utils/file_processor.py's
-                # determine_workflow) because PharmCAT is not validated against
-                # <NON_REF> reference blocks, so this check is the backstop for
-                # anything that reaches the sidecar by another route - not a nuisance
-                # to bypass.
+                # No "-G": PharmCAT's own gVCF check is left switched on deliberately,
+                # and the gVCF lane made that MORE important rather than less. gVCFs are
+                # no longer refused at upload -- ZaroPGx genotypes a GATK GRCh38 one into
+                # a plain VCF first (gatk-api's /gvcf-to-vcf, two GenotypeGVCFs passes)
+                # -- so the file that arrives here is meant to have stopped being a gVCF,
+                # by content AND by name. This check is what verifies that: if a gVCF
+                # ever reaches this sidecar, the conversion did not happen or did not
+                # work, and PharmCAT saying so is the only signal anything would get.
+                # Upstream documents -G as "SHOULD ONLY BE USED if you are certain your
+                # data is not a gVCF", and we are certain of no such thing about a file
+                # we did not convert.
+                #
+                # (The justification here used to read "PharmCAT is not validated
+                # against <NON_REF> reference blocks". That was measured and is false --
+                # PharmCAT 3.4.0 detects a gVCF and refuses it, emitting no star alleles
+                # at all. The conclusion was right for the wrong reason; the reason is
+                # now the right one.)
                 pharmcat_cmd = [
                     "pharmcat_pipeline",
                     "-v",  # Verbose output

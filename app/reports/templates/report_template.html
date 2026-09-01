@@ -939,6 +939,14 @@
         {% if pharmcat_assume_ref_methodology %}
             {{ pharmcat_assume_ref_methodology|safe }}
         {% endif %}
+        {# Deliberately adjacent to the assume-ref paragraph above: the two describe
+           opposite ends of the same question (were the homozygous-reference calls at
+           pharmacogene positions read from the data, or filled in?), and a reader who
+           sees one without the other cannot tell which they are looking at. Renders
+           only when the run actually genotyped a gVCF. #}
+        {% if gvcf_provenance %}
+            {{ gvcf_provenance|safe }}
+        {% endif %}
     </div>
 
     <div class="disclaimer">

@@ -13,12 +13,25 @@ curation: full
   chain). Unliftable variants are dropped and counted; an implausibly high reject rate
   fails the run instead of producing a near-empty result.
 - **Priority 1.5 (Development)**: BAM
-- **Priority 2   (Development)**: CRAM, SAM, BCF (NGS-derived)
+- **Priority 2   (Development)**: CRAM, SAM, BCF, gVCF (NGS-derived). A GRCh38 GATK gVCF
+  is genotyped into a plain VCF by gatk-api's `/gvcf-to-vcf` (two `GenotypeGVCFs` passes,
+  the first `--include-non-variant-sites` over `pharmcat_positions.vcf`) before analysis.
+- **Not accepted**: gVCFs whose reference blocks are `<*>` rather than GATK's `<NON_REF>`
+  (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
+  gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
 - **Not accepted**: FASTQ. ZaroPGx ships no aligner, so raw reads — single- or paired-end —
   are refused at upload. Implementing alignment is the only thing that would change this.
+- **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
+  pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
+  that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
+  deletion, and PyPGx reads the gaps as homozygous reference — so the report would be
+  confidently wrong rather than incomplete. See `docs/user/file-formats.md`.
+- **Not accepted**: T2T-CHM13, in any format. Detected from the file's own contig lengths
+  or `##reference=` line and refused. Building a liftover lane for it is a separate
+  decision, not a scheduled one: the T2T chains exclude GRCh38's ALT contigs (GSTT1 lives
+  on one), and CYP2D6's CHM13 representation is uncharacterised.
 - **Priority 3   (Research)**: Other sequencing/genotyping formats
-- **Priority 4   (Research)**: BED, gVCF, 23andMe, AncestryDNA, TXT formats
-- **Priority 5   (Early Research)**: T2T and other emerging formats
+- **Priority 4   (Research)**: BED, TXT formats
 
 ## Pipeline Function
 

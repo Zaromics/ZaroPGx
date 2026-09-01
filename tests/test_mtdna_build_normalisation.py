@@ -137,10 +137,55 @@ def test_chrm_with_no_length_and_a_37_label_is_refused():
 
 
 def test_chrm_with_no_length_and_an_unknown_label_is_refused():
-    assert classify_from_mito_contig("chrM", None, build_label="T2T-CHM13") == (
+    assert classify_from_mito_contig("chrM", None, build_label="GRCh36") == (
         MitoBuild.AMBIGUOUS_CHRM
     )
     assert classify_from_mito_contig("chrM", None) == MitoBuild.AMBIGUOUS_CHRM
+
+
+# -- classify_from_mito_contig: T2T-CHM13, where the length is NOT ground truth --
+
+
+def test_a_chm13_label_is_not_read_as_grch38():
+    """The one case where the label outranks the length, and it has to.
+
+    CHM13's chrM is rCRS at 16569 bp and spelled chrM -- byte for byte the
+    evidence GRCh38's chrM presents -- but its origin is rotated 576 bp. Both
+    signals this function reads therefore say GRCh38 about a file that is not
+    GRCh38, and calling against it would report m.1555A>G at the wrong position
+    rather than failing. Only the label disagrees, so only the label can catch it.
+    """
+    assert classify_from_mito_contig("chrM", 16569, build_label="T2T-CHM13v2") == (
+        MitoBuild.CHM13
+    )
+    assert classify_from_mito_contig("chrM", None, build_label="T2T-CHM13v2") == (
+        MitoBuild.CHM13
+    )
+
+
+def test_a_chm13_file_is_refused_with_a_reason_that_is_true_of_it():
+    """Not the generic UNSUPPORTED reason: that one says the build could not be
+    matched to rCRS or NC_001807, which would be false here -- CHM13's chrM IS
+    rCRS. The refusal has to name the rotation, and a way out."""
+    plan = plan_for(MitoBuild.CHM13)
+
+    assert not plan.supported
+    assert not plan.needs_liftover
+    assert not plan.rename_mt_to_chrm
+    assert "576" in plan.reason
+    assert "GRCh38" in plan.reason
+
+
+def test_the_chm13_guard_does_not_catch_the_ordinary_builds():
+    """The negative control: the guard must not disturb the three builds that
+    do work, whichever way their labels are spelled."""
+    for label in ("GRCh38", "hg38", "GRCh37", "b37", "hg19", "unknown", None):
+        assert classify_from_mito_contig("chrM", 16569, build_label=label) != (
+            MitoBuild.CHM13
+        )
+        assert classify_from_mito_contig("MT", 16569, build_label=label) != (
+            MitoBuild.CHM13
+        )
 
 
 def test_ambiguous_chrm_is_refused_with_a_reason():

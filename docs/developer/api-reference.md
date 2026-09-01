@@ -209,32 +209,66 @@ render its pre-flight summary.
 2. **Unreadable file.** `FileProcessor.process_files` returned `success: false` —
    the file could not be read or parsed at all.
 3. **Unanalysable input.** `_unanalysable_upload_reason` rejected the derived
-   workflow. This fires when the workflow is flagged `unsupported`, is **not**
-   flagged `is_provisional`, and the detected `file_type` is outside
-   `NEXTFLOW_INPUT_TYPES` (`vcf`, `bam`, `cram`, `sam`) — i.e. FASTQ, 23andMe,
-   FASTA, BED, gVCF, BCF and unrecognised formats. The reason string is the
+   workflow. This fires whenever the workflow is flagged `unsupported`, *unless*
+   the detected `file_type` is in `NEXTFLOW_INPUT_TYPES` (`vcf`, `bcf`, `gvcf`,
+   `bam`, `cram`, `sam`) **and** the workflow is flagged `is_provisional` — that
+   pair is the only exemption, and as of 2026-08-31 nothing sets `is_provisional`,
+   so every flagged input is refused. Two groups reach it: whole formats the
+   pipeline cannot carry (FASTQ, 23andMe, AncestryDNA, FASTA, BED and unrecognised
+   ones), and otherwise-runnable formats on the wrong genome build or in the wrong
+   dialect — a GRCh37/hg19 BAM, CRAM or SAM, a GRCh37/hg19 or non-GATK gVCF, and
+   anything on T2T-CHM13. The reason string is the
    workflow's `unsupported_reason` when it has one, otherwise
    `"Files of type '<file_type>' cannot be analysed."`
 
    Accepting any of these could only ever mint a job that fails, but not all for
    the same reason, and the differences are the point:
 
-   - **FASTA, BED, 23andMe, unrecognised** — `main.nf` has no branch, so the run
+   - **FASTA, BED, unrecognised** — `main.nf` has no branch, so the run
      dies at `error "Unsupported input type"`.
+   - **23andMe, AncestryDNA** — refused by decision rather than for want of a
+     branch. A chip carries under a third of PharmCAT's positions and cannot show
+     a gene duplication, and PyPGx reads the positions it lacks as homozygous
+     reference, so the report would be confidently wrong rather than incomplete.
+     See `docs/user/file-formats.md` for the measured coverage.
    - **FASTQ** — `main.nf` *has* a branch, but its first step POSTs to gatk-api's
      `/align-fastq`, which answers HTTP 501 because the image ships no aligner.
      A branch existing is not the same as the branch working.
-   - **gVCF** — would run to completion and be wrong. PharmCAT is not validated
-     against a gVCF's `<NON_REF>` reference blocks, so the result would be star
-     alleles nobody has checked. Detected by name (`.gvcf`, `.g.vcf`, gzipped or
-     not) *and* by a `##GVCFBlock` header record, since the stored filename is
-     sanitised and can lose its extension.
-   - **BCF** — would run and produce nothing, silently. The pipeline stages the
-     upload verbatim, so the file reaches the PharmCAT sidecar still named
-     `.bcf`; `/genotype` gates on the extension and answers 400; and the
-     PharmCAT curl ends in `|| true`, so that 400 is swallowed. Renaming the
-     input type to `vcf` does not help — the file on disk is unchanged. Accepting
-     BCF needs a conversion step ZaroPGx does not ship.
+   - **gVCF, non-GATK dialect** — `gatk GenotypeGVCFs`, which is the whole
+     conversion, exits with "The list of input alleles must contain `<NON_REF>` as
+     an allele" on a file whose reference blocks use `<*>` (DeepVariant, bcftools,
+     some Illumina callers). A gVCF is detected by name (`.gvcf`, `.g.vcf`,
+     gzipped or not), by a `##GVCFBlock` header record, and by its symbolic ALT
+     allele, since the stored filename is sanitised and can lose its extension and
+     a DeepVariant gVCF carries no `##GVCFBlock` at all.
+   - **gVCF, GRCh37/hg19** — `pharmcat_positions.vcf`, the interval list the
+     reference-confidence pass is emitted over, exists in GRCh38 coordinates only,
+     so the pass that makes the lane worth having has nothing to run against.
+     Genotyping the file without it would produce exactly the plain VCF the user
+     could make themselves, under copy claiming its hom-ref calls are called data.
+
+   gVCF and BCF used to be in the refused list outright and are not any more:
+
+   - **BCF** — used to run and produce nothing, silently. The pipeline staged the
+     upload verbatim, so the file reached the PharmCAT sidecar still named `.bcf`;
+     `/genotype` gates on the extension and answers 400; and the PharmCAT curl
+     ends in `|| true`, so that 400 was swallowed. Renaming the input type to
+     `vcf` does not help — the file on disk is unchanged. It now has a real
+     conversion: `POST /bcf-to-vcf` on gatk-api (`bcftools view -O z` plus a tabix
+     index), driven by `main.nf`'s `BcfToVCF`.
+   - **gVCF** — the old refusal said PharmCAT "is not validated against" a gVCF's
+     `<NON_REF>` reference blocks and would emit "star alleles nobody has
+     checked". That was wrong: PharmCAT 3.4.0 *detects* a gVCF
+     (`pcat/utilities.py:is_gvcf_file` — filename, `##GVCFBlock` header, or a
+     reference-block data row) and refuses it, emitting no star alleles at all.
+     A GRCh38 GATK gVCF now has a real conversion: `POST /gvcf-to-vcf` on gatk-api
+     runs `GenotypeGVCFs` twice — once with `--include-non-variant-sites -L
+     /reference/pharmcat/pharmcat_positions.vcf`, once with `-XL` of the same file
+     — and joins them with `bcftools concat -a`, driven by `main.nf`'s `GVCFToVCF`.
+     The output is published as `*.genotyped.vcf.gz`, never `*.g.vcf*`, because
+     PharmCAT condemns that filename before reading a byte. The endpoint answers
+     400 when `pharmcat_positions.vcf` is not staged under `/reference/pharmcat/`;
+     that file must be re-staged on every PharmCAT version bump.
 
    An input flagged `unsupported` but marked `is_provisional`, and any input whose
    type is in `NEXTFLOW_INPUT_TYPES`, is accepted and analysed — `unsupported` on

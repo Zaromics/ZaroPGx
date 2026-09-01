@@ -32,11 +32,12 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 *Input formats*
 - [X] Priority 0 (*Supported*): **VCF, GRCh38**/hg38, NGS-derived.
 - [X] Priority 1 (*Supported*): **VCF, GRCh37**/hg19, NGS-derived. *Lifted over to GRCh38 automatically before analysis — GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. Unliftable variants are dropped and the step reports how many.*
-- [...] Priority 2 (*Development*): **BAM, CRAM, SAM, BCF**, all NGS-derived. *Scaffolded, needs testing. Projected release in v0.4, with BAM support first and foremost.*
+- [...] Priority 2 (*Development*): **BAM, CRAM, SAM, BCF, gVCF**, all NGS-derived. *Scaffolded, needs testing. Projected release in v0.4, with BAM support first and foremost. A BCF is converted to a bgzipped VCF with bcftools before analysis and then follows the VCF lane, liftover included — the conversion is lossless, but every VCF caveat then applies. A GRCh38 GATK gVCF is genotyped with `GenotypeGVCFs` over PharmCAT's own position list, which makes it a better input than a plain VCF: the reference calls at pharmacogene positions come from its own reference-confidence blocks rather than from PharmCAT's `--absent-to-ref`. gVCFs using `<*>` instead of `<NON_REF>`, and GRCh37 gVCFs, are refused with the reason.*
 - [ ] Not accepted: **FASTQ**. ZaroPGx ships no aligner, so raw reads (single- or paired-end) are refused at upload. *Align to GRCh38/hg38 yourself — bwa-mem2/BWA, minimap2, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.*
+- [ ] Not accepted: **23andMe, AncestryDNA**. Detected by name and refused — a decision, not pending work. A 23andMe v5 export carries 229 of the 1,226 positions PharmCAT calls on (18.7%) and 25 of the 157 that define *CYP2D6*; AncestryDNA v2 carries 380 (31.0%) and 14. No chip can detect a gene duplication or deletion. *Upload sequencing data instead — see `docs/user/file-formats.md` for the measured coverage and the failure mode.*
+- [ ] Not accepted: **T2T-CHM13**, in any format. Detected from the file's own contig lengths or `##reference=` line and refused, rather than analysed on coordinates that are not GRCh38's. *No automatic liftover exists for it and lifting one yourself drops GSTT1 — call your variants against GRCh38/hg38, or realign to it.*
 - [...] Priority 3 (*Research*): Other sequencing and genotyping formats.
-- [...] Priority 4 (*Research*): BED, detailed gVCF, 23andMe, AncestryDNA, various TXT formats.
-- [...] Priority 5 (*Early research*): T2T format, and others.
+- [...] Priority 4 (*Research*): BED, various TXT formats.
 
 *Features*
 - [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**

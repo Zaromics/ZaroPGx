@@ -81,6 +81,20 @@ DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 # GRCh37 row serves both spellings), and no length is shared between GRCh38 and
 # GRCh37 (so a match is decisive rather than merely suggestive).
 #
+# The T2T-CHM13v2 rows added 2026-08-31 are the one group NOT read out of a
+# shipped dictionary, because this deployment stages no CHM13 reference and is
+# never going to align against one -- they exist so a CHM13 file can be REFUSED
+# instead of analysed on GRCh38 coordinates (file_processor.determine_workflow).
+# They were taken from UCSC's hs1.chrom.sizes and cross-checked against NCBI
+# GCF_009914755.1, and every one was checked against both builds above: no
+# CHM13 length collides with a GRCh37 or GRCh38 length here, which is what
+# tests/test_header_inspector_build_detection.py's collision test now pins.
+#
+# chrM is deliberately absent from the CHM13 rows. It is 16569 in CHM13 and in
+# GRCh38 alike, so it discriminates nothing and would turn every GRCh38 file
+# into an ambiguous one. (It is not interchangeable either: CHM13's chrM is
+# rCRS rotated by 576 bp -- see app/mtdna/builds.py, which refuses it.)
+#
 # Unlike gatk-api's copy, this one answers with the *assembly* alone and does not
 # read the `chr` prefix as evidence of which GRCh37 FASTA to align against: the
 # app stores an assembly name in metadata.reference_genome, and no caller here
@@ -121,6 +135,22 @@ CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
     ("19", 59128983): "GRCh37",
     ("22", 50818468): "GRCh38",
     ("22", 51304566): "GRCh37",
+    # T2T-CHM13v2 (UCSC hs1), for the same eleven chromosomes: a CHM13 file has
+    # to be recognised before it can be refused, and a CHM13 PGx panel carries
+    # only the gene-bearing chromosomes for exactly the reason the block above
+    # exists. Names are the canonical build string that travels through
+    # determine_workflow, source_build and the pipeline token allowlist.
+    ("1", 248387328): "T2T-CHM13v2",
+    ("2", 242696752): "T2T-CHM13v2",
+    ("3", 201105948): "T2T-CHM13v2",
+    ("6", 172126628): "T2T-CHM13v2",
+    ("7", 160567428): "T2T-CHM13v2",
+    ("10", 134758134): "T2T-CHM13v2",
+    ("12", 133324548): "T2T-CHM13v2",
+    ("16", 96330374): "T2T-CHM13v2",
+    ("19", 61707364): "T2T-CHM13v2",
+    ("22", 51324926): "T2T-CHM13v2",
+    ("X", 154259566): "T2T-CHM13v2",
 }
 
 # Tokens that name an assembly when they appear in a free-text `##reference=`
@@ -131,9 +161,17 @@ CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
 #
 # Deliberately no bare `b37` / `b38`: three characters is a substring, not a
 # token, and this value is a path that may carry a hash or a project name.
+#
+# The T2T-CHM13v2 tokens follow that same rule, which is why neither bare `t2t`
+# nor bare `hs1` is here: `hs1` matches `HS1_run3.fasta`, and `t2t` is three
+# characters. The spellings seen in the wild are covered by `chm13`
+# (chm13v2.0.fa, chm13v2.0_maskedY.fa, chm13v2.0_maskedY_rCRS.fa,
+# chm13v2.0_noY.fa, T2T-CHM13v2.0), by `hs1.fa` (which also matches hs1.fasta),
+# and by the two assembly accessions.
 ASSEMBLY_NAME_TOKENS: Dict[str, tuple] = {
     "GRCh38": ("grch38", "hg38", "assembly38"),
     "GRCh37": ("grch37", "hg19", "g1k_v37", "assembly19"),
+    "T2T-CHM13v2": ("chm13", "hs1.fa", "gca_009914755", "gcf_009914755"),
 }
 
 
@@ -245,10 +283,14 @@ def detect_reference_assembly(header_records=None, contig_lengths=None) -> Dict:
 
     Returns::
 
-        {"assembly": "GRCh38" | "GRCh37" | None,
+        {"assembly": "GRCh38" | "GRCh37" | "T2T-CHM13v2" | None,
          "source": "contig_lengths" | "reference_line" | None,
          "ambiguous": bool,
          "candidates": [assembly, ...]}
+
+    Naming an assembly is not the same as supporting it: T2T-CHM13v2 is here so
+    that a CHM13 file is *recognised*, and determine_workflow refuses it. This
+    function reports what the header says and nothing about what can be run.
 
     `assembly` is None whenever the answer is not established -- either no
     evidence at all, or evidence that contradicts itself. A caller must treat
@@ -302,8 +344,33 @@ def detect_reference_assembly(header_records=None, contig_lengths=None) -> Dict:
     }
 
 
+# Every format string the dispatch in inspect_header below actually branches on.
+# Kept beside that dispatch because it exists only to answer "did the suffix tell
+# us anything usable?" -- if a branch there gains a format, add it here too, or a
+# caller's format_hint will override a suffix this module can in fact handle.
+DISPATCHABLE_FORMATS = frozenset(
+    {
+        ".vcf",
+        ".bcf",
+        ".gvcf",
+        ".bam",
+        ".sam",
+        ".cram",
+        ".fastq",
+        ".fq",
+        ".fasta",
+        ".fa",
+        ".fas",
+        ".fna",
+    }
+)
+
+
 def inspect_header(
-    filepath: str, max_bytes: Optional[int] = None, timeout_sec: Optional[int] = None
+    filepath: str,
+    max_bytes: Optional[int] = None,
+    timeout_sec: Optional[int] = None,
+    format_hint: Optional[str] = None,
 ) -> Dict:
     """
     Inspect genomic file header and return normalized JSON:
@@ -339,14 +406,44 @@ def inspect_header(
         if time.time() - start_time > timeout_sec:
             raise TimeoutError(f"Header inspection exceeded {timeout_sec}s")
 
-    # Determine format via existing helper
+    # Determine format from the path suffix, with the caller's answer as fallback.
+    #
+    # _get_file_format reads the suffix and nothing else, and the suffix is not
+    # always there to read: safe_upload_basename runs the stored name through
+    # werkzeug's secure_filename, which DROPS non-ASCII characters -- so
+    # "obrazets.vcf" spelled in Cyrillic is stored as `upload_vcf`, extension
+    # consumed into the basename, no suffix left. This function then dispatched to
+    # no inspector at all, returned no header, and the caller read
+    # reference_genome="unknown".
+    #
+    # That is not a cosmetic loss. Every build-keyed decision reads that value, so
+    # a GRCh37 VCF stopped being lifted and was analysed on GRCh38 coordinates, a
+    # T2T-CHM13 VCF stopped being refused, and the self-contradicting-header
+    # warning stopped firing -- each silently, on a file whose only peculiarity
+    # was a non-Latin name. FileProcessor._detect_file_type has already decided
+    # the real type by this point (it sniffs content, not just the name), so it
+    # passes that answer in.
+    #
+    # Fallback rather than override, deliberately: for a normally-named file the
+    # suffix and the hint agree, so preferring the suffix leaves this function's
+    # behaviour for every existing caller exactly as it was.
     file_format = inspector._get_file_format(filepath)
+    if format_hint and file_format not in DISPATCHABLE_FORMATS:
+        file_format = format_hint
     _ensure_time()
 
     # Dispatch to specific inspectors with minimal I/O
     if file_format in (
         ".vcf",
         ".bcf",
+        # `sample.gvcf[.gz]`. The GATK spelling `sample.g.vcf[.gz]` already lands on
+        # ".vcf" above (_get_file_format returns only the final suffix), so only this
+        # one needed adding -- and it needed it once gVCFs were analysed rather than
+        # refused: without it a `.gvcf` upload got no header read at all, which reads
+        # downstream as "no evidence about the build", and a GRCh37 gVCF would have
+        # been genotyped at GRCh38 positions instead of refused. pysam and the bcftools
+        # fallback both read a gVCF as an ordinary VCF, so nothing else changes.
+        ".gvcf",
         "vcf.gz",
         "bcf.gz",
         "vcf.bz2",

@@ -30,10 +30,20 @@ class FileType(str, Enum):
 
 
 class SequencingProfile(str, Enum):
+    """How the sample was sequenced. Only WGS/WES/UNKNOWN are ever assigned
+    today (file_processor.analyze_file infers them from the contig count); the
+    rest are profiles the detector does not yet distinguish.
+
+    ``T2T = "telomere-to-telomere_seq"`` was removed on 2026-08-31. It was never
+    assigned, and it was a category error besides: T2T-CHM13 is an assembly, not
+    a sequencing profile, and it now travels as a reference_genome value that
+    determine_workflow refuses. Leaving it here invited someone to wire the two
+    together.
+    """
+
     WGS = "whole_genome_seq"
     WES = "whole_exome_seq"
     TARGETED = "targeted_seq"
-    T2T = "telomere-to-telomere_seq"
     SHORT_READ = "short_read_seq"
     LONG_READ = "long_read_seq"
     NGS = "next_gen_seq"
@@ -151,7 +161,15 @@ class WorkflowOptions(BaseModel):
     # pipelines/pgx/main.nf.
     needs_mtdna: bool = False
     needs_report: bool = True
+    # "this input needs a gatk-api conversion before it can enter the VCF lane". A BCF
+    # (/bcf-to-vcf) and a gVCF (/gvcf-to-vcf) both set it; needs_gvcf_genotyping below
+    # says which. workflow_registry's gatk_cram_sam_to_bam template vetoes on this one
+    # flag, which is why the general meaning is kept general.
     needs_conversion: bool = False
+    # gVCF -> plain VCF via GATK GenotypeGVCFs (gatk-api's /gvcf-to-vcf). Mints the
+    # "gvcf_to_vcf" step in workflow_registry and vetoes "bcf_to_vcf" there; drives the
+    # GVCFToVCF process in pipelines/pgx/main.nf. Always set with needs_conversion.
+    needs_gvcf_genotyping: bool = False
     # GRCh37/hg19 VCF -> lifted to GRCh38 via gatk-api's Picard LiftoverVcf before
     # analysis (workflow_registry mints the "liftover" step off this flag). Set from
     # the DETECTED build (header inspection), never from the reference_genome form

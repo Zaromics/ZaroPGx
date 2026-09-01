@@ -222,6 +222,36 @@ so a PharmCAT version bump takes effect on image rebuild **without** wiping the 
 Wipe `pharmcat-references` only when you intentionally want to re-fetch the GRCh38
 reference (or reclaim disk).
 
+### `/reference/pharmcat/pharmcat_positions.vcf` — re-stage on EVERY PharmCAT bump
+
+gatk-api's `/gvcf-to-vcf` (the gVCF lane) uses PharmCAT's own position list as the
+interval list it emits reference calls over:
+`GenotypeGVCFs --include-non-variant-sites -L /reference/pharmcat/pharmcat_positions.vcf`.
+That file is **version-specific** — it is the matcher's definition of which positions
+matter and it changes between releases — so a copy left over from an older PharmCAT
+emits a gVCF upload's reference calls at the wrong positions while PharmCAT genotypes
+the right ones. The difference surfaces as no-calls, not as an error. Same class of
+trap as the `pharmcat-references` volume above.
+
+It is **not** in the image and **not** created by `down -v`/`up`: it lives under the
+`./reference` bind mount, and `genome-downloader` (which does fetch it, pinned to
+`PHARMCAT_VERSION`) short-circuits on `/reference/.download_complete`, which every
+long-lived deployment already has. As of 2026-08-31 this machine's `./reference` has
+`chain/`, `grch37/`, `grch38/`, `hg19/`, `hg38/` and **no `pharmcat/` at all**, so the
+lane is staged-but-not-provisioned here: `/gvcf-to-vcf` answers 400 naming the missing
+path rather than genotyping against nothing.
+
+To stage or re-stage it:
+
+```bash
+# from the pinned image (authoritative — exactly what the matcher will use)
+docker --context pgx-native cp pgx_pharmcat:/pharmcat/pharmcat_positions.vcf \
+    ./reference/pharmcat/pharmcat_positions.vcf
+
+# or force genome-downloader to run again (re-downloads the genomes too)
+rm ./reference/.download_complete && docker --context pgx-native compose up -d genome-downloader
+```
+
 ## Note on Docker engines — READ BEFORE RUNNING COMPOSE
 
 The `pgx_*` containers run on **WSL-native docker**, NOT Docker Desktop. (Docker

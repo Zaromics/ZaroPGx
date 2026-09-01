@@ -98,7 +98,16 @@ def test_bam_includes_bam2vcf_not_alignment():
     planned = calc._planned_steps_from_config(cfg)
     assert "gatk_alignment" not in planned
     assert "pypgx_bam2vcf" in planned
-    assert planned.index("pypgx_analysis") < planned.index("pypgx_bam2vcf")
+    # bam2vcf first: PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll reads. This
+    # assertion was the other way round, pinning the order the builder happened to
+    # append in -- which is membership-only, since _active_ordered_steps re-sorts
+    # through CANONICAL_STEP_ORDER before anything reaches the bar. CANONICAL_STEP_ORDER
+    # had the same inversion, and there it WAS the bar: on every BAM/CRAM/SAM job the
+    # progress jumped to bam2vcf's range and then fell back ~17 points when the
+    # genotyping it had already fed started reporting.
+    assert planned.index("pypgx_bam2vcf") < planned.index("pypgx_analysis")
+    ordered = calc._active_ordered_steps([], cfg)
+    assert ordered.index("pypgx_bam2vcf") < ordered.index("pypgx_analysis")
 
 
 def test_fastq_includes_gatk_alignment_when_needs_gatk():

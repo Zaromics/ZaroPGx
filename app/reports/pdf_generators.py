@@ -743,6 +743,18 @@ class WeasyPrintGenerator(PDFGenerator):
                     "pharmcat_assume_ref_methodology": template_data.get(
                         "pharmcat_assume_ref_methodology"
                     ),
+                    # Forwarded for the same reason as the paragraph above it: the PDF
+                    # rebuilds its own context dict, so a key missing here renders as
+                    # nothing at all rather than as an error.
+                    "gvcf_provenance": template_data.get("gvcf_provenance"),
+                    # liftover_provenance was missing from this dict entirely, so
+                    # report_template.html's "Reference build:" line -- the only place a
+                    # reader learns the analysed coordinates are not the uploaded
+                    # file's -- silently rendered nothing in the PDF while rendering
+                    # fine in the HTML. Pre-existing, found while adding the line above,
+                    # and the same one-word failure: a key this dict does not carry is
+                    # not an error, it is an omission.
+                    "liftover_provenance": template_data.get("liftover_provenance"),
                     # 159: run-derived provenance, forwarded from template_data
                     "genome_build": template_data.get("genome_build"),
                     "named_allele_matcher_version": template_data.get(

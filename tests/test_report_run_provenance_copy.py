@@ -5,11 +5,14 @@ specified on. It is emitted by PharmCAT itself, it is always ``GRCh38.x``, and i
 is never the reference build of the uploaded file.
 
 A GRCh37 upload no longer reaches this conflict -- it is lifted to GRCh38 before
-analysis -- but a VCF on any other named build (T2T-CHM13, say) has no chain, is
-analysed on its own coordinates and is flagged provisional by
-``app/api/utils/file_processor.py``. That is the alert this module pairs against
-the provenance line, and the contradiction it guards is unchanged: the build in
-the provenance sentence is PharmCAT's, not the file's.
+analysis -- and as of 2026-08-31 no upload is analysed on a build that is not
+GRCh38's at all: T2T-CHM13, the last such case, is detected and refused rather
+than flagged provisional. The contradiction this module guards is unchanged
+regardless, because it was never really about the build of one input class: any
+run that carries workflow warnings puts them on a page whose provenance sentence
+names a GRCh38 build, and that build is PharmCAT's allele definitions, not the
+file's. So the alert paired against the provenance line below is simply one the
+product still emits.
 
 The copy shipped before this module read:
 
@@ -42,11 +45,10 @@ import pytest
 
 TEMPLATES = ["report_template.html", "interactive_report.html"]
 
-# The alert file_processor emits for a VCF on a build with no liftover chain.
-PROVISIONAL_ALERT = (
-    "<p>⚠️ This file is aligned to T2T-CHM13. Only GRCh38/hg38 is supported, "
-    "so these results are provisional.</p>"
-)
+# A warning file_processor really does emit, on every VCF upload. It replaced a
+# T2T "results are provisional" string on 2026-08-31, when that verdict was
+# retired in favour of refusing the file.
+WORKFLOW_ALERT = "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>"
 
 BUILD = "GRCh38.p14"
 
@@ -112,10 +114,10 @@ def test_the_sentence_attributes_the_build_to_pharmcats_definitions(template_nam
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
 def test_the_alert_and_the_provenance_can_both_be_true_on_one_page(template_name):
-    """A no-chain upload: warning and provenance must coexist without conflict."""
-    html = _render(template_name, workflow_warnings=[PROVISIONAL_ALERT])
+    """A caveated upload: warning and provenance must coexist without conflict."""
+    html = _render(template_name, workflow_warnings=[WORKFLOW_ALERT])
 
-    assert "so these results are provisional" in html
+    assert "degraded accuracy" in html
     text = _provenance_text(html)
     assert BUILD in text
     # The reader is pointed at the alert rather than left to reconcile the two.

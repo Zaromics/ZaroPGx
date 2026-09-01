@@ -78,19 +78,30 @@ runner = _load_runner()
 #                                           enforces the same allowlist as reference, so
 #                                           only [A-Za-z0-9][A-Za-z0-9._-]{0,63} can reach
 #                                           the LiftoverVCF shell block
-#   params.input_type                     - a fixed FileType enum value
+#   bcf                                   - BcfToVCF's own `path` input (audited
+#                                           2026-08-31): same class as the
+#                                           bam/cram/fastq/sam/vcf path inputs above
+#                                           - Nextflow escapes path-typed inputs.
 #   params.pharmcat_absent_to_ref/...     - booleans rendered as "true"/"false"
 #   variants_file                         - MtdnaCall's own `path` input (audited
 #                                           2026-08-30, Task 9): same class as the
 #                                           bam/cram/fastq/sam/vcf path inputs above
 #                                           - Nextflow escapes path-typed inputs.
-#   input_type (MtdnaCall's local var)    - audited 2026-08-30: computed in the
-#                                           workflow block as a Groovy ternary over
-#                                           params.input_type with only two possible
-#                                           literal outputs, 'vcf' or 'bam' - never a
-#                                           value read through from user input, so
-#                                           even more constrained than the
-#                                           params.input_type enum case above.
+#   input_type (a process-local var, in   - audited 2026-08-30 for MtdnaCall and
+#   MtdnaCall and PyPGxGenotypeAll)         re-audited 2026-08-31 when
+#                                           PyPGxGenotypeAll took the same input:
+#                                           both are computed in the workflow block
+#                                           as Groovy ternaries over
+#                                           params.input_type, itself a fixed
+#                                           FileType enum value, and every arm is
+#                                           either a string literal ('vcf'/'bam') or
+#                                           params.input_type unchanged - never a
+#                                           value read through from user input.
+#                                           (`params.input_type` itself is no longer
+#                                           interpolated anywhere: PyPGxGenotypeAll
+#                                           was the last site, and it now takes this
+#                                           corrected value instead, because a `bcf`
+#                                           run hands PyPGx a converted VCF.)
 #   absent_to_ref (MtdnaCall's local var) - audited 2026-08-30: the same
 #                                           params.pharmcat_absent_to_ref boolean
 #                                           ("true"/"false") already audited above,
@@ -99,8 +110,10 @@ runner = _load_runner()
 # sample_identifier is DELIBERATELY absent: it now travels via the environment.
 EXPECTED_INTERPOLATIONS = {
     "bam",
+    "bcf",
     "cram",
     "fastq",
+    "gvcf",
     "sam",
     "vcf",
     "variants_file",
@@ -110,7 +123,6 @@ EXPECTED_INTERPOLATIONS = {
     "source_build",
     "input_type",
     "absent_to_ref",
-    "params.input_type",
     "params.pharmcat_absent_to_ref",
     "params.pharmcat_unspecified_to_ref",
 }

@@ -19,6 +19,8 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 | Format | Extension | Description | Processing |
 | --- | --- | --- | --- |
 | **VCF** | `.vcf`, `.vcf.gz` | Variant calls | Direct analysis |
+| **BCF** | `.bcf` | Binary variant calls | bcftools (VCF conversion) → Analysis |
+| **gVCF** | `.g.vcf`, `.g.vcf.gz`, `.gvcf`, `.gvcf.gz` | Variant calls plus reference-confidence blocks (GATK, GRCh38) | GATK GenotypeGVCFs (VCF conversion) → Analysis |
 | **BAM** | `.bam` | Aligned reads | HLA typing → Analysis |
 | **CRAM** | `.cram` | Compressed BAM | GATK → HLA typing → Analysis |
 | **SAM** | `.sam` | Text alignment | GATK → HLA typing → Analysis |
@@ -39,7 +41,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 **Reference Genome:**
 - **hg38/GRCh38**: analysed directly — the build every result is reported on.
 - **hg19/GRCh37**: **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. Unliftable variants are dropped and the step reports how many. A native GRCh38 file is more reliable if you have one.
-- **T2T**: Not yet supported
+- **T2T-CHM13**: **detected and refused.** ZaroPGx reads the assembly out of the file's own contig lengths or `##reference=` line and declines the upload, rather than analysing CHM13 coordinates as if they were GRCh38's — the pharmacogenes sit at different positions, and PharmCAT normalises against GRCh38.p13 without checking, so the result would be wrong star alleles rather than an error. Call your variants against GRCh38/hg38, or realign to it, and upload that.
 
 **Processing Toggles:**
 - **GATK Processing**: Enable/Disable use of GATK Tools including conversion and variant calling

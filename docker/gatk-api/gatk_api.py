@@ -203,6 +203,29 @@ LIFTOVER_CHAIN_PATHS = {
     ('GRCh37', 'GRCh38'): os.path.join(REFERENCE_DIR, 'chain', 'hg19ToHg38.over.chain.gz'),
 }
 
+# PharmCAT's own position list, used by /gvcf-to-vcf as the interval list its
+# reference-confidence pass is emitted over. Under the same /reference bind mount as
+# the FASTAs and the chain above, for the same reason: staged once, visible to every
+# recreation of this container.
+#
+# THIS FILE MUST BE RE-STAGED ON EVERY PHARMCAT BUMP. It is the matcher's own
+# definition of which positions matter, and it changes between releases; a stale copy
+# means the hom-ref calls are emitted at last release's positions while PharmCAT
+# genotypes this release's, and the difference shows up as no-calls nobody ordered
+# rather than as an error. Same trap the `pharmcat-references` volume carries in
+# compose.yml. genome-downloader fetches it (docker/genome-downloader/downloader_api.py,
+# pinned to PHARMCAT_VERSION), but only on a reference tree that has not already been
+# marked complete -- see that module's `.download_complete` short-circuit. The
+# authoritative copy for a running stack is the one inside the pgx_pharmcat image at
+# /pharmcat/pharmcat_positions.vcf.
+#
+# Deliberately the plain `.vcf`, not `pharmcat_positions.vcf.bgz`: GATK reads an
+# uncompressed VCF as an interval list without needing a tabix index alongside it, and
+# the file is 1,226 records.
+PHARMCAT_POSITIONS_PATH = os.path.join(
+    REFERENCE_DIR, 'pharmcat', 'pharmcat_positions.vcf'
+)
+
 # Builds /liftover-vcf accepts as `source_build`. An allowlist, not a passthrough:
 # source_build is a caller-supplied form field, and everything it selects -- the chain,
 # the log lines, the output naming -- must come from constants in this module, never
@@ -946,15 +969,30 @@ def list_jobs(status: Optional[str] = None):
 # cannot be pinned by a test -- reference/ is gitignored (.gitignore:203), the
 # same reason tests/test_pharmcat_schema_gate_265.py's data/reports glob is empty
 # in a fresh checkout -- so re-read them if you touch this table.
+#
+# The T2T-CHM13v2 rows are the exception, and the exception is the point: this
+# deployment stages no CHM13 reference, so those values came from UCSC's
+# hs1.chrom.sizes cross-checked against NCBI GCF_009914755.1 (added 2026-08-31,
+# mirroring app/api/utils/header_inspector.py's CONTIG_LENGTH_ASSEMBLIES -- a
+# separate image cannot import from the app, so the duplication is deliberate).
+# They cover the same four chromosomes the rows above do, because that is what
+# this table is for; the app's copy carries eleven, and the app is what refuses
+# the upload. None of the four collides with a GRCh37 or GRCh38 length here.
+# chrM is excluded on purpose: 16569 in CHM13 and GRCh38 alike, so it names
+# nothing.
 SQ_LENGTH_ASSEMBLIES = {
     ('1', 248956422): 'GRCh38',
     ('1', 249250621): 'GRCh37',
+    ('1', 248387328): 'T2T-CHM13v2',
     ('2', 242193529): 'GRCh38',
     ('2', 243199373): 'GRCh37',
+    ('2', 242696752): 'T2T-CHM13v2',
     ('3', 198295559): 'GRCh38',
     ('3', 198022430): 'GRCh37',
+    ('3', 201105948): 'T2T-CHM13v2',
     ('X', 156040895): 'GRCh38',
     ('X', 155270560): 'GRCh37',
+    ('X', 154259566): 'T2T-CHM13v2',
 }
 
 # (assembly, sequences are chr-prefixed) -> the REFERENCE_PATHS key whose FASTA
@@ -975,6 +1013,11 @@ SQ_LENGTH_ASSEMBLIES = {
 # GRCh38 has one entry because it has one file: REFERENCE_PATHS['grch38'] is the
 # same path string as REFERENCE_PATHS['hg38'], and reference/grch38/ holds a
 # symlink to it. There is no un-prefixed GRCh38 FASTA here to point at.
+#
+# T2T-CHM13v2 has NO entry, deliberately: no CHM13 FASTA is staged, so there is
+# nothing to point at and inventing a key would mean running a CHM13 file
+# against GRCh38. reference_from_sam_header therefore reports a recognised
+# CHM13 header as *undetectable* and says so in the log -- see the .get() there.
 ASSEMBLY_REFERENCE_KEYS = {
     ('GRCh38', True): 'hg38',
     ('GRCh38', False): 'hg38',
@@ -1052,7 +1095,19 @@ def reference_from_sam_header(header):
             seen.add((assembly, is_chr_prefixed(raw_name)))
 
     if len(seen) == 1:
-        detected = ASSEMBLY_REFERENCE_KEYS[seen.pop()]
+        # .get(), not [] : SQ_LENGTH_ASSEMBLIES names T2T-CHM13v2 so that a CHM13
+        # header is recognised, and no CHM13 FASTA is staged for it to map onto.
+        # A KeyError here would turn a recognised-but-unrunnable build into a 500;
+        # "undetectable" is the same honest answer the >1 case gives.
+        assembly, chr_prefixed = seen.pop()
+        detected = ASSEMBLY_REFERENCE_KEYS.get((assembly, chr_prefixed))
+        if detected is None:
+            logger.warning(
+                f"Header @SQ records describe {assembly}, which this deployment "
+                f"stages no reference for; reporting it as undetectable rather "
+                f"than aligning it against a different assembly"
+            )
+            return None
         logger.info(f"Detected {detected} from the @SQ records in the header")
         return detected
     if len(seen) > 1:
@@ -2991,7 +3046,16 @@ async def cram_to_bam(
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
     job_id: Optional[str] = Form(None),
-    step_name: Optional[str] = Form("gatk_cram_to_bam")
+    # gatk_cram_sam_to_bam, not gatk_cram_to_bam: one step name serves both this
+    # endpoint and /sam-to-bam, because a job has one input type and only one of
+    # them can ever run. That single name is what the app registers a template for
+    # and maps to a stage -- a name nothing app-side knows makes the JobClient's
+    # status update 404 and leaves the step at [pending] for its whole duration,
+    # which is exactly what these two defaults used to spell. Latent rather than
+    # live (main.nf always sends step_name alongside job_id, and no JobClient is
+    # built without job_id), but a default that names a step nobody registers is a
+    # trap for the next caller.
+    step_name: Optional[str] = Form("gatk_cram_sam_to_bam")
 ):
     """
     Convert CRAM to a coordinate-sorted, indexed BAM.
@@ -3145,7 +3209,8 @@ async def sam_to_bam(
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
     job_id: Optional[str] = Form(None),
-    step_name: Optional[str] = Form("gatk_sam_to_bam")
+    # Shares gatk_cram_sam_to_bam with /cram-to-bam -- see that endpoint's note.
+    step_name: Optional[str] = Form("gatk_cram_sam_to_bam")
 ):
     """
     Convert SAM to a coordinate-sorted, indexed BAM.
@@ -3249,6 +3314,874 @@ async def sam_to_bam(
         logger.exception(f"Error in SAM to BAM conversion: {e}")
         await _fail_step(job_client, f"SAM to BAM conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"SAM to BAM conversion failed: {str(e)}")
+    finally:
+        _cleanup_dir(work_dir)
+
+
+# ---------------------------------------------------------------------------
+# BCF -> bgzipped VCF (/bcf-to-vcf)
+#
+# BCF is the binary encoding of a VCF and holds exactly the same records, so this
+# conversion is lossless: there is no reference to decode against (unlike CRAM),
+# no sort decision to get wrong (unlike SAM) and no coordinate arithmetic
+# (unlike the liftover above). It exists because the rest of the stack reads
+# filenames rather than content -- docker/pharmcat's /genotype refuses any name
+# that does not end .vcf/.vcf.gz/.vcf.bgz, and main.nf's PharmCAT curl ends in
+# `|| true`, so a `.bcf` carried that far produces no PharmCAT output AND no
+# error. Renaming the file was tried and reverted for exactly that reason; the
+# bytes have to actually change, which is what this endpoint does.
+# ---------------------------------------------------------------------------
+
+
+def _looks_gzipped(path):
+    """The gzip magic bytes, which every BGZF file starts with -- and so does plain gzip.
+
+    The VCF-shaped counterpart of _looks_like_bam() above, and here for the same
+    reason: `bcftools view -O z` that somehow wrote plain text (or an error
+    document) where the compressed VCF belongs must not be reported as a
+    successful conversion.
+
+    Named for what it CHECKS, not for what the caller wants to be true. It was
+    `_looks_like_bgzf`, which it never verified: BGZF is gzip with a `BC` extra
+    subfield carrying the block size, and nothing here reads past byte 2. Both callers
+    pass a `bcftools ... -O z` output, which is always genuinely BGZF, so the gap has no
+    live consequence -- but a test named "a non-BGZF output is refused" was really
+    pinning "plain text is refused", and neither the name nor the caller's message may
+    claim a check that is not made. Verifying the framing means reading the extra field;
+    do that here if a plain-gzip VCF ever reaches these paths.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def vcf_has_records(path):
+    """True as soon as one data line is found; stops reading there.
+
+    Deliberately not count_vcf_records() above. That one reads the file to the
+    end because the liftover needs an exact number for its reject-rate
+    arithmetic; here the only question is "is this empty", and a whole-genome
+    VCF is millions of lines of which none after the first changes the answer.
+    """
+    if not os.path.exists(path):
+        return False
+    with _open_vcf_text(path) as handle:
+        for line in handle:
+            if line.strip() and not line.startswith('#'):
+                return True
+    return False
+
+
+def convert_bcf_to_vcf(job_label, input_path, output_vcf):
+    """Convert a BCF to a bgzipped VCF, index it, and vouch for the result.
+
+    Blocking -- call it through asyncio.to_thread under _to_thread_semaphore,
+    exactly like the CRAM/SAM conversions and the liftover: `bcftools view` on a
+    whole-genome BCF runs for minutes, and a blocking subprocess on the event
+    loop would take /health (and with it the container healthcheck) down with it.
+
+    Every failure path raises HTTPException and removes the output, so a caller
+    that returns normally can promise `output_vcf` exists, is BGZF-framed and
+    holds at least one variant record. An empty-but-valid VCF is a 422 rather
+    than a success for the same reason convert_to_indexed_bam() refuses a
+    zero-record BAM: downstream it reads as "no variants found", which is a
+    clinical statement, not the truncated-or-wrong-input it actually is.
+
+    argv lists, never shell=True: input_path derives from an uploaded filename.
+
+    Deliberately NOT run through _fatal_stderr(): those markers were written for
+    samtools' CRAM decoding, where htslib downgrades a wrong-reference decode to
+    a warning and exits 0. Nothing in a BCF->VCF conversion has a reference to be
+    wrong about, and the module's other bcftools call
+    (rename_vcf_contigs_to_chr) does not use them either. The gates below --
+    exit code, existence, non-empty, BGZF framing, at least one record -- are
+    what a re-encode can actually fail.
+
+    Returns:
+        tuple: (VCF size in bytes, tabix index path or None)
+    """
+    argv = ['bcftools', 'view', '-O', 'z', '-o', output_vcf, input_path]
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _discard_output(output_vcf)
+        message = f"bcftools could not be executed - check container configuration ({exc})"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+
+    if result.returncode != 0:
+        _discard_output(output_vcf)
+        message = f"bcftools view failed with exit code {result.returncode}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not os.path.exists(output_vcf) or os.path.getsize(output_vcf) == 0:
+        _discard_output(output_vcf)
+        message = f"bcftools view exited 0 but wrote no VCF to {output_vcf}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not _looks_gzipped(output_vcf):
+        _discard_output(output_vcf)
+        message = (
+            f"bcftools view produced {output_vcf}, which is not compressed at all. "
+            "Everything downstream opens it as bgzip, so refusing to treat this as "
+            "a valid conversion."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not vcf_has_records(output_vcf):
+        _discard_output(output_vcf)
+        message = (
+            f"The conversion produced a valid but empty VCF (no variant records) "
+            f"from {os.path.basename(input_path)}. That is a truncated or wrong "
+            f"input, not a negative result -- shipping it would read downstream as "
+            f"'no variants found'."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=422, detail=message)
+
+    if stderr:
+        logger.warning(f"Job {job_label}: bcftools stderr: {stderr}")
+
+    # Tabix index. Best effort for the same reason as the liftover's step 4: the
+    # pipeline re-indexes when no .tbi travels with the VCF, so a failed index is
+    # a warning rather than a lost run. `bcftools index -t` writes the same .tbi
+    # `tabix -p vcf` would (both are htslib); the standalone tabix binary is not
+    # in this image, bcftools is.
+    tbi_path = f"{output_vcf}.tbi"
+    try:
+        index_result = subprocess.run(
+            ['bcftools', 'index', '-t', '-f', output_vcf],
+            capture_output=True,
+            check=False,
+        )
+        if index_result.returncode != 0 or not os.path.exists(tbi_path):
+            index_stderr = (index_result.stderr or b'').decode('utf-8', errors='replace').strip()
+            logger.warning(f"Job {job_label}: could not tabix-index {output_vcf}: {index_stderr}")
+            tbi_path = None
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(f"Job {job_label}: could not tabix-index {output_vcf}: {exc}")
+        tbi_path = None
+
+    size = os.path.getsize(output_vcf)
+    logger.info(f"Job {job_label}: wrote {output_vcf} ({size} bytes)")
+    return size, tbi_path
+
+
+@app.post("/bcf-to-vcf")
+async def bcf_to_vcf(
+    file: UploadFile = File(...),
+    reference_genome: str = Form("hg38"),
+    patient_id: Optional[str] = Form(None),
+    report_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
+    step_name: Optional[str] = Form("bcf_to_vcf")
+):
+    """
+    Convert a BCF to a bgzipped, tabix-indexed VCF.
+
+    `bcftools view -O z`, then `bcftools index -t`. BCF and VCF encode the same
+    records, so nothing is lost and there is no accuracy caveat to report -- the
+    output is the same call set the caller uploaded, in the encoding every other
+    service in this stack can actually read.
+
+    No reference FASTA is involved, so unlike the CRAM route this conversion is
+    self-contained and cannot be pointed at the wrong build. `reference_genome`
+    is accepted only because callers post the same form to every conversion
+    route; it is not read. (Nor is the build checked here: a GRCh37 BCF is meant
+    to arrive, be converted, and then go through /liftover-vcf, which does its
+    own source_build validation.)
+    """
+    job_client = None
+    work_dir = None
+    output_dir = None
+    try:
+        # Initialize job client if Zaro Job PK is provided
+        if job_id:
+            try:
+                job_client = JobClient(job_id=job_id, step_name=step_name)
+                await job_client.start_step(f"Starting BCF to VCF conversion for {file.filename}")
+                await job_client.log_progress(f"Converting {file.filename} to a bgzipped VCF", {
+                    "filename": file.filename
+                })
+            except Exception as e:
+                logger.warning(f"Failed to initialize workflow client: {e}")
+                job_client = None
+
+        # Sanitised for the same reason as every other route here: file.filename
+        # is attacker-controlled and this name reaches subprocess argv and the
+        # shared volume. See safe_upload_name's docstring.
+        local_job_id = str(uuid.uuid4())
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        filename = safe_upload_name(file.filename or "input.bcf", local_job_id)
+        input_path = os.path.join(work_dir, filename)
+        # Output goes on the shared volume, not this container's /tmp -- the
+        # caller is a Nextflow process in another container and the ./data bind
+        # mount is the only filesystem both can see. See conversion_output_dir().
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        # stored_stem(), not splitext: a misdirected `.vcf.gz` post here would
+        # otherwise yield `<name>.vcf.vcf.gz`.
+        output_vcf = os.path.join(output_dir, f"{stored_stem(filename)}.vcf.gz")
+
+        # Chunked for the same reason as the CRAM route: never buffer the upload.
+        with open(input_path, "wb") as f:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
+
+        logger.info(f"Job {local_job_id}: Saved BCF file to {input_path}")
+
+        if job_client:
+            file_size = os.path.getsize(input_path)
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
+                "file_size_bytes": file_size,
+                "input_path": input_path
+            })
+
+        # to_thread under the semaphore, exactly like the CRAM/SAM conversions
+        # and the liftover: a whole-genome re-encode runs for minutes and must
+        # not stall the event loop, and therefore /health.
+        async with _to_thread_semaphore:
+            vcf_size, index_path = await asyncio.to_thread(
+                convert_bcf_to_vcf,
+                local_job_id,
+                input_path,
+                output_vcf,
+            )
+
+        if job_client:
+            await job_client.log_progress("BCF to VCF conversion completed", {
+                "vcf_path": output_vcf,
+                "vcf_size_bytes": vcf_size,
+                "vcf_index": index_path
+            })
+            await job_client.complete_step("BCF to VCF conversion completed successfully")
+
+        return {
+            "success": True,
+            "job_id": local_job_id,
+            "vcf_path": output_vcf,
+            "vcf": output_vcf,  # Alternative field name, matching the other routes
+            "vcf_index": index_path,
+            "vcf_size_bytes": vcf_size,
+            "message": f"Converted {filename} to a bgzipped VCF"
+        }
+
+    except HTTPException as e:
+        # Do not relabel a deliberate 4xx as a 500 on the way out.
+        _cleanup_dir(output_dir)
+        logger.error(f"BCF to VCF conversion failed: {e.detail}")
+        await _fail_step(job_client, f"BCF to VCF conversion failed: {e.detail}")
+        raise
+    except Exception as e:
+        _cleanup_dir(output_dir)
+        logger.exception(f"Error in BCF to VCF conversion: {e}")
+        await _fail_step(job_client, f"BCF to VCF conversion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"BCF to VCF conversion failed: {str(e)}")
+    finally:
+        _cleanup_dir(work_dir)
+
+
+# ---------------------------------------------------------------------------
+# gVCF -> genotyped bgzipped VCF (/gvcf-to-vcf)
+#
+# Not a re-encode like /bcf-to-vcf above: a gVCF holds reference-confidence BLOCKS
+# (`<NON_REF>` ALT alleles, `END`-spanning rows, `##GVCFBlock` headers) that no
+# consumer in this stack reads. PharmCAT 3.4.0 does not mis-handle one either -- it
+# DETECTS and REFUSES it (pcat/utilities.py:is_gvcf_file, which fires on a
+# `.g.vcf`-shaped filename, on a `##GVCFBlock` header record, or on a data row whose
+# ALT is `<NON_REF>`/`<*>`/`.` spanning more than one base), printing "... is a gVCF
+# file, which is not currently supported". So the conversion has to produce a file
+# that genuinely is not a gVCF, by content AND by name.
+#
+# Why bother, when the user could run GenotypeGVCFs themselves: a converted gVCF is
+# BETTER than the plain VCF they would otherwise upload. Its reference-confidence
+# blocks are CALLED data, so `--include-non-variant-sites` over PharmCAT's own
+# position list yields real hom-ref genotypes at the PGx positions -- the thing the
+# plain-VCF lane can only fabricate with PharmCAT's `--absent-to-ref`.
+#
+# Two passes, one output, measured on the live stack against a synthetic hg38 gVCF:
+#
+#   -L pharmcat_positions.vcf --include-non-variant-sites  1,362 rows   13 KB   2.4 s
+#   -L pharmcat_regions.bed   --include-non-variant-sites  1,544,820 rows 4.8 MB 11.2 s
+#   (no interval list, variants only)                          1 row   6.4 KB  2.0 s
+#
+# All three are accepted by PharmCAT and the first two both call 21/21 genes, so the
+# BED is 350x the file for identical results -- and it costs PyPGx 2m29s per gene
+# against 5.1s, which over ~20 genes is ~45 minutes of nothing. The positions VCF is
+# the interval list; the BED is not a "more thorough" alternative.
+#
+# `bcftools convert --gvcf2vcf` was measured too and is NOT usable: it keeps the
+# `<NON_REF>` alleles and the `##GVCFBlock` headers, so PharmCAT refuses its output.
+# Nor is `bcftools view -e 'ALT="<NON_REF>"'`, which produced ZERO records: a GATK
+# gVCF's variant rows carry ALT `A,<NON_REF>`, so that expression deletes the real
+# variants along with the blocks.
+# ---------------------------------------------------------------------------
+
+
+# PharmCAT's own filename rule for "this is a gVCF", transcribed from
+# pcat/utilities.py:is_gvcf_file. Matched against the BASENAME of anything this
+# endpoint is about to hand back: a correct conversion published under a name like
+# `sample.g.vcf.gz` is refused by PharmCAT on the name alone, whatever its content,
+# and the failure arrives at the far end of the pipeline behind main.nf's `|| true`.
+# Checking here turns that into a 500 at the step that caused it.
+PHARMCAT_GVCF_NAME_RE = re.compile(r'\.(g|genomic)\.vcf(\.b?gz)?$', re.IGNORECASE)
+
+
+def build_genotype_gvcfs_argv(
+    reference_path,
+    input_path,
+    output_path,
+    intervals=None,
+    exclude_intervals=None,
+    include_non_variant=False,
+):
+    """Build the GATK GenotypeGVCFs command as an argv list.
+
+    A list, never a shell string: input_path derives from an uploaded filename.
+
+    Flag notes:
+      -R / -V / -O     reference FASTA, input gVCF, output VCF. A `.vcf.gz` output is
+                       written as BGZF by htsjdk, i.e. already bgzipped.
+      -L / -XL         include / exclude an interval list. GATK accepts a VCF as an
+                       interval list directly (verified with pharmcat_positions.vcf),
+                       so the two passes below can be exact complements of each other
+                       and `bcftools concat -a` of the pair has no duplicates by
+                       construction.
+      --include-non-variant-sites
+                       emit a row for every position in the interval list, not only
+                       the variant ones. This is the entire point of the endpoint: the
+                       hom-ref rows it writes come from the gVCF's own
+                       reference-confidence blocks, so they are called data. Only ever
+                       passed with -L; without an interval list it means "every base
+                       in the genome".
+      --standard-min-confidence-threshold-for-calling 0
+                       GenotypeGVCFs RE-GENOTYPES from the PLs rather than copying the
+                       original GT, and at its default -stand-call-conf of 30.0 a call
+                       the original caller emitted can come back as `./.`. Zero keeps
+                       the re-genotyping faithful to the input: every site the gVCF
+                       had evidence for is emitted with the genotype those PLs
+                       support, rather than being silently dropped for not clearing a
+                       threshold the uploader never chose. It does NOT make the output
+                       byte-identical to the original caller's -- see the report copy
+                       in app/utils/gvcf_provenance.py, which says so out loud.
+    """
+    argv = [
+        'gatk', 'GenotypeGVCFs',
+        '-R', reference_path,
+        '-V', input_path,
+        '-O', output_path,
+        '--standard-min-confidence-threshold-for-calling', '0',
+    ]
+    if intervals:
+        argv += ['-L', str(intervals)]
+    if exclude_intervals:
+        argv += ['-XL', str(exclude_intervals)]
+    if include_non_variant:
+        argv += ['--include-non-variant-sites']
+    return argv
+
+
+def read_vcf_positions(path, limit=100000):
+    """The set of DISTINCT (CHROM, POS) keys in a (possibly bgzipped) VCF.
+
+    Bounded: it stops at `limit` keys. Deliberately only ever called on
+    pharmcat_positions.vcf (1,226 records), but the cap keeps a mistaken caller from
+    building a set of tens of millions of tuples in a process that also holds a GATK
+    heap. Returns an empty set for a missing file.
+    """
+    if not os.path.exists(path):
+        return set()
+    seen = set()
+    with _open_vcf_text(path) as handle:
+        for line in handle:
+            if not line.strip() or line.startswith('#'):
+                continue
+            fields = line.split('\t', 2)
+            if len(fields) < 2:
+                continue
+            seen.add((fields[0], fields[1]))
+            if len(seen) >= limit:
+                break
+    return seen
+
+
+def count_positions_with_calls(positions, called_path):
+    """How many of `positions` the emitted VCF actually carries a GENOTYPE for.
+
+    An INTERSECTION, not a row count, and that distinction is the whole honesty of the
+    figure this feeds. Counting rows in the all-sites pass was tried and is wrong twice
+    over:
+
+    * It over-counts. GATK derives an interval from a VCF record as
+      `start .. start + len(REF) - 1`, and pharmcat_positions.vcf carries multi-base-REF
+      records (a 20-base indel anchor, say). With --include-non-variant-sites each such
+      interval emits one row PER BASE, at positions that are not themselves in
+      PharmCAT's list -- which is why the measured run produced 1,362 rows from a 1,226
+      record list. The report would then print "1,362 of PharmCAT's 1,226 positions",
+      and, worse, a clamped "0 were not covered" that HIDES real missing coverage.
+    * It counts no-calls as coverage. --include-non-variant-sites emits a row for every
+      position in the interval list, including ones the gVCF had no block for; those
+      come out `./.`. Counting them would report full coverage for a file that covered
+      nothing, which is the exact fabrication this lane exists to avoid making.
+
+    So a position counts only when a row at that key carries at least one called allele.
+    Single-sample is enforced at upload (FileProcessor.process_upload), so column 10 is
+    the sample and its first FORMAT field is the genotype.
+    """
+    if not positions or not os.path.exists(called_path):
+        return 0
+    covered = set()
+    with _open_vcf_text(called_path) as handle:
+        for line in handle:
+            if not line.strip() or line.startswith('#'):
+                continue
+            fields = line.rstrip('\n').split('\t')
+            if len(fields) < 10:
+                continue
+            key = (fields[0], fields[1])
+            if key not in positions or key in covered:
+                continue
+            genotype = fields[9].split(':', 1)[0]
+            # `./.`, `.|.` and a bare `.` are all no-calls; anything with a digit in it
+            # is a real allele index, hom-ref included -- which is the point of the pass.
+            if any(char.isdigit() for char in genotype):
+                covered.add(key)
+    return len(covered)
+
+
+def _run_tool(job_label, argv, what, status_code=500):
+    """Run a conversion subprocess, raising HTTPException on anything but exit 0.
+
+    One helper for the five subprocess calls the gVCF conversion makes, rather than
+    five copies of the same eight lines: the failure text is the only thing that
+    differs, and five copies of it would drift the way the two copies of the gVCF
+    refusal copy did.
+    """
+    logger.info(f"Job {job_label}: running {' '.join(argv)}")
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        message = f"{argv[0]} could not be executed - check container configuration ({exc})"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+    if result.returncode != 0:
+        message = f"{what} failed with exit code {result.returncode}: {stderr}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=status_code, detail=message)
+    if stderr:
+        logger.warning(f"Job {job_label}: {argv[0]} stderr: {stderr}")
+    return stderr
+
+
+def convert_gvcf_to_vcf(
+    job_label, input_path, work_dir, output_vcf, reference_path, positions_path
+):
+    """Genotype a gVCF into a plain VCF, index it, and vouch for the result.
+
+    Blocking -- call it through asyncio.to_thread under _to_thread_semaphore, exactly
+    like the BCF/CRAM/SAM conversions and the liftover: two GenotypeGVCFs passes over
+    a whole-genome gVCF run for minutes and a blocking subprocess on the event loop
+    would take /health (and with it the container healthcheck) down with it.
+
+    Every failure path raises HTTPException, so a caller that returns normally can
+    promise `output_vcf` exists, is BGZF-framed and holds at least one record. An
+    empty-but-valid VCF is a 422 for the same reason it is in convert_bcf_to_vcf():
+    downstream it reads as "no variants found", which is a clinical statement rather
+    than the truncated-or-wrong-input it actually is.
+
+    Four steps:
+
+    1. Stage the upload as a bgzipped, tabix-indexed `.vcf.gz`. GenotypeGVCFs needs an
+       index and needs a filename extension it recognises, and the stored upload name
+       is guaranteed to be NEITHER: safe_upload_name() has no `.gvcf` in
+       SAFE_UPLOAD_EXTENSIONS, so `sample.gvcf` reaches disk with no extension at all,
+       and a `.g.vcf.gz` upload can be plain gzip rather than BGZF. `bcftools view -Oz`
+       unconditionally, rather than renaming when the bytes already look bgzipped,
+       because it is the one path that is correct for plain text, plain gzip, BGZF
+       *and* BCF -- which is what lets a gVCF that was written as a BCF use this lane
+       instead of needing one of its own.
+    2. The PGx pass: every position in PharmCAT's list, variant or confidently
+       reference. This is what makes the conversion worth doing.
+    3. The variant pass: everything OUTSIDE that list, variants only -- for PyPGx
+       (which reads the whole call set, not just PharmCAT's positions) and for the
+       mtDNA sidecar (pharmcat_positions.vcf carries no chrM at all; see
+       app/mtdna/mt_rnr1.py).
+    4. `bcftools concat -a -D` of the two. `-a` handles the interleaved positions.
+       `-D` is NOT belt and braces: the two passes are complements by INTERVAL, and
+       GATK selects records for a VariantWalker by OVERLAP, so a record that starts
+       outside a PharmCAT interval and extends into it satisfies both `-L` and `-XL`
+       and is emitted twice. That is not hypothetical at these loci -- the interval
+       list's multi-base-REF indel anchors are exactly where a spanning record lands --
+       and `concat -a` alone keeps both copies, so a duplicate would reach PyPGx and
+       PharmCAT. `-D` drops the second copy of an identical record. (Not measured
+       against real GATK: no GATK in the unit-test environment. The flag is the
+       conservative direction either way -- it can only ever remove a record that is
+       byte-identical to one already emitted.)
+
+    Returns:
+        dict of paths and honest counts, for the response and the JobStep output_data.
+    """
+    staged = os.path.join(work_dir, 'staged.vcf.gz')
+    pgx_vcf = os.path.join(work_dir, 'pgx_positions.vcf.gz')
+    variant_vcf = os.path.join(work_dir, 'variants.vcf.gz')
+
+    # 1. Stage.
+    _run_tool(
+        job_label,
+        ['bcftools', 'view', '-O', 'z', '-o', staged, input_path],
+        'Re-encoding the uploaded gVCF as a bgzipped VCF (bcftools view)',
+    )
+    if not os.path.exists(staged) or os.path.getsize(staged) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "bcftools view exited 0 but wrote no bgzipped copy of the uploaded "
+                "gVCF; refusing to genotype a file that is not there."
+            ),
+        )
+    _run_tool(
+        job_label,
+        ['bcftools', 'index', '-t', '-f', staged],
+        'Indexing the uploaded gVCF (bcftools index)',
+    )
+
+    # 2. The PGx pass.
+    _run_tool(
+        job_label,
+        build_genotype_gvcfs_argv(
+            reference_path,
+            staged,
+            pgx_vcf,
+            intervals=positions_path,
+            include_non_variant=True,
+        ),
+        'Genotyping the gVCF at PharmCAT positions (GATK GenotypeGVCFs)',
+    )
+
+    # 3. The variant pass.
+    _run_tool(
+        job_label,
+        build_genotype_gvcfs_argv(
+            reference_path,
+            staged,
+            variant_vcf,
+            exclude_intervals=positions_path,
+        ),
+        'Genotyping the remaining variants (GATK GenotypeGVCFs)',
+    )
+
+    # 4. One file. Order matters only for readability -- `-a` sorts the union. `-D` is
+    # load-bearing; see step 4 in the docstring.
+    _run_tool(
+        job_label,
+        [
+            'bcftools', 'concat', '-a', '-D',
+            '-O', 'z', '-o', output_vcf, variant_vcf, pgx_vcf,
+        ],
+        'Merging the two genotyped passes (bcftools concat)',
+    )
+
+    # Vouching, in the same order and for the same reasons as convert_bcf_to_vcf().
+    if not os.path.exists(output_vcf) or os.path.getsize(output_vcf) == 0:
+        _discard_output(output_vcf)
+        message = f"bcftools concat exited 0 but wrote no VCF to {output_vcf}"
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not _looks_gzipped(output_vcf):
+        _discard_output(output_vcf)
+        message = (
+            f"The genotyped output {output_vcf} is not compressed at all. Everything "
+            "downstream opens it as bgzip, so refusing to treat this as a valid "
+            "conversion."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+    if not vcf_has_records(output_vcf):
+        _discard_output(output_vcf)
+        message = (
+            f"Genotyping produced a valid but empty VCF (no records) from "
+            f"{os.path.basename(input_path)}. That is a truncated or wrong input, not "
+            f"a negative result -- shipping it would read downstream as 'no variants "
+            f"found'."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=422, detail=message)
+
+    # Tabix index. Best effort for the same reason as the liftover's and the BCF
+    # route's: the pipeline re-indexes when no .tbi travels with the VCF.
+    tbi_path = f"{output_vcf}.tbi"
+    try:
+        index_result = subprocess.run(
+            ['bcftools', 'index', '-t', '-f', output_vcf],
+            capture_output=True,
+            check=False,
+        )
+        if index_result.returncode != 0 or not os.path.exists(tbi_path):
+            index_stderr = (index_result.stderr or b'').decode('utf-8', errors='replace').strip()
+            logger.warning(f"Job {job_label}: could not tabix-index {output_vcf}: {index_stderr}")
+            tbi_path = None
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(f"Job {job_label}: could not tabix-index {output_vcf}: {exc}")
+        tbi_path = None
+
+    # Honest counts. The denominator is read from the staged interval list rather than
+    # hard-coded, so a PharmCAT bump that changes the list changes it in the same edit --
+    # there is no second number to forget. The numerator is an INTERSECTION against that
+    # same set, and counts only positions that came back with a called genotype; see
+    # count_positions_with_calls for the two ways a row count gets this wrong.
+    pharmcat_positions = read_vcf_positions(positions_path)
+    n_pharmcat_positions = len(pharmcat_positions)
+    n_pgx_positions_called = count_positions_with_calls(pharmcat_positions, pgx_vcf)
+    n_positions_absent = n_pharmcat_positions - n_pgx_positions_called
+
+    size = os.path.getsize(output_vcf)
+    logger.info(
+        f"Job {job_label}: wrote {output_vcf} ({size} bytes); "
+        f"{n_pgx_positions_called}/{n_pharmcat_positions} PharmCAT positions covered"
+    )
+    return {
+        'vcf_path': output_vcf,
+        'vcf_index': tbi_path,
+        'vcf_size_bytes': size,
+        'n_pharmcat_positions': n_pharmcat_positions,
+        'n_pgx_positions_called': n_pgx_positions_called,
+        'n_positions_absent': n_positions_absent,
+    }
+
+
+@app.post("/gvcf-to-vcf")
+async def gvcf_to_vcf(
+    file: UploadFile = File(...),
+    reference_genome: str = Form("hg38"),
+    patient_id: Optional[str] = Form(None),
+    report_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
+    step_name: Optional[str] = Form("gvcf_to_vcf")
+):
+    """
+    Genotype a GATK gVCF into a plain, bgzipped, tabix-indexed GRCh38 VCF.
+
+    Two GATK GenotypeGVCFs passes joined with `bcftools concat -a`: PharmCAT's own
+    positions emitted with `--include-non-variant-sites`, and every other variant.
+    The reference genotypes in the result come from the gVCF's reference-confidence
+    blocks, so they are called data -- this is not `--absent-to-ref`, which fabricates
+    them.
+
+    GRCh38 only, and that is a real limit rather than a missing form field.
+    `pharmcat_positions.vcf` exists in GRCh38 coordinates alone (PharmCAT is a
+    GRCh38-only tool), so there is no interval list to run the PGx pass over for a
+    GRCh37 gVCF: genotyping one against a GRCh38 interval list would select the wrong
+    loci, and genotyping it without one would throw away the reference blocks that are
+    the whole reason this endpoint exists. A GRCh37 gVCF is refused at upload
+    (app/api/utils/file_processor.py) with the way out spelled out; this check is the
+    server-side half of that decision, not a duplicate of it.
+
+    The output is deliberately NOT named `*.g.vcf*`: PharmCAT condemns a gVCF by
+    filename before it reads a byte, so a correct conversion under the wrong name is
+    still refused at the far end of the pipeline.
+    """
+    job_client = None
+    work_dir = None
+    output_dir = None
+    try:
+        if job_id:
+            try:
+                job_client = JobClient(job_id=job_id, step_name=step_name)
+                await job_client.start_step(f"Starting gVCF genotyping for {file.filename}")
+                await job_client.log_progress(f"Genotyping {file.filename} into a plain VCF", {
+                    "filename": file.filename
+                })
+            except Exception as e:
+                logger.warning(f"Failed to initialize workflow client: {e}")
+                job_client = None
+
+        # The target build, checked as a BUILD (hg38 and grch38 both pass) exactly as
+        # /liftover-vcf checks its own. See the docstring for why there is only one.
+        target_key = (reference_genome or "hg38").strip().lower()
+        if REFERENCE_BUILDS.get(target_key) != 'GRCh38':
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"gVCF genotyping targets GRCh38 only; got "
+                    f"reference_genome={reference_genome!r}. PharmCAT's position list, "
+                    "which this conversion emits reference calls over, exists in GRCh38 "
+                    "coordinates only. Post hg38 (or grch38), or omit the field."
+                ),
+            )
+        reference_path = REFERENCE_PATHS[target_key]
+        if not os.path.exists(reference_path):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"gVCF genotyping requires the GRCh38 reference FASTA, which is not "
+                    f"present at {reference_path}. Fetch the reference before genotyping."
+                ),
+            )
+
+        # The prerequisite that is easiest to be missing, so it gets the loudest 400.
+        # This is not a file the image ships: it is staged under the /reference bind
+        # mount, and a reference tree populated before genome-downloader learned about
+        # it will not have it (that module short-circuits on /reference/.download_complete).
+        if not os.path.exists(PHARMCAT_POSITIONS_PATH):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"PharmCAT's position list is not present at "
+                    f"{PHARMCAT_POSITIONS_PATH}. It is the interval list this "
+                    "conversion emits reference calls over, so there is nothing to "
+                    "genotype against without it. Stage it there -- it ships inside "
+                    "the pgx_pharmcat image at /pharmcat/pharmcat_positions.vcf, and "
+                    "genome-downloader fetches it for the pinned PharmCAT version on a "
+                    "reference tree that is not already marked complete. It must be "
+                    "re-staged on every PharmCAT version bump."
+                ),
+            )
+
+        # Present is not the same as usable, and the difference is reachable rather than
+        # theoretical: genome-downloader's download_file() never checks the HTTP status,
+        # so a 404 from the pinned release URL writes its error body to this exact path
+        # and reports the entry "ready" (gz_path == fasta_path for it, so nothing
+        # extracts or indexes and nothing else would notice). GATK would then fail with
+        # an opaque parse error and the operator would never see the 400 above, which is
+        # the one message that names the file and the fix. Vouching for content here is
+        # the same rule the conversion's own output is held to.
+        if not read_vcf_positions(PHARMCAT_POSITIONS_PATH, limit=1):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"PharmCAT's position list at {PHARMCAT_POSITIONS_PATH} carries no "
+                    "variant records, so it is not a usable interval list -- most "
+                    "likely a failed download left an error document at that path "
+                    "(genome-downloader does not check the HTTP status). Re-stage it: "
+                    "it ships inside the pgx_pharmcat image at "
+                    "/pharmcat/pharmcat_positions.vcf. It must be re-staged on every "
+                    "PharmCAT version bump."
+                ),
+            )
+
+        # Sanitised for the same reason as every other route here: file.filename is
+        # attacker-controlled and this name reaches subprocess argv and the shared
+        # volume. See safe_upload_name's docstring.
+        local_job_id = str(uuid.uuid4())
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        filename = safe_upload_name(file.filename or "input.g.vcf.gz", local_job_id)
+        input_path = os.path.join(work_dir, filename)
+        # Output goes on the shared volume, not this container's /tmp -- the caller is
+        # a Nextflow process in another container. See conversion_output_dir().
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        # `.genotyped.vcf.gz`, and stored_stem() rather than splitext, so the name says
+        # what happened and a misdirected `.vcf.gz` post cannot yield `<name>.vcf.vcf.gz`.
+        output_vcf = os.path.join(
+            output_dir, f"{stored_stem(filename)}.genotyped.vcf.gz"
+        )
+        # Belt and braces on the name rule. safe_upload_name() strips the dots out of
+        # the stem, so `sample.g.vcf.gz` is already stored as `sampleg_<uuid>.vcf.gz`
+        # and this can only fire if that sanitiser changes -- which is exactly when it
+        # needs to, because the symptom otherwise is a PharmCAT refusal swallowed by
+        # main.nf's `|| true` at the other end of the run.
+        if PHARMCAT_GVCF_NAME_RE.search(os.path.basename(output_vcf)):
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Refusing to publish the genotyped VCF as "
+                    f"{os.path.basename(output_vcf)}: PharmCAT condemns that filename "
+                    "as a gVCF before reading a byte of it, so a correct conversion "
+                    "under this name would still be refused downstream."
+                ),
+            )
+
+        # Chunked for the same reason as the CRAM route: never buffer the upload.
+        with open(input_path, "wb") as f:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                f.write(chunk)
+
+        logger.info(f"Job {local_job_id}: Saved gVCF to {input_path}")
+
+        if job_client:
+            file_size = os.path.getsize(input_path)
+            await job_client.log_progress(f"File uploaded: {file_size} bytes", {
+                "file_size_bytes": file_size,
+                "input_path": input_path
+            })
+
+        # to_thread under the semaphore, exactly like the other conversions: two
+        # GenotypeGVCFs passes over a whole-genome gVCF run for minutes and must not
+        # stall the event loop, and therefore /health.
+        async with _to_thread_semaphore:
+            stats = await asyncio.to_thread(
+                convert_gvcf_to_vcf,
+                local_job_id,
+                input_path,
+                work_dir,
+                output_vcf,
+                reference_path,
+                PHARMCAT_POSITIONS_PATH,
+            )
+
+        coverage = (
+            f"{stats['n_pgx_positions_called']} of {stats['n_pharmcat_positions']} "
+            f"PharmCAT positions carried a call"
+        )
+        # ONE dict, read twice below: the JobStep's output_data and this endpoint's own
+        # response body. It used to be two identical literals, and only the response one
+        # was ever executed by a test (JobClient is stubbed to raise in the unit
+        # environment), so renaming a key in the complete_step copy would have stripped
+        # the coverage figures from every gVCF report -- app/utils/gvcf_provenance.py
+        # reads exactly these names off the step row -- with the suite still green.
+        coverage_data = {
+            "n_pharmcat_positions": stats['n_pharmcat_positions'],
+            "n_pgx_positions_called": stats['n_pgx_positions_called'],
+            "n_positions_absent": stats['n_positions_absent'],
+            "target_build": "GRCh38",
+        }
+        if job_client:
+            await job_client.log_progress("gVCF genotyping completed", {
+                "vcf_path": stats['vcf_path'],
+                "vcf_size_bytes": stats['vcf_size_bytes'],
+                "vcf_index": stats['vcf_index'],
+            })
+            # output_data, not just the message: only output_data lands on the JobStep
+            # row, and the report reads these counts afterwards to say how much of
+            # PharmCAT's position list the gVCF actually covered. Same contract as the
+            # liftover step's counts.
+            await job_client.complete_step(
+                f"Genotyped {file.filename} into a plain VCF ({coverage})",
+                output_data=dict(coverage_data),
+            )
+
+        return {
+            "success": True,
+            "job_id": local_job_id,
+            "vcf_path": stats['vcf_path'],
+            "vcf": stats['vcf_path'],  # Alternative field name, matching the other routes
+            "vcf_index": stats['vcf_index'],
+            "vcf_size_bytes": stats['vcf_size_bytes'],
+            **coverage_data,
+            "message": f"Genotyped {filename} into a plain VCF ({coverage})",
+        }
+
+    except HTTPException as e:
+        # Do not relabel a deliberate 4xx as a 500 on the way out.
+        _cleanup_dir(output_dir)
+        logger.error(f"gVCF genotyping failed: {e.detail}")
+        await _fail_step(job_client, f"gVCF genotyping failed: {e.detail}")
+        raise
+    except Exception as e:
+        _cleanup_dir(output_dir)
+        logger.exception(f"Error in gVCF genotyping: {e}")
+        await _fail_step(job_client, f"gVCF genotyping failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"gVCF genotyping failed: {str(e)}")
     finally:
         _cleanup_dir(work_dir)
 

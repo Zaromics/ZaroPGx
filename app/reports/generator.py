@@ -1266,6 +1266,7 @@ def create_interactive_html_report(
     workflow_warnings: List[str] | None = None,
     pharmcat_assume_ref_methodology: str | None = None,
     liftover_provenance: str | None = None,
+    gvcf_provenance: str | None = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -1448,6 +1449,7 @@ def create_interactive_html_report(
             # Add workflow warnings/alerts for report display
             "workflow_warnings": workflow_warnings or [],
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+            "gvcf_provenance": gvcf_provenance,
             "liftover_provenance": liftover_provenance,
             # 159: run-derived provenance (each rendered only if resolved)
             "genome_build": matcher_meta["genome_build"],
@@ -1871,6 +1873,7 @@ def generate_report(
     workflow_warnings = []  # Initialize warnings list
     pharmcat_assume_ref_methodology = None
     liftover_provenance = None
+    gvcf_provenance = None
     if job_id and db_session:
         try:
             logger.info(
@@ -1888,6 +1891,7 @@ def generate_report(
             # Prefer Job.job_metadata (upload writes assume-ref flags here)
             try:
                 from app.api.db import Job, JobStep
+                from app.utils.gvcf_provenance import gvcf_provenance_paragraph
                 from app.utils.liftover_provenance import (
                     liftover_provenance_sentence,
                 )
@@ -1938,9 +1942,14 @@ def generate_report(
                 logger.info(
                     f"Retrieved {len(workflow_warnings)} workflow warnings from job metadata"
                 )
+                # Read once, used twice: the assume-ref paragraph below and the gVCF
+                # paragraph further down describe the two ends of the same question
+                # and must not be told different things about the same run.
+                absent_to_ref = bool(meta.get("pharmcat_absent_to_ref"))
+                unspecified_to_ref = bool(meta.get("pharmcat_unspecified_to_ref"))
                 pharmcat_assume_ref_methodology = methodology_assume_ref_paragraph(
-                    bool(meta.get("pharmcat_absent_to_ref")),
-                    bool(meta.get("pharmcat_unspecified_to_ref")),
+                    absent_to_ref,
+                    unspecified_to_ref,
                 )
 
                 # A lifted run reports coordinates the uploaded file never had, so
@@ -1960,11 +1969,63 @@ def generate_report(
                 liftover_provenance = liftover_provenance_sentence(
                     liftover_step.output_data if liftover_step is not None else None
                 )
+
+                # Same contract as the liftover row above, for the same reason: a
+                # genotyped gVCF's reference calls are the one thing about this run
+                # the reader cannot infer from the results, and only the step row
+                # carries how much of PharmCAT's position list the file covered
+                # (gatk-api's /gvcf-to-vcf writes it as output_data on completion).
+                # Absent row = no gVCF genotyping ran, which is every other input.
+                gvcf_step = (
+                    db_session.query(JobStep)
+                    .filter(
+                        JobStep.job_id == job_uuid,
+                        JobStep.step_name == "gvcf_to_vcf",
+                    )
+                    .first()
+                )
+                # The flags are handed over, not assumed: they are GLOBAL checkboxes
+                # with no input-type branch anywhere between the form and PharmCAT's
+                # command line, so a gVCF run can perfectly well have had
+                # --unspecified-to-ref on -- which turns the very positions this
+                # paragraph counts as uncovered into fabricated reference calls. The
+                # paragraph used to assert they were off.
+                gvcf_provenance = gvcf_provenance_paragraph(
+                    gvcf_step.output_data if gvcf_step is not None else None,
+                    absent_to_ref=absent_to_ref,
+                    unspecified_to_ref=unspecified_to_ref,
+                )
             except Exception as e:
+                # Say so in the report, do not just blank the fields.
+                #
+                # Everything this block reads is a claim about the run that the
+                # reader CANNOT infer from the results: that --absent-to-ref was
+                # used and can over-call normal phenotypes, that the file was
+                # lifted from GRCh37, how much of PharmCAT's position list a
+                # genotyped gVCF actually covered, and the workflow's own
+                # warnings. Resetting all four to empty renders a report that is
+                # byte-indistinguishable from a run where none of them applied --
+                # an absent measurement presented as a normal result, which is the
+                # one outcome this pipeline refuses everywhere else. The log line
+                # was the only trace, and nobody reads a report's logs.
+                #
+                # The warning goes in workflow_warnings because that is the
+                # channel both templates already render (see this module's
+                # docstring); it deliberately does not name the exception, which
+                # would mean nothing to a clinician reading the PDF.
                 logger.warning(f"Failed to retrieve job report metadata: {e}")
-                workflow_warnings = []
+                workflow_warnings = [
+                    "<p>⚠️ This run's provenance could not be read back from the "
+                    "database, so this report omits statements it would normally "
+                    "make about how the analysis was configured — including "
+                    "whether uncalled positions were assumed to be reference, and "
+                    "whether the file was converted from another genome build. "
+                    "Treat the absence of those statements as unknown, not as "
+                    "'did not apply'.</p>"
+                ]
                 pharmcat_assume_ref_methodology = None
                 liftover_provenance = None
+                gvcf_provenance = None
 
             if not data:
                 logger.warning(
@@ -2248,6 +2309,7 @@ def generate_report(
         # Add workflow warnings/alerts for report display
         "workflow_warnings": workflow_warnings,
         "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+        "gvcf_provenance": gvcf_provenance,
         "liftover_provenance": liftover_provenance,
         # 159: run-derived provenance (each rendered only if resolved)
         "genome_build": matcher_meta["genome_build"],
@@ -2859,6 +2921,7 @@ def generate_report(
                 # Add workflow warnings/alerts for report display
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
+                "gvcf_provenance": gvcf_provenance,
                 "liftover_provenance": liftover_provenance,
                 # 159: run-derived provenance (each rendered only if resolved).
                 # This dict rebinds `template_data` and is the one actually fed
@@ -3044,6 +3107,7 @@ def generate_report(
                 workflow_warnings=workflow_warnings,
                 pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
                 liftover_provenance=liftover_provenance,
+                gvcf_provenance=gvcf_provenance,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 

@@ -11,6 +11,8 @@ nextflow.enable.dsl=2
     BAM -> OptiType/HLA + PyPGx -> PharmCAT  
     VCF -> PyPGx -> PharmCAT (quick pipeline, no HLA)
     GRCh37/hg19 VCF -> GATK LiftoverVcf (via gatk-api) -> GRCh38 VCF -> PyPGx -> PharmCAT
+    BCF -> bcftools view (via gatk-api) -> bgzipped VCF -> the vcf lane above, liftover included
+    gVCF -> GATK GenotypeGVCFs x2 (via gatk-api) -> plain bgzipped VCF -> the vcf lane above
 
   Inputs/Outputs are file-path based; integration with FastAPI will pass params.
 
@@ -27,16 +29,25 @@ nextflow.enable.dsl=2
 */
 
 params.input          = params.input ?: ''
-params.input_type     = params.input_type ?: ''  // vcf|bam|cram|sam|fastq
+params.input_type     = params.input_type ?: ''  // vcf|bcf|gvcf|bam|cram|sam|fastq
 params.patient_id     = params.patient_id ?: ''
 params.report_id      = params.report_id ?: ''
 params.reference      = params.reference ?: 'hg38'
 params.outdir         = params.outdir ?: "data/reports/${params.patient_id}"
 params.skip_hla       = params.skip_hla != null ? params.skip_hla : false
 params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
-// skip_gatk covers the three GATK-container conversions (FastqToBAM/CramToBAM/SamToBAM).
-// It is a no-op for vcf/bam input (no GATK process is invoked) and rejected for
-// fastq/cram/sam, where there is no non-GATK route to a BAM - see the guard below.
+// skip_gatk covers the conversions that run inside the gatk-api container
+// (FastqToBAM/CramToBAM/SamToBAM, BcfToVCF and GVCFToVCF). It is rejected outright for
+// fastq/cram/sam/bcf/gvcf, where there is no other route to a file the rest of the
+// pipeline can read - see the guard below.
+//
+// It is NOT, however, a no-op for vcf/bam: LiftoverVCF is a gatk-api process too, and
+// the vcf lane invokes it on source_build grch37/hg19/b37 whatever skip_gatk says. So
+// unticking GATK on a GRCh37 VCF still lifts the file. That is the safe direction -
+// everything downstream is GRCh38-only, and honouring the toggle here would analyse the
+// file on the wrong coordinates - but it is not what the toggle promises, and this
+// comment used to claim the opposite. Making the toggle refuse a GRCh37 VCF the way it
+// refuses a BCF is the change to consider, not making it skip the lift.
 params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
 // skip_report is the ZaroPGx custom-report toggle. It is honoured, but app-side,
 // not here: no process in this pipeline reads the param below. It is carried this
@@ -85,7 +96,12 @@ params.source_build   = params.source_build ?: ''
 // upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
-// FASTQ alignment
+// FASTQ alignment. Unreachable today: FASTQ is refused at ingest (no aligner ships, and
+// gatk-api's /align-fastq answers HTTP 501), so no job ever reaches this process. Its
+// step_name=gatk_alignment nevertheless has a StepTemplate in
+// app/services/workflow_registry.py, gated on needs_alignment, which nothing sets --
+// registered so the pipeline and the app agree on the name rather than disagreeing
+// silently, NOT because FASTQ works.
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -122,7 +138,23 @@ PY
     '''
 }
 
-// CRAM to BAM conversion
+// CRAM to BAM conversion.
+//
+// Posts step_name=gatk_cram_sam_to_bam -- ONE name shared with SamToBAM below, not the
+// per-process gatk_cram_to_bam/gatk_sam_to_bam this used to send. The app mints a Job's
+// steps from the StepTemplates in app/services/workflow_registry.py and then looks each
+// incoming status update up by EXACT step_name (app/services/job_service.py); a name
+// with no minted step 404s and the UI leaves that step at [pending] for as long as the
+// conversion runs. The app-side vocabulary has only ever carried the single name --
+// workflow_stages.STEP_TO_STAGE, the progress calculator's bands and canonical order,
+// and index.html's glyph map all say gatk_cram_sam_to_bam -- so every CRAM and SAM
+// upload hung there, on two supported, shipping input lanes.
+//
+// One name is also the honest model, not just the smaller diff: a job has exactly one
+// input type, so at most one of these two processes can ever run in it, and both land in
+// the same GATK progress band. Two names would be two spellings of a step that can never
+// co-occur. If a future process needs its own name, add the StepTemplate first --
+// tests/test_pipeline_step_names_are_registered.py fails the build if it does not exist.
 process CramToBAM {
     tag "cram2bam_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -142,7 +174,7 @@ process CramToBAM {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{cram} )
     if [ -n "${JOB_ID:-}" ]; then
-      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_to_bam )
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
     if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam > cram_response.json; then
       echo "gatk-api /cram-to-bam returned an error:" >&2
@@ -159,7 +191,8 @@ PY
     '''
 }
 
-// SAM to BAM conversion
+// SAM to BAM conversion. Posts the same step_name as CramToBAM above -- see that
+// process's comment for why the two share one name and what the mismatch broke.
 process SamToBAM {
     tag "sam2bam_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -179,7 +212,7 @@ process SamToBAM {
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{sam} )
     if [ -n "${JOB_ID:-}" ]; then
-      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_sam_to_bam )
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
     if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam > sam_response.json; then
       echo "gatk-api /sam-to-bam returned an error:" >&2
@@ -349,6 +382,115 @@ PY
     '''
 }
 
+// BCF -> bgzipped VCF, via gatk-api's bcftools endpoint. A real re-encode, not a
+// rename: docker/pharmcat's /genotype gates on the filename and its 400 is swallowed
+// by the PharmCAT curl's `|| true`, so a `.bcf` carried downstream verbatim ends the
+// run with no PharmCAT output and no error. BCF and VCF hold the same records, so
+// nothing is lost here - the endpoint refuses (HTTP 4xx/5xx -> --fail-with-body ->
+// run failure) rather than returning a file it cannot vouch for as non-empty BGZF.
+process BcfToVCF {
+    tag "bcf2vcf_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path bcf
+    val patient_id
+    val report_id
+    val reference
+    val outdir
+
+    output:
+    // A fixed name, for the same reason LiftoverVCF uses one: a bare `*.vcf.gz`
+    // glob would also match anything the staged input happened to be called.
+    path "converted.vcf.gz", emit: vcf
+    path "converted.vcf.gz.tbi", optional: true, emit: tbi
+
+    shell:
+    '''
+    set -euo pipefail
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bcf} )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=bcf_to_vcf )
+    fi
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/bcf-to-vcf > bcf_response.json; then
+      echo "gatk-api /bcf-to-vcf returned an error:" >&2
+      cat bcf_response.json >&2 || true
+      exit 1
+    fi
+    VCF_PATH=$(python3 - <<'PY'
+import json
+data = json.load(open('bcf_response.json'))
+print(data.get('vcf_path') or data.get('vcf') or '')
+PY
+)
+    if [ -z "$VCF_PATH" ]; then
+      echo "bcf-to-vcf response carried no vcf_path" >&2
+      cat bcf_response.json >&2 || true
+      exit 1
+    fi
+    cp "$VCF_PATH" converted.vcf.gz
+    # Bring the tabix index along if the sidecar made one (downstream re-indexes otherwise).
+    [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" converted.vcf.gz.tbi || true
+    '''
+}
+
+// gVCF -> plain genotyped bgzipped VCF, via gatk-api's GATK GenotypeGVCFs endpoint.
+// Not a re-encode like BcfToVCF above: PharmCAT 3.4.0 DETECTS and REFUSES a gVCF (by
+// filename, by ##GVCFBlock header, or by a reference-block data row), so the bytes have
+// to stop being a gVCF's. Two GenotypeGVCFs passes joined with `bcftools concat -a`:
+// PharmCAT's own positions emitted with --include-non-variant-sites, so the hom-ref
+// calls at PGx loci are the gVCF's own reference-confidence data rather than PharmCAT's
+// --absent-to-ref fabrication, plus every other variant for PyPGx and the mtDNA sidecar.
+// The endpoint refuses (HTTP 4xx/5xx -> --fail-with-body -> run failure) rather than
+// returning a file it cannot vouch for as non-empty BGZF with at least one record.
+process GVCFToVCF {
+    tag "gvcf2vcf_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path gvcf
+    val patient_id
+    val report_id
+    val reference
+    val outdir
+
+    output:
+    // A fixed name, for the same reason BcfToVCF and LiftoverVCF use one: a bare
+    // `*.vcf.gz` glob would also match the staged input. It must also never be
+    // `*.g.vcf*` -- PharmCAT condemns that filename as a gVCF whatever the content --
+    // which is a second reason not to derive it from the upload's name.
+    path "genotyped.vcf.gz", emit: vcf
+    path "genotyped.vcf.gz.tbi", optional: true, emit: tbi
+
+    shell:
+    '''
+    set -euo pipefail
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{gvcf} )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gvcf_to_vcf )
+    fi
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/gvcf-to-vcf > gvcf_response.json; then
+      echo "gatk-api /gvcf-to-vcf returned an error:" >&2
+      cat gvcf_response.json >&2 || true
+      exit 1
+    fi
+    VCF_PATH=$(python3 - <<'PY'
+import json
+data = json.load(open('gvcf_response.json'))
+print(data.get('vcf_path') or data.get('vcf') or '')
+PY
+)
+    if [ -z "$VCF_PATH" ]; then
+      echo "gvcf-to-vcf response carried no vcf_path" >&2
+      cat gvcf_response.json >&2 || true
+      exit 1
+    fi
+    cp "$VCF_PATH" genotyped.vcf.gz
+    # Bring the tabix index along if the sidecar made one (downstream re-indexes otherwise).
+    [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" genotyped.vcf.gz.tbi || true
+    '''
+}
+
 // GRCh37/hg19 VCF -> GRCh38 VCF, via gatk-api's Picard LiftoverVcf endpoint.
 // Real coordinate conversion, not a contig rename - the sidecar normalises contig
 // naming to match the UCSC chain, runs LiftoverVcf against the GRCh38 reference,
@@ -372,7 +514,9 @@ process LiftoverVCF {
     // A fixed name, deliberately NOT a bare `*.vcf.gz` glob: the staged INPUT can
     // itself be a .vcf.gz, and a glob would emit input and output both - sending
     // the un-lifted GRCh37 file downstream alongside the lifted one. The staged
-    // input can never collide with this name (uploads stage as `upload_*`).
+    // input can never collide with this name: an upload stages as `upload_*`, a BCF
+    // that came through BcfToVCF above stages as `converted.vcf.gz`, and a gVCF that
+    // came through GVCFToVCF stages as `genotyped.vcf.gz`.
     path "lifted.grch38.vcf.gz", emit: vcf
     path "lifted.grch38.vcf.gz.tbi", optional: true, emit: tbi
 
@@ -459,6 +603,15 @@ process PyPGxGenotypeAll {
     path vcf
     val patient_id
     val report_id
+    // The type of the file PyPGx is actually handed, which is NOT always
+    // params.input_type: a `bcf` or `gvcf` run reaches here holding the converted
+    // VCF, and docker/pypgx's determine_pypgx_gene_set() branches on this value (VCF
+    // input prefers PharmCAT's calls for overlapping genes, everything else prefers
+    // PyPGx's). Telling it "bcf"/"gvcf" would give the same call set a different gene
+    // selection than the identical VCF gets. Passed as a val input rather than read
+    // off params inside the shell block, because the corrected value only exists in
+    // the workflow body.
+    val input_type
     val reference
     val outdir
 
@@ -477,7 +630,7 @@ process PyPGxGenotypeAll {
     # degrading to PharmCAT-only. --fail-with-body would write the error body into
     # pypgx_result.json, which the else branch overwrites anyway - no gain, and the
     # explicit degradation path is the point.
-    CURL_ARGS=( -f -X POST -F genes=ALL -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} -F input_type=!{params.input_type} )
+    CURL_ARGS=( -f -X POST -F genes=ALL -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{vcf} -F input_type=!{input_type} )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_analysis )
     fi
@@ -592,18 +745,22 @@ process PharmCATRun {
 workflow {
     main:
     assert params.input : 'Missing --input path'
-    assert params.input_type : 'Missing --input_type (vcf|bam|cram|sam|fastq)'
+    assert params.input_type : 'Missing --input_type (vcf|bcf|gvcf|bam|cram|sam|fastq)'
 
-    // GATK gate. fastq/cram/sam only reach a BAM through the gatk-api container, so
-    // gating FastqToBAM/CramToBAM/SamToBAM off would leave bam_ch empty and starve
-    // every downstream channel - the pipeline would "succeed" having produced
-    // nothing, which is worse than the silent-override it replaces. Refuse the
-    // combination instead. For vcf/bam input no GATK process runs at all, so
-    // skip_gatk is correctly a no-op there.
-    if (params.skip_gatk && ['fastq', 'cram', 'sam'].contains(params.input_type)) {
+    // GATK gate. fastq/cram/sam only reach a BAM, and bcf/gvcf only reach a readable
+    // VCF, through the gatk-api container, so gating FastqToBAM/CramToBAM/SamToBAM/
+    // BcfToVCF/GVCFToVCF off would leave bam_ch (or vcf_ch) empty and starve every
+    // downstream channel - the pipeline would "succeed" having produced nothing, which
+    // is worse than the silent-override it replaces. Refuse the combination instead.
+    //
+    // vcf/bam are let through, which is not the same as skip_gatk doing nothing on them:
+    // a GRCh37 vcf still goes through LiftoverVCF below, which is a gatk-api process.
+    // See params.skip_gatk's comment at the top of this file.
+    if (params.skip_gatk && ['fastq', 'cram', 'sam', 'bcf', 'gvcf'].contains(params.input_type)) {
         error(
             "--skip_gatk is not compatible with --input_type ${params.input_type}: " +
-            "converting ${params.input_type} to BAM requires the GATK service. " +
+            "converting ${params.input_type} into something the rest of the pipeline " +
+            "can read requires the GATK service. " +
             "Re-enable GATK, or upload a BAM/VCF instead."
         )
     }
@@ -697,14 +854,38 @@ workflow {
             vcf_ch = PyPGxBam2Vcf(hla_complete_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
         }
     }
-    // For VCF: quick pipeline, no HLA. A GRCh37/hg19 VCF is lifted over to GRCh38
-    // first; everything downstream (PyPGx, PharmCAT) is GRCh38-only, so skipping
-    // this step for such a file would analyse it on the wrong coordinates.
-    else if (params.input_type == 'vcf') {
+    // For VCF, BCF and gVCF: quick pipeline, no HLA. A BCF is re-encoded to a bgzipped
+    // VCF first (BcfToVCF) because everything downstream gates on the filename; a gVCF
+    // is GENOTYPED into a plain VCF first (GVCFToVCF) because PharmCAT detects and
+    // refuses a gVCF outright. From there both are the same lane as a VCF upload,
+    // liftover included. A GRCh37/hg19 file is lifted over to GRCh38 next; everything
+    // downstream (PyPGx, PharmCAT) is GRCh38-only, so skipping that step would analyse
+    // it on the wrong coordinates. The three share one branch deliberately: each of the
+    // other two IS a VCF once converted, and a second copy of the liftover decision is a
+    // second copy to drift.
+    //
+    // The liftover is unreachable on the gvcf arm today and that is not an oversight: a
+    // GRCh37 gVCF is refused at upload, because PharmCAT's position list -- the interval
+    // list GVCFToVCF emits its reference calls over -- exists in GRCh38 coordinates
+    // only. The arm is written as part of the shared branch anyway rather than special-
+    // cased, so that if a GRCh37 interval list is ever staged the order is already
+    // genotype-then-lift, which is the only correct order.
+    else if (params.input_type in ['vcf', 'bcf', 'gvcf']) {
+        // Assigned without `def` on purpose: the mtDNA wiring below reads it, and a
+        // `def` here would scope it to this branch. Same pattern as vcf_ch/bam_ch.
+        // .first() makes it reusable by that second consumer -- see input_ch's
+        // comment above for why a plain queue channel cannot feed two.
+        if (params.input_type == 'bcf') {
+            converted_vcf_ch = BcfToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
+        } else if (params.input_type == 'gvcf') {
+            converted_vcf_ch = GVCFToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
+        } else {
+            converted_vcf_ch = input_ch
+        }
         def source_build_norm = (params.source_build ?: '').toString().toLowerCase()
         if (['grch37', 'hg19', 'b37'].contains(source_build_norm)) {
             vcf_ch = LiftoverVCF(
-                input_ch,
+                converted_vcf_ch,
                 Channel.value(params.source_build),
                 patient_id_ch,
                 report_id_ch,
@@ -712,12 +893,12 @@ workflow {
                 outdir_ch
             ).vcf
         } else {
-            vcf_ch = input_ch
+            vcf_ch = converted_vcf_ch
         }
         hla_ch = empty_file_ch
     }
     else {
-        error "Unsupported input type: ${params.input_type}. Supported: vcf, bam, cram, sam, fastq"
+        error "Unsupported input type: ${params.input_type}. Supported: vcf, bcf, gvcf, bam, cram, sam, fastq"
     }
 
     // mtDNA calling. Which channel feeds it depends on input type:
@@ -727,6 +908,16 @@ workflow {
     //     pushing it through that chain shifts positions by 2 inside MT-RNR1 and
     //     would report a pathogenic m.1555A>G at 1553. The sidecar does its own
     //     build-appropriate normalisation from the untouched input instead.
+    //   - bcf/gvcf: the CONVERTED but NOT LIFTED VCF (converted_vcf_ch). That file is
+    //     these lanes' equivalent of "the original upload" -- BcfToVCF only re-encodes
+    //     the same records and GVCFToVCF only genotypes them, so its chrM coordinates
+    //     are exactly the upload's, while the liftover that may follow is the very step
+    //     the paragraph above says the sidecar must not see. It is sent as
+    //     mtdna_input_type 'vcf', because that is what the sidecar is now holding.
+    //     Sending the raw .bcf/.g.vcf.gz instead would hand the sidecar a file it reads
+    //     by name, the same trap this whole lane exists to avoid. (chrM survives the
+    //     gVCF conversion: pharmcat_positions.vcf carries no chrM at all -- see
+    //     app/mtdna/mt_rnr1.py -- so every chrM variant lands in GVCFToVCF's -XL pass.)
     //   - bam/cram/sam/fastq: the already-CONVERTED BAM (bam_ch, or input_ch
     //     itself for 'bam' input, which needs no conversion) -- never the raw
     //     cram/sam/fastq upload. There is no liftover concern on these paths, the
@@ -741,8 +932,14 @@ workflow {
     if (params.skip_mtdna) {
         mtdna_outside = empty_file_ch
     } else {
-        mtdna_variants_ch = (params.input_type in ['fastq', 'cram', 'sam']) ? bam_ch : input_ch
-        mtdna_input_type = (params.input_type == 'vcf') ? 'vcf' : 'bam'
+        if (params.input_type in ['fastq', 'cram', 'sam']) {
+            mtdna_variants_ch = bam_ch
+        } else if (params.input_type in ['bcf', 'gvcf']) {
+            mtdna_variants_ch = converted_vcf_ch
+        } else {
+            mtdna_variants_ch = input_ch
+        }
+        mtdna_input_type = (params.input_type in ['vcf', 'bcf', 'gvcf']) ? 'vcf' : 'bam'
         mtdna_result = MtdnaCall(
             mtdna_variants_ch,
             patient_id_ch,
@@ -759,11 +956,19 @@ workflow {
         mtdna_outside = mtdna_result.mtdna.ifEmpty(empty_file_ch)
     }
 
+    // What the file PyPGx and the HLA wiring see actually is. For a `bcf` or `gvcf` run
+    // that is a VCF by this point (BcfToVCF re-encoded it above; GVCFToVCF genotyped
+    // it), and saying otherwise would give the same variants a different PyPGx gene set
+    // - see PyPGxGenotypeAll's `input_type` input - and would send the vcf lane's
+    // `hla_ch` (a plain path, not a channel) down the `.ifEmpty()` arm below, which only
+    // a channel has.
+    analysed_input_type = (params.input_type in ['bcf', 'gvcf']) ? 'vcf' : params.input_type
+
     // Run PyPGx genotyping on VCF (if enabled)
     if (params.skip_pypgx) {
         pypgx_outside = empty_file_ch
         // When PyPGx is skipped, run PharmCAT directly on VCF
-        hla_outside = (params.skip_hla || params.input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
+        hla_outside = (params.skip_hla || analysed_input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
         PharmCATRun(
             vcf_ch,
             pypgx_outside,
@@ -775,15 +980,22 @@ workflow {
         )
     } else {
         // PyPGx is enabled - run it first, then PharmCAT
-        pypgx_result = PyPGxGenotypeAll(vcf_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+        pypgx_result = PyPGxGenotypeAll(
+            vcf_ch,
+            patient_id_ch,
+            report_id_ch,
+            Channel.value(analysed_input_type),
+            reference_ch,
+            outdir_ch
+        )
         // Handle PyPGx results: if PyPGx completely failed (service unavailable),
         // it won't emit an outside.tsv file, so Nextflow uses empty_file_ch.
         // If PyPGx succeeded but produced no valid results, it may emit an empty file.
         // In both cases, PharmCAT will skip outside calls if the file is empty.
         pypgx_outside = pypgx_result.outside.ifEmpty(empty_file_ch)
         
-        hla_outside = (params.skip_hla || params.input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
-        
+        hla_outside = (params.skip_hla || analysed_input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
+
         // Create dependency: PharmCAT waits for PyPGx to complete
         // This ensures sequential execution: PyPGx -> PharmCAT
         pypgx_complete_ch = pypgx_result.pypgx_json.combine(vcf_ch).map { pypgx_json, vcf_file -> vcf_file }

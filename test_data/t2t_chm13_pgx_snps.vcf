@@ -1,0 +1,19 @@
+##fileformat=VCFv4.2
+##source=ZaroPGx-test-fixture-T2T-CHM13-refusal
+##reference=file:///references/chm13/chm13v2.0.fa
+##comment="T2T-CHM13v2 PGx fixture for the build-refusal path. It carries BOTH kinds of evidence header_inspector reads: CHM13 contig lengths (UCSC hs1.chrom.sizes, cross-checked against NCBI GCF_009914755.1) and a ##reference= value naming chm13v2.0.fa. Either alone must be enough to detect T2T-CHM13v2, and determine_workflow must then REFUSE the file rather than analyse CHM13 coordinates as GRCh38's."
+##comment="The POS values below are NOT CHM13 coordinates. They are the GRCh38 positions of the same seven PGx SNPs, copied from test_data/grch37_pgx_snps.vcf's expected-liftover list, because no verified CHM13 coordinate for these rsIDs was to hand and inventing one would put a wrong number in a test fixture. Nothing reads them: a refused file never reaches a variant reader, and every assertion this fixture supports is about the header."
+##contig=<ID=chr1,length=248387328,assembly=T2T-CHM13v2>
+##contig=<ID=chr10,length=134758134,assembly=T2T-CHM13v2>
+##contig=<ID=chr12,length=133324548,assembly=T2T-CHM13v2>
+##contig=<ID=chr16,length=96330374,assembly=T2T-CHM13v2>
+##contig=<ID=chr22,length=51324926,assembly=T2T-CHM13v2>
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE1
+chr10	94761900	rs12248560	C	T	100	PASS	.	GT	0/1
+chr10	94781859	rs4244285	G	A	100	PASS	.	GT	0/1
+chr10	94942290	rs1799853	C	T	100	PASS	.	GT	0/1
+chr10	94981296	rs1057910	A	C	100	PASS	.	GT	0/1
+chr12	21178615	rs4149056	T	C	100	PASS	.	GT	0/1
+chr16	31096368	rs9923231	C	T	100	PASS	.	GT	1/1
+chr22	42128945	rs3892097	C	T	100	PASS	.	GT	0/1

@@ -1,10 +1,11 @@
 """Which mitochondrial sequence a build actually carries.
 
-| Build         | Contig | Sequence           | Length |
-|---------------|--------|--------------------|--------|
-| GRCh38/hg38   | chrM   | NC_012920 (rCRS)   | 16569  |
-| GRCh37/b37    | MT     | NC_012920 (rCRS)   | 16569  |
-| hg19          | chrM   | NC_001807 (Yoruba) | 16571  |
+| Build         | Contig | Sequence             | Length |
+|---------------|--------|----------------------|--------|
+| GRCh38/hg38   | chrM   | NC_012920 (rCRS)     | 16569  |
+| GRCh37/b37    | MT     | NC_012920 (rCRS)     | 16569  |
+| hg19          | chrM   | NC_001807 (Yoruba)   | 16571  |
+| T2T-CHM13v2   | chrM   | rCRS **rotated 576** | 16569  |
 
 Note the row that breaks the pattern: b37 spells it the "old" way but carries
 the *new* sequence. gatk_api.py's PLAIN_TO_CHR_CONTIGS maps MT -> chrM along
@@ -12,6 +13,15 @@ with 1 -> chr1 and the rest, and for the 26 other entries that rename is purely
 cosmetic -- same sequence, same coordinates -- so rename-then-lift is right.
 MT is the one contig where the spelling difference is also a sequence
 difference, and it was added by pattern-completion with its neighbours.
+
+And note the row that breaks the *length*: T2T-CHM13v2 spells it chrM, carries
+rCRS, and is 16569 bp -- indistinguishable from GRCh38 by both of the signals
+this module reads -- yet its origin is rotated 576 bp (hs1 chrM:0 == GRCh38
+chrM:576; verified against the UCSC sequence API and against hs1ToHg38.over.
+chain.gz, which carries chrM as two blocks with a ~241 bp unmapped seam).
+Treating it as GRCh38's would report MT-RNR1's m.1555A>G at the wrong position
+entirely, so the build label is consulted for that one case -- see
+classify_from_mito_contig.
 
 This module exists so the mtDNA path decides for itself rather than inheriting
 that. It reads the DETECTED build (from VCF header inspection), never the
@@ -36,6 +46,12 @@ class MitoBuild(Enum):
     # guessing between them risks a shifted position inside MT-RNR1, not just
     # a missed call. See classify_from_mito_contig.
     AMBIGUOUS_CHRM = "ambiguous_chrm"
+    # T2T-CHM13v2. Distinct from UNSUPPORTED ("no evidence at all", which the
+    # callers answer by falling back to classify_build) for two reasons: this
+    # one IS evidence and must not be overridden by a fallback, and the generic
+    # UNSUPPORTED reason -- "could not be matched to rCRS or NC_001807" -- would
+    # be false here. CHM13's chrM *is* rCRS; it is rotated.
+    CHM13 = "chm13"
 
 
 class BuildPlan(NamedTuple):
@@ -65,6 +81,17 @@ def classify_build(reference_genome: str) -> MitoBuild:
     return MitoBuild.UNSUPPORTED
 
 
+# Tokens that name T2T-CHM13 in a build label. Matched against a short label
+# (header_inspector reports the canonical "T2T-CHM13v2"), not against a path, so
+# the three-character "t2t" is a token here rather than a substring -- the same
+# distinction file_processor.T2T_BUILD_TOKENS draws.
+_CHM13_LABEL_TOKENS = ("chm13", "t2t")
+
+
+def _label_names_chm13(build_label: Optional[str]) -> bool:
+    return any(token in (build_label or "").lower() for token in _CHM13_LABEL_TOKENS)
+
+
 def classify_from_mito_contig(
     name: Optional[str], length: Optional[int], build_label: Optional[str] = None
 ) -> MitoBuild:
@@ -90,7 +117,16 @@ def classify_from_mito_contig(
     this function exists to prevent: a real hg19 file, labelled "GRCh37" by
     file_processor's collapse, would take the rename-only (never lifted)
     plan.
+
+    The one exception to "the length is ground truth" is the CHM13 guard below,
+    and it is an exception because for CHM13 the length is not ground truth: its
+    chrM is rCRS at 16569 bp, the same name and the same length GRCh38's carries,
+    but rotated 576 bp (see the module docstring). Both signals this function
+    reads therefore say GRCh38 about a file that is not GRCh38, and the label is
+    the only evidence that disagrees -- so here, uniquely, the label wins.
     """
+    if _label_names_chm13(build_label):
+        return MitoBuild.CHM13
     if length == 16571:
         return MitoBuild.HG19
     if length == 16569:
@@ -150,6 +186,19 @@ _PLANS = {
         "variants at positions shifted by up to 2 bp inside MT-RNR1. "
         "Re-header the VCF with contig lengths "
         "(##contig=<ID=chrM,length=...>) and try again.",
+    ),
+    MitoBuild.CHM13: BuildPlan(
+        False,
+        False,
+        False,
+        "T2T-CHM13 files are not supported for mitochondrial calling. CHM13's "
+        "chrM is rCRS rotated by 576 bp, so it is 16569 bp and named chrM like "
+        "GRCh38's and is nonetheless in different coordinates: calling against "
+        "it would report MT-RNR1's m.1555A>G at the wrong position rather than "
+        "failing. This stack has no CHM13 chain, and the T2T chrM chain is a "
+        "two-block alignment with a ~241 bp unmapped seam. Realign to "
+        "GRCh38/hg38, or call your variants against GRCh38/hg38, and upload "
+        "that instead.",
     ),
 }
 

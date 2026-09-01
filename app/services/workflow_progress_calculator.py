@@ -113,6 +113,14 @@ class WorkflowProgressCalculator:
 
     STEP_BASE_BANDS: Dict[str, Tuple[int, int]] = {
         "header_analysis": (1, 9),
+        # bcftools in the gatk-api container, before anything else on a BCF. Same
+        # weight as the liftover it may be followed by, and needing a band here for
+        # the same reason -- see that entry below.
+        "bcf_to_vcf": (10, 19),
+        # Two GATK GenotypeGVCFs passes in the gatk-api container, before anything else
+        # on a gVCF. Same weight as the other VCF-lane conversion; it can never
+        # co-occur with it (a job has one input type).
+        "gvcf_to_vcf": (10, 19),
         # Picard LiftoverVcf in the gatk-api container, before anything else on a
         # GRCh37 VCF. Without a band here _active_ordered_steps() dropped it (it
         # filters on membership of this dict), so `ranges` had no entry, the
@@ -121,11 +129,25 @@ class WorkflowProgressCalculator:
         # entire lift. Same weight as the other GATK conversion; it never co-occurs
         # with them (VCF vs aligned input), so the relative order is free.
         "liftover": (10, 19),
+        # Both CRAM->BAM and SAM->BAM report under this one name (main.nf's CramToBAM
+        # and SamToBAM post it; only one can run in a job, since a job has one input
+        # type). It had a band and a registry with no template to match, which is how
+        # the CRAM/SAM lanes ended up reporting a step the Job had never minted.
         "gatk_cram_sam_to_bam": (10, 19),
         "hla_typing": (20, 34),
+        # Unreachable while FASTQ is refused at ingest -- kept so the band, the stage
+        # map and the registry agree on the name rather than disagreeing silently.
         "gatk_alignment": (35, 49),
-        "pypgx_analysis": (50, 64),
-        "pypgx_bam2vcf": (65, 74),
+        # bam2vcf before analysis, in this order and with these numbers, because
+        # PyPGxBam2Vcf PRODUCES the VCF that PyPGxGenotypeAll consumes. Only the
+        # widths of these bands reach the bar (_base_weight returns hi - lo, and
+        # _renormalized_ranges lays the active steps out end to end), so the
+        # absolute values are documentation -- but documentation a reader compares
+        # against CANONICAL_STEP_ORDER below, and they used to disagree. Widths are
+        # unchanged from when they were the other way round: 9 for the conversion,
+        # 14 for the genotyping it feeds.
+        "pypgx_bam2vcf": (50, 59),
+        "pypgx_analysis": (60, 74),
         # Same weight as liftover/gatk_cram_sam_to_bam above: mtDNA calling
         # (mutserve + haplogrep3 + haplocheck, or the lighter VCF-only path)
         # runs after PyPGx and immediately before PharmCAT, matching
@@ -138,12 +160,23 @@ class WorkflowProgressCalculator:
 
     CANONICAL_STEP_ORDER: List[str] = [
         "header_analysis",
+        # Before "liftover": a GRCh37 BCF is converted first and lifted second, and
+        # this list is what _renormalized_ranges() lays the bar out in.
+        "bcf_to_vcf",
+        "gvcf_to_vcf",
         "liftover",
         "gatk_cram_sam_to_bam",
         "hla_typing",
         "gatk_alignment",
-        "pypgx_analysis",
+        # Before "pypgx_analysis": PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll
+        # reads, so it runs first on every alignment lane. This list was the other
+        # way round, and _renormalized_ranges lays the bar out in exactly this
+        # order -- so on every BAM, CRAM and SAM job the bar jumped forward to
+        # bam2vcf's range and then fell BACK ~17 points when the genotyping it had
+        # already fed started reporting. Measured on a BAM job before the swap:
+        # bam2vcf 44-54, then pypgx_analysis 27-43.
         "pypgx_bam2vcf",
+        "pypgx_analysis",
         "mtdna_analysis",
         "pharmcat_analysis",
         "diagram_generation",
@@ -164,7 +197,10 @@ class WorkflowProgressCalculator:
         cfg = workflow_config or {}
         fa = cfg.get("file_analysis") or {}
         file_type = str(fa.get("file_type") or cfg.get("file_type") or "").lower()
-        is_vcf = file_type in {"vcf", "vcf.gz", "bcf", "bcf.gz"}
+        # "the analysed file is already a variant call set", which decides whether PyPGx
+        # needs its BAM->VCF step. A gVCF belongs here for the same reason a BCF does:
+        # what PyPGx is handed is the converted VCF, not the upload.
+        is_vcf = file_type in {"vcf", "vcf.gz", "bcf", "bcf.gz", "gvcf"}
         needs_gatk = bool(cfg.get("needs_gatk", False))
         needs_hla = bool(cfg.get("needs_hla", False))
         needs_pypgx = bool(cfg.get("needs_pypgx", True))
@@ -173,6 +209,16 @@ class WorkflowProgressCalculator:
         needs_mtdna = bool(cfg.get("needs_mtdna", False))
 
         planned: List[str] = ["header_analysis"]
+        # The VCF-lane conversion first, then the liftover that may follow it: a GRCh37
+        # BCF runs both, in this order. needs_conversion says a conversion is planned;
+        # needs_gvcf_genotyping says which of the two it is. (A gVCF is never lifted --
+        # a GRCh37 one is refused at upload -- but the ordering is written once for
+        # both rather than special-cased.)
+        if bool(cfg.get("needs_conversion", False)):
+            if bool(cfg.get("needs_gvcf_genotyping", False)):
+                planned.append("gvcf_to_vcf")
+            else:
+                planned.append("bcf_to_vcf")
         if bool(cfg.get("needs_liftover", False)):
             planned.append("liftover")
         if needs_gatk:
@@ -182,10 +228,17 @@ class WorkflowProgressCalculator:
                 planned.append("gatk_alignment")
         if needs_hla:
             planned.append("hla_typing")
-        if needs_pypgx:
-            planned.append("pypgx_analysis")
+        # bam2vcf before analysis, matching CANONICAL_STEP_ORDER and the registry:
+        # PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll reads. The order here is
+        # membership-only -- the single production caller (_active_ordered_steps)
+        # re-sorts this list through CANONICAL_STEP_ORDER before it reaches the bar --
+        # but the two were written in opposite orders, and one of them WAS the bar.
+        # Keeping all three lists in one order is what stops the next reader having to
+        # work out which one is load-bearing.
         if needs_bam2vcf:
             planned.append("pypgx_bam2vcf")
+        if needs_pypgx:
+            planned.append("pypgx_analysis")
         if needs_mtdna:
             planned.append("mtdna_analysis")
         planned.extend(["pharmcat_analysis", "diagram_generation", "report_generation"])
@@ -530,9 +583,14 @@ class WorkflowProgressCalculator:
             # needs_liftover counts as needing GATK: Picard LiftoverVcf runs in the
             # gatk-api container and "liftover" maps to WorkflowStage.GATK. Keying
             # on needs_gatk alone called the stage skipped while it was running.
+            # needs_conversion is here for the same reason: the VCF-lane conversions
+            # (BCF->VCF via bcftools, gVCF->VCF via GATK GenotypeGVCFs) run in that
+            # container too and map to the same stage. One flag covers both, which is
+            # why widening its meaning did not need a second entry here.
             WorkflowStage.GATK: not (
                 workflow_config.get("needs_gatk", False)
                 or workflow_config.get("needs_liftover", False)
+                or workflow_config.get("needs_conversion", False)
             ),
             WorkflowStage.HLA: not workflow_config.get("needs_hla", False),
             WorkflowStage.PYPGX: not workflow_config.get("needs_pypgx", True),
@@ -562,6 +620,10 @@ class WorkflowProgressCalculator:
             # needs_liftover=True, so keying on needs_gatk alone announced
             # "Skipping GATK processing" while Picard LiftoverVcf was running --
             # the stage is GATK precisely because the liftover step maps to it.
+            if self._is_step_running(steps, "bcf_to_vcf"):
+                return f"{base_message} - Converting BCF to a bgzipped VCF"
+            if self._is_step_running(steps, "gvcf_to_vcf"):
+                return f"{base_message} - Genotyping gVCF into a plain VCF"
             if self._is_step_running(steps, "liftover"):
                 return f"{base_message} - Lifting GRCh37/hg19 over to GRCh38"
             if cfg.get("needs_gatk", False):

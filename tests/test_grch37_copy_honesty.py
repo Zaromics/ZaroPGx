@@ -170,15 +170,24 @@ def test_grch38_upload_is_not_marked_for_liftover():
     assert workflow["needs_liftover"] is False
 
 
-def test_other_named_builds_keep_the_honest_provisional_copy():
-    # No chain is staged for anything but GRCh37->GRCh38, so a third build
-    # (T2T, say) keeps the old behaviour AND the old copy: unsupported,
-    # provisional, convert-it-yourself. The flip is scoped to GRCh37/hg19.
-    workflow = FileProcessor().determine_workflow(_analysis_for("T2T-CHM13"))
+def test_other_named_builds_are_refused_rather_than_analysed_provisionally():
+    # The flip is scoped to GRCh37/hg19: no chain is staged for a third build.
+    # What changed on 2026-08-31 is the verdict for that third build. It used to
+    # be "unsupported AND provisional" -- which reads as "analysed anyway, on its
+    # own coordinates" and exempts a VCF from the upload gate -- and it was
+    # unreachable, because detect_reference_assembly could name no build but
+    # these two. Now that it can name T2T-CHM13v2, the branch runs, and analysing
+    # CHM13 coordinates as GRCh38 is the confident-wrong-answer case rather than
+    # a provisional one: PharmCAT rewrites mismatched reference alleles instead
+    # of failing. So it refuses.
+    workflow = FileProcessor().determine_workflow(_analysis_for("T2T-CHM13v2"))
     assert workflow["unsupported"] is True
-    assert workflow["is_provisional"] is True
+    assert workflow["is_provisional"] is False
     assert workflow["needs_liftover"] is False
     reason = workflow["unsupported_reason"]
-    assert "provisional" in reason.lower()
+    assert "T2T-CHM13v2" in reason
+    assert "provisional" not in reason.lower()
+    # The way out has to be a real one, and for this build it is not "convert it
+    # yourself": the copy names calling or realigning against GRCh38 instead.
     recs = [r.lower() for r in workflow["recommendations"]]
-    assert any("convert" in r and "yourself" in r for r in recs)
+    assert any("grch38" in r and ("realign" in r or "call" in r) for r in recs)
