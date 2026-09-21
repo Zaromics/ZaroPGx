@@ -101,21 +101,34 @@ def fake_tools(zarohla, monkeypatch):
     with no HLA capture, anything else a sample that has reads to type.
     """
     calls: list[list[str]] = []
-    state = {"reads": b"", "optitype_returncode": 0}
+    # mhc_reads: how many reads the MHC probe finds. None makes the probe fail, which
+    # is the "cannot tell" case and must fall back rather than assume either way.
+    state = {"reads": b"", "optitype_returncode": 0, "mhc_reads": 1}
 
     class FakeProc:
-        def __init__(self, returncode):
+        def __init__(self, returncode, stdout=b""):
             self.returncode = returncode
             self.pid = 4242
+            self._stdout = stdout
 
         async def communicate(self):
-            return (b"", b"OptiType blew up" if self.returncode else b"")
+            return (self._stdout, b"OptiType blew up" if self.returncode else b"")
 
     async def fake_exec(*cmd, **kwargs):
         cmd = [str(c) for c in cmd]
         calls.append(cmd)
         tool = Path(cmd[0]).name
 
+        if tool == "samtools" and cmd[1] == "index":
+            return FakeProc(0 if state["mhc_reads"] is not None else 1)
+        if tool == "samtools" and cmd[1] == "view" and "-H" in cmd:
+            if state["mhc_reads"] is None:
+                return FakeProc(1)
+            return FakeProc(0, stdout=b"@SQ\tSN:chr6\tLN:170805979\n")
+        if tool == "samtools" and cmd[1] == "view" and "-c" in cmd:
+            if state["mhc_reads"] is None:
+                return FakeProc(1)
+            return FakeProc(0, stdout=str(state["mhc_reads"]).encode() + b"\n")
         if tool == "samtools" and cmd[1] == "collate":
             Path(cmd[cmd.index("-o") + 1]).write_bytes(BAM_BYTES)
             return FakeProc(0)
@@ -239,3 +252,90 @@ def test_main_nf_still_tolerates_an_absent_hla_calls_file():
         "PharmCAT no longer falls back to an empty HLA file; a run with no HLA "
         "calls will hang on a channel that never emits"
     )
+
+
+# --------------------------------------------------------------------------
+# Reads present, but none of them in the MHC
+# --------------------------------------------------------------------------
+#
+# The 0-byte check above is necessary but was not sufficient, and a live run on a
+# chrM-only CRAM proved it: `samtools fastq` over a WHOLE alignment writes every
+# read in the file, so an input with reads but none in the HLA region produced a
+# thoroughly non-empty FASTQ, sailed past the guard, and died inside OptiType's
+# pandas with the very "Expected axis has 0 elements" this module exists to
+# prevent. The guard was reading emptiness off the wrong artefact: the FASTQ is
+# only evidence about HLA content when it was built from the HLA region.
+#
+# The premise is fixed rather than the symptom. "No HLA reads" is still an
+# observed fact about the input -- now counted directly in the MHC interval via
+# the index -- never an inference from OptiType's exit code. The negative control
+# above (reads present + OptiType fails => 500) still holds unchanged.
+
+
+def _post_named(client, name: str):
+    return client.post(
+        "/call-hla",
+        files={"file": (name, BAM_BYTES, "application/octet-stream")},
+    )
+
+
+def test_reads_present_but_none_in_the_mhc_is_an_empty_result(client, fake_tools):
+    """The case the 0-byte check could not see."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"  # non-empty FASTQ
+    fake_tools.state["mhc_reads"] = 0
+
+    response = _post_bam(client)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["results"] == {}
+
+
+def test_optitype_is_not_invoked_when_the_mhc_is_empty(client, fake_tools):
+    """Same rule as before: caught before the crash, not after it."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = 0
+
+    _post_bam(client)
+
+    assert "optitype" not in _tools_run(fake_tools)
+
+
+def test_the_mhc_is_counted_on_the_input_not_guessed(client, fake_tools):
+    """An observed fact about the alignment, which is the whole safety argument."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = 0
+
+    _post_bam(client)
+
+    counted = [c for c in fake_tools.calls if c[:3] == ["samtools", "view", "-c"]]
+    assert counted, "the MHC interval should be counted with samtools view -c"
+    region = counted[0][-1]
+    assert re.match(r"^(chr)?6:\d+-\d+$", region), f"unexpected MHC region: {region}"
+
+
+def test_mhc_reads_present_still_runs_optitype(client, fake_tools):
+    """The ordinary path stays ordinary."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = 1234
+
+    body = _post_bam(client).json()
+
+    assert "optitype" in _tools_run(fake_tools)
+    assert body["results"]["HLA-A"] == "A*01:01,A*02:01"
+
+
+def test_an_unprobeable_input_falls_back_instead_of_refusing(client, fake_tools):
+    """No index, no header, no answer -- so do what we did before, not worse.
+
+    Guessing "no HLA reads" from a failed probe would be exactly the inference the
+    module forbids, and refusing outright would break inputs that work today.
+    """
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = None  # probe fails
+
+    body = _post_bam(client).json()
+
+    assert "optitype" in _tools_run(fake_tools), "must still attempt the typing"
+    assert body["results"]["HLA-A"] == "A*01:01,A*02:01"

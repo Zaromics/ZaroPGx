@@ -2,6 +2,7 @@ import os
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 import csv
@@ -20,7 +21,14 @@ from job_client import JobClient
 # Read (and created) before logging is configured because the progress-log handler
 # below writes into DATA_DIR. Same ordering as gatk_api.py.
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
-TEMP_DIR = DATA_DIR / "temp"
+# Where the FASTQ conversion lands. Separable from DATA_DIR because it is by far
+# the largest thing this service writes and the shortest-lived: converting a whole
+# WGS alignment produces tens of gigabytes of FASTQ that exist only until OptiType
+# has read them. On a host whose /data lives on a small disk that is the difference
+# between a run and a full filesystem, so HLA_TEMP_DIR can point it at roomier
+# storage (compose wires it to the ZAROPGX_SCRATCH bind mount). Defaults to the
+# old location, so an unconfigured deployment behaves exactly as before.
+TEMP_DIR = Path(os.getenv("HLA_TEMP_DIR") or (DATA_DIR / "temp"))
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Uploads are streamed to disk in chunks of this size rather than read into memory --
@@ -182,6 +190,23 @@ _publish_version_manifest()
 # Longest suffixes first: `.vcf.gz` must win over `.vcf`, and `.fastq.gz` over
 # `.fastq` -- OptiType is a FASTQ consumer, so the gzipped FASTQ suffixes are
 # the ones that matter most here.
+# The MHC interval, where every gene OptiType types lives. Deliberately a little
+# wider than the canonical extended MHC at both ends: this is only ever used to ask
+# "are there ANY HLA reads here", so erring wide costs one cheap index lookup while
+# erring narrow would call a real sample empty and report no HLA.
+MHC_INTERVALS = {
+    "GRCh38": (28510000, 33480600),
+    "GRCh37": (28477000, 33449000),
+}
+
+_BUILD_ALIASES = {
+    "hg38": "GRCh38",
+    "grch38": "GRCh38",
+    "hg19": "GRCh37",
+    "grch37": "GRCh37",
+    "b37": "GRCh37",
+}
+
 ALLOWED_UPLOAD_SUFFIXES = (
     ".vcf.gz",
     ".vcf.bgz",
@@ -247,6 +272,104 @@ class CancelRequest(BaseModel):
 # first -- a module global is not that, and neither is `--preload`, which forks
 # after import and then lets each worker mutate its own copy.
 running_processes: Dict[str, Dict[str, Any]] = {}
+
+
+NO_HLA_READS_MESSAGE = (
+    "No HLA reads in the input, so there is nothing to type. This is "
+    "normal for a targeted PGx panel that does not capture the HLA "
+    "region; the rest of the analysis is unaffected."
+)
+
+
+async def _no_hla_reads_result(job_client) -> Dict[str, Any]:
+    """The one shape "this sample has no HLA" is allowed to take.
+
+    Two checks now reach this: the MHC interval probe (before conversion) and the
+    0-byte FASTQ check (after it). They answer the same question about different
+    evidence, so they must not be allowed to answer it differently -- a caller
+    that had to tell them apart would be back to guessing.
+    """
+    if job_client:
+        # complete_step, not fail_step: the run continues with no HLA calls.
+        # main.nf already handles an absent hla_calls.tsv through
+        # `hla_ch.ifEmpty(empty_file_ch)`, so nothing downstream changes.
+        await job_client.complete_step(
+            NO_HLA_READS_MESSAGE,
+            output_data={"results": {}, "reason": "no_hla_reads"},
+        )
+    return {"status": "success", "results": {}, "warning": NO_HLA_READS_MESSAGE}
+
+
+async def _samtools(*args: str) -> tuple[int, bytes]:
+    """Run samtools, returning (returncode, stdout). No shell, as everywhere here."""
+    proc = await asyncio.create_subprocess_exec(
+        "samtools",
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return proc.returncode, stdout
+
+
+async def _probe_mhc_read_count(
+    input_path: Path, reference_genome: Optional[str]
+) -> Optional[int]:
+    """Reads aligned inside the MHC, or None when that cannot be established.
+
+    This exists because the 0-byte FASTQ check further down was reading emptiness
+    off the wrong artefact. `samtools fastq` over a whole alignment writes every
+    read in the file, so "no HLA reads" only shows up as an empty FASTQ when the
+    alignment had no reads AT ALL. An input with reads but none in the MHC -- a
+    targeted PGx panel without HLA capture, or a mitochondrial-only file -- yielded
+    a perfectly non-empty FASTQ, walked past the guard, and died inside OptiType's
+    pandas with the same "Length mismatch: Expected axis has 0 elements" the guard
+    was added to prevent. Observed on a live run against a chrM-only CRAM.
+
+    Counting the interval directly keeps the safety property the guard was built
+    on: "no HLA reads" stays an OBSERVED FACT about the input, established before
+    OptiType runs, never an inference from OptiType's exit code. That distinction
+    is the whole argument -- see the block comment at the FASTQ check below, and
+    tests/test_zarohla_no_hla_reads.py, which pins both directions.
+
+    Returns None -- meaning "cannot tell" -- for anything unprobeable: a SAM (not
+    indexable without sorting it first), an unindexable or unsorted alignment, a
+    header with no recognisable chromosome 6. A None must never be read as zero;
+    the caller falls back to converting the whole file exactly as before, because
+    guessing "no HLA" from a failed probe would be precisely the inference this
+    module refuses to make.
+    """
+    suffix = input_path.name.lower()
+    if not (suffix.endswith(".bam") or suffix.endswith(".cram")):
+        return None
+
+    build = _BUILD_ALIASES.get((reference_genome or "hg38").strip().lower())
+    interval = MHC_INTERVALS.get(build or "GRCh38")
+    if not interval:
+        return None
+
+    # A region query needs an index, and main.nf posts the alignment without one.
+    if (await _samtools("index", str(input_path)))[0] != 0:
+        return None
+
+    # Contig naming is not knowable in advance: `chr6` and `6` are both in the wild
+    # and this sidecar sees whatever the caller aligned against.
+    rc, header = await _samtools("view", "-H", str(input_path))
+    if rc != 0:
+        return None
+    names = set(re.findall(rb"\sSN:(\S+)", header))
+    contig = next((c for c in (b"chr6", b"6") if c in names), None)
+    if contig is None:
+        return None
+
+    region = f"{contig.decode()}:{interval[0]}-{interval[1]}"
+    rc, counted = await _samtools("view", "-c", str(input_path), region)
+    if rc != 0:
+        return None
+    try:
+        return int(counted.decode().strip())
+    except ValueError:
+        return None
 
 
 @app.get("/health")
@@ -348,6 +471,18 @@ async def call_hla(
                 or input_path.name.lower().endswith(".sam")
                 or input_path.name.lower().endswith(".cram")
             ):
+                # Ask the alignment itself whether it carries any HLA reads before
+                # spending a whole-genome FASTQ conversion finding out. A zero here
+                # is an observed fact; None means the probe could not run, and is
+                # deliberately NOT treated as zero. See _probe_mhc_read_count.
+                mhc_reads = await _probe_mhc_read_count(input_path, reference_genome)
+                if mhc_reads == 0:
+                    logger.info(
+                        f"Job {local_job_id}: no reads in the MHC interval; "
+                        "nothing to type"
+                    )
+                    return await _no_hla_reads_result(job_client)
+
                 if job_client:
                     await job_client.log_progress(
                         f"Converting BAM to FASTQ using samtools"
@@ -447,20 +582,8 @@ async def call_hla(
         # records is a different and real problem that must keep failing.
         candidates = [p for p in (f1_path, f2_path) if p and os.path.exists(p)]
         if candidates and all(os.path.getsize(p) == 0 for p in candidates):
-            message = (
-                "No HLA reads in the input, so there is nothing to type. This is "
-                "normal for a targeted PGx panel that does not capture the HLA "
-                "region; the rest of the analysis is unaffected."
-            )
-            logger.info(f"Job {local_job_id}: {message}")
-            if job_client:
-                # complete_step, not fail_step: the run continues with no HLA
-                # calls. main.nf already handles an absent hla_calls.tsv through
-                # `hla_ch.ifEmpty(empty_file_ch)`, so nothing downstream changes.
-                await job_client.complete_step(
-                    message, output_data={"results": {}, "reason": "no_hla_reads"}
-                )
-            return {"status": "success", "results": {}, "warning": message}
+            logger.info(f"Job {local_job_id}: {NO_HLA_READS_MESSAGE}")
+            return await _no_hla_reads_result(job_client)
 
         if job_client:
             await job_client.log_progress(f"Running OptiType on {f1_path.name}")
