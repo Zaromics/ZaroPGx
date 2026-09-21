@@ -96,12 +96,16 @@ params.source_build   = params.source_build ?: ''
 // upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
-// FASTQ alignment. Unreachable today: FASTQ is refused at ingest (no aligner ships, and
-// gatk-api's /align-fastq answers HTTP 501), so no job ever reaches this process. Its
-// step_name=gatk_alignment nevertheless has a StepTemplate in
-// app/services/workflow_registry.py, gated on needs_alignment, which nothing sets --
-// registered so the pipeline and the app agree on the name rather than disagreeing
-// silently, NOT because FASTQ works.
+// FASTQ alignment. REACHABLE as of the zaroalign sidecar: single-end FASTQ under the
+// 20 GB cap, whose platform is detectable from its read names, is accepted at ingest and
+// sets needs_alignment, which mints the gatk_alignment StepTemplate in
+// app/services/workflow_registry.py. The step name stays `gatk_alignment` even though
+// the service is now zaroalign, because the progress calculator bands and
+// CANONICAL_STEP_ORDER key on that name; renaming it would desynchronise them again.
+//
+// Paired-end still does not reach here: the app carries one data file per job and this
+// process takes a single `path fastq`. zaroalign accepts file1/file2 already, so wiring
+// a pair through is an app + pipeline change, not a sidecar one.
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -123,8 +127,14 @@ process FastqToBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_alignment )
     fi
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json; then
-      echo "gatk-api /align-fastq returned an error:" >&2
+    # zaroalign, not gatk-api. gatk-api's /align-fastq answers 501 and always did:
+    # no aligner ships in that image, and gatk_api.py documents the container as
+    # already memory-oversubscribed, which is no place to hold a 5.6 GB bwa index.
+    # zaroalign is a sidecar of its own with its own memory limits, carrying bwa and
+    # a bind-mounted PyPGx-compliant reference (main contigs + chr22_KI270879v1_alt
+    # for GSTT1).
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://zaroalign:5000/align-fastq > align_response.json; then
+      echo "zaroalign /align-fastq returned an error:" >&2
       cat align_response.json >&2 || true
       exit 1
     fi
@@ -698,9 +708,14 @@ process PharmCATRun {
     val outdir
 
     output:
-    path "${patient_id}_pgx_pharmcat.html", optional: true
-    path "${patient_id}_pgx_pharmcat.json", optional: true
-    path "${patient_id}_pgx_pharmcat.tsv", optional: true
+    // Named after the REPORT id, not the patient id. The pharmcat sidecar builds
+    // every output name from `name_base`, which is the report id, and drops them in
+    // a directory carrying the report id too (docker/pharmcat/pharmcat.py). These
+    // globs used to spell patient_id, so they matched nothing and - being optional -
+    // published nothing without complaint.
+    path "${report_id}_pgx_pharmcat.html", optional: true
+    path "${report_id}_pgx_pharmcat.json", optional: true
+    path "${report_id}_pgx_pharmcat.tsv", optional: true
 
     shell:
     '''
@@ -735,10 +750,26 @@ process PharmCATRun {
     # Left as-is on purpose; making PharmCAT failures fail the run is its own change.
     curl "${CURL_ARGS[@]}" http://pharmcat:5000/genotype > pharmcat_result.json 2>pharmcat.log || true
     
-    # Copy outputs from mounted volume
-    for f in /data/reports/!{patient_id}/!{patient_id}_pgx_pharmcat.*; do
-      [ -f "$f" ] && cp "$f" . || true
+    # Copy outputs from mounted volume.
+    #
+    # The sidecar writes /data/reports/<patient_id>/<report_id>/<report_id>_pgx_pharmcat.*
+    # This loop used to read /data/reports/<patient_id>/<patient_id>_pgx_pharmcat.* -
+    # one directory too shallow AND the wrong stem - so it matched nothing on every
+    # run. With `|| true` here and `optional: true` on the outputs, that was silent:
+    # the process published no report and still exited 0. Only a standalone
+    # `nextflow run` ever hit it; the app reads the sidecar's path directly.
+    published=0
+    for f in /data/reports/!{patient_id}/!{report_id}/!{report_id}_pgx_pharmcat.*; do
+      if [ -f "$f" ]; then
+        cp "$f" . && published=$((published + 1))
+      fi
     done
+    # PharmCAT may legitimately produce nothing, so this is not fatal - but it is not
+    # nothing either, and exiting 0 without a word is what hid the bug above. Say it
+    # on stderr, where .command.err and the run report will carry it.
+    if [ "$published" -eq 0 ]; then
+      echo "PharmCATRun published no report: nothing matched /data/reports/!{patient_id}/!{report_id}/!{report_id}_pgx_pharmcat.*" >&2
+    fi
     '''
 }
 
