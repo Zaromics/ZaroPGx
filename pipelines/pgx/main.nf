@@ -96,16 +96,17 @@ params.source_build   = params.source_build ?: ''
 // upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
-// FASTQ alignment. REACHABLE as of the zaroalign sidecar: single-end FASTQ under the
-// 20 GB cap, whose platform is detectable from its read names, is accepted at ingest and
-// sets needs_alignment, which mints the gatk_alignment StepTemplate in
-// app/services/workflow_registry.py. The step name stays `gatk_alignment` even though
-// the service is now zaroalign, because the progress calculator bands and
-// CANONICAL_STEP_ORDER key on that name; renaming it would desynchronise them again.
+// FASTQ alignment. REACHABLE now that gatk-api's /align-fastq is implemented: single-end
+// FASTQ under the 20 GB cap, whose platform is detectable from its read names, is
+// accepted at ingest and sets needs_alignment, which mints the gatk_alignment
+// StepTemplate in app/services/workflow_registry.py. GATK has bundled bwa-mem as a JNI
+// native since GATK 4, so no extra aligner is installed anywhere -- the endpoint runs
+// FastqToSam then BwaAndMarkDuplicatesPipelineSpark, which also marks duplicates
+// (PyPGx calls CYP2D6 copy number, and duplicate-inflated depth corrupts that).
 //
 // Paired-end still does not reach here: the app carries one data file per job and this
-// process takes a single `path fastq`. zaroalign accepts file1/file2 already, so wiring
-// a pair through is an app + pipeline change, not a sidecar one.
+// process takes a single `path fastq`. GATK aligns paired reads perfectly well, so
+// wiring a pair through is an app + pipeline change, not an aligner one.
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -127,14 +128,12 @@ process FastqToBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_alignment )
     fi
-    # zaroalign, not gatk-api. gatk-api's /align-fastq answers 501 and always did:
-    # no aligner ships in that image, and gatk_api.py documents the container as
-    # already memory-oversubscribed, which is no place to hold a 5.6 GB bwa index.
-    # zaroalign is a sidecar of its own with its own memory limits, carrying bwa and
-    # a bind-mounted PyPGx-compliant reference (main contigs + chr22_KI270879v1_alt
-    # for GSTT1).
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://zaroalign:5000/align-fastq > align_response.json; then
-      echo "zaroalign /align-fastq returned an error:" >&2
+    # gatk-api, which has carried an aligner all along: GATK bundles bwa-mem as a JNI
+    # native (libbwa.Linux.so inside the fat jar), so /align-fastq now runs FastqToSam
+    # followed by BwaAndMarkDuplicatesPipelineSpark instead of answering 501. The
+    # endpoint was what was missing, not the tool.
+    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json; then
+      echo "gatk-api /align-fastq returned an error:" >&2
       cat align_response.json >&2 || true
       exit 1
     fi

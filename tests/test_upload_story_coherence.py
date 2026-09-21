@@ -2,15 +2,19 @@
 
 FASTQ used to be advertised in the UI and the docs, accepted by
 ``POST /upload/genomic-data``, given a job — and then killed minutes later, because
-``docker/gatk-api``'s ``/align-fastq`` answers HTTP 501 (the image ships no aligner) and
-``pipelines/pgx/main.nf``'s curls carry ``--fail-with-body``. The upload gate exempted
+``docker/gatk-api``'s ``/align-fastq`` answered HTTP 501 (on the stated grounds that the
+image shipped no aligner — see below, it did) and ``pipelines/pgx/main.nf``'s curls carry
+``--fail-with-body``. The upload gate exempted
 FASTQ on the reasoning that ``main.nf`` has a ``fastq`` branch; a branch existing is not
 the same as the branch working.
 
 The decision taken then was to refuse FASTQ at upload, on the reasoning that implementing
 alignment was the only other honest option and was a different, much larger piece of
-work. **That work has since been done** (2026-09-20): the ``zaroalign`` sidecar carries
-BWA and a PyPGx-compliant GRCh38, so FASTQ is accepted.
+work. **That reasoning rested on a false premise**, found 2026-09-20: GATK has bundled
+bwa-mem as a JNI native (``libbwa.Linux.so``, inside the fat jar) since GATK 4, so an
+aligner was in the stack the whole time and only gatk-api's ``/align-fastq`` endpoint
+was missing. It is now implemented, against a PyPGx-compliant GRCh38, so FASTQ is
+accepted.
 
 The refusal therefore NARROWED rather than disappearing, and what survives of it is what
 this module now pins. Three things are still refused, and each is a property of the file
@@ -25,9 +29,9 @@ rather than a missing feature:
   count, so more time does not rescue a whole-genome upload.
 * **paired-end.** ``process_files`` analyses ``files[0]`` only and ``main.nf``'s
   ``FastqToBAM`` takes a single ``path fastq``, so a mate pair would be aligned from R1
-  alone — half the evidence, in a report that looks complete. ``zaroalign`` itself accepts
-  ``file1``/``file2`` and would align a pair correctly; nothing upstream can deliver one
-  yet. Wiring that through is its own change.
+  alone — half the evidence, in a report that looks complete. GATK aligns paired reads
+  perfectly well; nothing upstream can deliver a pair yet. Wiring that through is its own
+  change.
 
 For every other format the ``files[0]`` discard is still said out loud in the workflow
 warnings the UI renders, rather than refused.

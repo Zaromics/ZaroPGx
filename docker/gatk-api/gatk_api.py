@@ -34,6 +34,17 @@ from pydantic import BaseModel
 import sys
 sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
+# The FASTQ platform detector. ONE implementation, two import paths, because this
+# module is loaded two ways: inside the image, where Dockerfile.gatk-api copies the
+# file in beside it, and out of the container by the test suite, which execs this
+# source from a checkout where the canonical copy is importable as a package module.
+# The app imports that same canonical copy to make the same decision before the
+# upload starts, so the pre-upload plan cannot promise an alignment this endpoint
+# then refuses. A second copy of the logic is what this try/except exists to avoid.
+try:
+    from fastq_platform import detect_fastq_platform  # pyright: ignore[reportMissingImports]
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
+    from app.api.utils.fastq_platform import detect_fastq_platform
 
 # Configuration. Read before logging is configured because the progress-log handler
 # below writes into DATA_DIR.
@@ -2976,6 +2987,41 @@ async def liftover_vcf(
         _cleanup_dir(work_dir)
 
 
+# FASTQ alignment reference. A bind mount rather than part of this image: PyPGx
+# forbids ALT contigs except chr22_KI270879v1_alt (GSTT1), so no published prebuilt
+# index qualifies and it is built on the host by scripts/build-align-index.sh. The
+# .img is GATK's own bwa-mem index image and is NOT interchangeable with the plain
+# .bwt/.sa/.pac set -- BwaMemIndexImageCreator builds it from the FASTA directly.
+ALIGN_REFERENCE_FASTA = os.environ.get(
+    "ALIGN_REFERENCE", os.path.join(REFERENCE_DIR, "pypgx", "pypgx_grch38.fasta")
+)
+ALIGN_INDEX_IMAGE = os.environ.get("ALIGN_INDEX_IMAGE", f"{ALIGN_REFERENCE_FASTA}.img")
+
+# 20 GB of reads. Comfortably above a targeted panel and a modest exome, far below the
+# whole-genome sizes whose failure mode is memory rather than bytes. Kept in step with
+# app/api/utils/file_processor.py's FASTQ_MAX_UPLOAD_BYTES, which makes the same
+# promise before the upload starts; tests/test_fastq_lane_planning.py pins the pair.
+FASTQ_MAX_UPLOAD_BYTES = int(
+    os.environ.get("FASTQ_MAX_UPLOAD_BYTES", str(20 * 1024 ** 3))
+)
+
+
+def _run_align_step(job_label, argv, label):
+    """Run one GATK alignment step, failing loudly on a non-zero exit.
+
+    Separate from the conversion runners because those vouch for samtools output;
+    this only has to turn a Java stack trace into an HTTPException whose detail names
+    the step, so a Nextflow failure points at FastqToSam or the bwa pipeline rather
+    than at a bare exit status.
+    """
+    logger.info(f"Job {job_label}: {label}: {' '.join(str(a) for a in argv)}")
+    result = subprocess.run(argv, capture_output=True, text=True)
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "")[-2000:]
+        logger.error(f"Job {job_label}: {label} failed: {tail}")
+        raise HTTPException(status_code=500, detail=f"{label} failed: {tail}")
+
+
 @app.post("/align-fastq")
 async def align_fastq(
     file: UploadFile = File(...),
@@ -2986,57 +3032,233 @@ async def align_fastq(
     step_name: Optional[str] = Form("gatk_alignment")
 ):
     """
-    Not implemented. Returns HTTP 501 whenever it is reached.
+    Align single-end FASTQ to GRCh38 and return a sorted, duplicate-marked BAM.
 
-    (Reached, not "always": the form parameters below are still declared, so Starlette
-    parses the multipart body before this function runs. A malformed body is a 422 and
-    a body that fills the disk is a 500, neither of which this code sees. The
-    parameters are kept so the OpenAPI schema still documents what the route takes.)
+    This route used to answer 501 on the stated grounds that "this service ships no
+    aligner". That was never true. GATK bundles bwa-mem as a JNI native --
+    `libbwa.Linux.so` sits inside gatk-package-4.7.0.0-local.jar, and
+    `BwaMemIndexImageCreator` runs bwa's own BWT construction -- so an aligner has
+    been in this image for as long as GATK 4 has. What was missing was the endpoint,
+    not the tool, and "no aligner ships" sent people away to do something this stack
+    could already do.
 
-    Aligning FASTQ needs an aligner (bwa-mem2 for short reads, minimap2 for long),
-    a prebuilt reference index and a large-RAM profile, none of which this image
-    carries. Until that lands this endpoint refuses instead of inventing an
-    alignment: it used to write a 21-byte ASCII placeholder to a `.bam` and answer
-    `success: true` (BACKLOG 0 / 51 / 112 / 113). Implementing alignment for real is
-    tracked as BACKLOG 3 / 112.
+    Two GATK steps, no third-party binary:
 
-    No ZaroPGx upload reaches this route. app/api/utils/file_processor.py sets
-    workflow["unsupported"] = True for FileType.FASTQ, and app/api/routes/upload_router.py
-    now acts on it: `_unanalysable_upload_reason` turns that verdict into a 400 before a
-    patient or job row exists, and that gate sits ahead of the only place the app submits
-    to Nextflow. So the app can no longer mint a run with `--input_type fastq`.
+      FastqToSam   FASTQ -> unaligned BAM carrying the read group. Needed because the
+                   Bwa*Spark tools take BAM/SAM/CRAM, never raw FASTQ.
+      BwaAndMarkDuplicatesPipelineSpark
+                   aligns against the index image AND marks duplicates in one pass.
+                   The duplicate marking is why this is preferred over a bare
+                   BwaSpark: PyPGx calls copy number for CYP2D6, and duplicate-inflated
+                   depth is exactly what corrupts a copy-number estimate. An aligner
+                   that skips it yields a BAM that looks fine and reports the wrong
+                   number of gene copies.
 
-    The 501 is kept as defence in depth, not as a formality behind a closed door.
-    gatk-api is its own service on the compose network, so anything that can reach
-    http://gatk-api:5000 can POST here: pipelines/pgx/main.nf still has a fastq branch
-    whose FastqToBAM process calls this route, so a hand-run `nextflow run
-    --input_type fastq` arrives here directly, and so would a regression in the upload
-    gate. Refusing is still right -- the alternative is a fabricated BAM.
+    The reference is a bind mount, not part of this image. PyPGx requires alignment to
+    main contigs only, with the single exception of chr22_KI270879v1_alt (GSTT1), and
+    no published prebuilt index satisfies both halves -- so it is built on the host by
+    scripts/build-align-index.sh, which also writes the .img this route loads.
 
-    Because a caller that gets here is mid-run, a JobClient step is opened and failed
-    with the reason, so the operator sees why the job stopped instead of a bare
-    "exit status (1)" from Nextflow.
+    PL: is detected from the reads rather than assumed or asked (fastq_platform.py). A
+    FASTQ whose platform cannot be established is refused: PL: reaches GATK and PyPGx,
+    and guessing it writes an unverified claim about the sample into everything
+    downstream.
+
+    SM: is the job id, so the VCF sample column stays machine-generated exactly as the
+    BAM and VCF lanes already produce it.
+
+    Single-end only, and that is an app-side limit rather than a GATK one: ZaroPGx
+    carries one data file per job, so a mate pair would be aligned from R1 alone.
     """
-    detail = (
-        "FASTQ alignment is not implemented: this service ships no aligner. "
-        "ZaroPGx refuses FASTQ at upload with a 400, so reaching this route means "
-        "the pipeline was invoked outside the app. Align the reads outside ZaroPGx "
-        "and upload the resulting BAM, CRAM or VCF."
-    )
-    logger.warning(
-        f"Refused /align-fastq for {file.filename}: FASTQ alignment is not implemented"
-    )
+    job_client = None
+    work_dir = None
+    output_dir = None
+    try:
+        # Opened BEFORE the validation below, deliberately. A caller that reaches this
+        # route is mid-run, and the refusals here are the ones most likely to fire on a
+        # deployment that never staged the reference -- so they have to reach the job
+        # log, or the operator sees a bare "exit status (1)" from Nextflow pointing
+        # nowhere near the cause. Same argument the old 501 made for itself.
+        if job_id:
+            try:
+                job_client = JobClient(job_id=job_id, step_name=step_name)
+                await job_client.start_step(f"Aligning {file.filename} to GRCh38")
+            except Exception as e:
+                logger.warning(f"Failed to initialize workflow client: {e}")
+                job_client = None
 
-    # Best effort: a dead job server must not turn the 501 into something else.
-    if job_id:
-        try:
-            job_client = JobClient(job_id=job_id, step_name=step_name)
-            await job_client.start_step(f"FASTQ alignment requested for {file.filename}")
-            await _fail_step(job_client, detail)
-        except Exception as exc:
-            logger.warning(f"Could not record the FASTQ refusal on job {job_id}: {exc}")
+        target_key = (reference_genome or "hg38").strip().lower()
+        if REFERENCE_BUILDS.get(target_key) != 'GRCh38':
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Alignment targets GRCh38 only; got reference_genome="
+                    f"{reference_genome!r}. Everything downstream is GRCh38-only."
+                ),
+            )
+        if not os.path.exists(ALIGN_REFERENCE_FASTA):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"The alignment reference is not present at {ALIGN_REFERENCE_FASTA}. "
+                    "It is a host-side bind mount rather than part of this image, and "
+                    "must be built before this lane can run: scripts/build-align-index.sh."
+                ),
+            )
+        if not os.path.exists(ALIGN_INDEX_IMAGE):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"The bwa-mem index image is not present at {ALIGN_INDEX_IMAGE}. "
+                    "GATK's aligner loads this image rather than the plain .bwt/.sa "
+                    "index, so the two are not interchangeable; build it with "
+                    "scripts/build-align-index.sh."
+                ),
+            )
 
-    raise HTTPException(status_code=501, detail=detail)
+        local_job_id = str(uuid.uuid4())
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        filename = safe_upload_name(file.filename or "reads.fastq", local_job_id)
+        input_path = os.path.join(work_dir, filename)
+
+        # Capped while streaming, not by trusting a client-supplied Content-Length,
+        # and the partial file is discarded on breach. Peak RSS during alignment
+        # follows the index rather than the read count, so this bounds time and disk
+        # but cannot make whole-genome FASTQ safe -- which is why the refusal above
+        # the cap stays honest instead of implying more time would help.
+        written = 0
+        with open(input_path, "wb") as handle:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                written += len(chunk)
+                if written > FASTQ_MAX_UPLOAD_BYTES:
+                    handle.close()
+                    _discard_output(input_path)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"FASTQ upload exceeds the "
+                            f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for this "
+                            "lane. ZaroPGx aligns targeted-panel and exome-sized read "
+                            "sets: a whole-genome FASTQ exhausts memory during "
+                            "alignment however long it is given, so accepting one "
+                            "would buy a job that dies partway through. Align "
+                            "whole-genome reads yourself (nf-core/sarek, or bwa-mem "
+                            "against GRCh38) and upload the BAM or CRAM."
+                        ),
+                    )
+                handle.write(chunk)
+
+        call = detect_fastq_platform(input_path)
+        if not call.determined:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Could not establish which sequencing platform produced this "
+                    "FASTQ, so the read group's PL: field cannot be filled in "
+                    f"honestly. Observed: {call.evidence}. That is, {call.reason}. "
+                    "GATK and PyPGx both read PL:, and guessing it would write a claim "
+                    "about your data into every result that follows. Upload reads that "
+                    "still carry their instrument's own read names, or align them "
+                    "yourself and upload the BAM, CRAM or SAM."
+                ),
+            )
+        logger.info(f"Job {local_job_id}: platform {call.platform} ({call.evidence})")
+
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        unaligned = os.path.join(work_dir, "unaligned.bam")
+        output_bam = os.path.join(output_dir, f"aligned_{local_job_id}.bam")
+
+        if job_client:
+            await job_client.log_progress(
+                f"Preparing reads ({call.platform})", {"platform": call.platform}
+            )
+
+        # to_thread under the semaphore, the same shape the liftover and CRAM/SAM
+        # conversions use: these are multi-minute Java processes, and a blocking call
+        # here would take /health (and the container healthcheck) down with it.
+        async with _to_thread_semaphore:
+            await asyncio.to_thread(
+                _run_align_step,
+                local_job_id,
+                [
+                    "gatk", "FastqToSam",
+                    "-F1", input_path,
+                    "-O", unaligned,
+                    "-SM", job_id or local_job_id,
+                    "-RG", local_job_id,
+                    "-PL", call.platform,
+                    "-LB", report_id or local_job_id,
+                    "-PU", local_job_id,
+                    "--TMP_DIR", work_dir,
+                ],
+                "FastqToSam",
+            )
+
+        if job_client:
+            await job_client.log_progress("Aligning with bwa-mem and marking duplicates")
+
+        async with _to_thread_semaphore:
+            await asyncio.to_thread(
+                _run_align_step,
+                local_job_id,
+                [
+                    "gatk", "BwaAndMarkDuplicatesPipelineSpark",
+                    "-I", unaligned,
+                    "-O", output_bam,
+                    "-R", ALIGN_REFERENCE_FASTA,
+                    "--bwa-mem-index-image", ALIGN_INDEX_IMAGE,
+                    "--single-end-alignment", "true",
+                    "--tmp-dir", work_dir,
+                ],
+                "BwaAndMarkDuplicatesPipelineSpark",
+            )
+
+        index_path = index_output_bam(local_job_id, output_bam)
+        records = count_records(local_job_id, output_bam, index_path)
+        if records == 0:
+            _discard_output(index_path)
+            _discard_output(output_bam)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Alignment produced a valid but empty BAM (0 alignment records). "
+                    "That is a truncated or non-human FASTQ, not a sample with no "
+                    "variants -- shipping it would read downstream as 'no variants "
+                    "found'."
+                ),
+            )
+
+        if job_client:
+            await job_client.complete_step("Alignment complete")
+
+        return {
+            "success": True,
+            "job_id": local_job_id,
+            "bam_path": output_bam,
+            "bam": output_bam,
+            "bam_index": index_path,
+            "bam_size_bytes": os.path.getsize(output_bam),
+            "records": records,
+            "platform": call.platform,
+            "platform_evidence": call.evidence,
+            "duplicates_marked": True,
+            "message": (
+                f"Aligned {filename} to GRCh38 ({records} records, duplicates marked)"
+            ),
+        }
+
+    except HTTPException as e:
+        _cleanup_dir(output_dir)
+        logger.error(f"FASTQ alignment failed: {e.detail}")
+        await _fail_step(job_client, f"FASTQ alignment failed: {e.detail}")
+        raise
+    except Exception as e:
+        _cleanup_dir(output_dir)
+        logger.exception(f"Error aligning FASTQ: {e}")
+        await _fail_step(job_client, f"FASTQ alignment failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"FASTQ alignment failed: {str(e)}")
+    finally:
+        _cleanup_dir(work_dir)
 
 
 @app.post("/cram-to-bam")

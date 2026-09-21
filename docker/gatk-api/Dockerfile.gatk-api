@@ -66,6 +66,9 @@ ENV PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
 # Copy the API script and workflow client
 COPY docker/gatk-api/gatk_api.py /app/
 COPY app/utils/job_client.py /job-client/
+# The FASTQ platform detector, shared with the app so the pre-upload plan and
+# /align-fastq reach the same verdict about @RG PL:.
+COPY app/api/utils/fastq_platform.py /app/
 
 # Expose the API port
 EXPOSE 5000

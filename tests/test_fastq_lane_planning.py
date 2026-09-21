@@ -1,10 +1,11 @@
 """FASTQ is accepted, capped, and refused for reasons that are about the file.
 
-The blanket refusal ("ZaroPGx ships no aligner") was true and is no longer: the
-zaroalign sidecar carries bwa and a PyPGx-compliant reference. What replaced it is
-a NARROWER refusal, and the narrowing is the part worth pinning -- it would be easy
-to accept everything now that something can align, and both remaining refusals are
-real:
+The blanket refusal said "ZaroPGx ships no aligner". That was never true: GATK has
+bundled bwa-mem as a JNI native since GATK 4, so the aligner was in the image all
+along and only gatk-api's /align-fastq endpoint was missing. What replaced the
+refusal is a NARROWER one, and the narrowing is the part worth pinning -- it would
+be easy to accept everything now that something can align, and both remaining
+refusals are real:
 
 * above the byte cap, alignment exhausts memory regardless of time given, because
   peak RSS is a function of the index rather than the read count;
@@ -129,12 +130,39 @@ def test_a_missing_platform_call_does_not_crash_or_default():
 # --------------------------------------------------------------------------
 
 
-def test_the_planner_cap_matches_the_sidecars_default():
+def test_the_planner_cap_matches_the_endpoints_default():
     """Two copies of the number, guarding different points. If they drift, the plan
-    promises an alignment that zaroalign then refuses while streaming."""
-    sidecar = (
-        Path(__file__).resolve().parent.parent / "docker" / "zaroalign" / "app.py"
+    promises an alignment /align-fastq then refuses while streaming."""
+    endpoint = (
+        Path(__file__).resolve().parent.parent / "docker" / "gatk-api" / "gatk_api.py"
     ).read_text(encoding="utf-8")
 
-    assert "str(20 * 1024**3)" in sidecar
+    assert "str(20 * 1024 ** 3)" in endpoint
     assert FASTQ_MAX_UPLOAD_BYTES == 20 * 1024**3
+
+
+def test_the_endpoint_uses_gatks_own_bwa_rather_than_a_second_aligner():
+    """The whole reason zaroalign was dropped.
+
+    GATK already carries bwa-mem as a JNI native, so installing a second bwa was
+    duplicating a binary the stack had. If someone reintroduces a standalone aligner
+    they should have to delete this test and say why.
+    """
+    endpoint = (
+        Path(__file__).resolve().parent.parent / "docker" / "gatk-api" / "gatk_api.py"
+    ).read_text(encoding="utf-8")
+
+    assert "BwaAndMarkDuplicatesPipelineSpark" in endpoint
+    assert "FastqToSam" in endpoint
+
+
+def test_the_alignment_step_marks_duplicates():
+    """Not incidental: PyPGx calls CYP2D6 copy number, and duplicate-inflated depth
+    is exactly what corrupts a copy-number estimate. A plain BwaSpark would align
+    just as well and report the wrong number of gene copies."""
+    endpoint = (
+        Path(__file__).resolve().parent.parent / "docker" / "gatk-api" / "gatk_api.py"
+    ).read_text(encoding="utf-8")
+
+    assert "BwaAndMarkDuplicatesPipelineSpark" in endpoint
+    assert '"duplicates_marked": True' in endpoint

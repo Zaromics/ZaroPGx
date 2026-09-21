@@ -223,9 +223,14 @@ services:
     volumes:
       - ./data:/data
       - ./reference:/reference
+      # The FASTQ lane's reference + GATK bwa-mem index image (~8 GB). Host-side
+      # because PyPGx's no-ALT-except-GSTT1 rule disqualifies every prebuilt index,
+      # so it is built once by scripts/build-align-index.sh rather than baked in.
+      - ${ZAROPGX_ALIGN_REFERENCE:-./reference/pypgx}:/reference/pypgx:ro
     environment:
       - REFERENCE_DIR=/reference
       - DATA_DIR=/data
+      - ALIGN_REFERENCE=/reference/pypgx/pypgx_grch38.fasta
       - MAX_MEMORY=${MAX_MEMORY:-20g}
       - PYTHONPATH=/app
       - UVICORN_RELOAD_EXCLUDES=".git/*,.venv/*"
@@ -312,52 +317,6 @@ services:
       - ${ZAROPGX_SCRATCH:-./data/temp}:/scratch
     ports:
       - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5060:5000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - pgx-network
-
-  # zaroalign -- the FASTQ lane's aligner (bwa). Its own sidecar rather than a
-  # second job for gatk-api, which gatk_api.py already documents as memory
-  # oversubscribed (TO_THREAD_CONCURRENCY_LIMIT=2, GATK_VARIANT_CALL_CONCURRENCY=1);
-  # an aligner holding a ~5.6 GB index alongside that is how both end up thrashing.
-  #
-  # The reference is a bind mount, not baked into the image: PyPGx's no-ALT rule
-  # (except chr22_KI270879v1_alt for GSTT1) means no prebuilt index qualifies, so
-  # it is built once on the host by scripts/build-align-index.sh. ~3 GB of FASTA
-  # and ~5.6 GB of index do not belong in a published image.
-  #
-  # Excluded from scripts/e2e-up.sh the way mtdna is: the index is a host
-  # prerequisite CI does not have.
-  zaroalign:
-    image: zaromicsresearch/zaropgx-zaroalign:${ZAROPGX_TAG:-0.3.2}
-    build:
-      context: .
-      dockerfile: docker/zaroalign/Dockerfile
-    container_name: pgx_zaroalign
-    restart: unless-stopped
-    environment:
-      - DATA_DIR=/data
-      - JOB_API_BASE=http://app:8000/api/v1
-      - ALIGN_REFERENCE=/reference/pypgx/pypgx_grch38.fasta
-      - ALIGN_TEMP_DIR=/scratch
-      - ALIGN_THREADS=${ALIGN_THREADS:-4}
-    volumes:
-      - ./data:/data
-      - ${ZAROPGX_ALIGN_REFERENCE:-./reference/pypgx}:/reference/pypgx:ro
-      - ${ZAROPGX_SCRATCH:-./data/temp}:/scratch
-    ports:
-      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5061:5000"
-    deploy:
-      resources:
-        limits:
-          memory: 12G
-        reservations:
-          memory: 6G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s

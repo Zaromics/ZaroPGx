@@ -607,11 +607,11 @@ def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
     )
 
 
-# The FASTQ lane's byte cap, matched to zaroalign's ALIGN_MAX_UPLOAD_BYTES. Two
+# The FASTQ lane's byte cap, matched to gatk-api's FASTQ_MAX_UPLOAD_BYTES. Two
 # copies is one more than ideal, but they guard different things: this one keeps
-# the pre-upload plan honest about what will be accepted, and the sidecar's
+# the pre-upload plan honest about what will be accepted, and the endpoint's
 # enforces it while streaming, where the bytes actually arrive. A mismatch shows
-# up as a plan that promises an alignment the sidecar then refuses, which
+# up as a plan that promises an alignment /align-fastq then refuses, which
 # tests/test_fastq_lane_planning.py pins against.
 FASTQ_MAX_UPLOAD_BYTES = 20 * 1024**3
 
@@ -621,8 +621,10 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
 
     FASTQ used to be refused outright, because ZaroPGx shipped no aligner and
     gatk-api's /align-fastq answered 501 -- accepting one could only buy the user a
-    job that died minutes later. The zaroalign sidecar supplies the aligner, so the
-    refusal NARROWS rather than disappearing. Two things can still make a FASTQ
+    job that died minutes later. That reason was itself mistaken -- GATK has bundled
+    bwa-mem as a JNI native since GATK 4, so an aligner was in the stack all along
+    and only the endpoint was missing -- and now that /align-fastq is implemented
+    the refusal NARROWS rather than disappearing. Two things can still make a FASTQ
     unanalysable, and both are properties of the file rather than of ZaroPGx:
 
     * **Size.** Peak RAM during alignment is set by the index, not the read count,
@@ -677,8 +679,8 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
         )
         return
 
-    # Accepted. The lane is FASTQ -> zaroalign -> BAM, and from the BAM onwards this
-    # is exactly the BAM lane, so it sets the same flags that lane does.
+    # Accepted. The lane is FASTQ -> gatk-api /align-fastq -> BAM, and from the BAM
+    # onwards it is exactly the BAM lane, so it sets the same flags that lane does.
     workflow["needs_alignment"] = True
     workflow["needs_hla"] = True
     workflow["needs_mtdna"] = True
@@ -2335,10 +2337,10 @@ class FileProcessor:
                 # Paired-end is refused rather than half-run because the ingest path
                 # carries ONE file end to end -- process_files analyses files[0] and
                 # publishes a single path, and main.nf's FastqToBAM takes a single
-                # `path fastq`. zaroalign itself accepts file1/file2 and would align a
-                # pair correctly; nothing upstream of it can deliver one yet. Wiring
-                # that through is its own change, and until it happens saying so is
-                # the honest answer.
+                # `path fastq`. GATK's aligner handles paired reads perfectly well;
+                # nothing upstream of it can deliver a pair yet. Wiring that through
+                # is its own change, and until it happens saying so is the honest
+                # answer.
                 if ignored_files and workflow.get("file_type") == FileType.FASTQ.value:
                     workflow["unsupported"] = True
                     workflow["unsupported_reason"] = (

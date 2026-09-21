@@ -261,94 +261,131 @@ def test_no_endpoint_advertises_a_mock_implementation(source):
 
 
 # --------------------------------------------------------------------------
-# /align-fastq: refuse, do not fabricate
+# /align-fastq: align for real, or refuse -- never fabricate
 # --------------------------------------------------------------------------
 
 
-def test_align_fastq_returns_501(client):
+FASTQ_BYTES = b"@r1\nACGT\n+\nIIII\n"
+ILLUMINA_FASTQ = b"".join(
+    b"@A00123:45:HXXXXDSXX:1:1101:%d:%d\n%s\n+\n%s\n"
+    % (1000 + i, 2000 + i, b"A" * 100, b"I" * 100)
+    for i in range(30)
+)
+
+
+def test_align_fastq_refuses_when_the_reference_is_absent(client):
+    """The endpoint is implemented now, but its reference is a host-side bind mount
+    rather than part of the image, so an unprepared deployment must be told that
+    plainly instead of being handed a fabricated BAM."""
     resp = client.post(
         "/align-fastq",
-        files={"file": ("sample.fastq", b"@r1\nACGT\n+\nIIII\n", "text/plain")},
+        files={"file": ("sample.fastq", ILLUMINA_FASTQ, "text/plain")},
         data={"reference_genome": "hg38"},
     )
-    assert resp.status_code == 501, resp.text
-    detail = resp.json()["detail"].lower()
-    assert "not implemented" in detail
-    assert "fastq" in detail
-    # The detail lands in the job log, so it must not contradict the upload gate:
-    # upload_router._unanalysable_upload_reason refuses FASTQ with a 400 before a job
-    # exists. It used to read "ZaroPGx accepts FASTQ at upload".
-    assert "accepts fastq" not in detail
+    assert resp.status_code == 503, resp.text
+    detail = resp.json()["detail"]
+    assert "build-align-index.sh" in detail, "the refusal must name the way out"
 
 
 def test_align_fastq_leaves_no_bam_behind(client, gatk_api, reference_fasta):
-    """Takes `reference_fasta` deliberately: the old handler checked the reference
-    first and would 400 before fabricating, so without it this test would pass
-    against the unfixed code purely on test-ordering luck."""
+    """The original defect: a ~21-byte ASCII placeholder written into a `.bam` and
+    reported as success. Takes `reference_fasta` deliberately, so the test cannot
+    pass purely because an earlier check short-circuited."""
     before = _bam_files(gatk_api)
     client.post(
         "/align-fastq",
-        files={"file": ("sample.fastq", b"@r1\nACGT\n+\nIIII\n", "text/plain")},
+        files={"file": ("sample.fastq", ILLUMINA_FASTQ, "text/plain")},
         data={"reference_genome": "hg38"},
     )
     assert _bam_files(gatk_api) == before
 
 
-def test_align_fastq_docstring_matches_the_upload_gate(gatk_api):
-    """The docstring must describe the refusal that actually exists now.
+def test_align_fastq_refuses_a_non_grch38_target(client):
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("sample.fastq", ILLUMINA_FASTQ, "text/plain")},
+        data={"reference_genome": "hg19"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "GRCh38" in resp.json()["detail"]
 
-    app/api/routes/upload_router.py's `_unanalysable_upload_reason` refuses FileType.FASTQ
-    with a 400 before a patient or job row exists, ahead of the only Nextflow submission
-    the app makes. The docstring used to say the opposite -- that the ingest flag was
-    merely advisory and FASTQ uploads "do reach this route" -- which was true before the
-    gate landed and is a comfortable falsehood now.
 
-    The route still 501s on purpose: gatk-api is reachable on the compose network and
-    main.nf's fastq branch still calls it, so the docstring must say why it is kept.
+def test_align_fastq_refuses_an_undetectable_platform(
+    client, gatk_api, monkeypatch, tmp_path
+):
+    """`@r1` carries no instrument structure, so PL: cannot be established.
+
+    Reached only once the reference checks pass, hence the stubbed paths: the point
+    is that an unknown platform is refused rather than defaulted to ILLUMINA, which
+    would write an unverified claim about the sample into every result downstream.
     """
-    doc = (gatk_api.align_fastq.__doc__ or "").lower()
-    assert "501" in doc
-    assert "defence in depth" in doc
-    assert "400" in doc
-    for stale_claim in (
-        "fastq uploads do reach this route",
-        "that flag is advisory",
-    ):
-        assert stale_claim not in doc
+    fasta = tmp_path / "ref.fasta"
+    fasta.write_text(">chr1\nACGT\n", encoding="utf-8")
+    image = tmp_path / "ref.fasta.img"
+    image.write_bytes(b"not-a-real-index")
+    monkeypatch.setattr(gatk_api, "ALIGN_REFERENCE_FASTA", str(fasta))
+    monkeypatch.setattr(gatk_api, "ALIGN_INDEX_IMAGE", str(image))
+
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("sample.fastq", FASTQ_BYTES, "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert "PL:" in detail
+    assert "platform" in detail.lower()
+
+
+def test_align_fastq_no_longer_claims_the_image_ships_no_aligner(gatk_api):
+    """The 501 this route used to return gave a false reason.
+
+    GATK has bundled bwa-mem as a JNI native (`libbwa.Linux.so`, inside the fat jar)
+    since GATK 4, so an aligner was in this image the whole time and only the
+    endpoint was missing. A false reason is worse than a blunt one here: it sent
+    people away to align a file the stack could already align.
+    """
+    source = Path(gatk_api.__file__).read_text(encoding="utf-8")
+    assert "ships no aligner" not in source
+    assert "FASTQ alignment is not implemented" not in source
+    # And it really does use GATK's own bwa rather than a second one.
+    assert "BwaAndMarkDuplicatesPipelineSpark" in source
 
 
 def test_align_fastq_records_the_reason_on_the_job(gatk_api, client, monkeypatch):
-    """A failed job with no recorded reason is a support ticket."""
-    recorded = {}
+    """A caller that gets refused is mid-run, so the reason must reach the job
+    rather than surfacing as a bare Nextflow exit status."""
+    failures = []
 
     class RecordingClient:
-        def __init__(self, job_id=None, step_name=None):
-            recorded["job_id"] = job_id
-            recorded["step_name"] = step_name
+        def __init__(self, *args, **kwargs):
+            pass
 
-        async def start_step(self, message=None):
-            recorded["started"] = message
+        async def start_step(self, *args, **kwargs):
+            return None
 
-        async def fail_step(self, message, details=None):
-            recorded["failed"] = message
+        async def log_progress(self, *args, **kwargs):
+            return None
+
+        async def fail_step(self, message, *args, **kwargs):
+            failures.append(message)
+
+        async def complete_step(self, *args, **kwargs):
+            return None
 
     monkeypatch.setattr(gatk_api, "JobClient", RecordingClient)
 
     resp = client.post(
         "/align-fastq",
-        files={"file": ("sample.fastq", b"@r1\nACGT\n+\nIIII\n", "text/plain")},
+        files={"file": ("sample.fastq", ILLUMINA_FASTQ, "text/plain")},
         data={"reference_genome": "hg38", "job_id": "job-77"},
     )
-
-    assert resp.status_code == 501
-    assert recorded["job_id"] == "job-77"
-    assert "started" in recorded
-    assert "not implemented" in recorded["failed"].lower()
+    assert resp.status_code == 503
+    assert failures, "the refusal must be recorded on the job"
+    assert "alignment" in " ".join(failures).lower()
 
 
-def test_align_fastq_still_501s_when_the_job_server_is_down(
-    gatk_api, client, monkeypatch
-):
+def test_align_fastq_refusal_survives_a_dead_job_server(gatk_api, client, monkeypatch):
     """Best-effort reporting must not turn the refusal into something else."""
 
     class DeadClient:
@@ -359,10 +396,10 @@ def test_align_fastq_still_501s_when_the_job_server_is_down(
 
     resp = client.post(
         "/align-fastq",
-        files={"file": ("sample.fastq", b"@r1\nACGT\n+\nIIII\n", "text/plain")},
+        files={"file": ("sample.fastq", ILLUMINA_FASTQ, "text/plain")},
         data={"reference_genome": "hg38", "job_id": "job-77"},
     )
-    assert resp.status_code == 501
+    assert resp.status_code == 503
 
 
 # --------------------------------------------------------------------------

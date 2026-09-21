@@ -139,19 +139,18 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
             unless="needs_conversion",
         ),
         StepTemplate("hla_typing", "zarohla", when="needs_hla"),
-        # FASTQ -> BAM, via zaroalign's /align-fastq. main.nf's FastqToBAM posts
+        # FASTQ -> BAM, via gatk-api's /align-fastq. main.nf's FastqToBAM posts
         # step_name=gatk_alignment and the progress calculator gives that name a band
-        # (35-49) and a slot in CANONICAL_STEP_ORDER, so the name stays as it is even
-        # though the service moved -- renaming it would desynchronise the registry and
-        # the calculator again, which is the bug this template was added to close.
+        # (35-49) and a slot in CANONICAL_STEP_ORDER, so registry and calculator agree.
         #
         # This is now REACHABLE. It used to be unreachable by construction: FASTQ was
-        # refused at ingest because no aligner shipped and gatk-api's /align-fastq
-        # answered 501, so nothing set needs_alignment. The zaroalign sidecar supplies
-        # the aligner, determine_workflow accepts capped FASTQ with a detectable
-        # platform, and that branch now sets needs_alignment. The gate is unchanged;
-        # what changed is that something finally satisfies it.
-        StepTemplate("gatk_alignment", "zaroalign", when="needs_alignment"),
+        # refused at ingest because /align-fastq answered 501, so nothing ever set
+        # needs_alignment. That 501's stated reason -- "this service ships no aligner"
+        # -- was false: GATK has bundled bwa-mem as a JNI native since GATK 4. The
+        # endpoint is implemented, determine_workflow accepts capped FASTQ with a
+        # detectable platform, and that branch sets needs_alignment. The gate is
+        # unchanged; what changed is that something finally satisfies it.
+        StepTemplate("gatk_alignment", "gatk-api", when="needs_alignment"),
         StepTemplate("pypgx_bam2vcf", "pypgx", when="needs_pypgx_bam2vcf"),
         StepTemplate("pypgx_analysis", "pypgx", when="needs_pypgx"),
         # Mitochondrial calling via the mtdna sidecar. Registered here because

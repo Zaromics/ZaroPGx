@@ -232,9 +232,12 @@ render its pre-flight summary.
      reference, so the report would be confidently wrong rather than incomplete.
      See `docs/user/file-formats.md` for the measured coverage.
    - **FASTQ, above 20 GB or with an undetectable platform** — the lane itself now
-     works: `main.nf`'s `FastqToBAM` POSTs to the `zaroalign` sidecar, which carries
-     BWA and a bind-mounted PyPGx-compliant GRCh38 (main contigs plus
-     `chr22_KI270879v1_alt`, without which GSTT1 cannot be called). Two refusals
+     works: `main.nf`'s `FastqToBAM` POSTs to gatk-api's `/align-fastq`, which runs
+     `FastqToSam` then `BwaAndMarkDuplicatesPipelineSpark` against a bind-mounted
+     PyPGx-compliant GRCh38 (main contigs plus `chr22_KI270879v1_alt`, without which
+     GSTT1 cannot be called). No aligner was installed to do this: GATK has bundled
+     bwa-mem as a JNI native since GATK 4, so the old 501's stated reason ("ships no
+     aligner") was false — the endpoint was missing, not the tool. Two refusals
      remain. Above the cap, peak RSS during alignment is a function of the genome
      index rather than the read count, so more time does not help and a
      whole-genome upload would fail partway through. And `@RG PL:` is detected from

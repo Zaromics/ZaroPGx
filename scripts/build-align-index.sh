@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Build the FASTQ lane's alignment reference and its bwa index.
+# Build the FASTQ lane's alignment reference and GATK's bwa-mem index image.
 #
-# This is a host-side prerequisite, run once, not part of any image build. Two
-# reasons it cannot be an off-the-shelf download:
+# A host-side prerequisite, run once, not part of any image build. Two reasons it
+# cannot be an off-the-shelf download:
 #
 #   1. PyPGx requires alignment to MAIN CONTIGS ONLY -- ALT contigs reduce
 #      variant-calling sensitivity -- with exactly one exception,
@@ -11,12 +11,16 @@
 #      cannot be called at all. AWS iGenomes ships hs38DH (ALT-bearing, wrong);
 #      Broad's ALT-free tarball omits the GSTT1 contig (also wrong). Nothing
 #      published satisfies both halves.
-#   2. The result is ~3 GB of FASTA and ~5.6 GB of index. That does not belong in
-#      a published Docker image.
+#   2. The result is ~3.15 GB of FASTA plus a multi-GB index image. That does not
+#      belong in a published Docker image.
 #
-# Expect the bwa index to take roughly 60-90 minutes and ~5 GB of RAM. bwa-mem2
-# would want ~28N GB (measured 80-90 GB) which is why this lane uses bwa -- see
-# docker/zaroalign/LICENSES.md.
+# No aligner is installed to do this. GATK has bundled bwa-mem as a JNI native since
+# GATK 4 (libbwa.Linux.so, inside the fat jar), so BwaMemIndexImageCreator runs bwa's
+# own index construction. The `.img` it writes is GATK's format and is NOT
+# interchangeable with a plain bwa `.bwt/.sa/.pac` index -- the Bwa*Spark tools load
+# the image and nothing else.
+#
+# Expect the image build to take roughly an hour and several GB of RAM.
 #
 # Usage:
 #   scripts/build-align-index.sh [OUT_DIR] [SOURCE_FASTA]
@@ -28,7 +32,7 @@ set -euo pipefail
 OUT_DIR="${1:-${ZAROPGX_ALIGN_REFERENCE:-./reference/pypgx}}"
 SOURCE_FASTA="${2:-./reference/hg38/Homo_sapiens_assembly38.fasta}"
 TARGET="${OUT_DIR}/pypgx_grch38.fasta"
-IMAGE="${ZAROPGX_ALIGN_IMAGE:-zaromicsresearch/zaropgx-zaroalign:0.3.1}"
+IMAGE="${ZAROPGX_ALIGN_IMAGE:-zaromicsresearch/zaropgx-gatk-api:0.3.2}"
 DOCKER="${DOCKER:-docker}"
 
 if [ ! -f "$SOURCE_FASTA" ]; then
@@ -48,9 +52,10 @@ if ! grep -q "^chr22_KI270879v1_alt" "${SOURCE_FASTA}.fai"; then
 fi
 
 mkdir -p "$OUT_DIR"
+ABS_OUT="$(cd "$OUT_DIR" && pwd)"
 
-if [ -f "${TARGET}.bwt" ]; then
-  echo "Index already present at ${TARGET}.bwt -- nothing to do."
+if [ -f "${TARGET}.img" ]; then
+  echo "Index image already present at ${TARGET}.img -- nothing to do."
   echo "Delete it to force a rebuild."
   exit 0
 fi
@@ -66,11 +71,13 @@ else
   echo "    reference already built, reusing $TARGET"
 fi
 
-echo "==> Building bwa index (expect 60-90 minutes)"
-$DOCKER run --rm \
-  -v "$(cd "$OUT_DIR" && pwd)":/ref \
-  "$IMAGE" \
-  bwa index "/ref/$(basename "$TARGET")"
+echo "==> Creating the sequence dictionary and bwa-mem index image (expect ~1 hour)"
+$DOCKER run --rm -v "$ABS_OUT":/ref --memory=16g "$IMAGE" sh -lc '
+set -e
+R=/ref/'"$(basename "$TARGET")"'
+[ -f "${R%.fasta}.dict" ] || gatk CreateSequenceDictionary -R "$R"
+gatk --java-options "-Xmx12g" BwaMemIndexImageCreator -I "$R" -O "${R}.img"
+'
 
-echo "==> Done. Index files:"
+echo "==> Done. Reference files:"
 ls -la "$OUT_DIR"

@@ -257,8 +257,11 @@ def test_gatk_api_upload_sites_no_longer_buffer_whole_file(gatk_api_source):
         "await file.read(); every save site must stream via UPLOAD_CHUNK_BYTES"
     )
     # /variant-call, /cram-to-bam, /sam-to-bam, /liftover-vcf, /bcf-to-vcf,
-    # /gvcf-to-vcf: one chunked read loop each.
-    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 6
+    # /gvcf-to-vcf, /align-fastq: one chunked read loop each. /align-fastq streams
+    # for a second reason on top of the memory one -- it is the only route with a
+    # byte cap, and the cap is enforced per chunk so an oversized upload costs the
+    # bytes already written rather than all of them.
+    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 7
 
 
 def test_pypgx_upload_sites_no_longer_buffer_whole_file(pypgx_source):
@@ -685,10 +688,10 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
             ):
                 guarded_to_thread_calls.append(call)
 
-    assert len(guarded_to_thread_calls) == 5, (
-        f"expected 5 semaphore-guarded asyncio.to_thread() calls "
-        f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf, gvcf_to_vcf), "
-        f"found {len(guarded_to_thread_calls)}"
+    assert len(guarded_to_thread_calls) == 7, (
+        f"expected 7 semaphore-guarded asyncio.to_thread() calls "
+        f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf, gvcf_to_vcf, and "
+        f"align_fastq's two GATK steps), found {len(guarded_to_thread_calls)}"
     )
     # The audited set of heavy workers each guarded call may drive. Anything
     # else appearing here means a new call site was added without re-auditing
@@ -698,6 +701,11 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
         "run_liftover_pipeline",
         "convert_bcf_to_vcf",
         "convert_gvcf_to_vcf",
+        # /align-fastq drives both its GATK steps (FastqToSam, then
+        # BwaAndMarkDuplicatesPipelineSpark) through one runner. Both are
+        # multi-minute Java processes holding a multi-GB index, which is exactly
+        # what this semaphore exists to keep from running two-at-a-time.
+        "_run_align_step",
     }
     driven = set()
     for call in guarded_to_thread_calls:
