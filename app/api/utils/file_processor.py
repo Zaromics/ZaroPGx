@@ -35,6 +35,7 @@ from app.api.models import (
     SequencingProfile,
     VCFHeaderInfo,
 )
+from app.api.utils.fastq_platform import PlatformCall, detect_fastq_platform
 from app.api.utils.file_utils import has_index_file, is_compressed_file
 from app.api.utils.header_inspector import inspect_header
 from app.utils.env import env_flag
@@ -516,6 +517,12 @@ class FileAnalysis:
     # fails on anything but <NON_REF> -- so determine_workflow needs it, and
     # determine_workflow never sees a path. See _gvcf_symbolic_allele.
     gvcf_symbolic_allele: Optional[str] = None
+    # ONLY for FileType.FASTQ: a fastq_platform.PlatformCall saying what produced
+    # the reads. It carries the evidence and the refusal reason as well as the
+    # answer, because an undetermined platform is a refusal and the uploader has
+    # to be told what was actually seen. Same "determine_workflow never sees a
+    # path" rule as gvcf_symbolic_allele above.
+    fastq_platform: Optional[PlatformCall] = None
 
 
 # PharmCAT's own position list, as shipped: 1,226 records across 22 genes in
@@ -597,6 +604,99 @@ def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
         "<p>⚠️ This file's header contradicts itself about the genome "
         f"build{builds_note}. The build could not be verified, so "
         "analysis proceeds against the caller-declared build.</p>"
+    )
+
+
+# The FASTQ lane's byte cap, matched to zaroalign's ALIGN_MAX_UPLOAD_BYTES. Two
+# copies is one more than ideal, but they guard different things: this one keeps
+# the pre-upload plan honest about what will be accepted, and the sidecar's
+# enforces it while streaming, where the bytes actually arrive. A mismatch shows
+# up as a plan that promises an alignment the sidecar then refuses, which
+# tests/test_fastq_lane_planning.py pins against.
+FASTQ_MAX_UPLOAD_BYTES = 20 * 1024**3
+
+
+def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
+    """Plan (or refuse) a FASTQ upload.
+
+    FASTQ used to be refused outright, because ZaroPGx shipped no aligner and
+    gatk-api's /align-fastq answered 501 -- accepting one could only buy the user a
+    job that died minutes later. The zaroalign sidecar supplies the aligner, so the
+    refusal NARROWS rather than disappearing. Two things can still make a FASTQ
+    unanalysable, and both are properties of the file rather than of ZaroPGx:
+
+    * **Size.** Peak RAM during alignment is set by the index, not the read count,
+      so a cap bounds time and disk but cannot make whole-genome FASTQ safe on
+      modest hardware. Above the cap the honest answer is still no.
+    * **Platform.** GATK and PyPGx both read ``@RG PL:``, and a bare FASTQ does not
+      state it. It is detected from the read names and corroborated against read
+      lengths; when that fails -- an SRA round-trip strips instrument naming -- the
+      file is refused rather than stamped with a guess.
+
+    Everything downstream of alignment is the BAM lane, unchanged: a BAM is a BAM
+    however it was produced.
+    """
+    size = analysis.file_size or 0
+    cap_gb = FASTQ_MAX_UPLOAD_BYTES // 1024**3
+    if size > FASTQ_MAX_UPLOAD_BYTES:
+        workflow["unsupported"] = True
+        workflow["unsupported_reason"] = (
+            f"This FASTQ is {size / 1024**3:.1f} GB, above the {cap_gb} GB limit for "
+            "the alignment lane. ZaroPGx aligns targeted-panel and exome-sized read "
+            "sets: whole-genome FASTQ exhausts memory during alignment no matter how "
+            "much time it is given, so accepting it would produce a job that fails "
+            "partway through rather than a report. Align whole-genome reads yourself "
+            "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM or CRAM."
+        )
+        workflow["recommendations"].append(
+            "<p>• Run nf-core/sarek, or bwa-mem against GRCh38, and upload the BAM or CRAM.</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>ZaroPGx accepts BAM, CRAM and SAM directly; a GRCh38/hg38 VCF is the fastest input of all.</p>"
+        )
+        return
+
+    call = analysis.fastq_platform
+    if call is None or not call.determined:
+        evidence = getattr(call, "evidence", "the reads could not be inspected")
+        reason = (
+            getattr(call, "reason", None) or "the platform could not be established"
+        )
+        workflow["unsupported"] = True
+        workflow["unsupported_reason"] = (
+            "ZaroPGx could not establish which sequencing platform produced this "
+            f"FASTQ, so the read group's PL: field cannot be filled in honestly. "
+            f"Observed: {evidence}. That is, {reason}. GATK and PyPGx both read PL:, "
+            "and guessing it would write a claim about your data into every result "
+            "that follows. Upload reads that still carry their instrument's own read "
+            "names, or align them yourself and upload the BAM, CRAM or SAM."
+        )
+        workflow["recommendations"].append(
+            "<p>• A FASTQ re-exported from SRA loses the original read names; the "
+            "original run files keep them.</p>"
+        )
+        return
+
+    # Accepted. The lane is FASTQ -> zaroalign -> BAM, and from the BAM onwards this
+    # is exactly the BAM lane, so it sets the same flags that lane does.
+    workflow["needs_alignment"] = True
+    workflow["needs_hla"] = True
+    workflow["needs_mtdna"] = True
+    workflow["needs_pypgx"] = True
+    workflow["needs_pypgx_bam2vcf"] = True
+    workflow["recommendations"].append(
+        f"<p>Detected platform: {call.platform} ({call.evidence}).</p>"
+    )
+    workflow["recommendations"].append(
+        "<p>Step 1: Align reads to GRCh38 with BWA against a PyPGx-compliant "
+        "reference (main contigs plus chr22_KI270879v1_alt, so GSTT1 can be called).</p>"
+    )
+    workflow["recommendations"].append(
+        "<p>Step 2: HLA typing with OptiType, then PyPGx star-allele calling, then PharmCAT.</p>"
+    )
+    workflow["warnings"].append(
+        "<p>⚠️ Alignment is the slowest step in the stack; expect this to take "
+        "substantially longer than uploading an aligned file.</p>"
     )
 
 
@@ -768,6 +868,15 @@ class FileProcessor:
                 _gvcf_symbolic_allele(file_path) if file_type == FileType.GVCF else None
             )
 
+            # Same rule, same reason: determine_workflow never sees a path, so the
+            # platform has to be read here, while one is in hand. Bounded to the
+            # first reads -- see fastq_platform.detect_fastq_platform.
+            fastq_platform = (
+                detect_fastq_platform(file_path)
+                if file_type == FileType.FASTQ
+                else None
+            )
+
             # Create the file analysis object with all the gathered information
             analysis = FileAnalysis(
                 file_type=file_type,
@@ -779,6 +888,7 @@ class FileProcessor:
                 reference_genome_candidates=reference_genome_candidates,
                 reference_genome=alignment_reference_genome,
                 gvcf_symbolic_allele=gvcf_symbolic_allele,
+                fastq_platform=fastq_platform,
             )
 
             logger.info(f"Analysis complete: {analysis}")
@@ -1638,28 +1748,7 @@ class FileProcessor:
         # a paired-read upload would carry one mate, so "upload both mates" was never
         # true either; the copy below says single- and paired-end alike are refused.
         if analysis.file_type == FileType.FASTQ:
-            workflow["unsupported"] = True
-            workflow["unsupported_reason"] = (
-                "ZaroPGx cannot analyse FASTQ files. It ships no aligner, so raw reads "
-                "cannot be turned into the aligned data every later step needs, and a "
-                "FASTQ job would fail partway through instead of producing a report. "
-                "This applies to paired-end reads too. Align your reads to GRCh38/hg38 "
-                "yourself and upload the resulting BAM, CRAM or SAM file, or upload a "
-                "GRCh38/hg38 VCF."
-            )
-            workflow["recommendations"].append(
-                "<p>Align the reads to GRCh38/hg38 yourself, then upload the aligned file:</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>• Short reads: bwa-mem2 (please ensure ≥64GB RAM available), or BWA (Burrows-Wheeler Aligner)</p>"
-            )
-            workflow["recommendations"].append("<p>• Long reads: minimap2</p>")
-            workflow["recommendations"].append(
-                "<p>• Or run an established end-to-end pipeline such as nf-core/sarek and upload its BAM, CRAM or VCF output.</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>ZaroPGx accepts BAM, CRAM and SAM directly; a GRCh38/hg38 VCF is the fastest input of all.</p>"
-            )
+            _plan_fastq(analysis, workflow)
 
         # CRAM -> to be converted to BAM (lossy)
         #
@@ -2237,6 +2326,30 @@ class FileProcessor:
                 workflow = result["workflow"]
                 workflow["reference"] = reference_genome
                 workflow["workflow_type"] = "genomic_analysis"
+
+                # A second data file alongside a FASTQ is almost always the other
+                # mate, and for FASTQ specifically the generic "we analysed one of
+                # them" warning is not good enough: analysing R1 alone silently
+                # halves the evidence and produces a report that looks complete.
+                #
+                # Paired-end is refused rather than half-run because the ingest path
+                # carries ONE file end to end -- process_files analyses files[0] and
+                # publishes a single path, and main.nf's FastqToBAM takes a single
+                # `path fastq`. zaroalign itself accepts file1/file2 and would align a
+                # pair correctly; nothing upstream of it can deliver one yet. Wiring
+                # that through is its own change, and until it happens saying so is
+                # the honest answer.
+                if ignored_files and workflow.get("file_type") == FileType.FASTQ.value:
+                    workflow["unsupported"] = True
+                    workflow["unsupported_reason"] = (
+                        "ZaroPGx cannot analyse paired-end FASTQ yet. It carries one "
+                        "data file through the whole job, so a mate pair would be "
+                        "aligned from R1 alone -- half the evidence, in a report that "
+                        "would look complete. Upload a single-end FASTQ, or align the "
+                        "pair yourself (bwa-mem against GRCh38, or nf-core/sarek) and "
+                        "upload the resulting BAM, CRAM or SAM."
+                    )
+                    _clear_needs_flags(workflow)
 
                 if ignored_files:
                     # html.escape, not safe_upload_basename: the point of this warning is

@@ -163,7 +163,8 @@ Core stack rebuilt and healthy on refreshed versions (WSL-native docker):
 |---|---|---|
 | `pgx_db` | **postgres:18** | Fresh DB; data volume mounted at `/var/lib/postgresql` (PG18 layout) |
 | `pgx_pharmcat` | **PharmCAT 3.4.0** | PharmVar data refresh; reporter multi-phenotype fix |
-| `pgx_zarohla` | **ZaroHLA / OptiType v1.5** | Active HLA path on `:5060`; paired-end typing verified |
+| `pgx_zarohla` | **ZaroHLA / OptiType v1.5** | Active HLA path on `:5060`; paired-end typing verified. Its FASTQ scratch is `HLA_TEMP_DIR` (compose: `ZAROPGX_SCRATCH`), separable from `./data` because converting a whole alignment is the largest short-lived write in the stack |
+| `pgx_zaroalign` | **BWA 0.7.18** | FASTQ alignment lane on `:5061`. Its reference is a **bind mount, not baked in**: a PyPGx-compliant GRCh38 (26 contigs — main plus `chr22_KI270879v1_alt`, which carries GSTT1), ~3.15 GB of FASTA and ~5.6 GB of bwa index, built once by `scripts/build-align-index.sh` and pointed at by `ZAROPGX_ALIGN_REFERENCE`. bwa rather than bwa-mem2 because the index must be built locally (no prebuilt index satisfies PyPGx's no-ALT-except-GSTT1 rule) and bwa-mem2 needs ~80–90 GB to do that. **GPL-3.0** — see `docker/zaroalign/LICENSES.md` |
 | `pgx_mtdna` | **mtDNA-Server 2 v2.1.16** (mutserve 2.0.3, haplogrep3 3.2.2, haplocheck 1.3.3) | Active mitochondrial/MT-RNR1 path on `:5062`; ~4.52 GB image, largest in the stack |
 | `pgx_gatk_api` | GATK **4.7.0.0** | Uses the `./reference` bind mount; also serves `/liftover-vcf` (Picard LiftoverVcf, GRCh37→GRCh38, chain at `reference/chain/hg19ToHg38.over.chain.gz`) |
 | `pgx_app` | app | DB connects as `zaropgx_user` |

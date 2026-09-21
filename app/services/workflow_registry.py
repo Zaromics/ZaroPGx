@@ -139,18 +139,19 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
             unless="needs_conversion",
         ),
         StepTemplate("hla_typing", "zarohla", when="needs_hla"),
-        # FASTQ -> BAM, via gatk-api's /align-fastq. main.nf's FastqToBAM posts
-        # step_name=gatk_alignment and the progress calculator already gives it a band
-        # (35-49) and a slot in CANONICAL_STEP_ORDER, so leaving it out kept the registry
-        # and the calculator disagreeing about whether the name exists.
+        # FASTQ -> BAM, via zaroalign's /align-fastq. main.nf's FastqToBAM posts
+        # step_name=gatk_alignment and the progress calculator gives that name a band
+        # (35-49) and a slot in CANONICAL_STEP_ORDER, so the name stays as it is even
+        # though the service moved -- renaming it would desynchronise the registry and
+        # the calculator again, which is the bug this template was added to close.
         #
-        # It is UNREACHABLE and this template does not pretend otherwise: FASTQ is
-        # refused at ingest (ZaroPGx ships no aligner; /align-fastq answers HTTP 501), so
-        # determine_workflow's FASTQ branch sets no needs_* flag at all -- and nothing,
-        # anywhere, sets needs_alignment. That is exactly why it is the gate: the step
-        # can never mint while FASTQ is refused, and the day FASTQ is genuinely supported
-        # the name is already registered instead of 404ing on its first run.
-        StepTemplate("gatk_alignment", "gatk-api", when="needs_alignment"),
+        # This is now REACHABLE. It used to be unreachable by construction: FASTQ was
+        # refused at ingest because no aligner shipped and gatk-api's /align-fastq
+        # answered 501, so nothing set needs_alignment. The zaroalign sidecar supplies
+        # the aligner, determine_workflow accepts capped FASTQ with a detectable
+        # platform, and that branch now sets needs_alignment. The gate is unchanged;
+        # what changed is that something finally satisfies it.
+        StepTemplate("gatk_alignment", "zaroalign", when="needs_alignment"),
         StepTemplate("pypgx_bam2vcf", "pypgx", when="needs_pypgx_bam2vcf"),
         StepTemplate("pypgx_analysis", "pypgx", when="needs_pypgx"),
         # Mitochondrial calling via the mtdna sidecar. Registered here because

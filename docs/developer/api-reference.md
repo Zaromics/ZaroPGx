@@ -231,9 +231,16 @@ render its pre-flight summary.
      a gene duplication, and PyPGx reads the positions it lacks as homozygous
      reference, so the report would be confidently wrong rather than incomplete.
      See `docs/user/file-formats.md` for the measured coverage.
-   - **FASTQ** — `main.nf` *has* a branch, but its first step POSTs to gatk-api's
-     `/align-fastq`, which answers HTTP 501 because the image ships no aligner.
-     A branch existing is not the same as the branch working.
+   - **FASTQ, above 20 GB or with an undetectable platform** — the lane itself now
+     works: `main.nf`'s `FastqToBAM` POSTs to the `zaroalign` sidecar, which carries
+     BWA and a bind-mounted PyPGx-compliant GRCh38 (main contigs plus
+     `chr22_KI270879v1_alt`, without which GSTT1 cannot be called). Two refusals
+     remain. Above the cap, peak RSS during alignment is a function of the genome
+     index rather than the read count, so more time does not help and a
+     whole-genome upload would fail partway through. And `@RG PL:` is detected from
+     read-name structure corroborated against read length — an SRA re-export strips
+     the instrument naming, and a guessed platform would write an unverified claim
+     about the sample into everything downstream.
    - **gVCF, non-GATK dialect** — `gatk GenotypeGVCFs`, which is the whole
      conversion, exits with "The list of input alleles must contain `<NON_REF>` as
      an allele" on a file whose reference blocks use `<*>` (DeepVariant, bcftools,

@@ -7,18 +7,30 @@ FASTQ used to be advertised in the UI and the docs, accepted by
 FASTQ on the reasoning that ``main.nf`` has a ``fastq`` branch; a branch existing is not
 the same as the branch working.
 
-The decision taken here is to refuse FASTQ at upload. Implementing alignment is the only
-other honest option and it is a different, much larger piece of work; until it exists,
-telling the user *now* — with the fix they can act on — beats telling them in twenty
-minutes with a Nextflow traceback.
+The decision taken then was to refuse FASTQ at upload, on the reasoning that implementing
+alignment was the only other honest option and was a different, much larger piece of
+work. **That work has since been done** (2026-09-20): the ``zaroalign`` sidecar carries
+BWA and a PyPGx-compliant GRCh38, so FASTQ is accepted.
 
-Two behaviours are pinned:
+The refusal therefore NARROWED rather than disappearing, and what survives of it is what
+this module now pins. Three things are still refused, and each is a property of the file
+rather than a missing feature:
 
-* a FASTQ upload is refused **before** any patient or job row is created, with copy that
-  names the reason and the way out;
-* ``process_files`` analyses ``files[0]`` only, which silently discarded the second mate
-  of a paired-read upload. FASTQ is now refused outright, and for every other format the
-  discard is said out loud in the workflow warnings the UI renders.
+* **an undetectable sequencing platform.** ``@RG PL:`` is read by GATK and PyPGx, a FASTQ
+  states it nowhere, and it is detected from read-name structure corroborated against read
+  length. An SRA re-export strips that naming. ``PL:ILLUMINA`` is the likeliest answer and
+  must still never be the automatic one — a guessed platform writes an unverified claim
+  about the sample into everything downstream.
+* **above the 20 GB cap.** Peak RSS during alignment follows the genome index, not the read
+  count, so more time does not rescue a whole-genome upload.
+* **paired-end.** ``process_files`` analyses ``files[0]`` only and ``main.nf``'s
+  ``FastqToBAM`` takes a single ``path fastq``, so a mate pair would be aligned from R1
+  alone — half the evidence, in a report that looks complete. ``zaroalign`` itself accepts
+  ``file1``/``file2`` and would align a pair correctly; nothing upstream can deliver one
+  yet. Wiring that through is its own change.
+
+For every other format the ``files[0]`` discard is still said out loud in the workflow
+warnings the UI renders, rather than refused.
 
 A 23andMe upload had the same shape of problem for a different reason: ``FileProcessor``
 set ``is_provisional`` next to ``unsupported``, and the gate read that as "analysed
@@ -134,16 +146,33 @@ def test_fastq_upload_is_refused_before_a_job_exists(upload):
 
 
 def test_fastq_refusal_says_why_and_what_to_do_instead(upload):
+    """FASTQ_BYTES has the read name ``@read1`` -- no instrument structure at all --
+    so this is the undetectable-platform refusal, not the old no-aligner one.
+
+    The copy has to name ``PL:`` rather than talking vaguely about "the format",
+    because the fix available to the user is specific: re-export from the original
+    run files, or align it themselves.
+    """
     detail = upload(("reads.fastq", FASTQ_BYTES)).json()["detail"]
     lowered = detail.lower()
 
     # the reason
     assert "fastq" in lowered
-    assert "aligner" in lowered
+    assert "pl:" in lowered
+    assert "platform" in lowered
     # the way out: align yourself, upload the aligned file
     assert "align" in lowered
     for accepted in ("bam", "cram", "sam"):
         assert accepted in lowered
+
+
+def test_the_fastq_refusal_no_longer_claims_there_is_no_aligner(upload):
+    """The old reason is now false, and a false reason is worse than a vague one:
+    it sends the user to align a file ZaroPGx would have aligned for them."""
+    detail = upload(("reads.fastq", FASTQ_BYTES)).json()["detail"].lower()
+
+    assert "ships no aligner" not in detail
+    assert "no aligner" not in detail
 
 
 @pytest.mark.parametrize(

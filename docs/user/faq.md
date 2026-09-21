@@ -38,7 +38,7 @@ ZaroPGx supports:
 - **CRAM**: Compressed BAM (soon)
 - **SAM**: Sequence Alignment Map (soon)
 
-**FASTQ is not accepted**, single- or paired-end: ZaroPGx ships no aligner. Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or a pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM.
+**Single-end FASTQ is accepted up to 20 GB** (paired-end is not accepted yet: ZaroPGx carries one data file per job, so a mate pair would be aligned from R1 alone). ZaroPGx aligns it for you with BWA against GRCh38, then runs the usual pipeline. Two things are still refused, and both are about the file: read sets above the cap (whole-genome FASTQ exhausts memory during alignment however long it is given, because the requirement comes from the genome index rather than the read count), and reads whose sequencing platform cannot be determined from their read names — an SRA re-export strips that naming, and ZaroPGx will not guess a platform it has to record in the read group. In either case, align the reads yourself (`bwa-mem` against GRCh38, or a pipeline such as nf-core/sarek) and upload the BAM, CRAM or SAM.
 
 ### What reference genomes are supported?
 

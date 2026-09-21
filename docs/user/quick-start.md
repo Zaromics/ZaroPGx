@@ -97,7 +97,7 @@ Once complete, you'll see:
 
 Only the first datafile you select is analysed; an index file may be uploaded alongside it.
 
-**FASTQ is not accepted.** ZaroPGx ships no aligner, so raw reads — single- or paired-end — are refused at upload with an explanatory message. Align them to GRCh38/hg38 yourself (bwa-mem2/BWA for short reads, minimap2 for long reads, or a pipeline such as nf-core/sarek) and upload the resulting BAM, CRAM or SAM.
+**Single-end FASTQ is accepted up to 20 GB** and is aligned for you with BWA against GRCh38. Paired-end FASTQ is not accepted yet — ZaroPGx analyses one data file per job, so a mate pair would be aligned from R1 alone. Expect it to take substantially longer than uploading an aligned file. Above the cap, or when the sequencing platform cannot be determined from the read names, the upload is refused with an explanatory message — align those reads yourself (`bwa-mem` against GRCh38, or nf-core/sarek) and upload the BAM, CRAM or SAM.
 
 ## Next Steps
 

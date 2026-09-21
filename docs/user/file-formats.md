@@ -76,10 +76,19 @@ SAM is the text-based format for aligned sequences, often used as an intermediat
 SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 ```
 
-## FASTQ Format — not accepted
-FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. **ZaroPGx does not accept them**, single- or paired-end: no aligner ships with ZaroPGx.
+## FASTQ Format — accepted up to 20 GB
 
-Align the reads to GRCh38/hg38 yourself — `bwa-mem2` or BWA for short reads, `minimap2` for long reads, or an established end-to-end pipeline such as nf-core/sarek — and upload the resulting BAM, CRAM or SAM. A GRCh38/hg38 VCF is the fastest input of all.
+FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. ZaroPGx accepts **single-end** FASTQ and aligns it for you with BWA against GRCh38 before running the usual pipeline.
+
+**Paired-end FASTQ is not accepted yet.** ZaroPGx carries one data file through a whole job, so a mate pair would be aligned from R1 alone — half the evidence, in a report that would look complete. Align the pair yourself and upload the BAM, CRAM or SAM.
+
+Two further limits apply, and both are about the file rather than about ZaroPGx:
+
+**Size — 20 GB across all uploaded reads.** This covers targeted PGx panels and exome-sized read sets. It does not cover whole-genome FASTQ, and raising it would not help: the memory an aligner needs is set by the size of the genome index, not by how many reads you give it, so a whole-genome upload exhausts memory no matter how much time it is allowed. Above the cap the honest answer is still no. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
+
+**A detectable sequencing platform.** Alignment has to record which instrument produced the reads — the `@RG PL:` field — because GATK and PyPGx both read it. A FASTQ does not state this anywhere, so ZaroPGx works it out from the structure of the read names (Illumina encodes flowcell coordinates, Oxford Nanopore its run and channel ids, PacBio its ZMW numbers) and checks that against the read lengths. If the reads have been re-exported from SRA, that naming is stripped and the platform cannot be established — ZaroPGx refuses rather than assuming Illumina, because a wrong platform silently changes how downstream tools treat your data. Upload the original run files, or align them yourself.
+
+Alignment is by far the slowest step in the stack. If you already have a BAM, CRAM or SAM, uploading that is much faster, and a GRCh38/hg38 VCF is the fastest input of all.
 
 ## Consumer genotyping arrays (23andMe, AncestryDNA) — not accepted
 
