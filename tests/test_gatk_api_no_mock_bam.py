@@ -349,7 +349,7 @@ def test_align_fastq_no_longer_claims_the_image_ships_no_aligner(gatk_api):
     assert "ships no aligner" not in source
     assert "FASTQ alignment is not implemented" not in source
     # And it really does use GATK's own bwa rather than a second one.
-    assert "BwaAndMarkDuplicatesPipelineSpark" in source
+    assert "BwaSpark" in source
 
 
 def test_align_fastq_records_the_reason_on_the_job(gatk_api, client, monkeypatch):

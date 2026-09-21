@@ -3006,6 +3006,23 @@ FASTQ_MAX_UPLOAD_BYTES = int(
 )
 
 
+def _gatk_error_summary(output, limit=600):
+    """The useful part of a failed GATK run, which is never the end of it.
+
+    A Spark failure ends in a hundred lines of RDD frames, so taking the tail --
+    the obvious thing, and what this did first -- reports
+    "MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)" and hides the one line
+    that says what went wrong. The exception messages are near the TOP. Picks the
+    first line naming a cause, falling back to the tail only when nothing matches.
+    """
+    markers = ("A USER ERROR", "Caused by:", "GATKException", "Exception:", "ERROR ")
+    for line in output.splitlines():
+        stripped = line.strip()
+        if any(marker in stripped for marker in markers):
+            return stripped[:limit]
+    return output.strip()[-limit:]
+
+
 def _run_align_step(job_label, argv, label):
     """Run one GATK alignment step, failing loudly on a non-zero exit.
 
@@ -3017,9 +3034,11 @@ def _run_align_step(job_label, argv, label):
     logger.info(f"Job {job_label}: {label}: {' '.join(str(a) for a in argv)}")
     result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
-        tail = (result.stderr or result.stdout or "")[-2000:]
-        logger.error(f"Job {job_label}: {label} failed: {tail}")
-        raise HTTPException(status_code=500, detail=f"{label} failed: {tail}")
+        output = result.stderr or result.stdout or ""
+        logger.error(f"Job {job_label}: {label} failed:\n{output[-8000:]}")
+        raise HTTPException(
+            status_code=500, detail=f"{label} failed: {_gatk_error_summary(output)}"
+        )
 
 
 @app.post("/align-fastq")
@@ -3044,15 +3063,18 @@ async def align_fastq(
 
     Two GATK steps, no third-party binary:
 
-      FastqToSam   FASTQ -> unaligned BAM carrying the read group. Needed because the
-                   Bwa*Spark tools take BAM/SAM/CRAM, never raw FASTQ.
-      BwaAndMarkDuplicatesPipelineSpark
-                   aligns against the index image AND marks duplicates in one pass.
-                   The duplicate marking is why this is preferred over a bare
-                   BwaSpark: PyPGx calls copy number for CYP2D6, and duplicate-inflated
-                   depth is exactly what corrupts a copy-number estimate. An aligner
-                   that skips it yields a BAM that looks fine and reports the wrong
-                   number of gene copies.
+      FastqToSam          FASTQ -> unaligned BAM carrying the read group. Needed
+                          because the Bwa*Spark tools take BAM/SAM/CRAM, never raw FASTQ.
+      BwaSpark            aligns against the index image.
+      MarkDuplicatesSpark marks duplicates. Not cosmetic: PyPGx calls copy number for
+                          CYP2D6, and duplicate-inflated depth is exactly what corrupts
+                          a copy-number estimate, so an aligner that skips this yields a
+                          BAM that looks fine and reports the wrong number of gene copies.
+
+    The single combined tool that does the last two, BwaAndMarkDuplicatesPipelineSpark,
+    is deliberately NOT used: it ignores --single-end-alignment and dies with "We're
+    supposed to be aligning paired reads, but there are an odd number of them". Run as
+    two steps, both work.
 
     The reference is a bind mount, not part of this image. PyPGx requires alignment to
     main contigs only, with the single exception of chr22_KI270879v1_alt (GSTT1), and
@@ -3195,22 +3217,50 @@ async def align_fastq(
             )
 
         if job_client:
-            await job_client.log_progress("Aligning with bwa-mem and marking duplicates")
+            await job_client.log_progress("Aligning with bwa-mem")
 
+        # BwaSpark then MarkDuplicatesSpark, NOT BwaAndMarkDuplicatesPipelineSpark.
+        # The combined tool would be the obvious choice and it does not work here: it
+        # ignores --single-end-alignment and dies with "We're supposed to be aligning
+        # paired reads, but there are an odd number of them" on a single-end input,
+        # measured against a real 96,781-read FASTQ. It is a BETA tool and this is the
+        # kind of gap that earns the label. Run separately, both halves are fine --
+        # BwaSpark honours the flag, and MarkDuplicatesSpark marks single-end
+        # duplicates by 5' position as it should (1,185 of 97,023 on the same data).
+        aligned = os.path.join(work_dir, "aligned.bam")
         async with _to_thread_semaphore:
             await asyncio.to_thread(
                 _run_align_step,
                 local_job_id,
                 [
-                    "gatk", "BwaAndMarkDuplicatesPipelineSpark",
+                    "gatk", "BwaSpark",
                     "-I", unaligned,
-                    "-O", output_bam,
+                    "-O", aligned,
                     "-R", ALIGN_REFERENCE_FASTA,
                     "--bwa-mem-index-image", ALIGN_INDEX_IMAGE,
                     "--single-end-alignment", "true",
                     "--tmp-dir", work_dir,
                 ],
-                "BwaAndMarkDuplicatesPipelineSpark",
+                "BwaSpark",
+            )
+
+        if job_client:
+            await job_client.log_progress("Marking duplicates")
+
+        # Not cosmetic: PyPGx calls copy number for CYP2D6, and duplicate-inflated
+        # depth is exactly what corrupts a copy-number estimate. Skipping this would
+        # yield a BAM that looks fine and reports the wrong number of gene copies.
+        async with _to_thread_semaphore:
+            await asyncio.to_thread(
+                _run_align_step,
+                local_job_id,
+                [
+                    "gatk", "MarkDuplicatesSpark",
+                    "-I", aligned,
+                    "-O", output_bam,
+                    "--tmp-dir", work_dir,
+                ],
+                "MarkDuplicatesSpark",
             )
 
         index_path = index_output_bam(local_job_id, output_bam)

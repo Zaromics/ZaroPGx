@@ -152,7 +152,7 @@ def test_the_endpoint_uses_gatks_own_bwa_rather_than_a_second_aligner():
         Path(__file__).resolve().parent.parent / "docker" / "gatk-api" / "gatk_api.py"
     ).read_text(encoding="utf-8")
 
-    assert "BwaAndMarkDuplicatesPipelineSpark" in endpoint
+    assert "BwaSpark" in endpoint
     assert "FastqToSam" in endpoint
 
 
