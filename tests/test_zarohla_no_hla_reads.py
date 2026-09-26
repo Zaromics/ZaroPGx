@@ -103,7 +103,15 @@ def fake_tools(zarohla, monkeypatch):
     calls: list[list[str]] = []
     # mhc_reads: how many reads the MHC probe finds. None makes the probe fail, which
     # is the "cannot tell" case and must fall back rather than assume either way.
-    state = {"reads": b"", "optitype_returncode": 0, "mhc_reads": 1}
+    # layout: "paired" puts reads in samtools' -1/-2 outputs; "single" puts them in -0,
+    # which is where samtools routes a read carrying neither READ1 nor READ2 -- i.e.
+    # every read of a single-end alignment. The bug lived in that difference.
+    state = {
+        "reads": b"",
+        "optitype_returncode": 0,
+        "mhc_reads": 1,
+        "layout": "paired",
+    }
 
     class FakeProc:
         def __init__(self, returncode, stdout=b""):
@@ -133,8 +141,16 @@ def fake_tools(zarohla, monkeypatch):
             Path(cmd[cmd.index("-o") + 1]).write_bytes(BAM_BYTES)
             return FakeProc(0)
         if tool == "samtools" and cmd[1] == "fastq":
-            for flag in ("-1", "-2"):
-                Path(cmd[cmd.index(flag) + 1]).write_bytes(state["reads"])
+            # Like real samtools: every named output file is created, and the reads
+            # land only in the ones their READ1/READ2 flags route them to.
+            targets = ("-0",) if state["layout"] == "single" else ("-1", "-2")
+            for flag in ("-0", "-1", "-2"):
+                if flag not in cmd:
+                    continue
+                dest = cmd[cmd.index(flag) + 1]
+                if dest == "/dev/null":
+                    continue
+                Path(dest).write_bytes(state["reads"] if flag in targets else b"")
             return FakeProc(0)
         if tool == "optitype":
             outdir = Path(cmd[cmd.index("-o") + 1])
@@ -339,3 +355,142 @@ def test_an_unprobeable_input_falls_back_instead_of_refusing(client, fake_tools)
 
     assert "optitype" in _tools_run(fake_tools), "must still attempt the typing"
     assert body["results"]["HLA-A"] == "A*01:01,A*02:01"
+
+
+# --------------------------------------------------------------------------
+# Single-end alignments
+# --------------------------------------------------------------------------
+#
+# Found live on 2026-09-26, and the worst failure in this module: a single-end BAM
+# with 96,189 reads in the MHC came back as "No HLA reads in the input ... normal for a
+# targeted PGx panel". The conversion called `samtools fastq -1 R1 -2 R2 -0 /dev/null`,
+# and a single-end read carries neither READ1 nor READ2, so samtools routes EVERY such
+# read to -0 -- straight into /dev/null. R1 and R2 came out empty, and the 0-byte guard
+# above then reported that emptiness as a fact about the sample.
+#
+# That guard's whole safety argument is "zero bytes out of samtools is an observed fact
+# about the input". Here the zero bytes were a fact about the command line. The reads
+# were there; they were thrown away and then described as absent -- the clinical
+# failure this module exists to prevent (HLA-B*57:01, HLA-A*31:01 reported as nothing
+# to worry about). It affects every single-end BAM/CRAM/SAM upload, and it is on the
+# path the FASTQ lane takes, which aligns single-end reads.
+
+
+def test_a_single_end_alignment_is_typed_not_reported_empty(client, fake_tools):
+    fake_tools.state["layout"] = "single"
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = 96189
+
+    body = _post_bam(client).json()
+
+    assert "optitype" in _tools_run(
+        fake_tools
+    ), "a single-end alignment with MHC reads was never typed"
+    assert body["results"].get("HLA-A") == "A*01:01,A*02:01"
+    assert "no hla reads" not in (body.get("warning") or "").lower()
+
+
+def test_single_end_reads_are_not_sent_to_dev_null(client, fake_tools):
+    """The line that caused it. -0 must be a real file, not the bit bucket."""
+    fake_tools.state["layout"] = "single"
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+
+    _post_bam(client)
+
+    fastq_calls = [c for c in fake_tools.calls if c[:2] == ["samtools", "fastq"]]
+    assert fastq_calls, "the conversion should have run"
+    zero_output = fastq_calls[0][fastq_calls[0].index("-0") + 1]
+    assert zero_output != "/dev/null"
+
+
+def test_a_single_end_alignment_is_typed_as_single_end(client, fake_tools):
+    """One -i, the -0 output -- not an empty R1 handed to OptiType."""
+    fake_tools.state["layout"] = "single"
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+
+    _post_bam(client)
+
+    optitype = next(c for c in fake_tools.calls if Path(c[0]).name == "optitype")
+    inputs = [optitype[i + 1] for i, a in enumerate(optitype) if a == "-i"]
+    assert len(inputs) == 1, f"single-end should be one -i, got {inputs}"
+    assert inputs[0].endswith("read0.fq")
+
+
+def test_a_genuinely_empty_single_end_alignment_is_still_empty(client, fake_tools):
+    """The guard must keep working: no reads anywhere is still no HLA reads."""
+    fake_tools.state["layout"] = "single"
+    fake_tools.state["reads"] = b""
+
+    body = _post_bam(client).json()
+
+    assert body["results"] == {}
+    assert "optitype" not in _tools_run(fake_tools)
+
+
+def test_paired_alignments_are_unchanged(client, fake_tools):
+    """The negative control: a paired BAM is still typed from R1 and R2."""
+    fake_tools.state["layout"] = "paired"
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+
+    _post_bam(client)
+
+    optitype = next(c for c in fake_tools.calls if Path(c[0]).name == "optitype")
+    inputs = [optitype[i + 1] for i, a in enumerate(optitype) if a == "-i"]
+    assert [Path(i).name for i in inputs] == ["read1.fq", "read2.fq"]
+
+
+# --------------------------------------------------------------------------
+# The probe asks about OptiType's genes, not the whole MHC
+# --------------------------------------------------------------------------
+#
+# Found by the first end-to-end panel FASTQ run (2026-09-26). The panel, re-aligned
+# against the no-ALT reference, put exactly TWO reads into the 5 Mb MHC -- both MAPQ 0,
+# multi-mapped strays -- and ZERO onto HLA-A, -B or -C. "Any read in the MHC" said yes,
+# conversion ran, and OptiType died with the same "Length mismatch" crash. The MHC is
+# the wrong question: OptiType types the class I genes, and a read placed nowhere in
+# particular is not coverage of them. A real sample (single-end, same stack) keeps
+# 167 / 265 / 53 reads on A / B / C at MAPQ >= 1 -- 97-100% of all reads there -- so the
+# filter costs a real sample nothing and removes exactly the noise that caused this.
+
+
+def _probe_count_call(fake_tools):
+    counted = [
+        c for c in fake_tools.calls if c[:2] == ["samtools", "view"] and "-c" in c
+    ]
+    assert counted, "the probe should have counted reads"
+    return counted[0]
+
+
+def test_the_probe_counts_only_confidently_placed_reads(client, fake_tools):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    _post_bam(client)
+
+    call = _probe_count_call(fake_tools)
+    assert (
+        "-q" in call and call[call.index("-q") + 1] == "1"
+    ), "MAPQ-0 strays must not count as HLA coverage"
+
+
+def test_the_probe_asks_about_hla_a_b_and_c_not_the_whole_mhc(client, fake_tools):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    _post_bam(client)
+
+    regions = [
+        a for a in _probe_count_call(fake_tools) if re.match(r"^(chr)?6:\d+-\d+$", a)
+    ]
+    assert len(regions) == 3, f"expected HLA-A, -B and -C, got {regions}"
+    for region in regions:
+        start, end = (int(x) for x in region.split(":")[1].split("-"))
+        assert end - start < 50_000, f"{region} is a gene locus, not a 5 Mb span"
+
+
+def test_a_build_without_verified_loci_is_unprobeable_not_empty(client, fake_tools):
+    """GRCh37 gene coordinates are not carried here, so the probe says "cannot tell"
+    and the caller falls back -- it must never read that as "no HLA reads"."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    client.post(
+        "/call-hla",
+        files={"file": ("panel.bam", BAM_BYTES, "application/octet-stream")},
+        data={"reference_genome": "hg19"},
+    )
+    assert "optitype" in _tools_run(fake_tools)

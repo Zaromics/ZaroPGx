@@ -190,14 +190,27 @@ _publish_version_manifest()
 # Longest suffixes first: `.vcf.gz` must win over `.vcf`, and `.fastq.gz` over
 # `.fastq` -- OptiType is a FASTQ consumer, so the gzipped FASTQ suffixes are
 # the ones that matter most here.
-# The MHC interval, where every gene OptiType types lives. Deliberately a little
-# wider than the canonical extended MHC at both ends: this is only ever used to ask
-# "are there ANY HLA reads here", so erring wide costs one cheap index lookup while
-# erring narrow would call a real sample empty and report no HLA.
-MHC_INTERVALS = {
-    "GRCh38": (28510000, 33480600),
-    "GRCh37": (28477000, 33449000),
+# The HLA class I genes OptiType types -- HLA-A, -B and -C -- as GRCh38 gene loci
+# (Ensembl), each padded by 1 kb. The probe asks about THESE, not the whole 5 Mb MHC it
+# used to: a panel FASTQ re-aligned against the no-ALT reference put two MAPQ-0 strays
+# into the MHC and zero reads on any HLA gene, "reads in the MHC" waved it through, and
+# OptiType crashed. Coverage of the MHC is not coverage of what OptiType reads.
+#
+# GRCh38 only, deliberately. The pipeline analyses hg38 whatever the upload was, and a
+# GRCh37 entry would be coordinates this module has never checked; a build with no
+# entry makes the probe answer "cannot tell", which falls back rather than guesses.
+HLA_CLASS_I_LOCI = {
+    "GRCh38": (
+        (29940260, 29950572),  # HLA-A  chr6:29,941,260-29,949,572
+        (31352872, 31368067),  # HLA-B  chr6:31,353,872-31,367,067
+        (31267749, 31273130),  # HLA-C  chr6:31,268,749-31,272,130
+    ),
 }
+# A read at MAPQ 0 aligned equally well somewhere else, so it says nothing about
+# whether these genes were sequenced. Measured on a real single-end sample: MAPQ >= 1
+# keeps 167 / 265 / 53 of its reads on A / B / C (97-100%), and drops both of the
+# panel's strays.
+PROBE_MIN_MAPQ = 1
 
 _BUILD_ALIASES = {
     "hg38": "GRCh38",
@@ -312,10 +325,13 @@ async def _samtools(*args: str) -> tuple[int, bytes]:
     return proc.returncode, stdout
 
 
-async def _probe_mhc_read_count(
+async def _probe_hla_read_count(
     input_path: Path, reference_genome: Optional[str]
 ) -> Optional[int]:
-    """Reads aligned inside the MHC, or None when that cannot be established.
+    """Confidently placed reads on HLA-A/-B/-C, or None when that cannot be established.
+
+    It used to count reads anywhere in the 5 Mb MHC; see HLA_CLASS_I_LOCI for why that
+    was the wrong question. The history below is otherwise unchanged.
 
     This exists because the 0-byte FASTQ check further down was reading emptiness
     off the wrong artefact. `samtools fastq` over a whole alignment writes every
@@ -344,8 +360,8 @@ async def _probe_mhc_read_count(
         return None
 
     build = _BUILD_ALIASES.get((reference_genome or "hg38").strip().lower())
-    interval = MHC_INTERVALS.get(build or "GRCh38")
-    if not interval:
+    loci = HLA_CLASS_I_LOCI.get(build or "GRCh38")
+    if not loci:
         return None
 
     # A region query needs an index, and main.nf posts the alignment without one.
@@ -362,8 +378,10 @@ async def _probe_mhc_read_count(
     if contig is None:
         return None
 
-    region = f"{contig.decode()}:{interval[0]}-{interval[1]}"
-    rc, counted = await _samtools("view", "-c", str(input_path), region)
+    regions = [f"{contig.decode()}:{start}-{end}" for start, end in loci]
+    rc, counted = await _samtools(
+        "view", "-c", "-q", str(PROBE_MIN_MAPQ), str(input_path), *regions
+    )
     if rc != 0:
         return None
     try:
@@ -474,14 +492,15 @@ async def call_hla(
                 # Ask the alignment itself whether it carries any HLA reads before
                 # spending a whole-genome FASTQ conversion finding out. A zero here
                 # is an observed fact; None means the probe could not run, and is
-                # deliberately NOT treated as zero. See _probe_mhc_read_count.
-                mhc_reads = await _probe_mhc_read_count(input_path, reference_genome)
-                if mhc_reads == 0:
+                # deliberately NOT treated as zero. See _probe_hla_read_count.
+                hla_reads = await _probe_hla_read_count(input_path, reference_genome)
+                if hla_reads == 0:
                     logger.info(
-                        f"Job {local_job_id}: no reads in the MHC interval; "
-                        "nothing to type"
+                        f"Job {local_job_id}: no MAPQ>={PROBE_MIN_MAPQ} reads on "
+                        "HLA-A/-B/-C; nothing to type"
                     )
                     return await _no_hla_reads_result(job_client)
+                logger.info(f"Job {local_job_id}: {hla_reads} HLA class I reads")
 
                 if job_client:
                     await job_client.log_progress(
@@ -490,6 +509,13 @@ async def call_hla(
 
                 f1_path = job_dir / "read1.fq"
                 f2_path = job_dir / "read2.fq"
+                # Single-end reads. A read in a single-end alignment carries neither
+                # READ1 nor READ2, and samtools routes exactly those reads to -0. This
+                # used to be /dev/null, so every read of a single-end BAM was thrown
+                # away, R1/R2 came out empty, and the 0-byte guard below then reported
+                # "no HLA reads" -- for a sample with 96,189 reads in the MHC (measured).
+                # See the choice of OptiType inputs after the conversion.
+                f0_path = job_dir / "read0.fq"
                 # `samtools fastq -1/-2` only routes properly-mate-adjacent reads to the
                 # paired outputs; a real BAM is coordinate-sorted with mates far apart,
                 # so it must be name-collated first or most pairs fall through to the
@@ -529,7 +555,7 @@ async def call_hla(
                     "-2",
                     str(f2_path),
                     "-0",
-                    "/dev/null",
+                    str(f0_path),
                     "-s",
                     "/dev/null",
                     str(collated_path),
@@ -552,6 +578,25 @@ async def call_hla(
 
                 if process.returncode != 0:
                     raise Exception(f"samtools failed: {stderr.decode()}")
+
+                # Pick OptiType's inputs from where the reads actually went. A paired
+                # alignment fills R1/R2 and is typed paired, exactly as before. A
+                # single-end one leaves R1/R2 empty and fills -0, so it is typed
+                # single-end from that. Deciding this AFTER the conversion, from file
+                # sizes, is what keeps the 0-byte guard honest: it now only ever sees
+                # an empty file when the reads were genuinely absent, not when a flag
+                # sent them somewhere nobody looked. (A mixed alignment keeps the
+                # paired reads and drops the single-end ones, as it always did.)
+                def _has_reads(path):
+                    return os.path.exists(path) and os.path.getsize(path) > 0
+
+                if not _has_reads(f1_path) and not _has_reads(f2_path):
+                    if _has_reads(f0_path):
+                        logger.info(
+                            f"Job {local_job_id}: single-end alignment; typing from "
+                            f"{f0_path.name}"
+                        )
+                        f1_path, f2_path = f0_path, None
             else:
                 f1_path = input_path
         else:
