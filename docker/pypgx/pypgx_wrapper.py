@@ -4,6 +4,7 @@ PyPGx Wrapper Service for ZaroPGx
 Provides REST API endpoints for calling PyPGx supported star alleles
 """
 
+import gzip
 import os
 import json
 import logging
@@ -797,6 +798,117 @@ def _reference_fasta_for_assembly(assembly: str) -> Path:
     return REFERENCE_DIR / "grch38" / "Homo_sapiens_assembly38.fasta"
 
 
+# ---------------------------------------------------------------------------
+# Per-gene coverage, measured on the alignment and carried in the VCF header
+# ---------------------------------------------------------------------------
+#
+# A gene the alignment never covered must get NO PyPGx call. Measured 2026-09-26 on a
+# real targeted panel: ABCB1 (0 reads) came back *2/*2, CYP2E1 (0) *7/*7, GSTM1 (0)
+# *A/*A, APOE (0) Reference/Reference -- "no reads" read as "matches GRCh38", which is
+# not *1 for every gene. The chromosome-level "invalid contig" check below never fired,
+# because each of those genes shares a chromosome with a gene the panel did cover.
+# PyPGx calls reach PharmCAT as OVERRIDING outside calls, so the same mechanism would
+# report an unsequenced CYP2D6 as a normal metabolizer.
+#
+# Coverage can only be observed on the alignment, so it is measured in
+# /create-input-vcf and written into the VCF's own header, where it travels with the
+# file through Nextflow to /genotype without new plumbing. An uploaded VCF has no such
+# line: it carries no coverage evidence, and keeps the chromosome-level behaviour.
+UNCOVERED_GENES_HEADER_KEY = "ZaroPGx_uncovered_genes"
+
+
+def uncovered_genes_header_line(genes) -> str:
+    """The header line recording which PyPGx genes the alignment did not cover.
+
+    Written even when the list is empty ("."), so the genotyper can tell "measured,
+    and everything was covered" from "never measured" -- the second is an uploaded
+    VCF and must keep its old handling.
+    """
+    listed = ",".join(sorted(set(genes)))
+    return f"##{UNCOVERED_GENES_HEADER_KEY}={listed or '.'}"
+
+
+def uncovered_genes_from_vcf(vcf_path: str) -> Optional[set]:
+    """Genes the source alignment never covered, or None when the VCF does not say.
+
+    Reads only the header, from a plain or bgzipped VCF (bgzip is gzip-compatible).
+    None means no coverage evidence exists -- an uploaded VCF -- and must not be
+    confused with an empty set, which means measured and fully covered.
+    """
+    prefix = f"##{UNCOVERED_GENES_HEADER_KEY}="
+    with open(vcf_path, "rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip()
+                return set() if value in ("", ".") else set(value.split(","))
+    return None
+
+
+def uncovered_genes_in_alignment(alignment_path: str, assembly: str) -> list:
+    """PyPGx genes with no confidently placed read in the alignment.
+
+    Regions come from PyPGx itself (create_regions_bed), so this asks about exactly the
+    genes and spans PyPGx genotypes rather than a hand-kept list. A read counts only at
+    MAPQ >= 1 and when it is a primary, mapped alignment: a MAPQ-0 multi-mapper aligned
+    equally well elsewhere and says nothing about this gene -- the same rule zarohla's
+    HLA probe uses, for the same reason. One qualifying read is enough to call a gene
+    covered; the question is "was anything sequenced here", not "how well".
+    """
+    import pysam
+    from pypgx.api import utils as pypgx_utils
+
+    with pysam.AlignmentFile(alignment_path) as bam:
+        contigs = set(bam.references)
+        prefixed = any(c.startswith("chr") for c in contigs)
+        regions = pypgx_utils.create_regions_bed(
+            assembly=assembly, add_chr_prefix=prefixed
+        ).gr.df
+        covered = {}
+        for chrom, start, end, gene in regions[
+            ["Chromosome", "Start", "End", "Name"]
+        ].itertuples(index=False):
+            if covered.get(gene):
+                continue
+            hit = False
+            if chrom in contigs:
+                for read in bam.fetch(chrom, int(start), int(end)):
+                    if (
+                        read.mapping_quality >= 1
+                        and not read.is_unmapped
+                        and not read.is_secondary
+                        and not read.is_supplementary
+                    ):
+                        hit = True
+                        break
+            covered[gene] = hit
+    return sorted(g for g, hit in covered.items() if not hit)
+
+
+def annotate_uncovered_genes(vcf_gz: str, genes) -> None:
+    """Write the uncovered-genes line into a bgzipped VCF's header, in place.
+
+    bcftools rather than pysam's writer: it leaves every record byte-identical and only
+    adds the header line. Re-indexed afterwards, since the file is rewritten.
+    """
+    header_file = f"{vcf_gz}.uncovered.hdr"
+    with open(header_file, "w", encoding="utf-8") as fh:
+        fh.write(uncovered_genes_header_line(genes) + "\n")
+    annotated = f"{vcf_gz}.annotated.vcf.gz"
+    subprocess.run(
+        ["bcftools", "annotate", "--header-lines", header_file, "-Oz", "-o", annotated, vcf_gz],
+        check=True,
+        capture_output=True,
+    )
+    os.replace(annotated, vcf_gz)
+    os.remove(header_file)
+    tabix_index(vcf_gz, force=True)
+
+
 def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly: str) -> Dict[str, Any]:
     """Run PyPGx create-input-vcf to generate a VCF from an alignment file.
 
@@ -848,7 +960,21 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             logger.info(f"Indexing VCF with tabix: {output_vcf_gz}")
             tabix_index(output_vcf_gz, force=True)
 
-        return {"success": True, "vcf": output_vcf_gz, "tbi": tbi_path}
+        # Which PyPGx genes this alignment never covered, recorded in the VCF's own
+        # header so /genotype can decline to call them. See UNCOVERED_GENES_HEADER_KEY.
+        uncovered = uncovered_genes_in_alignment(str(alignment_path), str(assembly))
+        annotate_uncovered_genes(output_vcf_gz, uncovered)
+        logger.info(
+            f"Coverage: {len(uncovered)} PyPGx gene(s) with no reads in the alignment"
+            + (f": {', '.join(uncovered)}" if uncovered else "")
+        )
+
+        return {
+            "success": True,
+            "vcf": output_vcf_gz,
+            "tbi": tbi_path,
+            "uncovered_genes": uncovered,
+        }
     except subprocess.CalledProcessError as cpe:
         logger.exception("Subprocess error running create-input-vcf")
         return {"success": False, "error": str(cpe)}
@@ -1014,6 +1140,25 @@ async def genotype(
                 "total_genes": len(requested_genes)
             })
         
+        # Genes the source alignment never covered get no call -- see
+        # UNCOVERED_GENES_HEADER_KEY. None (an uploaded VCF) changes nothing here.
+        uncovered = uncovered_genes_from_vcf(str(input_filepath)) or set()
+        not_sequenced = {}
+        for gene in [g for g in requested_genes if g in uncovered]:
+            not_sequenced[gene] = {
+                'success': True,
+                'gene': gene,
+                'diplotype': None,
+                'details': {'note': 'No reads over this gene in the alignment'},
+                'error': 'No reads over this gene in the alignment',
+            }
+        if not_sequenced:
+            logger.info(
+                f"Not calling {len(not_sequenced)} gene(s) with no reads in the "
+                f"alignment: {', '.join(sorted(not_sequenced))}"
+            )
+            requested_genes = [g for g in requested_genes if g not in not_sequenced]
+
         # Calculate optimal batch size based on file size and available memory
         optimal_batch_size = calculate_optimal_batch_size(file_size_gb, memory_info['available_gb'])
         logger.info(f"Using batch size: {optimal_batch_size} genes per batch")
@@ -1021,7 +1166,7 @@ async def genotype(
         # Split genes into batches for parallel processing
         gene_batches = chunk_list(requested_genes, optimal_batch_size)
         
-        aggregated: Dict[str, Any] = {"success": True, "results": {}, "job_id": local_job_id}
+        aggregated: Dict[str, Any] = {"success": True, "results": dict(not_sequenced), "job_id": local_job_id}
         if patient_id:
             aggregated["patient_id"] = patient_id
         if report_id:

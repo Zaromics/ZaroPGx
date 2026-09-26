@@ -465,8 +465,39 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
             REFERENCE_DIR=ref_dir,
             bgzip_in_place=lambda *a, **k: None,
             tabix_index=lambda *a, **k: None,
+            # Per-gene coverage (measured with pysam over PyPGx's own regions, then
+            # written into the VCF header by bcftools) runs after the conversion.
+            # Orthogonal to this module's concern -- the hostile BAM path's argv -- and
+            # covered in tests/test_pypgx_uncovered_genes.py; the bcftools sink it adds
+            # is checked for argv safety below.
+            uncovered_genes_in_alignment=lambda *a, **k: [],
+            annotate_uncovered_genes=lambda *a, **k: None,
         ),
     )
+
+
+def test_the_coverage_annotation_sink_is_argv_safe():
+    """annotate_uncovered_genes adds a subprocess sink: bcftools, as an argv list,
+    never through a shell -- the same rule every other sink in the wrapper follows."""
+    tree = ast.parse(PYPGX_WRAPPER.read_text(encoding="utf-8"))
+    fn = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "annotate_uncovered_genes"
+    )
+    calls = [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "run"
+    ]
+    assert calls, "expected a subprocess.run call"
+    for call in calls:
+        assert isinstance(call.args[0], ast.List), "argv must be a list literal"
+        assert not any(
+            kw.arg == "shell" for kw in call.keywords
+        ), "no shell= on this sink"
 
 
 def test_create_input_vcf_passes_hostile_path_as_one_argv_element(
