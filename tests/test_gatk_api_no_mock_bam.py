@@ -1937,3 +1937,183 @@ def test_a_skipped_log_destination_is_reported_loudly(gatk_api, tmp_path, caplog
 
     # Leave the module-level list as it was found; it is import-time state.
     del gatk_api._log_file_errors[before:]
+
+
+def test_align_fastq_refuses_a_long_read_platform(
+    client, gatk_api, monkeypatch, tmp_path
+):
+    """Nanopore read names are detected correctly -- and then refused.
+
+    Repeated here, not only in the app's planner, because a hand-run
+    `nextflow run --input_type fastq` reaches this route without the planner ever
+    seeing the file. BwaSpark has no long-read preset and OptiType is short-read only.
+    """
+    fasta = tmp_path / "ref.fasta"
+    fasta.write_text(">chr1\nACGT\n", encoding="utf-8")
+    image = tmp_path / "ref.fasta.img"
+    image.write_bytes(b"not-a-real-index")
+    monkeypatch.setattr(gatk_api, "ALIGN_REFERENCE_FASTA", str(fasta))
+    monkeypatch.setattr(gatk_api, "ALIGN_INDEX_IMAGE", str(image))
+
+    ont = b"".join(
+        b"@0000%04d-aaaa-bbbb-cccc-dddddddddddd runid=abc read=%d ch=%d "
+        b"start_time=2026-01-01T00:00:00Z\n%s\n+\n%s\n"
+        % (i, i, 100 + i, b"ACGT" * 2500, b"I" * 10000)
+        for i in range(20)
+    )
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("ont.fastq", ont, "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert "ONT" in detail
+    assert "minimap2" in detail
+
+
+# --------------------------------------------------------------------------
+# /align-fastq: paired-end
+# --------------------------------------------------------------------------
+
+
+def _illumina_fastq(n=30, mate=1, name_offset=0):
+    return b"".join(
+        b"@A00123:45:HXXXXDSXX:1:1101:%d:%d %d:N:0:ATCACG\n%s\n+\n%s\n"
+        % (1000 + i + name_offset, 2000 + i, mate, b"A" * 100, b"I" * 100)
+        for i in range(n)
+    )
+
+
+@pytest.fixture
+def fake_alignment(gatk_api, monkeypatch, tmp_path):
+    """GATK stubbed out: record each step's argv and produce its -O output."""
+    fasta = tmp_path / "ref.fasta"
+    fasta.write_text(">chr1\nACGT\n", encoding="utf-8")
+    image = tmp_path / "ref.fasta.img"
+    image.write_bytes(b"not-a-real-index")
+    monkeypatch.setattr(gatk_api, "ALIGN_REFERENCE_FASTA", str(fasta))
+    monkeypatch.setattr(gatk_api, "ALIGN_INDEX_IMAGE", str(image))
+
+    steps = {}
+
+    def fake_run(job_label, argv, label):
+        steps[label] = list(argv)
+        out = argv[argv.index("-O") + 1]
+        Path(out).write_bytes(b"BAM\x01")
+
+    monkeypatch.setattr(gatk_api, "_run_align_step", fake_run)
+    monkeypatch.setattr(gatk_api, "index_output_bam", lambda label, bam: bam + ".bai")
+    monkeypatch.setattr(gatk_api, "count_records", lambda label, bam, idx: 100)
+    return steps
+
+
+def test_align_fastq_single_end_argv(client, fake_alignment):
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("r1.fastq", _illumina_fastq(), "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paired"] is False
+    assert "-F2" not in fake_alignment["FastqToSam"]
+    bwa = fake_alignment["BwaSpark"]
+    assert bwa[bwa.index("--single-end-alignment") + 1] == "true"
+
+
+def test_align_fastq_paired_end_argv(client, fake_alignment):
+    """Two mates: FastqToSam gets -F2, BwaSpark runs paired, and the answer says so."""
+    resp = client.post(
+        "/align-fastq",
+        files={
+            "file": ("reads_1.fastq", _illumina_fastq(mate=1), "text/plain"),
+            "file2": ("reads_2.fastq", _illumina_fastq(mate=2), "text/plain"),
+        },
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paired"] is True
+    fq2sam = fake_alignment["FastqToSam"]
+    assert "-F2" in fq2sam
+    # The two mates must not have been sanitised onto the same path.
+    assert fq2sam[fq2sam.index("-F1") + 1] != fq2sam[fq2sam.index("-F2") + 1]
+    bwa = fake_alignment["BwaSpark"]
+    assert bwa[bwa.index("--single-end-alignment") + 1] == "false"
+
+
+def test_align_fastq_refuses_mates_from_different_platforms(client, fake_alignment):
+    """PL: carries one answer; two files that disagree are not one run."""
+    dnbseq = b"".join(
+        b"@FP200007900L1C%03dR038%08d\n%s\n+\n%s\n" % (i, i, b"A" * 100, b"I" * 100)
+        for i in range(1, 31)
+    )
+    resp = client.post(
+        "/align-fastq",
+        files={
+            "file": ("r1.fastq", _illumina_fastq(), "text/plain"),
+            "file2": ("r2.fastq", dnbseq, "text/plain"),
+        },
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "same sequencing run" in resp.json()["detail"]
+    assert "FastqToSam" not in fake_alignment, "no GATK work before the check"
+
+
+def test_align_fastq_cap_is_shared_across_both_mates(
+    client, gatk_api, fake_alignment, monkeypatch
+):
+    """Each mate under the cap, the pair over it: still refused."""
+    one = _illumina_fastq()
+    monkeypatch.setattr(gatk_api, "FASTQ_MAX_UPLOAD_BYTES", int(len(one) * 1.5))
+    resp = client.post(
+        "/align-fastq",
+        files={
+            "file": ("r1.fastq", one, "text/plain"),
+            "file2": ("r2.fastq", _illumina_fastq(mate=2), "text/plain"),
+        },
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 413, resp.text
+    assert "both mates" in resp.json()["detail"]
+
+
+def test_align_fastq_warms_the_index_image_before_bwaspark(
+    client, gatk_api, fake_alignment, monkeypatch
+):
+    """BwaSpark memory-maps the 5.4 GB index image and reads it at random.
+
+    With the image on a Windows-backed mount (WSL's 9P, where ZAROPGX_ALIGN_REFERENCE
+    puts it to keep large files off C:), every page fault on a cold cache is a 9P round
+    trip. Measured 2026-09-26 after a reboot: the executor sat in p9_client_rpc for 8+
+    minutes having read 110 MB, and a sequential pre-read of the image -- 150 s cold,
+    25 s warm -- is what got it moving. Order matters: warming after BwaSpark starts is
+    warming too late.
+    """
+    order = []
+    real_run = gatk_api._run_align_step
+
+    def recording_run(job_label, argv, label):
+        order.append(label)
+        real_run(job_label, argv, label)
+
+    monkeypatch.setattr(gatk_api, "_run_align_step", recording_run)
+    monkeypatch.setattr(
+        gatk_api, "_warm_index_image", lambda label, path: order.append("warm")
+    )
+
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("r1.fastq", _illumina_fastq(), "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "warm" in order
+    assert order.index("warm") < order.index("BwaSpark")
+
+
+def test_warming_reads_the_whole_image(gatk_api, tmp_path):
+    """A partial read would leave the rest to fault in over 9P, which is the stall."""
+    image = tmp_path / "idx.img"
+    image.write_bytes(b"x" * (3 * 1024 * 1024 + 17))
+    assert gatk_api._warm_index_image("t", str(image)) == image.stat().st_size

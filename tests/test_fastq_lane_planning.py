@@ -166,3 +166,135 @@ def test_the_alignment_step_marks_duplicates():
 
     assert "BwaAndMarkDuplicatesPipelineSpark" in endpoint
     assert '"duplicates_marked": True' in endpoint
+
+
+# --------------------------------------------------------------------------
+# Long reads are detected correctly, and still refused
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("platform", ["ONT", "PACBIO"])
+def test_a_long_read_fastq_is_refused(platform):
+    """Detecting the platform is not the same as being able to use it.
+
+    The lane aligns with bwa-mem through GATK's BwaSpark, which exposes no long-read
+    preset, and types HLA with OptiType, which is short-read only. Accepting an ONT or
+    PacBio FASTQ would return confident output from tools that were never meant to read
+    it -- the class of answer this codebase refuses everywhere else.
+    """
+    call = PlatformCall(platform, f"{platform} read-name structure; mean 15000 bp")
+    workflow = _plan(2 * 1024**3, call)
+
+    assert workflow["unsupported"] is True
+    assert workflow["needs_alignment"] is False
+    reason = workflow["unsupported_reason"]
+    assert "minimap2" in reason, "the refusal must name the tool that does fit"
+    assert platform in reason
+
+
+def test_a_short_read_dnbseq_fastq_is_accepted():
+    call = PlatformCall("DNBSEQ", "DNBSEQ read-name structure; mean read length 150 bp")
+    workflow = _plan(2 * 1024**3, call)
+
+    assert workflow["unsupported"] is False
+    assert workflow["needs_alignment"] is True
+
+
+# --------------------------------------------------------------------------
+# HLA on the FASTQ lane is typed from the aligned BAM, not the raw reads
+# --------------------------------------------------------------------------
+
+
+def _main_nf() -> str:
+    return (
+        Path(__file__).resolve().parent.parent / "pipelines" / "pgx" / "main.nf"
+    ).read_text(encoding="utf-8")
+
+
+def _fastq_branch(src: str) -> str:
+    start = src.index("if (params.input_type == 'fastq') {")
+    end = src.index("else if (params.input_type == 'cram')", start)
+    return src[start:end]
+
+
+def test_the_fastq_lane_types_hla_from_the_aligned_bam():
+    """A targeted panel with no HLA capture crashed OptiType on the raw-FASTQ path.
+
+    Measured on a real 218,682-read panel FASTQ with no MHC reads: zarohla answered
+    500, "OptiType failed: Length mismatch: Expected axis has 0 elements", which fails
+    the whole run. A raw FASTQ has no coordinates, so there is no observed fact to
+    decide "no HLA reads" from; the aligned BAM does, and zarohla's HLA-locus probe reads it.
+    The BAM keeps its unmapped reads and zarohla converts all of it back, so OptiType
+    still sees essentially every read -- only the decision moves.
+    """
+    branch = _fastq_branch(_main_nf())
+    assert "OptiTypeHLAFromBAM(bam_ch" in branch
+    assert "OptiTypeHLAFromFastq" not in branch
+
+
+def test_the_raw_fastq_hla_process_is_gone():
+    """Nothing calls it any more, and leaving it defined invites someone back onto
+    the path that crashes on every panel FASTQ."""
+    assert "process OptiTypeHLAFromFastq" not in _main_nf()
+
+
+# --------------------------------------------------------------------------
+# Alignment is gatk-api work, so it must not be skipped as "no GATK needed"
+# --------------------------------------------------------------------------
+#
+# Found by the first end-to-end FASTQ run through the app (2026-09-26): the planner
+# accepted the file, the job was created, and it died 15 s later with
+# "--skip_gatk is not compatible with fastq". upload_router derived skip_gatk from
+# needs_gatk alone, and the FASTQ plan sets needs_alignment instead -- so a lane whose
+# every step runs in the gatk-api container was told to skip gatk-api. Every unit test
+# was green, because none of them followed a FASTQ from planner to argv.
+#
+# needs_gatk is deliberately NOT set for FASTQ: workflow_registry mints
+# gatk_cram_sam_to_bam on needs_gatk (vetoed only by needs_conversion), and minting a
+# step no process posts leaves it [pending] forever. So the fix is on the skip side.
+
+
+def _router_src() -> str:
+    return (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "api"
+        / "routes"
+        / "upload_router.py"
+    ).read_text(encoding="utf-8")
+
+
+def test_skip_gatk_counts_alignment_as_gatk_work():
+    src = _router_src()
+    start = src.index("skip_gatk = ")
+    statement = src[start : src.index("skip_report = ", start)]
+    assert (
+        "needs_alignment" in statement
+    ), "skip_gatk must stay false when alignment is planned; alignment runs in gatk-api"
+
+
+def test_the_fastq_plan_does_not_set_needs_gatk():
+    """Setting it would mint gatk_cram_sam_to_bam onto a FASTQ job, where no process
+    ever posts it -- the [pending]-forever failure workflow_registry warns about."""
+    workflow = _plan(2 * 1024**3, _GOOD)
+    assert workflow["needs_gatk"] is False
+    assert workflow["needs_alignment"] is True
+
+
+def test_unticking_gatk_also_unplans_alignment():
+    """The GATK toggle covers alignment -- FastqToSam, BwaSpark and MarkDuplicatesSpark
+    are all GATK tools -- so disabling it must not leave an alignment planned that
+    skip_gatk then contradicts. main.nf rejects skip_gatk for fastq loudly, exactly as
+    it does for cram/sam, rather than the run silently ignoring the toggle."""
+    src = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "api"
+        / "utils"
+        / "file_processor.py"
+    ).read_text(encoding="utf-8")
+    block = src[
+        src.index('if gatk_enabled is not None and not workflow["gatk_enabled"]:') :
+    ]
+    block = block[: block.index("if pypgx_enabled is not None")]
+    assert 'workflow["needs_alignment"] = False' in block

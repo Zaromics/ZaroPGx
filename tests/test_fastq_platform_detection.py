@@ -196,3 +196,138 @@ def test_the_scan_is_bounded(tmp_path):
     call = detect_fastq_platform(path, max_records=10)
     assert call.platform == ILLUMINA
     assert "over 10 reads" in call.evidence
+
+
+def test_dnbseq_names_with_a_mate_suffix_are_detected(tmp_path):
+    """Real MGI instrument FASTQs end every read name in /1 or /2.
+
+    The first cut of this pattern was anchored on the grid reference at the very end
+    of the name, so `...R03305448507/1` -- the form the sequencer actually writes --
+    matched nothing and a legible DNBSEQ run was refused as "no recognisable
+    platform". The fixture that caught it came from samtools, which does not add the
+    suffix; the instrument does.
+    """
+    records = [
+        (
+            f"NG1GNACLXB_2022_12_28_206677_ProPhase_BP_FP200007900L1C{i:03d}R038{i:08d}/1",
+            "A" * 100,
+        )
+        for i in range(1, 31)
+    ]
+    call = detect_fastq_platform(_write_fastq(tmp_path / "r.fastq", records))
+
+    assert call.platform == DNBSEQ
+
+
+def test_short_and_long_read_platforms_are_distinguished():
+    """The alignment lane is short-read only, so callers need to ask which is which."""
+    from app.api.utils.fastq_platform import SHORT_READ_PLATFORMS
+
+    assert ILLUMINA in SHORT_READ_PLATFORMS
+    assert DNBSEQ in SHORT_READ_PLATFORMS
+    assert ONT not in SHORT_READ_PLATFORMS
+    assert PACBIO not in SHORT_READ_PLATFORMS
+
+
+# --------------------------------------------------------------------------
+# The header panel must agree with the plan
+# --------------------------------------------------------------------------
+#
+# Seen on the live upload page (2026-09-26): for a DNBSEQ FASTQ the header panel said
+# "Sequencing Platform: Unknown" directly above a recommendation reading "Detected
+# platform: DNBSEQ", and listed the first read's name as the "Sample ID". The panel is
+# fed by header_inspector, which knew neither.
+
+
+def test_the_fastq_header_reports_the_detected_platform(tmp_path):
+    from app.api.utils.header_inspector import inspect_header
+
+    records = [
+        (
+            f"NG1GNACLXB_2022_12_28_206677_ProPhase_BP_FP200007900L1C{i:03d}R038{i:08d}",
+            "A" * 150,
+        )
+        for i in range(1, 31)
+    ]
+    info = inspect_header(str(_write_fastq(tmp_path / "reads.fastq", records)))
+
+    assert info["metadata"]["sequencing_platform"] == DNBSEQ
+
+
+def test_the_fastq_header_does_not_present_a_read_name_as_the_sample(tmp_path):
+    """A FASTQ carries no sample name. The first read's identifier is not one, and
+    showing it as "Sample ID" invites someone to take it for theirs."""
+    from app.api.utils.header_inspector import inspect_header
+
+    info = inspect_header(
+        str(_write_fastq(tmp_path / "reads.fastq", _illumina_records()))
+    )
+
+    assert info.get("sample") is None
+
+
+# --------------------------------------------------------------------------
+# Mate pairs: two FASTQs are one run only if their read names pair up
+# --------------------------------------------------------------------------
+
+
+def test_casava_mates_pair(tmp_path):
+    from app.api.utils.fastq_platform import mate_names_agree
+
+    r1 = _write_fastq(tmp_path / "r1.fastq", _illumina_records())
+    r2_records = [(n.replace(" 1:N:", " 2:N:"), s) for n, s in _illumina_records()]
+    r2 = _write_fastq(tmp_path / "r2.fastq", r2_records)
+    ok, evidence = mate_names_agree(r1, r2)
+    assert ok, evidence
+
+
+def test_slash_suffixed_mates_pair(tmp_path):
+    """MGI writes /1 and /2 onto every name; the suffix is what differs, not the read."""
+    from app.api.utils.fastq_platform import mate_names_agree
+
+    base = [f"FP200007900L1C{i:03d}R038{i:08d}" for i in range(1, 31)]
+    r1 = _write_fastq(tmp_path / "r1.fastq", [(n + "/1", "A" * 100) for n in base])
+    r2 = _write_fastq(tmp_path / "r2.fastq", [(n + "/2", "A" * 100) for n in base])
+    ok, evidence = mate_names_agree(r1, r2)
+    assert ok, evidence
+
+
+def test_two_unrelated_fastqs_do_not_pair(tmp_path):
+    """Two single-end runs uploaded together are not a pair, and aligning them as
+    one would invent mate relationships between strangers."""
+    from app.api.utils.fastq_platform import mate_names_agree
+
+    r1 = _write_fastq(tmp_path / "a.fastq", _illumina_records())
+    other = [
+        (f"A00999:7:HYYYYDSXX:2:2202:{5000 + i}:{6000 + i} 1:N:0:GGGGGG", "A" * 151)
+        for i in range(50)
+    ]
+    r2 = _write_fastq(tmp_path / "b.fastq", other)
+    ok, evidence = mate_names_agree(r1, r2)
+    assert not ok
+    assert "pair" in evidence
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "sample_R1.fastq.gz",
+        "sample_R2_001.fastq.gz",
+        "sample_1.fq",
+        "sample.R2.fq.gz",
+        "SAMPLE-r1.FASTQ",
+    ],
+)
+def test_a_mate_filename_is_recognised(name):
+    from app.api.utils.fastq_platform import looks_like_one_mate
+
+    assert looks_like_one_mate(name)
+
+
+@pytest.mark.parametrize(
+    "name", ["sample.fastq.gz", "chr1.fastq", "sample1.fq", "run_3.fastq", "", None]
+)
+def test_a_plain_filename_is_not_taken_for_a_mate(name):
+    from app.api.utils.fastq_platform import looks_like_one_mate
+
+    assert not looks_like_one_mate(name)

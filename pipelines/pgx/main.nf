@@ -29,6 +29,10 @@ nextflow.enable.dsl=2
 */
 
 params.input          = params.input ?: ''
+// The second mate of a paired-end FASTQ upload. Blank means single-end, and it is only
+// read by the fastq branch. A path the app created, like --input, and staged as a
+// `path` input -- which Nextflow escapes -- never interpolated as a value.
+params.input2         = params.input2 ?: ''
 params.input_type     = params.input_type ?: ''  // vcf|bcf|gvcf|bam|cram|sam|fastq
 params.patient_id     = params.patient_id ?: ''
 params.report_id      = params.report_id ?: ''
@@ -113,6 +117,10 @@ process FastqToBAM {
 
     input:
     path fastq
+    // The second mate, or the 0-byte assets/empty.tsv placeholder for single-end. The
+    // shell below tells the two apart with `[ -s ]`: a real FASTQ is never empty, and
+    // the placeholder always is.
+    path fastq2
     val patient_id
     val report_id
     val reference
@@ -125,13 +133,16 @@ process FastqToBAM {
     '''
     set -euo pipefail
     CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
+    if [ -s "!{fastq2}" ]; then
+      CURL_ARGS+=( -F file2=@!{fastq2} )
+    fi
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_alignment )
     fi
     # gatk-api, which has carried an aligner all along: GATK bundles bwa-mem as a JNI
-    # native (libbwa.Linux.so inside the fat jar), so /align-fastq now runs FastqToSam
-    # followed by BwaAndMarkDuplicatesPipelineSpark instead of answering 501. The
-    # endpoint was what was missing, not the tool.
+    # native (libbwa.Linux.so inside the fat jar), so /align-fastq now runs FastqToSam,
+    # BwaSpark and MarkDuplicatesSpark instead of answering 501. The endpoint was what
+    # was missing, not the tool.
     if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json; then
       echo "gatk-api /align-fastq returned an error:" >&2
       cat align_response.json >&2 || true
@@ -238,53 +249,11 @@ PY
     '''
 }
 
-// OptiType HLA calling on FASTQ
-process OptiTypeHLAFromFastq {
-    tag "hla_fastq_${patient_id}"
-    publishDir { outdir }, mode: 'copy'
-
-    input:
-    path fastq
-    val patient_id
-    val report_id
-    val reference
-    val outdir
-
-    output:
-    path "*.hla_calls.tsv", optional: true, emit: hla
-    path "hla_result.json", emit: hla_json
-
-    shell:
-    '''
-    set -euo pipefail
-    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
-    if [ -n "${JOB_ID:-}" ]; then
-      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=hla_typing )
-    fi
-    # An HTTP error here used to be swallowed: the error JSON landed in hla_result.json,
-    # the parser below found no HLA- keys, and the run completed reporting no HLA calls -
-    # indistinguishable from OptiType legitimately finding none. Untick OptiType
-    # (--skip_hla) to opt out of HLA typing; a failing service is not that.
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json; then
-      echo "zarohla /call-hla returned an error:" >&2
-      cat hla_result.json >&2 || true
-      exit 1
-    fi
-    python3 - <<'PY'
-import json,sys
-data=json.load(open('hla_result.json'))
-results=data.get('results') or {}
-lines=[]
-for gene,call in results.items():
-    if call and gene.startswith('HLA-'):
-        lines.append(f"{gene}\t{call}")
-if lines:
-    open('pharmcat.hla_calls.tsv','w',encoding='utf-8').write('\\n'.join(lines)+'\\n')
-PY
-    '''
-}
-
-// OptiType HLA calling on BAM (will internally convert to FASTQ - less optimal)
+// OptiType HLA calling on an alignment. The ONLY HLA path, for every lane that reaches a
+// BAM (bam, cram, sam, fastq). It used to be billed as the "less optimal" fallback to a
+// raw-FASTQ route; that route crashed on every panel FASTQ without HLA capture and was
+// removed. This one is safer: zarohla counts MAPQ>=1 reads on HLA-A/-B/-C on the alignment before
+// converting anything, so "no HLA reads" is an observed fact, not an OptiType crash.
 process OptiTypeHLAFromBAM {
     tag "hla_bam_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -814,6 +783,10 @@ workflow {
     // (not a channel): valid as a process input AND as an .ifEmpty() default, and
     // reusable across branches — avoids the queue-consumed-twice / DataflowVariable issues.
     empty_file_ch = file("${projectDir}/assets/empty.tsv")
+    // Paired-end FASTQ: the second mate, or the empty placeholder for single-end.
+    // checkIfExists turns a mistyped --input2 into an error at launch instead of a
+    // silently single-end run.
+    mate2_ch = params.input2 ? file(params.input2, checkIfExists: true) : empty_file_ch
 
     // Handle different input types with optimal HLA calling strategy
     
@@ -822,15 +795,25 @@ workflow {
         // Convert FASTQ to BAM (needed for PyPGx regardless of HLA). .first() makes
         // this reusable by the mtDNA wiring below too -- see input_ch's comment above
         // for why a plain queue channel can't feed two consumers.
-        bam_ch = FastqToBAM(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam.first()
+        bam_ch = FastqToBAM(input_ch, mate2_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).bam.first()
 
         if (params.skip_hla) {
             // HLA typing opted out: no OptiType, PyPGx runs on the converted BAM.
             hla_ch = empty_file_ch
             vcf_ch = PyPGxBam2Vcf(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf
         } else {
-            // HLA typing on FASTQ (optimal - no conversion needed for OptiType).
-            hla_result = OptiTypeHLAFromFastq(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
+            // HLA typing from the ALIGNED BAM, not the raw FASTQ, and that is a fix
+            // rather than a preference. A targeted panel with no HLA capture crashed
+            // OptiType on the raw-FASTQ path -- measured on a real 218,682-read panel
+            // FASTQ: zarohla 500, "Length mismatch: Expected axis has 0 elements",
+            // which failed the whole run. A raw FASTQ has no coordinates, so nothing
+            // observed can say "no HLA reads"; the aligned BAM does, and zarohla's probe
+            // counts MAPQ>=1 reads on HLA-A/-B/-C (not the whole MHC, which catches strays) before OptiType runs.
+            // Nothing is lost: the BAM keeps its unmapped reads and zarohla converts
+            // the whole of it back, so OptiType sees essentially every read. The cost
+            // is that typing waits for alignment instead of running beside it, which
+            // on a capped panel-sized FASTQ is minutes.
+            hla_result = OptiTypeHLAFromBAM(bam_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch)
             hla_ch = hla_result.hla
             // PyPGx waits for HLA to complete
             hla_complete_ch = hla_result.hla_json.combine(bam_ch).map { hla_json, bam_file -> bam_file }

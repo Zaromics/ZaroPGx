@@ -172,6 +172,23 @@ class NextflowRunRequest(BaseModel):
     # lockstep with main.nf's params.skip_mtdna default; do not "fix" this default
     # in isolation.
     skip_mtdna: str = "true"
+    # The second mate of a paired-end FASTQ upload, as a path the app wrote. Blank or
+    # absent means single-end. Declared for the reason every field above is: pydantic
+    # silently drops an undeclared one, which would quietly align R1 alone.
+    input2: Optional[str] = None
+
+    @field_validator("input2")
+    @classmethod
+    def _validate_input2(cls, v: Optional[str]) -> Optional[str]:
+        # It reaches the argv (a list, never a shell) and main.nf stages it as a
+        # `path`, so this is defence in depth rather than the only guard. The name
+        # descends from an uploaded filename, so refuse anything that is not a plain
+        # absolute path: control characters and newlines have no business in one.
+        if not v:
+            return None
+        if not v.startswith('/') or any(ord(c) < 32 for c in v):
+            raise ValueError('input2 must be an absolute path without control characters')
+        return v
 
     @field_validator("reference")
     @classmethod
@@ -273,7 +290,7 @@ async def run(request: NextflowRunRequest):
     # Start Nextflow in a separate thread
     thread = threading.Thread(
         target=run_nextflow_job, 
-        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref, request.skip_gatk, request.skip_report, request.source_build, request.skip_mtdna)
+        args=(job_key, request.input, request.input_type, request.patient_id, report_id, request.reference, outdir, request.skip_hla, request.skip_pypgx, request.job_id, request.sample_identifier, request.pharmcat_absent_to_ref, request.pharmcat_unspecified_to_ref, request.skip_gatk, request.skip_report, request.source_build, request.skip_mtdna, request.input2 or '')
     )
     thread.daemon = True
     thread.start()
@@ -305,7 +322,7 @@ def summarize_nextflow_failure(stdout: Optional[str], stderr: Optional[str], tai
             parts.append(f"{label}:\n{stream.strip()[-tail:]}")
     return "\n\n".join(parts) if parts else "Unknown error"
 
-def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', source_build: str = '', skip_mtdna: str = 'true'):
+def build_nextflow_command(input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', source_build: str = '', skip_mtdna: str = 'true', input2: str = ''):
     """Build the Nextflow argv. Pure and side-effect free so it can be unit tested.
 
     Every skip flag the request model accepts must be emitted here; a flag that
@@ -357,9 +374,14 @@ def build_nextflow_command(input_path: str, input_type: str, patient_id: str, re
     if source_build and str(source_build).strip():
         cmd.extend(['--source_build', str(source_build).strip()])
 
+    # Paired-end FASTQ only. Emitted only when set, for the same reason --source_build
+    # is: a blank --input2 means single-end to main.nf, exactly as an absent one does.
+    if input2 and str(input2).strip():
+        cmd.extend(['--input2', str(input2).strip()])
+
     return cmd
 
-def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', source_build: str = '', skip_mtdna: str = 'true'):
+def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id: str, report_id: str, reference: str, outdir: str, skip_hla: str = 'false', skip_pypgx: str = 'false', job_id: Optional[str] = None, sample_identifier: Optional[str] = None, pharmcat_absent_to_ref: str = 'false', pharmcat_unspecified_to_ref: str = 'false', skip_gatk: str = 'false', skip_report: str = 'false', source_build: str = '', skip_mtdna: str = 'true', input2: str = ''):
     """Run Nextflow job in background thread. Nextflow orchestrates individual containers that report their own progress."""
     try:
         # Update job status
@@ -381,6 +403,7 @@ def run_nextflow_job(job_key: str, input_path: str, input_type: str, patient_id:
             pharmcat_unspecified_to_ref=pharmcat_unspecified_to_ref,
             source_build=source_build,
             skip_mtdna=skip_mtdna,
+            input2=input2,
         )
 
         # Set environment variables for job_id passing to individual containers

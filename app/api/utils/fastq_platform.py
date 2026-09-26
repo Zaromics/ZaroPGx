@@ -60,8 +60,10 @@ _PACBIO = re.compile(r"^[^\s/]+/\d+/(\d+_\d+|ccs)$", re.IGNORECASE)
 # MGI/BGI DNBSEQ: ...L<lane>C<column>R<row><read>. Matched at the END of the token
 # rather than anchored whole, because vendors prepend their own sample prefix
 # ("NG1GNACLXB_..._FP200007900L1C025R03808007886") and the grid reference is the part
-# that identifies the instrument.
-_DNBSEQ = re.compile(r"L\d+C\d{3}R\d{3}\d+$")
+# that identifies the instrument. An optional /1 or /2 mate suffix is allowed after it:
+# that is how the sequencer itself writes every read name, and anchoring the grid
+# reference at the very end of the token refused genuine MGI output.
+_DNBSEQ = re.compile(r"L\d+C\d{3}R\d{3}\d+(/[12])?$")
 # Nanopore metadata keys. `ch=` and `start_time=` co-occur; `runid=` is decisive.
 _ONT_KEYS = ("runid=", "flow_cell_id=", "start_time=")
 
@@ -81,7 +83,14 @@ DNBSEQ = "DNBSEQ"
 # Which platforms produce short reads. Drives the length corroboration below, so a
 # new short-read platform must be added here as well as to _classify_name or it will
 # be refused for having "long" reads it does not have.
-_SHORT_READ_PLATFORMS = frozenset({ILLUMINA, DNBSEQ})
+#
+# Public because it is also the alignment lane's admission rule. Detecting ONT or
+# PacBio correctly is not the same as being able to use it: the lane aligns with
+# bwa-mem (a short-read aligner, run through GATK's BwaSpark with no long-read preset)
+# and types HLA with OptiType (short-read only), so a long-read FASTQ it accepted would
+# come back as confident output from tools that were never meant to read it.
+SHORT_READ_PLATFORMS = frozenset({ILLUMINA, DNBSEQ})
+_SHORT_READ_PLATFORMS = SHORT_READ_PLATFORMS
 
 
 @dataclass(frozen=True)
@@ -213,3 +222,61 @@ def detect_fastq_platform(path, max_records: int = 1000) -> PlatformCall:
         )
 
     return PlatformCall(winner, f"{winner} read-name structure; {length_summary}")
+
+
+def _mate_key(name: str) -> str:
+    """A read name reduced to what both mates share.
+
+    The first whitespace token only -- CASAVA 1.8+ puts the mate number after a space
+    ("... 1:N:0:ATCACG") -- with a trailing /1 or /2 removed, which is how MGI and
+    pre-1.8 Illumina mark the mate instead.
+    """
+    token = name.split()[0] if name.split() else ""
+    return re.sub(r"/[12]$", "", token)
+
+
+def mate_names_agree(
+    path1, path2, max_records: int = 1000, min_agreement: float = 0.95
+):
+    """Whether two FASTQs are the two halves of one paired-end run.
+
+    Paired FASTQs list the same reads in the same order, one mate per file, so their
+    read names match record for record once the mate marker is stripped. That is a
+    fact about the files, checked directly -- which matters because the alternative is
+    trusting filenames ("_R1" / "_R2"), and two unrelated single-end runs uploaded
+    together would otherwise be aligned as pairs, inventing mate relationships between
+    reads that never shared a fragment. FastqToSam repeats the check on every record
+    later; this is the cheap version that lets the upload be refused with a reason
+    before any alignment work is spent.
+
+    Bounded to the first `max_records` of each file, like platform detection. Returns
+    (agrees, evidence) so a refusal can say what was compared.
+    """
+    names1, _ = _read_records(Path(path1), max_records)
+    names2, _ = _read_records(Path(path2), max_records)
+    compared = min(len(names1), len(names2))
+    if compared == 0:
+        return False, "one of the two files has no readable reads to pair"
+    same = sum(
+        1
+        for a, b in zip(names1[:compared], names2[:compared])
+        if _mate_key(a) == _mate_key(b)
+    )
+    share = same / compared
+    evidence = f"{same} of the first {compared} read names pair up ({share:.0%})"
+    if share < min_agreement:
+        return False, f"read names do not pair: {evidence}"
+    return True, evidence
+
+
+# "_R1", "_2", ".R2", "-R1_001" (bcl2fastq) directly before the FASTQ extension.
+_MATE_FILENAME = re.compile(r"[._-]R?[12](_\d{3})?\.(fastq|fq)(\.gz)?$", re.IGNORECASE)
+
+
+def looks_like_one_mate(filename) -> bool:
+    """Whether a FASTQ's filename marks it as R1 or R2 of a paired-end run.
+
+    A hint, used only to warn when one mate is uploaded alone. The reads cannot
+    answer this: "1:N:0" and a trailing "/1" appear in true single-end runs too.
+    """
+    return bool(_MATE_FILENAME.search(str(filename or "")))

@@ -143,10 +143,14 @@ def _nextflow_max_wait_seconds() -> float:
 # reaches its `error "Unsupported input type: ${params.input_type}"` and the run dies at
 # workflow definition, so submitting one can only ever produce a failed job.
 #
-# `fastq` is deliberately absent even though main.nf *has* a fastq branch: that branch's
-# first step POSTs to gatk-api's /align-fastq, which answers HTTP 501 because the image
-# ships no aligner, and main.nf's curls use --fail-with-body, so the 501 kills the run.
-# A branch existing is not the same as the branch working.
+# `fastq` is present now, and it was absent for a reason that turned out to be false.
+# main.nf's fastq branch POSTs to gatk-api's /align-fastq, which used to answer 501 on
+# the grounds that "the image ships no aligner". GATK has bundled bwa-mem as a JNI native
+# since GATK 4 (libbwa.Linux.so, inside the fat jar); the endpoint was missing, not the
+# tool. /align-fastq now aligns with FastqToSam -> BwaSpark -> MarkDuplicatesSpark.
+# FileProcessor still refuses the FASTQs the
+# lane genuinely cannot finish -- over the size cap, an undetectable or long-read
+# platform, paired-end -- so what reaches this set is only what the branch can carry.
 #
 # `bcf` is present, and it must still never be ALIASED onto `vcf`. That alias was tried
 # and reverted, and the reason it was wrong has not gone away: it made main.nf take the
@@ -171,7 +175,7 @@ def _nextflow_max_wait_seconds() -> float:
 # `*.g.vcf*` because PharmCAT condemns that filename before reading a byte. Not every
 # gVCF is accepted -- a non-GATK (`<*>`) flavour and a GRCh37 one are refused at
 # FileProcessor, each for a reason the conversion cannot get past.
-NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bcf", "gvcf", "bam", "cram", "sam"})
+NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bcf", "gvcf", "bam", "cram", "sam", "fastq"})
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
@@ -192,11 +196,15 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     stops a mis-set one from waving an input past.
 
     What genuinely cannot work is an input that is flagged unsupported and that the
-    pipeline cannot carry: FASTQ, 23andMe, AncestryDNA, FASTA, BED and unrecognised
-    formats. Those used to be accepted, queued, and then failed minutes later with a
-    Nextflow or gatk-api error the user could do nothing with.
+    pipeline cannot carry: 23andMe, AncestryDNA, FASTA, BED and unrecognised formats.
+    Those used to be accepted, queued, and then failed minutes later with a Nextflow or
+    gatk-api error the user could do nothing with.
 
-    BCF and gVCF used to sit in that list and no longer do, each for its own reason.
+    BCF, gVCF and FASTQ used to sit in that list and no longer do, each for its own
+    reason. FASTQ's is that its refusal rested on "the image ships no aligner", which was
+    false: GATK bundles bwa-mem. A FASTQ can still be flagged unsupported -- over the cap,
+    an undetectable or long-read platform, paired-end -- and this gate refuses those; an
+    accepted one is simply not flagged.
 
     A BCF onto the *vcf* branch would not run and would not say so, because that branch
     stages the upload verbatim and docker/pharmcat's /genotype gates on the ``.bcf``
@@ -1508,7 +1516,19 @@ async def process_file_nextflow_background(
             # Determine skip flags based on workflow needs (after user overrides)
             skip_hla = "true" if not workflow.get("needs_hla", False) else "false"
             skip_pypgx = "true" if not workflow.get("needs_pypgx", False) else "false"
-            skip_gatk = "true" if not workflow.get("needs_gatk", False) else "false"
+            # Alignment is gatk-api work too (FastqToSam, BwaSpark, MarkDuplicatesSpark),
+            # so it keeps GATK on. Keying this on needs_gatk alone told every FASTQ run
+            # to skip the only container that could align it, and main.nf rejected it
+            # 15 s in -- found by the first end-to-end FASTQ upload. needs_gatk itself
+            # stays unset for FASTQ: it would mint gatk_cram_sam_to_bam onto the job.
+            skip_gatk = (
+                "true"
+                if not (
+                    workflow.get("needs_gatk", False)
+                    or workflow.get("needs_alignment", False)
+                )
+                else "false"
+            )
             skip_report = "true" if not workflow.get("needs_report", True) else "false"
             skip_mtdna = "true" if not workflow.get("needs_mtdna", False) else "false"
 
@@ -1567,6 +1587,10 @@ async def process_file_nextflow_background(
 
             payload = {
                 "input": file_path,
+                # The second mate of a paired-end FASTQ upload; blank for everything
+                # else. Set by FileProcessor._accept_fastq_mate only after the two files
+                # have proved they pair, and carried by the runner as --input2.
+                "input2": workflow.get("input2") or "",
                 "input_type": input_type,
                 "patient_id": patient_id,
                 "report_id": str(job_id),  # display report_id = job_id
@@ -1660,8 +1684,10 @@ async def upload_genomic_data(
       cannot be lifted are dropped, and the run fails rather than continuing if an
       implausibly large share of the file fails to lift.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
-    - FASTQ: rejected with 400. ZaroPGx ships no aligner, so raw reads cannot reach a BAM
-      (gatk-api's /align-fastq answers 501); align them yourself and upload the BAM/CRAM/SAM.
+    - FASTQ: short-read, single-end or an R1/R2 pair uploaded together, up to 20 GB, is
+      aligned to GRCh38 (gatk-api's /align-fastq: FastqToSam, BwaSpark, MarkDuplicatesSpark)
+      and then processed as a BAM. Rejected with 400: over the cap, long reads (ONT, PacBio),
+      a platform that cannot be read from the read names, or two files that are not mates.
     - FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no working
       branch for them, so accepting one could only ever produce a failed job.
     - 23andMe/AncestryDNA: rejected with 400, by decision rather than for want of a

@@ -42,9 +42,15 @@ from job_client import JobClient, create_job_client  # pyright: ignore[reportMis
 # upload starts, so the pre-upload plan cannot promise an alignment this endpoint
 # then refuses. A second copy of the logic is what this try/except exists to avoid.
 try:
-    from fastq_platform import detect_fastq_platform  # pyright: ignore[reportMissingImports]
+    from fastq_platform import (  # pyright: ignore[reportMissingImports]
+        SHORT_READ_PLATFORMS,
+        detect_fastq_platform,
+    )
 except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
-    from app.api.utils.fastq_platform import detect_fastq_platform
+    from app.api.utils.fastq_platform import (
+        SHORT_READ_PLATFORMS,
+        detect_fastq_platform,
+    )
 
 # Configuration. Read before logging is configured because the progress-log handler
 # below writes into DATA_DIR.
@@ -3023,6 +3029,68 @@ def _gatk_error_summary(output, limit=600):
     return output.strip()[-limit:]
 
 
+async def _stream_capped_fastq(file, dest, budget):
+    """Write one FASTQ upload to `dest`, drawing down the shared byte budget.
+
+    `budget` is a one-element list so both mates of a pair spend a single allowance;
+    checking each against the cap separately would let 12 GB + 12 GB through. Enforced
+    per chunk, and the partial file is discarded on breach, so an oversized upload
+    costs the bytes already streamed rather than all of them -- the point of doing it
+    here instead of trusting a Content-Length the client controls. Peak RSS during
+    alignment follows the index rather than the read count, so the cap bounds time and
+    disk but cannot make whole-genome FASTQ safe; the refusal says so.
+    """
+    with open(dest, "wb") as handle:
+        while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+            budget[0] -= len(chunk)
+            if budget[0] < 0:
+                handle.close()
+                _discard_output(dest)
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"FASTQ upload exceeds the "
+                        f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for this lane "
+                        "(both mates of a pair count together). ZaroPGx aligns "
+                        "targeted-panel and exome-sized read sets: a whole-genome FASTQ "
+                        "exhausts memory during alignment however long it is given, so "
+                        "accepting one would buy a job that dies partway through. Align "
+                        "whole-genome reads yourself (nf-core/sarek, or bwa-mem against "
+                        "GRCh38) and upload the BAM or CRAM."
+                    ),
+                )
+            handle.write(chunk)
+
+
+def _warm_index_image(job_label, path, chunk_bytes=16 * 1024 * 1024):
+    """Read the bwa-mem index image once, sequentially, before BwaSpark maps it.
+
+    BwaSpark memory-maps the 5.4 GB image and then touches it at random. When the
+    image sits on a Windows-backed mount -- WSL's 9P/DrvFs, which is where
+    ZAROPGX_ALIGN_REFERENCE puts it to keep large files off C: -- every page fault on a
+    cold cache is a 9P round trip, and the aligner effectively stops. Measured
+    2026-09-26 after a reboot: the Spark executor sat in p9_client_rpc for 8+ minutes
+    having read 110 MB of input. A sequential read fills the page cache at 9P's
+    streaming rate -- 150 s cold (36 MB/s), 25 s warm (220 MB/s) -- and the same stuck
+    process resumed at a full core the moment it finished.
+
+    On a native Linux filesystem this is a few seconds and changes nothing, so it is
+    unconditional rather than a guess about which disk the image is on. Returns the
+    bytes read, which is what the test checks: a partial read leaves the remainder to
+    fault in over 9P, which is the stall itself.
+    """
+    started = time.monotonic()
+    total = 0
+    with open(path, "rb", buffering=0) as handle:
+        while block := handle.read(chunk_bytes):
+            total += len(block)
+    logger.info(
+        f"Job {job_label}: warmed {os.path.basename(path)} "
+        f"({total / 1024 ** 3:.1f} GB) in {time.monotonic() - started:.0f}s"
+    )
+    return total
+
+
 def _run_align_step(job_label, argv, label):
     """Run one GATK alignment step, failing loudly on a non-zero exit.
 
@@ -3044,6 +3112,8 @@ def _run_align_step(job_label, argv, label):
 @app.post("/align-fastq")
 async def align_fastq(
     file: UploadFile = File(...),
+    # The second mate of a paired-end run. Absent means single-end.
+    file2: Optional[UploadFile] = File(None),
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
@@ -3089,8 +3159,10 @@ async def align_fastq(
     SM: is the job id, so the VCF sample column stays machine-generated exactly as the
     BAM and VCF lanes already produce it.
 
-    Single-end only, and that is an app-side limit rather than a GATK one: ZaroPGx
-    carries one data file per job, so a mate pair would be aligned from R1 alone.
+    Single-end or paired-end. A second mate arrives as `file2`; the two draw down ONE
+    shared byte budget (a 12 GB + 12 GB pair is 24 GB of reads however it is split),
+    must come from the same platform, and are handed to FastqToSam as -F1/-F2, which
+    itself checks that the read names pair up. BwaSpark then runs in paired mode.
     """
     job_client = None
     work_dir = None
@@ -3142,33 +3214,22 @@ async def align_fastq(
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         filename = safe_upload_name(file.filename or "reads.fastq", local_job_id)
         input_path = os.path.join(work_dir, filename)
+        # A distinct prefix, because safe_upload_name keeps only the extension of the
+        # caller's name: two mates called reads_1.fq.gz / reads_2.fq.gz would otherwise
+        # sanitise to the same path and the second would overwrite the first.
+        mate_path = None
+        if file2 is not None:
+            mate_path = os.path.join(
+                work_dir,
+                "mate2_" + safe_upload_name(file2.filename or "reads.fastq", local_job_id),
+            )
 
         # Capped while streaming, not by trusting a client-supplied Content-Length,
-        # and the partial file is discarded on breach. Peak RSS during alignment
-        # follows the index rather than the read count, so this bounds time and disk
-        # but cannot make whole-genome FASTQ safe -- which is why the refusal above
-        # the cap stays honest instead of implying more time would help.
-        written = 0
-        with open(input_path, "wb") as handle:
-            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
-                written += len(chunk)
-                if written > FASTQ_MAX_UPLOAD_BYTES:
-                    handle.close()
-                    _discard_output(input_path)
-                    raise HTTPException(
-                        status_code=413,
-                        detail=(
-                            f"FASTQ upload exceeds the "
-                            f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for this "
-                            "lane. ZaroPGx aligns targeted-panel and exome-sized read "
-                            "sets: a whole-genome FASTQ exhausts memory during "
-                            "alignment however long it is given, so accepting one "
-                            "would buy a job that dies partway through. Align "
-                            "whole-genome reads yourself (nf-core/sarek, or bwa-mem "
-                            "against GRCh38) and upload the BAM or CRAM."
-                        ),
-                    )
-                handle.write(chunk)
+        # and the partial file is discarded on breach. One budget across both mates.
+        budget = [FASTQ_MAX_UPLOAD_BYTES]
+        await _stream_capped_fastq(file, input_path, budget)
+        if file2 is not None:
+            await _stream_capped_fastq(file2, mate_path, budget)
 
         call = detect_fastq_platform(input_path)
         if not call.determined:
@@ -3184,7 +3245,42 @@ async def align_fastq(
                     "yourself and upload the BAM, CRAM or SAM."
                 ),
             )
-        logger.info(f"Job {local_job_id}: platform {call.platform} ({call.evidence})")
+        # The same admission rule the app's planner applies, repeated here because a
+        # hand-run `nextflow run --input_type fastq` reaches this route without ever
+        # passing through it. BwaSpark has no long-read preset and OptiType is
+        # short-read only, so a long-read FASTQ aligned here would produce confident
+        # output from tools that cannot read it.
+        if call.platform not in SHORT_READ_PLATFORMS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"This FASTQ was produced by a long-read platform ({call.platform}: "
+                    f"{call.evidence}). This route aligns short reads only, with "
+                    "bwa-mem. Align long reads with minimap2 against GRCh38 and upload "
+                    "the resulting BAM or CRAM."
+                ),
+            )
+        if mate_path:
+            # Two files that disagree about their instrument are not a mate pair, and
+            # PL: can only carry one answer. Checked before any GATK work is spent;
+            # FastqToSam then checks the read names themselves.
+            mate_call = detect_fastq_platform(mate_path)
+            if mate_call.platform != call.platform:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "The two FASTQs do not come from the same sequencing run: the "
+                        f"first reads as {call.platform or 'undetermined'} "
+                        f"({call.evidence}) and the second as "
+                        f"{mate_call.platform or 'undetermined'} ({mate_call.evidence}). "
+                        "A mate pair is two halves of one run. Upload the matching R1 "
+                        "and R2, or each as its own single-end analysis."
+                    ),
+                )
+        logger.info(
+            f"Job {local_job_id}: platform {call.platform} ({call.evidence}), "
+            f"{'paired' if mate_path else 'single'}-end"
+        )
 
         output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
         unaligned = os.path.join(work_dir, "unaligned.bam")
@@ -3205,6 +3301,7 @@ async def align_fastq(
                 [
                     "gatk", "FastqToSam",
                     "-F1", input_path,
+                    *(["-F2", mate_path] if mate_path else []),
                     "-O", unaligned,
                     "-SM", job_id or local_job_id,
                     "-RG", local_job_id,
@@ -3215,6 +3312,14 @@ async def align_fastq(
                 ],
                 "FastqToSam",
             )
+
+        if job_client:
+            await job_client.log_progress("Loading the alignment index")
+
+        # Before BwaSpark maps the index, not after -- see _warm_index_image. Under the
+        # semaphore because it is a multi-GB read, the same reason the GATK steps are.
+        async with _to_thread_semaphore:
+            await asyncio.to_thread(_warm_index_image, local_job_id, ALIGN_INDEX_IMAGE)
 
         if job_client:
             await job_client.log_progress("Aligning with bwa-mem")
@@ -3238,7 +3343,7 @@ async def align_fastq(
                     "-O", aligned,
                     "-R", ALIGN_REFERENCE_FASTA,
                     "--bwa-mem-index-image", ALIGN_INDEX_IMAGE,
-                    "--single-end-alignment", "true",
+                    "--single-end-alignment", "false" if mate_path else "true",
                     "--tmp-dir", work_dir,
                 ],
                 "BwaSpark",
@@ -3292,6 +3397,7 @@ async def align_fastq(
             "platform": call.platform,
             "platform_evidence": call.evidence,
             "duplicates_marked": True,
+            "paired": bool(mate_path),
             "message": (
                 f"Aligned {filename} to GRCh38 ({records} records, duplicates marked)"
             ),

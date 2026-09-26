@@ -113,6 +113,12 @@ EXPECTED_INTERPOLATIONS = {
     "bcf",
     "cram",
     "fastq",
+    # Audited 2026-09-26: FastqToBAM's second mate. A `path` input, the same kind as
+    # `fastq` above, and named the same way -- upload_mate2_{safe_upload_basename(...)}
+    # -- so its provenance is the primary's. With no mate it is the repo's own
+    # assets/empty.tsv. The runner also refuses a relative or control-character input2
+    # before Nextflow ever sees it.
+    "fastq2",
     "gvcf",
     "sam",
     "vcf",

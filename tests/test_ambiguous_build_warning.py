@@ -122,6 +122,9 @@ _EXPECTED_METADATA_KEYS = {
     "reference_genome_source",
     "reference_genome_ambiguous",
     "reference_genome_candidates",
+    # Detected from read names for FASTQ and None elsewhere, carried by every branch so
+    # the UI can read it without asking which format it was handed.
+    "sequencing_platform",
 }
 
 

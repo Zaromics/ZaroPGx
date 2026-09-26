@@ -35,7 +35,13 @@ from app.api.models import (
     SequencingProfile,
     VCFHeaderInfo,
 )
-from app.api.utils.fastq_platform import PlatformCall, detect_fastq_platform
+from app.api.utils.fastq_platform import (
+    SHORT_READ_PLATFORMS,
+    PlatformCall,
+    detect_fastq_platform,
+    looks_like_one_mate,
+    mate_names_agree,
+)
 from app.api.utils.file_utils import has_index_file, is_compressed_file
 from app.api.utils.header_inspector import inspect_header
 from app.utils.env import env_flag
@@ -676,6 +682,25 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
         workflow["recommendations"].append(
             "<p>• A FASTQ re-exported from SRA loses the original read names; the "
             "original run files keep them.</p>"
+        )
+        return
+
+    # A platform we can NAME is not necessarily one we can USE. The lane aligns with
+    # bwa-mem (GATK's BwaSpark, which exposes no long-read preset) and types HLA with
+    # OptiType, which is short-read only, so an ONT or PacBio FASTQ would come back as
+    # confident output from tools that were never meant to read it.
+    if call.platform not in SHORT_READ_PLATFORMS:
+        workflow["unsupported"] = True
+        workflow["unsupported_reason"] = (
+            f"This FASTQ was produced by a long-read platform ({call.platform}: "
+            f"{call.evidence}). ZaroPGx aligns short reads only -- its aligner is "
+            "bwa-mem and its HLA typing is OptiType, both built for short reads -- so "
+            "it would analyse these reads with tools that cannot read them properly "
+            "rather than refuse. Align long reads with minimap2 against GRCh38 and "
+            "upload the resulting BAM or CRAM."
+        )
+        workflow["recommendations"].append(
+            "<p>• Long reads: align with minimap2 against GRCh38, then upload the BAM or CRAM.</p>"
         )
         return
 
@@ -1655,7 +1680,8 @@ class FileProcessor:
         Determine the appropriate workflow based on file analysis.
 
         This method implements the detailed workflow logic from workflow_logic.md:
-        - FASTQ files: refused (no aligner ships with ZaroPGx; see the branch below)
+        - FASTQ files: aligned to GRCh38 when short-read, capped and platform-legible;
+          otherwise refused with the reason (see _plan_fastq)
         - CRAM files: conversion to BAM with specific tools and considerations
         - BAM files: OptiType/HLA typing + PyPGx pipeline with detailed recommendations
         - VCF files: direct PyPGx + PharmCAT with outside calls
@@ -1736,19 +1762,11 @@ class FileProcessor:
         if gatk_enabled is None:
             gatk_enabled = env_flag("GATK_ENABLED", False)
 
-        # FASTQ: refused at upload, not analysed.
-        #
-        # ZaroPGx ships no aligner. Raw reads have to be aligned before any downstream
-        # step can touch them, and the only route to a BAM in this stack is gatk-api's
-        # /align-fastq, which answers HTTP 501 (docker/gatk-api/gatk_api.py). Since
-        # pipelines/pgx/main.nf's curls carry --fail-with-body, that 501 kills the run.
-        # So the fastq branch in main.nf exists but cannot complete: accepting a FASTQ
-        # could only ever buy the user a job that dies minutes later. None of the
-        # needs_* flags are set, because there is no workflow to plan.
-        #
-        # Also note process_files() analyses files[0] only. Even if alignment existed,
-        # a paired-read upload would carry one mate, so "upload both mates" was never
-        # true either; the copy below says single- and paired-end alike are refused.
+        # FASTQ: planned or refused by _plan_fastq -- see its docstring. It used to be
+        # refused outright on the grounds that "ZaroPGx ships no aligner", which was
+        # never true: GATK bundles bwa-mem, and only gatk-api's /align-fastq endpoint was
+        # missing. A mate pair is taken in process_files (_accept_fastq_mate), which is
+        # where both files are visible.
         if analysis.file_type == FileType.FASTQ:
             _plan_fastq(analysis, workflow)
 
@@ -2123,7 +2141,7 @@ class FileProcessor:
                 "<p>Priority 2 (Development): BAM, CRAM, SAM, BCF, all NGS-derived.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Not accepted: FASTQ. ZaroPGx ships no aligner — align the reads to GRCh38/hg38 yourself and upload the resulting BAM, CRAM or SAM.</p>"
+                "<p>Priority 2 (Development): FASTQ, short-read, single- or paired-end, up to 20 GB, aligned to GRCh38 first.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Not accepted: 23andMe and AncestryDNA genotyping exports. That is "
@@ -2244,6 +2262,92 @@ class FileProcessor:
 
         return workflow
 
+    async def _accept_fastq_mate(self, mates, r1_path, workflow, result) -> bool:
+        """Take the second mate of a paired-end FASTQ upload, or refuse the upload.
+
+        Four things have to hold, each checked on the files rather than assumed from
+        their names:
+
+        * exactly one other data file -- a pair is R1 and R2, nothing else;
+        * it is a FASTQ from the same platform as R1 -- PL: carries one answer;
+        * the read names pair up record for record (mate_names_agree) -- two unrelated
+          single-end runs uploaded together would otherwise be aligned as pairs,
+          inventing mate relationships between reads that never shared a fragment;
+        * the two together fit the same byte cap a single FASTQ does -- peak RSS in
+          alignment follows the index, and a 12 GB + 12 GB pair is 24 GB of reads.
+
+        The saved mate is registered in result["file_paths"] BEFORE any check, so a
+        refused upload leaves no bytes behind: the refusal path discards every path in
+        that list, and this one must be in it.
+
+        On success the mate's path travels as workflow["input2"] to the runner and on
+        to main.nf's --input2. Returns whether the mate was accepted.
+        """
+
+        def refuse(reason: str) -> bool:
+            workflow["unsupported"] = True
+            workflow["unsupported_reason"] = reason
+            _clear_needs_flags(workflow)
+            return False
+
+        if len(mates) != 1:
+            return refuse(
+                f"This upload has {len(mates) + 1} data files. A FASTQ upload is either "
+                "one single-end file or the two mates of one paired-end run (R1 and "
+                "R2). Upload each other file as its own analysis."
+            )
+
+        mate = mates[0]
+        mate_path = (
+            self.temp_dir / f"upload_mate2_{safe_upload_basename(mate.filename)}"
+        )
+        with open(mate_path, "wb") as handle:
+            while chunk := await mate.read(8 * 1024 * 1024):
+                handle.write(chunk)
+        result["file_paths"].append(str(mate_path))
+
+        if self._detect_file_type(mate_path) != FileType.FASTQ:
+            return refuse(
+                f"The second file ({html.escape(str(mate.filename or ''))}) is not a "
+                "FASTQ, so it cannot be the other mate of this read set. Upload each "
+                "data file as its own analysis."
+            )
+
+        combined = os.path.getsize(r1_path) + os.path.getsize(mate_path)
+        if combined > FASTQ_MAX_UPLOAD_BYTES:
+            return refuse(
+                f"These two FASTQs total {combined / 1024 ** 3:.1f} GB, above the "
+                f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for the alignment lane "
+                "(both mates count together). Whole-genome read sets exhaust memory "
+                "during alignment however long they are given. Align them yourself "
+                "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM or CRAM."
+            )
+
+        r1_call = detect_fastq_platform(r1_path)
+        r2_call = detect_fastq_platform(mate_path)
+        if r1_call.platform != r2_call.platform:
+            return refuse(
+                "The two FASTQs do not come from the same sequencing run: the first "
+                f"reads as {r1_call.platform or 'undetermined'} and the second as "
+                f"{r2_call.platform or 'undetermined'}. Upload the matching R1 and R2, "
+                "or each file as its own single-end analysis."
+            )
+
+        paired, evidence = mate_names_agree(r1_path, mate_path)
+        if not paired:
+            return refuse(
+                "These two FASTQs are not mates of one paired-end run: "
+                f"{evidence}. Paired files list the same reads in the same order. "
+                "Upload the matching R1 and R2, or each file as its own single-end "
+                "analysis."
+            )
+
+        workflow["input2"] = str(mate_path)
+        workflow["recommendations"].append(
+            f"<p>Paired-end: both mates will be aligned together ({evidence}).</p>"
+        )
+        return True
+
     async def process_files(
         self,
         files: List,
@@ -2330,28 +2434,42 @@ class FileProcessor:
                 workflow["workflow_type"] = "genomic_analysis"
 
                 # A second data file alongside a FASTQ is almost always the other
-                # mate, and for FASTQ specifically the generic "we analysed one of
-                # them" warning is not good enough: analysing R1 alone silently
-                # halves the evidence and produces a report that looks complete.
-                #
-                # Paired-end is refused rather than half-run because the ingest path
-                # carries ONE file end to end -- process_files analyses files[0] and
-                # publishes a single path, and main.nf's FastqToBAM takes a single
-                # `path fastq`. GATK's aligner handles paired reads perfectly well;
-                # nothing upstream of it can deliver a pair yet. Wiring that through
-                # is its own change, and until it happens saying so is the honest
-                # answer.
-                if ignored_files and workflow.get("file_type") == FileType.FASTQ.value:
-                    workflow["unsupported"] = True
-                    workflow["unsupported_reason"] = (
-                        "ZaroPGx cannot analyse paired-end FASTQ yet. It carries one "
-                        "data file through the whole job, so a mate pair would be "
-                        "aligned from R1 alone -- half the evidence, in a report that "
-                        "would look complete. Upload a single-end FASTQ, or align the "
-                        "pair yourself (bwa-mem against GRCh38, or nf-core/sarek) and "
-                        "upload the resulting BAM, CRAM or SAM."
+                # mate. For every other format the extra file is warned about and
+                # dropped below; for FASTQ that would align R1 alone -- half the
+                # evidence, in a report that looks complete -- so it is either taken
+                # as the second mate or the upload is refused. Never silently halved.
+                if (
+                    ignored_files
+                    and workflow.get("file_type") == FileType.FASTQ.value
+                    and not workflow.get("unsupported")
+                ):
+                    mates = [f for f in data_files if f is not primary_file]
+                    accepted = await self._accept_fastq_mate(
+                        mates, temp_file_path, workflow, result
                     )
-                    _clear_needs_flags(workflow)
+                    if accepted:
+                        # R2 is used, not ignored: no "was ignored" warning for it.
+                        ignored_files = []
+
+                # One mate of a pair, uploaded alone, still aligns -- as single-end,
+                # with half the depth and no mate to rescue reads in paralogous
+                # genes. Checked against a WGS CRAM of the same sample: R1 alone
+                # missed CYP2B6 785A>G (every alt read MAPQ<20 against CYP2B7) and
+                # NAT2 590G>A (2 alt of 11 reads), which the pair called correctly.
+                # The filename is the only honest signal: "1:N:0" and "/1" appear in
+                # true single-end runs too.
+                if (
+                    workflow.get("file_type") == FileType.FASTQ.value
+                    and not workflow.get("unsupported")
+                    and not workflow.get("input2")
+                    and looks_like_one_mate(primary_file.filename)
+                ):
+                    workflow["warnings"].append(
+                        f"<p>⚠️ {html.escape(str(primary_file.filename))} looks like one "
+                        "mate of a paired-end run. Aligned alone, heterozygous variants "
+                        "in genes with close paralogs (CYP2B6, CYP2D6) can be missed. "
+                        "Upload R1 and R2 together.</p>"
+                    )
 
                 if ignored_files:
                     # html.escape, not safe_upload_basename: the point of this warning is
@@ -2397,8 +2515,13 @@ class FileProcessor:
                     # User disabled OptiType, so disable HLA even if workflow needs it
                     workflow["needs_hla"] = False
                 if gatk_enabled is not None and not workflow["gatk_enabled"]:
-                    # User disabled GATK, so disable GATK even if workflow needs it
+                    # User disabled GATK, so disable GATK even if workflow needs it.
+                    # Alignment goes with it: FastqToSam, BwaSpark and
+                    # MarkDuplicatesSpark are all GATK tools, and leaving an alignment
+                    # planned under a disabled GATK would contradict skip_gatk. A FASTQ
+                    # run then fails loudly in main.nf, as a CRAM/SAM one already does.
                     workflow["needs_gatk"] = False
+                    workflow["needs_alignment"] = False
                 if pypgx_enabled is not None and not workflow["pypgx_enabled"]:
                     # User disabled PyPGx, so disable PyPGx even if workflow needs it
                     workflow["needs_pypgx"] = False

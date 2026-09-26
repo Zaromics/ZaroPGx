@@ -366,6 +366,21 @@ DISPATCHABLE_FORMATS = frozenset(
 )
 
 
+def _fastq_platform_or_none(filepath):
+    """The detected sequencing platform of a FASTQ, or None when it cannot be named.
+
+    Never raises: this only feeds a display field, and a header panel must not fail
+    over it. The refusal that an undetermined platform actually warrants is made by
+    FileProcessor, from the same detector.
+    """
+    try:
+        from app.api.utils.fastq_platform import detect_fastq_platform
+
+        return detect_fastq_platform(filepath).platform
+    except Exception:  # pragma: no cover - display-only, best effort
+        return None
+
+
 def inspect_header(
     filepath: str,
     max_bytes: Optional[int] = None,
@@ -619,6 +634,7 @@ def inspect_header(
                 "reference_genome_source": build["source"],
                 "reference_genome_ambiguous": build["ambiguous"],
                 "reference_genome_candidates": build["candidates"],
+                "sequencing_platform": None,  # detected for FASTQ only; see that branch
             },
             "sequences": sequences_norm,
             "samples": res.get("samples") or [],  # <-- all samples
@@ -693,6 +709,7 @@ def inspect_header(
                 "reference_genome_source": build["source"],
                 "reference_genome_ambiguous": build["ambiguous"],
                 "reference_genome_candidates": build["candidates"],
+                "sequencing_platform": None,  # detected for FASTQ only; see that branch
             },
             "sequences": sequences,
             "sample": None,
@@ -727,16 +744,17 @@ def inspect_header(
                 "reference_genome_source": None,
                 "reference_genome_ambiguous": False,
                 "reference_genome_candidates": [],
+                # The platform the alignment lane will write into @RG PL:, from the
+                # same detector the planner and /align-fastq use. Without it the
+                # header panel showed "Sequencing Platform: Unknown" directly above a
+                # plan reading "Detected platform: DNBSEQ" -- seen on the live page.
+                "sequencing_platform": _fastq_platform_or_none(filepath),
             },
             "sequences": [],
-            "sample": next(
-                (
-                    rec.get("id")
-                    for rec in first_records
-                    if isinstance(rec, dict) and rec.get("id")
-                ),
-                None,
-            ),
+            # None, deliberately. A FASTQ carries no sample name; the first read's
+            # identifier is not one, and the panel used to show it as "Sample ID",
+            # inviting someone to take a flowcell coordinate for their sample.
+            "sample": None,
             "format_specific": {
                 "fastq_preview_records": first_records,
                 "total_records": res.get("total_records")
@@ -767,6 +785,7 @@ def inspect_header(
                 "reference_genome_source": None,
                 "reference_genome_ambiguous": False,
                 "reference_genome_candidates": [],
+                "sequencing_platform": None,  # detected for FASTQ only; see that branch
             },
             "sequences": [
                 {"name": s.get("id") or s.get("header"), "length": s.get("length")}
@@ -801,6 +820,7 @@ def inspect_header(
                 "reference_genome_source": None,
                 "reference_genome_ambiguous": False,
                 "reference_genome_candidates": [],
+                "sequencing_platform": None,  # detected for FASTQ only; see that branch
             },
             "sequences": [],
             "sample": None,

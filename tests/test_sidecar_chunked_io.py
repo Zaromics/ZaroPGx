@@ -688,10 +688,11 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
             ):
                 guarded_to_thread_calls.append(call)
 
-    assert len(guarded_to_thread_calls) == 8, (
-        f"expected 8 semaphore-guarded asyncio.to_thread() calls "
+    assert len(guarded_to_thread_calls) == 9, (
+        f"expected 9 semaphore-guarded asyncio.to_thread() calls "
         f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf, gvcf_to_vcf, and "
-        f"align_fastq's three GATK steps), found {len(guarded_to_thread_calls)}"
+        f"align_fastq's index warm-up plus its three GATK steps), "
+        f"found {len(guarded_to_thread_calls)}"
     )
     # The audited set of heavy workers each guarded call may drive. Anything
     # else appearing here means a new call site was added without re-auditing
@@ -706,6 +707,10 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
         # process, and BwaSpark holds a 5.4 GB index image -- exactly what this
         # semaphore exists to keep from running two-at-a-time.
         "_run_align_step",
+        # Reads the 5.4 GB index image sequentially before BwaSpark maps it; on a
+        # 9P-backed mount the mmap otherwise stalls. A multi-GB read, so it takes
+        # the same semaphore as the GATK steps it precedes.
+        "_warm_index_image",
     }
     driven = set()
     for call in guarded_to_thread_calls:

@@ -205,13 +205,126 @@ def test_gzipped_fastq_is_refused_too(upload):
     assert "fastq" in resp.json()["detail"].lower()
 
 
-def test_paired_fastq_is_refused_rather_than_analysed_as_one_mate(upload):
-    """``process_files`` reads files[0] only: a mate pair was half-analysed, silently."""
-    resp = upload(("reads_R1.fastq", FASTQ_BYTES), ("reads_R2.fastq", FASTQ_BYTES))
+def _dnbseq_mate(mate: int, n: int = 40, offset: int = 0) -> bytes:
+    """A DNBSEQ FASTQ mate as the instrument writes it: /1 or /2 on every name."""
+    return b"".join(
+        b"@FP200007900L1C%03dR038%08d/%d\n%s\n+\n%s\n"
+        % (i, i + offset, mate, b"ACGT" * 25, b"I" * 100)
+        for i in range(1, n + 1)
+    )
+
+
+def _capture_workflow(monkeypatch):
+    """Record the workflow the upload hands to the pipeline, instead of discarding it."""
+    from app.api.routes import upload_router
+
+    seen = {}
+
+    async def capture(file_path, patient_id, data_id, workflow, *args, **kwargs):
+        seen["file_path"] = file_path
+        seen["workflow"] = workflow
+
+    monkeypatch.setattr(
+        upload_router, "process_file_nextflow_background_with_db", capture
+    )
+    return seen
+
+
+def test_a_mate_pair_is_aligned_together_not_half_analysed(upload, monkeypatch):
+    """``process_files`` used to read files[0] only, so a mate pair was half-analysed
+    silently. Both mates now travel to the pipeline: R1 as the input, R2 as input2."""
+    seen = _capture_workflow(monkeypatch)
+    resp = upload(
+        ("reads_R1.fastq", _dnbseq_mate(1)), ("reads_R2.fastq", _dnbseq_mate(2))
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert seen["workflow"].get("input2"), "the second mate never reached the pipeline"
+    assert seen["workflow"]["input2"] != seen["file_path"]
+
+
+def test_a_mate_pair_is_not_reported_as_an_ignored_file(upload, monkeypatch):
+    """R2 is used, so the generic "one data file per job ... was ignored" warning
+    would be false."""
+    _capture_workflow(monkeypatch)
+    resp = upload(
+        ("reads_R1.fastq", _dnbseq_mate(1)), ("reads_R2.fastq", _dnbseq_mate(2))
+    )
+
+    warnings = " ".join(resp.json()["workflow"]["options"]["warnings"]).lower()
+    assert "ignored" not in warnings
+
+
+def _warnings(resp) -> str:
+    return " ".join(resp.json()["workflow"]["options"]["warnings"]).lower()
+
+
+def test_one_mate_uploaded_alone_is_aligned_but_warned(upload, monkeypatch):
+    """R1 without R2 still aligns (single-end), but misses hets in paralogous genes:
+    against a WGS CRAM of one sample, R1 alone lost CYP2B6 785A>G and NAT2 590G>A,
+    which the pair called. Accepted, and the user is told what the missing mate costs.
+    """
+    seen = _capture_workflow(monkeypatch)
+    resp = upload(("reads_R1_001.fastq", _dnbseq_mate(1)))
+
+    assert resp.status_code == 200, resp.text
+    assert not seen["workflow"].get("input2")
+    warnings = _warnings(resp)
+    assert "one mate of a paired-end run" in warnings
+    assert "upload r1 and r2 together" in warnings
+
+
+def test_a_single_end_fastq_is_not_warned_about_a_mate(upload, monkeypatch):
+    _capture_workflow(monkeypatch)
+    resp = upload(("reads.fastq", _dnbseq_mate(1)))
+
+    assert resp.status_code == 200, resp.text
+    assert "paired-end" not in _warnings(resp)
+
+
+def test_a_mate_pair_is_not_warned_about_a_missing_mate(upload, monkeypatch):
+    _capture_workflow(monkeypatch)
+    resp = upload(
+        ("reads_R1.fastq", _dnbseq_mate(1)), ("reads_R2.fastq", _dnbseq_mate(2))
+    )
+
+    assert "one mate of a paired-end run" not in _warnings(resp)
+
+
+def test_two_fastqs_that_are_not_mates_are_refused(upload):
+    """Two unrelated read sets uploaded together must not be aligned as pairs --
+    that would invent mate relationships between reads that never shared a fragment."""
+    resp = upload(
+        ("a_R1.fastq", _dnbseq_mate(1)),
+        ("b_R2.fastq", _dnbseq_mate(2, offset=500000)),
+    )
 
     assert resp.status_code == 400, resp.text
-    assert "paired" in resp.json()["detail"].lower()
+    assert "not mates" in resp.json()["detail"]
     assert upload.created_patients == []
+
+
+def test_three_fastqs_are_refused(upload, monkeypatch):
+    """A pair is R1 and R2; a third file has no place in one run."""
+    # Real DNBSEQ reads, so the primary passes platform detection and the upload
+    # reaches the pairing step, where three data files is refused on the count alone.
+    resp = upload(
+        ("r1.fastq", _dnbseq_mate(1)),
+        ("r2.fastq", _dnbseq_mate(2)),
+        ("r3.fastq", _dnbseq_mate(1)),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "3 data files" in resp.json()["detail"]
+
+
+def test_a_refused_pair_leaves_no_bytes_behind(upload, tmp_path):
+    """The mate is saved before it is checked, so it must be cleaned on refusal too."""
+    uploads = tmp_path / "uploads"
+    upload(
+        ("a_R1.fastq", _dnbseq_mate(1)),
+        ("b_R2.fastq", _dnbseq_mate(2, offset=500000)),
+    )
+    assert list(uploads.glob("*")) == []
 
 
 def test_a_refused_upload_leaves_no_bytes_behind(upload, tmp_path):

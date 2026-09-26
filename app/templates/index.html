@@ -584,8 +584,8 @@
                             <form action="/upload/genomic-data" method="post" enctype="multipart/form-data" id="uploadForm">
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File(s)</label>
-                                    <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.gvcf,.gvcf.gz,.bcf,.bam,.sam,.cram,.bai,.crai,.csi,.tbi,.idx" multiple required>
-                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38; a file aligned to T2T-CHM13 is detected and refused.) Index file may be included. A BCF is converted to a bgzipped VCF with bcftools first, then analysed as one. A GRCh38 gVCF from GATK is genotyped with GenotypeGVCFs over PharmCAT's own positions first, which makes it a better input than a plain VCF — the reference calls at pharmacogene positions come from your file's reference-confidence blocks rather than being assumed; gVCFs from callers that write &lt;*&gt; instead of &lt;NON_REF&gt;, and GRCh37 gVCFs, are refused with the reason. Formats BAM, SAM, CRAM, BCF and gVCF are in testing. 23andMe and AncestryDNA exports are not accepted — a decision, not pending work: a chip carries under a third of the positions PharmCAT calls on and cannot show a gene duplication. Support for BED and others is in development.</div>
+                                    <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.gvcf,.gvcf.gz,.bcf,.bam,.sam,.cram,.fastq,.fq,.fastq.gz,.fq.gz,.bai,.crai,.csi,.tbi,.idx" multiple required>
+                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38; a file aligned to T2T-CHM13 is detected and refused.) Index file may be included. A BCF is converted to a bgzipped VCF with bcftools first, then analysed as one. A GRCh38 gVCF from GATK is genotyped with GenotypeGVCFs over PharmCAT's own positions first, which makes it a better input than a plain VCF — the reference calls at pharmacogene positions come from your file's reference-confidence blocks rather than being assumed; gVCFs from callers that write &lt;*&gt; instead of &lt;NON_REF&gt;, and GRCh37 gVCFs, are refused with the reason. A short-read FASTQ, or an R1/R2 pair (up to 20 GB together), is aligned to GRCh38 first. Formats BAM, SAM, CRAM, BCF, gVCF and FASTQ are in testing. 23andMe and AncestryDNA exports are not accepted — a decision, not pending work: a chip carries under a third of the positions PharmCAT calls on and cannot show a gene duplication. Support for BED and others is in development.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -1083,8 +1083,16 @@
                     steps.push({ name: 'Liftover to GRCh38 (GATK)', icon: 'bi-arrow-left-right' });
                 }
 
-                // GATK needed for certain formats or explicit flag. `fastq` is absent:
-                // FASTQ uploads are refused, so there is no FASTQ alignment to draw.
+                // FASTQ -> BAM. Its own step rather than the generic "GATK Processing"
+                // row below, because it is a different piece of work (read alignment,
+                // not a format conversion) and the backend mints it as its own step,
+                // gatk_alignment. It used to be absent entirely: FASTQ was refused
+                // outright, on the false grounds that no aligner shipped.
+                if (wf.needs_alignment) {
+                    steps.push({ name: 'Align reads to GRCh38 (bwa via GATK)', icon: 'bi-align-start' });
+                }
+
+                // GATK needed for CRAM/SAM conversion or an explicit flag.
                 //
                 // The `&& !wf.needs_conversion` mirrors workflow_registry.py's
                 // gatk_cram_sam_to_bam template exactly (when="needs_gatk",
@@ -1094,7 +1102,7 @@
                 // that already has its own conversion row two blocks above. A BCF/gVCF
                 // does set needs_gatk (its conversion runs in the gatk-api container),
                 // which is why the veto is needed on this side too.
-                const needsGatk = (!!wf.needs_gatk || !!wf.needs_alignment || ['sam', 'cram'].includes(fileType)) && !wf.needs_conversion;
+                const needsGatk = (!!wf.needs_gatk || ['sam', 'cram'].includes(fileType)) && !wf.needs_conversion;
                 if (needsGatk) {
                     steps.push({ name: 'GATK Processing', icon: 'bi-cpu' });
                 }
@@ -2072,7 +2080,9 @@
                         vcf_info: rawData.metadata ? {
                             reference_genome: rawData.metadata.reference_genome || 'Unknown',
                             reference_genome_file: rawData.metadata.reference_genome_path || null,
-                            sequencing_platform: rawData.metadata.created_by || 'Unknown',
+                            // A FASTQ's platform is detected from its read names; prefer
+                            // it. created_by stays the fallback for other formats.
+                            sequencing_platform: rawData.metadata.sequencing_platform || rawData.metadata.created_by || 'Unknown',
                             sequencing_profile: (function() {
                                 // Prefer explicit platform/profile if present later; fallback to contig count
                                 const seqCount = rawData.sequences ? rawData.sequences.length : 0;

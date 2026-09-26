@@ -46,8 +46,8 @@ STEP_TO_STAGE: Mapping[str, WorkflowStage] = {
     # sat at [pending] for the whole conversion. Do not re-split the name without
     # adding StepTemplates and glyphs for both halves.
     "gatk_cram_sam_to_bam": WorkflowStage.GATK,
-    # FASTQ->BAM. Mapped, banded and registered, but unreachable: FASTQ is refused
-    # at ingest (no aligner ships). See workflow_registry's template comment.
+    # FASTQ->BAM, via gatk-api's /align-fastq. Reachable since that endpoint was
+    # implemented; see workflow_registry's template comment.
     "gatk_alignment": WorkflowStage.GATK,
     # BCF -> bgzipped VCF runs inside the gatk-api container (bcftools), so it
     # surfaces under the GATK stage rather than falling through
