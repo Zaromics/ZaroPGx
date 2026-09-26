@@ -78,7 +78,7 @@ SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 
 ## FASTQ Format — accepted up to 20 GB
 
-FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. ZaroPGx accepts short-read FASTQ, single-end or as an R1/R2 pair uploaded together, and aligns it for you with BWA against GRCh38 before running the usual pipeline. The two files of a pair are checked against each other: they must come from the same platform and their read names must pair up, so two unrelated read sets cannot be aligned as mates.
+FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. ZaroPGx accepts short-read FASTQ, single-end or as an R1/R2 pair uploaded together, and aligns it for you with BWA against GRCh38 before running the usual pipeline. The two files of a pair are checked against each other: they must come from the same platform and their read names must pair up, so two unrelated read sets cannot be aligned as mates, and one file uploaded twice is refused too.
 
 If your run is paired-end, upload both files. R1 alone is aligned as single-end, with half the reads and no mate to help place reads in genes with close copies (CYP2B6, CYP2D6), so heterozygous variants there can be missed. ZaroPGx warns when a lone file's name looks like one mate (`_R1`, `_2.fq.gz`).
 
@@ -86,7 +86,7 @@ Three limits apply, and all three are about the file rather than about ZaroPGx:
 
 **Short reads only.** Oxford Nanopore and PacBio reads are recognised and refused: the aligner and the HLA typing are both short-read tools. Align long reads with minimap2 against GRCh38 and upload the BAM or CRAM.
 
-**Size — 20 GB across all uploaded reads.** This covers targeted PGx panels and exome-sized read sets. It does not cover whole-genome FASTQ, and raising it would not help: the memory an aligner needs is set by the size of the genome index, not by how many reads you give it, so a whole-genome upload exhausts memory no matter how much time it is allowed. Above the cap the honest answer is still no. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
+**Size — 20 GB across all uploaded reads.** This covers targeted PGx panels and exome-sized read sets. It does not cover whole-genome FASTQ: alignment writes the reads out three times (unaligned, aligned and duplicate-marked BAM) on one machine, so a whole-genome read set would need several times its own size in free disk and many hours of alignment. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
 
 **A detectable sequencing platform.** Alignment has to record which instrument produced the reads — the `@RG PL:` field — because GATK and PyPGx both read it. A FASTQ does not state this anywhere, so ZaroPGx works it out from the structure of the read names (Illumina encodes flowcell coordinates, MGI/DNBSEQ its lane, column and row, Oxford Nanopore its run and channel ids, PacBio its ZMW numbers) and checks that against the read lengths. If the reads have been re-exported from SRA, that naming is stripped and the platform cannot be established — ZaroPGx refuses rather than assuming Illumina, because a wrong platform silently changes how downstream tools treat your data. Upload the original run files, or align them yourself.
 

@@ -231,16 +231,20 @@ render its pre-flight summary.
      a gene duplication, and PyPGx reads the positions it lacks as homozygous
      reference, so the report would be confidently wrong rather than incomplete.
      See `docs/user/file-formats.md` for the measured coverage.
-   - **FASTQ, above 20 GB or with an undetectable platform** — the lane itself now
+   - **FASTQ, above 20 GB, long-read, not a mate pair, or with an undetectable
+     platform** — the lane itself now
      works: `main.nf`'s `FastqToBAM` POSTs to gatk-api's `/align-fastq`, which runs
      `FastqToSam`, `BwaSpark` and `MarkDuplicatesSpark` against a bind-mounted
      PyPGx-compliant GRCh38 (main contigs plus `chr22_KI270879v1_alt`, without which
      GSTT1 cannot be called). No aligner was installed to do this: GATK has bundled
      bwa-mem as a JNI native since GATK 4, so the old 501's stated reason ("ships no
-     aligner") was false — the endpoint was missing, not the tool. Two refusals
-     remain. Above the cap, peak RSS during alignment is a function of the genome
-     index rather than the read count, so more time does not help and a
-     whole-genome upload would fail partway through. And `@RG PL:` is detected from
+     aligner") was false — the endpoint was missing, not the tool. What is refused
+     is about the file. Above the cap, alignment writes the reads out three times
+     (unaligned, aligned and duplicate-marked BAM) on one machine, so a whole-genome
+     read set would need several times its own size in scratch disk and many hours.
+     Long reads (ONT, PacBio) are refused because bwa-mem and OptiType are
+     short-read tools. Two files are paired only if their platforms match, their
+     read names pair up and their sequences differ. And `@RG PL:` is detected from
      read-name structure corroborated against read length — an SRA re-export strips
      the instrument naming, and a guessed platform would write an unverified claim
      about the sample into everything downstream.
