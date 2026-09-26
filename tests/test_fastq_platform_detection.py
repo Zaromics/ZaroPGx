@@ -275,7 +275,9 @@ def test_casava_mates_pair(tmp_path):
     from app.api.utils.fastq_platform import mate_names_agree
 
     r1 = _write_fastq(tmp_path / "r1.fastq", _illumina_records())
-    r2_records = [(n.replace(" 1:N:", " 2:N:"), s) for n, s in _illumina_records()]
+    r2_records = [
+        (n.replace(" 1:N:", " 2:N:"), "C" * len(s)) for n, s in _illumina_records()
+    ]
     r2 = _write_fastq(tmp_path / "r2.fastq", r2_records)
     ok, evidence = mate_names_agree(r1, r2)
     assert ok, evidence
@@ -287,7 +289,7 @@ def test_slash_suffixed_mates_pair(tmp_path):
 
     base = [f"FP200007900L1C{i:03d}R038{i:08d}" for i in range(1, 31)]
     r1 = _write_fastq(tmp_path / "r1.fastq", [(n + "/1", "A" * 100) for n in base])
-    r2 = _write_fastq(tmp_path / "r2.fastq", [(n + "/2", "A" * 100) for n in base])
+    r2 = _write_fastq(tmp_path / "r2.fastq", [(n + "/2", "C" * 100) for n in base])
     ok, evidence = mate_names_agree(r1, r2)
     assert ok, evidence
 
@@ -331,3 +333,33 @@ def test_a_plain_filename_is_not_taken_for_a_mate(name):
     from app.api.utils.fastq_platform import looks_like_one_mate
 
     assert not looks_like_one_mate(name)
+
+
+def test_a_file_paired_with_its_own_copy_is_not_a_pair(tmp_path):
+    """Stripping the mate marker makes a file agree with itself; the sequences don't
+    lie. Accepted, it would be single-end data labelled paired-end."""
+    from app.api.utils.fastq_platform import mate_names_agree
+
+    records = [(f"FP200007900L1C{i:03d}R038{i:08d}/1", "ACGT" * 25) for i in range(30)]
+    r1 = _write_fastq(tmp_path / "r1.fastq", records)
+    copy = _write_fastq(tmp_path / "r1_copy.fastq", records)
+    ok, evidence = mate_names_agree(r1, copy)
+    assert not ok
+    assert "same reads" in evidence
+
+
+def test_a_truncated_gzip_ends_the_scan_instead_of_raising(tmp_path):
+    """A gzip stream cut short raises EOFError from readline(); the reads before the
+    cut are still read, as for any other truncated record."""
+    whole = gzip.compress(
+        "".join(
+            f"@A00123:45:HXXXXDSXX:1:1101:{1000 + i}:2000 1:N:0:ATCACG\n{'A' * 151}\n+\n"
+            f"{'I' * 151}\n"
+            for i in range(400)
+        ).encode()
+    )
+    path = tmp_path / "cut.fastq.gz"
+    path.write_bytes(whole[: len(whole) // 2])
+
+    call = detect_fastq_platform(path)
+    assert call.platform == ILLUMINA

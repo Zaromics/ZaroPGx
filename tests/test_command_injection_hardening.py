@@ -822,6 +822,15 @@ def test_file_processor_sanitiser_preserves_ordinary_names():
     assert safe_upload_basename("sample.vcf.gz") == "sample.vcf.gz"
 
 
+_GRCH38_VCF = (
+    b"##fileformat=VCFv4.2\n"
+    b"##contig=<ID=chr1,length=248956422,assembly=GRCh38>\n"
+    b'##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+    b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+    b"chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n"
+)
+
+
 @pytest.mark.asyncio
 async def test_process_files_writes_a_glob_free_path(tmp_path):
     """End to end: the path handed to Nextflow carries no glob metacharacter.
@@ -832,22 +841,29 @@ async def test_process_files_writes_a_glob_free_path(tmp_path):
     from app.api.utils.file_processor import FileProcessor
 
     class _FakeUpload:
-        def __init__(self, filename, content=b"##fileformat=VCFv4.2\n"):
+        """read(size) like Starlette's UploadFile: the content once, then b"".
+
+        It used to take no size argument, so process_files always failed on it and
+        this test only found a file because the error path leaked the empty one --
+        the leak review found and closed. It now has to succeed to leave one."""
+
+        def __init__(self, filename, content=_GRCH38_VCF):
             self.filename = filename
             self._content = content
 
-        async def read(self):
-            return self._content
+        async def read(self, size=-1):
+            content, self._content = self._content, b""
+            return content
 
     processor = FileProcessor()
     processor.temp_dir = tmp_path
 
-    # The file is written before any analysis happens, so the result of the
-    # (inevitably failing) analysis of this stub content is irrelevant here.
-    await processor.process_files([_FakeUpload("*.vcf")])
+    result = await processor.process_files([_FakeUpload("*.vcf")])
+    assert result["success"], result
 
     written = list(tmp_path.iterdir())
     assert written, "nothing was written to the upload directory"
+    assert [str(path) for path in written] == result["file_paths"]
     for path in written:
         for meta in "*?[]{};$`|&<> ":
             assert meta not in path.name, f"{meta!r} survived into {path.name!r}"

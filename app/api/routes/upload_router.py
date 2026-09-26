@@ -150,7 +150,8 @@ def _nextflow_max_wait_seconds() -> float:
 # tool. /align-fastq now aligns with FastqToSam -> BwaSpark -> MarkDuplicatesSpark.
 # FileProcessor still refuses the FASTQs the
 # lane genuinely cannot finish -- over the size cap, an undetectable or long-read
-# platform, paired-end -- so what reaches this set is only what the branch can carry.
+# platform, two files that are not mates -- so what reaches this set is only what the
+# branch can carry.
 #
 # `bcf` is present, and it must still never be ALIASED onto `vcf`. That alias was tried
 # and reverted, and the reason it was wrong has not gone away: it made main.nf take the
@@ -203,8 +204,8 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     BCF, gVCF and FASTQ used to sit in that list and no longer do, each for its own
     reason. FASTQ's is that its refusal rested on "the image ships no aligner", which was
     false: GATK bundles bwa-mem. A FASTQ can still be flagged unsupported -- over the cap,
-    an undetectable or long-read platform, paired-end -- and this gate refuses those; an
-    accepted one is simply not flagged.
+    an undetectable or long-read platform, two files that are not mates -- and this gate
+    refuses those; an accepted one is simply not flagged.
 
     A BCF onto the *vcf* branch would not run and would not say so, because that branch
     stages the upload verbatim and docker/pharmcat's /genotype gates on the ``.bcf``

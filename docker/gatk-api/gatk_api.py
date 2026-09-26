@@ -2079,8 +2079,8 @@ def index_output_bam(job_label, output_bam):
     return index_path
 
 
-def count_records(job_label, output_bam, index_path):
-    """Return the number of alignment records in an indexed BAM.
+def count_mapped_and_unmapped(job_label, output_bam, index_path):
+    """Return (mapped, unmapped) read counts for an indexed BAM.
 
     Reads `samtools idxstats`, which answers from the .bai rather than by streaming
     the BAM, so this is cheap even on a whole genome.
@@ -2110,17 +2110,24 @@ def count_records(job_label, output_bam, index_path):
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)
 
-    total = 0
+    mapped = unmapped = 0
     for line in (result.stdout or b"").decode("utf-8", errors="replace").splitlines():
         fields = line.split("\t")
         if len(fields) < 4:
             continue
         try:
-            # mapped + unmapped; the trailing '*' row carries unplaced reads.
-            total += int(fields[2]) + int(fields[3])
+            # The trailing '*' row carries unplaced reads.
+            row_mapped, row_unmapped = int(fields[2]), int(fields[3])
         except ValueError:
             continue
-    return total
+        mapped += row_mapped
+        unmapped += row_unmapped
+    return mapped, unmapped
+
+
+def count_records(job_label, output_bam, index_path):
+    """Return the number of alignment records in an indexed BAM, mapped or not."""
+    return sum(count_mapped_and_unmapped(job_label, output_bam, index_path))
 
 
 def convert_to_indexed_bam(job_label, input_path, output_bam, work_dir, reference_path=None):
@@ -3003,13 +3010,19 @@ ALIGN_REFERENCE_FASTA = os.environ.get(
 )
 ALIGN_INDEX_IMAGE = os.environ.get("ALIGN_INDEX_IMAGE", f"{ALIGN_REFERENCE_FASTA}.img")
 
-# 20 GB of reads. Comfortably above a targeted panel and a modest exome, far below the
-# whole-genome sizes whose failure mode is memory rather than bytes. Kept in step with
+# 20 GB of reads. Comfortably above a targeted panel and a modest exome, far below
+# whole-genome sizes, which would need several times their own size in scratch disk
+# (three BAMs are written) and many hours of alignment. Kept in step with
 # app/api/utils/file_processor.py's FASTQ_MAX_UPLOAD_BYTES, which makes the same
 # promise before the upload starts; tests/test_fastq_lane_planning.py pins the pair.
 FASTQ_MAX_UPLOAD_BYTES = int(
     os.environ.get("FASTQ_MAX_UPLOAD_BYTES", str(20 * 1024 ** 3))
 )
+
+# Below this share of reads aligned, /align-fastq refuses. Human short-read data aligns
+# at well over 90% (this stack's panel runs: over 99%); half leaves room for a
+# contaminated saliva sample while catching another species or the wrong library.
+ALIGN_MIN_MAPPED_FRACTION = 0.5
 
 
 def _gatk_error_summary(output, limit=600):
@@ -3033,12 +3046,13 @@ async def _stream_capped_fastq(file, dest, budget):
     """Write one FASTQ upload to `dest`, drawing down the shared byte budget.
 
     `budget` is a one-element list so both mates of a pair spend a single allowance;
-    checking each against the cap separately would let 12 GB + 12 GB through. Enforced
-    per chunk, and the partial file is discarded on breach, so an oversized upload
-    costs the bytes already streamed rather than all of them -- the point of doing it
-    here instead of trusting a Content-Length the client controls. Peak RSS during
-    alignment follows the index rather than the read count, so the cap bounds time and
-    disk but cannot make whole-genome FASTQ safe; the refusal says so.
+    checking each against the cap separately would let 12 GB + 12 GB through.
+
+    This does NOT keep an oversized body off disk: Starlette has already spooled every
+    file part to a temporary file before the handler runs (its ``max_part_size`` bounds
+    non-file fields only). What it stops is the copy into the work directory and the
+    alignment. The gate that refuses before any bytes move is the app's, at upload;
+    the only client of this endpoint is main.nf, posting a file the app accepted.
     """
     with open(dest, "wb") as handle:
         while chunk := await file.read(UPLOAD_CHUNK_BYTES):
@@ -3052,11 +3066,11 @@ async def _stream_capped_fastq(file, dest, budget):
                         f"FASTQ upload exceeds the "
                         f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for this lane "
                         "(both mates of a pair count together). ZaroPGx aligns "
-                        "targeted-panel and exome-sized read sets: a whole-genome FASTQ "
-                        "exhausts memory during alignment however long it is given, so "
-                        "accepting one would buy a job that dies partway through. Align "
-                        "whole-genome reads yourself (nf-core/sarek, or bwa-mem against "
-                        "GRCh38) and upload the BAM or CRAM."
+                        "targeted-panel and exome-sized read sets on one machine; a "
+                        "whole-genome read set needs several times its own size in "
+                        "scratch disk and many hours. Align whole-genome reads yourself "
+                        "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM "
+                        "or CRAM."
                     ),
                 )
             handle.write(chunk)
@@ -3121,7 +3135,7 @@ async def align_fastq(
     step_name: Optional[str] = Form("gatk_alignment")
 ):
     """
-    Align single-end FASTQ to GRCh38 and return a sorted, duplicate-marked BAM.
+    Align single- or paired-end FASTQ to GRCh38; return a sorted, duplicate-marked BAM.
 
     This route used to answer 501 on the stated grounds that "this service ships no
     aligner". That was never true. GATK bundles bwa-mem as a JNI native --
@@ -3136,10 +3150,11 @@ async def align_fastq(
       FastqToSam          FASTQ -> unaligned BAM carrying the read group. Needed
                           because the Bwa*Spark tools take BAM/SAM/CRAM, never raw FASTQ.
       BwaSpark            aligns against the index image.
-      MarkDuplicatesSpark marks duplicates. Not cosmetic: PyPGx calls copy number for
-                          CYP2D6, and duplicate-inflated depth is exactly what corrupts
-                          a copy-number estimate, so an aligner that skips this yields a
-                          BAM that looks fine and reports the wrong number of gene copies.
+      MarkDuplicatesSpark marks duplicates. Not cosmetic: bcftools mpileup, which
+                          PyPGx's create-input-vcf runs, skips duplicate-flagged reads,
+                          so unmarked PCR duplicates would count as independent evidence
+                          and can tip a genotype. (PyPGx gets --variants only here, so
+                          no copy number is called from this BAM.)
 
     The single combined tool that does the last two, BwaAndMarkDuplicatesPipelineSpark,
     is deliberately NOT used: it ignores --single-end-alignment and dies with "We're
@@ -3352,9 +3367,8 @@ async def align_fastq(
         if job_client:
             await job_client.log_progress("Marking duplicates")
 
-        # Not cosmetic: PyPGx calls copy number for CYP2D6, and duplicate-inflated
-        # depth is exactly what corrupts a copy-number estimate. Skipping this would
-        # yield a BAM that looks fine and reports the wrong number of gene copies.
+        # Not cosmetic: bcftools mpileup skips duplicate-flagged reads, so without
+        # this PCR duplicates would count as independent evidence for a genotype.
         async with _to_thread_semaphore:
             await asyncio.to_thread(
                 _run_align_step,
@@ -3369,17 +3383,27 @@ async def align_fastq(
             )
 
         index_path = index_output_bam(local_job_id, output_bam)
-        records = count_records(local_job_id, output_bam, index_path)
-        if records == 0:
+        # Mapped reads, not records. Every read of a FASTQ comes out of BwaSpark as a
+        # record, mapped or not, so counting records could never catch the input this
+        # guard exists for: a non-human sample, the wrong library, or adapter-only reads
+        # align at (near) zero and would go on to read as "nothing found" -- or, where
+        # PharmCAT assumes absent positions are reference, as normal results.
+        mapped, unmapped = count_mapped_and_unmapped(
+            local_job_id, output_bam, index_path
+        )
+        total = mapped + unmapped
+        if total == 0 or mapped < total * ALIGN_MIN_MAPPED_FRACTION:
             _discard_output(index_path)
             _discard_output(output_bam)
+            share = f"{mapped / total:.1%}" if total else "0%"
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "Alignment produced a valid but empty BAM (0 alignment records). "
-                    "That is a truncated or non-human FASTQ, not a sample with no "
-                    "variants -- shipping it would read downstream as 'no variants "
-                    "found'."
+                    f"Only {mapped} of {total} reads ({share}) aligned to GRCh38. "
+                    "Human short-read data aligns at well over 90%, so these are not "
+                    "usable human reads: another species, the wrong library, or mostly "
+                    "adapter. Reporting on them would read as 'nothing found', not as "
+                    "a failed run."
                 ),
             )
 
@@ -3393,13 +3417,15 @@ async def align_fastq(
             "bam": output_bam,
             "bam_index": index_path,
             "bam_size_bytes": os.path.getsize(output_bam),
-            "records": records,
+            "records": total,
+            "mapped_reads": mapped,
             "platform": call.platform,
             "platform_evidence": call.evidence,
             "duplicates_marked": True,
             "paired": bool(mate_path),
             "message": (
-                f"Aligned {filename} to GRCh38 ({records} records, duplicates marked)"
+                f"Aligned {filename} to GRCh38 ({mapped} of {total} reads mapped, "
+                "duplicates marked)"
             ),
         }
 

@@ -2004,7 +2004,9 @@ def fake_alignment(gatk_api, monkeypatch, tmp_path):
 
     monkeypatch.setattr(gatk_api, "_run_align_step", fake_run)
     monkeypatch.setattr(gatk_api, "index_output_bam", lambda label, bam: bam + ".bai")
-    monkeypatch.setattr(gatk_api, "count_records", lambda label, bam, idx: 100)
+    monkeypatch.setattr(
+        gatk_api, "count_mapped_and_unmapped", lambda label, bam, idx: (100, 0)
+    )
     return steps
 
 
@@ -2117,3 +2119,40 @@ def test_warming_reads_the_whole_image(gatk_api, tmp_path):
     image = tmp_path / "idx.img"
     image.write_bytes(b"x" * (3 * 1024 * 1024 + 17))
     assert gatk_api._warm_index_image("t", str(image)) == image.stat().st_size
+
+
+@pytest.mark.parametrize("mapped, unmapped", [(0, 1000), (10, 990), (400, 600)])
+def test_align_fastq_refuses_reads_that_do_not_align(
+    client, gatk_api, fake_alignment, monkeypatch, mapped, unmapped
+):
+    """Every FASTQ read comes out of BwaSpark as a record, mapped or not, so a record
+    count of zero never happens. Found by review: the guard counted unmapped reads too,
+    and a non-human FASTQ sailed through to a report of "nothing found"."""
+    monkeypatch.setattr(
+        gatk_api,
+        "count_mapped_and_unmapped",
+        lambda label, bam, idx: (mapped, unmapped),
+    )
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("r1.fastq", _illumina_fastq(), "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert f"Only {mapped} of {mapped + unmapped} reads" in detail
+
+
+def test_align_fastq_accepts_a_contaminated_but_human_sample(
+    client, gatk_api, fake_alignment, monkeypatch
+):
+    """Saliva samples carry bacterial DNA; 70% aligned is still a human sample."""
+    monkeypatch.setattr(
+        gatk_api, "count_mapped_and_unmapped", lambda label, bam, idx: (700, 300)
+    )
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("r1.fastq", _illumina_fastq(), "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text

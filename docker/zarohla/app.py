@@ -297,7 +297,7 @@ NO_HLA_READS_MESSAGE = (
 async def _no_hla_reads_result(job_client) -> Dict[str, Any]:
     """The one shape "this sample has no HLA" is allowed to take.
 
-    Two checks now reach this: the MHC interval probe (before conversion) and the
+    Two checks now reach this: the HLA-A/-B/-C locus probe (before conversion) and the
     0-byte FASTQ check (after it). They answer the same question about different
     evidence, so they must not be allowed to answer it differently -- a caller
     that had to tell them apart would be back to guessing.

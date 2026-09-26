@@ -100,17 +100,14 @@ params.source_build   = params.source_build ?: ''
 // upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
-// FASTQ alignment. REACHABLE now that gatk-api's /align-fastq is implemented: single-end
-// FASTQ under the 20 GB cap, whose platform is detectable from its read names, is
-// accepted at ingest and sets needs_alignment, which mints the gatk_alignment
-// StepTemplate in app/services/workflow_registry.py. GATK has bundled bwa-mem as a JNI
-// native since GATK 4, so no extra aligner is installed anywhere -- the endpoint runs
-// FastqToSam then BwaAndMarkDuplicatesPipelineSpark, which also marks duplicates
-// (PyPGx calls CYP2D6 copy number, and duplicate-inflated depth corrupts that).
-//
-// Paired-end still does not reach here: the app carries one data file per job and this
-// process takes a single `path fastq`. GATK aligns paired reads perfectly well, so
-// wiring a pair through is an app + pipeline change, not an aligner one.
+// FASTQ alignment. Short-read FASTQ under the 20 GB cap, single-end or an R1/R2 pair,
+// whose platform is detectable from its read names, is accepted at ingest and sets
+// needs_alignment, which mints the gatk_alignment StepTemplate in
+// app/services/workflow_registry.py. GATK has bundled bwa-mem as a JNI native since
+// GATK 4, so no extra aligner is installed anywhere -- the endpoint runs FastqToSam,
+// BwaSpark and MarkDuplicatesSpark (the combined BwaAndMarkDuplicatesPipelineSpark
+// cannot do single-end). A mate arrives as `fastq2`; with none it is the 0-byte
+// placeholder, and the `[ -s ]` test below tells the two apart.
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir { outdir }, mode: 'copy'

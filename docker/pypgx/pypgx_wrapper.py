@@ -849,6 +849,29 @@ def uncovered_genes_from_vcf(vcf_path: str) -> Optional[set]:
     return None
 
 
+# Genes whose common null allele deletes the whole of PyPGx's region for them, so a
+# homozygous carrier's alignment has no reads there even when the gene was targeted.
+# Sizes from lexicon/gene-table.csv: GSTM1 11.9 kb, GSTT1 14.2 kb, UGT2B17 37.3 kb,
+# each inside its usual deletion.
+WHOLE_GENE_DELETION_GENES = frozenset({"GSTM1", "GSTT1", "UGT2B17"})
+
+
+def no_reads_note(gene: str) -> str:
+    """What to say about a gene with no reads, which is not always "not sequenced".
+
+    For a gene whose both copies are commonly deleted, no reads is also what a real
+    homozygous deletion looks like, and this alignment cannot tell the two apart.
+    Saying only "not sequenced" would report a positive finding as a gap.
+    """
+    note = "No reads over this gene in the alignment"
+    if gene in WHOLE_GENE_DELETION_GENES:
+        note += (
+            f". For {gene} that means either it was not sequenced or both copies are "
+            "deleted, a common genotype; the alignment cannot tell which"
+        )
+    return note
+
+
 def uncovered_genes_in_alignment(alignment_path: str, assembly: str) -> list:
     """PyPGx genes with no confidently placed read in the alignment.
 
@@ -1145,12 +1168,13 @@ async def genotype(
         uncovered = uncovered_genes_from_vcf(str(input_filepath)) or set()
         not_sequenced = {}
         for gene in [g for g in requested_genes if g in uncovered]:
+            note = no_reads_note(gene)
             not_sequenced[gene] = {
                 'success': True,
                 'gene': gene,
                 'diplotype': None,
-                'details': {'note': 'No reads over this gene in the alignment'},
-                'error': 'No reads over this gene in the alignment',
+                'details': {'note': note},
+                'error': note,
             }
         if not_sequenced:
             logger.info(

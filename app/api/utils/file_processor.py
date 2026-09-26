@@ -633,9 +633,10 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
     the refusal NARROWS rather than disappearing. Two things can still make a FASTQ
     unanalysable, and both are properties of the file rather than of ZaroPGx:
 
-    * **Size.** Peak RAM during alignment is set by the index, not the read count,
-      so a cap bounds time and disk but cannot make whole-genome FASTQ safe on
-      modest hardware. Above the cap the honest answer is still no.
+    * **Size.** The cap bounds run time and scratch disk: alignment writes the
+      reads out three times (unaligned, aligned and duplicate-marked BAM) on one
+      machine. Not memory -- BwaSpark's footprint is the index image, which a panel
+      run already loads whole. Above the cap the honest answer is still no.
     * **Platform.** GATK and PyPGx both read ``@RG PL:``, and a bare FASTQ does not
       state it. It is detected from the read names and corroborated against read
       lengths; when that fails -- an SRA round-trip strips instrument naming -- the
@@ -651,10 +652,11 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
         workflow["unsupported_reason"] = (
             f"This FASTQ is {size / 1024**3:.1f} GB, above the {cap_gb} GB limit for "
             "the alignment lane. ZaroPGx aligns targeted-panel and exome-sized read "
-            "sets: whole-genome FASTQ exhausts memory during alignment no matter how "
-            "much time it is given, so accepting it would produce a job that fails "
-            "partway through rather than a report. Align whole-genome reads yourself "
-            "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM or CRAM."
+            "sets: alignment writes the reads out three times (unaligned, aligned and "
+            "duplicate-marked BAM) on one machine, so a whole-genome read set would "
+            "need several times its own size in scratch disk and hold the stack for "
+            "many hours. Align whole-genome reads yourself (nf-core/sarek, or bwa-mem "
+            "against GRCh38) and upload the BAM or CRAM."
         )
         workflow["recommendations"].append(
             "<p>• Run nf-core/sarek, or bwa-mem against GRCh38, and upload the BAM or CRAM.</p>"
@@ -725,6 +727,21 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
         "<p>⚠️ Alignment is the slowest step in the stack; expect this to take "
         "substantially longer than uploading an aligned file.</p>"
     )
+
+
+def _discard_saved_upload(paths: List[str]) -> None:
+    """Delete an upload's saved files after an error. Never raises.
+
+    The error path's twin of upload_router._discard_refused_upload: a failure must
+    not be turned into a different failure by the cleanup.
+    """
+    for path in paths:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Could not remove failed upload %s: %s", path, exc)
 
 
 def _clear_needs_flags(workflow: Dict) -> None:
@@ -2262,7 +2279,9 @@ class FileProcessor:
 
         return workflow
 
-    async def _accept_fastq_mate(self, mates, r1_path, workflow, result) -> bool:
+    async def _accept_fastq_mate(
+        self, mates, r1_path, workflow, result, upload_id
+    ) -> bool:
         """Take the second mate of a paired-end FASTQ upload, or refuse the upload.
 
         Four things have to hold, each checked on the files rather than assumed from
@@ -2273,12 +2292,13 @@ class FileProcessor:
         * the read names pair up record for record (mate_names_agree) -- two unrelated
           single-end runs uploaded together would otherwise be aligned as pairs,
           inventing mate relationships between reads that never shared a fragment;
-        * the two together fit the same byte cap a single FASTQ does -- peak RSS in
-          alignment follows the index, and a 12 GB + 12 GB pair is 24 GB of reads.
+        * the two together fit the same byte cap a single FASTQ does -- run time and
+          scratch disk follow the total, and a 12 GB + 12 GB pair is 24 GB of reads.
 
-        The saved mate is registered in result["file_paths"] BEFORE any check, so a
-        refused upload leaves no bytes behind: the refusal path discards every path in
-        that list, and this one must be in it.
+        The mate is registered in result["file_paths"] BEFORE it is written, so neither
+        a refusal nor an error leaves bytes behind: both paths discard every path in
+        that list, and this one must be in it. Its name carries R1's upload_id, so
+        concurrent uploads of identically named pairs never share a file.
 
         On success the mate's path travels as workflow["input2"] to the runner and on
         to main.nf's --input2. Returns whether the mate was accepted.
@@ -2299,12 +2319,13 @@ class FileProcessor:
 
         mate = mates[0]
         mate_path = (
-            self.temp_dir / f"upload_mate2_{safe_upload_basename(mate.filename)}"
+            self.temp_dir
+            / f"upload_{upload_id}_mate2_{safe_upload_basename(mate.filename)}"
         )
+        result["file_paths"].append(str(mate_path))
         with open(mate_path, "wb") as handle:
             while chunk := await mate.read(8 * 1024 * 1024):
                 handle.write(chunk)
-        result["file_paths"].append(str(mate_path))
 
         if self._detect_file_type(mate_path) != FileType.FASTQ:
             return refuse(
@@ -2318,9 +2339,8 @@ class FileProcessor:
             return refuse(
                 f"These two FASTQs total {combined / 1024 ** 3:.1f} GB, above the "
                 f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for the alignment lane "
-                "(both mates count together). Whole-genome read sets exhaust memory "
-                "during alignment however long they are given. Align them yourself "
-                "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM or CRAM."
+                "(both mates count together). Align them yourself (nf-core/sarek, or "
+                "bwa-mem against GRCh38) and upload the BAM or CRAM."
             )
 
         r1_call = detect_fastq_platform(r1_path)
@@ -2337,9 +2357,8 @@ class FileProcessor:
         if not paired:
             return refuse(
                 "These two FASTQs are not mates of one paired-end run: "
-                f"{evidence}. Paired files list the same reads in the same order. "
-                "Upload the matching R1 and R2, or each file as its own single-end "
-                "analysis."
+                f"{evidence}. Upload the matching R1 and R2, or each file as its own "
+                "single-end analysis."
             )
 
         workflow["input2"] = str(mate_path)
@@ -2403,11 +2422,23 @@ class FileProcessor:
                 str(f.filename or "") for f in data_files if f is not primary_file
             ]
 
-            # Save the uploaded file to temporary location
+            # Save the uploaded file to temporary location.
+            #
+            # The saved path IS the pipeline's --input (a mate's is --input2), read when
+            # the job runs, so it must be unique per upload. Named from the client's
+            # filename alone, two uploads of "R1.fastq.gz" shared one path: the second
+            # rewrote the first while its job was queued or aligning, and one patient's
+            # report could carry another patient's reads.
+            upload_id = uuid.uuid4().hex[:12]
             self.temp_dir.mkdir(parents=True, exist_ok=True)
             temp_file_path = (
-                self.temp_dir / f"upload_{safe_upload_basename(primary_file.filename)}"
+                self.temp_dir
+                / f"upload_{upload_id}_{safe_upload_basename(primary_file.filename)}"
             )
+            # Every path saved for this upload, mate included. Nothing sweeps the upload
+            # root (cleanup_service reaps /data/uploads/{patient_id}), so a failure here
+            # removes them itself; a refusal hands them to the router, which does.
+            saved_paths = [str(temp_file_path)]
 
             try:
                 # Stream the upload to disk in chunks rather than buffering the whole
@@ -2423,10 +2454,12 @@ class FileProcessor:
                 result = await self.process_upload(str(temp_file_path))
 
                 if result["status"] != "success":
+                    _discard_saved_upload(saved_paths)
                     return {"success": False, "error": result["error"]}
 
-                # Add file paths to result
-                result["file_paths"] = [str(temp_file_path)]
+                # Add file paths to result. The same list: a mate saved below lands in
+                # saved_paths too.
+                result["file_paths"] = saved_paths
 
                 # Update workflow with reference genome
                 workflow = result["workflow"]
@@ -2445,7 +2478,7 @@ class FileProcessor:
                 ):
                     mates = [f for f in data_files if f is not primary_file]
                     accepted = await self._accept_fastq_mate(
-                        mates, temp_file_path, workflow, result
+                        mates, temp_file_path, workflow, result, upload_id
                     )
                     if accepted:
                         # R2 is used, not ignored: no "was ignored" warning for it.
@@ -2559,6 +2592,9 @@ class FileProcessor:
 
             except Exception as e:
                 logger.error(f"Error processing uploaded file: {str(e)}")
+                # No Job will ever name these bytes. A truncated gzip mate used to leave
+                # both files here for good.
+                _discard_saved_upload(saved_paths)
                 return {"success": False, "error": f"Error processing file: {str(e)}"}
 
         except Exception as e:

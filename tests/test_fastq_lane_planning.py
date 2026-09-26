@@ -7,8 +7,8 @@ refusal is a NARROWER one, and the narrowing is the part worth pinning -- it wou
 be easy to accept everything now that something can align, and both remaining
 refusals are real:
 
-* above the byte cap, alignment exhausts memory regardless of time given, because
-  peak RSS is a function of the index rather than the read count;
+* above the byte cap, alignment would need several times the reads' size in scratch
+  disk (three BAMs are written) and many hours on one machine;
 * with no detectable platform there is no honest ``@RG PL:``, which GATK and PyPGx
   both read.
 
@@ -89,11 +89,14 @@ def test_above_the_cap_is_refused():
     assert "limit" in workflow["unsupported_reason"]
 
 
-def test_the_cap_refusal_explains_memory_not_just_size():
-    """A cap that reads as arbitrary invites 'just raise it'. It cannot be raised
-    into WGS on this hardware, and the copy has to say why."""
-    workflow = _plan(FASTQ_MAX_UPLOAD_BYTES + 1, _GOOD)
-    assert "memory" in workflow["unsupported_reason"].lower()
+def test_the_cap_refusal_explains_why_not_just_size():
+    """A cap that reads as arbitrary invites 'just raise it', and the copy has to say
+    what it bounds. It once said "memory", which was wrong: BwaSpark's footprint is the
+    index image, loaded whole for a panel too. What grows with the reads is disk and
+    time."""
+    reason = _plan(FASTQ_MAX_UPLOAD_BYTES + 1, _GOOD)["unsupported_reason"].lower()
+    assert "disk" in reason
+    assert "memory" not in reason
 
 
 def test_an_oversized_fastq_plans_no_work():

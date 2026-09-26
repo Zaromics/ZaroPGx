@@ -46,6 +46,7 @@ from __future__ import annotations
 import gzip
 import re
 import statistics
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -121,27 +122,34 @@ def _open_text(path: Path):
 
 
 def _read_records(path: Path, max_records: int):
-    """(identifiers, sequence lengths) from the first ``max_records`` reads.
+    """(identifiers, sequence lengths, sequence digests) from the first reads.
 
     Bounded deliberately: a FASTQ can be 20 GB and the answer is settled by the
     first handful of reads. Bad/truncated records simply end the scan -- validating
-    the FASTQ is not this function's job.
+    the FASTQ is not this function's job. That includes a gzip stream cut short,
+    which raises from inside readline(). Digests rather than sequences, because a
+    thousand long reads would otherwise be held in memory to compare them.
     """
     names: List[str] = []
     lengths: List[int] = []
+    digests: List[int] = []
     with _open_text(path) as handle:
-        while len(names) < max_records:
-            header = handle.readline()
-            if not header:
-                break
-            sequence = handle.readline()
-            plus = handle.readline()
-            handle.readline()  # quality
-            if not header.startswith("@") or not plus.startswith("+"):
-                break
-            names.append(header[1:].rstrip("\n"))
-            lengths.append(len(sequence.strip()))
-    return names, lengths
+        try:
+            while len(names) < max_records:
+                header = handle.readline()
+                if not header:
+                    break
+                sequence = handle.readline()
+                plus = handle.readline()
+                handle.readline()  # quality
+                if not header.startswith("@") or not plus.startswith("+"):
+                    break
+                names.append(header[1:].rstrip("\n"))
+                lengths.append(len(sequence.strip()))
+                digests.append(hash(sequence.strip()))
+        except (EOFError, zlib.error, gzip.BadGzipFile):
+            pass
+    return names, lengths, digests
 
 
 def _classify_name(name: str) -> Optional[str]:
@@ -185,7 +193,7 @@ def detect_fastq_platform(path, max_records: int = 1000) -> PlatformCall:
     propagate a falsehood into every downstream call.
     """
     path = Path(path)
-    names, lengths = _read_records(path, max_records)
+    names, lengths, _ = _read_records(path, max_records)
     if not names:
         return PlatformCall(
             None, "no FASTQ records could be read", "the file carries no readable reads"
@@ -249,11 +257,17 @@ def mate_names_agree(
     later; this is the cheap version that lets the upload be refused with a reason
     before any alignment work is spent.
 
+    Names alone cannot tell a pair from one file uploaded twice: stripping the mate
+    marker is what makes R1 and R2 agree, and it makes a file agree with its own copy
+    too. The sequences can -- the mates read opposite ends of each fragment, so a
+    real pair almost never repeats a sequence across the two files. A duplicated file
+    repeats every one, and would be aligned as a "pair" that is single-end data.
+
     Bounded to the first `max_records` of each file, like platform detection. Returns
     (agrees, evidence) so a refusal can say what was compared.
     """
-    names1, _ = _read_records(Path(path1), max_records)
-    names2, _ = _read_records(Path(path2), max_records)
+    names1, _, digests1 = _read_records(Path(path1), max_records)
+    names2, _, digests2 = _read_records(Path(path2), max_records)
     compared = min(len(names1), len(names2))
     if compared == 0:
         return False, "one of the two files has no readable reads to pair"
@@ -265,7 +279,16 @@ def mate_names_agree(
     share = same / compared
     evidence = f"{same} of the first {compared} read names pair up ({share:.0%})"
     if share < min_agreement:
-        return False, f"read names do not pair: {evidence}"
+        return False, (
+            f"read names do not pair: {evidence}; paired files list the same reads "
+            "in the same order"
+        )
+    repeated = sum(1 for a, b in zip(digests1, digests2) if a == b)
+    if repeated > compared // 2:
+        return False, (
+            f"the two files hold the same reads ({repeated} of the first {compared} "
+            "sequences are identical), where mates read opposite ends of each fragment"
+        )
     return True, evidence
 
 

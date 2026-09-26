@@ -17,21 +17,18 @@ was missing. It is now implemented, against a PyPGx-compliant GRCh38, so FASTQ i
 accepted.
 
 The refusal therefore NARROWED rather than disappearing, and what survives of it is what
-this module now pins. Three things are still refused, and each is a property of the file
-rather than a missing feature:
+this module now pins. What is still refused is a property of the file rather than a
+missing feature:
 
 * **an undetectable sequencing platform.** ``@RG PL:`` is read by GATK and PyPGx, a FASTQ
   states it nowhere, and it is detected from read-name structure corroborated against read
   length. An SRA re-export strips that naming. ``PL:ILLUMINA`` is the likeliest answer and
   must still never be the automatic one — a guessed platform writes an unverified claim
   about the sample into everything downstream.
-* **above the 20 GB cap.** Peak RSS during alignment follows the genome index, not the read
-  count, so more time does not rescue a whole-genome upload.
-* **paired-end.** ``process_files`` analyses ``files[0]`` only and ``main.nf``'s
-  ``FastqToBAM`` takes a single ``path fastq``, so a mate pair would be aligned from R1
-  alone — half the evidence, in a report that looks complete. GATK aligns paired reads
-  perfectly well; nothing upstream can deliver a pair yet. Wiring that through is its own
-  change.
+* **above the 20 GB cap.** Alignment writes the reads out three times on one machine, so a
+  whole-genome set needs several times its size in scratch disk and many hours.
+* **two files that are not one pair.** A mate pair is accepted and travels as ``input2``;
+  two unrelated read sets, or one file twice, are refused rather than aligned as mates.
 
 For every other format the ``files[0]`` discard is still said out loud in the workflow
 warnings the UI renders, rather than refused.
@@ -55,6 +52,7 @@ on the emitted strings, not on source text.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import uuid
@@ -209,7 +207,7 @@ def _dnbseq_mate(mate: int, n: int = 40, offset: int = 0) -> bytes:
     """A DNBSEQ FASTQ mate as the instrument writes it: /1 or /2 on every name."""
     return b"".join(
         b"@FP200007900L1C%03dR038%08d/%d\n%s\n+\n%s\n"
-        % (i, i + offset, mate, b"ACGT" * 25, b"I" * 100)
+        % (i, i + offset, mate, (b"ACGT" if mate == 1 else b"TGCA") * 25, b"I" * 100)
         for i in range(1, n + 1)
     )
 
@@ -340,7 +338,56 @@ def test_an_accepted_upload_keeps_its_bytes(upload, tmp_path):
     uploads = tmp_path / "uploads"
 
     assert upload(("sample.bam", BAM_BYTES)).status_code == 200
-    assert [p.name for p in uploads.glob("*")] == ["upload_sample.bam"]
+    names = [p.name for p in uploads.glob("*")]
+    assert len(names) == 1
+    assert re.fullmatch(r"upload_[0-9a-f]{12}_sample\.bam", names[0]), names
+
+
+def test_identically_named_uploads_never_share_a_path(upload, tmp_path):
+    """The saved path is the pipeline's --input, read when the job runs. Named from
+    the client's filename alone, a second "sample.bam" rewrote the first while its
+    job was queued -- one patient's report carrying another patient's data."""
+    uploads = tmp_path / "uploads"
+
+    assert upload(("sample.bam", BAM_BYTES)).status_code == 200
+    assert upload(("sample.bam", BAM_BYTES + b"other")).status_code == 200
+    saved = sorted(uploads.glob("*"))
+    assert len(saved) == 2
+    assert {p.read_bytes() for p in saved} == {BAM_BYTES, BAM_BYTES + b"other"}
+
+
+def test_a_mate_pair_shares_its_upload_id_and_never_a_path(upload, monkeypatch):
+    seen = _capture_workflow(monkeypatch)
+    upload(("reads_R1.fastq", _dnbseq_mate(1)), ("reads_R2.fastq", _dnbseq_mate(2)))
+
+    r1 = Path(seen["file_path"]).name
+    r2 = Path(seen["workflow"]["input2"]).name
+    upload_id = r1.split("_")[1]
+    assert r2.startswith(f"upload_{upload_id}_mate2_")
+
+
+def test_an_error_while_pairing_leaves_no_bytes_behind(upload, tmp_path, monkeypatch):
+    """An exception is not a refusal: it returns through process_files' error path,
+    which the router turns into a 400 without discarding anything. Found by review:
+    a truncated gzip mate left both files in the upload root, which nothing sweeps."""
+    from app.api.utils import file_processor
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("unreadable mate")
+
+    monkeypatch.setattr(file_processor, "mate_names_agree", boom)
+    resp = upload(("a_R1.fastq", _dnbseq_mate(1)), ("a_R2.fastq", _dnbseq_mate(2)))
+
+    assert resp.status_code == 400, resp.text
+    assert list((tmp_path / "uploads").glob("*")) == []
+
+
+def test_the_same_file_twice_is_refused_as_a_pair(upload, tmp_path):
+    resp = upload(("a_R1.fastq", _dnbseq_mate(1)), ("a_R2.fastq", _dnbseq_mate(1)))
+
+    assert resp.status_code == 400, resp.text
+    assert "same reads" in resp.json()["detail"]
+    assert list((tmp_path / "uploads").glob("*")) == []
 
 
 def test_fastq_workflow_plans_no_steps_it_cannot_run():

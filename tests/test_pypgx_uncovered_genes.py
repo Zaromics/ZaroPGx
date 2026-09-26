@@ -147,3 +147,90 @@ def test_an_uncovered_gene_gets_no_diplotype():
         )
     ]
     assert "'diplotype': None" in block or '"diplotype": None' in block
+
+
+# --------------------------------------------------------------------------
+# The measurement itself, on a real BAM. Found by review: the wiring above was only
+# ever checked as source text, and the function that decides "uncovered" had no test.
+# --------------------------------------------------------------------------
+
+
+def _regions_stub(rows):
+    """What the wrapper reads from PyPGx: create_regions_bed(...).gr.df, then
+    df[[Chromosome, Start, End, Name]].itertuples(index=False)."""
+    import types
+
+    class _Frame:
+        def __getitem__(self, columns):
+            return self
+
+        def itertuples(self, index=False):
+            return iter(rows)
+
+    utils = types.ModuleType("pypgx.api.utils")
+    utils.create_regions_bed = lambda assembly, add_chr_prefix: types.SimpleNamespace(
+        gr=types.SimpleNamespace(df=_Frame())
+    )
+    api = types.ModuleType("pypgx.api")
+    api.utils = utils
+    root = types.ModuleType("pypgx")
+    root.api = api
+    return {"pypgx": root, "pypgx.api": api, "pypgx.api.utils": utils}
+
+
+def _bam(tmp_path, reads):
+    pysam = __import__("pytest").importorskip("pysam")
+    path = str(tmp_path / "aln.bam")
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": 10000}],
+    }
+    with pysam.AlignmentFile(path, "wb", header=header) as out:
+        for i, (start, mapq, flag) in enumerate(sorted(reads)):
+            read = pysam.AlignedSegment()
+            read.query_name = f"r{i}"
+            read.query_sequence = "A" * 50
+            read.flag = flag
+            read.reference_id = 0
+            read.reference_start = start
+            read.mapping_quality = mapq
+            read.cigarstring = "50M"
+            read.query_qualities = pysam.qualitystring_to_array("I" * 50)
+            out.write(read)
+    pysam.index(path)
+    return path
+
+
+def test_only_confidently_placed_primary_reads_cover_a_gene(tmp_path, monkeypatch):
+    rows = [
+        ("chr1", 100, 300, "PLACED"),  # one MAPQ-30 primary read: covered
+        ("chr1", 1000, 1200, "MULTIMAPPER"),  # MAPQ 0 only: aligned equally elsewhere
+        ("chr1", 2000, 2200, "SECONDARY"),  # a secondary alignment only
+        ("chrX", 100, 300, "NO_CONTIG"),  # contig absent from the BAM
+        ("chr1", 3000, 3200, "SPLIT"),  # first region empty ...
+        ("chr1", 4000, 4200, "SPLIT"),  # ... second covered: the gene is covered
+        ("chr1", 5000, 5200, "EMPTY"),
+    ]
+    bam = _bam(
+        tmp_path,
+        [(150, 30, 0), (1050, 0, 0), (2050, 30, 256), (4050, 30, 0)],
+    )
+    for name, module in _regions_stub(rows).items():
+        monkeypatch.setitem(__import__("sys").modules, name, module)
+
+    ns = _load(["uncovered_genes_in_alignment"])
+    uncovered = ns["uncovered_genes_in_alignment"](bam, "GRCh38")
+
+    assert uncovered == ["EMPTY", "MULTIMAPPER", "NO_CONTIG", "SECONDARY"]
+
+
+def test_no_reads_on_a_commonly_deleted_gene_is_not_called_a_gap():
+    """GSTM1/GSTT1/UGT2B17 *0/*0 is a real, common genotype, and its alignment has no
+    reads over PyPGx's whole region for the gene. "Not sequenced" alone would report a
+    positive finding as a sequencing gap; the note has to say it could be either."""
+    ns = _load(["no_reads_note", "WHOLE_GENE_DELETION_GENES"])
+    for gene in ("GSTM1", "GSTT1", "UGT2B17"):
+        note = ns["no_reads_note"](gene)
+        assert note.startswith("No reads over this gene in the alignment")
+        assert "deleted" in note
+    assert ns["no_reads_note"]("CYP2C19") == "No reads over this gene in the alignment"
