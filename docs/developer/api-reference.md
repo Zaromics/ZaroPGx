@@ -233,7 +233,7 @@ render its pre-flight summary.
      See `docs/user/file-formats.md` for the measured coverage.
    - **FASTQ, above 20 GB or with an undetectable platform** — the lane itself now
      works: `main.nf`'s `FastqToBAM` POSTs to gatk-api's `/align-fastq`, which runs
-     `FastqToSam` then `BwaAndMarkDuplicatesPipelineSpark` against a bind-mounted
+     `FastqToSam`, `BwaSpark` and `MarkDuplicatesSpark` against a bind-mounted
      PyPGx-compliant GRCh38 (main contigs plus `chr22_KI270879v1_alt`, without which
      GSTT1 cannot be called). No aligner was installed to do this: GATK has bundled
      bwa-mem as a JNI native since GATK 4, so the old 501's stated reason ("ships no

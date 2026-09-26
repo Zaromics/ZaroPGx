@@ -19,8 +19,9 @@ curation: full
 - **Not accepted**: gVCFs whose reference blocks are `<*>` rather than GATK's `<NON_REF>`
   (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
   gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
-- **Not accepted**: FASTQ. ZaroPGx ships no aligner, so raw reads — single- or paired-end —
-  are refused at upload. Implementing alignment is the only thing that would change this.
+- **FASTQ** (in testing): short-read, single- or paired-end, up to 20 GB. Aligned to GRCh38
+  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over 20 GB, long
+  reads (ONT, PacBio), or a platform that cannot be read from the read names.
 - **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
   pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
   that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
