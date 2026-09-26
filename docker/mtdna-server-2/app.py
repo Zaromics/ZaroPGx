@@ -697,6 +697,44 @@ async def _call_from_alignment(
     )
     await _run(["samtools", "index", chrm_bam], work, job_key)
 
+    # An alignment with no mitochondrial reads at all -- a targeted panel without
+    # chrM capture, which is most of them -- must end here, as an observed fact, before
+    # mutserve sees it. mutserve does not survive an empty extraction: measured on a
+    # real panel BAM and an MHC extract (0 chrM reads each), it died writing the VCF
+    # header with "NullPointerException: Cannot invoke String.length() because str is
+    # null", the sidecar answered 500, and the whole run failed over a property of the
+    # sample. A chrM-only BAM through the same code called H16a1.
+    #
+    # The answer is a NO-CALL, routed through the same resolver as every other
+    # promotion decision: measured coverage is 0x, below the floor, so MT-RNR1 must
+    # stay uncalled. Reporting Reference here would call an unsequenced gene normal
+    # for aminoglycoside ototoxicity. None of the downstream fields are fabricated;
+    # main.nf's MtdnaCall already treats a missing call, VCF and report as absent.
+    chrm_reads = await _count_reads(chrm_bam, work, job_key)
+    if chrm_reads == 0:
+        logger.info(f"mtDNA {job_key}: no reads on {region}; MT-RNR1 not called")
+        resolved = resolve_mt_rnr1_call(
+            [], [], evidence_reason=NO_CALL_COVERAGE_BELOW_FLOOR, basis=None
+        )
+        return {
+            "haplogroup": None,
+            "haplogroup_quality": None,
+            "haplogroup_range": None,
+            "mt_rnr1": resolved.call,
+            "mt_rnr1_no_call_reason": resolved.no_call_reason,
+            "evidence_basis": resolved.basis,
+            "mt_rnr1_all_matches": [],
+            "mean_coverage": 0.0,
+            "variants": [],
+            "chrm_vcf": None,
+            "report_html": None,
+            "report_unavailable_reason": (
+                "The alignment carries no mitochondrial reads, so there was nothing "
+                "to call. This is normal for a targeted panel that does not capture "
+                "the mitochondrial genome."
+            ),
+        }
+
     called = os.path.join(work, "chrM.vcf.gz")
     await _run(
         [
@@ -828,6 +866,31 @@ async def _call_from_alignment(
         "report_html": report_html,
         "report_unavailable_reason": None,
     }
+
+
+async def _count_reads(bam: str, work: str, job_key: str) -> int:
+    """Number of alignment records in `bam`.
+
+    Raises rather than guessing if samtools fails: a failed count must never read as
+    zero, because zero is exactly the answer that ends the call as "no mitochondrial
+    reads". Treating an error as that would turn a broken step into a quiet no-call.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "samtools",
+        "view",
+        "-c",
+        bam,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"samtools view -c failed on {os.path.basename(bam)}: "
+            f"{stderr.decode(errors='replace')[-400:]}",
+        )
+    return int(stdout.decode().strip() or 0)
 
 
 async def _mean_coverage(

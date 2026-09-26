@@ -324,3 +324,53 @@ def test_classify_haplogroup_return_arity_matches_every_call_site():
                 "not the unpack target, is what the assignment actually "
                 "produces on the false branch"
             )
+
+
+# --------------------------------------------------------------------------
+# An alignment with no mitochondrial reads is a no-call, not a crash
+# --------------------------------------------------------------------------
+#
+# Measured 2026-09-26 on three real BAMs: a targeted PGx panel and an MHC extract,
+# each with 0 reads on chrM, both came back 500 --
+#   java.lang.NullPointerException: Cannot invoke "String.length()" because "str" is null
+#     at htsjdk...VCFWriter.writeHeader  <-  genepi.mut.pileup.VcfWriter.createVCF
+# -- while a chrM-only BAM from the same stack called haplogroup H16a1. mutserve does
+# not survive an empty extraction, and the 500 failed the whole Nextflow run, so any
+# panel without mitochondrial capture (most of them) killed the job over a property of
+# the sample. The same shape of failure OptiType had with no HLA reads, and the same
+# fix: establish the absence as an observed fact first, then answer it honestly.
+#
+# Honestly means a NO-CALL. Zero reads is measured coverage 0x, below the floor, and
+# MT-RNR1 must not be promoted to Reference on it -- an aminoglycoside-ototoxicity
+# variant reported as "normal risk" because nothing was sequenced is the worst answer
+# available.
+
+
+def test_no_mito_reads_are_caught_before_mutserve_runs():
+    branch = _alignment_branch()
+    guard = branch.index("chrm_reads == 0")
+    assert guard < branch.index(
+        "MUTSERVE_JAR"
+    ), "the empty-chrM check must come before mutserve, which crashes on it"
+
+
+def test_no_mito_reads_resolve_as_below_floor_not_reference():
+    branch = _alignment_branch()
+    guard_block = branch[branch.index("chrm_reads == 0") : branch.index("MUTSERVE_JAR")]
+    assert "NO_CALL_COVERAGE_BELOW_FLOOR" in guard_block
+    assert (
+        "resolve_mt_rnr1_call" in guard_block
+    ), "the promotion decision must go through the one resolver, not be hand-rolled"
+    assert '"mean_coverage": 0.0' in guard_block
+    assert '"Reference"' not in guard_block
+
+
+def test_the_resolver_withholds_reference_when_nothing_was_sequenced():
+    """The behaviour the guard relies on, exercised rather than read."""
+    from app.mtdna.mt_rnr1 import NO_CALL_COVERAGE_BELOW_FLOOR, resolve_mt_rnr1_call
+
+    resolved = resolve_mt_rnr1_call(
+        [], [], evidence_reason=NO_CALL_COVERAGE_BELOW_FLOOR, basis=None
+    )
+    assert resolved.call is None
+    assert resolved.no_call_reason == NO_CALL_COVERAGE_BELOW_FLOOR
