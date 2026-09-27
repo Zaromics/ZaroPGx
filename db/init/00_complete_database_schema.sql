@@ -321,7 +321,7 @@ CREATE TABLE gene_group_members (
 CREATE TABLE genomic_file_headers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     file_path TEXT NOT NULL,
-    file_format VARCHAR(10) NOT NULL CHECK (file_format IN ('BAM','SAM','CRAM','VCF','BCF','FASTA','FASTQ')),
+    file_format VARCHAR(10) NOT NULL CHECK (file_format IN ('BAM','SAM','CRAM','VCF','GVCF','BCF','FASTA','FASTQ')),
     header_info JSONB NOT NULL,
     extracted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );

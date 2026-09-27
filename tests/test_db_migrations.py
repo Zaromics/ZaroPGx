@@ -67,3 +67,32 @@ def test_repo_migrations_are_discoverable_and_guarded():
 def test_apply_missing_dir_is_a_noop(tmp_path: Path):
     # No engine touched when the directory is absent.
     assert apply_pending_migrations(engine=None, migrations_dir=tmp_path / "nope") == []
+
+
+def _allowed_file_formats(sql: str) -> set:
+    import re as _re
+
+    m = _re.search(r"file_format[^;]*?CHECK \(file_format IN \(([^)]*)\)\)", sql)
+    assert m, "file_format CHECK not found"
+    return {v.strip().strip("'") for v in m.group(1).split(",")}
+
+
+def test_every_accepted_input_can_record_its_header():
+    """genomic_file_headers.file_format once lacked 'GVCF', so every gVCF upload made
+    through the app failed header analysis with a CheckViolation (2026-09-27). Each
+    input type the pipeline accepts must be storable, in a fresh schema and in the
+    migration that brings an existing database up to date."""
+    from app.api.routes.upload_router import NEXTFLOW_INPUT_TYPES
+
+    root = _DEFAULT_MIGRATIONS_DIR.parents[1]
+    fresh = _allowed_file_formats(
+        (root / "init" / "00_complete_database_schema.sql").read_text(encoding="utf-8")
+    )
+    migrated = _allowed_file_formats(
+        (_DEFAULT_MIGRATIONS_DIR / "06_allow_gvcf_file_format.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+    wanted = {t.upper() for t in NEXTFLOW_INPUT_TYPES}
+    assert wanted <= fresh
+    assert fresh == migrated

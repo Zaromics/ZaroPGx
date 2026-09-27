@@ -27,4 +27,5 @@ docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -f /docker-entrypoint-
 - `02_fix_variant_column_lengths.sql` — widen variant columns
 - `03_drop_job_monitoring.sql` — hand-run drop of unused `job_monitoring` schema (CASCADE)
 - `04_rename_workflows_to_jobs.sql` — hand-run rename workflows* → jobs* (137a)
+- `06_allow_gvcf_file_format.sql` — allow `GVCF` in `genomic_file_headers.file_format` (every gVCF upload failed header analysis); applied automatically at startup
 
