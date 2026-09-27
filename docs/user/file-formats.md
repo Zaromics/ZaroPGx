@@ -37,7 +37,7 @@ The two assume-reference checkboxes under PharmCAT are not applied to a gVCF, wh
 What the report tells you, and why:
 
 - **How much of PharmCAT's position list your file actually covered.** A gVCF that omits a region has no reference block there, so those positions are no-calls — absent is not reference.
-- **That `GenotypeGVCFs` re-derives each genotype** from the recorded likelihoods rather than copying your caller's. At PharmCAT's positions ZaroPGx sets the calling-confidence threshold to zero and applies its own: a reference call needs a reference confidence of 20 or more over at least 7 reads, and no other allele in your file with reads at or across the position; a variant call needs a genotype quality of 20 and a call quality of 30. Anything else is a no-call, so the genotypes analysed are not guaranteed identical to your caller's output.
+- **That `GenotypeGVCFs` re-derives each genotype** from the recorded likelihoods rather than copying your caller's. At PharmCAT's positions ZaroPGx sets the calling-confidence threshold to zero and applies its own: a reference call needs a reference confidence of 20 or more over at least 7 reads, and no other allele your caller saw across the position; a variant call needs a genotype quality of 20 and a call quality of 30. Anything else is a no-call, so the genotypes analysed are not guaranteed identical to your caller's output.
 - A variant whose indel representation PharmCAT cannot match stays a no-call, the same outcome a plain VCF gets. Reference calls at indel positions are written with PharmCAT's own alleles, so PharmCAT reads them.
 
 Two kinds of gVCF are refused, each because the conversion genuinely cannot proceed:

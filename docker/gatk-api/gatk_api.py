@@ -4316,7 +4316,8 @@ def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path, conte
 
     Each row is judged by _gvcf_row_status. Then, at every PharmCAT position:
 
-    * every row a confident variant (or variant and reference): left as GATK wrote it.
+    * every row a confident variant (or variant and reference), and no record starting
+      upstream covering the position: left as GATK wrote it.
     * every row reference, every base of PharmCAT's record there (a deletion's REF spans
       several) reference too, and none of it inside a `contested` span (a gVCF record
       with another allele, which may start upstream; see contested_spans): written with
@@ -4326,12 +4327,16 @@ def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path, conte
       defined there became uncallable -- measured 2026-09-27 on a panel gVCF: UGT1A1
       *28/*36/*37, DPYD *3/*7 and NUDT15 *3/*6/*9, all covered and all reference.
     * anything else -- an uncertain row, a row without a genotype beside a called one, a
-      base of the record that is not confidently reference -- makes every row there
-      `./.`. A no-call is what PharmCAT should see where the gVCF is not sure; review
+      `*` allele, a base of the record that is not confidently reference -- is a
+      no-call. A no-call is what PharmCAT should see where the gVCF is not sure; review
       found a QUAL 15.6 het at CYP4F2 rs4020346 coming out as reference, and
       reference-block rows with 6 reads.
-    * a position with no genotype at all is left as is; it counts as covered-but-not-
-      called when GATK saw reads there (`./.:11:0`), and as absent otherwise.
+    * a position with no genotype at all is a no-call too; it counts as covered-but-
+      not-called when GATK saw reads there (`./.:11:0`), and as absent otherwise.
+
+    Every no-call at a PharmCAT position is written as PharmCAT's own record(s) with
+    `./.` rather than GATK's row: PharmCAT reads that as missing, but beside a `*`
+    allele (called or `./.`) its preprocessor adds its own 0/0 and reports reference.
 
     A row at a position PharmCAT does not list (the other bases of a multi-base record)
     is left as is, unless it carries a non-reference allele the lane cannot stand
@@ -4420,34 +4425,57 @@ def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path, conte
                 out.append('\t'.join(no_call(r) if weak_call or inside else finite_qual(r)))
             continue
 
+        pos = int(f[1])
+        end = pos + max(len(ref) for _, ref, _ in pharmcat) - 1
+        dp = next(
+            (d for d in (fmt_value(r, 'DP') for r in rows if len(r) >= 10) if d not in (None, '', '.')),
+            None,
+        )
+
+        def pharmcat_record(genotype):
+            fmt, sample = ('GT:DP', f'{genotype}:{dp}') if dp else ('GT', genotype)
+            return [
+                '\t'.join([f[0], f[1], rid, ref, alt, '.', '.', '.', fmt, sample])
+                for rid, ref, alt in pharmcat
+            ]
+
+        # A no-call at a PharmCAT position is written as PharmCAT's own record with
+        # `./.`, never with GATK's alleles: beside a `*` allele PharmCAT's preprocessor
+        # adds a 0/0 record of its own and reports reference (review: rs17376848 A/A
+        # under a het GGAA>G anchored upstream, whether the `*` row was called or ./.).
+        # For the same reason a `*` row is never taken as a call.
+        star = any('*' in r[4].split(',') for r in rows if len(r) >= 5)
+        # A variant row that a record starting upstream covers is not what it looks
+        # like: GATK drops the `*` of `C *,G 1/2` and writes `C G 0/1` with AD 0,15.
+        upstream = any(c == f[0] and s < pos <= e for c, s, e in contested)
+
         if all(s == 'missing' for s in statuses):
-            out.extend('\t'.join(finite_qual(r)) for r in rows)
-            if any((_as_int(fmt_value(r, 'DP')) or 0) > 0 for r in rows if len(r) >= 10):
+            out.extend(pharmcat_record('./.'))
+            if (_as_int(dp) or 0) > 0:
                 demoted += 1
             continue
-        if any(s in ('uncertain', 'missing') for s in statuses):
-            out.extend('\t'.join(no_call(r)) for r in rows)
+        if star or any(s in ('uncertain', 'missing') for s in statuses):
+            out.extend(pharmcat_record('./.'))
             demoted += 1
             continue
         if 'variant' in statuses:
-            out.extend('\t'.join(finite_qual(r)) for r in rows)
+            if upstream:
+                out.extend(pharmcat_record('./.'))
+                demoted += 1
+            else:
+                out.extend('\t'.join(finite_qual(r)) for r in rows)
             continue
 
-        pos = int(f[1])
-        end = pos + max(len(ref) for _, ref, _ in pharmcat) - 1
         if is_contested(f[0], pos, end) or any(
             base_status.get((f[0], b)) != 'reference' for b in range(pos, end + 1)
         ):
-            out.extend('\t'.join(no_call(r)) for r in rows)
+            out.extend(pharmcat_record('./.'))
             demoted += 1
             continue
         if {(r[3], r[4]) for r in rows} == {(ref, alt) for _, ref, alt in pharmcat}:
             out.extend('\t'.join(finite_qual(r)) for r in rows)
             continue
-        dp = fmt_value(rows[0], 'DP')
-        fmt, sample = ('GT:DP', f'0/0:{dp}') if dp not in (None, '', '.') else ('GT', '0/0')
-        for rid, ref, alt in pharmcat:
-            out.append('\t'.join([f[0], f[1], rid, ref, alt, '.', '.', '.', fmt, sample]))
+        out.extend(pharmcat_record('0/0'))
         rewritten += 1
 
     return [h + '\n' for h in header] + [o + '\n' for o in out], rewritten, demoted

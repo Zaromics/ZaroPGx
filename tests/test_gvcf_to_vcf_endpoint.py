@@ -1082,31 +1082,42 @@ def test_a_reference_row_beside_a_no_call_row_is_a_no_call(gatk_api, tmp_path):
         _positions(tmp_path, [_SNV]),
     )
     assert (rewritten, demoted) == (0, 1)
-    assert [_genotype(line) for line in _body(lines)] == ["./.", "./."]
+    assert _body(lines) == [
+        "chr19\t15878920\trs4020346\tT\tC\t.\t.\t.\tGT:DP\t./.:30\n"
+    ]
 
 
-@pytest.mark.parametrize(
-    "row",
-    [
-        (
-            "chr13",
-            48037782,
-            "A",
-            "AGGAGTCGGAGTC",
-            "GT:AD:DP:GQ:PL",
-            "0/1:10,10:20:99:300,0,300",
-            "300.64",
-        ),
-        ("chr13", 48037782, "A", ".", "GT", "./."),
-    ],
-)
-def test_a_call_or_a_no_call_is_left_as_gatk_wrote_it(gatk_api, tmp_path, row):
-    called = _called([row])
+def test_a_confident_call_is_left_as_gatk_wrote_it(gatk_api, tmp_path):
+    called = _called(
+        [
+            (
+                "chr13",
+                48037782,
+                "A",
+                "AGGAGTCGGAGTC",
+                "GT:AD:DP:GQ:PL",
+                "0/1:10,10:20:99:300,0,300",
+                "300.64",
+            )
+        ]
+    )
     lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
         called, _positions(tmp_path, [_INDEL])
     )
     assert (rewritten, demoted) == (0, 0)
     assert lines == called
+
+
+def test_an_uncovered_position_is_pharmcats_record_uncalled(gatk_api, tmp_path):
+    """No block in the gVCF: a no-call, and absent rather than uncertain."""
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called([("chr13", 48037782, "A", ".", "GT", "./.")]),
+        _positions(tmp_path, [_INDEL]),
+    )
+    assert (rewritten, demoted) == (0, 0)
+    assert _body(lines) == [
+        "chr13\t48037782\trs746071566\tAGGAGTC\tA,AGGAGTCGGAGTC\t.\t.\t.\tGT\t./.\n"
+    ]
 
 
 def test_a_position_with_a_variant_row_keeps_every_row(gatk_api, tmp_path):
@@ -1239,7 +1250,7 @@ def test_a_covered_position_gatk_left_uncalled_is_not_absent(gatk_api, tmp_path)
         called, _positions(tmp_path, [_SNV])
     )
     assert (rewritten, demoted) == (0, 1)
-    assert lines == called
+    assert _genotype(_body(lines)[0]) == "./."
 
 
 @pytest.mark.parametrize(
@@ -1350,3 +1361,67 @@ def test_other_bases_inside_a_called_deletion_are_not_reference(gatk_api, tmp_pa
     assert (rewritten, demoted) == (0, 1)
     assert [_genotype(line) for line in _body(lines)] == ["./.", "./.", "0/0"]
     assert [_qual(line) for line in _body(lines)] == [".", ".", "."]
+
+
+# --------------------------------------------------------------------------
+# `*` at a PharmCAT position (review, verified with GATK 4.7.0.0 and PharmCAT 3.4.0:
+# rs17376848 came out A/A under a het GGAA>G anchored one base upstream)
+# --------------------------------------------------------------------------
+_RS17376848 = ("chr1", 97450068, "rs17376848", "A", "G")
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        (
+            "chr1",
+            97450068,
+            "A",
+            "*",
+            "GT:AD:DP:GQ:PL",
+            "0/1:20,18:38:99:0,99,900",
+            "45",
+        ),
+        ("chr1", 97450068, "A", "*", "GT:AD:DP:GQ:PL", "./.:20,18:38:99:0,99,900"),
+    ],
+)
+def test_a_star_allele_never_reaches_pharmcat(gatk_api, tmp_path, row):
+    """Beside a `*` row -- called or `./.` -- PharmCAT's preprocessor adds its own 0/0
+    and reports reference. PharmCAT's own record with `./.` reads as missing."""
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called([row]), _positions(tmp_path, [_RS17376848])
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert _body(lines) == [
+        "chr1\t97450068\trs17376848\tA\tG\t.\t.\t.\tGT:DP\t./.:38\n"
+    ]
+
+
+def test_a_call_covered_by_a_record_starting_upstream_is_a_no_call(gatk_api, tmp_path):
+    """GATK drops the `*` of `C *,G 1/2` and writes `C G 0/1` with AD 0,15: the other
+    haplotype is deleted, not reference. PharmCAT discarded it only because GT and AD
+    disagree; the lane does not rely on that."""
+    row = (
+        "chr1",
+        97078993,
+        "C",
+        "G",
+        "GT:AD:DP:GQ:PL",
+        "0/1:0,15:15:45:450,0,45",
+        "400",
+    )
+    positions = _positions(tmp_path, [("chr1", 97078993, "rs1", "C", "G")])
+
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called([row]), positions, [("chr1", 97078991, 97078994)]
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert _genotype(_body(lines)[0]) == "./."
+
+    # A record starting AT the position is the row itself: the call stands.
+    called = _called([row])
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        called, positions, [("chr1", 97078993, 97078993)]
+    )
+    assert (rewritten, demoted) == (0, 0)
+    assert lines == called
