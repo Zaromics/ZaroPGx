@@ -42,10 +42,11 @@ The paragraph also carries the two caveats the reader is owed:
   paragraph says so instead. The counts come from the step's own ``output_data`` --
   what happened, not what was planned.
 * Re-genotyping. GenotypeGVCFs derives each genotype afresh from the recorded
-  likelihoods rather than copying the original caller's GT, at GATK's default
-  calling-confidence threshold, so a site the original caller marked variant with low
-  confidence comes out as a no-call, and the emitted genotypes are not guaranteed
-  identical to the original caller's.
+  likelihoods rather than copying the original caller's GT. At PharmCAT's positions
+  it runs at calling-confidence threshold 0 and the gatk-api applies the lane's own
+  bar, so a site the original caller marked variant with low confidence comes out as
+  a no-call, and the emitted genotypes are not guaranteed identical to the original
+  caller's.
 
 Not carried, and deliberately: the count of positions PharmCAT discarded for indel
 representation mismatch. It is in PharmCAT's ``*.match_warnings.txt``, which nothing
@@ -134,10 +135,18 @@ def gvcf_provenance_paragraph(
             if unspecified_to_ref
             else "and {absent:,} were not covered by the file and remain no-calls"
         ).format(absent=absent)
+        uncertain = _as_count(output_data.get("n_positions_uncertain")) or 0
+        unsure = (
+            f" {uncertain:,} more were covered but not called with confidence -- "
+            "too few reads, low confidence, or reads for another allele without a "
+            "confident call -- and are no-calls too."
+            if uncertain
+            else ""
+        )
         coverage = (
             f"Reference genotypes at the pharmacogene positions come from those "
             f"blocks: {called:,} of PharmCAT's {total:,} positions carried a call, "
-            f"{fate}."
+            f"{fate}.{unsure}"
         )
 
     if unspecified_to_ref:
@@ -183,9 +192,10 @@ def gvcf_provenance_paragraph(
         f"{coverage} {assume_ref}Two caveats: "
         "<code>GenotypeGVCFs</code> re-derives each genotype from the recorded "
         "likelihoods rather than copying the original caller's, so the genotypes "
-        "analysed here are not guaranteed identical to that caller's output (GATK's "
-        "default calling-confidence threshold applies, so a site the caller marked "
-        "variant with low confidence is a no-call here); and a variant whose indel "
+        "analysed here are not guaranteed identical to that caller's output (the "
+        "calling-confidence threshold was set to zero and ZaroPGx applied its own, "
+        "so a site the caller marked variant with low confidence is a no-call "
+        "here); and a variant whose indel "
         "representation PharmCAT cannot match stays a no-call, the same as it would "
         "from a plain VCF. Reference calls at indel positions are written with "
         "PharmCAT's own alleles, so PharmCAT reads them.</p>"

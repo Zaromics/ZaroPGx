@@ -2040,10 +2040,12 @@ class FileProcessor:
                 )
                 workflow["warnings"].append(
                     "<p>⚠️ GenotypeGVCFs re-genotypes each site from the recorded "
-                    "likelihoods rather than copying the original caller's genotype, at "
-                    "GATK's default calling-confidence threshold: a site your caller "
+                    "likelihoods rather than copying the original caller's genotype. At "
+                    "PharmCAT's positions ZaroPGx runs it with the calling-confidence "
+                    "threshold set to zero and applies its own, so a site your caller "
                     "marked variant with low confidence comes out as a no-call, and the "
-                    "emitted genotypes are not guaranteed identical to your caller's.</p>"
+                    "emitted genotypes are still not guaranteed identical to your "
+                    "caller's.</p>"
                 )
                 workflow["warnings"].append(
                     "<p>⚠️ Positions your gVCF does not cover are no-calls: a "

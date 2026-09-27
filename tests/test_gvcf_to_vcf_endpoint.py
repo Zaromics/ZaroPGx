@@ -75,13 +75,28 @@ def _vcf_text(rows):
     -- ``--include-non-variant-sites`` emits a row at EVERY interval position, including
     ones the gVCF had no block for, and those come back ``./.``. Counting them would
     report full coverage for a file that covered nothing.
+
+    Rows are written as GenotypeGVCFs writes them (measured on a panel gVCF): a 0/0 is
+    a reference-block row, `REF ALT=.` with GT:DP:RGQ and a confident RGQ --
+    rewrite_homref_to_pharmcat_alleles no-calls a 0/0 row it cannot stand behind -- and
+    a position the gVCF had no block for is a bare `GT ./.`.
     """
     lines = []
     for row in rows:
         chrom, pos = row[0], row[1]
         genotype = row[2] if len(row) > 2 else "0/0"
-        lines.append(f"{chrom}\t{pos}\trsX\tG\tA\t100\tPASS\t.\tGT:DP\t{genotype}:30\n")
+        if genotype == "0/0":
+            lines.append(f"{chrom}\t{pos}\t.\tG\t.\t.\t.\t.\tGT:DP:RGQ\t0/0:30:99\n")
+        else:
+            lines.append(f"{chrom}\t{pos}\t.\tG\t.\t.\t.\t.\tGT\t{genotype}\n")
     return VCF_HEADER + "".join(lines)
+
+
+def _positions_text(rows):
+    """PharmCAT's position list: one SNV record per position."""
+    return VCF_HEADER + "".join(
+        f"{chrom}\t{pos}\trsX\tG\tA\t.\tPASS\t.\tGT\t0/0\n" for chrom, pos in rows
+    )
 
 
 def _fake_psutil():
@@ -118,7 +133,7 @@ def gatk_api(tmp_path_factory):
     (reference / "hg38" / "Homo_sapiens_assembly38.fasta").write_text(">chr10\nACGT\n")
     (reference / "pharmcat").mkdir(parents=True)
     (reference / "pharmcat" / "pharmcat_positions.vcf").write_text(
-        _vcf_text(PHARMCAT_POSITION_ROWS)
+        _positions_text(PHARMCAT_POSITION_ROWS)
     )
 
     before_handlers = list(logging.root.handlers)
@@ -339,11 +354,14 @@ def test_the_variant_pass_covers_everything_the_pgx_pass_excluded(
     assert "-L" not in variant[0]
 
 
-def test_both_passes_use_gatks_default_calling_threshold(client, tools):
-    """GenotypeGVCFs is GATK's calling step; a gVCF's genotypes are provisional. At
-    -stand-call-conf 0 (this lane's setting until 2026-09-27) a QUAL 15.6 het with 5 of
-    34 reads alt came through as CYP4F2 *17, where the sample's WGS shows 30 T / 3 C.
-    At GATK's default such a site is a no-call, which PharmCAT reads as missing."""
+def test_only_the_pgx_pass_runs_at_calling_threshold_zero(client, tools):
+    """At GATK's default of 30, a variant that fails the threshold is not no-called: it
+    is written as a reference-block row, 0/0 with the het's GQ as RGQ. Measured on a
+    panel gVCF: CYP4F2 rs4020346 (0/1, 5 of 34 reads alt, QUAL 15.6) came out
+    `T . 0.12 GT:DP:RGQ 0/0:34:23`, which no rule applied afterwards can tell from
+    covered reference. At 0 the row keeps the caller's genotype, AD and QUAL, and
+    rewrite_homref_to_pharmcat_alleles makes it a no-call. The variant pass is the
+    ordinary calling step and keeps GATK's default."""
     resp = _post(client)
 
     # The status assertion is not decoration: a bare `for argv in ...: assert` over an
@@ -353,9 +371,13 @@ def test_both_passes_use_gatks_default_calling_threshold(client, tools):
     assert resp.status_code == 200, resp.text
     assert len(tools.genotype_calls()) == 2, tools.argvs()
 
+    flag = "--standard-min-confidence-threshold-for-calling"
     for argv in tools.genotype_calls():
-        assert "--standard-min-confidence-threshold-for-calling" not in argv, argv
         assert "-stand-call-conf" not in argv, argv
+        if "--include-non-variant-sites" in argv:
+            assert argv[argv.index(flag) + 1] == "0", argv
+        else:
+            assert flag not in argv, argv
 
 
 def test_the_regions_bed_is_not_the_interval_list(client, tools):
@@ -821,6 +843,8 @@ _POSITIONS_HEADER = (
     "##fileformat=VCFv4.2\n"
     "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tPharmCAT\n"
 )
+_INDEL = ("chr13", 48037782, "rs746071566", "AGGAGTC", "A,AGGAGTCGGAGTC")
+_SNV = ("chr19", 15878920, "rs4020346", "T", "C")
 
 
 def _positions(tmp_path, rows):
@@ -837,65 +861,248 @@ def _positions(tmp_path, rows):
 
 
 def _called(rows):
+    """Rows are (chrom, pos, ref, alt, FORMAT, sample) or, with QUAL, (..., qual)."""
     return [
         "##fileformat=VCFv4.2\n",
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n",
-    ] + [f"{c}\t{p}\t.\t{r}\t{a}\t.\t.\t.\tGT:DP\t{gt}:21\n" for c, p, r, a, gt in rows]
+    ] + [
+        f"{c}\t{p}\t.\t{r}\t{a}\t{rest[0] if rest else '.'}\t.\t.\t{fmt}\t{s}\n"
+        for c, p, r, a, fmt, s, *rest in rows
+    ]
 
 
-def test_a_reference_indel_position_gets_pharmcats_alleles(gatk_api, tmp_path):
+def _indel_rows(at_anchor, sample="0/0:21:60", fmt="GT:DP:RGQ"):
+    """GenotypeGVCFs emits one row per base of a multi-base interval: the anchor row
+    given, then reference-block rows for the other six bases of _INDEL's REF."""
+    return [at_anchor] + [
+        ("chr13", 48037782 + offset, "G", ".", fmt, sample) for offset in range(1, 7)
+    ]
+
+
+def _body(lines):
+    return [line for line in lines if not line.startswith("#")]
+
+
+def _genotype(line):
+    return line.rstrip("\n").split("\t")[9].split(":", 1)[0]
+
+
+def test_a_confident_reference_indel_position_gets_pharmcats_alleles(
+    gatk_api, tmp_path
+):
     """GenotypeGVCFs writes it REF=anchor ALT=., which PharmCAT discards; measured on a
     panel gVCF, that made NUDT15 *3/*6/*9, UGT1A1 *28/*36/*37 and DPYD *3/*7
     uncallable though the positions were covered and reference."""
-    positions = _positions(
-        tmp_path, [("chr13", 48037782, "rs746071566", "AGGAGTC", "A,AGGAGTCGGAGTC")]
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(_indel_rows(("chr13", 48037782, "A", ".", "GT:DP:RGQ", "0/0:21:60"))),
+        _positions(tmp_path, [_INDEL]),
     )
-    lines, n = gatk_api.rewrite_homref_to_pharmcat_alleles(
-        _called([("chr13", 48037782, "A", ".", "0/0")]), positions
-    )
-    body = [l for l in lines if not l.startswith("#")]
-    assert n == 1
-    assert body == [
+    assert (rewritten, demoted) == (1, 0)
+    assert _body(lines)[0] == (
         "chr13\t48037782\trs746071566\tAGGAGTC\tA,AGGAGTCGGAGTC\t.\t.\t.\tGT:DP\t0/0:21\n"
-    ]
+    )
+
+
+@pytest.mark.parametrize(
+    "fmt, sample, why",
+    [
+        ("GT:DP:RGQ", "0/0:21:12", "reference confidence below 20"),
+        ("GT:DP:RGQ", "0/0:6:60", "fewer than 7 reads"),
+        ("GT:DP", "0/0:21", "no confidence evidence at all"),
+    ],
+)
+def test_a_reference_row_it_cannot_stand_behind_becomes_a_no_call(
+    gatk_api, tmp_path, fmt, sample, why
+):
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(_indel_rows(("chr13", 48037782, "A", ".", fmt, sample))),
+        _positions(tmp_path, [_INDEL]),
+    )
+    assert (rewritten, demoted) == (0, 1), why
+    assert _genotype(_body(lines)[0]) == "./.", why
+
+
+@pytest.mark.parametrize(
+    "row, why",
+    [
+        # CYP4F2 rs4020346 exactly as GenotypeGVCFs writes it at threshold 0, from the
+        # panel gVCF's `0/1:29,5,0:34:23` (the WGS shows the site uncertain).
+        (
+            (
+                "chr19",
+                15878920,
+                "T",
+                "C",
+                "GT:AD:DP:GQ:PL",
+                "0/1:29,5:34:23:23,0,887",
+                "15.63",
+            ),
+            "a het below QUAL 30",
+        ),
+        (
+            (
+                "chr19",
+                15878920,
+                "T",
+                "C",
+                "GT:AD:DP:GQ:PL",
+                "1/1:0,3:3:9:99,9,0",
+                "95.0",
+            ),
+            "a hom-alt below GQ 20",
+        ),
+        # The same gVCF's chr19:15878886, a 0/0 on a variant record: 2 of 31 reads alt.
+        (
+            ("chr19", 15878920, "T", "C", "GT:AD:DP:RGQ", "0/0:29,2:31:18", "0"),
+            "a 0/0 with reads for another allele",
+        ),
+        (
+            ("chr19", 15878920, "T", "C", "GT:AD:DP:RGQ", "0/0:29,1:30:12", "0"),
+            "a 0/0 below reference confidence 20",
+        ),
+    ],
+)
+def test_a_row_the_caller_was_not_sure_of_becomes_a_no_call(
+    gatk_api, tmp_path, row, why
+):
+    """Neither a call nor reference: GenotypeGVCFs runs this pass at threshold 0, so
+    the caller's own genotype reaches this function and the lane applies the bar."""
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called([row]), _positions(tmp_path, [_SNV])
+    )
+    assert (rewritten, demoted) == (0, 1), why
+    assert _genotype(_body(lines)[0]) == "./.", why
+
+
+def test_one_stray_read_at_depth_is_still_reference(gatk_api, tmp_path):
+    """The alignment lanes' allowance: from 20 reads up, 5% may show something else."""
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(
+            _indel_rows(
+                ("chr13", 48037782, "A", "C", "GT:AD:DP:RGQ", "0/0:29,1:30:60", "0")
+            )
+        ),
+        _positions(tmp_path, [_INDEL]),
+    )
+    assert (rewritten, demoted) == (1, 0)
+
+
+def test_every_base_of_a_multi_base_record_must_be_reference(gatk_api, tmp_path):
+    """A deletion's REF spans seven bases; one of them not confidently reference means
+    the deletion's absence is not known either."""
+    rows = _indel_rows(("chr13", 48037782, "A", ".", "GT:DP:RGQ", "0/0:21:60"))
+    rows[4] = ("chr13", 48037786, "G", ".", "GT:DP:RGQ", "0/0:21:5")
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(rows), _positions(tmp_path, [_INDEL])
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert _genotype(_body(lines)[0]) == "./."
+
+
+def test_a_base_missing_from_the_record_span_is_not_reference(gatk_api, tmp_path):
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called([("chr13", 48037782, "A", ".", "GT:DP:RGQ", "0/0:21:60")]),
+        _positions(tmp_path, [_INDEL]),
+    )
+    assert (rewritten, demoted) == (0, 1)
+
+
+def test_a_reference_row_beside_a_no_call_row_is_a_no_call(gatk_api, tmp_path):
+    """Review: a 0/0 row and a `./.` row at one position skipped the check."""
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(
+            [
+                ("chr19", 15878920, "T", ".", "GT:DP:RGQ", "0/0:30:99"),
+                ("chr19", 15878920, "T", "C", "GT", "./."),
+            ]
+        ),
+        _positions(tmp_path, [_SNV]),
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert [_genotype(line) for line in _body(lines)] == ["./.", "./."]
 
 
 @pytest.mark.parametrize(
     "row",
     [
-        ("chr13", 48037782, "A", "AGGAGTCGGAGTC", "0/1"),  # a real call
-        ("chr13", 48037782, "A", ".", "./."),  # not covered: stays a no-call
+        (
+            "chr13",
+            48037782,
+            "A",
+            "AGGAGTCGGAGTC",
+            "GT:AD:DP:GQ:PL",
+            "0/1:10,10:20:99:300,0,300",
+            "300.64",
+        ),
+        ("chr13", 48037782, "A", ".", "GT", "./."),
     ],
 )
-def test_anything_but_a_called_reference_is_left_alone(gatk_api, tmp_path, row):
-    positions = _positions(
-        tmp_path, [("chr13", 48037782, "rs746071566", "AGGAGTC", "A,AGGAGTCGGAGTC")]
-    )
+def test_a_call_or_a_no_call_is_left_as_gatk_wrote_it(gatk_api, tmp_path, row):
     called = _called([row])
-    lines, n = gatk_api.rewrite_homref_to_pharmcat_alleles(called, positions)
-    assert n == 0
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        called, _positions(tmp_path, [_INDEL])
+    )
+    assert (rewritten, demoted) == (0, 0)
     assert lines == called
 
 
 def test_a_position_with_a_variant_row_keeps_every_row(gatk_api, tmp_path):
     """A second record at the position saying non-reference means it is not reference."""
-    positions = _positions(
-        tmp_path, [("chr2", 233760233, "rs3064744", "CAT", "C,CATAT")]
-    )
     called = _called(
         [
-            ("chr2", 233760233, "C", ".", "0/0"),
-            ("chr2", 233760233, "CAT", "CATAT", "0/1"),
+            ("chr2", 233760233, "C", ".", "GT:DP:RGQ", "0/0:30:99"),
+            (
+                "chr2",
+                233760233,
+                "CAT",
+                "CATAT",
+                "GT:AD:DP:GQ",
+                "0/1:15,15:30:99",
+                "250.6",
+            ),
         ]
     )
-    lines, n = gatk_api.rewrite_homref_to_pharmcat_alleles(called, positions)
-    assert n == 0
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        called,
+        _positions(tmp_path, [("chr2", 233760233, "rs3064744", "CAT", "C,CATAT")]),
+    )
+    assert (rewritten, demoted) == (0, 0)
     assert lines == called
 
 
-def test_positions_outside_pharmcats_list_are_untouched(gatk_api, tmp_path):
-    positions = _positions(tmp_path, [("chr1", 100, "rs1", "C", "T")])
-    called = _called([("chr1", 101, "G", ".", "0/0")])
-    lines, n = gatk_api.rewrite_homref_to_pharmcat_alleles(called, positions)
-    assert n == 0
-    assert lines == called
+def test_rows_outside_pharmcats_list_are_untouched_but_for_weak_calls(
+    gatk_api, tmp_path
+):
+    """The other bases of a multi-base record come through the pass too. A reference
+    row or a confident call there is left alone; a variant the caller was not sure of
+    is a no-call, as it would have been dropped at GATK's default threshold rather than
+    reaching PyPGx as a call."""
+    called = _called(
+        [
+            ("chr1", 101, "G", ".", "GT:DP", "0/0:3"),
+            (
+                "chr1",
+                102,
+                "G",
+                "A",
+                "GT:AD:DP:GQ:PL",
+                "0/1:15,15:30:99:300,0,300",
+                "300.6",
+            ),
+            (
+                "chr1",
+                103,
+                "G",
+                "A",
+                "GT:AD:DP:GQ:PL",
+                "0/1:29,5:34:23:23,0,887",
+                "15.63",
+            ),
+        ]
+    )
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        called, _positions(tmp_path, [("chr1", 100, "rs1", "C", "T")])
+    )
+    assert (rewritten, demoted) == (0, 0)
+    assert _body(lines)[:2] == _body(called)[:2]
+    assert _genotype(_body(lines)[2]) == "./."

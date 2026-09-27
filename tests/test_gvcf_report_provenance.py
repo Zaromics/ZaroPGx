@@ -121,15 +121,15 @@ def test_zero_coverage_is_reported_not_swallowed():
 
 def test_the_paragraph_states_the_re_genotyping_caveat():
     """GenotypeGVCFs re-derives each genotype from the PLs rather than copying the
-    original caller's, at GATK's default calling-confidence threshold (it was 0 until
-    2026-09-27, which let a QUAL 15.6 het through as a false CYP4F2 *17). The copy must
-    say a low-confidence site is a no-call and must not overclaim identity."""
+    original caller's. The PGx pass runs at threshold 0 and the lane applies its own bar
+    (at GATK's default a QUAL 15.6 het came through as reference). The copy must say a
+    low-confidence site is a no-call and must not overclaim identity."""
     paragraph = _paragraph()
 
     assert "re-derives each genotype" in paragraph
     assert "not guaranteed identical" in paragraph
-    assert "default calling-confidence threshold" in paragraph
-    assert "set to zero" not in paragraph
+    assert "set to zero and ZaroPGx applied its own" in paragraph
+    assert "low confidence is a no-call" in paragraph
 
 
 def test_the_paragraph_states_the_indel_representation_caveat():
@@ -424,3 +424,22 @@ def test_the_pdf_lane_forwards_both_provenance_keys():
     source = Path(pdf_generators.__file__).read_text(encoding="utf-8")
     for key in ("gvcf_provenance", "liftover_provenance"):
         assert f'"{key}": template_data.get("{key}")' in source, key
+
+
+def test_covered_but_uncertain_positions_are_not_called_uncovered():
+    """rewrite_homref_to_pharmcat_alleles no-calls a 0/0 it cannot stand behind; those
+    positions were covered, and the paragraph must not count them as not covered."""
+    from app.utils.gvcf_provenance import gvcf_provenance_paragraph
+
+    paragraph = gvcf_provenance_paragraph(
+        {
+            "n_pharmcat_positions": 1226,
+            "n_pgx_positions_called": 790,
+            "n_positions_absent": 423,
+            "n_positions_uncertain": 13,
+        },
+        absent_to_ref=False,
+        unspecified_to_ref=False,
+    )
+    assert "423 were not covered by the file" in paragraph
+    assert "13 more were covered but not called with confidence" in paragraph

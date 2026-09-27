@@ -4045,6 +4045,7 @@ def build_genotype_gvcfs_argv(
     intervals=None,
     exclude_intervals=None,
     include_non_variant=False,
+    min_confidence=None,
 ):
     """Build the GATK GenotypeGVCFs command as an argv list.
 
@@ -4065,15 +4066,17 @@ def build_genotype_gvcfs_argv(
                        reference-confidence blocks, so they are called data. Only ever
                        passed with -L; without an interval list it means "every base
                        in the genome".
-      (no --standard-min-confidence-threshold-for-calling)
-                       GATK's default of 30 applies. It was set to 0 until 2026-09-27,
-                       to keep every site the gVCF's caller had marked variant. But a
-                       gVCF's genotypes are provisional in GATK's design --
-                       GenotypeGVCFs is the calling step -- and at 0 a QUAL 15.6 het
-                       with 5 of 34 reads alt came through as CYP4F2 *17, on a sample
-                       whose WGS shows 30 T / 3 C there. At 30 such a site is a
-                       no-call, which PharmCAT reads as missing rather than as a
-                       genotype.
+      --standard-min-confidence-threshold-for-calling (min_confidence)
+                       passed only for the PGx pass, as 0; the variant pass keeps
+                       GATK's default of 30. At 30 GATK does not no-call a variant that
+                       fails the threshold: it writes it as a reference-block row, 0/0
+                       with the het's own GQ as RGQ. Measured 2026-09-27 on a panel
+                       gVCF: CYP4F2 rs4020346, the caller's 0/1 with 5 of 34 reads alt
+                       and QUAL 15.6, came out `T . 0.12 GT:DP:RGQ 0/0:34:23` --
+                       indistinguishable from covered reference, while the sample's WGS
+                       shows the site uncertain. At 0 the row keeps its ALT, AD, GQ and
+                       QUAL, and rewrite_homref_to_pharmcat_alleles judges it: a variant
+                       below QUAL 30 or GQ 20 is a no-call, not a call and not reference.
     """
     argv = [
         'gatk', 'GenotypeGVCFs',
@@ -4087,6 +4090,8 @@ def build_genotype_gvcfs_argv(
         argv += ['-XL', str(exclude_intervals)]
     if include_non_variant:
         argv += ['--include-non-variant-sites']
+    if min_confidence is not None:
+        argv += ['--standard-min-confidence-threshold-for-calling', str(min_confidence)]
     return argv
 
 
@@ -4158,24 +4163,100 @@ def count_positions_with_calls(positions, called_path):
     return len(covered)
 
 
+# What a row of the PGx pass says, judged by the same bar as the alignment lanes
+# (genotype_pharmcat_positions in the pypgx wrapper). The pass runs at GATK's calling
+# threshold 0 (see build_genotype_gvcfs_argv), so every row still says what the gVCF's
+# caller said, and this lane applies the thresholds itself:
+#
+#   * a reference-block row (ALT `.`, 0/0) is reference with RGQ >= 20 and >= 7 reads;
+#   * a 0/0 row on a variant record is reference with RGQ (or GQ) >= 20, >= 7 reads for
+#     the reference and next to none for anything else (none below 20 reads, 5% from 20
+#     up) -- the site had reads for another allele, so its counts decide;
+#   * a row with a non-reference allele is a variant with GQ >= 20 and QUAL >= 30
+#     (GATK's own default calling threshold);
+#   * anything else is uncertain, and a missing allele is missing.
+GVCF_MIN_RGQ = 20
+GVCF_MIN_REF_READS = 7
+GVCF_MAX_OTHER_FRACTION = 0.05
+GVCF_MIN_VARIANT_GQ = 20
+GVCF_MIN_VARIANT_QUAL = 30
+
+
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _gvcf_row_status(fields):
+    """'reference', 'variant', 'uncertain' or 'missing', for one row of the PGx pass."""
+    if len(fields) < 10:
+        return 'missing'
+    fmt = dict(zip(fields[8].split(':'), fields[9].split(':')))
+    alleles = fmt.get('GT', '.').replace('|', '/').split('/')
+    if any(a in ('', '.') for a in alleles):
+        return 'missing'
+
+    if any(a != '0' for a in alleles):
+        gq = _as_int(fmt.get('GQ'))
+        qual = _as_float(fields[5])
+        if (
+            gq is not None and gq >= GVCF_MIN_VARIANT_GQ
+            and qual is not None and qual >= GVCF_MIN_VARIANT_QUAL
+        ):
+            return 'variant'
+        return 'uncertain'
+
+    quality = _as_int(fmt.get('RGQ', fmt.get('GQ')))
+    if quality is None or quality < GVCF_MIN_RGQ:
+        return 'uncertain'
+    if fields[4] == '.':
+        depth = _as_int(fmt.get('DP')) or 0
+        return 'reference' if depth >= GVCF_MIN_REF_READS else 'uncertain'
+    reads = [_as_int(v) for v in fmt.get('AD', '.').split(',')]
+    if not reads or reads[0] is None:
+        return 'uncertain'
+    other = sum(r for r in reads[1:] if r)
+    allowed = int((reads[0] + other) * GVCF_MAX_OTHER_FRACTION)
+    if reads[0] >= GVCF_MIN_REF_READS and other <= allowed:
+        return 'reference'
+    return 'uncertain'
+
+
 def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path):
-    """Hom-ref rows at PharmCAT positions, rewritten with PharmCAT's own alleles.
+    """PharmCAT's positions in the PGx pass, as PharmCAT can read them, honestly.
 
-    GenotypeGVCFs writes a confident reference call at an indel position as
-    `REF=<anchor base> ALT=.`. PharmCAT discards that ("not a valid GT format for
-    INDELs"), so the position reads as missing and every allele defined there becomes
-    uncallable -- measured 2026-09-27 on a panel gVCF: UGT1A1 *28/*36/*37, DPYD *3/*7
-    and NUDT15 *3/*6/*9, all covered and all reference. The alignment lanes write such
-    positions with PharmCAT's own record (genotype_pharmcat_positions in the pypgx
-    wrapper); this is the gVCF lane's copy of the same rule.
+    Each row is judged by _gvcf_row_status. Then, at every PharmCAT position:
 
-    Per position: if every row there is a called hom-ref (only 0 alleles, none
-    missing) and any row's REF/ALT differs from PharmCAT's, the rows are replaced by
-    PharmCAT's records with GT 0/0 and the row's DP carried over. A position with any
-    non-reference or missing allele is left exactly as GATK wrote it.
+    * every row a confident variant (or variant and reference): left as GATK wrote it.
+    * every row reference, and every base of PharmCAT's record there (a deletion's REF
+      spans several) reference too: written with PharmCAT's own record and alleles.
+      GenotypeGVCFs writes a reference call at an indel position as
+      `REF=<anchor base> ALT=.`, which PharmCAT discards ("not a valid GT format for
+      INDELs"), so the position read as missing and every allele defined there became
+      uncallable -- measured 2026-09-27 on a panel gVCF: UGT1A1 *28/*36/*37, DPYD *3/*7
+      and NUDT15 *3/*6/*9, all covered and all reference.
+    * anything else -- an uncertain row, a row without a genotype beside a called one, a
+      base of the record that is not confidently reference -- makes every row there
+      `./.`. A no-call is what PharmCAT should see where the gVCF is not sure; review
+      found a QUAL 15.6 het at CYP4F2 rs4020346 coming out as reference, and
+      reference-block rows with 6 reads.
+    * a position with no genotype at all (the gVCF had no block there) is left as is.
+
+    A row at a position PharmCAT does not list (the other bases of a multi-base record)
+    is left as is, unless it carries a non-reference allele the lane cannot stand
+    behind: at threshold 0 such a row would otherwise reach PyPGx as a call.
 
     Takes and returns the VCF as a list of lines, so it stays a pure function of text.
-    Returns (lines, number of positions rewritten).
+    Returns (lines, positions rewritten, positions made no-calls).
     """
     known = {}
     with _open_vcf_text(positions_path) as handle:
@@ -4190,46 +4271,78 @@ def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path):
     for line in pgx_vcf_text_lines:
         (header if line.startswith('#') else body).append(line.rstrip('\n'))
 
-    by_key = {}
+    # Every row's verdict, and per base the verdict of every row whose REF covers it:
+    # a multi-base PharmCAT record is reference only where all of its bases are.
+    by_key, base_status = {}, {}
     for line in body:
         f = line.split('\t')
         by_key.setdefault((f[0], f[1]), []).append(f)
-
-    def homref(fields):
-        if len(fields) < 10:
-            return False
-        gt = fields[9].split(':', 1)[0].replace('|', '/').split('/')
-        return all(a == '0' for a in gt)
+        pos = _as_int(f[1]) if len(f) >= 10 else None
+        if pos is None:
+            continue
+        status = _gvcf_row_status(f)
+        for base in range(pos, pos + max(1, len(f[3]))):
+            before = base_status.get((f[0], base))
+            base_status[(f[0], base)] = status if before in (None, status) else 'uncertain'
 
     def depth(fields):
         keys = fields[8].split(':')
         values = fields[9].split(':')
         return values[keys.index('DP')] if 'DP' in keys and keys.index('DP') < len(values) else None
 
-    rewritten, out, done = 0, [], set()
+    def no_call(fields):
+        sample = fields[9].split(':')
+        sample[0] = './.'
+        return fields[:9] + [':'.join(sample)]
+
+    def has_nonref(fields):
+        gt = fields[9].split(':', 1)[0].replace('|', '/').split('/')
+        return any(a not in ('0', '.', '') for a in gt)
+
+    rewritten, demoted, out, done = 0, 0, [], set()
     for line in body:
         f = line.split('\t')
         key = (f[0], f[1])
         if key in done:
             continue
+        done.add(key)
         rows = by_key[key]
         pharmcat = known.get(key)
-        if (
-            pharmcat
-            and all(homref(r) for r in rows)
-            and {(r[3], r[4]) for r in rows} != {(ref, alt) for _, ref, alt in pharmcat}
-        ):
-            dp = depth(rows[0])
-            fmt, sample = ('GT:DP', f'0/0:{dp}') if dp not in (None, '', '.') else ('GT', '0/0')
-            for rid, ref, alt in pharmcat:
-                out.append('\t'.join([f[0], f[1], rid, ref, alt, '.', '.', '.', fmt, sample]))
-            rewritten += 1
-            done.add(key)
-            continue
-        out.extend('\t'.join(r) for r in rows)
-        done.add(key)
+        statuses = [_gvcf_row_status(r) for r in rows]
 
-    return [h + '\n' for h in header] + [o + '\n' for o in out], rewritten
+        if not pharmcat:
+            for r, status in zip(rows, statuses):
+                weak_call = len(r) >= 10 and status == 'uncertain' and has_nonref(r)
+                out.append('\t'.join(no_call(r) if weak_call else r))
+            continue
+
+        if all(s == 'missing' for s in statuses):
+            out.extend('\t'.join(r) for r in rows)
+            continue
+        if any(s in ('uncertain', 'missing') for s in statuses):
+            out.extend('\t'.join(no_call(r)) for r in rows)
+            demoted += 1
+            continue
+        if 'variant' in statuses:
+            out.extend('\t'.join(r) for r in rows)
+            continue
+
+        pos = int(f[1])
+        span = max(len(ref) for _, ref, _ in pharmcat)
+        if any(base_status.get((f[0], b)) != 'reference' for b in range(pos, pos + span)):
+            out.extend('\t'.join(no_call(r)) for r in rows)
+            demoted += 1
+            continue
+        if {(r[3], r[4]) for r in rows} == {(ref, alt) for _, ref, alt in pharmcat}:
+            out.extend('\t'.join(r) for r in rows)
+            continue
+        dp = depth(rows[0])
+        fmt, sample = ('GT:DP', f'0/0:{dp}') if dp not in (None, '', '.') else ('GT', '0/0')
+        for rid, ref, alt in pharmcat:
+            out.append('\t'.join([f[0], f[1], rid, ref, alt, '.', '.', '.', fmt, sample]))
+        rewritten += 1
+
+    return [h + '\n' for h in header] + [o + '\n' for o in out], rewritten, demoted
 
 
 def _run_tool(job_label, argv, what, status_code=500):
@@ -4339,6 +4452,7 @@ def convert_gvcf_to_vcf(
             pgx_vcf,
             intervals=positions_path,
             include_non_variant=True,
+            min_confidence=0,
         ),
         'Genotyping the gVCF at PharmCAT positions (GATK GenotypeGVCFs)',
     )
@@ -4347,8 +4461,8 @@ def convert_gvcf_to_vcf(
     # rewrite_homref_to_pharmcat_alleles: without it, every covered-and-reference
     # indel position is discarded by PharmCAT and reads as missing.
     with _open_vcf_text(pgx_vcf) as handle:
-        fixed_lines, n_homref_rewritten = rewrite_homref_to_pharmcat_alleles(
-            handle.readlines(), positions_path
+        fixed_lines, n_homref_rewritten, n_positions_uncertain = (
+            rewrite_homref_to_pharmcat_alleles(handle.readlines(), positions_path)
         )
     fixed_text = os.path.join(work_dir, 'pgx_positions.pharmcat_alleles.vcf')
     with open(fixed_text, 'w', encoding='utf-8') as fh:
@@ -4366,7 +4480,8 @@ def convert_gvcf_to_vcf(
     )
     logger.info(
         f"Job {job_label}: {n_homref_rewritten} reference position(s) rewritten "
-        "with PharmCAT's own alleles"
+        f"with PharmCAT's own alleles; {n_positions_uncertain} not called with "
+        "confidence, left as no-calls"
     )
 
     # 3. The variant pass.
@@ -4445,7 +4560,10 @@ def convert_gvcf_to_vcf(
     pharmcat_positions = read_vcf_positions(positions_path)
     n_pharmcat_positions = len(pharmcat_positions)
     n_pgx_positions_called = count_positions_with_calls(pharmcat_positions, pgx_vcf)
-    n_positions_absent = n_pharmcat_positions - n_pgx_positions_called
+    # Covered-but-uncertain positions are no-calls too, but not "not covered".
+    n_positions_absent = max(
+        0, n_pharmcat_positions - n_pgx_positions_called - n_positions_uncertain
+    )
 
     size = os.path.getsize(output_vcf)
     logger.info(
@@ -4459,6 +4577,7 @@ def convert_gvcf_to_vcf(
         'n_pharmcat_positions': n_pharmcat_positions,
         'n_pgx_positions_called': n_pgx_positions_called,
         'n_positions_absent': n_positions_absent,
+        'n_positions_uncertain': n_positions_uncertain,
         'n_homref_rewritten_to_pharmcat_alleles': n_homref_rewritten,
     }
 
@@ -4646,6 +4765,7 @@ async def gvcf_to_vcf(
             "n_pharmcat_positions": stats['n_pharmcat_positions'],
             "n_pgx_positions_called": stats['n_pgx_positions_called'],
             "n_positions_absent": stats['n_positions_absent'],
+            "n_positions_uncertain": stats['n_positions_uncertain'],
             "target_build": "GRCh38",
         }
         if job_client:
