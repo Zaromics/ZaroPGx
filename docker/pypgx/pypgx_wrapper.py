@@ -962,7 +962,11 @@ def annotate_uncovered_genes(vcf_gz: str, genes) -> None:
 #   with PharmCAT's own record and alleles.
 # * variant -- whatever bcftools call -mv (the engine PyPGx uses) calls over the span,
 #   at GQ >= 20, in bcftools's own representation, including an allele PharmCAT does
-#   not list, which PharmCAT then treats as undocumented rather than as reference.
+#   not list. PharmCAT 3.4.0 reports such an allele as found, warns "Undocumented
+#   variations will be replaced with reference" and matches the position as
+#   reference -- its own policy, the same for any input, and visible in PharmCAT's
+#   own report (not yet in ZaroPGx's), where the constrained genotype this replaced
+#   wrote a silent 0/0.
 # * anything else -- no reads, too few, reads for another allele without a confident
 #   call -- is left out, which PharmCAT reads as a no-call.
 #
