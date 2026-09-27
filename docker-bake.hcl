@@ -10,7 +10,7 @@
 # the disk-budget problem first.
 
 variable "ZAROPGX_TAG" {
-  default = "0.2.8"
+  default = "0.3.2"
 }
 
 variable "PHARMCAT_VERSION" {

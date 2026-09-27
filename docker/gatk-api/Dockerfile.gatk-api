@@ -1,43 +1,38 @@
-# Debian release pinned explicitly. `python:3.12-slim` floats across Debian releases,
-# and the apt version of samtools moves with it (bookworm ships 1.16.1-1, trixie
-# 1.21-1). Since gatk_api.py now runs samtools on the clinical data path -- the
-# CRAM/SAM to BAM conversion, its sort and its index -- that drift would silently
-# change results between rebuilds. trixie is what `python:3.12-slim` resolves to
-# today, so this pins current behaviour rather than changing it.
+# htslib/bcftools/samtools 1.24 built from the upstream tarballs rather than taken from
+# Debian: trixie ships 1.21, listed vulnerable to the CRAM-decoder and GZI CVEs fixed
+# upstream in 1.21.1. The same version the pharmcat and app images build. See
+# docker/common/build-htslib-suite.sh.
+FROM python:3.12-slim-trixie AS htslib
+COPY docker/common/build-htslib-suite.sh /tmp/
+RUN sh /tmp/build-htslib-suite.sh htslib bcftools samtools
+
+# Debian release pinned explicitly, so the base does not float across releases.
 FROM python:3.12-slim-trixie
 
 LABEL maintainer="ZaroPGx (wrapper only)"
 LABEL description="GATK 4.7.0.0 service for the ZaroPGx pipeline"
 
-# Install system dependencies
-# Note that samtools, bcftools, possibly others, may need to be installed from source
+# Install system dependencies.
 #
-# samtools is version-pinned because it produces clinical output here. Bump it
-# deliberately, together with the FROM line above; a Debian point release that
-# revises the package will fail this build loudly, which is the intent.
-#
-# bcftools produces clinical output here too and SHOULD be pinned the same way:
-# gatk_api.py shells out to it for the pre-liftover contig rename, for every
-# tabix index it writes, and -- since /bcf-to-vcf -- for the BCF->VCF conversion
-# whose output is what PyPGx and PharmCAT then analyse. (The older claim that
-# "nothing in gatk_api.py invokes bcftools" was already false when the liftover
-# landed.) It is still unpinned only because the exact trixie package version
-# string could not be verified from this workstation, and pinning a guessed
-# version would fail the build outright. Pin it -- `bcftools=<version>` -- the
-# next time this image is built somewhere `apt-cache policy bcftools` can be run.
-#
-# bedtools is genuinely unused: nothing in gatk_api.py invokes it.
+# samtools and bcftools produce clinical output here (CRAM/SAM->BAM, its sort and
+# index; the BCF->VCF conversion, the liftover's contig rename, every tabix index), so
+# they are version-pinned: built at 1.24 in the builder stage above, not taken from
+# apt, where the version moves with the Debian release. bedtools is unused.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
     wget \
     default-jre \
     unzip \
-    bcftools \
-    bedtools \
-    samtools=1.21-1 && \
+    bedtools && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# The htslib suite from the builder stage, and the libraries it links at runtime.
+COPY --from=htslib /opt/htslib-suite/usr/local/ /usr/local/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    zlib1g libbz2-1.0 liblzma5 libcurl4t64 libdeflate0 libncursesw6 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* && ldconfig
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh

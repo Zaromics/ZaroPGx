@@ -1,6 +1,10 @@
 FROM eclipse-temurin:21-jre-noble
 
-ARG NXF_VERSION=25.04.7
+# 25.10.x is the newest line still on the legacy parser. 26.x makes the strict parser the
+# default, under which the runner's string params ("--skip_hla false") stay truthy
+# strings: every run would skip HLA and PyPGx. Move the runner to a typed params block
+# (or explicit == 'true' checks in main.nf) before going past 25.x.
+ARG NXF_VERSION=25.10.7
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git bash ca-certificates python3 python3-pip procps \
@@ -38,7 +42,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # Create virtual environment and install Python deps
 RUN uv venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
-RUN uv pip install fastapi uvicorn httpx python-dotenv psutil sqlalchemy psycopg requests
+# Pinned at the versions installed and running when this was pinned (2026-09-27).
+RUN uv pip install fastapi==0.141.1 uvicorn==0.54.0 httpx==0.28.1 python-dotenv==1.2.3 \
+    psutil==7.2.2 sqlalchemy==2.1.1 psycopg==3.3.6 requests==2.34.2
 EXPOSE 5055
 
 ENTRYPOINT ["python3", "/opt/runner.py"]

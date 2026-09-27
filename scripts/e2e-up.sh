@@ -13,7 +13,7 @@ COMPOSE=(docker compose --env-file .env.e2e -p zaropgx_e2e -f compose.yml -f com
 SERVICES=(db app pharmcat nextflow pypgx gatk-api genome-downloader zarohla kroki)
 
 # Bake/compose image tag + PharmCAT arg (compose.yml defaults if unset).
-ZAROPGX_TAG="${ZAROPGX_TAG:-0.2.8}"
+ZAROPGX_TAG="${ZAROPGX_TAG:-0.3.2}"
 PHARMCAT_VERSION="${PHARMCAT_VERSION:-3.4.0}"
 if [[ -f .env.e2e ]]; then
   _tag="$(grep -E '^ZAROPGX_TAG=' .env.e2e | head -n1 | cut -d= -f2- || true)"

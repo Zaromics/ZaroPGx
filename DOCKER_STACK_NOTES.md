@@ -161,16 +161,27 @@ Core stack rebuilt and healthy on refreshed versions (WSL-native docker):
 
 | Service | Image / version | Notes |
 |---|---|---|
-| `pgx_db` | **postgres:18** | Fresh DB; data volume mounted at `/var/lib/postgresql` (PG18 layout) |
+| `pgx_db` | **postgres:18.6** | Pinned to the minor (was floating `:18`, ran 18.4); 18.x updates are in place. Data volume at `/var/lib/postgresql` (PG18 layout) |
 | `pgx_pharmcat` | **PharmCAT 3.4.0** | PharmVar data refresh; reporter multi-phenotype fix |
 | `pgx_zarohla` | **ZaroHLA / OptiType v1.5** | Active HLA path on `:5060`; paired-end typing verified. Its FASTQ scratch is `HLA_TEMP_DIR` (compose: `ZAROPGX_SCRATCH`), separable from `./data` because converting a whole alignment is the largest short-lived write in the stack |
 | `pgx_mtdna` | **mtDNA-Server 2 v2.1.16** (mutserve 2.0.3, haplogrep3 3.2.2, haplocheck 1.3.3) | Active mitochondrial/MT-RNR1 path on `:5062`; ~4.52 GB image, largest in the stack |
 | `pgx_gatk_api` | GATK **4.7.0.0** | Uses the `./reference` bind mount; also serves `/align-fastq` (FASTQ→BAM via `FastqToSam` + `BwaSpark` + `MarkDuplicatesSpark` — not the combined `BwaAndMarkDuplicatesPipelineSpark`, which cannot do single-end — using the bwa-mem JNI native GATK already bundles. The 5.4 GB `.img` is read sequentially before `BwaSpark` maps it: on a 9P-backed mount a cold mmap stalls, 150 s cold / 25 s warm to pre-read — its reference and `.img` index come from `ZAROPGX_ALIGN_REFERENCE`, built by `scripts/build-align-index.sh`) and `/liftover-vcf` (Picard LiftoverVcf, GRCh37→GRCh38, chain at `reference/chain/hg19ToHg38.over.chain.gz`) |
 | `pgx_app` | app | DB connects as `zaropgx_user` |
+| `pgx_nextflow` | **Nextflow 25.10.7** | Newest line still on the legacy parser; 26.x held (its strict parser makes the runner's `"false"` string params truthy). Runner Python deps pinned |
+| `pgx_kroki` / `pgx_kroki_mermaid` | **kroki 0.32.1** | Pinned (was `:latest`, ran 0.30.1) |
+| `pgx_fhir_server` | HAPI **v8.10.0-2** (held) | Healthcheck disabled: the image is distroless, so the old `curl` check could never run and the service always read "unhealthy" |
 
 Other refreshed versions: htslib/bcftools **1.24** (pinned release tarballs in the main
 image + the pharmcat container; the pharmcat container also pins samtools **1.24**), PyPGx
-pinned to **0.26.0**.
+pinned to **0.27.0** (data-only over 0.26.0: ACYP2 rs1872328 gains a GRCh38 definition, CYP17A1 L465P its GRCh38 coordinate), with its scientific stack (scikit-learn, numpy, scipy, pysam, fuc) pinned alongside. gatk-api, pypgx and zarohla now build htslib/bcftools/samtools **1.24** from source too (`docker/common/build-htslib-suite.sh`); they took Debian trixie's 1.21 before.
+
+Held, with the reason (2026-09-27 survey): **WeasyPrint** stays 66.0 -- 70.0 still fails
+`AssertionError` at `layout/page.py:717` on every real report (tested on three), as 67-69
+did; **SQLAlchemy** capped `<2.1` (autoflush / `filter_by` changes, to be tested on their
+own); **HAPI** version (owns a live schema; no security fix in 8.10.0-3). App Python deps
+bumped the same day: aiohttp 3.14.3, anyio 4.15.1, pyasn1 0.6.4 (security), pysam 0.24.1,
+fastapi 0.141.1, starlette 1.7.0, uvicorn 0.54.0; pdfkit, passlib, bcrypt, aiofiles and
+sse-starlette removed (none imported).
 
 ## ✅ RESOLVED (this refresh)
 

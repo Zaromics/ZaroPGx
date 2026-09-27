@@ -1,6 +1,14 @@
-FROM python:3.12-slim
+# htslib/bcftools/samtools 1.24 built from the upstream tarballs rather than taken from
+# Debian: trixie ships 1.21, listed vulnerable to the CRAM-decoder and GZI CVEs fixed
+# upstream in 1.21.1. The same version the pharmcat and app images build. See
+# docker/common/build-htslib-suite.sh.
+FROM python:3.12-slim-trixie AS htslib
+COPY docker/common/build-htslib-suite.sh /tmp/
+RUN sh /tmp/build-htslib-suite.sh htslib bcftools
 
-LABEL description="PyPGx 0.26.0 service for the ZaroPGx pipeline"
+FROM python:3.12-slim-trixie
+
+LABEL description="PyPGx 0.27.0 service for the ZaroPGx pipeline"
 LABEL maintainer="ZaroPGx (wrapper only)"
 
 # Install system dependencies
@@ -18,10 +26,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev \
     zlib1g-dev \
     libncurses5-dev \
-    bcftools \
-    tabix \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# bcftools/tabix/bgzip: the wrapper's own calls (PharmCAT's force-called positions, the
+# coverage header, contig renames). PyPGx's calling itself uses pysam's bundled copy.
+# The htslib suite from the builder stage, and the libraries it links at runtime.
+COPY --from=htslib /opt/htslib-suite/usr/local/ /usr/local/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    zlib1g libbz2-1.0 liblzma5 libcurl4t64 libdeflate0 libncursesw6 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* && ldconfig
 
 # Set up working directories
 RUN mkdir -p /app /data /reference /tmp/pypgx
@@ -30,16 +44,21 @@ RUN mkdir -p /app /data /reference /tmp/pypgx
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 # Install PyPGx and dependencies (ensure compatibility with Python 3.12).
-# pandas is pinned <3: pypgx 0.26.0 breaks on pandas 3.x with
+# pandas is pinned <3: pypgx 0.26+ breaks on pandas 3.x with
 # "ValueError: setting an array element with a sequence" in its string handling,
-# which fails every gene in run-ngs-pipeline. The transitive resolver otherwise
-# pulls pandas 3.x. 2.2.3 is the last 2.x and is verified against this pipeline.
-RUN uv pip install --system setuptools==80.9.0 "pandas==2.2.3" fuc pypgx==0.26.0 scikit-learn autodocsumm psutil fastapi uvicorn httpx python-multipart
+# which fails every gene in run-ngs-pipeline. 2.2.3 is the version verified against
+# this pipeline (2.3.x exists, untested here).
+# The scientific stack is pinned too, at what was installed and validated: PyPGx's CNV
+# callers are pickled scikit-learn models loaded from the bundle, and fuc/pysam do the
+# variant calling, so a floating version changes calls between rebuilds.
+RUN uv pip install --system setuptools==80.9.0 "pandas==2.2.3" pypgx==0.27.0 fuc==0.38.0 \
+    scikit-learn==1.9.1 numpy==2.5.3 scipy==1.18.1 pysam==0.24.1 \
+    autodocsumm psutil fastapi uvicorn httpx python-multipart
 
 # Clone the matching PyPGx bundle repository
 # NB: pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81
 RUN cd /root && git clone --branch $(pip show pypgx | grep -oP 'Version: \K.*') --depth 1 https://github.com/sbslee/pypgx-bundle || \
-    git clone --branch 0.26.0 --depth 1 https://github.com/sbslee/pypgx-bundle
+    git clone --branch 0.27.0 --depth 1 https://github.com/sbslee/pypgx-bundle
 
 # Create a simple script to setup environment and run server
 WORKDIR /app

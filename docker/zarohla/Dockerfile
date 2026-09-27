@@ -1,4 +1,12 @@
-FROM python:3.12-slim
+# htslib/bcftools/samtools 1.24 built from the upstream tarballs rather than taken from
+# Debian: trixie ships 1.21, listed vulnerable to the CRAM-decoder and GZI CVEs fixed
+# upstream in 1.21.1. The same version the pharmcat and app images build. See
+# docker/common/build-htslib-suite.sh.
+FROM python:3.12-slim-trixie AS htslib
+COPY docker/common/build-htslib-suite.sh /tmp/
+RUN sh /tmp/build-htslib-suite.sh htslib samtools
+
+FROM python:3.12-slim-trixie
 
 # Create a non-root user
 RUN groupadd -r zarouser && useradd -r -g zarouser zarouser
@@ -7,7 +15,9 @@ RUN groupadd -r zarouser && useradd -r -g zarouser zarouser
 # - curl: needed for Docker HEALTHCHECK
 # - glpk-utils: needed for OptiType ILP solver (glpsol)
 # - seqan-apps: provides yara_mapper and razers3
-# - samtools: needed for BAM to FASTQ conversion
+# - samtools (BAM to FASTQ, the HLA-locus probe): built in the htslib stage above
+# OptiType's scientific deps are pinned at what was installed and validated: the ILP
+# solve goes through pyomo, and a floating version could resolve a tie differently.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
@@ -15,12 +25,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     glpk-utils \
     seqan-apps \
     curl \
-    samtools \
     && pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir git+https://github.com/FRED-2/OptiType.git@v1.5.0 uvicorn[standard] gunicorn fastapi python-multipart httpx httptools psutil \
+    && pip install --no-cache-dir git+https://github.com/FRED-2/OptiType.git@v1.5.0 \
+       pyomo==6.10.1 pandas==3.0.6 numpy==2.5.3 pysam==0.24.1 matplotlib==3.11.2 \
+       uvicorn[standard] gunicorn fastapi python-multipart httpx httptools psutil \
     && apt-get purge -y --auto-remove build-essential git libglpk-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# The htslib suite from the builder stage, and the libraries it links at runtime.
+COPY --from=htslib /opt/htslib-suite/usr/local/ /usr/local/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    zlib1g libbz2-1.0 liblzma5 libcurl4t64 libdeflate0 libncursesw6 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* && ldconfig
 
 # Set working directory
 WORKDIR /app
