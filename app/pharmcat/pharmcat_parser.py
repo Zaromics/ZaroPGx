@@ -320,6 +320,49 @@ def _as_float(value: Any) -> Optional[float]:
 # ============================================================================
 
 
+# PharmCAT's per-position warnings for a genotype it did not use as the data gave it.
+# Both leave the gene called, from what PharmCAT made of the rest, and PharmCAT says so
+# only in its own report:
+#   "... Undocumented variations will be replaced with reference."  An allele PharmCAT
+#       does not define at that position is matched as reference (PharmCAT 3.4.0 has
+#       no option to do otherwise), with the observed genotype kept in `call`.
+#   "Discarded genotype at this position because REF in VCF (T) does not match
+#       expected reference (TG)"  The data writes the position differently from
+#       PharmCAT's definition, so it is read as missing.
+_UNDOCUMENTED_MARK = "Undocumented variations will be replaced with reference"
+_DISCARDED_MARK = "Discarded genotype at this position"
+
+
+def unread_variants(gene_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """[{position, rsid, call, reason}] for each such position of one gene's JSON.
+
+    `reason` is "undocumented" (matched as reference) or "discarded" (read as
+    missing). Pure over PharmCAT's gene JSON, which the parser stores whole.
+    """
+    found = []
+    for variant in (gene_data or {}).get("variants") or []:
+        if not isinstance(variant, dict):
+            continue
+        warnings = [str(w) for w in (variant.get("warnings") or [])]
+        if variant.get("hasUndocumentedVariations") or any(
+            _UNDOCUMENTED_MARK in w for w in warnings
+        ):
+            reason = "undocumented"
+        elif any(w.startswith(_DISCARDED_MARK) for w in warnings):
+            reason = "discarded"
+        else:
+            continue
+        found.append(
+            {
+                "position": f"{variant.get('chromosome')}:{variant.get('position')}",
+                "rsid": variant.get("dbSnpId"),
+                "call": variant.get("call"),
+                "reason": reason,
+            }
+        )
+    return found
+
+
 class PharmCATParser:
     """Parse and load PharmCAT JSON results into PostgreSQL using SQLAlchemy 2"""
 
@@ -913,6 +956,7 @@ class PharmCATParser:
                 "uncalled_haplotypes": list(
                     (r.gene_full_data or {}).get("uncalledHaplotypes") or []
                 ),
+                "unread_variants": unread_variants(r.gene_full_data),
             }
             for r in results
         ]

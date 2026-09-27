@@ -221,6 +221,18 @@ Recommendations:
 - **Partial**: Some regions missing
 - **Incomplete**: Many regions missing
 
+### Alerts About Individual Positions
+
+PharmCAT calls a gene from the positions it can read, so a call can rest on less than
+the whole gene. The report names two ways that happens:
+
+- **Partly covered genes**: the alleles PharmCAT could not assess because the positions
+  defining them were missing from the data.
+- **Positions PharmCAT did not use as found**: an allele PharmCAT does not define at a
+  position, which it matches as reference (its own policy, for any input), and a
+  position the data writes differently from PharmCAT's definition, which it reads as
+  missing.
+
 ## Interpreting Results
 
 ### Key Considerations

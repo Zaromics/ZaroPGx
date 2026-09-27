@@ -984,6 +984,50 @@ def partial_coverage_alert(
     )
 
 
+def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
+    """One alert naming the positions a CALLED gene's call did not use as found.
+
+    PharmCAT matches an allele it does not define as reference, and reads a position
+    the data writes differently from its definition as missing, and says so only in its
+    own report (see pharmcat_parser.unread_variants). Either way the call printed here
+    is not what the data at that position showed, and the reader is owed that.
+    """
+    undocumented, discarded = [], []
+    for gene in sorted(genes or [], key=lambda g: str(g.get("gene") or "")):
+        if not gene_was_called(gene.get("diplotype")):
+            continue
+        for v in gene.get("unread_variants") or []:
+            label = f"{gene.get('gene')} {v.get('rsid') or v.get('position')}"
+            if v.get("reason") == "undocumented":
+                call = v.get("call")
+                undocumented.append(f"{label} ({call})" if call else label)
+            elif v.get("reason") == "discarded":
+                discarded.append(label)
+
+    def listed(items):
+        shown = "; ".join(html.escape(i) for i in items[:max_listed])
+        if len(items) > max_listed:
+            shown += f" and {len(items) - max_listed} more"
+        return shown
+
+    parts = []
+    if undocumented:
+        parts.append(
+            "Matched as reference although the data carries an allele PharmCAT does "
+            f"not define there: {listed(undocumented)}"
+        )
+    if discarded:
+        parts.append(
+            "Read as missing because the data writes the genotype differently from "
+            f"PharmCAT's definition: {listed(discarded)}"
+        )
+    if not parts:
+        return None
+    return (
+        "<p>⚠️ Positions PharmCAT did not use as found. " + ". ".join(parts) + ".</p>"
+    )
+
+
 register_report_template_helpers(env)
 
 
@@ -1999,6 +2043,9 @@ def generate_report(
                 )
                 if coverage_alert:
                     workflow_warnings.append(coverage_alert)
+                unread_alert = unread_variants_alert((data or {}).get("genes"))
+                if unread_alert:
+                    workflow_warnings.append(unread_alert)
                 # Read once, used twice: the assume-ref paragraph below and the gVCF
                 # paragraph further down describe the two ends of the same question
                 # and must not be told different things about the same run.

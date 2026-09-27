@@ -630,6 +630,153 @@ def test_the_generator_appends_the_alert_to_the_rendered_warnings():
     assert "workflow_warnings.append(coverage_alert)" in src
 
 
+# --------------------------------------------------------------------------
+# Positions PharmCAT did not use as found
+# --------------------------------------------------------------------------
+# PharmCAT 3.4.0's own texts, as review captured them from pharmcat_pipeline runs and
+# as stored in this stack's PharmCAT JSON.
+_UNDOCUMENTED = (
+    "The genetic variation at this position does not match what is in the allele "
+    "definition (expected G, found T in VCF).  Undocumented variations will be "
+    "replaced with reference."
+)
+_DISCARDED = (
+    "Discarded genotype at this position because REF in VCF (C) does not match "
+    "expected reference (CGAT)"
+)
+
+
+def _gene_json():
+    return {
+        "variants": [
+            {
+                "chromosome": "chr1",
+                "position": 97078993,
+                "dbSnpId": "rs148799944",
+                "call": "C/T",
+                "hasUndocumentedVariations": True,
+                "warnings": [_UNDOCUMENTED],
+            },
+            {
+                "chromosome": "chr19",
+                "position": 38440747,
+                "dbSnpId": "rs193922745",
+                "call": None,
+                "hasUndocumentedVariations": False,
+                "warnings": [_DISCARDED],
+            },
+            {
+                "chromosome": "chr1",
+                "position": 97079005,
+                "dbSnpId": None,
+                "call": None,
+                "hasUndocumentedVariations": False,
+                "warnings": ["Ignoring: no call (./.)"],
+            },
+            {
+                "chromosome": "chr1",
+                "position": 97079071,
+                "dbSnpId": "rs1801268",
+                "call": "C/C",
+                "hasUndocumentedVariations": False,
+                "warnings": [],
+            },
+        ]
+    }
+
+
+def test_the_parser_names_what_pharmcat_did_not_use():
+    from app.pharmcat.pharmcat_parser import unread_variants
+
+    assert unread_variants(_gene_json()) == [
+        {
+            "position": "chr1:97078993",
+            "rsid": "rs148799944",
+            "call": "C/T",
+            "reason": "undocumented",
+        },
+        {
+            "position": "chr19:38440747",
+            "rsid": "rs193922745",
+            "call": None,
+            "reason": "discarded",
+        },
+    ]
+    assert unread_variants(None) == []
+
+
+def test_the_report_says_what_the_call_did_not_use():
+    from app.reports.generator import unread_variants_alert
+
+    text = unread_variants_alert(
+        [
+            {
+                "gene": "DPYD",
+                "diplotype": "Reference/Reference",
+                "unread_variants": [
+                    {
+                        "position": "chr1:97078993",
+                        "rsid": "rs148799944",
+                        "call": "C/T",
+                        "reason": "undocumented",
+                    }
+                ],
+            },
+            {
+                "gene": "RYR1",
+                "diplotype": "Reference/Reference",
+                "unread_variants": [
+                    {
+                        "position": "chr19:38440747",
+                        "rsid": None,
+                        "call": None,
+                        "reason": "discarded",
+                    }
+                ],
+            },
+            # Not called at all: already under "examined without a call".
+            {
+                "gene": "CFTR",
+                "diplotype": "Unknown/Unknown",
+                "unread_variants": [
+                    {
+                        "position": "chr7:1",
+                        "rsid": "rs1",
+                        "call": "A/G",
+                        "reason": "undocumented",
+                    }
+                ],
+            },
+        ]
+    )
+    assert (
+        "Matched as reference although the data carries an allele PharmCAT does "
+        "not define there: DPYD rs148799944 (C/T)"
+    ) in text
+    assert "Read as missing" in text and "RYR1 chr19:38440747" in text
+    assert "CFTR" not in text
+
+
+def test_no_unread_positions_means_no_alert():
+    from app.reports.generator import unread_variants_alert
+
+    assert unread_variants_alert([{"gene": "DPYD", "diplotype": "*1/*1"}]) is None
+
+
+def test_the_unread_positions_reach_the_rendered_warnings():
+    service = (REPO / "app" / "services" / "pharmcat_data_service.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"unread_variants": list(gene.get("unread_variants") or [])' in service
+    parser = (REPO / "app" / "pharmcat" / "pharmcat_parser.py").read_text(
+        encoding="utf-8"
+    )
+    body = parser[parser.index("def get_gene_summary") :]
+    assert '"unread_variants": unread_variants(r.gene_full_data)' in body
+    generator = (REPO / "app" / "reports" / "generator.py").read_text(encoding="utf-8")
+    assert "workflow_warnings.append(unread_alert)" in generator
+
+
 def test_a_plain_vcf_is_not_told_its_data_did_not_cover_a_position():
     """Review: on a variants-only VCF a position is not listed, not uncovered."""
     from app.reports.generator import partial_coverage_alert
