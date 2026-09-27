@@ -9,13 +9,13 @@ either flag: ``gatk GenotypeGVCFs --include-non-variant-sites -L
 pharmcat_positions.vcf`` emits those genotypes out of the gVCF's own
 reference-confidence blocks.
 
-Not needing them is not the same as not using them, which is why this module takes
-the run's actual flags as arguments. ``--absent-to-ref`` / ``--unspecified-to-ref``
-are GLOBAL checkboxes (index.html) resolved once per upload from form-or-env
-(``upload_router.resolve_assume_ref_flags``) and forwarded to PharmCAT by
-``main.nf`` with no input-type branch anywhere on the way. This paragraph used to
-state "``--absent-to-ref`` was not used on this run" unconditionally, which was
-simply false for any run where the uploader ticked the box.
+This module takes the run's actual flags as arguments rather than assuming them.
+They used to reach PharmCAT on a gVCF run whenever the uploader ticked the box, and
+this paragraph once stated "``--absent-to-ref`` was not used" unconditionally, which
+was then false. Since 2026-09-27 ``main.nf`` switches both off for a gVCF (see
+``EXPLICIT_CALL_INPUT_TYPES`` in ``app/utils/pharmcat_assume_ref.py``), and the
+report passes the EFFECTIVE pair here, so the flag-on branches below describe runs
+made before that change or a pipeline run outside the app.
 
 WHICH flag matters here is the counter-intuitive part, and the paragraph has to say
 it. The PGx pass runs ``--include-non-variant-sites``, which emits a row at EVERY
@@ -42,11 +42,10 @@ The paragraph also carries the two caveats the reader is owed:
   paragraph says so instead. The counts come from the step's own ``output_data`` --
   what happened, not what was planned.
 * Re-genotyping. GenotypeGVCFs derives each genotype afresh from the recorded
-  likelihoods rather than copying the original caller's GT. ZaroPGx runs it with
-  ``--standard-min-confidence-threshold-for-calling 0`` so that nothing is dropped
-  for failing a cutoff the uploader never chose, but that removes a *filter*, not the
-  re-derivation, so the emitted genotypes are still not guaranteed identical to the
-  original caller's.
+  likelihoods rather than copying the original caller's GT, at GATK's default
+  calling-confidence threshold, so a site the original caller marked variant with low
+  confidence comes out as a no-call, and the emitted genotypes are not guaranteed
+  identical to the original caller's.
 
 Not carried, and deliberately: the count of positions PharmCAT discarded for indel
 representation mismatch. It is in PharmCAT's ``*.match_warnings.txt``, which nothing
@@ -184,9 +183,10 @@ def gvcf_provenance_paragraph(
         f"{coverage} {assume_ref}Two caveats: "
         "<code>GenotypeGVCFs</code> re-derives each genotype from the recorded "
         "likelihoods rather than copying the original caller's, so the genotypes "
-        "analysed here are not guaranteed identical to that caller's output (the "
-        "calling-confidence threshold was set to zero, so nothing was dropped for "
-        "failing a cutoff, but the re-derivation itself remains); and positions "
-        "PharmCAT discards because their indel representation does not match its own "
-        "definitions stay no-calls, the same as they would from a plain VCF.</p>"
+        "analysed here are not guaranteed identical to that caller's output (GATK's "
+        "default calling-confidence threshold applies, so a site the caller marked "
+        "variant with low confidence is a no-call here); and a variant whose indel "
+        "representation PharmCAT cannot match stays a no-call, the same as it would "
+        "from a plain VCF. Reference calls at indel positions are written with "
+        "PharmCAT's own alleles, so PharmCAT reads them.</p>"
     )

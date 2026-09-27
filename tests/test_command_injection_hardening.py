@@ -472,6 +472,10 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
             # is checked for argv safety below.
             uncovered_genes_in_alignment=lambda *a, **k: [],
             annotate_uncovered_genes=lambda *a, **k: None,
+            # PharmCAT's force-called input, likewise after the conversion; its
+            # subprocess sinks are checked for argv safety in
+            # tests/test_pharmcat_explicit_calls.py.
+            genotype_pharmcat_positions=lambda *a, **k: {},
         ),
     )
 

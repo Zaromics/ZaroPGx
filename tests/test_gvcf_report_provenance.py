@@ -121,13 +121,15 @@ def test_zero_coverage_is_reported_not_swallowed():
 
 def test_the_paragraph_states_the_re_genotyping_caveat():
     """GenotypeGVCFs re-derives each genotype from the PLs rather than copying the
-    original caller's. ZaroPGx sets the calling-confidence threshold to zero, which
-    removes a filter but not the re-derivation, and the copy must not overclaim."""
+    original caller's, at GATK's default calling-confidence threshold (it was 0 until
+    2026-09-27, which let a QUAL 15.6 het through as a false CYP4F2 *17). The copy must
+    say a low-confidence site is a no-call and must not overclaim identity."""
     paragraph = _paragraph()
 
     assert "re-derives each genotype" in paragraph
     assert "not guaranteed identical" in paragraph
-    assert "threshold was set to zero" in paragraph
+    assert "default calling-confidence threshold" in paragraph
+    assert "set to zero" not in paragraph
 
 
 def test_the_paragraph_states_the_indel_representation_caveat():
@@ -136,7 +138,9 @@ def test_the_paragraph_states_the_indel_representation_caveat():
     paragraph = _paragraph()
 
     assert "indel representation" in paragraph
-    assert "same as they would from a plain VCF" in paragraph
+    assert "same as it would from a plain VCF" in paragraph
+    # and that a REFERENCE call at an indel position is no longer among them
+    assert "PharmCAT's own alleles" in paragraph
 
 
 @pytest.mark.parametrize(
@@ -250,18 +254,22 @@ def test_the_generator_hands_over_the_job_metadata_flags():
     Required keyword-only arguments mean generator.py cannot silently omit them -- but
     it CAN pass the wrong thing, and the whole block is wrapped in a try/except that
     turns a TypeError into a one-line "provenance could not be read" warning. So what is
-    asserted is that the same two job_metadata keys feeding the assume-ref paragraph
-    also feed this one.
+    asserted is that the pair feeding the assume-ref paragraph also feeds this one --
+    and, since 2026-09-27, that it is the EFFECTIVE pair: the metadata holds what the
+    run asked for, and main.nf switches both flags off for a gVCF, so handing over the
+    requested pair would describe fabricated reference calls PharmCAT never made.
     """
     from pathlib import Path
 
     import app.reports.generator as generator
 
     source = Path(generator.__file__).read_text(encoding="utf-8")
-    assert 'absent_to_ref = bool(meta.get("pharmcat_absent_to_ref"))' in source
+    assert 'requested_absent = bool(meta.get("pharmcat_absent_to_ref"))' in source
     assert (
-        'unspecified_to_ref = bool(meta.get("pharmcat_unspecified_to_ref"))' in source
+        'requested_unspecified = bool(meta.get("pharmcat_unspecified_to_ref"))'
+        in source
     )
+    assert "absent_to_ref, unspecified_to_ref = pharmcat_flags_for_input(" in source
     assert "absent_to_ref=absent_to_ref," in source
     assert "unspecified_to_ref=unspecified_to_ref," in source
 

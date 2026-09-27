@@ -937,6 +937,37 @@ def gene_was_called(diplotype) -> bool:
     return bool(text) and not text.startswith("unknown")
 
 
+def partial_coverage_alert(genes, max_listed: int = 8) -> Optional[str]:
+    """One alert naming the CALLED genes whose call rests on partial coverage.
+
+    PharmCAT still calls a gene when some of its positions are missing, from the
+    positions it has, and lists the alleles it therefore could not assess
+    (``uncalledHaplotypes``). Before aligned inputs were genotyped at every PharmCAT
+    position that list was always empty for them, because --missing-to-ref filled
+    the gaps with reference; now a panel that misses 5 of NUDT15's 20 positions
+    reports *1/*1 with *4, *15, *20 and *21 unassessed, and the reader is owed that.
+    Genes with no call at all are already named under "Genes examined without a
+    call", so they are left out here.
+    """
+    parts = []
+    for gene in sorted(genes or [], key=lambda g: str(g.get("gene") or "")):
+        uncalled = [str(h) for h in (gene.get("uncalled_haplotypes") or []) if h]
+        if not uncalled or not gene_was_called(gene.get("diplotype")):
+            continue
+        shown = ", ".join(uncalled[:max_listed])
+        if len(uncalled) > max_listed:
+            shown += f" and {len(uncalled) - max_listed} more"
+        parts.append(f"{html.escape(str(gene.get('gene')))} ({html.escape(shown)})")
+    if not parts:
+        return None
+    return (
+        "<p>⚠️ Partly covered genes: "
+        + "; ".join(parts)
+        + " could not be assessed, because the data did not cover the positions "
+        "that define them. Those calls rest on the positions that were covered.</p>"
+    )
+
+
 register_report_template_helpers(env)
 
 
@@ -1896,7 +1927,9 @@ def generate_report(
                     liftover_provenance_sentence,
                 )
                 from app.utils.pharmcat_assume_ref import (
+                    explicit_calls_paragraph,
                     methodology_assume_ref_paragraph,
+                    pharmcat_flags_for_input,
                 )
 
                 # No populate_existing() here, unlike the six JobService reads.
@@ -1942,15 +1975,53 @@ def generate_report(
                 logger.info(
                     f"Retrieved {len(workflow_warnings)} workflow warnings from job metadata"
                 )
+                # From what PharmCAT reported, not from the plan: which calls rest on
+                # a gene only partly covered by the data.
+                coverage_alert = partial_coverage_alert((data or {}).get("genes"))
+                if coverage_alert:
+                    workflow_warnings.append(coverage_alert)
                 # Read once, used twice: the assume-ref paragraph below and the gVCF
                 # paragraph further down describe the two ends of the same question
                 # and must not be told different things about the same run.
-                absent_to_ref = bool(meta.get("pharmcat_absent_to_ref"))
-                unspecified_to_ref = bool(meta.get("pharmcat_unspecified_to_ref"))
+                #
+                # The metadata holds what the run ASKED for. What PharmCAT ran with
+                # depends on the input too: main.nf switches both flags off for an
+                # input it genotyped at every PharmCAT position (an alignment, a gVCF),
+                # and pharmcat_flags_for_input is that rule's report-side copy. Using
+                # the requested pair here would print "--missing-to-ref was used"
+                # under a run where it was not.
+                requested_absent = bool(meta.get("pharmcat_absent_to_ref"))
+                requested_unspecified = bool(meta.get("pharmcat_unspecified_to_ref"))
+                input_type = (meta.get("file_analysis") or {}).get("file_type")
+                absent_to_ref, unspecified_to_ref = pharmcat_flags_for_input(
+                    input_type, requested_absent, requested_unspecified
+                )
                 pharmcat_assume_ref_methodology = methodology_assume_ref_paragraph(
                     absent_to_ref,
                     unspecified_to_ref,
                 )
+                if pharmcat_assume_ref_methodology is None:
+                    # An alignment's PharmCAT positions: counts from the step row,
+                    # what happened rather than what was planned.
+                    bam2vcf_step = (
+                        db_session.query(JobStep)
+                        .filter(
+                            JobStep.job_id == job_uuid,
+                            JobStep.step_name == "pypgx_bam2vcf",
+                        )
+                        .first()
+                    )
+                    bam2vcf_output = (
+                        (bam2vcf_step.output_data or {})
+                        if bam2vcf_step is not None
+                        else {}
+                    )
+                    pharmcat_assume_ref_methodology = explicit_calls_paragraph(
+                        input_type,
+                        requested_absent,
+                        requested_unspecified,
+                        bam2vcf_output.get("pharmcat_positions"),
+                    )
 
                 # A lifted run reports coordinates the uploaded file never had, so
                 # the report has to say so. Read from the liftover JobStep, not the
@@ -1984,12 +2055,9 @@ def generate_report(
                     )
                     .first()
                 )
-                # The flags are handed over, not assumed: they are GLOBAL checkboxes
-                # with no input-type branch anywhere between the form and PharmCAT's
-                # command line, so a gVCF run can perfectly well have had
-                # --unspecified-to-ref on -- which turns the very positions this
-                # paragraph counts as uncovered into fabricated reference calls. The
-                # paragraph used to assert they were off.
+                # The flags are handed over, not assumed -- the EFFECTIVE pair from
+                # above, which is off for a gVCF: main.nf never lets them turn the
+                # positions this paragraph counts as uncovered into reference calls.
                 gvcf_provenance = gvcf_provenance_paragraph(
                     gvcf_step.output_data if gvcf_step is not None else None,
                     absent_to_ref=absent_to_ref,

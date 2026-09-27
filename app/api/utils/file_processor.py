@@ -2027,45 +2027,34 @@ class FileProcessor:
                     "come from your file's own reference-confidence blocks, so they "
                     "are called data rather than assumed.</p>"
                 )
-                # Not "--absent-to-ref is not used on this lane". That was asserted
-                # here, in the report paragraph and in the docs, and it is not this
-                # branch's to assert: the two assume-reference checkboxes are GLOBAL
-                # (index.html), resolved once per upload after this function has
-                # returned, and forwarded to PharmCAT with no input-type branch
-                # anywhere on the way. What IS true unconditionally is that the lane
-                # does not need them -- and which one would bite, which is the
-                # counter-intuitive half.
+                # main.nf switches both assume-reference flags off for a gVCF, whatever
+                # the checkboxes say (EXPLICIT_CALL_INPUT_TYPES in
+                # app/utils/pharmcat_assume_ref.py): the reference pass emits a row at
+                # every PharmCAT position, so a missing or ./. one means "not covered".
                 workflow["recommendations"].append(
-                    "<p>ZaroPGx needs neither of PharmCAT's assume-reference flags on "
-                    "this lane and adds neither itself. The two checkboxes under "
-                    "PharmCAT still apply if you tick them, and on this lane the one "
-                    "that changes the answer is <code>--unspecified-to-ref</code>, not "
-                    "<code>--absent-to-ref</code>: the reference pass emits a row at "
-                    "every position in PharmCAT's list, so a position your file did "
-                    "not cover arrives as a present <code>./.</code> row rather than "
-                    "as a missing one.</p>"
+                    "<p>PharmCAT's assume-reference flags (<code>--absent-to-ref</code>, "
+                    "<code>--unspecified-to-ref</code>) are not applied on this lane, "
+                    "whatever the checkboxes under PharmCAT say: a position your file "
+                    "did not cover arrives as <code>./.</code>, and assuming reference "
+                    "there would make a call your file does not support.</p>"
                 )
                 workflow["warnings"].append(
                     "<p>⚠️ GenotypeGVCFs re-genotypes each site from the recorded "
-                    "likelihoods rather than copying the original caller's genotype. "
-                    "ZaroPGx runs it with the calling-confidence threshold set to zero "
-                    "so that nothing is dropped for failing a cutoff you did not "
-                    "choose, but the emitted genotypes are still not guaranteed "
-                    "identical to your caller's.</p>"
+                    "likelihoods rather than copying the original caller's genotype, at "
+                    "GATK's default calling-confidence threshold: a site your caller "
+                    "marked variant with low confidence comes out as a no-call, and the "
+                    "emitted genotypes are not guaranteed identical to your caller's.</p>"
                 )
                 workflow["warnings"].append(
                     "<p>⚠️ Positions your gVCF does not cover are no-calls: a "
                     "reference block that is absent is not a reference call. The run "
-                    "reports how many of PharmCAT's positions carried a call. "
-                    "Ticking “Assume unspecified sites = reference” reverses that — "
-                    "it turns the very positions that count reports as uncovered into "
-                    "fabricated <code>0/0</code> calls.</p>"
+                    "reports how many of PharmCAT's positions carried a call.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ PharmCAT discards positions whose indel representation does "
-                    "not match its own definitions, and those stay no-calls too. That "
-                    "is the same outcome a plain VCF gets, not a cost of this "
-                    "conversion.</p>"
+                    "<p>⚠️ A variant whose indel representation PharmCAT cannot match "
+                    "stays a no-call, the same outcome a plain VCF gets. Reference calls "
+                    "at indel positions are written with PharmCAT's own alleles, so "
+                    "PharmCAT reads them.</p>"
                 )
                 workflow["recommendations"].append(
                     "<p>Everything below therefore describes a VCF analysis, and every "

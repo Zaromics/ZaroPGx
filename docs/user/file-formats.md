@@ -32,13 +32,13 @@ A gVCF records *reference-confidence blocks* — spans the caller is confident m
 
 ZaroPGx converts it instead, and the conversion makes a gVCF a **better** input than a plain VCF rather than merely an acceptable one. It runs GATK `GenotypeGVCFs` twice: once over PharmCAT's own position list with `--include-non-variant-sites`, and once over everything else, joining the two with `bcftools concat -a`. The first pass is the point — the homozygous-reference genotypes at the pharmacogene positions come from *your file's own reference-confidence blocks*, so they are called data. The plain-VCF lane has no such information and can only fill those positions in with PharmCAT's `--absent-to-ref`, which fabricates them; the gVCF lane needs no such flag, and ZaroPGx adds none of its own.
 
-It does not *forbid* one either, and that is worth a paragraph of its own. The two assume-reference checkboxes under PharmCAT are global — they apply to every input type, this one included — and on the gVCF lane the one that changes the answer is **`--unspecified-to-ref`**, not `--absent-to-ref`. The reference pass runs with `--include-non-variant-sites`, which emits a row at *every* position in PharmCAT's list, so a position your file did not cover arrives as a present `./.` row rather than as a missing one; `--absent-to-ref` acts on positions missing from the VCF and has little to act on here, while `--unspecified-to-ref` rewrites exactly those `./.` rows to `0/0`. Tick it and the positions the report counts as uncovered are reported as reference calls you did not make. The report says so when it happens.
+The two assume-reference checkboxes under PharmCAT are not applied to a gVCF, whatever they are set to. The reference pass emits a row at *every* position in PharmCAT's list, so a position your file did not cover arrives as a `./.` row, and the only thing `--unspecified-to-ref` could do here is turn those uncovered positions into reference calls you did not make. The report says so if you ticked one.
 
 What the report tells you, and why:
 
-- **How much of PharmCAT's position list your file actually covered.** A gVCF that omits a region has no reference block there, so those positions are no-calls — absent is not reference. Unless you ticked "Assume unspecified sites = reference", in which case they are not no-calls at all, and the report says that instead.
-- **That `GenotypeGVCFs` re-derives each genotype** from the recorded likelihoods rather than copying your caller's. ZaroPGx sets the calling-confidence threshold to zero so nothing is dropped for failing a cutoff you did not choose, but the genotypes analysed are still not guaranteed identical to your caller's output.
-- Positions PharmCAT discards because their indel representation does not match its own definitions stay no-calls. That is the same outcome a plain VCF gets, not a cost of the conversion.
+- **How much of PharmCAT's position list your file actually covered.** A gVCF that omits a region has no reference block there, so those positions are no-calls — absent is not reference.
+- **That `GenotypeGVCFs` re-derives each genotype** from the recorded likelihoods rather than copying your caller's, at GATK's default calling-confidence threshold. A site your caller marked variant with low confidence therefore comes out as a no-call, and the genotypes analysed are not guaranteed identical to your caller's output.
+- A variant whose indel representation PharmCAT cannot match stays a no-call, the same outcome a plain VCF gets. Reference calls at indel positions are written with PharmCAT's own alleles, so PharmCAT reads them.
 
 Two kinds of gVCF are refused, each because the conversion genuinely cannot proceed:
 
@@ -54,6 +54,8 @@ gVCF → GATK GenotypeGVCFs ×2 (VCF conversion) → Header Analysis → PyPGx �
 
 ## Binary Alignment Map (BAM)
 BAM files contain aligned sequencing reads and are commonly used for variant calling and analysis.
+
+For every aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT is given a call at each of its own positions, made from your reads: reference where at least 7 reads show no other allele, variant where the call is confident (genotype quality 20 or more), and nothing where the reads do not support either. A position with nothing is a no-call, not a reference call, so a gene your data did not cover is reported as not called rather than as normal. PharmCAT's assume-reference checkboxes are not applied to aligned inputs, for the same reason as for a gVCF. The report states how many positions were called, how many had no reads, and how many had too few.
 
 ### Processing Path — BAM
 ```

@@ -540,6 +540,12 @@ process PyPGxBam2Vcf {
     // matched and nextflow failed the process with "missing output" after a
     // successful conversion).
     path "*.vcf.gz", emit: vcf
+    // PharmCAT's own input: a call at every PharmCAT position the reads support, and
+    // nothing where they do not (see genotype_pharmcat_positions in the pypgx
+    // wrapper). In a subdirectory so the `*.vcf.gz` glob above cannot match it too.
+    // Not optional: without it PharmCAT would be handed PyPGx's variants-only VCF,
+    // which reads every reference position as a no-call.
+    path "pharmcat/pharmcat_positions.vcf.gz", emit: pharmcat_vcf
 
     shell:
     '''
@@ -553,20 +559,23 @@ process PyPGxBam2Vcf {
       cat response.json >&2 || true
       exit 1
     fi
-    VCF_PATH=$(python3 - <<'PY'
-import json; import sys
-data=json.load(open('response.json'))
-print(data.get('vcf_path') or data.get('vcf') or '')
+    read -r VCF_PATH PHARMCAT_VCF_PATH < <(python3 - <<'PY'
+import json
+data = json.load(open('response.json'))
+print(data.get('vcf_path') or data.get('vcf') or '-', data.get('pharmcat_vcf_path') or '-')
 PY
 )
-    if [ -z "$VCF_PATH" ]; then
-      echo "create-input-vcf response carried no vcf_path" >&2
+    if [ "$VCF_PATH" = "-" ] || [ "$PHARMCAT_VCF_PATH" = "-" ]; then
+      echo "create-input-vcf response carried no vcf_path or no pharmcat_vcf_path" >&2
       cat response.json >&2 || true
       exit 1
     fi
     cp "$VCF_PATH" .
     # Bring the tabix index along if the sidecar made one (downstream re-indexes otherwise).
     [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" . || true
+    mkdir -p pharmcat
+    cp "$PHARMCAT_VCF_PATH" pharmcat/pharmcat_positions.vcf.gz
+    [ -f "${PHARMCAT_VCF_PATH}.tbi" ] && cp "${PHARMCAT_VCF_PATH}.tbi" pharmcat/pharmcat_positions.vcf.gz.tbi || true
     '''
 }
 
@@ -671,6 +680,8 @@ process PharmCATRun {
     val patient_id
     val report_id
     val outdir
+    val absent_to_ref
+    val unspecified_to_ref
 
     output:
     // Named after the REPORT id, not the patient id. The pharmcat sidecar builds
@@ -706,8 +717,12 @@ process PharmCATRun {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pharmcat_analysis )
     fi
-    CURL_ARGS+=( -F pharmcat_absent_to_ref=!{params.pharmcat_absent_to_ref} )
-    CURL_ARGS+=( -F pharmcat_unspecified_to_ref=!{params.pharmcat_unspecified_to_ref} )
+    # The run's EFFECTIVE flags, decided in the workflow block (pharmcat_flags): off
+    # for an input whose PharmCAT VCF was genotyped explicitly. Always sent, even as
+    # 'false', because the sidecar falls back to the stack .env when the field is
+    # missing -- which is how an alignment run would get them back on.
+    CURL_ARGS+=( -F pharmcat_absent_to_ref=!{absent_to_ref} )
+    CURL_ARGS+=( -F pharmcat_unspecified_to_ref=!{unspecified_to_ref} )
     # DELIBERATELY EXEMPT from the --fail-with-body rule in the header: the trailing
     # `|| true` already discards curl's exit status, so adding the flag would change
     # nothing, and removing `|| true` would turn a tolerated PharmCAT error into a hard
@@ -974,19 +989,44 @@ workflow {
     // a channel has.
     analysed_input_type = (params.input_type in ['bcf', 'gvcf']) ? 'vcf' : params.input_type
 
+    // What PharmCAT reads, and whether its assume-reference flags may touch it.
+    //
+    // PharmCAT treats a position absent from its VCF as a no-call. --absent-to-ref and
+    // --unspecified-to-ref (documented by PharmCAT as DANGEROUS) turn such positions
+    // into 0/0, which is only defensible for a VCF that lists variants alone and whose
+    // uploader knows the rest is reference. The inputs below are not that: an
+    // alignment's PharmCAT VCF is force-called at every PharmCAT position
+    // (PyPGxBam2Vcf's pharmcat_vcf), and a gVCF is genotyped over the same positions
+    // from its own reference blocks (GVCFToVCF). In both, a missing or ./. position
+    // means the data did not cover it, and the flags could only relabel that as
+    // reference -- measured on a real panel, every RYR1, CACNA1S, CFTR, F2 and F5
+    // position, all unsequenced, reported as reference. So the flags are off for them,
+    // whatever the form or the .env says. The mtDNA call keeps the user's setting: for
+    // MT-RNR1 it is a consent, read by a different rule (app/mtdna/mt_rnr1.py).
+    //
+    // app/utils/pharmcat_assume_ref.py EXPLICIT_CALL_INPUT_TYPES is the report's copy
+    // of this list; tests/test_pharmcat_explicit_calls.py keeps the two identical.
+    explicit_call_input_types = ['fastq', 'bam', 'cram', 'sam', 'gvcf']
+    explicit_calls = params.input_type in explicit_call_input_types
+    pharmcat_vcf_ch = (params.input_type in ['fastq', 'bam', 'cram', 'sam']) ? PyPGxBam2Vcf.out.pharmcat_vcf : vcf_ch
+    pharmcat_absent_ch = Channel.value(explicit_calls ? 'false' : params.pharmcat_absent_to_ref)
+    pharmcat_unspecified_ch = Channel.value(explicit_calls ? 'false' : params.pharmcat_unspecified_to_ref)
+
     // Run PyPGx genotyping on VCF (if enabled)
     if (params.skip_pypgx) {
         pypgx_outside = empty_file_ch
         // When PyPGx is skipped, run PharmCAT directly on VCF
         hla_outside = (params.skip_hla || analysed_input_type == 'vcf') ? empty_file_ch : hla_ch.ifEmpty(empty_file_ch)
         PharmCATRun(
-            vcf_ch,
+            pharmcat_vcf_ch,
             pypgx_outside,
             hla_outside,
             mtdna_outside,
             patient_id_ch,
             report_id_ch,
-            outdir_ch
+            outdir_ch,
+            pharmcat_absent_ch,
+            pharmcat_unspecified_ch
         )
     } else {
         // PyPGx is enabled - run it first, then PharmCAT
@@ -1008,8 +1048,8 @@ workflow {
 
         // Create dependency: PharmCAT waits for PyPGx to complete
         // This ensures sequential execution: PyPGx -> PharmCAT
-        pypgx_complete_ch = pypgx_result.pypgx_json.combine(vcf_ch).map { pypgx_json, vcf_file -> vcf_file }
-        
+        pypgx_complete_ch = pypgx_result.pypgx_json.combine(pharmcat_vcf_ch).map { pypgx_json, vcf_file -> vcf_file }
+
         PharmCATRun(
             pypgx_complete_ch,
             pypgx_outside,
@@ -1017,7 +1057,9 @@ workflow {
             mtdna_outside,
             patient_id_ch,
             report_id_ch,
-            outdir_ch
+            outdir_ch,
+            pharmcat_absent_ch,
+            pharmcat_unspecified_ch
         )
     }
 }

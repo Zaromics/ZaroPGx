@@ -135,7 +135,9 @@ that starts a run.
 Every toggle is an optional **string** form field, not a bool, and defaults to
 `None` — meaning "fall back to the server-side env default", which is not the
 same as `false`. The two `pharmcat_*` flags fall back to `PHARMCAT_ABSENT_TO_REF`
-and `PHARMCAT_UNSPECIFIED_TO_REF`.
+and `PHARMCAT_UNSPECIFIED_TO_REF`. They reach PharmCAT only for VCF and BCF input:
+for aligned reads and gVCFs `main.nf` passes `false`, because those inputs are
+genotyped at every PharmCAT position and a missing one means "not covered".
 
 **Request Example:**
 ```bash

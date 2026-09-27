@@ -101,11 +101,12 @@
     },
     "pharmcat_can_call": {
       "name": "PharmCAT Can Call",
-      "description": "Genes that PharmCAT can call by itself using Named Allele Matcher (19 genes)",
-      "count": 19,
+      "description": "Genes that PharmCAT can call by itself using Named Allele Matcher (21 genes)",
+      "count": 21,
       "genes": [
         "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
-        "DPYD", "G6PD", "IFNL3", "NAT2", "NUDT15", "RYR1", "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
+        "DPYD", "F2", "F5", "G6PD", "IFNL3", "NAT2", "NUDT15", "RYR1", "SLCO1B1", "TPMT", "UGT1A1",
+        "VKORC1"
       ]
     },
     "pharmcat_outside_callers": {
@@ -118,23 +119,23 @@
     },
     "pharmcat_all": {
       "name": "PharmCAT All Reports",
-      "description": "All genes PharmCAT can create reports for (23 genes total)",
-      "count": 23,
+      "description": "All genes PharmCAT calls or takes as outside calls (25 genes total)",
+      "count": 25,
       "genes": [
         "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
-        "CYP2D6", "DPYD", "G6PD", "HLA-A", "HLA-B", "IFNL3", "MT-RNR1", "NAT2", "NUDT15", "RYR1",
+        "CYP2D6", "DPYD", "F2", "F5", "G6PD", "HLA-A", "HLA-B", "IFNL3", "MT-RNR1", "NAT2", "NUDT15", "RYR1",
         "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
       ]
     },
     "pypgx_minus_pharmcat": {
       "name": "PyPGx Only",
-      "description": "Genes supported by PyPGx but not by PharmCAT (68 genes)",
-      "count": 68,
+      "description": "Genes supported by PyPGx but not by PharmCAT (66 genes)",
+      "count": 66,
       "genes": [
         "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
         "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2C8", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2",
         "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP17A1",
-        "CYP19A1", "CYP26A1", "DBH", "DRD2", "F2", "F5", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
+        "CYP19A1", "CYP26A1", "DBH", "DRD2", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
         "GSTT1", "HTR1A", "HTR2A", "IFNL4", "ITGB3", "ITPA", "MTHFR", "NAT1", "OPRK1", "OPRM1", "POR",
         "PTGIS", "RARG", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B3", "SLCO2B1",
         "SULT1A1", "TBXAS1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "XPC"
@@ -284,21 +285,22 @@
     ],
     "pharmcat_can_call": [
       "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
-      "DPYD", "G6PD", "IFNL3", "NAT2", "NUDT15", "RYR1", "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
+      "DPYD", "F2", "F5", "G6PD", "IFNL3", "NAT2", "NUDT15", "RYR1", "SLCO1B1", "TPMT", "UGT1A1",
+      "VKORC1"
     ],
     "pharmcat_outside_callers": [
       "CYP2D6", "HLA-A", "HLA-B", "MT-RNR1"
     ],
     "pharmcat_all": [
       "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
-      "CYP2D6", "DPYD", "G6PD", "HLA-A", "HLA-B", "IFNL3", "MT-RNR1", "NAT2", "NUDT15", "RYR1",
+      "CYP2D6", "DPYD", "F2", "F5", "G6PD", "HLA-A", "HLA-B", "IFNL3", "MT-RNR1", "NAT2", "NUDT15", "RYR1",
       "SLCO1B1", "TPMT", "UGT1A1", "VKORC1"
     ],
     "pypgx_minus_pharmcat": [
       "ABCB1", "ACYP2", "ADRA2A", "ADRB2", "ANKK1", "APOE", "ATM", "BCHE", "BDNF", "COMT",
       "CYP1A1", "CYP1A2", "CYP1B1", "CYP2A6", "CYP2A13", "CYP2C8", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2",
       "CYP2R1", "CYP2S1", "CYP2W1", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1", "CYP17A1",
-      "CYP19A1", "CYP26A1", "DBH", "DRD2", "F2", "F5", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
+      "CYP19A1", "CYP26A1", "DBH", "DRD2", "GRIK1", "GRIK4", "GRIN2B", "GSTM1", "GSTP1",
       "GSTT1", "HTR1A", "HTR2A", "IFNL4", "ITGB3", "ITPA", "MTHFR", "NAT1", "OPRK1", "OPRM1", "POR",
       "PTGIS", "RARG", "SLC6A4", "SLC15A2", "SLC22A2", "SLC28A3", "SLC47A2", "SLCO1B3", "SLCO2B1",
       "SULT1A1", "TBXAS1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "XPC"

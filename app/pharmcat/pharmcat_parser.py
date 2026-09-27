@@ -907,6 +907,12 @@ class PharmCATParser:
                 "phenotype_source": r.phenotype_source,
                 "chromosome": r.chromosome,
                 "phased": r.phased,
+                # Alleles PharmCAT could not assess because the positions defining
+                # them were missing. Kept only in the stored gene JSON until the
+                # report needed to say which calls rest on partial coverage.
+                "uncalled_haplotypes": list(
+                    (r.gene_full_data or {}).get("uncalledHaplotypes") or []
+                ),
             }
             for r in results
         ]

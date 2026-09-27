@@ -145,20 +145,26 @@ graph TB
 
 **Supported Genes:**
 - `config/genes.json` is the machine-readable authority: 91 genes total (`sets.all`),
-  `sets.pypgx` = 87, `sets.pharmcat_all` = 23. Derive any other figure from those sets rather
+  `sets.pypgx` = 87, `sets.pharmcat_all` = 25. Derive any other figure from those sets rather
   than restating it from prose elsewhere.
 
 ```{warning}
 Do **not** quote `sets.pypgx_minus_pharmcat` as "genes PyPGx covers beyond the PharmCAT panel".
 Despite the name it is `pypgx − pharmcat_can_call`, not `pypgx − pharmcat_all`: it contains
 CYP2D6, which *is* in `pharmcat_all` (as an outside caller), and omits HLA-C. So
-`pharmcat_all ∪ pypgx_minus_pharmcat` covers 90 genes, not 91, and its length of 68 coincides
-with `all − pharmcat_all` = 68 only by accident.
+`pharmcat_all ∪ pypgx_minus_pharmcat` covers 90 genes, not 91, and its length of 66 coincides
+with `all − pharmcat_all` = 66 only by accident.
 
-The true decomposition of the 91: 23 in the PharmCAT panel, 67 more that PyPGx calls
-(`pypgx − pharmcat_all`), and HLA-C, which is in neither set — ZaroHLA/OptiType types it.
-Compute the set difference; do not read the count off the label.
+The true decomposition of the 91: 25 that PharmCAT calls or takes as outside calls (its
+23-gene guideline-reporting panel, plus F2 and F5, which it matches from its own positions but
+reports no guideline for), 65 more that PyPGx calls (`pypgx − pharmcat_all`), and HLA-C, which
+is in neither set — ZaroHLA/OptiType types it. Compute the set difference; do not read the
+count off the label.
 ```
+
+F2 and F5 moved into the PharmCAT sets on 2026-09-27. Listed as PyPGx-only, they were sent to
+PharmCAT as outside calls on top of PharmCAT's own match, and a well-covered sample's report
+carried each of them twice.
 
 ### GATK API (`gatk-api`)
 

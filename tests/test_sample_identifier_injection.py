@@ -107,6 +107,11 @@ runner = _load_runner()
 #                                           ("true"/"false") already audited above,
 #                                           just referenced through the process's
 #                                           own local parameter name.
+#   absent_to_ref / unspecified_to_ref    - re-audited 2026-09-27 for PharmCATRun,
+#   (PharmCATRun's local vars)              which stopped interpolating the params
+#                                           directly: each is a Channel.value of a
+#                                           Groovy ternary whose arms are the literal
+#                                           'false' or the params boolean above.
 # sample_identifier is DELIBERATELY absent: it now travels via the environment.
 EXPECTED_INTERPOLATIONS = {
     "bam",
@@ -114,7 +119,7 @@ EXPECTED_INTERPOLATIONS = {
     "cram",
     "fastq",
     # Audited 2026-09-26: FastqToBAM's second mate. A `path` input, the same kind as
-    # `fastq` above, and named the same way -- upload_mate2_{safe_upload_basename(...)}
+    # `fastq` above, and named the same way -- upload_<id>_mate2_{safe_upload_basename}
     # -- so its provenance is the primary's. With no mate it is the repo's own
     # assets/empty.tsv. The runner also refuses a relative or control-character input2
     # before Nextflow ever sees it.
@@ -129,8 +134,7 @@ EXPECTED_INTERPOLATIONS = {
     "source_build",
     "input_type",
     "absent_to_ref",
-    "params.pharmcat_absent_to_ref",
-    "params.pharmcat_unspecified_to_ref",
+    "unspecified_to_ref",
 }
 
 

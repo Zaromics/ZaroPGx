@@ -291,6 +291,7 @@ class PharmCATDataService:
                 "function2": primary_diplotype.get("allele2_function"),
                 "inferred": primary_diplotype.get("inferred", False),
                 "combination": primary_diplotype.get("combination", False),
+                "uncalled_haplotypes": list(gene.get("uncalled_haplotypes") or []),
             }
 
             report_gene["called_by"] = provenance.letter

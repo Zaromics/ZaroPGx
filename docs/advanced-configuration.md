@@ -192,6 +192,10 @@ The service is a FastAPI wrapper around OptiType v1.5, not a Nextflow pipeline: 
   from the VCF, which is only safe for a VCF you know covers all callable positions.
 - **PHARMCAT_UNSPECIFIED_TO_REF**: Same idea for positions present but unspecified.
   Default: `false`.
+- Both apply to VCF and BCF uploads only. For aligned reads (BAM, CRAM, SAM, FASTQ) and
+  gVCFs, ZaroPGx genotypes every PharmCAT position itself, so a missing position there
+  means "not covered", and the flags are not applied whatever they are set to. The mtDNA
+  service still reads `PHARMCAT_ABSENT_TO_REF` as consent for MT-RNR1 on VCF input.
 
 ## HAPI FHIR container (abridged; see HAPI FHIR docs)
 - **HAPI_FHIR_TAG**: Image tag — see *Docker compose → images* above.

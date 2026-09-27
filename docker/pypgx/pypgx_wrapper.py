@@ -766,7 +766,12 @@ async def create_input_vcf(
                 "vcf_path": str(output_vcf_gz),
                 "assembly": pypgx_assembly
             })
-            await job_client.complete_step("BAM to VCF conversion completed successfully")
+            # The PharmCAT-position counts go on the step row: the report states them
+            # from what happened here, the way it states a gVCF's coverage.
+            await job_client.complete_step(
+                "BAM to VCF conversion completed successfully",
+                {"pharmcat_positions": res.get("pharmcat_positions")},
+            )
 
         payload: Dict[str, Any] = {
             "success": True,
@@ -774,6 +779,8 @@ async def create_input_vcf(
             "input_file": str(input_path),
             "vcf_path": str(output_vcf_gz),
             "tbi_path": str(output_vcf_gz) + ".tbi",
+            "pharmcat_vcf_path": res.get("pharmcat_vcf"),
+            "pharmcat_positions": res.get("pharmcat_positions"),
             "assembly": pypgx_assembly,
         }
         if patient_id:
@@ -932,6 +939,176 @@ def annotate_uncovered_genes(vcf_gz: str, genes) -> None:
     tabix_index(vcf_gz, force=True)
 
 
+# ---------------------------------------------------------------------------
+# PharmCAT's input for an alignment: a call at every PharmCAT position, or none
+# ---------------------------------------------------------------------------
+#
+# PharmCAT reads "absent from the VCF" as "no call", and its preprocessor documents
+# --absent-to-ref / --unspecified-to-ref as DANGEROUS: use them only when the data
+# really is reference at those positions rather than unreadable. PyPGx's
+# create-input-vcf output is variants-only (bcftools call -mv), so PharmCAT could
+# only tell a covered reference position from an unsequenced one if someone turned
+# those flags on -- and then it could not tell at all. Measured 2026-09-27 on a real
+# targeted panel: 422 of PharmCAT's 1,226 positions had no read, among them every
+# RYR1, CACNA1S, CFTR, F2 and F5 position, and all 422 were reported as reference.
+#
+# So the alignment lanes give PharmCAT its own file: every PharmCAT position is
+# force-called from the alignment with the engine and mpileup settings PyPGx's
+# create-input-vcf already uses (bcftools; MAPQ >= 1, --max-depth 250, -F 0). A
+# position the reads confidently call reference is written with PharmCAT's own
+# record and alleles (bcftools writes a hom-ref indel site as REF=anchor ALT=.,
+# which PharmCAT discards as an invalid indel); a confident variant keeps the
+# caller's record; anything else -- no reads, too few, a low-quality or conflicting
+# call -- is left out, which PharmCAT reads as a no-call. Validated 2026-09-27: on a
+# 30x WGS all 21 PharmCAT genes came out identical to the old variants-only +
+# --missing-to-ref path; on the panel the five unsequenced genes became not called.
+
+PHARMCAT_POSITIONS_VCF = REFERENCE_DIR / "pharmcat" / "pharmcat_positions.vcf"
+
+# The same bar as a variant's genotype quality: Phred 20.
+PHARMCAT_MIN_VARIANT_GQ = 20
+# bcftools gives a hom-ref site no likelihoods, so no GQ; depth stands in for it. A
+# heterozygote shows zero alt reads in n reads with probability 0.5**n, and n >= 7
+# keeps that under 1% (Phred 20). Not higher: on a male 30x WGS most G6PD (chrX)
+# positions sit at DP 5-9, and a flat DP >= 10 would no-call a well-sequenced gene.
+PHARMCAT_MIN_REF_DEPTH = 7
+
+
+def classify_position_call(gt, dp, gq) -> str:
+    """'ref', 'variant' or 'uncertain' for one force-called record's genotype."""
+    if gt is None or None in gt:
+        return "uncertain"
+    if any(allele > 0 for allele in gt):
+        return "variant" if gq is not None and gq >= PHARMCAT_MIN_VARIANT_GQ else "uncertain"
+    return "ref" if dp is not None and dp >= PHARMCAT_MIN_REF_DEPTH else "uncertain"
+
+
+def genotype_pharmcat_positions(
+    alignment_path: str, fasta: str, output_vcf_gz: str, positions: str = None
+) -> Dict[str, Any]:
+    """Write PharmCAT's input VCF for an alignment. See the section comment above.
+
+    Returns counts of what happened -- positions, confident reference, variant
+    records, no reads, uncertain -- which /create-input-vcf records on the job step
+    so the report can state them rather than assume them.
+    """
+    import pysam
+
+    positions = str(positions or PHARMCAT_POSITIONS_VCF)
+    if not os.path.exists(positions):
+        raise FileNotFoundError(
+            f"PharmCAT's position list is not staged at {positions}. It ships in the "
+            "pharmcat image at /pharmcat/pharmcat_positions.vcf and must be copied to "
+            "reference/pharmcat/ on every PharmCAT upgrade."
+        )
+    work = tempfile.mkdtemp(prefix="pharmcat_positions_")
+    try:
+        # bcftools call -C alleles takes CHROM<TAB>POS<TAB>REF,ALT, not a VCF.
+        alleles_txt = os.path.join(work, "alleles.tsv")
+        query = subprocess.run(
+            ["bcftools", "query", "-f", "%CHROM\t%POS\t%REF,%ALT\n", positions],
+            check=True, capture_output=True,
+        )
+        with open(alleles_txt, "wb") as fh:
+            fh.write(query.stdout)
+        alleles = alleles_txt + ".gz"
+        pysam.tabix_compress(alleles_txt, alleles, force=True)
+        pysam.tabix_index(alleles, seq_col=0, start_col=1, end_col=1, zerobased=False, force=True)
+
+        calls = os.path.join(work, "calls.bcf")
+        mpileup = subprocess.Popen(
+            ["bcftools", "mpileup", "-f", str(fasta), "-T", positions,
+             "-a", "FORMAT/AD,FORMAT/DP", "-q", "1", "--max-depth", "250", "-F", "0",
+             "-Ou", str(alignment_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        call = subprocess.run(
+            ["bcftools", "call", "-m", "-C", "alleles", "-T", alleles, "-a", "GQ",
+             "-Ou", "-o", calls],
+            stdin=mpileup.stdout, capture_output=True,
+        )
+        mpileup.stdout.close()
+        mpileup_err = mpileup.stderr.read()
+        mpileup.stderr.close()
+        mpileup.wait()
+        if mpileup.returncode or call.returncode:
+            raise RuntimeError(
+                "bcftools mpileup/call at PharmCAT's positions failed: "
+                f"{mpileup_err.decode(errors='replace')[-400:]} "
+                f"{call.stderr.decode(errors='replace')[-400:]}"
+            )
+        normed = os.path.join(work, "calls.norm.bcf")
+        subprocess.run(
+            ["bcftools", "norm", "-f", str(fasta), "-Ob", "-o", normed, calls],
+            check=True, capture_output=True,
+        )
+
+        ref_keys, variants, unsure, seen, depth = set(), [], set(), set(), {}
+        with pysam.VariantFile(normed) as vf:
+            sample = list(vf.header.samples)[0]
+            contigs = list(vf.header.contigs)
+            for rec in vf:
+                key = (rec.chrom, rec.pos)
+                seen.add(key)
+                fmt = rec.samples[sample]
+                gt, dp, gq = fmt.get("GT"), fmt.get("DP"), fmt.get("GQ")
+                depth[key] = dp
+                kind = classify_position_call(gt, dp, gq)
+                if kind == "ref":
+                    ref_keys.add(key)
+                else:
+                    # A variant record means the position is not reference, whatever
+                    # a second (e.g. SNV-vs-indel) record at it says.
+                    unsure.add(key)
+                    if kind == "variant":
+                        variants.append((rec.chrom, rec.pos, rec.alleles, tuple(gt), dp, gq))
+        ref_keys -= unsure
+
+        header = pysam.VariantHeader()
+        for contig in contigs:
+            header.contigs.add(contig)
+        header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        header.add_line('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">')
+        header.add_line('##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">')
+        header.add_sample(sample)
+        unsorted = os.path.join(work, "pharmcat.unsorted.vcf.gz")
+        with pysam.VariantFile(unsorted, "wz", header=header) as out, \
+                pysam.VariantFile(positions) as known:
+            for prec in known:
+                key = (prec.chrom, prec.pos)
+                if key in ref_keys:
+                    rec = out.new_record(contig=prec.chrom, start=prec.start, alleles=prec.alleles, id=prec.id)
+                    rec.samples[sample]["GT"] = (0, 0)
+                    rec.samples[sample]["DP"] = depth.get(key)
+                    out.write(rec)
+            for chrom, pos, record_alleles, gt, dp, gq in variants:
+                rec = out.new_record(contig=chrom, start=pos - 1, alleles=record_alleles)
+                rec.samples[sample]["GT"] = gt
+                rec.samples[sample]["DP"] = dp
+                rec.samples[sample]["GQ"] = gq
+                out.write(rec)
+        subprocess.run(
+            ["bcftools", "sort", "-Oz", "-o", str(output_vcf_gz), unsorted],
+            check=True, capture_output=True,
+        )
+        tabix_index(str(output_vcf_gz), force=True)
+
+        with pysam.VariantFile(positions) as known:
+            all_keys = {(r.chrom, r.pos) for r in known}
+        variant_keys = {(c, p) for c, p, *_ in variants}
+        return {
+            "n_pharmcat_positions": len(all_keys),
+            "n_reference": len(ref_keys & all_keys),
+            "n_variant": len(variant_keys & all_keys),
+            "n_no_reads": len(all_keys - seen),
+            "n_uncertain": len((all_keys & seen) - ref_keys - variant_keys),
+            "min_reference_depth": PHARMCAT_MIN_REF_DEPTH,
+            "min_variant_gq": PHARMCAT_MIN_VARIANT_GQ,
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly: str) -> Dict[str, Any]:
     """Run PyPGx create-input-vcf to generate a VCF from an alignment file.
 
@@ -992,11 +1169,24 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             + (f": {', '.join(uncovered)}" if uncovered else "")
         )
 
+        # PharmCAT's own input -- see genotype_pharmcat_positions. GRCh38 only, as
+        # PharmCAT's positions are; a non-GRCh38 alignment is refused at upload, so
+        # the None here only ever reaches main.nf as a missing output, which fails.
+        pharmcat_vcf, pharmcat_positions = None, None
+        if str(assembly) == "GRCh38":
+            pharmcat_vcf = output_vcf_gz[: -len(".vcf.gz")] + ".pharmcat.vcf.gz"
+            pharmcat_positions = genotype_pharmcat_positions(
+                str(alignment_path), str(fasta), pharmcat_vcf
+            )
+            logger.info(f"PharmCAT positions called from the alignment: {pharmcat_positions}")
+
         return {
             "success": True,
             "vcf": output_vcf_gz,
             "tbi": tbi_path,
             "uncovered_genes": uncovered,
+            "pharmcat_vcf": pharmcat_vcf,
+            "pharmcat_positions": pharmcat_positions,
         }
     except subprocess.CalledProcessError as cpe:
         logger.exception("Subprocess error running create-input-vcf")
