@@ -226,3 +226,18 @@ def test_mt_rnr1_is_still_an_outside_call_gene():
         "MT-RNR1 is no longer configured as an outside call; the citation's "
         "'supplying the MT-RNR1 outside call' claim is stale"
     )
+
+
+def test_mt_rnr1_has_one_source_and_it_is_the_mtdna_service():
+    """PyPGx has genotyped MT-RNR1 since 0.26.0 (region M:410-1840), and ZaroPGx
+    leaves it out of the PyPGx gene set on purpose (checked 2026-09-27). PyPGx calls
+    chrM with a diploid bcftools model, has no heteroplasmy handling or coverage
+    floor, so an empty region comes back Reference/Reference ("Normal Risk" from
+    absent data). Its "X/X" MT-RNR1 diplotype is also refused as an outside call by
+    PharmCAT 3.4.0 for a single-chromosome gene, which fails the whole PharmCAT run,
+    and main.nf's outside-call merge does not deduplicate a second MT-RNR1 line. A
+    future "sync with PyPGx's gene list" must not put it back."""
+    sets = json.loads(GENES_JSON.read_text(encoding="utf-8"))["sets"]
+    assert "MT-RNR1" not in sets["pypgx"]
+    assert "MT-RNR1" not in sets["pypgx_minus_pharmcat"]
+    assert "MT-RNR1" in sets["pharmcat_outside_callers"]
