@@ -297,7 +297,7 @@ class FakeTools:
                         if (row[0], str(row[1])) not in drop
                     ],
                 )
-            elif source.endswith(".pharmcat_alleles.vcf"):
+            elif source.endswith((".pharmcat_alleles.vcf", ".general.vcf")):
                 # The PharmCAT-alleles rewrite of the PGx pass: carry its rows, so the
                 # coverage count downstream reads what the rewrite actually wrote.
                 rows = []
@@ -454,7 +454,7 @@ def test_the_two_passes_are_merged_into_one_file(client, tools):
     assert sorted(merged) == sorted(
         [
             trimmed[0][trimmed[0].index("-o") + 1],
-            pgx_pass.replace(".vcf.gz", ".pharmcat_alleles.vcf.gz"),
+            pgx_pass.replace(".vcf.gz", ".general.vcf.gz"),
         ]
     ), merged
 
@@ -490,13 +490,13 @@ def test_the_upload_is_staged_and_indexed_before_genotyping(client, tools):
     resp = _post(client, filename="sample.gvcf")
 
     assert resp.status_code == 200, resp.text
-    # The other `bcftools view`s re-encode the PharmCAT-alleles rewrite of the PGx pass,
+    # The other `bcftools view`s re-encode the two judged copies of the PGx pass,
     # read the staged gVCF's records at PharmCAT's positions (-R) and trim the variant
     # pass (-T).
     staged = [
         argv
         for argv in tools.ran("bcftools", "view")
-        if not argv[-1].endswith(".pharmcat_alleles.vcf")
+        if not argv[-1].endswith((".pharmcat_alleles.vcf", ".general.vcf"))
         and "-R" not in argv
         and "-T" not in argv
     ]
@@ -1201,7 +1201,7 @@ def test_a_position_inside_an_upstream_deletion_is_not_reference(gatk_api, tmp_p
         ("chr1", 97450065, "T", ".", "GT:DP:RGQ", "0/0:51:99"),
         ("chr1", 97450066, "G", ".", "GT:DP:RGQ", "0/0:51:99"),
     ]
-    contested = [("chr1", 97450060, 97450066)]
+    contested = [("chr1", 97450060, 97450066, False)]
     lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
         _called(rows), _positions(tmp_path, [_DPYD]), contested
     )
@@ -1215,16 +1215,28 @@ def test_a_position_inside_an_upstream_deletion_is_not_reference(gatk_api, tmp_p
     assert (rewritten, demoted) == (1, 0)
 
 
-def test_the_forced_spanning_deletion_row_is_not_reference(gatk_api, tmp_path):
-    """The shape GATK writes where a position's only other allele is a spanning
-    deletion's `*`: ALT `.`, QUAL `inf`, RGQ the deletion's own GQ. A reference block
-    has no QUAL, so a QUALified one is not reference even when no record is to hand."""
+def test_a_forced_row_is_decided_by_the_gvcfs_own_records(gatk_api, tmp_path):
+    """GATK's shape where a position's only other allele is a spanning deletion's `*`:
+    ALT `.`, QUAL `inf`, RGQ the deletion's own GQ. Under a deletion the caller called,
+    the record contests the position; under one it genotyped 0/0 with no reads for it
+    -- HaplotypeCaller writes such records in repeats -- the position is reference, and
+    review measured it no-called by the QUAL heuristic this replaced."""
+    row = ("chr19", 15878920, "T", ".", "GT:DP:RGQ", "0/0:32:90", "inf")
+
     lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
-        _called([("chr19", 15878920, "T", ".", "GT:DP:RGQ", "0/0:32:99", "inf")]),
+        _called([row]),
         _positions(tmp_path, [_SNV]),
+        [("chr19", 15878917, 15878920, False)],
     )
     assert (rewritten, demoted) == (0, 1)
     assert _genotype(_body(lines)[0]) == "./."
+
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called([row]), _positions(tmp_path, [_SNV])
+    )
+    assert (rewritten, demoted) == (1, 0)
+    assert _genotype(_body(lines)[0]) == "0/0"
+    assert _qual(_body(lines)[0]) == "."
 
 
 def test_a_no_call_never_carries_qual_inf(gatk_api, tmp_path):
@@ -1291,7 +1303,7 @@ def test_a_covered_position_gatk_left_uncalled_is_not_absent(gatk_api, tmp_path)
 def test_which_gvcf_records_contest_reference(gatk_api, record, contests):
     spans = gatk_api.contested_spans([record + "\n"])
     f = record.split("\t")
-    expected = [(f[0], int(f[1]), int(f[1]) + len(f[3]) - 1)] if contests else []
+    expected = [(f[0], int(f[1]), int(f[1]) + len(f[3]) - 1, False)] if contests else []
     assert spans == expected
 
 
@@ -1356,7 +1368,7 @@ def test_other_bases_inside_a_called_deletion_are_not_reference(gatk_api, tmp_pa
             ]
         ),
         _positions(tmp_path, [_DPYD]),
-        [("chr1", 97450060, 97450066)],
+        [("chr1", 97450060, 97450066, False)],
     )
     assert (rewritten, demoted) == (0, 1)
     assert [_genotype(line) for line in _body(lines)] == ["./.", "./.", "0/0"]
@@ -1413,7 +1425,7 @@ def test_a_call_covered_by_a_record_starting_upstream_is_a_no_call(gatk_api, tmp
     positions = _positions(tmp_path, [("chr1", 97078993, "rs1", "C", "G")])
 
     lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
-        _called([row]), positions, [("chr1", 97078991, 97078994)]
+        _called([row]), positions, [("chr1", 97078991, 97078994, False)]
     )
     assert (rewritten, demoted) == (0, 1)
     assert _genotype(_body(lines)[0]) == "./."
@@ -1421,7 +1433,150 @@ def test_a_call_covered_by_a_record_starting_upstream_is_a_no_call(gatk_api, tmp
     # A record starting AT the position is the row itself: the call stands.
     called = _called([row])
     lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
-        called, positions, [("chr1", 97078993, 97078993)]
+        called, positions, [("chr1", 97078993, 97078993, False)]
     )
     assert (rewritten, demoted) == (0, 0)
     assert lines == called
+
+
+# --------------------------------------------------------------------------
+# What contests reference, allele by allele (review's D1 and D2)
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "record, expected",
+    [
+        # No genotype at all on a record with a real allele: the caller could not say.
+        (
+            "chr1\t97079003\t.\tTACG\tT,<NON_REF>\t0\t.\t.\tGT:AD:DP:GQ\t./.:20,5,0:25:0",
+            [("chr1", 97079003, 97079006, False)],
+        ),
+        # Only the insertion of a multi-allelic record carried: insertion_only.
+        (
+            "chr1\t97079119\t.\tGGTG\tG,GGTGT,<NON_REF>\t500\t.\t.\tGT:AD:DP:GQ\t0/2:15,0,14,0:29:99",
+            [("chr1", 97079119, 97079122, True)],
+        ),
+        # The deletion carried as well: not.
+        (
+            "chr1\t97079119\t.\tGGTG\tG,GGTGT,<NON_REF>\t500\t.\t.\tGT:AD:DP:GQ\t1/2:0,15,14,0:29:99",
+            [("chr1", 97079119, 97079122, False)],
+        ),
+        # A plain insertion record.
+        (
+            "chr1\t97079119\t.\tG\tGT,<NON_REF>\t500\t.\t.\tGT:AD:DP:GQ\t0/1:15,14,0:29:99",
+            [("chr1", 97079119, 97079119, True)],
+        ),
+    ],
+)
+def test_contested_spans_by_allele(gatk_api, record, expected):
+    assert gatk_api.contested_spans([record + "\n"]) == expected
+
+
+def test_an_insertion_does_not_contest_an_snv_under_it(gatk_api, tmp_path):
+    """An insertion changes the identity of no reference base. Review: `GGTG G,GGTGT
+    0/2` no-called the SNV at 97079121 inside the GGTG."""
+    rows = [("chr1", 97079121, "T", ".", "GT:DP:RGQ", "0/0:30:60")]
+    spans = [("chr1", 97079119, 97079122, True)]
+
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(rows),
+        _positions(tmp_path, [("chr1", 97079121, "rs1", "T", "C")]),
+        spans,
+    )
+    assert (rewritten, demoted) == (1, 0)
+    assert _genotype(_body(lines)[0]) == "0/0"
+
+
+def test_an_insertion_still_contests_an_indel_record(gatk_api, tmp_path):
+    """In a repeat an insertion can be written at any point of it, so a multi-base
+    PharmCAT record under one is not reference."""
+    rows = [
+        ("chr1", 97079121, "T", ".", "GT:DP:RGQ", "0/0:30:60"),
+        ("chr1", 97079122, "G", ".", "GT:DP:RGQ", "0/0:30:60"),
+    ]
+    spans = [("chr1", 97079119, 97079122, True)]
+
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(rows),
+        _positions(tmp_path, [("chr1", 97079121, "rs1", "TG", "T")]),
+        spans,
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert _genotype(_body(lines)[0]) == "./."
+
+
+# --------------------------------------------------------------------------
+# Two readers: PharmCAT's file, and the general one PyPGx reads
+# --------------------------------------------------------------------------
+def test_a_confident_call_no_called_for_pharmcat_stays_for_pypgx(gatk_api, tmp_path):
+    """Review measured the G of `C *,G 1/2` (GATK: `C G 0/1:0,15`) lost from what PyPGx
+    reads. It matters most for CYP2D6: 157 PharmCAT positions, called by PyPGx."""
+    row = (
+        "chr1",
+        97078993,
+        "C",
+        "G",
+        "GT:AD:DP:GQ:PL",
+        "0/1:0,15:15:45:450,0,45",
+        "400",
+    )
+    called = _called([row])
+
+    pharmcat, general, rewritten, demoted = gatk_api.judge_pgx_pass(
+        called,
+        _positions(tmp_path, [("chr1", 97078993, "rs1", "C", "G")]),
+        [("chr1", 97078991, 97078994, False)],
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert _genotype(_body(pharmcat)[0]) == "./."
+    assert _body(general) == _body(called)
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        # A weak call: nobody should read it as a call.
+        (
+            "chr19",
+            15878920,
+            "T",
+            "C",
+            "GT:AD:DP:GQ:PL",
+            "0/1:29,5:34:23:23,0,887",
+            "15.63",
+        ),
+        # A `*` row the caller was not sure of.
+        (
+            "chr19",
+            15878920,
+            "T",
+            "*",
+            "GT:AD:DP:GQ:PL",
+            "0/1:20,18:38:99:0,99,900",
+            "0",
+        ),
+    ],
+)
+def test_an_evidence_no_call_is_a_no_call_for_everyone(gatk_api, tmp_path, row):
+    pharmcat, general, _, demoted = gatk_api.judge_pgx_pass(
+        _called([row]), _positions(tmp_path, [_SNV])
+    )
+    assert demoted == 1
+    assert _body(general) == _body(pharmcat)
+    assert _genotype(_body(general)[0]) == "./."
+
+
+def test_the_conversion_returns_pharmcats_own_file(client, tools):
+    """Beside the output (the work dir is gone once the request returns), holding the
+    judged PGx pass alone; genotyped.vcf.gz is built from the general copy."""
+    body = _post(client).json()
+
+    path = body["pharmcat_vcf_path"]
+    assert path.endswith(".genotyped.pharmcat.vcf.gz"), path
+    assert os.path.dirname(path) == os.path.dirname(body["vcf_path"])
+    written = [
+        argv
+        for argv in tools.ran("bcftools", "view")
+        if argv[argv.index("-o") + 1] == path
+    ]
+    assert len(written) == 1 and written[0][-1].endswith(".pharmcat_alleles.vcf")
+    assert [r[:2] for r in tools.rows_by_path[path]] == PHARMCAT_POSITION_ROWS

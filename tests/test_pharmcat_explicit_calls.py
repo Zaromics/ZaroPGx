@@ -75,12 +75,26 @@ def test_main_nf_and_the_report_agree_on_which_inputs_are_explicit():
 
 def test_alignment_inputs_hand_pharmcat_the_force_called_vcf():
     m = re.search(
-        r"pharmcat_vcf_ch = \(params\.input_type in \[([^\]]*)\]\) \? "
-        r"PyPGxBam2Vcf\.out\.pharmcat_vcf : vcf_ch",
+        r"pharmcat_vcf_ch = \(params\.input_type in \[([^\]]*)\]\)\s*\?\s*"
+        r"PyPGxBam2Vcf\.out\.pharmcat_vcf\s*:\s*"
+        r"\(params\.input_type == 'gvcf' \? GVCFToVCF\.out\.pharmcat_vcf : vcf_ch\)",
         _workflow(),
     )
-    assert m, "PharmCAT's input for alignments is no longer PyPGxBam2Vcf's pharmcat_vcf"
+    assert m, "PharmCAT's input is no longer each lane's own PharmCAT file"
     assert _names(m.group(1)) == set(ALIGNMENT_INPUT_TYPES)
+
+
+def test_a_gvcf_hands_pharmcat_its_own_file():
+    """PharmCAT's positions alone, no-calls in its representation; PyPGx and the mtDNA
+    sidecar read genotyped.vcf.gz, which keeps a confident call PharmCAT's file had to
+    drop (review: the G of `C *,G 1/2` under an upstream deletion, at a CYP2D6-dense
+    list of positions whose call comes from PyPGx)."""
+    body = _process("GVCFToVCF")
+    line = next(l for l in body.splitlines() if "emit: pharmcat_vcf" in l)
+    assert 'path "pharmcat/pharmcat_positions.vcf.gz"' in line
+    assert "optional" not in line
+    assert "pharmcat_vcf_path" in body
+    assert 'cp "$PHARMCAT_VCF_PATH" pharmcat/pharmcat_positions.vcf.gz' in body
 
 
 def test_every_pharmcat_run_reads_that_vcf_and_the_effective_flags():

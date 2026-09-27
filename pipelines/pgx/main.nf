@@ -436,6 +436,10 @@ process GVCFToVCF {
     // which is a second reason not to derive it from the upload's name.
     path "genotyped.vcf.gz", emit: vcf
     path "genotyped.vcf.gz.tbi", optional: true, emit: tbi
+    // PharmCAT's own input: its positions alone, each a call or a no-call written in
+    // PharmCAT's representation (gatk_api.judge_pgx_pass). Same name and subdirectory
+    // as PyPGxBam2Vcf's, for the same reason: required, and outside any VCF glob.
+    path "pharmcat/pharmcat_positions.vcf.gz", emit: pharmcat_vcf
 
     shell:
     '''
@@ -455,14 +459,21 @@ data = json.load(open('gvcf_response.json'))
 print(data.get('vcf_path') or data.get('vcf') or '')
 PY
 )
-    if [ -z "$VCF_PATH" ]; then
-      echo "gvcf-to-vcf response carried no vcf_path" >&2
+    PHARMCAT_VCF_PATH=$(python3 - <<'PY'
+import json
+print(json.load(open('gvcf_response.json')).get('pharmcat_vcf_path') or '')
+PY
+)
+    if [ -z "$VCF_PATH" ] || [ -z "$PHARMCAT_VCF_PATH" ]; then
+      echo "gvcf-to-vcf response carried no vcf_path or pharmcat_vcf_path" >&2
       cat gvcf_response.json >&2 || true
       exit 1
     fi
     cp "$VCF_PATH" genotyped.vcf.gz
     # Bring the tabix index along if the sidecar made one (downstream re-indexes otherwise).
     [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" genotyped.vcf.gz.tbi || true
+    mkdir -p pharmcat
+    cp "$PHARMCAT_VCF_PATH" pharmcat/pharmcat_positions.vcf.gz
     '''
 }
 
@@ -1008,7 +1019,12 @@ workflow {
     // of this list; tests/test_pharmcat_explicit_calls.py keeps the two identical.
     explicit_call_input_types = ['fastq', 'bam', 'cram', 'sam', 'gvcf']
     explicit_calls = params.input_type in explicit_call_input_types
-    pharmcat_vcf_ch = (params.input_type in ['fastq', 'bam', 'cram', 'sam']) ? PyPGxBam2Vcf.out.pharmcat_vcf : vcf_ch
+    // PharmCAT reads its own file wherever one exists: the force-called positions for an
+    // alignment, the judged PGx pass for a gVCF. A gVCF is GRCh38 by construction (a
+    // GRCh37 one is refused at upload), so its PharmCAT file never needs the liftover.
+    pharmcat_vcf_ch = (params.input_type in ['fastq', 'bam', 'cram', 'sam'])
+        ? PyPGxBam2Vcf.out.pharmcat_vcf
+        : (params.input_type == 'gvcf' ? GVCFToVCF.out.pharmcat_vcf : vcf_ch)
     pharmcat_absent_ch = Channel.value(explicit_calls ? 'false' : params.pharmcat_absent_to_ref)
     pharmcat_unspecified_ch = Channel.value(explicit_calls ? 'false' : params.pharmcat_unspecified_to_ref)
 
