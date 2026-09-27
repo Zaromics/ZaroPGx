@@ -37,6 +37,15 @@ _DEFAULT_MIGRATIONS_DIR = (
 
 _MIGRATION_NAME = re.compile(r"^\d+_.*\.sql$")
 
+# The last migration whose end state 00_complete_database_schema.sql already embedded
+# when this applier was introduced. Those are baselined on an already-current database;
+# anything later is applied (see the baseline in apply_pending_migrations).
+_BASELINE_THROUGH = 5
+
+
+def _migration_number(path: Path) -> int:
+    return int(path.name.split("_", 1)[0])
+
 
 def _split_statements(sql: str) -> List[str]:
     """Split a simple migration file into individual statements.
@@ -99,16 +108,24 @@ def apply_pending_migrations(
                 is not None
             )
             if jobs_exists:
-                for path in files:
+                # Only the historical transforms are baselined. A migration added after
+                # this applier existed (06 on) is idempotent by rule and must still RUN
+                # on such a database: baselining 06 would record the GVCF constraint as
+                # applied on a pre-v0.3.1 volume that never got it, and every gVCF
+                # upload there would keep failing header analysis.
+                historical = [
+                    f for f in files if _migration_number(f) <= _BASELINE_THROUGH
+                ]
+                for path in historical:
                     conn.execute(
                         text("INSERT INTO schema_migrations (filename) VALUES (:f)"),
                         {"f": path.name},
                     )
+                already = {path.name for path in historical}
                 logger.info(
                     "Baselined %d existing migration(s) on an already-current schema",
-                    len(files),
+                    len(historical),
                 )
-                return []
 
         for path in files:
             if path.name in already:

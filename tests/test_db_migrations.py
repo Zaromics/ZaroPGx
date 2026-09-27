@@ -96,3 +96,76 @@ def test_every_accepted_input_can_record_its_header():
     wanted = {t.upper() for t in NEXTFLOW_INPUT_TYPES}
     assert wanted <= fresh
     assert fresh == migrated
+
+
+class _FakeResult:
+    def __init__(self, scalar=None, rows=()):
+        self._scalar, self._rows = scalar, rows
+
+    def scalar(self):
+        return self._scalar
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _FakeConn:
+    """Just enough of a SQLAlchemy connection for apply_pending_migrations."""
+
+    def __init__(self, has_migrations_table, has_jobs):
+        self.has_migrations_table, self.has_jobs = has_migrations_table, has_jobs
+        self.recorded, self.ran = [], []
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "to_regclass('public.schema_migrations')" in sql:
+            return _FakeResult(
+                "schema_migrations" if self.has_migrations_table else None
+            )
+        if "to_regclass('public.jobs')" in sql:
+            return _FakeResult("jobs" if self.has_jobs else None)
+        if sql.startswith("SELECT filename"):
+            return _FakeResult(rows=[])
+        if sql.startswith("INSERT INTO schema_migrations"):
+            self.recorded.append(params["f"])
+        elif not sql.startswith(
+            ("SELECT pg_advisory", "CREATE TABLE IF NOT EXISTS schema_migrations")
+        ):
+            self.ran.append(sql)
+        return _FakeResult()
+
+
+class _FakeEngine:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def begin(self):
+        engine = self
+
+        class _Ctx:
+            def __enter__(self):
+                return engine.conn
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Ctx()
+
+
+def test_a_current_database_baselines_history_but_runs_new_migrations(tmp_path: Path):
+    """Found by review: the baseline recorded EVERY migration as applied on a database
+    that had a jobs table but no schema_migrations yet, so a pre-v0.3.1 volume never
+    ran 06 and kept refusing every gVCF upload. History (<= 05) is recorded without
+    running -- 04 is a rename that fails twice -- and anything newer runs."""
+    (tmp_path / "04_rename.sql").write_text("ALTER TABLE a RENAME COLUMN x TO y;\n")
+    (tmp_path / "05_add.sql").write_text(
+        "ALTER TABLE a ADD COLUMN IF NOT EXISTS z INT;\n"
+    )
+    (tmp_path / "06_new.sql").write_text("ALTER TABLE b DROP CONSTRAINT IF EXISTS c;\n")
+    conn = _FakeConn(has_migrations_table=False, has_jobs=True)
+
+    applied = apply_pending_migrations(_FakeEngine(conn), migrations_dir=tmp_path)
+
+    assert applied == ["06_new.sql"]
+    assert conn.ran == ["ALTER TABLE b DROP CONSTRAINT IF EXISTS c"]
+    assert sorted(conn.recorded) == ["04_rename.sql", "05_add.sql", "06_new.sql"]
