@@ -952,35 +952,83 @@ def annotate_uncovered_genes(vcf_gz: str, genes) -> None:
 # targeted panel: 422 of PharmCAT's 1,226 positions had no read, among them every
 # RYR1, CACNA1S, CFTR, F2 and F5 position, and all 422 were reported as reference.
 #
-# So the alignment lanes give PharmCAT its own file: every PharmCAT position is
-# force-called from the alignment with the engine and mpileup settings PyPGx's
-# create-input-vcf already uses (bcftools; MAPQ >= 1, --max-depth 250, -F 0). A
-# position the reads confidently call reference is written with PharmCAT's own
-# record and alleles (bcftools writes a hom-ref indel site as REF=anchor ALT=.,
-# which PharmCAT discards as an invalid indel); a confident variant keeps the
-# caller's record; anything else -- no reads, too few, a low-quality or conflicting
-# call -- is left out, which PharmCAT reads as a no-call. Validated 2026-09-27: on a
-# 30x WGS all 21 PharmCAT genes came out identical to the old variants-only +
-# --missing-to-ref path; on the panel the five unsequenced genes became not called.
+# So the alignment lanes give PharmCAT its own file, decided from the reads at each
+# PharmCAT record:
+#
+# * reference -- every base of the record's REF span has at least
+#   PHARMCAT_MIN_REF_READS good reads (MAPQ >= 1, base quality >= 13) for the
+#   reference and next to none for anything else (allowed_other_reads), and neither
+#   an indel candidate with support nor a variant call overlaps the span. Written
+#   with PharmCAT's own record and alleles.
+# * variant -- whatever bcftools call -mv (the engine PyPGx uses) calls over the span,
+#   at GQ >= 20, in bcftools's own representation, including an allele PharmCAT does
+#   not list, which PharmCAT then treats as undocumented rather than as reference.
+# * anything else -- no reads, too few, reads for another allele without a confident
+#   call -- is left out, which PharmCAT reads as a no-call.
+#
+# Reference is decided from READ COUNTS, not from a genotype. The first version asked
+# bcftools for a genotype constrained to PharmCAT's alleles (call -C alleles), and a
+# constrained caller calls 0/0 whenever the reads show an allele it was not offered:
+# review found a homozygous RYR1 TT>AA MNV (20 of 20 reads), a TPMT base PharmCAT does
+# not list, an unlisted NUDT15 duplication and 20 all-alt low-quality reads, each
+# written as reference. The pileup is padded around each position, so an indel
+# anchored upstream of it, or placed at the far end of a repeat, is still seen.
 
 PHARMCAT_POSITIONS_VCF = REFERENCE_DIR / "pharmcat" / "pharmcat_positions.vcf"
 
-# The same bar as a variant's genotype quality: Phred 20.
+# A variant's genotype quality: Phred 20.
 PHARMCAT_MIN_VARIANT_GQ = 20
-# bcftools gives a hom-ref site no likelihoods, so no GQ; depth stands in for it. A
-# heterozygote shows zero alt reads in n reads with probability 0.5**n, and n >= 7
-# keeps that under 1% (Phred 20). Not higher: on a male 30x WGS most G6PD (chrX)
-# positions sit at DP 5-9, and a flat DP >= 10 would no-call a well-sequenced gene.
-PHARMCAT_MIN_REF_DEPTH = 7
+# A heterozygote shows no read for its other allele in n reads with probability
+# 0.5**n; n >= 7 with none allowed keeps that under 1% (Phred 20). Not higher: on a
+# male 30x WGS most G6PD (chrX, one copy) positions have 5-9 reads.
+PHARMCAT_MIN_REF_READS = 7
+# At depth a stray read is a sequencing error, not a heterozygote: from 20 reads up,
+# 5% may show something else (none below 20). With 1 allowed in 20 reads a het is
+# missed with probability 21 / 2**20.
+PHARMCAT_MAX_OTHER_FRACTION = 0.05
+# The samtools/bcftools convention, and what PyPGx's own calling applies. 20 was tried
+# and discarded most reads of a binned-quality MGI WGS (RYR1 positions with 16 reads
+# kept 2); at 13 an all-alt run of BQ 3-10 reads still counts for nothing, and BQ-13
+# alt reads count against reference.
+PHARMCAT_MIN_BASE_QUALITY = 13
+# How far around each position the pileup reaches, for an indel anchored upstream of
+# it or written at the far end of a repeat (bcftools norm then left-aligns it).
+PHARMCAT_PILEUP_PAD = 50
 
 
-def classify_position_call(gt, dp, gq) -> str:
-    """'ref', 'variant' or 'uncertain' for one force-called record's genotype."""
-    if gt is None or None in gt:
+def allowed_other_reads(total: int) -> int:
+    """Reads for another allele tolerated in a reference call, given all reads."""
+    return int(total * PHARMCAT_MAX_OTHER_FRACTION)
+
+
+def classify_pharmcat_record(chrom, pos, ref, base_reads, indel_spans, calls) -> str:
+    """'reference', 'variant', 'uncertain' or 'no_reads' for one PharmCAT record.
+
+    base_reads:  {(chrom, pos): (reference reads, other reads)} for each pileup base.
+    indel_spans: [(chrom, start, end)] of indel candidates whose non-reference
+                 support is beyond allowed_other_reads.
+    calls:       [(chrom, start, end, confident)] from bcftools call -mv, normalised.
+    """
+    end = pos + len(ref) - 1
+
+    def overlaps(c, start, stop):
+        return c == chrom and start <= end and stop >= pos
+
+    hits = [confident for c, s, e, confident in calls if overlaps(c, s, e)]
+    if hits:
+        return "variant" if any(hits) else "uncertain"
+    if any(overlaps(c, s, e) for c, s, e in indel_spans):
         return "uncertain"
-    if any(allele > 0 for allele in gt):
-        return "variant" if gq is not None and gq >= PHARMCAT_MIN_VARIANT_GQ else "uncertain"
-    return "ref" if dp is not None and dp >= PHARMCAT_MIN_REF_DEPTH else "uncertain"
+    evidence = [base_reads.get((chrom, p)) for p in range(pos, end + 1)]
+    if all(e is None for e in evidence):
+        return "no_reads"
+    for e in evidence:
+        if e is None:
+            return "uncertain"
+        ref_reads, other = e
+        if ref_reads < PHARMCAT_MIN_REF_READS or other > allowed_other_reads(ref_reads + other):
+            return "uncertain"
+    return "reference"
 
 
 def genotype_pharmcat_positions(
@@ -988,9 +1036,9 @@ def genotype_pharmcat_positions(
 ) -> Dict[str, Any]:
     """Write PharmCAT's input VCF for an alignment. See the section comment above.
 
-    Returns counts of what happened -- positions, confident reference, variant
-    records, no reads, uncertain -- which /create-input-vcf records on the job step
-    so the report can state them rather than assume them.
+    Returns counts of what happened -- positions, reference, variant, no reads,
+    uncertain -- which /create-input-vcf records on the job step so the report can
+    state them rather than assume them.
     """
     import pysam
 
@@ -1001,68 +1049,119 @@ def genotype_pharmcat_positions(
             "pharmcat image at /pharmcat/pharmcat_positions.vcf and must be copied to "
             "reference/pharmcat/ on every PharmCAT upgrade."
         )
+    with pysam.VariantFile(positions) as known:
+        records = [(r.chrom, r.pos, r.id, r.ref, r.alleles) for r in known]
+
     work = tempfile.mkdtemp(prefix="pharmcat_positions_")
     try:
-        # bcftools call -C alleles takes CHROM<TAB>POS<TAB>REF,ALT, not a VCF.
-        alleles_txt = os.path.join(work, "alleles.tsv")
-        query = subprocess.run(
-            ["bcftools", "query", "-f", "%CHROM\t%POS\t%REF,%ALT\n", positions],
-            check=True, capture_output=True,
+        # Each record's REF span, padded, merged: the regions the pileup reads. Only
+        # contigs the alignment has: `mpileup -R` fails outright on a region whose
+        # contig is missing from the header, and a BAM without, say, chrX should get
+        # no-calls for G6PD rather than no PharmCAT file at all.
+        with pysam.AlignmentFile(str(alignment_path)) as aln:
+            present = set(aln.references)
+            read_groups = aln.header.to_dict().get("RG") or []
+        spans = sorted(
+            (c, max(0, p - 1 - PHARMCAT_PILEUP_PAD), p - 1 + len(ref) + PHARMCAT_PILEUP_PAD)
+            for c, p, _, ref, _ in records
+            if c in present
         )
-        with open(alleles_txt, "wb") as fh:
-            fh.write(query.stdout)
-        alleles = alleles_txt + ".gz"
-        pysam.tabix_compress(alleles_txt, alleles, force=True)
-        pysam.tabix_index(alleles, seq_col=0, start_col=1, end_col=1, zerobased=False, force=True)
+        merged = []
+        for c, s, e in spans:
+            if merged and merged[-1][0] == c and s <= merged[-1][2]:
+                merged[-1][2] = max(merged[-1][2], e)
+            else:
+                merged.append([c, s, e])
+        bed = os.path.join(work, "regions.bed")
+        with open(bed, "w", encoding="utf-8") as fh:
+            fh.writelines(f"{c}\t{s}\t{e}\n" for c, s, e in merged)
 
-        calls = os.path.join(work, "calls.bcf")
-        mpileup = subprocess.Popen(
-            ["bcftools", "mpileup", "-f", str(fasta), "-T", positions,
-             "-a", "FORMAT/AD,FORMAT/DP", "-q", "1", "--max-depth", "250", "-F", "0",
-             "-Ou", str(alignment_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        )
-        call = subprocess.run(
-            ["bcftools", "call", "-m", "-C", "alleles", "-T", alleles, "-a", "GQ",
-             "-Ou", "-o", calls],
-            stdin=mpileup.stdout, capture_output=True,
-        )
-        mpileup.stdout.close()
-        mpileup_err = mpileup.stderr.read()
-        mpileup.stderr.close()
-        mpileup.wait()
-        if mpileup.returncode or call.returncode:
-            raise RuntimeError(
-                "bcftools mpileup/call at PharmCAT's positions failed: "
-                f"{mpileup_err.decode(errors='replace')[-400:]} "
-                f"{call.stderr.decode(errors='replace')[-400:]}"
+        base_reads, indel_spans, calls, variant_records = {}, [], [], []
+        sample = next((rg.get("SM") for rg in read_groups if rg.get("SM")), "SAMPLE")
+        contigs = sorted(present)
+        if merged:
+            common = ["-f", str(fasta), "-R", bed, "-a", "FORMAT/AD,FORMAT/DP", "-q", "1",
+                      "-Q", str(PHARMCAT_MIN_BASE_QUALITY), "--max-depth", "250", "-F", "0"]
+            # Two pileups over the same regions. COUNTS decides reference, so it sees
+            # everything that could argue against it: BAQ off (-B), because BAQ can push
+            # every alt base next to an indel below the quality floor (review: a het at
+            # the CYP2C19 *4 site, 10 of 20 reads, counted 10,0 beside a 3-bp deletion),
+            # and an indel candidate from a single gapped read (-m 1; the default 2 left
+            # a one-read deletion invisible, and deleted reads count for nothing at the
+            # bases they delete). CALLS is the variant caller, on PyPGx's settings.
+            counts = os.path.join(work, "counts.bcf")
+            subprocess.run(
+                ["bcftools", "mpileup", *common, "-B", "-m", "1", "-Ob", "-o", counts,
+                 str(alignment_path)],
+                check=True, capture_output=True,
             )
-        normed = os.path.join(work, "calls.norm.bcf")
-        subprocess.run(
-            ["bcftools", "norm", "-f", str(fasta), "-Ob", "-o", normed, calls],
-            check=True, capture_output=True,
-        )
+            likelihoods = os.path.join(work, "likelihoods.bcf")
+            subprocess.run(
+                ["bcftools", "mpileup", *common, "-Ob", "-o", likelihoods, str(alignment_path)],
+                check=True, capture_output=True,
+            )
+            calls_bcf = os.path.join(work, "calls.bcf")
+            subprocess.run(
+                ["bcftools", "call", "-mv", "-a", "GQ", "-Ob", "-o", calls_bcf, likelihoods],
+                check=True, capture_output=True,
+            )
+            normed = os.path.join(work, "calls.norm.bcf")
+            subprocess.run(
+                ["bcftools", "norm", "-f", str(fasta), "-Ob", "-o", normed, calls_bcf],
+                check=True, capture_output=True,
+            )
+            # Indel candidates, raw AND left-normalised: the raw record sits where the
+            # aligner put the gap (a UGT1A1 *28 insertion at the right end of the TA
+            # repeat lands at 233760247), and only the normalised one overlaps
+            # PharmCAT's position (233760233).
+            indels = os.path.join(work, "indels.bcf")
+            subprocess.run(
+                ["bcftools", "view", "-i", "INDEL=1", "-Ob", "-o", indels, counts],
+                check=True, capture_output=True,
+            )
+            indels_normed = os.path.join(work, "indels.norm.bcf")
+            subprocess.run(
+                ["bcftools", "norm", "-f", str(fasta), "-Ob", "-o", indels_normed, indels],
+                check=True, capture_output=True,
+            )
 
-        ref_keys, variants, unsure, seen, depth = set(), [], set(), set(), {}
-        with pysam.VariantFile(normed) as vf:
-            sample = list(vf.header.samples)[0]
-            contigs = list(vf.header.contigs)
-            for rec in vf:
-                key = (rec.chrom, rec.pos)
-                seen.add(key)
-                fmt = rec.samples[sample]
-                gt, dp, gq = fmt.get("GT"), fmt.get("DP"), fmt.get("GQ")
-                depth[key] = dp
-                kind = classify_position_call(gt, dp, gq)
-                if kind == "ref":
-                    ref_keys.add(key)
-                else:
-                    # A variant record means the position is not reference, whatever
-                    # a second (e.g. SNV-vs-indel) record at it says.
-                    unsure.add(key)
-                    if kind == "variant":
-                        variants.append((rec.chrom, rec.pos, rec.alleles, tuple(gt), dp, gq))
-        ref_keys -= unsure
+            # The evidence: per-base read counts and supported indel candidates.
+            with pysam.VariantFile(counts) as vf:
+                sample = list(vf.header.samples)[0]
+                contigs = list(vf.header.contigs)
+                for rec in vf:
+                    ad = rec.samples[sample].get("AD")
+                    if not ad or ad[0] is None or rec.info.get("INDEL"):
+                        continue
+                    base_reads[(rec.chrom, rec.pos)] = (ad[0], sum(a for a in ad[1:] if a))
+            for path in (indels, indels_normed):
+                with pysam.VariantFile(path) as vf:
+                    for rec in vf:
+                        ad = rec.samples[sample].get("AD")
+                        if not ad or ad[0] is None:
+                            continue
+                        other = sum(a for a in ad[1:] if a)
+                        if other > allowed_other_reads(ad[0] + other):
+                            indel_spans.append((rec.chrom, rec.pos, rec.pos + len(rec.ref) - 1))
+            # The caller's variant records.
+            with pysam.VariantFile(normed) as vf:
+                for rec in vf:
+                    fmt = rec.samples[sample]
+                    gt, gq, dp = fmt.get("GT"), fmt.get("GQ"), fmt.get("DP")
+                    confident = (
+                        gt is not None and None not in gt and any(a > 0 for a in gt)
+                        and gq is not None and gq >= PHARMCAT_MIN_VARIANT_GQ
+                    )
+                    calls.append((rec.chrom, rec.pos, rec.pos + len(rec.ref) - 1, confident))
+                    if confident:
+                        variant_records.append(
+                            (rec.chrom, rec.pos, rec.ref, rec.alleles, tuple(gt), dp, gq)
+                        )
+
+        status = {}
+        for c, p, _, ref, _ in records:
+            status[(c, p)] = classify_pharmcat_record(c, p, ref, base_reads, indel_spans, calls)
+        record_spans = [(c, p, p + len(ref) - 1) for c, p, _, ref, _ in records]
 
         header = pysam.VariantHeader()
         for contig in contigs:
@@ -1072,17 +1171,21 @@ def genotype_pharmcat_positions(
         header.add_line('##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">')
         header.add_sample(sample)
         unsorted = os.path.join(work, "pharmcat.unsorted.vcf.gz")
-        with pysam.VariantFile(unsorted, "wz", header=header) as out, \
-                pysam.VariantFile(positions) as known:
-            for prec in known:
-                key = (prec.chrom, prec.pos)
-                if key in ref_keys:
-                    rec = out.new_record(contig=prec.chrom, start=prec.start, alleles=prec.alleles, id=prec.id)
-                    rec.samples[sample]["GT"] = (0, 0)
-                    rec.samples[sample]["DP"] = depth.get(key)
-                    out.write(rec)
-            for chrom, pos, record_alleles, gt, dp, gq in variants:
-                rec = out.new_record(contig=chrom, start=pos - 1, alleles=record_alleles)
+        with pysam.VariantFile(unsorted, "wz", header=header) as out:
+            for c, p, rid, ref, alleles in records:
+                if status[(c, p)] != "reference":
+                    continue
+                rec = out.new_record(contig=c, start=p - 1, alleles=alleles, id=rid)
+                rec.samples[sample]["GT"] = (0, 0)
+                rec.samples[sample]["DP"] = min(
+                    base_reads[(c, q)][0] for q in range(p, p + len(ref))
+                )
+                out.write(rec)
+            for chrom, pos, ref, alleles, gt, dp, gq in variant_records:
+                end = pos + len(ref) - 1
+                if not any(c == chrom and s <= end and e >= pos for c, s, e in record_spans):
+                    continue
+                rec = out.new_record(contig=chrom, start=pos - 1, alleles=alleles)
                 rec.samples[sample]["GT"] = gt
                 rec.samples[sample]["DP"] = dp
                 rec.samples[sample]["GQ"] = gq
@@ -1093,16 +1196,17 @@ def genotype_pharmcat_positions(
         )
         tabix_index(str(output_vcf_gz), force=True)
 
-        with pysam.VariantFile(positions) as known:
-            all_keys = {(r.chrom, r.pos) for r in known}
-        variant_keys = {(c, p) for c, p, *_ in variants}
+        counts = {k: 0 for k in ("reference", "variant", "no_reads", "uncertain")}
+        for kind in status.values():
+            counts[kind] += 1
         return {
-            "n_pharmcat_positions": len(all_keys),
-            "n_reference": len(ref_keys & all_keys),
-            "n_variant": len(variant_keys & all_keys),
-            "n_no_reads": len(all_keys - seen),
-            "n_uncertain": len((all_keys & seen) - ref_keys - variant_keys),
-            "min_reference_depth": PHARMCAT_MIN_REF_DEPTH,
+            "n_pharmcat_positions": len(status),
+            "n_reference": counts["reference"],
+            "n_variant": counts["variant"],
+            "n_no_reads": counts["no_reads"],
+            "n_uncertain": counts["uncertain"],
+            "min_reference_reads": PHARMCAT_MIN_REF_READS,
+            "max_other_fraction": PHARMCAT_MAX_OTHER_FRACTION,
             "min_variant_gq": PHARMCAT_MIN_VARIANT_GQ,
         }
     finally:
@@ -1112,7 +1216,7 @@ def genotype_pharmcat_positions(
 def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly: str) -> Dict[str, Any]:
     """Run PyPGx create-input-vcf to generate a VCF from an alignment file.
 
-    pypgx 0.26.0's CLI is positional -- ``create-input-vcf [--assembly A] <vcf> <fasta>
+    pypgx 0.26+'s CLI is positional -- ``create-input-vcf [--assembly A] <vcf> <fasta>
     <bams...>`` -- not the ``--bam``/``--output`` flags an earlier version of this code
     assumed (which produced "the following arguments are required: bams" and no output).
     It also drives bcftools mpileup under the hood, which needs a ``.fai`` next to the

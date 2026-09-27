@@ -346,7 +346,7 @@ def build_citations() -> List[Dict[str, str]]:
     def _ver(key: str, fallback: str) -> str:
         return _normalize_version_text(vmap.get(key) or fallback)
 
-    pypgx_ver = _ver("pypgx", "0.26.0")
+    pypgx_ver = _ver("pypgx", "0.27.0")
     pharmcat_ver = _ver("pharmcat", "3.4.0")
     gatk_ver = _ver("gatk", "4.7.0.0")
     zarohla_ver = _ver("zarohla", "1.5.0")
@@ -937,7 +937,12 @@ def gene_was_called(diplotype) -> bool:
     return bool(text) and not text.startswith("unknown")
 
 
-def partial_coverage_alert(genes, max_listed: int = 8) -> Optional[str]:
+_VARIANT_ONLY_INPUT_TYPES = frozenset({"vcf", "bcf"})
+
+
+def partial_coverage_alert(
+    genes, input_type: Optional[str] = None, max_listed: int = 8
+) -> Optional[str]:
     """One alert naming the CALLED genes whose call rests on partial coverage.
 
     PharmCAT still calls a gene when some of its positions are missing, from the
@@ -948,6 +953,9 @@ def partial_coverage_alert(genes, max_listed: int = 8) -> Optional[str]:
     reports *1/*1 with *4, *15, *20 and *21 unassessed, and the reader is owed that.
     Genes with no call at all are already named under "Genes examined without a
     call", so they are left out here.
+
+    For a plain VCF the missing positions are not "uncovered", they are simply not
+    listed: a variants-only file says nothing about the rest, and the wording says so.
     """
     parts = []
     for gene in sorted(genes or [], key=lambda g: str(g.get("gene") or "")):
@@ -960,6 +968,14 @@ def partial_coverage_alert(genes, max_listed: int = 8) -> Optional[str]:
         parts.append(f"{html.escape(str(gene.get('gene')))} ({html.escape(shown)})")
     if not parts:
         return None
+    if str(input_type or "").strip().lower() in _VARIANT_ONLY_INPUT_TYPES:
+        return (
+            "<p>⚠️ Genes called from part of their positions: "
+            + "; ".join(parts)
+            + " could not be assessed, because the uploaded VCF has no record at the "
+            "positions that define them (a VCF that lists variants only says nothing "
+            "about the rest). Those calls rest on the positions the file lists.</p>"
+        )
     return (
         "<p>⚠️ Partly covered genes: "
         + "; ".join(parts)
@@ -1977,7 +1993,10 @@ def generate_report(
                 )
                 # From what PharmCAT reported, not from the plan: which calls rest on
                 # a gene only partly covered by the data.
-                coverage_alert = partial_coverage_alert((data or {}).get("genes"))
+                coverage_alert = partial_coverage_alert(
+                    (data or {}).get("genes"),
+                    (meta.get("file_analysis") or {}).get("file_type"),
+                )
                 if coverage_alert:
                     workflow_warnings.append(coverage_alert)
                 # Read once, used twice: the assume-ref paragraph below and the gVCF

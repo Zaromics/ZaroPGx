@@ -525,7 +525,7 @@ def test_create_input_vcf_passes_hostile_path_as_one_argv_element(
     assert pypgx_calls, f"no pypgx create-input-vcf call: {recorder.calls!r}"
     args, kwargs = pypgx_calls[0]
     _assert_argv_is_safe(args, kwargs, PAYLOAD_MARKER)
-    # pypgx 0.26.0 is positional: create-input-vcf [--assembly A] <vcf> <fasta> <bams...>,
+    # pypgx 0.26+ is positional: create-input-vcf [--assembly A] <vcf> <fasta> <bams...>,
     # so the hostile BAM is the final argv element, opaque and not shell-interpreted.
     assert args[-1] == str(hostile_bam)
 

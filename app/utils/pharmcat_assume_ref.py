@@ -89,13 +89,19 @@ def explicit_calls_paragraph(
             var = _count(stats.get("n_variant")) or 0
             no_reads = _count(stats.get("n_no_reads")) or 0
             unsure = _count(stats.get("n_uncertain")) or 0
-            depth = _count(stats.get("min_reference_depth")) or 7
+            reads = (
+                _count(stats.get("min_reference_reads"))
+                or _count(stats.get("min_reference_depth"))
+                or 7
+            )
             parts.append(
                 f"Genotypes at PharmCAT's {total:,} positions were called from the "
-                f"alignment: {ref:,} reference and {var:,} variant. {no_reads:,} had no "
-                f"reads and {unsure:,} had fewer than {depth} reads or an uncertain "
-                "call; those are no-calls, not reference calls, and a gene with none "
-                "of its positions called is reported as not called."
+                f"alignment: {ref:,} reference and {var:,} variant. A reference call "
+                f"needs at least {reads} good reads for the reference and next to none "
+                f"for anything else. {no_reads:,} positions had no reads and {unsure:,} "
+                "had too few, or reads for another allele without a confident call; "
+                "those are no-calls, not reference calls, and a gene with none of its "
+                "positions called is reported as not called."
             )
         else:
             parts.append(

@@ -159,14 +159,15 @@ STATS = {
     "n_variant": 4,
     "n_no_reads": 422,
     "n_uncertain": 0,
-    "min_reference_depth": 7,
+    "min_reference_reads": 7,
 }
 
 
 def test_the_paragraph_states_what_the_force_call_found():
     text = explicit_calls_paragraph("fastq", False, False, STATS)
     assert "1,226" in text and "800 reference" in text and "4 variant" in text
-    assert "422 had no reads" in text
+    assert "422 positions had no reads" in text
+    assert "at least 7 good reads for the reference" in text
     assert "not reference calls" in text
     assert "not called" in text
     assert "not applied" not in text
@@ -226,27 +227,68 @@ def _load_wrapper(names):
 
 CLASSIFY = [
     "PHARMCAT_MIN_VARIANT_GQ",
-    "PHARMCAT_MIN_REF_DEPTH",
-    "classify_position_call",
+    "PHARMCAT_MIN_REF_READS",
+    "PHARMCAT_MAX_OTHER_FRACTION",
+    "PHARMCAT_MIN_BASE_QUALITY",
+    "PHARMCAT_PILEUP_PAD",
+    "allowed_other_reads",
+    "classify_pharmcat_record",
 ]
 
 
+def _classify(ref, reads=None, indels=(), calls=(), pos=100):
+    """classify_pharmcat_record for one record at chr1:pos, evidence given per base."""
+    fn = _load_wrapper(CLASSIFY)["classify_pharmcat_record"]
+    base_reads = {("chr1", p): r for p, r in (reads or {}).items()}
+    return fn("chr1", pos, ref, base_reads, list(indels), list(calls))
+
+
 @pytest.mark.parametrize(
-    "gt, dp, gq, expected",
+    "case, reads, indels, calls, expected",
     [
-        ((0, 0), 7, None, "ref"),  # 0.5**7 < 1%: a het would have shown an alt read
-        ((0, 0), 6, None, "uncertain"),
-        ((0, 0), None, None, "uncertain"),
-        ((0, 1), 30, 20, "variant"),
-        ((0, 1), 30, 19, "uncertain"),
-        ((1, 1), 30, None, "uncertain"),
-        ((None, None), 30, 99, "uncertain"),
-        (None, 30, 99, "uncertain"),
+        # Reference needs >= 7 reads for it and none for anything else below 20 reads.
+        ("10 reference reads", {100: (10, 0)}, (), (), "reference"),
+        ("6 reference reads", {100: (6, 0)}, (), (), "uncertain"),
+        # Review: bcftools called 0/0 with one alt read at 7-20 reads, and the first
+        # version took that as reference. A het misses its other allele entirely in n
+        # reads with probability 0.5**n; one read of it is not "none".
+        ("1 other read in 10", {100: (9, 1)}, (), (), "uncertain"),
+        ("1 other read in 20", {100: (19, 1)}, (), (), "reference"),
+        ("2 other reads in 20", {100: (18, 2)}, (), (), "uncertain"),
+        ("2 other reads in 40", {100: (38, 2)}, (), (), "reference"),
+        # Review: an allele PharmCAT does not list (TPMT het A), called by the caller.
+        (
+            "unlisted allele, called",
+            {100: (10, 10)},
+            (),
+            [("chr1", 100, 100, True)],
+            "variant",
+        ),
+        # Review: 20 all-alt reads at low base quality never reach the pileup counts.
+        ("all reads below the quality floor", {}, (), (), "no_reads"),
+        # An indel anchored upstream whose deleted span covers the position.
+        ("spanning deletion", {100: (10, 0)}, [("chr1", 95, 105)], (), "uncertain"),
+        # A call PharmCAT's matcher cannot use with confidence is not reference either.
+        (
+            "low-confidence call",
+            {100: (10, 3)},
+            (),
+            [("chr1", 100, 100, False)],
+            "uncertain",
+        ),
     ],
 )
-def test_what_counts_as_a_call(gt, dp, gq, expected):
-    classify = _load_wrapper(CLASSIFY)["classify_position_call"]
-    assert classify(gt, dp, gq) == expected
+def test_what_counts_as_reference(case, reads, indels, calls, expected):
+    assert _classify("A", reads, indels, calls) == expected, case
+
+
+def test_every_base_of_a_multi_base_record_must_be_reference():
+    """Review: a homozygous RYR1 TT>AA MNV (20 of 20 reads) was written 0/0, because
+    the first version looked at the POS base's genotype alone."""
+    assert _classify("TT", {100: (0, 20), 101: (0, 20)}) == "uncertain"
+    assert _classify("TT", {100: (20, 0), 101: (0, 20)}) == "uncertain"
+    assert _classify("TT", {100: (20, 0), 101: (20, 0)}) == "reference"
+    assert _classify("CTT", {100: (12, 0), 101: (12, 0)}) == "uncertain"  # 102 unread
 
 
 def test_every_subprocess_in_the_force_call_is_an_argv_list():
@@ -263,10 +305,19 @@ def test_every_subprocess_in_the_force_call_is_an_argv_list():
         and isinstance(n.func, ast.Attribute)
         and n.func.attr in ("run", "Popen")
     ]
-    assert len(calls) >= 5
+    assert len(calls) >= 4
     for call in calls:
         assert isinstance(call.args[0], ast.List), "argv must be a list literal"
         assert not any(kw.arg == "shell" for kw in call.keywords)
+
+
+def test_reference_is_never_decided_by_a_constrained_genotype():
+    """The first version ran `bcftools call -C alleles`, which calls 0/0 whenever the
+    reads show an allele it was not offered."""
+    src = WRAPPER.read_text(encoding="utf-8")
+    body = src[src.index("def genotype_pharmcat_positions") :]
+    body = body[: body.index("\ndef ", 1)]
+    assert '"-C"' not in body
 
 
 needs_htslib = pytest.mark.skipif(
@@ -277,15 +328,17 @@ needs_htslib = pytest.mark.skipif(
 
 @needs_htslib
 def test_the_force_call_writes_calls_and_leaves_the_rest_out(tmp_path):
-    """Five PharmCAT positions, one of each fate:
+    """Seven PharmCAT positions, each with its own fate:
 
-    100  SNV       10 reads, all reference  -> 0/0, PharmCAT's own record
-    150  deletion  10 reads, all reference  -> 0/0 with PharmCAT's multi-base REF
-                                               (bcftools writes REF=anchor ALT=.,
-                                               which PharmCAT discards)
-    200  SNV       10 reads, 5 alt          -> the caller's 0/1 record
-    250  SNV        3 reads                 -> left out: too few to call reference
-    350  SNV        no reads                -> left out
+    100  SNV       10 reads, all reference     -> 0/0, PharmCAT's own record
+    150  deletion  10 reads, all reference     -> 0/0 with PharmCAT's multi-base REF
+                                                  (bcftools writes REF=anchor ALT=.,
+                                                  which PharmCAT discards)
+    200  SNV       10 reads, 5 alt             -> the caller's 0/1 record
+    250  SNV        3 reads                    -> left out: too few for reference
+    280  SNV       10 reads, 1 alt             -> left out: not "none for anything else"
+    330  MNV       20 reads, all carry the MNV -> the caller's records, never 0/0
+    390  SNV        no reads                   -> left out
     """
     pysam = pytest.importorskip("pysam")
     import random
@@ -299,13 +352,16 @@ def test_the_force_call_writes_calls_and_leaves_the_rest_out(tmp_path):
     def alt_of(base):
         return "A" if base != "A" else "C"
 
+    mnv_alt = alt_of(seq[329]) + alt_of(seq[330])
     positions = tmp_path / "pharmcat_positions.vcf"
     records = [
         (100, seq[99], alt_of(seq[99])),
         (150, seq[149:152], seq[149]),
         (200, seq[199], alt_of(seq[199])),
         (250, seq[249], alt_of(seq[249])),
-        (350, seq[349], alt_of(seq[349])),
+        (280, seq[279], alt_of(seq[279])),
+        (330, seq[329:331], mnv_alt),
+        (390, seq[389], alt_of(seq[389])),
     ]
     positions.write_text(
         "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=400>\n"
@@ -325,16 +381,20 @@ def test_the_force_call_writes_calls_and_leaves_the_rest_out(tmp_path):
         "RG": [{"ID": "rg", "SM": "S1"}],
     }
     reads = []
-    for start, n, alt_at in (
-        (75, 10, None),
-        (125, 10, None),
-        (175, 10, 199),
-        (225, 3, None),
+    # (first base, reads, {position: alt-carrying read predicate})
+    for start, n, alts in (
+        (75, 10, {}),
+        (125, 10, {}),
+        (175, 10, {199: lambda i: i % 2 == 0}),
+        (225, 3, {}),
+        (256, 10, {279: lambda i: i == 0}),
+        (310, 20, {329: lambda i: True, 330: lambda i: True}),
     ):
         for i in range(n):
             s = list(seq[start : start + 50])
-            if alt_at is not None and i % 2 == 0:
-                s[alt_at - start] = alt_of(seq[alt_at])
+            for at, carries in alts.items():
+                if carries(i):
+                    s[at - start] = alt_of(seq[at])
             reads.append((start, "".join(s)))
     bam = tmp_path / "aln.bam"
     with pysam.AlignmentFile(str(bam), "wb", header=header) as out:
@@ -363,12 +423,106 @@ def test_the_force_call_writes_calls_and_leaves_the_rest_out(tmp_path):
         (100, seq[99], (alt_of(seq[99]),), (0, 0)),
         (150, seq[149:152], (seq[149],), (0, 0)),
         (200, seq[199], (alt_of(seq[199]),), (0, 1)),
+        (330, seq[329], (alt_of(seq[329]),), (1, 1)),
+        (331, seq[330], (alt_of(seq[330]),), (1, 1)),
     }
-    assert stats["n_pharmcat_positions"] == 5
+    assert stats["n_pharmcat_positions"] == 7
     assert stats["n_reference"] == 2
-    assert stats["n_variant"] == 1
+    assert stats["n_variant"] == 2
     assert stats["n_no_reads"] == 1
-    assert stats["n_uncertain"] == 1
+    assert stats["n_uncertain"] == 2
+
+
+# 300 bp of GRCh38 around CYP2C19 rs28399504 (chr10:94762556-94762855); the
+# position is index 150. Review's BAQ case needs real sequence: on random sequence
+# BAQ left the alt reads alone and the test proved nothing.
+_CYP2C19_CONTEXT = (
+    "GTCAAAGTCCTTTCAGAAGGAGCATATAGTGGGCCTAGGTGATTGGCCACTTTATCCATCAAAGAGGCACACACACTTAATT"
+    "AGCATGGAGTGTTATAAAAAGCTTGGAGTGCAAGCTCACGGTTGTCTTAACAAGAGGAGAAGGCTTCAATGGATCCTTTTG"
+    "TGGTCCTTGTGCTCTGTCTCTCATGTTTGCTTCTCCTTTCAATCTGGAGACAGAGCTCTGGGAGAGGAAAACTCCCTCCTG"
+    "GCCCCACTCCTCTCCCAGTGATTGGAAATATCCTACAGATAGATATTAAGGATGTC"
+)
+
+
+@needs_htslib
+def test_evidence_the_caller_does_not_call_still_blocks_reference(tmp_path):
+    """Two ways review found a false 0/0 with reads for something else in plain view:
+
+    chr1:100  one read of 10 deletes the position. bcftools reports an indel candidate
+              only from two gapped reads by default, and a deleted read counts for
+              nothing at the bases it deletes, so the nine others read as reference.
+              -> left out (the counting pileup runs with -m 1)
+    chr2:151  CYP2C19 rs28399504 A>G, 10 of 20 reads, each also deleting 3 bases 1 bp
+              downstream. BAQ drops every alt base beside the gap: the site counted
+              10 reads, all reference, and the caller made no call.
+              -> left out (the counting pileup runs with -B, and counts 10,10)
+
+    Each assertion fails with its flag removed (checked by hand, bcftools 1.22).
+    """
+    pysam = pytest.importorskip("pysam")
+    import random
+
+    rng = random.Random(11)
+    seq = "".join(rng.choice("ACGT") for _ in range(400))
+    ctx = _CYP2C19_CONTEXT
+    assert ctx[150] == "A"
+    fasta = tmp_path / "ref.fa"
+    fasta.write_text(f">chr1\n{seq}\n>chr2\n{ctx}\n", encoding="utf-8")
+    pysam.faidx(str(fasta))
+
+    alt = "A" if seq[99] != "A" else "C"
+    positions = tmp_path / "pharmcat_positions.vcf"
+    positions.write_text(
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tPharmCAT\n"
+        f"chr1\t100\trs1\t{seq[99]}\t{alt}\t.\tPASS\tPX=TEST\tGT\t0/0\n"
+        "chr2\t151\trs28399504\tA\tG\t.\tPASS\tPX=CYP2C19\tGT\t0/0\n",
+        encoding="utf-8",
+    )
+
+    reads = []  # (contig index, 0-based start, sequence, cigar)
+    reads.append((0, 70, seq[70:99] + seq[101:132], "29M2D31M"))  # deletes 99-100
+    reads += [(0, 70, seq[70:130], "60M")] * 9
+    for i in range(20):
+        s0 = 125 - (i * 3) % 45
+        if i < 10:  # G at 150, then 152-154 deleted
+            before = ctx[s0:150] + "G" + ctx[151:152]
+            query = before + ctx[155 : 155 + 100 - len(before)]
+            reads.append((1, s0, query, f"{len(before)}M3D{100 - len(before)}M"))
+        else:
+            reads.append((1, s0, ctx[s0 : s0 + 100], "100M"))
+
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": len(seq)}, {"SN": "chr2", "LN": len(ctx)}],
+        "RG": [{"ID": "rg", "SM": "S1"}],
+    }
+    bam = tmp_path / "aln.bam"
+    with pysam.AlignmentFile(str(bam), "wb", header=header) as out:
+        for i, (tid, start, s, cigar) in enumerate(sorted(reads)):
+            r = pysam.AlignedSegment()
+            r.query_name, r.query_sequence, r.flag = f"r{i}", s, 0
+            r.reference_id, r.reference_start, r.mapping_quality = tid, start, 60
+            r.cigarstring = cigar
+            r.query_qualities = pysam.qualitystring_to_array("I" * len(s))
+            r.set_tag("RG", "rg")
+            out.write(r)
+    pysam.index(str(bam))
+
+    ns = _load_wrapper(
+        CLASSIFY
+        + ["tabix_index", "PHARMCAT_POSITIONS_VCF", "genotype_pharmcat_positions"]
+    )
+    out = tmp_path / "pharmcat.vcf.gz"
+    stats = ns["genotype_pharmcat_positions"](
+        str(bam), str(fasta), str(out), positions=str(positions)
+    )
+
+    with pysam.VariantFile(str(out)) as vf:
+        got = {(r.chrom, r.pos): r.samples["S1"]["GT"] for r in vf}
+    assert ("chr1", 100) not in got, got
+    assert got.get(("chr2", 151)) != (0, 0), got
+    assert stats["n_reference"] == 0, stats
 
 
 # --------------------------------------------------------------------------
@@ -457,8 +611,20 @@ def test_the_parser_reads_them_back_from_the_stored_gene_json():
 
 def test_the_generator_appends_the_alert_to_the_rendered_warnings():
     src = (REPO / "app" / "reports" / "generator.py").read_text(encoding="utf-8")
-    assert 'coverage_alert = partial_coverage_alert((data or {}).get("genes"))' in src
+    assert "coverage_alert = partial_coverage_alert(" in src
+    assert '(meta.get("file_analysis") or {}).get("file_type")' in src
     assert "workflow_warnings.append(coverage_alert)" in src
+
+
+def test_a_plain_vcf_is_not_told_its_data_did_not_cover_a_position():
+    """Review: on a variants-only VCF a position is not listed, not uncovered."""
+    from app.reports.generator import partial_coverage_alert
+
+    genes = [{"gene": "CYP2C9", "diplotype": "*1/*1", "uncalled_haplotypes": ["*8"]}]
+    vcf = partial_coverage_alert(genes, "vcf")
+    assert "has no record at the positions" in vcf and "did not cover" not in vcf
+    bam = partial_coverage_alert(genes, "bam")
+    assert "did not cover the positions" in bam
 
 
 # --------------------------------------------------------------------------
