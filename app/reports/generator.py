@@ -8,7 +8,7 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -984,6 +984,88 @@ def partial_coverage_alert(
     )
 
 
+# PharmCAT's preprocessor drops a record whose REF does not match PharmCAT's own
+# before the matcher sees it, and says so only in the pipeline log (measured with
+# PharmCAT 3.4.0):
+#   * WARNING: "chr1:97450065 REF=TGG ALT=T" does not match PharmCAT expectation of
+#     REF at "chr1:97450065 REF=TG ALT=T"
+# The position then reads as missing -- or, when the run's assume-reference setting is
+# on (plain VCF/BCF only), as reference: that record became `TG|TG`. Either way the data
+# had something there that the call did not use.
+_PREPROCESSOR_REF_MISMATCH = re.compile(
+    r'"(\S+):(\d+) REF=(\S+) ALT=\S*" does not match PharmCAT expectation of REF at '
+    r'"\S+ REF=(\S+) ALT=\S*"'
+)
+
+
+def preprocessor_ref_mismatches(log_text: str) -> List[Tuple[str, int, str, str]]:
+    """(chrom, pos, REF in the data, REF PharmCAT expects) for each dropped record."""
+    seen, found = set(), []
+    for m in _PREPROCESSOR_REF_MISMATCH.finditer(log_text or ""):
+        key = (m.group(1), int(m.group(2)), m.group(3), m.group(4))
+        if key not in seen:
+            seen.add(key)
+            found.append(key)
+    return found
+
+
+def add_preprocessor_drops(genes, report_dir: str) -> None:
+    """Add the preprocessor's dropped records to each report gene's unread_variants.
+
+    Reads the run's own artifacts in report_dir: the PharmCAT pipeline log for the
+    drops, and PharmCAT's report JSON (``*_pgx_pharmcat.json``) for which gene each
+    position belongs to and what PharmCAT finally used there. A position the matcher
+    already flagged is left as the matcher described it. Missing files mean nothing
+    is added; the report must not fail over a supplementary alert.
+    """
+    try:
+        logs = sorted(glob.glob(os.path.join(report_dir, "*_pharmcat_pipeline.log")))
+        reports = sorted(glob.glob(os.path.join(report_dir, "*_pgx_pharmcat.json")))
+        if not logs or not reports:
+            return
+        with open(logs[-1], encoding="utf-8", errors="replace") as fh:
+            drops = preprocessor_ref_mismatches(fh.read())
+        if not drops:
+            return
+        with open(reports[-1], encoding="utf-8") as fh:
+            pharmcat_genes = (json.load(fh) or {}).get("genes") or {}
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Could not read PharmCAT's preprocessor drops: {exc}")
+        return
+
+    by_symbol = {str(g.get("gene")): g for g in genes or [] if isinstance(g, dict)}
+    for chrom, pos, data_ref, expected_ref in drops:
+        for symbol, gene_json in pharmcat_genes.items():
+            variant = next(
+                (
+                    v
+                    for v in (gene_json or {}).get("variants") or []
+                    if isinstance(v, dict)
+                    and v.get("chromosome") == chrom
+                    and v.get("position") == pos
+                ),
+                None,
+            )
+            gene = by_symbol.get(str(symbol))
+            if variant is None or gene is None:
+                continue
+            unread = gene.setdefault("unread_variants", [])
+            label = f"{chrom}:{pos}"
+            if any(u.get("position") == label for u in unread):
+                continue
+            unread.append(
+                {
+                    "position": label,
+                    "rsid": variant.get("dbSnpId"),
+                    "call": variant.get("call"),
+                    "reason": (
+                        "assumed_reference" if variant.get("call") else "discarded"
+                    ),
+                    "detail": f"REF {data_ref} where PharmCAT expects {expected_ref}",
+                }
+            )
+
+
 def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
     """One alert naming the positions a CALLED gene's call did not use as found.
 
@@ -992,7 +1074,7 @@ def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
     own report (see pharmcat_parser.unread_variants). Either way the call printed here
     is not what the data at that position showed, and the reader is owed that.
     """
-    undocumented, discarded = [], []
+    undocumented, discarded, assumed = [], [], []
     for gene in sorted(genes or [], key=lambda g: str(g.get("gene") or "")):
         if not gene_was_called(gene.get("diplotype")):
             continue
@@ -1001,8 +1083,12 @@ def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
             if v.get("reason") == "undocumented":
                 call = v.get("call")
                 undocumented.append(f"{label} ({call})" if call else label)
-            elif v.get("reason") == "discarded":
-                discarded.append(label)
+            elif v.get("reason") in ("discarded", "assumed_reference"):
+                detail = v.get("detail")
+                item = f"{label} ({detail})" if detail else label
+                (assumed if v["reason"] == "assumed_reference" else discarded).append(
+                    item
+                )
 
     def listed(items):
         shown = "; ".join(html.escape(i) for i in items[:max_listed])
@@ -1018,8 +1104,13 @@ def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
         )
     if discarded:
         parts.append(
-            "Read as missing because the data writes the genotype differently from "
-            f"PharmCAT's definition: {listed(discarded)}"
+            "Read as missing because PharmCAT could not use the record there as "
+            f"written: {listed(discarded)}"
+        )
+    if assumed:
+        parts.append(
+            "Taken as reference by this run's assume-reference setting, though the "
+            f"data has a record there PharmCAT could not use as written: {listed(assumed)}"
         )
     if not parts:
         return None
@@ -2043,6 +2134,7 @@ def generate_report(
                 )
                 if coverage_alert:
                     workflow_warnings.append(coverage_alert)
+                add_preprocessor_drops((data or {}).get("genes"), output_dir)
                 unread_alert = unread_variants_alert((data or {}).get("genes"))
                 if unread_alert:
                     workflow_warnings.append(unread_alert)

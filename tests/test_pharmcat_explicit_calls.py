@@ -694,15 +694,42 @@ def test_the_parser_names_what_pharmcat_did_not_use():
             "rsid": "rs148799944",
             "call": "C/T",
             "reason": "undocumented",
+            "detail": None,
         },
         {
             "position": "chr19:38440747",
             "rsid": "rs193922745",
             "call": None,
             "reason": "discarded",
+            "detail": "REF C where PharmCAT expects CGAT",
         },
     ]
     assert unread_variants(None) == []
+
+
+def test_pharmcats_other_discard_wording_is_read_too():
+    """Review: "Discarding genotype ... GT field indicates heterozygous (0/1) but AD
+    field indicates homozygous (0,15)" -- PharmCAT's wording, as captured from a
+    pharmcat_pipeline run -- starts differently and was missed."""
+    from app.pharmcat.pharmcat_parser import unread_variants
+
+    gene = {
+        "variants": [
+            {
+                "chromosome": "chr1",
+                "position": 97078993,
+                "dbSnpId": "rs148799944",
+                "call": None,
+                "hasUndocumentedVariations": False,
+                "warnings": [
+                    "Discarding genotype at this position because GT field indicates "
+                    "heterozygous (0/1) but AD field indicates homozygous (0,15)"
+                ],
+            }
+        ]
+    }
+    assert unread_variants(gene)[0]["reason"] == "discarded"
+    assert unread_variants(gene)[0]["detail"] == "genotype and read counts disagree"
 
 
 def test_the_report_says_what_the_call_did_not_use():
@@ -728,6 +755,7 @@ def test_the_report_says_what_the_call_did_not_use():
                 "unread_variants": [
                     {
                         "position": "chr19:38440747",
+                        "detail": "REF C where PharmCAT expects CGAT",
                         "rsid": None,
                         "call": None,
                         "reason": "discarded",
@@ -753,8 +781,93 @@ def test_the_report_says_what_the_call_did_not_use():
         "Matched as reference although the data carries an allele PharmCAT does "
         "not define there: DPYD rs148799944 (C/T)"
     ) in text
-    assert "Read as missing" in text and "RYR1 chr19:38440747" in text
+    assert (
+        "Read as missing because PharmCAT could not use the record there as written: "
+        "RYR1 chr19:38440747 (REF C where PharmCAT expects CGAT)"
+    ) in text
     assert "CFTR" not in text
+
+
+# PharmCAT 3.4.0's preprocessor line, from a live plain-VCF run (job 1709a064): the
+# record was dropped and the run's assume-reference setting then made the position
+# `TG|TG`.
+_PREPROCESSOR_LOG = (
+    "Preprocessing...\n"
+    '  * WARNING: "chr1:97450065 REF=TGG ALT=T" does not match PharmCAT expectation of '
+    'REF at "chr1:97450065 REF=TG ALT=T"\n'
+    '  * WARNING: "chr1:97082365 REF=TA ALT=T" does not match PharmCAT expectation of '
+    'REF at "chr1:97082365 REF=T ALT=C"\n'
+)
+
+
+def test_the_preprocessors_dropped_records_are_read_from_its_log():
+    from app.reports.generator import preprocessor_ref_mismatches
+
+    assert preprocessor_ref_mismatches(_PREPROCESSOR_LOG) == [
+        ("chr1", 97450065, "TGG", "TG"),
+        ("chr1", 97082365, "TA", "T"),
+    ]
+    assert preprocessor_ref_mismatches("") == []
+
+
+def test_a_dropped_record_is_named_with_what_pharmcat_used_instead(tmp_path):
+    """Its fate is PharmCAT's own final call there: a call means the assume-reference
+    setting filled it in (reference), none means it read as missing."""
+    import json as _json
+
+    from app.reports.generator import add_preprocessor_drops, unread_variants_alert
+
+    (tmp_path / "run_pharmcat_pipeline.log").write_text(
+        _PREPROCESSOR_LOG, encoding="utf-8"
+    )
+    (tmp_path / "job_pgx_pharmcat.json").write_text(
+        _json.dumps(
+            {
+                "genes": {
+                    "DPYD": {
+                        "variants": [
+                            {
+                                "chromosome": "chr1",
+                                "position": 97450065,
+                                "dbSnpId": "rs72549303",
+                                "call": "TG|TG",
+                            },
+                            {
+                                "chromosome": "chr1",
+                                "position": 97082365,
+                                "dbSnpId": "rs141044036",
+                                "call": None,
+                            },
+                        ]
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    genes = [{"gene": "DPYD", "diplotype": "Reference/Reference"}]
+
+    add_preprocessor_drops(genes, str(tmp_path))
+
+    assert [(u["rsid"], u["reason"]) for u in genes[0]["unread_variants"]] == [
+        ("rs72549303", "assumed_reference"),
+        ("rs141044036", "discarded"),
+    ]
+    text = unread_variants_alert(genes)
+    assert (
+        "Taken as reference by this run's assume-reference setting, though the data "
+        "has a record there PharmCAT could not use as written: DPYD rs72549303 "
+        "(REF TGG where PharmCAT expects TG)"
+    ) in text
+    assert "DPYD rs141044036 (REF TA where PharmCAT expects T)" in text
+
+
+def test_no_artifacts_means_nothing_added(tmp_path):
+    from app.reports.generator import add_preprocessor_drops
+
+    genes = [{"gene": "DPYD", "diplotype": "*1/*1"}]
+    add_preprocessor_drops(genes, str(tmp_path))
+    assert "unread_variants" not in genes[0]
 
 
 def test_no_unread_positions_means_no_alert():
@@ -775,6 +888,7 @@ def test_the_unread_positions_reach_the_rendered_warnings():
     assert '"unread_variants": unread_variants(r.gene_full_data)' in body
     generator = (REPO / "app" / "reports" / "generator.py").read_text(encoding="utf-8")
     assert "workflow_warnings.append(unread_alert)" in generator
+    assert 'add_preprocessor_drops((data or {}).get("genes"), output_dir)' in generator
 
 
 def test_a_plain_vcf_is_not_told_its_data_did_not_cover_a_position():

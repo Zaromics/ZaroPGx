@@ -6,6 +6,7 @@ Handles parsing and loading PharmCAT output into PostgreSQL using SQLAlchemy 2 a
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -327,29 +328,51 @@ def _as_float(value: Any) -> Optional[float]:
 #       does not define at that position is matched as reference (PharmCAT 3.4.0 has
 #       no option to do otherwise), with the observed genotype kept in `call`.
 #   "Discarded genotype at this position because REF in VCF (T) does not match
-#       expected reference (TG)"  The data writes the position differently from
-#       PharmCAT's definition, so it is read as missing.
+#       expected reference (TG)", and "Discarding genotype at this position because
+#       GT field indicates heterozygous (0/1) but AD field indicates homozygous
+#       (0,15)"  PharmCAT could not use the record as written, so the position is
+#       read as missing.
 _UNDOCUMENTED_MARK = "Undocumented variations will be replaced with reference"
-_DISCARDED_MARK = "Discarded genotype at this position"
+_DISCARD_MARKS = (
+    "Discarded genotype at this position",
+    "Discarding genotype at this position",
+)
+_REF_MISMATCH = re.compile(
+    r"REF in VCF \((\S+)\) does not match expected reference \((\S+)\)"
+)
+
+
+def _discard_detail(warning: str) -> Optional[str]:
+    """PharmCAT's reason for a discard, short enough for one alert item."""
+    ref = _REF_MISMATCH.search(warning)
+    if ref:
+        return f"REF {ref.group(1)} where PharmCAT expects {ref.group(2)}"
+    if "GT field" in warning and "AD field" in warning:
+        return "genotype and read counts disagree"
+    return None
 
 
 def unread_variants(gene_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """[{position, rsid, call, reason}] for each such position of one gene's JSON.
 
     `reason` is "undocumented" (matched as reference) or "discarded" (read as
-    missing). Pure over PharmCAT's gene JSON, which the parser stores whole.
+    missing, with PharmCAT's reason in `detail` when it is one of the known ones).
+    Pure over PharmCAT's gene JSON, which the parser stores whole.
     """
     found = []
     for variant in (gene_data or {}).get("variants") or []:
         if not isinstance(variant, dict):
             continue
         warnings = [str(w) for w in (variant.get("warnings") or [])]
+        discards = [w for w in warnings if w.startswith(_DISCARD_MARKS)]
+        detail = None
         if variant.get("hasUndocumentedVariations") or any(
             _UNDOCUMENTED_MARK in w for w in warnings
         ):
             reason = "undocumented"
-        elif any(w.startswith(_DISCARDED_MARK) for w in warnings):
+        elif discards:
             reason = "discarded"
+            detail = _discard_detail(discards[0])
         else:
             continue
         found.append(
@@ -358,6 +381,7 @@ def unread_variants(gene_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]
                 "rsid": variant.get("dbSnpId"),
                 "call": variant.get("call"),
                 "reason": reason,
+                "detail": detail,
             }
         )
     return found

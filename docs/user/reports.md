@@ -230,8 +230,8 @@ the whole gene. The report names two ways that happens:
   defining them were missing from the data.
 - **Positions PharmCAT did not use as found**: an allele PharmCAT does not define at a
   position, which it matches as reference (its own policy, for any input), and a
-  position the data writes differently from PharmCAT's definition, which it reads as
-  missing.
+  record PharmCAT could not use as written, which it reads as missing -- or, for a
+  plain VCF with the assume-reference setting on, as reference.
 
 ## Interpreting Results
 
