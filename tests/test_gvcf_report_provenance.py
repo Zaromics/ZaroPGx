@@ -128,7 +128,7 @@ def test_the_paragraph_states_the_re_genotyping_caveat():
 
     assert "re-derives each genotype" in paragraph
     assert "not guaranteed identical" in paragraph
-    assert "set to zero and ZaroPGx applied its own" in paragraph
+    assert "positions the calling-confidence threshold was set to zero" in paragraph
     assert "low confidence is a no-call" in paragraph
 
 

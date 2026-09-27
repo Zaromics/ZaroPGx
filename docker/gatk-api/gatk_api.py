@@ -4163,12 +4163,18 @@ def count_positions_with_calls(positions, called_path):
     return len(covered)
 
 
-# What a row of the PGx pass says, judged by the same bar as the alignment lanes
-# (genotype_pharmcat_positions in the pypgx wrapper). The pass runs at GATK's calling
-# threshold 0 (see build_genotype_gvcfs_argv), so every row still says what the gVCF's
-# caller said, and this lane applies the thresholds itself:
+# What a row of the PGx pass says. The pass runs at GATK's calling threshold 0 (see
+# build_genotype_gvcfs_argv), so every row still says what the gVCF's caller said, and
+# this lane applies the thresholds itself -- the aligned lanes' bar (see
+# genotype_pharmcat_positions in the pypgx wrapper), plus GATK's own QUAL >= 30 for a
+# variant:
 #
-#   * a reference-block row (ALT `.`, 0/0) is reference with RGQ >= 20 and >= 7 reads;
+#   * a reference-block row (ALT `.`, 0/0) is reference with RGQ >= 20 and >= 7 reads
+#     -- unless it carries a QUAL. GATK writes no QUAL on a reference block; a
+#     QUALified ALT-`.` row is a site forced to 0/0 because its only other allele is a
+#     spanning deletion's `*` (seen as `C . inf GT:DP:RGQ 0/0:32:99`, RGQ being the
+#     deletion's own GQ). Review found DPYD rs72549303 written reference that way,
+#     inside a het 6-bp deletion.
 #   * a 0/0 row on a variant record is reference with RGQ (or GQ) >= 20, >= 7 reads for
 #     the reference and next to none for anything else (none below 20 reads, 5% from 20
 #     up) -- the site had reads for another allele, so its counts decide;
@@ -4196,6 +4202,10 @@ def _as_float(value):
         return None
 
 
+def _allowed_other_reads(total):
+    return int(total * GVCF_MAX_OTHER_FRACTION)
+
+
 def _gvcf_row_status(fields):
     """'reference', 'variant', 'uncertain' or 'missing', for one row of the PGx pass."""
     if len(fields) < 10:
@@ -4219,44 +4229,121 @@ def _gvcf_row_status(fields):
     if quality is None or quality < GVCF_MIN_RGQ:
         return 'uncertain'
     if fields[4] == '.':
+        if fields[5] != '.':
+            return 'uncertain'
         depth = _as_int(fmt.get('DP')) or 0
         return 'reference' if depth >= GVCF_MIN_REF_READS else 'uncertain'
     reads = [_as_int(v) for v in fmt.get('AD', '.').split(',')]
     if not reads or reads[0] is None:
         return 'uncertain'
     other = sum(r for r in reads[1:] if r)
-    allowed = int((reads[0] + other) * GVCF_MAX_OTHER_FRACTION)
-    if reads[0] >= GVCF_MIN_REF_READS and other <= allowed:
+    if reads[0] >= GVCF_MIN_REF_READS and other <= _allowed_other_reads(reads[0] + other):
         return 'reference'
     return 'uncertain'
 
 
-def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path):
+def contested_spans(gvcf_record_lines):
+    """[(chrom, start, end)] of the gVCF's own records that argue against reference.
+
+    A record whose genotype carries an allele other than the reference, or whose reads
+    for such an allele are beyond the 5% allowance, contests every base of its REF span.
+    The PGx pass cannot see these when they start upstream of a PharmCAT position:
+    GenotypeGVCFs with -L emits only records that START in an interval, and writes the
+    covered position as a forced 0/0. So they are read from the staged gVCF itself (see
+    gvcf_contested_spans), not from either pass -- the variant pass drops such a
+    deletion when its QUAL is below 30, though its GQ may still be 20 or more.
+
+    Reference blocks (ALT `<NON_REF>` or `<*>` only) contest nothing. Pure over text,
+    so it is tested without bcftools.
+    """
+    spans = []
+    for line in gvcf_record_lines:
+        if not line.strip() or line.startswith('#'):
+            continue
+        f = line.rstrip('\n').split('\t')
+        pos = _as_int(f[1]) if len(f) >= 10 else None
+        if pos is None:
+            continue
+        alts = f[4].split(',')
+        real = {i + 1 for i, a in enumerate(alts) if a not in ('<NON_REF>', '<*>', '.')}
+        if not real:
+            continue
+        fmt = dict(zip(f[8].split(':'), f[9].split(':')))
+        gt = fmt.get('GT', '.').replace('|', '/').split('/')
+        carried = any(_as_int(a) in real for a in gt)
+        reads = [_as_int(v) or 0 for v in fmt.get('AD', '').split(',') if v != '']
+        ref_reads = reads[0] if reads else 0
+        other = sum(r for i, r in enumerate(reads) if i in real)
+        if carried or other > _allowed_other_reads(ref_reads + other):
+            spans.append((f[0], pos, pos + len(f[3]) - 1))
+    return spans
+
+
+def gvcf_contested_spans(job_label, staged_gvcf, positions_path, work_dir):
+    """contested_spans over the staged gVCF's records that overlap a PharmCAT record.
+
+    `bcftools view -R` of PharmCAT's record spans with --regions-overlap record, which
+    includes a record starting upstream whose REF reaches into a span (verified with
+    bcftools 1.24: a TTGTCTG>T record at 95 is returned for a span at 99). Through the
+    tabix index, so a whole-genome gVCF is not streamed.
+    """
+    bed = os.path.join(work_dir, 'pharmcat_spans.bed')
+    with _open_vcf_text(positions_path) as handle, open(bed, 'w', encoding='utf-8') as out:
+        for line in handle:
+            if not line.strip() or line.startswith('#'):
+                continue
+            f = line.rstrip('\n').split('\t')
+            pos = _as_int(f[1]) if len(f) >= 4 else None
+            if pos is not None:
+                out.write(f"{f[0]}\t{pos - 1}\t{pos - 1 + len(f[3])}\n")
+    overlapping = os.path.join(work_dir, 'pharmcat_span_records.txt')
+    _run_tool(
+        job_label,
+        [
+            'bcftools', 'view', '-H', '-R', bed, '--regions-overlap', 'record',
+            '-o', overlapping, staged_gvcf,
+        ],
+        "Reading the gVCF's records at PharmCAT's positions (bcftools view)",
+    )
+    if not os.path.exists(overlapping):
+        return []
+    with _open_vcf_text(overlapping) as handle:
+        return contested_spans(handle)
+
+
+def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path, contested=()):
     """PharmCAT's positions in the PGx pass, as PharmCAT can read them, honestly.
 
     Each row is judged by _gvcf_row_status. Then, at every PharmCAT position:
 
     * every row a confident variant (or variant and reference): left as GATK wrote it.
-    * every row reference, and every base of PharmCAT's record there (a deletion's REF
-      spans several) reference too: written with PharmCAT's own record and alleles.
-      GenotypeGVCFs writes a reference call at an indel position as
-      `REF=<anchor base> ALT=.`, which PharmCAT discards ("not a valid GT format for
-      INDELs"), so the position read as missing and every allele defined there became
-      uncallable -- measured 2026-09-27 on a panel gVCF: UGT1A1 *28/*36/*37, DPYD *3/*7
-      and NUDT15 *3/*6/*9, all covered and all reference.
+    * every row reference, every base of PharmCAT's record there (a deletion's REF spans
+      several) reference too, and none of it inside a `contested` span (a gVCF record
+      with another allele, which may start upstream; see contested_spans): written with
+      PharmCAT's own record and alleles. GenotypeGVCFs writes a reference call at an
+      indel position as `REF=<anchor base> ALT=.`, which PharmCAT discards ("not a
+      valid GT format for INDELs"), so the position read as missing and every allele
+      defined there became uncallable -- measured 2026-09-27 on a panel gVCF: UGT1A1
+      *28/*36/*37, DPYD *3/*7 and NUDT15 *3/*6/*9, all covered and all reference.
     * anything else -- an uncertain row, a row without a genotype beside a called one, a
       base of the record that is not confidently reference -- makes every row there
       `./.`. A no-call is what PharmCAT should see where the gVCF is not sure; review
       found a QUAL 15.6 het at CYP4F2 rs4020346 coming out as reference, and
       reference-block rows with 6 reads.
-    * a position with no genotype at all (the gVCF had no block there) is left as is.
+    * a position with no genotype at all is left as is; it counts as covered-but-not-
+      called when GATK saw reads there (`./.:11:0`), and as absent otherwise.
 
     A row at a position PharmCAT does not list (the other bases of a multi-base record)
     is left as is, unless it carries a non-reference allele the lane cannot stand
-    behind: at threshold 0 such a row would otherwise reach PyPGx as a call.
+    behind -- at threshold 0 such a row would otherwise reach PyPGx as a call -- or it
+    is a 0/0 inside a contested span, which is GATK's forced row within a called
+    deletion.
+
+    Every row written without a finite QUAL gets `.`: GATK writes `inf` on a forced
+    spanning-deletion row, and PharmCAT stops on it ("QUAL 'inf' is not a number").
 
     Takes and returns the VCF as a list of lines, so it stays a pure function of text.
-    Returns (lines, positions rewritten, positions made no-calls).
+    Returns (lines, positions rewritten, positions covered but left as no-calls).
     """
     known = {}
     with _open_vcf_text(positions_path) as handle:
@@ -4285,19 +4372,30 @@ def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path):
             before = base_status.get((f[0], base))
             base_status[(f[0], base)] = status if before in (None, status) else 'uncertain'
 
-    def depth(fields):
+    def fmt_value(fields, key):
         keys = fields[8].split(':')
         values = fields[9].split(':')
-        return values[keys.index('DP')] if 'DP' in keys and keys.index('DP') < len(values) else None
+        return values[keys.index(key)] if key in keys and keys.index(key) < len(values) else None
+
+    def finite_qual(fields):
+        if len(fields) <= 5 or fields[5] == '.':
+            return fields
+        qual = _as_float(fields[5])
+        if qual is not None and qual == qual and abs(qual) != float('inf'):
+            return fields
+        return fields[:5] + ['.'] + fields[6:]
 
     def no_call(fields):
         sample = fields[9].split(':')
         sample[0] = './.'
-        return fields[:9] + [':'.join(sample)]
+        return fields[:5] + ['.'] + fields[6:9] + [':'.join(sample)]
 
     def has_nonref(fields):
         gt = fields[9].split(':', 1)[0].replace('|', '/').split('/')
         return any(a not in ('0', '.', '') for a in gt)
+
+    def is_contested(chrom, start, end):
+        return any(c == chrom and s <= end and e >= start for c, s, e in contested)
 
     rewritten, demoted, out, done = 0, 0, [], set()
     for line in body:
@@ -4313,30 +4411,40 @@ def rewrite_homref_to_pharmcat_alleles(pgx_vcf_text_lines, positions_path):
         if not pharmcat:
             for r, status in zip(rows, statuses):
                 weak_call = len(r) >= 10 and status == 'uncertain' and has_nonref(r)
-                out.append('\t'.join(no_call(r) if weak_call else r))
+                inside = (
+                    len(r) >= 10
+                    and status != 'missing'
+                    and not has_nonref(r)
+                    and is_contested(r[0], int(r[1]), int(r[1]))
+                )
+                out.append('\t'.join(no_call(r) if weak_call or inside else finite_qual(r)))
             continue
 
         if all(s == 'missing' for s in statuses):
-            out.extend('\t'.join(r) for r in rows)
+            out.extend('\t'.join(finite_qual(r)) for r in rows)
+            if any((_as_int(fmt_value(r, 'DP')) or 0) > 0 for r in rows if len(r) >= 10):
+                demoted += 1
             continue
         if any(s in ('uncertain', 'missing') for s in statuses):
             out.extend('\t'.join(no_call(r)) for r in rows)
             demoted += 1
             continue
         if 'variant' in statuses:
-            out.extend('\t'.join(r) for r in rows)
+            out.extend('\t'.join(finite_qual(r)) for r in rows)
             continue
 
         pos = int(f[1])
-        span = max(len(ref) for _, ref, _ in pharmcat)
-        if any(base_status.get((f[0], b)) != 'reference' for b in range(pos, pos + span)):
+        end = pos + max(len(ref) for _, ref, _ in pharmcat) - 1
+        if is_contested(f[0], pos, end) or any(
+            base_status.get((f[0], b)) != 'reference' for b in range(pos, end + 1)
+        ):
             out.extend('\t'.join(no_call(r)) for r in rows)
             demoted += 1
             continue
         if {(r[3], r[4]) for r in rows} == {(ref, alt) for _, ref, alt in pharmcat}:
-            out.extend('\t'.join(r) for r in rows)
+            out.extend('\t'.join(finite_qual(r)) for r in rows)
             continue
-        dp = depth(rows[0])
+        dp = fmt_value(rows[0], 'DP')
         fmt, sample = ('GT:DP', f'0/0:{dp}') if dp not in (None, '', '.') else ('GT', '0/0')
         for rid, ref, alt in pharmcat:
             out.append('\t'.join([f[0], f[1], rid, ref, alt, '.', '.', '.', fmt, sample]))
@@ -4411,10 +4519,11 @@ def convert_gvcf_to_vcf(
        and is emitted twice. That is not hypothetical at these loci -- the interval
        list's multi-base-REF indel anchors are exactly where a spanning record lands --
        and `concat -a` alone keeps both copies, so a duplicate would reach PyPGx and
-       PharmCAT. `-D` drops the second copy of an identical record. (Not measured
-       against real GATK: no GATK in the unit-test environment. The flag is the
-       conservative direction either way -- it can only ever remove a record that is
-       byte-identical to one already emitted.)
+       PharmCAT. `-D` drops the second copy of an identical record. And before the
+       concat the variant pass loses every record at a position the PGx pass wrote a
+       row for (step 3b): measured with GATK 4.7.0.0, a record starting at a PharmCAT
+       position and running past its interval comes out of both passes, and `-D` kept
+       the variant pass's `1/1 GQ 15` over the PGx pass's no-call.
 
     Returns:
         dict of paths and honest counts, for the response and the JobStep output_data.
@@ -4457,12 +4566,17 @@ def convert_gvcf_to_vcf(
         'Genotyping the gVCF at PharmCAT positions (GATK GenotypeGVCFs)',
     )
 
-    # 2b. PharmCAT's allele representation at hom-ref positions. See
-    # rewrite_homref_to_pharmcat_alleles: without it, every covered-and-reference
-    # indel position is discarded by PharmCAT and reads as missing.
+    # 2b. Honest calls at PharmCAT's positions, in PharmCAT's allele representation.
+    # See rewrite_homref_to_pharmcat_alleles: without the representation, every
+    # covered-and-reference indel position is discarded by PharmCAT and reads as
+    # missing; without the gVCF's own records (gvcf_contested_spans), a position inside
+    # a deletion called upstream of it is written reference.
+    contested = gvcf_contested_spans(job_label, staged, positions_path, work_dir)
     with _open_vcf_text(pgx_vcf) as handle:
         fixed_lines, n_homref_rewritten, n_positions_uncertain = (
-            rewrite_homref_to_pharmcat_alleles(handle.readlines(), positions_path)
+            rewrite_homref_to_pharmcat_alleles(
+                handle.readlines(), positions_path, contested
+            )
         )
     fixed_text = os.path.join(work_dir, 'pgx_positions.pharmcat_alleles.vcf')
     with open(fixed_text, 'w', encoding='utf-8') as fh:
@@ -4496,13 +4610,39 @@ def convert_gvcf_to_vcf(
         'Genotyping the remaining variants (GATK GenotypeGVCFs)',
     )
 
+    # 3b. The PGx pass has the last word at every position it wrote a row for. A record
+    # that starts at a PharmCAT position and runs past its interval is emitted by BOTH
+    # passes (measured with GATK 4.7.0.0: TCAA>T 1/1 GQ 15 at a PharmCAT SNV), and
+    # `concat -D` keeps the variant pass's copy -- undoing the no-call. So the variant
+    # pass loses every record at those positions first.
+    pgx_rows = os.path.join(work_dir, 'pgx_positions.rows.tsv')
+    with open(pgx_rows, 'w', encoding='utf-8') as fh:
+        fh.writelines(
+            f"{f[0]}\t{f[1]}\n"
+            for f in (line.split('\t', 2) for line in fixed_lines)
+            if not f[0].startswith('#') and len(f) > 2
+        )
+    outside = os.path.join(work_dir, 'variants.outside_pgx.vcf.gz')
+    _run_tool(
+        job_label,
+        ['bcftools', 'view', '-T', f'^{pgx_rows}', '-O', 'z', '-o', outside, variant_vcf],
+        'Dropping variant-pass records the PGx pass decides (bcftools view)',
+    )
+    # `concat -a` opens every input through its index; GATK indexes its own outputs,
+    # bcftools view does not.
+    _run_tool(
+        job_label,
+        ['bcftools', 'index', '-t', '-f', outside],
+        'Indexing the variant-pass records (bcftools index)',
+    )
+
     # 4. One file. Order matters only for readability -- `-a` sorts the union. `-D` is
     # load-bearing; see step 4 in the docstring.
     _run_tool(
         job_label,
         [
             'bcftools', 'concat', '-a', '-D',
-            '-O', 'z', '-o', output_vcf, variant_vcf, pgx_vcf,
+            '-O', 'z', '-o', output_vcf, outside, pgx_vcf,
         ],
         'Merging the two genotyped passes (bcftools concat)',
     )

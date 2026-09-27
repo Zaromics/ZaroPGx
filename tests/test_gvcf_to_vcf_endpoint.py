@@ -173,6 +173,10 @@ class FakeTools:
     * `bcftools view -O z -o OUT IN` writes a gzipped VCF (the staging re-encode).
     * `gatk GenotypeGVCFs -V IN ... -O OUT` writes `pgx_rows` when the argv carries
       `--include-non-variant-sites`, and `variant_rows` otherwise.
+    * `bcftools view -H -R BED ... -o OUT STAGED` (the gVCF's own records at
+      PharmCAT's positions) writes the text lines in `span_records`.
+    * `bcftools view -T ^ROWS ... -o OUT IN` writes IN's rows minus those at a position
+      ROWS lists.
     * `bcftools concat -a ... -o OUT A B` writes the union of what A and B hold.
     * `bcftools index -t X` touches `X.tbi`.
 
@@ -198,6 +202,8 @@ class FakeTools:
         self.calls = []
         self.pgx_rows = list(PHARMCAT_POSITION_ROWS)
         self.variant_rows = [("chr1", 1000), ("chrM", 1555)]
+        self.span_records = []
+        self.span_beds = []
         self.rows_by_path = {}
         # (tool, subcommand-or-None) -> exit code, for provoking one failure at a time.
         self.failing = {}
@@ -231,7 +237,12 @@ class FakeTools:
         if tool == "gatk" and sub == "GenotypeGVCFs":
             return [FakeTools._flag_value(argv, flag) for flag in ("-R", "-V")]
         if tool == "bcftools" and sub == "view":
-            return [argv[-1]]
+            side = [
+                argv[argv.index(flag) + 1].lstrip("^")
+                for flag in ("-R", "-T")
+                if flag in argv
+            ]
+            return side + [argv[-1]]
         if tool == "bcftools" and sub == "concat":
             return argv[argv.index("-o") + 2 :]
         if tool == "bcftools" and sub == "index":
@@ -266,7 +277,27 @@ class FakeTools:
             self._write(out, rows)
         elif tool == "bcftools" and sub == "view":
             source = argv[-1]
-            if source.endswith(".pharmcat_alleles.vcf"):
+            if "-R" in argv:
+                self.span_beds.append(
+                    Path(self._flag_value(argv, "-R")).read_text(encoding="utf-8")
+                )
+                Path(self._flag_value(argv, "-o")).write_text(
+                    "".join(self.span_records), encoding="utf-8"
+                )
+            elif "-T" in argv:
+                listed = Path(self._flag_value(argv, "-T").lstrip("^")).read_text(
+                    encoding="utf-8"
+                )
+                drop = {tuple(line.split("\t")) for line in listed.splitlines()}
+                self._write(
+                    self._flag_value(argv, "-o"),
+                    [
+                        row
+                        for row in self.rows_by_path.get(source, [])
+                        if (row[0], str(row[1])) not in drop
+                    ],
+                )
+            elif source.endswith(".pharmcat_alleles.vcf"):
                 # The PharmCAT-alleles rewrite of the PGx pass: carry its rows, so the
                 # coverage count downstream reads what the rewrite actually wrote.
                 rows = []
@@ -413,13 +444,41 @@ def test_the_two_passes_are_merged_into_one_file(client, tools):
     # And it merges THE TWO PASSES, not two paths that happen to be named plausibly --
     # the PGx pass by way of its PharmCAT-alleles rewrite (see
     # rewrite_homref_to_pharmcat_alleles), which is written from that pass's output.
+    # The variant pass by way of the copy that lost the PGx pass's positions (step 3b).
     merged = concat[0][concat[0].index("-o") + 2 :]
     outputs = [argv[argv.index("-O") + 1] for argv in tools.genotype_calls()]
     pgx_pass = next(o for o in outputs if o.endswith("pgx_positions.vcf.gz"))
     variant_pass = next(o for o in outputs if o != pgx_pass)
+    trimmed = [argv for argv in tools.ran("bcftools", "view") if "-T" in argv]
+    assert len(trimmed) == 1 and trimmed[0][-1] == variant_pass, tools.argvs()
     assert sorted(merged) == sorted(
-        [variant_pass, pgx_pass.replace(".vcf.gz", ".pharmcat_alleles.vcf.gz")]
+        [
+            trimmed[0][trimmed[0].index("-o") + 1],
+            pgx_pass.replace(".vcf.gz", ".pharmcat_alleles.vcf.gz"),
+        ]
     ), merged
+
+
+def test_every_concat_input_is_indexed_first(client, tools):
+    """`concat -a` opens its inputs through their indexes: an unindexed one fails the
+    conversion outright (measured: "could not load index" on every gVCF, when the
+    trimmed variant pass was first added without one). GATK indexes what it writes;
+    anything bcftools writes has to be indexed before the concat."""
+    resp = _post(client)
+    assert resp.status_code == 200, resp.text
+
+    order = tools.argvs()
+    concat = tools.ran("bcftools", "concat")[0]
+    gatk_outputs = {argv[argv.index("-O") + 1] for argv in tools.genotype_calls()}
+    for source in concat[concat.index("-o") + 2 :]:
+        if source in gatk_outputs:
+            continue
+        indexed = [
+            i
+            for i, argv in enumerate(order)
+            if argv[:2] == ["bcftools", "index"] and argv[-1] == source
+        ]
+        assert indexed and indexed[0] < order.index(concat), source
 
 
 def test_the_upload_is_staged_and_indexed_before_genotyping(client, tools):
@@ -431,11 +490,15 @@ def test_the_upload_is_staged_and_indexed_before_genotyping(client, tools):
     resp = _post(client, filename="sample.gvcf")
 
     assert resp.status_code == 200, resp.text
-    # The other `bcftools view` re-encodes the PharmCAT-alleles rewrite of the PGx pass.
+    # The other `bcftools view`s re-encode the PharmCAT-alleles rewrite of the PGx pass,
+    # read the staged gVCF's records at PharmCAT's positions (-R) and trim the variant
+    # pass (-T).
     staged = [
         argv
         for argv in tools.ran("bcftools", "view")
         if not argv[-1].endswith(".pharmcat_alleles.vcf")
+        and "-R" not in argv
+        and "-T" not in argv
     ]
     assert len(staged) == 1, tools.argvs()
     output = staged[0][staged[0].index("-o") + 1]
@@ -1106,3 +1169,184 @@ def test_rows_outside_pharmcats_list_are_untouched_but_for_weak_calls(
     assert (rewritten, demoted) == (0, 0)
     assert _body(lines)[:2] == _body(called)[:2]
     assert _genotype(_body(lines)[2]) == "./."
+
+
+# --------------------------------------------------------------------------
+# A deletion called upstream of a PharmCAT position (review, verified with GATK 4.7.0.0
+# and PharmCAT end to end: DPYD rs72549303 came out TG/TG inside a het TTGTCTG>T)
+# --------------------------------------------------------------------------
+_DPYD = ("chr1", 97450065, "rs72549303", "TG", "T")
+
+
+def _qual(line):
+    return line.split("\t")[5]
+
+
+def test_a_position_inside_an_upstream_deletion_is_not_reference(gatk_api, tmp_path):
+    """GenotypeGVCFs with -L emits only records STARTING in an interval, so the
+    deletion never reaches the PGx pass; the position comes out as a plain confident
+    reference-block row. Only the gVCF's own record says otherwise."""
+    rows = [
+        ("chr1", 97450065, "T", ".", "GT:DP:RGQ", "0/0:51:99"),
+        ("chr1", 97450066, "G", ".", "GT:DP:RGQ", "0/0:51:99"),
+    ]
+    contested = [("chr1", 97450060, 97450066)]
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(rows), _positions(tmp_path, [_DPYD]), contested
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert _genotype(_body(lines)[0]) == "./."
+
+    # Without the gVCF's record it would have been reference -- the finding itself.
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(rows), _positions(tmp_path, [_DPYD])
+    )
+    assert (rewritten, demoted) == (1, 0)
+
+
+def test_the_forced_spanning_deletion_row_is_not_reference(gatk_api, tmp_path):
+    """The shape GATK writes where a position's only other allele is a spanning
+    deletion's `*`: ALT `.`, QUAL `inf`, RGQ the deletion's own GQ. A reference block
+    has no QUAL, so a QUALified one is not reference even when no record is to hand."""
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called([("chr19", 15878920, "T", ".", "GT:DP:RGQ", "0/0:32:99", "inf")]),
+        _positions(tmp_path, [_SNV]),
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert _genotype(_body(lines)[0]) == "./."
+
+
+def test_a_no_call_never_carries_qual_inf(gatk_api, tmp_path):
+    """PharmCAT stops on it: "Error parsing data: QUAL 'inf' is not a number"
+    (review, with the demoted row `T . inf GT:DP:RGQ 0/0:28:15`)."""
+    lines, _, _ = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(
+            [
+                ("chr19", 15878920, "T", ".", "GT:DP:RGQ", "0/0:28:15", "inf"),
+                ("chr19", 15878921, "G", ".", "GT:DP:RGQ", "0/0:51:99", "inf"),
+            ]
+        ),
+        _positions(tmp_path, [_SNV]),
+    )
+    assert [_qual(line) for line in _body(lines)] == [".", "."]
+
+
+def test_a_covered_position_gatk_left_uncalled_is_not_absent(gatk_api, tmp_path):
+    """Measured on the panel: chrX 154536168 `GT:DP:RGQ ./.:11:0` -- 11 reads, no call.
+    It stays `./.`, but counts as covered-and-uncertain, not as "not covered"."""
+    called = _called([("chr19", 15878920, "T", ".", "GT:DP:RGQ", "./.:11:0")])
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        called, _positions(tmp_path, [_SNV])
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert lines == called
+
+
+@pytest.mark.parametrize(
+    "record, contests",
+    [
+        # HaplotypeCaller's het deletion upstream of DPYD rs72549303.
+        (
+            "chr1\t97450060\t.\tTTGTCTG\tT,<NON_REF>\t500\t.\t.\tGT:AD:DP:GQ\t0/1:30,21,0:51:99",
+            True,
+        ),
+        # A 0/0 with 2 of 31 reads for the deletion: beyond the 5% allowance.
+        (
+            "chr1\t97450060\t.\tTTGTCTG\tT,<NON_REF>\t0\t.\t.\tGT:AD:DP:GQ\t0/0:29,2,0:31:18",
+            True,
+        ),
+        # One stray read in 30 is within it.
+        (
+            "chr1\t97450060\t.\tTTGTCTG\tT,<NON_REF>\t0\t.\t.\tGT:AD:DP:GQ\t0/0:29,1,0:30:60",
+            False,
+        ),
+        # Hemizygous.
+        (
+            "chrX\t154532040\t.\tCAG\tC,<NON_REF>\t90\t.\t.\tGT:AD:DP:GQ\t1:0,9,0:9:90",
+            True,
+        ),
+        # A reference block contests nothing, whatever it spans.
+        (
+            "chr1\t97450000\t.\tA\t<NON_REF>\t.\t.\tEND=97450100\tGT:DP:GQ\t0/0:40:99",
+            False,
+        ),
+        # Reads for <NON_REF> are not reads for an allele the caller saw.
+        (
+            "chr1\t97450060\t.\tTTGTCTG\tT,<NON_REF>\t0\t.\t.\tGT:AD:DP:GQ\t0/0:29,0,9:38:30",
+            False,
+        ),
+    ],
+)
+def test_which_gvcf_records_contest_reference(gatk_api, record, contests):
+    spans = gatk_api.contested_spans([record + "\n"])
+    f = record.split("\t")
+    expected = [(f[0], int(f[1]), int(f[1]) + len(f[3]) - 1)] if contests else []
+    assert spans == expected
+
+
+def test_the_conversion_reads_the_gvcfs_own_records_across_pharmcats_spans(
+    client, tools, gatk_api
+):
+    """By overlap, so a record starting upstream is returned; through the index."""
+    resp = _post(client)
+    assert resp.status_code == 200, resp.text
+
+    reads = [argv for argv in tools.ran("bcftools", "view") if "-R" in argv]
+    assert len(reads) == 1, tools.argvs()
+    argv = reads[0]
+    assert argv[argv.index("--regions-overlap") + 1] == "record"
+    assert argv[-1].endswith("staged.vcf.gz")
+    assert tools.span_beds[0].splitlines() == [
+        f"{c}\t{p - 1}\t{p}" for c, p in PHARMCAT_POSITION_ROWS
+    ]
+
+
+def test_a_contested_position_reaches_the_merged_vcf_as_a_no_call(client, tools):
+    chrom, pos = PHARMCAT_POSITION_ROWS[0]
+    tools.span_records = [
+        f"{chrom}\t{pos - 3}\t.\tGTCA\tG,<NON_REF>\t400\t.\t.\tGT:AD:DP:GQ\t0/1:15,15,0:30:99\n"
+    ]
+
+    body = _post(client).json()
+
+    merged = tools.ran("bcftools", "concat")[0]
+    rows = tools.rows_by_path[merged[merged.index("-o") + 1]]
+    assert (chrom, pos, "./.") in rows, rows
+    assert body["n_positions_uncertain"] == 1
+
+
+def test_the_pgx_pass_has_the_last_word_at_its_positions(client, tools):
+    """Measured: a record starting at a PharmCAT position and running past its interval
+    comes out of both passes, and `concat -D` kept the variant pass's `1/1 GQ 15` over
+    the PGx pass's no-call. The variant pass now loses every record at a position the
+    PGx pass wrote a row for, before the concat."""
+    chrom, pos = PHARMCAT_POSITION_ROWS[0]
+    tools.variant_rows = [(chrom, pos, "1/1"), ("chr1", 1000)]
+
+    resp = _post(client)
+    assert resp.status_code == 200, resp.text
+
+    merged = tools.ran("bcftools", "concat")[0]
+    rows = tools.rows_by_path[merged[merged.index("-o") + 1]]
+    assert [r for r in rows if (r[0], r[1]) == (chrom, pos)] == [(chrom, pos, "0/0")]
+    assert ("chr1", 1000) in rows
+
+
+def test_other_bases_inside_a_called_deletion_are_not_reference(gatk_api, tmp_path):
+    """Measured through the endpoint: GATK's forced row at 97450066, a base PharmCAT
+    does not list, sat inside a called het TTGTCTG>T as `0/0:51:99`. PharmCAT ignores
+    the base; PyPGx reads the same file, so it is a no-call too."""
+    lines, rewritten, demoted = gatk_api.rewrite_homref_to_pharmcat_alleles(
+        _called(
+            [
+                ("chr1", 97450065, "T", ".", "GT:DP:RGQ", "0/0:51:99"),
+                ("chr1", 97450066, "G", ".", "GT:DP:RGQ", "0/0:51:99", "inf"),
+                ("chr1", 97450067, "C", ".", "GT:DP:RGQ", "0/0:51:99"),
+            ]
+        ),
+        _positions(tmp_path, [_DPYD]),
+        [("chr1", 97450060, 97450066)],
+    )
+    assert (rewritten, demoted) == (0, 1)
+    assert [_genotype(line) for line in _body(lines)] == ["./.", "./.", "0/0"]
+    assert [_qual(line) for line in _body(lines)] == [".", ".", "."]
