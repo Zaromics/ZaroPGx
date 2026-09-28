@@ -1,4 +1,6 @@
 import asyncio
+import functools
+import hashlib
 import html
 import json
 import logging
@@ -160,6 +162,7 @@ REPORTS_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
 UPLOADS_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
 
 # These directories are created by startup_event(), not at import time: the defaults are
 # absolute container paths, so creating them on import would litter the host filesystem
@@ -238,8 +241,33 @@ def safe_upload_name(filename: Optional[str], local_job_id: str) -> str:
     return f"{fragment or 'upload'}_{local_job_id}{extension}"
 
 
+@functools.lru_cache(maxsize=None)
+def static_url(path: str) -> str:
+    """`/static/<path>?v=<content hash>`: a changed file gets a new URL.
+
+    Under a fixed URL a browser keeps a script cached across a deploy: after the
+    v0.3.2 upgrade, returning visitors ran the old workflow-monitor.js and opened
+    the renamed /api/v1/workflows/{id}/ws WebSocket, which no longer exists.
+    """
+    try:
+        digest = hashlib.sha256((STATIC_DIR / path).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return f"/static/{path}"
+    return f"/static/{path}?v={digest}"
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    """StaticFiles that makes browsers revalidate (a 304 when unchanged)."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 # Initialize templates
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+templates.env.globals["static_url"] = static_url
 
 Author_Name = "Iliya Yaroshevskiy"
 
@@ -286,7 +314,7 @@ app = FastAPI(
 )
 
 # Set up static file serving for application static assets
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/static", RevalidatedStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Static file serving for reports is now handled by custom routes
 # app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
