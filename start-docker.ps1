@@ -37,8 +37,18 @@ if ($currentPolicy -eq "Restricted" -or $currentPolicy -eq "AllSigned") {
     }
 }
 
+# compose.yml names the project (zaropgx). Keep the old forced name only for an install
+# whose data lives in pgx_* volumes -- see the same block in start-docker.sh.
+docker volume inspect pgx_pgdata *> $null
+$hasPgx = ($LASTEXITCODE -eq 0)
+docker volume inspect zaropgx_pgdata *> $null
+$hasZaropgx = ($LASTEXITCODE -eq 0)
+if ($hasPgx -and -not $hasZaropgx) {
+    $env:COMPOSE_PROJECT_NAME = "pgx"
+    Write-Host "  Keeping this install's original compose project name (pgx)" -ForegroundColor Cyan
+}
+
 # Detect environment
-$env:COMPOSE_PROJECT_NAME = "pgx"
 
 if ($IsWindows -or $env:OS -eq "Windows_NT") {
     Write-Host "  Detected: Windows PowerShell environment" -ForegroundColor Cyan

@@ -19,15 +19,23 @@ echo "======================================"
 # Detect environment
 if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
     echo "📱 Detected: Windows environment"
-    # PowerShell/WSL hybrid
-    export COMPOSE_PROJECT_NAME=pgx
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     echo "🐧 Detected: Linux or WSL environment"
-    # Pure WSL
-    export COMPOSE_PROJECT_NAME=pgx
 else
     echo "❓ Unknown environment: $OSTYPE"
     exit 1
+fi
+
+# compose.yml names the project (`name: zaropgx`), and plain `docker compose` uses that.
+# This script used to force COMPOSE_PROJECT_NAME=pgx, so on an install run both ways it
+# created a second project beside the first: new empty pgx_* volumes, and a container
+# name clash that left nothing running (found upgrading a v0.2.5 server to v0.3.2). An
+# install that only ever ran this script has its data in pgx_* volumes; keep its name
+# so they stay attached.
+if docker volume inspect pgx_pgdata >/dev/null 2>&1 \
+    && ! docker volume inspect zaropgx_pgdata >/dev/null 2>&1; then
+    export COMPOSE_PROJECT_NAME=pgx
+    echo "ℹ️  Keeping this install's original compose project name (pgx)"
 fi
 
 # Rewrite KEY=value in .env in place (create the line if missing).
