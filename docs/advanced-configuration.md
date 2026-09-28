@@ -18,7 +18,7 @@ or by a service's own Dockerfile and never surfaced in `.env.example` — `TEMP_
 (`MAX_UPLOAD_SIZE_BYTES`, `MAX_UPLOAD_TIMEOUT_SEC`) that the repo never reads at all and that are
 listed only to say so. `.env.example` is the install-time template; this page is the full set.
 
-*Last revised 2026-08-08 against ZaroPGx 0.2.8.*
+*Last revised 2026-09-28 against ZaroPGx 0.3.2.*
 
 ## General
 - Defaults listed above reflect current code paths; docker compose may set different values. When both exist, the container environment overrides code defaults.
@@ -75,7 +75,9 @@ listed only to say so. `.env.example` is the install-time template; this page is
 ## Docker compose
 *images*
 - **ZAROPGX_TAG**: Tag of the pre-built `zaromicsresearch/zaropgx-*` images to pull from Docker
-  Hub. Default: `0.2.8`. Set to `latest` to track the newest. `docker compose build` (or
+  Hub. Default: `0.3.2` (the `:-` default in `compose.yml`; `.env.local` and `.env.production`
+  ship the same pin, because one-command setup copies `.env.local`). Set to `latest` to track
+  the newest. `docker compose build` (or
   `up --build`) overrides the pull with a local build.
 - **HAPI_FHIR_TAG**: Pinned tag for the bundled `hapiproject/hapi` image. Default: `v8.10.0-2`.
   Bump deliberately — the service owns a live Postgres schema and point releases have shipped

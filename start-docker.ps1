@@ -23,6 +23,8 @@ param(
     [switch]$AutoLocal  # Automatically use .env.local without prompting
 )
 
+$ReleaseVersion = "0.3.2"
+
 Write-Host "Starting ZaroPGx with Docker Compose" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Green
 
@@ -99,6 +101,24 @@ function Get-EnvVarFromFile {
         Select-Object -Last 1
     if (-not $match) { return "" }
     return $match.Substring($Key.Length + 1)
+}
+
+function Update-KnownReleaseTag {
+    param([Parameter(Mandatory = $true)][string]$ReleaseVersion)
+    $current = Get-EnvVarFromFile -Key "ZAROPGX_TAG"
+    # 0.2.8 predates the mtDNA image, so a complete 0.2.8 image set never
+    # existed. Migrate only that known-bad shipped default; preserve latest,
+    # blank values, and operator-managed/custom tags.
+    if ($current -ne "0.2.8") { return }
+    try {
+        Set-EnvVarInFile -Key "ZAROPGX_TAG" -Value $ReleaseVersion
+    } catch {
+        throw "Could not migrate ZAROPGX_TAG in .env: $($_.Exception.Message)"
+    }
+    if ((Get-EnvVarFromFile -Key "ZAROPGX_TAG") -ne $ReleaseVersion) {
+        throw "ZAROPGX_TAG migration did not persist"
+    }
+    Write-Host "  [OK] Updated the obsolete ZAROPGX_TAG=0.2.8 default to $ReleaseVersion" -ForegroundColor Green
 }
 
 function Test-SecretSentinel {
@@ -203,6 +223,7 @@ if (-not (Test-Path ".env")) {
     Write-Host "  [OK] Environment configuration found (.env)" -ForegroundColor Gray
 }
 
+Update-KnownReleaseTag -ReleaseVersion $ReleaseVersion
 Ensure-InstallSecrets
 Write-Host ""
 
@@ -261,6 +282,12 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
                 if ($updateResponse -notmatch '^[Nn]') {
                     Write-Host "  Updating WSL..." -ForegroundColor Cyan
                     wsl --update
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "  [ERROR] WSL update failed with exit code $LASTEXITCODE" -ForegroundColor Red
+                        Write-Host "  Run 'wsl --update' from an Administrator PowerShell, then re-run this script." -ForegroundColor Yellow
+                        if ($didPush) { Pop-Location }
+                        exit 1
+                    }
                     Write-Host "  WSL update complete. Please restart your terminal if needed." -ForegroundColor Green
                     Write-Host ""
                 }
@@ -289,9 +316,9 @@ function Test-DockerDaemonInWSL {
         # Try without sudo first (group membership should be active)
         $job = Start-Job -ScriptBlock {
             param($timeoutSec)
-            $output = wsl bash -c "timeout $timeoutSec bash -c 'docker info >/dev/null 2>&1'; echo `$?" 2>&1
+            wsl bash -c "timeout $timeoutSec docker info >/dev/null 2>&1" 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
-            if ($output -match "^0$" -or $exitCode -eq 0) {
+            if ($exitCode -eq 0) {
                 return 0
             }
             return 1
@@ -314,12 +341,12 @@ function Test-DockerDaemonInWSL {
             }
         }
         
-        # Try with sudo as fallback
+        # Try as root if the user is not in the docker group yet. wsl -u root does not ask for a password.
         $job = Start-Job -ScriptBlock {
             param($timeoutSec)
-            $output = wsl bash -c "timeout $timeoutSec bash -c 'sudo docker info >/dev/null 2>&1'; echo `$?" 2>&1
+            wsl -u root -e bash -lc "timeout $timeoutSec docker info >/dev/null 2>&1" 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
-            if ($output -match "^0$" -or $exitCode -eq 0) {
+            if ($exitCode -eq 0) {
                 return 0
             }
             return 1
@@ -402,9 +429,9 @@ function Start-DockerDaemonInWSL {
     }
     
     # Start Docker daemon in background and don't wait for it to complete
-    # 'service docker start' can hang waiting for the service to fully initialize
-    # So we start it and then check status separately
-    $process = Start-Process -FilePath "wsl" -ArgumentList "sudo","service","docker","start" -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+    # 'service docker start' as root does not prompt for the Linux password.
+    # A sudo prompt from this window has no usable TTY and just hangs.
+    $process = Start-Process -FilePath "wsl" -ArgumentList "-u","root","-e","service","docker","start" -NoNewWindow -PassThru -ErrorAction SilentlyContinue
     
     # Give it a moment to start the process
     Start-Sleep -Seconds 1
@@ -619,7 +646,7 @@ function Install-DockerInWSL {
     Write-Host "    - Lighter weight than Docker Desktop" -ForegroundColor Gray
     Write-Host "    - Production-grade Docker Engine" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  Note: Requires sudo password in WSL" -ForegroundColor Yellow
+    Write-Host "  Note: Docker Engine is installed as root inside WSL, so this does not ask for your Ubuntu password." -ForegroundColor Yellow
     Write-Host ""
     
     if (-not $AutoLocal) {
@@ -636,29 +663,37 @@ function Install-DockerInWSL {
     
     Write-Host ""
     Write-Host "  Installing Docker Engine in WSL2 (this may take a few minutes)..." -ForegroundColor Yellow
-    Write-Host "  You WILL be prompted for your WSL sudo password multiple times" -ForegroundColor Yellow
     Write-Host ""
     
     try {
-        # Run installation commands step by step for better error handling and password prompts
+        wsl -u root -e true 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "WSL root is not available. Open Ubuntu and run: curl -fsSL https://get.docker.com | sudo sh"
+        }
+
         Write-Host "  Step 1/5: Updating package index..." -ForegroundColor Cyan
-        wsl sudo apt-get update
+        wsl -u root -e apt-get update
+        if ($LASTEXITCODE -ne 0) { throw "apt-get update failed" }
         
         Write-Host "  Step 2/5: Installing prerequisites..." -ForegroundColor Cyan
-        wsl sudo apt-get install -y ca-certificates curl
+        wsl -u root -e apt-get install -y ca-certificates curl
+        if ($LASTEXITCODE -ne 0) { throw "apt-get install failed" }
         
         Write-Host "  Step 3/5: Downloading Docker installation script..." -ForegroundColor Cyan
-        wsl curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+        wsl -u root -e bash -lc "curl -fsSL https://get.docker.com -o /tmp/get-docker.sh"
+        if ($LASTEXITCODE -ne 0) { throw "Could not download get.docker.com" }
         
         Write-Host "  Step 4/5: Installing Docker Engine..." -ForegroundColor Cyan
         Write-Host "  (This will take 1-2 minutes)" -ForegroundColor Gray
-        wsl sudo sh /tmp/get-docker.sh
+        wsl -u root -e sh /tmp/get-docker.sh
+        if ($LASTEXITCODE -ne 0) { throw "Docker installation script failed" }
         
         Write-Host "  Step 5/5: Configuring and starting Docker..." -ForegroundColor Cyan
-        # Get current WSL username
-        $wslUser = wsl whoami
-        wsl sudo usermod -aG docker $wslUser
-        wsl sudo service docker start
+        $wslUser = ((wsl whoami) -replace "`0", "").Trim()
+        if ($wslUser -and $wslUser -ne "root") {
+            wsl -u root -e usermod -aG docker $wslUser
+        }
+        wsl -u root -e service docker start
         
         # Wait a bit longer for Docker to start
         Start-Sleep -Seconds 5
@@ -669,9 +704,9 @@ function Install-DockerInWSL {
         $dockerVersion = wsl bash -c "docker --version" 2>&1
         
         if ($LASTEXITCODE -ne 0) {
-            # Try with sudo if regular command failed (group membership may not have taken effect yet)
-            Write-Host "  Note: Testing with sudo (group membership will be active in new WSL sessions)" -ForegroundColor Gray
-            $dockerVersion = wsl bash -c "sudo docker --version" 2>&1
+            # The user may not be in the docker group yet. Root inside WSL can still see the client.
+            Write-Host "  Note: Checking Docker as root inside WSL" -ForegroundColor Gray
+            $dockerVersion = wsl -u root -e docker --version 2>&1
         }
         
         if ($LASTEXITCODE -eq 0 -and $dockerVersion -match "Docker version") {
@@ -693,13 +728,14 @@ function Install-DockerInWSL {
                     Write-Host "  [OK] Docker daemon is running and accessible (no sudo needed)" -ForegroundColor Green
                 } else {
                     Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
-                    Write-Host "  [INFO] Docker group membership is active - commands will work without sudo in new sessions" -ForegroundColor Gray
+                    Write-Host "  [INFO] The daemon is up. This user is not in the docker group yet, so later commands run as root inside WSL." -ForegroundColor Gray
+                    $env:DOCKER_WSL_AS_ROOT = "1"
                 }
             } else {
                 Write-Host ""
                 Write-Host "  [WARNING] Docker daemon verification timed out" -ForegroundColor Yellow
                 Write-Host "  Docker may still be starting up - continuing anyway" -ForegroundColor Gray
-                Write-Host "  If containers fail to start, try: wsl sudo service docker start" -ForegroundColor Gray
+                Write-Host "  If containers fail to start, try: wsl -u root -e service docker start" -ForegroundColor Gray
             }
             Write-Host ""
             return $true
@@ -707,7 +743,7 @@ function Install-DockerInWSL {
             Write-Host ""
             Write-Host "  [ERROR] Docker installation verification failed" -ForegroundColor Red
             Write-Host "  Docker may not have installed correctly" -ForegroundColor Yellow
-            Write-Host "  Try running: wsl sudo docker --version" -ForegroundColor Gray
+            Write-Host "  Try running: wsl -u root -e docker --version" -ForegroundColor Gray
             Write-Host ""
             return $false
         }
@@ -777,7 +813,7 @@ function Test-DockerInWSL {
                     return $true
                 } else {
                     Write-Host "    [WARNING] Could not start Docker daemon in WSL2" -ForegroundColor Yellow
-                    Write-Host "    Try: wsl sudo service docker start" -ForegroundColor Gray
+                    Write-Host "    Try: wsl -u root -e service docker start" -ForegroundColor Gray
                     return $false
                 }
             }
@@ -804,7 +840,8 @@ function Test-DockerInWSL {
                         if (-not $daemonCheck.NeedsSudo) {
                             Write-Host "    [OK] Docker is ready and accessible" -ForegroundColor Green
                         } else {
-                            Write-Host "    [OK] Docker is ready (using sudo for now)" -ForegroundColor Green
+                            Write-Host "    [OK] Docker is ready (as root inside WSL)" -ForegroundColor Green
+                            $env:DOCKER_WSL_AS_ROOT = "1"
                         }
                     } else {
                         Write-Host "    [WARNING] Docker daemon may not be fully ready yet" -ForegroundColor Yellow
@@ -1051,7 +1088,8 @@ if ($env:DOCKER_USE_WSL -eq "1") {
             if (-not $daemonCheck.NeedsSudo) {
                 Write-Host "  [OK] Docker is ready" -ForegroundColor Green
             } else {
-                Write-Host "  [OK] Docker is ready (using sudo)" -ForegroundColor Green
+                Write-Host "  [OK] Docker is ready (as root inside WSL)" -ForegroundColor Green
+                $env:DOCKER_WSL_AS_ROOT = "1"
             }
         } else {
             Write-Host "  [WARNING] Docker may not be fully ready - bash script will attempt to start it" -ForegroundColor Yellow
@@ -1064,7 +1102,11 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         $pathWithoutDrive = $PWD.Path.Substring(2) -replace '\\','/'
         $wslPath = "/mnt/$driveLetter$pathWithoutDrive"
         Write-Host "  Launching Docker Compose setup..." -ForegroundColor Cyan
-        wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
+        if ($env:DOCKER_WSL_AS_ROOT -eq "1") {
+            wsl -u root -e bash -lc "cd '$wslPath' && ./start-docker.sh --auto-local"
+        } else {
+            wsl bash -c "cd '$wslPath' && ./start-docker.sh --auto-local"
+        }
         
         $bashExitCode = $LASTEXITCODE
         
@@ -1085,8 +1127,56 @@ if ($env:DOCKER_USE_WSL -eq "1") {
         exit $bashExitCode
     } else {
         Write-Host "  [WARNING] start-docker.sh not found, using WSL docker commands directly" -ForegroundColor Yellow
-        Write-Host "  Note: Running commands through WSL (may need sudo)" -ForegroundColor Gray
+        Write-Host "  Note: Running commands through WSL" -ForegroundColor Gray
     }
+}
+
+# Published images are linux/amd64 only. On any other machine, continue only
+# when this daemon can actually run that architecture.
+function Test-PublishedImageArch {
+    if ($env:DOCKER_USE_WSL -eq "1") {
+        if ($env:DOCKER_WSL_AS_ROOT -eq "1") {
+            $serverPlatform = (wsl -u root -e docker version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>$null | Out-String).Trim()
+        } else {
+            $serverPlatform = (wsl docker version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>$null | Out-String).Trim()
+        }
+    } else {
+        $serverPlatform = (docker version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>$null | Out-String).Trim()
+    }
+    if ($LASTEXITCODE -ne 0 -or -not $serverPlatform) {
+        Write-Host "  Could not query the Docker daemon platform." -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+    if ($serverPlatform -in @("linux/amd64", "linux/x86_64")) { return }
+    if (-not $serverPlatform.StartsWith("linux/")) {
+        Write-Host "  ZaroPGx requires Linux containers; this Docker daemon reports $serverPlatform." -ForegroundColor Red
+        Write-Host "  Switch Docker Desktop to Linux containers and re-run." -ForegroundColor Yellow
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+
+    Write-Host "  Published ZaroPGx images are linux/amd64 only (the Docker daemon is $serverPlatform)." -ForegroundColor Yellow
+    Write-Host "  Checking whether Docker can run them under emulation..." -ForegroundColor Gray
+    if ($env:DOCKER_USE_WSL -eq "1") {
+        if ($env:DOCKER_WSL_AS_ROOT -eq "1") {
+            $probeOutput = wsl -u root -e docker run --rm --platform linux/amd64 hello-world 2>&1
+        } else {
+            $probeOutput = wsl docker run --rm --platform linux/amd64 hello-world 2>&1
+        }
+    } else {
+        $probeOutput = docker run --rm --platform linux/amd64 hello-world 2>&1
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  Emulation is available. The stack will run, and it will be much slower than native amd64." -ForegroundColor Yellow
+        return
+    }
+    Write-Host ($probeOutput | Out-String) -ForegroundColor Gray
+    Write-Host "  Docker could not run the linux/amd64 test image." -ForegroundColor Red
+    Write-Host "  This can mean emulation is unavailable, or that Docker could not pull the test image." -ForegroundColor Yellow
+    Write-Host "  Install a current Docker Desktop and re-run. It emulates amd64." -ForegroundColor Yellow
+    if ($didPush) { Pop-Location }
+    exit 1
 }
 
 # Helper function to run docker commands (through WSL if needed)
@@ -1094,21 +1184,42 @@ function Invoke-Docker {
     param([string]$Command)
     
     if ($env:DOCKER_USE_WSL -eq "1") {
-        # Run docker through WSL with sudo (needed after fresh install)
         # Convert Windows path to WSL path format: C:\Users\... -> /mnt/c/Users/...
         $driveLetter = ($PWD.Path.Substring(0,1)).ToLower()
         $pathWithoutDrive = $PWD.Path.Substring(2) -replace '\\','/'
         $wslPath = "/mnt/$driveLetter$pathWithoutDrive"
-        $wslCommand = "cd '$wslPath' && sudo $Command"
-        wsl bash -c $wslCommand
+        $wslCommand = "cd '$wslPath' && $Command"
+        if ($env:DOCKER_WSL_AS_ROOT -eq "1") {
+            wsl -u root -e bash -lc $wslCommand
+        } else {
+            wsl bash -lc $wslCommand
+        }
     } else {
         # Run docker directly on Windows
         Invoke-Expression $Command
     }
 }
 
+function Assert-DockerComposeVersion {
+    $minimum = [version]"2.24.0"
+    $raw = (Invoke-Docker "docker compose version --short" 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $raw -notmatch "v?(\d+\.\d+\.\d+)") {
+        Write-Host "  Docker Compose V2 is not installed." -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+    $version = [version]$matches[1]
+    if ($version -lt $minimum) {
+        Write-Host "  Docker Compose $version is too old; ZaroPGx requires $minimum or newer." -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit 1
+    }
+}
+
 # Start containers
 Write-Host "  Starting ZaroPGx Docker Compose containers..." -ForegroundColor Yellow
+Assert-DockerComposeVersion
+Test-PublishedImageArch
 
 if ($env:DOCKER_USE_WSL -eq "1") {
     Write-Host "  Note: Running Docker commands through WSL" -ForegroundColor Gray
@@ -1116,9 +1227,20 @@ if ($env:DOCKER_USE_WSL -eq "1") {
 
 Write-Host "  Stopping existing containers..." -ForegroundColor Gray
 Invoke-Docker "docker compose down --remove-orphans"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  docker compose down failed." -ForegroundColor Red
+    if ($didPush) { Pop-Location }
+    exit 1
+}
 
 Write-Host "  Pulling pre-built images from Docker Hub (build-only services build on up)..." -ForegroundColor Gray
 Invoke-Docker "docker compose pull"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  docker compose pull failed." -ForegroundColor Red
+    Write-Host "  Check ZAROPGX_TAG in .env. It must be a tag that exists for every zaropgx image, including mtdna." -ForegroundColor Yellow
+    if ($didPush) { Pop-Location }
+    exit 1
+}
 
 Write-Host "  Starting containers..." -ForegroundColor Gray
 Invoke-Docker "docker compose up -d"

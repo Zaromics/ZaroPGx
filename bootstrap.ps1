@@ -16,12 +16,21 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = "https://github.com/Zaromics/ZaroPGx.git",
-    [string]$Branch = "main",
+    [string]$ReleaseVersion = "0.3.2",
+    [string]$Branch = "",
     [string]$TargetDir = "ZaroPGx",
     [switch]$Update,
     [switch]$SkipDependencyCheck,
     [string[]]$MissingDeps = @()
 )
+
+if ([string]::IsNullOrWhiteSpace($Branch)) {
+    $Branch = "v$ReleaseVersion"
+}
+
+# Under `iwr | iex` there is no script path, and MyInvocation.ScriptBlock does
+# not reliably contain the downloaded script. The elevation path below
+# downloads the selected release's complete bootstrap instead.
 
 Write-Host "Bootstrapping ZaroPGx..." -ForegroundColor Green
 Write-Host "════════════════════════" -ForegroundColor Green
@@ -44,6 +53,33 @@ function Test-Administrator {
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# iwr | iex feeds the script on stdin, so Read-Host can see the pipe instead of the keyboard.
+function Read-ConsoleLine {
+    param([string]$Prompt)
+    if (-not [Console]::IsInputRedirected) {
+        return Read-Host $Prompt
+    }
+    Write-Host "$Prompt " -NoNewline
+    return [Console]::ReadLine()
+}
+
+# WSL feature install often cannot start until Windows reboots.
+function Test-RebootPending {
+    $cbs = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
+    $wu = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
+    if (Test-Path $cbs) { return $true }
+    if (Test-Path $wu) { return $true }
+    return $false
+}
+
+function Write-RebootRequired {
+    Write-Host ""
+    Write-Host "Windows needs a reboot before WSL can start." -ForegroundColor Yellow
+    Write-Host "Reboot, then run the same bootstrap command again." -ForegroundColor Yellow
+    Write-Host "After that, the first Ubuntu launch asks you to create a user. That prompt is once." -ForegroundColor Gray
+    Write-Host ""
 }
 
 # Helper: Get Windows build number (used to decide if wsl --install is supported)
@@ -83,6 +119,25 @@ function Test-WSLDistribution {
     }
 }
 
+function Test-DockerComposeVersion {
+    $minimum = [version]"2.24.0"
+    try {
+        $raw = (docker compose version --short 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $raw -notmatch "v?(\d+\.\d+\.\d+)") {
+            return $false
+        }
+        $version = [version]$matches[1]
+        if ($version -lt $minimum) {
+            Write-Host "  [WARNING] Docker Compose $version found; ZaroPGx requires $minimum or newer" -ForegroundColor Yellow
+            return $false
+        }
+        Write-Host "  [OK] Docker Compose $version found" -ForegroundColor Green
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 # Function to install dependencies using available package manager
 function Install-Dependencies {
     param([string[]]$MissingDeps)
@@ -106,10 +161,13 @@ function Install-Dependencies {
         return $false
     }
     
-    $response = Read-Host "Would you like to automatically install missing dependencies? (y/N)"
-    if ($response -notmatch '^[Yy]') {
-        Write-Host "Installation of missing dependencies is cancelled. Please re-run or install dependencies manually." -ForegroundColor Yellow
-        return $false
+    $isElevatedInstaller = $SkipDependencyCheck -and $MissingDeps.Count -gt 0
+    if (-not $isElevatedInstaller) {
+        $response = Read-ConsoleLine "Would you like to automatically install missing dependencies? (y/N)"
+        if ($response -notmatch '^[Yy]') {
+            Write-Host "Installation of missing dependencies is cancelled. Please re-run or install dependencies manually." -ForegroundColor Yellow
+            return $false
+        }
     }
     
     # Check if we need elevation
@@ -135,16 +193,10 @@ function Install-Dependencies {
             Write-Host "  Script is running from memory, creating temporary file..." -ForegroundColor Gray
             $tempScript = Join-Path $env:TEMP "zaropgx-bootstrap-temp.ps1"
             
-            # Try to get script content from current execution context
+            # A function's invocation metadata is not the complete piped script.
             $scriptContent = $null
             
-            # Method 1: Try to get from MyInvocation
-            try {
-                $scriptContent = $MyInvocation.MyCommand.ScriptBlock.ToString()
-                if ($scriptContent) {
-                    Write-Host "  Retrieved script from execution context" -ForegroundColor Gray
-                }
-            } catch {}
+            # Method 1: A physical script path was already selected above.
             
             # Method 2: If that didn't work, try reading from PSCommandPath anyway
             if (-not $scriptContent -and $PSCommandPath) {
@@ -154,9 +206,9 @@ function Install-Dependencies {
                 } catch {}
             }
             
-            # Method 3: Last resort - download from GitHub
+            # Method 3: For iwr | iex, download the complete release script.
             if (-not $scriptContent) {
-                Write-Host "  Downloading fresh copy of bootstrap script from GitHub..." -ForegroundColor Gray
+                Write-Host "  Downloading complete bootstrap script for elevation..." -ForegroundColor Gray
                 try {
                     # Convert git URL to raw content URL (remove .git suffix if present)
                     $rawRepoUrl = $RepoUrl -replace '\.git$', ''
@@ -184,7 +236,8 @@ function Install-Dependencies {
         # Build arguments to pass to elevated process
         $arguments = @()
         if ($RepoUrl -ne "https://github.com/Zaromics/ZaroPGx.git") { $arguments += "-RepoUrl `"$RepoUrl`"" }
-        if ($Branch -ne "main") { $arguments += "-Branch `"$Branch`"" }
+        if ($ReleaseVersion -ne "0.3.2") { $arguments += "-ReleaseVersion `"$ReleaseVersion`"" }
+        if ($Branch -ne "v$ReleaseVersion") { $arguments += "-Branch `"$Branch`"" }
         if ($TargetDir -ne "ZaroPGx") { $arguments += "-TargetDir `"$TargetDir`"" }
         if ($Update) { $arguments += "-Update" }
         # Pass SkipDependencyCheck and MissingDeps to elevated process
@@ -206,6 +259,10 @@ function Install-Dependencies {
                 try { Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue } catch {}
             }
             
+            if ($elevatedProcess.ExitCode -eq 3010) {
+                Write-RebootRequired
+                exit 0
+            }
             if ($elevatedProcess.ExitCode -ne 0) {
                 Write-Host "  Installation process exited with code: $($elevatedProcess.ExitCode)" -ForegroundColor Yellow
                 Write-Host ""
@@ -278,6 +335,18 @@ function Install-Dependencies {
                             if ($LASTEXITCODE -ne 0) { throw "Docker installation failed with exit code $LASTEXITCODE" }
                         }
                     }
+                    "Compose" {
+                        if ($wingetAvailable) {
+                            winget upgrade --id Docker.DockerDesktop -e --source winget --accept-package-agreements --accept-source-agreements
+                            if ($LASTEXITCODE -ne 0) {
+                                winget install --id Docker.DockerDesktop -e --source winget --accept-package-agreements --accept-source-agreements
+                            }
+                            if ($LASTEXITCODE -ne 0) { throw "Docker Compose installation failed with exit code $LASTEXITCODE" }
+                        } elseif ($chocoAvailable) {
+                            choco upgrade docker-desktop -y
+                            if ($LASTEXITCODE -ne 0) { throw "Docker Compose installation failed with exit code $LASTEXITCODE" }
+                        }
+                    }
                     "WSL2" {
                         # Prefer the modern, supported path: wsl --install (Win10 22H2+/Win11)
                         # Windows 10 build 19045 (22H2) or Windows 11 build 22000+ support wsl --install
@@ -289,10 +358,15 @@ function Install-Dependencies {
                             # Set WSL2 as default BEFORE installing distributions
                             try { wsl --set-default-version 2 2>&1 | Out-Null } catch {}
                             # Install WSL and Ubuntu 22.04; default can be changed later if desired
-                            wsl --install -d Ubuntu-22.04
-                            # Update WSL to latest version (ensures we have WSL 2.1.5+)
-                            Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
-                            try { wsl --update } catch { Write-Host "  Note: WSL update may complete after restart" -ForegroundColor Gray }
+                            $wslInstallOut = wsl --install -d Ubuntu-22.04 2>&1 | Out-String
+                            if ($LASTEXITCODE -ne 0) { throw "WSL installation failed with exit code $LASTEXITCODE`n$wslInstallOut" }
+                            if ($wslInstallOut -match '(?i)restart is required|please reboot|reboot your computer') { $script:NeedsReboot = $true }
+                            if (-not $script:NeedsReboot) {
+                                # Update WSL to latest version (ensures we have WSL 2.1.5+)
+                                Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
+                                wsl --update
+                                if ($LASTEXITCODE -ne 0) { throw "WSL update failed with exit code $LASTEXITCODE" }
+                            }
                         } elseif ($wingetAvailable) {
                             Write-Host "Installing WSL from Microsoft Store via winget..." -ForegroundColor Cyan
                             # Updated package ID for WSL in Microsoft Store; try legacy ID as fallback
@@ -306,6 +380,7 @@ function Install-Dependencies {
                             Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
                             wsl --set-default-version 2
                             Write-Host "Restart may be required. After restart, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                            $script:NeedsReboot = $true
                         } else {
                             Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
                             # Enable WSL and Virtual Machine Platform features
@@ -315,6 +390,7 @@ function Install-Dependencies {
                             wsl --set-default-version 2
                             Write-Host "If prompted for the WSL kernel, download from: https://github.com/microsoft/wsl/releases" -ForegroundColor Gray
                             Write-Host "After reboot, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                            $script:NeedsReboot = $true
                         }
                     }
                 }
@@ -328,6 +404,10 @@ function Install-Dependencies {
         Write-Host ""
         Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
         if ($installSuccess) {
+            if ($script:NeedsReboot -or (($MissingDeps -contains "WSL2") -and (Test-RebootPending))) {
+                Write-RebootRequired
+                exit 3010
+            }
             Write-Host "  Installation Complete!" -ForegroundColor Green
             Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
             Write-Host ""
@@ -377,6 +457,18 @@ function Install-Dependencies {
                     choco install docker-desktop -y
                 }
             }
+            "Compose" {
+                if ($wingetAvailable) {
+                    winget upgrade --id Docker.DockerDesktop -e --source winget --accept-package-agreements --accept-source-agreements
+                    if ($LASTEXITCODE -ne 0) {
+                        winget install --id Docker.DockerDesktop -e --source winget --accept-package-agreements --accept-source-agreements
+                    }
+                    if ($LASTEXITCODE -ne 0) { throw "Docker Compose installation failed with exit code $LASTEXITCODE" }
+                } elseif ($chocoAvailable) {
+                    choco upgrade docker-desktop -y
+                    if ($LASTEXITCODE -ne 0) { throw "Docker Compose installation failed with exit code $LASTEXITCODE" }
+                }
+            }
             "WSL2" {
                 # Prefer the modern, supported path: wsl --install (Win10 22H2+/Win11)
                 # Windows 10 build 19045 (22H2) or Windows 11 build 22000+ support wsl --install
@@ -388,10 +480,15 @@ function Install-Dependencies {
                     # Set WSL2 as default BEFORE installing distributions
                     try { wsl --set-default-version 2 2>&1 | Out-Null } catch {}
                     # Install WSL and Ubuntu 22.04; default can be changed later if desired
-                    wsl --install -d Ubuntu-22.04
-                    # Update WSL to latest version (ensures we have WSL 2.1.5+)
-                    Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
-                    try { wsl --update } catch { Write-Host "  Note: WSL update may complete after restart" -ForegroundColor Gray }
+                    $wslInstallOut = wsl --install -d Ubuntu-22.04 2>&1 | Out-String
+                    if ($LASTEXITCODE -ne 0) { throw "WSL installation failed with exit code $LASTEXITCODE`n$wslInstallOut" }
+                    if ($wslInstallOut -match '(?i)restart is required|please reboot|reboot your computer') { $script:NeedsReboot = $true }
+                    if (-not $script:NeedsReboot) {
+                        # Update WSL to latest version (ensures we have WSL 2.1.5+)
+                        Write-Host "Updating WSL to latest version..." -ForegroundColor Cyan
+                        wsl --update
+                        if ($LASTEXITCODE -ne 0) { throw "WSL update failed with exit code $LASTEXITCODE" }
+                    }
                 } elseif ($wingetAvailable) {
                     Write-Host "Installing WSL from Microsoft Store via winget..." -ForegroundColor Cyan
                     # Updated package ID for WSL in Microsoft Store; try legacy ID as fallback
@@ -405,6 +502,7 @@ function Install-Dependencies {
                     Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
                     wsl --set-default-version 2
                     Write-Host "Restart may be required. After restart, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                    $script:NeedsReboot = $true
                 } else {
                     Write-Host "Installing WSL2 manually..." -ForegroundColor Cyan
                     # Enable WSL and Virtual Machine Platform features
@@ -414,11 +512,17 @@ function Install-Dependencies {
                     wsl --set-default-version 2
                     Write-Host "If prompted for the WSL kernel, download from: https://github.com/microsoft/wsl/releases" -ForegroundColor Gray
                     Write-Host "After reboot, install a distro with: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
+                    $script:NeedsReboot = $true
                 }
             }
         }
     }
     
+    if ($script:NeedsReboot -or (($MissingDeps -contains "WSL2") -and (Test-RebootPending))) {
+        Write-RebootRequired
+        exit 0
+    }
+
     Write-Host ""
     Write-Host "Dependencies installed! You may need to:" -ForegroundColor Green
     Write-Host "  1. Restart your computer (especially if WSL2 was installed)" -ForegroundColor Yellow
@@ -432,6 +536,12 @@ function Install-Dependencies {
 }
 
 # Check dependencies
+if ($SkipDependencyCheck -and $MissingDeps.Count -gt 0) {
+    $installed = Install-Dependencies -MissingDeps $MissingDeps
+    if (-not $installed) { exit 1 }
+    exit 0
+}
+
 if (-not $SkipDependencyCheck) {
     Write-Host "Checking dependencies..." -ForegroundColor Cyan
     $missingDeps = @()
@@ -462,7 +572,7 @@ if (-not $SkipDependencyCheck) {
             # Offer to update WSL if outdated
             if ($needsUpdate) {
                 Write-Host ""
-                $updateResponse = Read-Host "Would you like to update WSL now? (Y/n)"
+                $updateResponse = Read-ConsoleLine "Would you like to update WSL now? (Y/n)"
                 if ($updateResponse -notmatch '^[Nn]') {
                     Write-Host "  Updating WSL..." -ForegroundColor Cyan
                     try {
@@ -497,10 +607,14 @@ if (-not $SkipDependencyCheck) {
                             Write-Host "  Installing Ubuntu 22.04 (recommended)..." -ForegroundColor Yellow
                             
                             try {
-                                wsl --install -d Ubuntu-22.04 --no-launch
+                                $ubuntuInstallOut = wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-String
                                 if ($LASTEXITCODE -eq 0) {
                                     Write-Host "  [OK] Ubuntu 22.04 installed" -ForegroundColor Green
                                     Write-Host "  Note: You'll need to set up a username/password on first use" -ForegroundColor Gray
+                                    if ($ubuntuInstallOut -match '(?i)restart is required|please reboot|reboot your computer' -or (Test-RebootPending)) {
+                                        Write-RebootRequired
+                                        exit 0
+                                    }
                                 } else {
                                     Write-Host "  [WARNING] Failed to install Ubuntu automatically" -ForegroundColor Yellow
                                     Write-Host "  Please run: wsl --install -d Ubuntu-22.04" -ForegroundColor Yellow
@@ -551,24 +665,13 @@ if (-not $SkipDependencyCheck) {
         }
     }
     
-    # Check Docker Compose
-    $composeCmd = Get-Command docker-compose -ErrorAction SilentlyContinue
-    $composeV2 = $false
-    if (-not $composeCmd) {
-        # Check for Docker Compose V2 (docker compose)
-        try {
-            docker compose version 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                $composeV2 = $true
-                Write-Host "  [OK] Docker Compose (V2) found" -ForegroundColor Green
-            }
-        } catch {}
-    } else {
-        Write-Host "  [OK] Docker Compose found" -ForegroundColor Green
-    }
-    
-    if (-not $composeCmd -and -not $composeV2) {
-        Write-Host "  [WARNING] Docker Compose not found (usually included with Docker Desktop)" -ForegroundColor Yellow
+    # start-docker.ps1 uses Compose V2 long-form env_file syntax.
+    if (-not (Test-DockerComposeVersion)) {
+        Write-Host "  [WARNING] Docker Compose 2.24.0 or newer is required" -ForegroundColor Yellow
+        # A Docker Desktop install includes Compose; do not install it twice.
+        if ($missingDeps -notcontains "Docker") {
+            $missingDeps += "Compose"
+        }
     }
     
     # Handle missing dependencies
@@ -614,6 +717,9 @@ if (-not $SkipDependencyCheck) {
                     $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
                     if (-not $dockerCmd) { $stillMissing += "Docker" }
                 }
+                "Compose" {
+                    if (-not (Test-DockerComposeVersion)) { $stillMissing += "Compose" }
+                }
                 "WSL2" {
                     $wslCmd = Get-Command wsl -ErrorAction SilentlyContinue
                     if (-not $wslCmd) { $stillMissing += "WSL2" }
@@ -634,14 +740,16 @@ if (-not $SkipDependencyCheck) {
             Write-Host "  3. Restart your terminal/PowerShell session" -ForegroundColor Gray
             Write-Host "  4. Re-run this bootstrap script" -ForegroundColor Gray
             Write-Host ""
-            $continue = Read-Host "Continue anyway? (y/N)"
-            if ($continue -notmatch '^[Yy]') {
-                Write-Host "Setup cancelled. Please restart this script when ready." -ForegroundColor Yellow
-                exit 0
-            }
+            Write-Host "Re-run the same bootstrap command after completing those steps." -ForegroundColor Yellow
+            exit 0
         } else {
             Write-Host "[OK] All dependencies are now available!" -ForegroundColor Green
         }
+    }
+
+    if (-not (Test-DockerComposeVersion)) {
+        Write-Host "Docker Compose 2.24.0 or newer is required before setup can continue." -ForegroundColor Red
+        exit 1
     }
     
     Write-Host ""
@@ -662,19 +770,26 @@ if (-not (Test-Path $TargetDir)) {
     Write-Host "Target directory already exists: $TargetDir" -ForegroundColor Gray
     if ($Update) {
         if (-not (Test-Path (Join-Path $TargetDir ".git"))) {
-            Write-Host "Existing directory is not a Git repository; skipping update." -ForegroundColor Yellow
+            Write-Host "Existing directory is not a Git repository; refusing to update." -ForegroundColor Red
+            exit 1
         } else {
             Write-Host "Updating repository (fast-forward only)..." -ForegroundColor Yellow
             $status = (& git -C $TargetDir status --porcelain)
             if ($status) {
                 Write-Host "Working tree has uncommitted changes; refusing to update. Commit or stash first." -ForegroundColor Yellow
+                exit 1
             } else {
-                git -C $TargetDir fetch --all --prune
+                # Release hotfix tags may be replaced deliberately. Force-fetch
+                # tags so an existing clone does not retain an older tag object.
+                git -C $TargetDir fetch --all --prune --force --tags
                 if ($LASTEXITCODE -ne 0) { Write-Host "git fetch failed." -ForegroundColor Red; exit 1 }
                 git -C $TargetDir checkout $Branch
                 if ($LASTEXITCODE -ne 0) { Write-Host "git checkout failed." -ForegroundColor Red; exit 1 }
-                git -C $TargetDir pull --ff-only
-                if ($LASTEXITCODE -ne 0) { Write-Host "git pull failed (non-fast-forward)." -ForegroundColor Red; exit 1 }
+                git -C $TargetDir rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>$null | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    git -C $TargetDir pull --ff-only
+                    if ($LASTEXITCODE -ne 0) { Write-Host "git pull failed (non-fast-forward)." -ForegroundColor Red; exit 1 }
+                }
                 
                 # Re-normalize line endings after pull (in case .gitattributes was updated)
                 Write-Host "Re-normalizing line endings..." -ForegroundColor Gray
@@ -716,7 +831,9 @@ try {
     powershell.exe -ExecutionPolicy Bypass -File $startScript -AutoLocal
     $startScriptExitCode = $LASTEXITCODE
     if ($startScriptExitCode -ne 0) {
-        Write-Host "start-docker.ps1 exited with code: $startScriptExitCode" -ForegroundColor Yellow
+        Write-Host "start-docker.ps1 exited with code: $startScriptExitCode" -ForegroundColor Red
+        if ($didPush) { Pop-Location }
+        exit $startScriptExitCode
     }
 } catch {
     Write-Host "Failed to launch start-docker.ps1: $($_.Exception.Message)" -ForegroundColor Red
