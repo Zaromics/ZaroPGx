@@ -9,8 +9,8 @@ API documentation for ZaroPGx, hand-written against the code at v0.2.8.
 The server also publishes a generated OpenAPI schema, which is authoritative
 whenever this page and the code disagree:
 
-- `/docs` — interactive Swagger UI
-- `/redoc` — ReDoc
+- `/api/docs` — interactive Swagger UI
+- `/api/redoc` — ReDoc
 - `/openapi.json` — the raw schema
 
 Routes marked `include_in_schema=False` (`/api-reference`, `/login`, `/logout`)
@@ -70,11 +70,11 @@ claim and cannot unlock `password` mode.
 ### Always-open paths
 
 These bypass the gate even in `password` mode: `/health`, `/openapi.json`,
-`/docs`, `/redoc`, `/docs/oauth2-redirect`, `/api-reference`, `/login`,
-`/logout`, `/token`, `/favicon.ico`; anything under `/docs/` or `/redoc/`; and
-anything under `/static/`, `/documentation/`, `/api/v1/jobs/` or
-`/api/v1/workflows/` (bare `/api/v1/jobs` and `/api/v1/workflows` are allowlisted
-too).
+`/api/docs`, `/api/redoc`, `/api/docs/oauth2-redirect`, `/api-reference`, `/login`,
+`/logout`, `/token`, `/favicon.ico`; anything under `/api/docs/` or `/api/redoc/`;
+the documentation at `/docs` (and the old `/documentation`, which redirects there);
+and anything under `/static/`, `/api/v1/jobs/` or `/api/v1/workflows/` (bare
+`/api/v1/jobs` and `/api/v1/workflows` are allowlisted too).
 
 That allowlist covers the entire job API, so `password` mode does not protect job
 status, logs or cancel.
@@ -1200,11 +1200,12 @@ returns HTTP 200 with `{"error": "...", "traceback": "..."}` instead.
 
 | Endpoint | Method | Returns |
 | --- | --- | --- |
-| `/api` | GET | `{"message": "Welcome to ZaroPGx API", "docs": "/docs"}` |
+| `/api` | GET | `{"message": "Welcome to ZaroPGx API", "docs": "/api/docs"}` |
 | `/license` | GET | The repository `LICENSE` file as `text/plain` (404 if absent) |
 | `/notice` | GET | The repository `NOTICE` file as `text/plain` (404 if absent) |
-| `/docs`, `/redoc`, `/openapi.json` | GET | FastAPI's generated interactive docs and schema |
-| `/documentation/` | GET | Built Sphinx HTML, mounted only when `docs/_build/html` exists (the app tries to build it at startup) |
+| `/api/docs`, `/api/redoc`, `/openapi.json` | GET | FastAPI's generated interactive docs and schema |
+| `/docs/` | GET | Built Sphinx HTML, mounted only when `docs/_build/html` exists (the app tries to build it at startup) |
+| `/documentation/…` | GET | 301 to the same path under `/docs/` (the documentation's address before v0.3.2) |
 | `/static/…` | GET | Application static assets |
 
 HTML pages: `/` (the upload dashboard), `/api-reference` (a wrapper page that

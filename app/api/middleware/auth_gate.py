@@ -45,10 +45,12 @@ ALLOWLIST_EXACT = frozenset(
     {
         "/health",
         "/openapi.json",
-        "/docs",
-        "/redoc",
-        "/docs/oauth2-redirect",
+        "/api/docs",
+        "/api/redoc",
+        "/api/docs/oauth2-redirect",
         "/api-reference",
+        "/docs",
+        "/documentation",
         "/login",
         "/logout",
         "/token",
@@ -57,6 +59,7 @@ ALLOWLIST_EXACT = frozenset(
 )
 ALLOWLIST_PREFIXES = (
     "/static/",
+    "/docs/",
     "/documentation/",
     "/api/v1/jobs/",
     "/api/v1/workflows/",
@@ -89,7 +92,7 @@ def resolve_auth_mode() -> str:
 def is_allowlisted(path: str) -> bool:
     if path in ALLOWLIST_EXACT:
         return True
-    if path.startswith("/docs/") or path.startswith("/redoc/"):
+    if path.startswith("/api/docs/") or path.startswith("/api/redoc/"):
         return True
     for prefix in ALLOWLIST_PREFIXES:
         if path.startswith(prefix):

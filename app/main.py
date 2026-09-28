@@ -278,6 +278,11 @@ app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
     version="0.3.2",
+    # /docs is the project documentation (mounted below); FastAPI's API explorer
+    # lives under /api instead of taking that path.
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect",
 )
 
 # Set up static file serving for application static assets
@@ -286,14 +291,21 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 # Static file serving for reports is now handled by custom routes
 # app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
-# Mount built Sphinx documentation (if present) at /documentation
+# Mount built Sphinx documentation (if present) at /docs
 DOCS_BUILD_DIR = BASE_DIR.parent / "docs" / "_build" / "html"
 if DOCS_BUILD_DIR.exists():
     app.mount(
-        "/documentation",
+        "/docs",
         StaticFiles(directory=str(DOCS_BUILD_DIR), html=True),
         name="sphinx-docs",
     )
+
+
+# The documentation was served at /documentation until v0.3.2; keep old links working.
+@app.get("/documentation", include_in_schema=False)
+@app.get("/documentation/{path:path}", include_in_schema=False)
+async def documentation_moved(path: str = "") -> RedirectResponse:
+    return RedirectResponse(url=f"/docs/{path}", status_code=301)
 
 
 def _build_docs_if_missing() -> None:
@@ -314,12 +326,11 @@ def _build_docs_if_missing() -> None:
             subprocess.run(cmd, check=False)
         # Mount after building if not already mounted
         if (
-            "/documentation"
-            not in {m.path for m in app.router.routes if hasattr(m, "path")}
+            "/docs" not in {m.path for m in app.router.routes if hasattr(m, "path")}
             and DOCS_BUILD_DIR.exists()
         ):
             app.mount(
-                "/documentation",
+                "/docs",
                 StaticFiles(directory=str(DOCS_BUILD_DIR), html=True),
                 name="sphinx-docs",
             )
@@ -432,7 +443,7 @@ async def api_reference() -> HTMLResponse:
     <a class=\"btn btn-primary\" href=\"/\">Back to ZaroPGx</a>
     <h1>API Reference</h1>
   </div>
-  <iframe class=\"frame\" src=\"/docs\" title=\"Swagger UI\" loading=\"lazy\"></iframe>
+  <iframe class=\"frame\" src=\"/api/docs\" title=\"Swagger UI\" loading=\"lazy\"></iframe>
 </body>
 </html>
         """
@@ -742,7 +753,7 @@ async def notice_text():
 
 @app.get("/api")
 async def api_root():
-    return {"message": "Welcome to ZaroPGx API", "docs": "/docs"}
+    return {"message": "Welcome to ZaroPGx API", "docs": "/api/docs"}
 
 
 # Make the health check endpoint simple and dependency-free

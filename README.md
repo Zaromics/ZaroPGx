@@ -283,8 +283,8 @@ If you prefer more control or want to customize the installation:
 
 4. **Access the Main App**
    - Web UI: `http://localhost:8765`
-   - Interactive API docs (FastAPI/Swagger): `http://localhost:8765/docs`
-   - Project documentation (built Sphinx site, offline): `http://localhost:8765/documentation`
+   - Project documentation (built Sphinx site, offline): `http://localhost:8765/docs`
+   - Interactive API docs (FastAPI/Swagger): `http://localhost:8765/api/docs`
    - HAPI FHIR dashboard (loopback-bound): `http://localhost:8090`
 
 **Environment Differences:**

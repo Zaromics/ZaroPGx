@@ -118,7 +118,7 @@ FASTQ may be single-end or an R1/R2 pair, up to 20 GB in all. Whole-genome read 
 
 ## API Usage
 
-Your own instance publishes interactive API docs at `/docs` and the raw schema at
+Your own instance publishes interactive API docs at `/api/docs` and the raw schema at
 `/openapi.json`. The `/api-reference` page is a wrapper that embeds that same
 Swagger UI with a Back button — https://pgx.zaromics.com/api-reference is the
 reference instance's copy. For the full hand-written reference, including the

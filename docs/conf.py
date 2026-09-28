@@ -1,5 +1,6 @@
 import os
 import sys
+import tomllib
 from datetime import datetime, timezone
 
 # -- Path setup --------------------------------------------------------------
@@ -14,6 +15,11 @@ project = 'ZaroPGx'
 author = 'Iliya Yaroshevskiy'
 current_year = datetime.now(timezone.utc).year
 copyright = f"{current_year}, {author}"
+# From pyproject.toml, so the site title ("ZaroPGx 0.3.2 documentation") follows each
+# release. Unset, Sphinx titled every page "ZaroPGx  documentation".
+with open(os.path.join(os.path.dirname(__file__), '..', 'pyproject.toml'), 'rb') as fh:
+    release = tomllib.load(fh)['project']['version']
+version = release
 
 # -- General configuration ---------------------------------------------------
 

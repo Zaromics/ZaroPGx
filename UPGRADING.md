@@ -5,6 +5,13 @@ upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
 ## v0.3.1 → v0.3.2
 
+### Documentation and API explorer addresses
+
+The documentation moved from `/documentation` to `/docs`; old links redirect. The API
+explorer (Swagger UI) moved from `/docs` to `/api/docs`, and ReDoc to `/api/redoc`.
+`/openapi.json` is unchanged. Update bookmarks or scripts that open `/docs` for the API
+explorer.
+
 ### Stage PharmCAT's position list
 
 Aligned input (BAM, CRAM, SAM, FASTQ) and gVCFs are genotyped at every PharmCAT position,

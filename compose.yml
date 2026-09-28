@@ -464,7 +464,7 @@ services:
 
   # Sphinx Documentation service (live reload)
   docs:
-    # Optional and build-only (the app also serves docs at /documentation).
+    # Optional and build-only (the app also serves docs at /docs).
     # Opt in with: docker compose --profile optional up -d
     profiles: ["optional"]
     build:
