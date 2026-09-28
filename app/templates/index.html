@@ -323,6 +323,20 @@
             font-size: 1.2rem;
             margin-bottom: 0.25rem;
         }
+
+        /* Bootstrap Icons has no mitochondrion. This one is a mask (outer membrane and
+           cristae) filled with currentColor, so stage colours and pulses apply to it as
+           to any .bi glyph. */
+        .bi-mitochondrion::before {
+            content: "";
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            vertical-align: -0.125em;
+            background-color: currentColor;
+            -webkit-mask: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cg%20transform='rotate(-30%208%208)'%20fill='none'%20stroke='black'%20stroke-linecap='round'%3E%3Cellipse%20cx='8'%20cy='8'%20rx='7.2'%20ry='4.3'%20stroke-width='1.3'/%3E%3Cpath%20d='M3.3%208%20C3.9%205.4%204.9%205.4%205.4%208%20S6.9%2010.6%207.5%208%20S9%205.4%209.6%208%20S11.1%2010.6%2011.7%208%20S12.4%206.6%2012.7%208'%20stroke-width='1.1'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+            mask: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cg%20transform='rotate(-30%208%208)'%20fill='none'%20stroke='black'%20stroke-linecap='round'%3E%3Cellipse%20cx='8'%20cy='8'%20rx='7.2'%20ry='4.3'%20stroke-width='1.3'/%3E%3Cpath%20d='M3.3%208%20C3.9%205.4%204.9%205.4%205.4%208%20S6.9%2010.6%207.5%208%20S9%205.4%209.6%208%20S11.1%2010.6%2011.7%208%20S12.4%206.6%2012.7%208'%20stroke-width='1.1'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+        }
         
         /* Enhanced pulsing animations */
         @keyframes pulse-running {
@@ -585,7 +599,7 @@
                             <div class="mb-3">
                                 <label for="genomicFile" class="form-label">Genomic File(s)</label>
                                     <input class="form-control" type="file" id="genomicFile" name="files" accept=".vcf,.vcf.gz,.gvcf,.gvcf.gz,.bcf,.bam,.sam,.cram,.fastq,.fq,.fastq.gz,.fq.gz,.bai,.crai,.csi,.tbi,.idx" multiple required>
-                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38.) Index file may be included. Formats BAM, SAM, CRAM, BCF, gVCF, and FASTQ are in testing. Support for BED and others is in development. 23andMe and AncestryDNA exports are not supported.</div>
+                                    <div class="form-text">Upload a VCF datafile for pharmacogenomic analysis (GRCh38/hg38 supported, GRCh37/hg19 lifted over to GRCh38, T2T-CHM13 in development.) Index file may be included. Formats BAM, SAM, CRAM, BCF, gVCF, and FASTQ are in testing. Support for BED, 23andMe, AncestryDNA, and others is in development.</div>
                             </div>
                                 
                             <div class="mb-3">
@@ -634,7 +648,7 @@
                                 
                                 <!-- mtDNA Stage -->
                                 <div id="stageMtDNA" class="stage-indicator text-center text-muted" data-stage="mtdna" data-toggleable="true" data-enabled="true" data-flag="mtdna_enabled">
-                                    <div class="mb-1"><i class="bi bi-diagram-3"></i></div>
+                                    <div class="mb-1"><i class="bi bi-mitochondrion"></i></div>
                                     <span>mtDNA</span>
                                     <div class="stage-popup">
                                         <h6>mtDNA-Server 2</h6>
@@ -862,7 +876,7 @@
                             <div class="card-body d-flex flex-column h-100">
                                 <p class="mb-0">ZaroPGx is a free and open source, easily self-hostable individual pharmacogenomic
                                     analysis system which attempts to create the most accurate and complete reports possible 
-                                    with a given genomic datafile.<br><br>                         
+                                    with a given genomic datafile.<br>
                                     For detailed information, see the software documentation and access the API reference.</p>
                                 <div class="mt-auto d-flex gap-2">
                                     <a href="/documentation/" class="btn btn-secondary">Documentation</a>
@@ -1144,7 +1158,7 @@
                 // workflow_registry.py's step order -- it supplies PharmCAT's
                 // MT-RNR1 outside call.
                 if (wf.needs_mtdna) {
-                    steps.push({ name: 'mtDNA-Server 2 Calling', icon: 'bi-diagram-3' });
+                    steps.push({ name: 'mtDNA-Server 2 Calling', icon: 'bi-mitochondrion' });
                 }
 
                 // PharmCAT and Report are core terminal steps

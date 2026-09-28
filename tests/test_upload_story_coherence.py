@@ -439,7 +439,7 @@ def test_23andme_refusal_gives_the_real_reason_not_a_missing_converter(upload):
     detail = upload(("genome.txt", TWENTYTHREE_AND_ME_BYTES)).json()["detail"].lower()
 
     assert "not implemented" not in detail
-    assert "decision" in detail  # said out loud: we are not going to build this
+    assert "in development" in detail  # refused for now, support to come
     assert "cyp2d6" in detail  # the gene the coverage gap actually ruins
     assert "homozygous reference" in detail  # the mechanism
     # And an accepted input to go and get instead.

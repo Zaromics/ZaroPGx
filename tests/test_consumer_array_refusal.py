@@ -1,4 +1,4 @@
-"""23andMe and AncestryDNA exports are recognised by name and refused by decision.
+"""23andMe and AncestryDNA exports are recognised by name and refused for now.
 
 Two separate defects are closed here.
 
@@ -201,22 +201,12 @@ def test_the_refusal_states_the_failure_mode_not_just_the_coverage(file_type):
 
 
 @pytest.mark.parametrize("file_type", ARRAY_TYPES)
-def test_the_refusal_is_stated_as_a_decision_and_not_as_pending_work(file_type):
-    strings = _workflow_for(file_type)["recommendations"]
-    strings += _workflow_for(file_type)["warnings"]
-    strings.append(_workflow_for(file_type)["unsupported_reason"])
-
-    for text in strings:
-        lowered = text.lower()
-        for promise in (
-            "not implemented",
-            "not yet implemented",
-            "in development",
-            "once conversion exists",
-            "(to do)",
-            "coming soon",
-        ):
-            assert promise not in lowered, text
+def test_the_refusal_says_support_is_in_development(file_type):
+    """Iliya, 2026-09-27: they will be supported; refused until then, for the reason
+    the rest of this module pins."""
+    reason = _workflow_for(file_type)["unsupported_reason"].lower()
+    assert "in development" in reason
+    assert "decision" not in reason
 
 
 @pytest.mark.parametrize("file_type", ARRAY_TYPES)

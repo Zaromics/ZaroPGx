@@ -1493,8 +1493,8 @@ class FileProcessor:
         # the upload gate -- setting it here is the original 23andMe bug.
         workflow["is_provisional"] = False
         workflow["unsupported_reason"] = (
-            f"ZaroPGx cannot analyse {coverage.vendor} genotyping files, and that "
-            f"is a decision rather than a missing converter. {coverage.article} "
+            f"ZaroPGx cannot analyse {coverage.vendor} genotyping files yet; support "
+            f"is in development. {coverage.article} "
             f"{coverage.vendor} {coverage.best_chip} file carries "
             f"{coverage.positions} of the "
             f"{PHARMCAT_POSITIONS:,} positions PharmCAT calls on "
@@ -2095,29 +2095,22 @@ class FileProcessor:
                 "<p>Priority 0 (Supported): VCF, GRCh38/hg38, NGS-derived.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 1 (Development): VCF, GRCh37/hg19, NGS-derived.</p>"
+                "<p>Priority 1 (Supported): VCF, GRCh37/hg19, NGS-derived.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 2 (Development): BAM, CRAM, SAM, BCF, all NGS-derived.</p>"
+                "<p>Priority 2 (Development): BAM, CRAM, SAM, BCF, gVCF, all NGS-derived.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Priority 2 (Development): FASTQ, short-read, single- or paired-end, up to 20 GB, aligned to GRCh38 first.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Not accepted: 23andMe and AncestryDNA genotyping exports. That is "
-                "a decision rather than pending work — they carry under a third of "
-                "the positions PharmCAT calls on, and no chip can show a gene "
-                "duplication or deletion.</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>Not accepted: files aligned to T2T-CHM13. ZaroPGx detects them "
-                "and refuses them; it analyses against GRCh38/hg38 only.</p>"
-            )
-            workflow["recommendations"].append(
                 "<p>Priority 3 (Research): Other sequencing and genotyping formats.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 4 (Research): BED, gVCF, various TXT formats.</p>"
+                "<p>Priority 4 (Research): BED, 23andMe, AncestryDNA, various TXT formats.</p>"
+            )
+            workflow["recommendations"].append(
+                "<p>Priority 5 (Early research): T2T-CHM13, and all else.</p>"
             )
             workflow["recommendations"].append(
                 "<p>If you happen to have a supported datafile, please try again and upload that file(s) instead.</p>"
