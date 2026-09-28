@@ -514,6 +514,59 @@ def test_inspect_header_fills_sequence_lengths_from_the_contig_records(
     assert {"name": "chr1", "length": 248956422} in sequences
 
 
+# The readers themselves, unmocked. The tests above replace _inspect_vcf_bcf, which is
+# how it went unnoticed that the real one raised on every header with a ##contig line:
+# each VCF was read by the bcftools fallback instead, and where bcftools was not
+# installed the header came back empty -- no samples, no build, no error.
+GRCH38_VCF = "\n".join(
+    ["##fileformat=VCFv4.2"]
+    + GRCH38_CONTIGS
+    + [
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1",
+        "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1",
+        "",
+    ]
+)
+
+
+def test_pysam_reads_a_vcf_header_that_has_contigs(tmp_path):
+    pytest.importorskip("pysam")
+    path = tmp_path / "sample.vcf"
+    path.write_text(GRCH38_VCF, encoding="utf-8")
+
+    res = GenomicHeaderInspector()._inspect_vcf_bcf(str(path))
+
+    assert "error" not in res, res
+    assert res["contigs"] == ["chr1", "chr2", "chr3", "chrX"]
+    assert res["samples"] == ["SAMPLE1"]
+
+
+@pytest.mark.parametrize("compression", ["none", "gzip", "bgzip"])
+def test_a_vcf_header_is_read_without_bcftools(monkeypatch, tmp_path, compression):
+    """Plain gzip is the one pysam cannot read; it must not need bcftools either."""
+    import gzip
+
+    monkeypatch.setenv("PATH", str(tmp_path / "no-tools"))
+    text = tmp_path / "sample.vcf"
+    text.write_text(GRCH38_VCF, encoding="utf-8")
+    if compression == "none":
+        path = text
+    elif compression == "gzip":
+        path = tmp_path / "sample.vcf.gz"
+        path.write_bytes(gzip.compress(GRCH38_VCF.encode()))
+    else:
+        pysam = pytest.importorskip("pysam")
+        path = tmp_path / "sample.vcf.gz"
+        pysam.tabix_compress(str(text), str(path), force=True)
+
+    res = inspect_header(str(path))
+
+    assert res["samples"] == ["SAMPLE1"]
+    assert res["metadata"]["reference_genome"] == "GRCh38"
+    assert {"name": "chr1", "length": 248956422} in res["sequences"]
+
+
 def _canned_bam(monkeypatch, tmp_path, sq_records):
     """Point inspect_header's alignment reader at an @SQ dictionary we control."""
     path = tmp_path / "sample.bam"

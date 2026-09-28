@@ -381,6 +381,27 @@ def _fastq_platform_or_none(filepath):
         return None
 
 
+def _read_vcf_text_header(filepath) -> List[str]:
+    """The `##` and `#CHROM` lines of a text VCF, plain, gzip or bgzip.
+
+    Empty for anything that is not a text VCF, a BCF included: its first
+    decompressed byte is not `#`.
+    """
+    with open(filepath, "rb") as fh:
+        gzipped = fh.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    lines: List[str] = []
+    try:
+        with opener(filepath, "rt", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.startswith("#"):
+                    break
+                lines.append(line.rstrip("\r\n"))
+    except (OSError, EOFError):
+        return []
+    return [ln for ln in lines if ln]
+
+
 def inspect_header(
     filepath: str,
     max_bytes: Optional[int] = None,
@@ -471,19 +492,24 @@ def inspect_header(
             res = inspector._inspect_vcf_bcf(filepath)
         except Exception as e:
             res = {"error": str(e)}
-        # Fallback to bcftools header only if needed
+        # Fall back to reading the header as text, then to bcftools for a binary BCF.
+        # pysam cannot read a VCF gzipped with plain gzip instead of bgzip (it has to
+        # seek), and bcftools alone left the header empty wherever it was not installed
+        # -- read downstream as no samples and no build, not as an error.
         if "error" in res or not res:
             _ensure_time()
             try:
-                cmd = f"bcftools view -h {shlex.quote(filepath)}"
-                cp = subprocess.run(
-                    cmd,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=max(5, min(timeout_sec, 60)),
-                )
-                header_lines = [ln for ln in cp.stdout.splitlines() if ln]
+                header_lines = _read_vcf_text_header(filepath)
+                if not header_lines:
+                    # --no-version: otherwise bcftools appends its own
+                    # ##bcftools_viewVersion line, read below as the file's creator.
+                    cp = subprocess.run(
+                        ["bcftools", "view", "-h", "--no-version", filepath],
+                        capture_output=True,
+                        text=True,
+                        timeout=max(5, min(timeout_sec, 60)),
+                    )
+                    header_lines = [ln for ln in cp.stdout.splitlines() if ln]
                 # Minimal parse from header lines
                 samples = []
                 contigs: List[str] = []
@@ -906,7 +932,11 @@ class GenomicHeaderInspector:
                     "file": filepath,
                     "samples": list(vcf.header.samples),
                     "num_samples": len(list(vcf.header.samples)),
-                    "contigs": [rec.name for rec in header.contigs],
+                    # Iterating header.contigs yields the names themselves. This used
+                    # to read `.name` off each, which raised on every file with a
+                    # ##contig line, so the pysam path never returned and every VCF
+                    # header came from the bcftools fallback instead.
+                    "contigs": list(header.contigs),
                     "num_contigs": len(list(header.contigs)),
                     "info_fields": list(header.info.keys()),
                     "format_fields": list(header.formats.keys()),
@@ -916,7 +946,7 @@ class GenomicHeaderInspector:
 
                 # Get header records
                 for rec in header.records:
-                    result["header_records"].append(str(rec))
+                    result["header_records"].append(str(rec).rstrip("\n"))
 
                 return result
 
