@@ -223,15 +223,8 @@ Recommendations:
 
 ### Alerts About Individual Positions
 
-PharmCAT calls a gene from the positions it can read, so a call can rest on less than
-the whole gene. The report names two ways that happens:
-
-- **Partly covered genes**: the alleles PharmCAT could not assess because the positions
-  defining them were missing from the data.
-- **Positions PharmCAT did not use as found**: an allele PharmCAT does not define at a
-  position, which it matches as reference (its own policy, for any input), and a
-  record PharmCAT could not use as written, which it reads as missing -- or, for a
-  plain VCF with the assume-reference setting on, as reference.
+- **Partly covered genes**: alleles PharmCAT could not assess because their positions were missing from the data.
+- **Positions PharmCAT did not use as found**: an allele PharmCAT does not define (matched as reference, PharmCAT's policy for any input), or a record it could not read (taken as missing, or as reference when the assume-reference setting is on).
 
 ## Interpreting Results
 

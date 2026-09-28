@@ -89,13 +89,12 @@ def test_above_the_cap_is_refused():
     assert "limit" in workflow["unsupported_reason"]
 
 
-def test_the_cap_refusal_explains_why_not_just_size():
-    """A cap that reads as arbitrary invites 'just raise it', and the copy has to say
-    what it bounds. It once said "memory", which was wrong: BwaSpark's footprint is the
-    index image, loaded whole for a panel too. What grows with the reads is disk and
-    time."""
+def test_the_cap_refusal_says_what_it_is_for_and_what_to_do():
+    """It once said "memory", which was wrong: BwaSpark's footprint is the index
+    image, loaded whole for a panel too."""
     reason = _plan(FASTQ_MAX_UPLOAD_BYTES + 1, _GOOD)["unsupported_reason"].lower()
-    assert "disk" in reason
+    assert "exome" in reason and "whole-genome" in reason
+    assert "nf-core/sarek" in reason
     assert "memory" not in reason
 
 
@@ -111,13 +110,13 @@ def test_an_undetectable_platform_is_refused_not_defaulted():
     workflow = _plan(2 * 1024**3, _UNKNOWN)
 
     assert workflow["unsupported"] is True
-    assert "PL:" in workflow["unsupported_reason"]
+    assert "platform" in workflow["unsupported_reason"]
     assert workflow["needs_alignment"] is False
 
 
-def test_the_platform_refusal_quotes_what_was_observed():
+def test_the_platform_refusal_gives_the_detectors_reason():
     workflow = _plan(2 * 1024**3, _UNKNOWN)
-    assert "read names carry no structure" in workflow["unsupported_reason"]
+    assert _UNKNOWN.reason in workflow["unsupported_reason"]
 
 
 def test_a_missing_platform_call_does_not_crash_or_default():

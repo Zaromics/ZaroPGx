@@ -28,24 +28,22 @@ BCF → bcftools (VCF conversion) → Header Analysis → PyPGx → PharmCAT →
 ```
 
 ## Genomic VCF (gVCF)
-A gVCF records *reference-confidence blocks* — spans the caller is confident match the reference — alongside the variant calls. PharmCAT cannot read one: PharmCAT 3.4.0 detects a gVCF (from the filename, from a `##GVCFBlock` header record, or from a reference-block data row) and refuses it outright, so a gVCF handed to it produces an error, not a wrong answer.
+A gVCF records *reference-confidence blocks* alongside the variant calls. PharmCAT refuses a gVCF, so ZaroPGx genotypes it first with GATK `GenotypeGVCFs`: over PharmCAT's positions, then over everything else. Reference genotypes at the pharmacogene positions come from your file's reference blocks rather than being assumed, which makes a gVCF a better input than a plain VCF.
 
-ZaroPGx converts it instead, and the conversion makes a gVCF a **better** input than a plain VCF rather than merely an acceptable one. It runs GATK `GenotypeGVCFs` twice: once over PharmCAT's own position list with `--include-non-variant-sites`, and once over everything else, joining the two with `bcftools concat -a`. The first pass is the point — the homozygous-reference genotypes at the pharmacogene positions come from *your file's own reference-confidence blocks*, so they are called data. The plain-VCF lane has no such information and can only fill those positions in with PharmCAT's `--absent-to-ref`, which fabricates them; the gVCF lane needs no such flag, and ZaroPGx adds none of its own.
+PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls.
 
-The two assume-reference checkboxes under PharmCAT are not applied to a gVCF, whatever they are set to. The reference pass emits a row at *every* position in PharmCAT's list, so a position your file did not cover arrives as a `./.` row, and the only thing `--unspecified-to-ref` could do here is turn those uncovered positions into reference calls you did not make. The report says so if you ticked one.
+The report states:
 
-What the report tells you, and why:
+- **How much of PharmCAT's position list your file covered.** Positions without a reference block are no-calls.
+- **That genotypes are re-derived** from the recorded likelihoods, and may differ from your caller's. A reference call needs a reference confidence of 20 over at least 7 reads; a variant needs a genotype quality of 20 and a call quality of 30. Anything else is a no-call.
+- An indel PharmCAT cannot match stays a no-call, as with a plain VCF.
 
-- **How much of PharmCAT's position list your file actually covered.** A gVCF that omits a region has no reference block there, so those positions are no-calls — absent is not reference.
-- **That `GenotypeGVCFs` re-derives each genotype** from the recorded likelihoods rather than copying your caller's. At PharmCAT's positions ZaroPGx sets the calling-confidence threshold to zero and applies its own: a reference call needs a reference confidence of 20 or more over at least 7 reads, and no other allele your caller saw across the position; a variant call needs a genotype quality of 20 and a call quality of 30. Anything else is a no-call, so the genotypes analysed are not guaranteed identical to your caller's output.
-- A variant whose indel representation PharmCAT cannot match stays a no-call, the same outcome a plain VCF gets. Reference calls at indel positions are written with PharmCAT's own alleles, so PharmCAT reads them.
+Refused, with the reason:
 
-Two kinds of gVCF are refused, each because the conversion genuinely cannot proceed:
+- **Non-GATK reference blocks** (`<*>` instead of `<NON_REF>`, as written by DeepVariant, bcftools and some Illumina callers). Genotype the file with your caller's own tool and upload the VCF. Do not filter the reference blocks out by hand: that deletes your variants too.
+- **GRCh37/hg19 gVCFs.** Run `gatk GenotypeGVCFs` yourself and upload the GRCh37 VCF, which is lifted over.
 
-- **Non-GATK reference blocks.** DeepVariant, bcftools and some Illumina callers write `<*>` where GATK writes `<NON_REF>`, and `GenotypeGVCFs` stops on such a file with "The list of input alleles must contain `<NON_REF>` as an allele". Genotype it with your own caller's tool and upload the resulting plain VCF. **Do not** filter the reference blocks out by hand: `bcftools view -e 'ALT="<NON_REF>"'` and its equivalents delete your real variants too, because a gVCF's variant rows carry the reference allele alongside the alternate one.
-- **GRCh37/hg19 gVCFs.** PharmCAT's position list — the interval list the reference pass is emitted over — exists in GRCh38 coordinates only, so there is nothing to run that pass against. Run `gatk GenotypeGVCFs` on it yourself and upload the resulting GRCh37 VCF: that *is* supported, and ZaroPGx lifts it over to GRCh38 for you.
-
-Because the file that gets analysed is a VCF, every VCF caveat applies: no HLA typing, degraded accuracy for *CYP2D6*, and degraded accuracy for genes whose phenotypes depend on structural or copy-number variants. Exactly one sample, as for VCF and BCF — a joint-called multi-sample gVCF is refused.
+Every VCF caveat applies: no HLA typing, and degraded accuracy for *CYP2D6* and for structural and copy-number variants. One sample only.
 
 ### Processing Path — gVCF
 ```
@@ -55,7 +53,7 @@ gVCF → GATK GenotypeGVCFs ×2 (VCF conversion) → Header Analysis → PyPGx �
 ## Binary Alignment Map (BAM)
 BAM files contain aligned sequencing reads and are commonly used for variant calling and analysis.
 
-For every aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT is given a call at each of its own positions, made from your reads: reference where every base of the position has at least 7 good reads for the reference and next to none for anything else (none below 20 reads, up to 5% above), a variant where the caller makes a confident call (genotype quality 20 or more, in the caller's own representation, so an allele PharmCAT does not list is passed on as found; PharmCAT flags it as an undocumented variation and matches that position as reference, as it does for any input), and nothing where the reads support neither. A position with nothing is a no-call, not a reference call, so a gene your data did not cover is reported as not called rather than as normal. PharmCAT's assume-reference checkboxes are not applied to aligned inputs, for the same reason as for a gVCF. The report states how many positions were called, how many had no reads, and how many had too few.
+For aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT gets a call at each of its positions, made from your reads. Reference needs at least 7 good reads for the reference and next to none for anything else; a variant needs a confident call (genotype quality 20). Anything else is a no-call, so a gene your data did not cover is reported as not called, not as normal. PharmCAT's assume-reference checkboxes are not applied. The report states how many positions were called, had no reads, or were uncertain.
 
 ### Processing Path — BAM
 ```
@@ -80,19 +78,17 @@ SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
 
 ## FASTQ Format — accepted up to 20 GB
 
-FASTQ files contain raw sequencing reads with quality scores and are the starting point for most genomic analyses. ZaroPGx accepts short-read FASTQ, single-end or as an R1/R2 pair uploaded together, and aligns it for you with BWA against GRCh38 before running the usual pipeline. The two files of a pair are checked against each other: they must come from the same platform and their read names must pair up, so two unrelated read sets cannot be aligned as mates, and one file uploaded twice is refused too.
+Short-read FASTQ, single-end or an R1/R2 pair uploaded together. ZaroPGx aligns it to GRCh38 with BWA, then runs the usual pipeline. The two files of a pair must be mates of one run.
 
-If your run is paired-end, upload both files. R1 alone is aligned as single-end, with half the reads and no mate to help place reads in genes with close copies (CYP2B6, CYP2D6), so heterozygous variants there can be missed. ZaroPGx warns when a lone file's name looks like one mate (`_R1`, `_2.fq.gz`).
+Upload both files of a paired-end run. R1 alone can miss heterozygous variants in *CYP2B6* and *CYP2D6*.
 
-Three limits apply, and all three are about the file rather than about ZaroPGx:
+Refused, with the reason:
 
-**Short reads only.** Oxford Nanopore and PacBio reads are recognised and refused: the aligner and the HLA typing are both short-read tools. Align long reads with minimap2 against GRCh38 and upload the BAM or CRAM.
+- **Long reads** (Oxford Nanopore, PacBio). Align them with minimap2 against GRCh38 and upload the BAM or CRAM.
+- **Over 20 GB in total.** This covers targeted panels and exomes, not whole genomes. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
+- **No detectable sequencing platform.** The platform is read from the read names, which SRA re-exports lose. Upload the original run files, or align the reads yourself.
 
-**Size — 20 GB across all uploaded reads.** This covers targeted PGx panels and exome-sized read sets. It does not cover whole-genome FASTQ: alignment writes the reads out three times (unaligned, aligned and duplicate-marked BAM) on one machine, so a whole-genome read set would need several times its own size in free disk and many hours of alignment. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
-
-**A detectable sequencing platform.** Alignment has to record which instrument produced the reads — the `@RG PL:` field — because GATK and PyPGx both read it. A FASTQ does not state this anywhere, so ZaroPGx works it out from the structure of the read names (Illumina encodes flowcell coordinates, MGI/DNBSEQ its lane, column and row, Oxford Nanopore its run and channel ids, PacBio its ZMW numbers) and checks that against the read lengths. If the reads have been re-exported from SRA, that naming is stripped and the platform cannot be established — ZaroPGx refuses rather than assuming Illumina, because a wrong platform silently changes how downstream tools treat your data. Upload the original run files, or align them yourself.
-
-Alignment is by far the slowest step in the stack. If you already have a BAM, CRAM or SAM, uploading that is much faster, and a GRCh38/hg38 VCF is the fastest input of all.
+Alignment is slow. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.
 
 ## Consumer genotyping arrays (23andMe, AncestryDNA) — not accepted
 

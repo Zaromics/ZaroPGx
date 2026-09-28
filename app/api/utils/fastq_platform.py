@@ -207,8 +207,8 @@ def detect_fastq_platform(path, max_records: int = 1000) -> PlatformCall:
             None,
             f"read names carry no recognisable platform structure (e.g. {names[0][:60]!r}); "
             f"{length_summary}",
-            "the read names do not identify a platform -- SRA-normalised FASTQ loses "
-            "the instrument's own naming, and nothing else in a FASTQ records it",
+            "the read names do not identify one (SRA re-exports lose the "
+            "instrument's naming)",
         )
 
     winner = max(set(votes), key=votes.count)

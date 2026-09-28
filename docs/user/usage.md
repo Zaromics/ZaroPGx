@@ -26,7 +26,7 @@ Learn how to use ZaroPGx to submit a sample for processing and receive insightfu
 | **SAM** | `.sam` | Text alignment | GATK → HLA typing → Analysis |
 | **FASTQ** | `.fastq`, `.fq` (gzipped too) | Raw short reads | Alignment (GATK/bwa) → HLA typing → Analysis |
 
-FASTQ may be single-end or an R1/R2 pair uploaded together, up to 20 GB in all. Whole-genome read sets, long reads (ONT, PacBio) and reads whose platform cannot be read from their names are refused with the reason; align those yourself and upload the BAM, CRAM or SAM.
+FASTQ may be single-end or an R1/R2 pair, up to 20 GB in all. Whole-genome read sets, long reads and reads without a detectable platform are refused.
 
 #### Upload Process
 

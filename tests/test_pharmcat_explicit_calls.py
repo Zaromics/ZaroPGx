@@ -180,16 +180,16 @@ STATS = {
 def test_the_paragraph_states_what_the_force_call_found():
     text = explicit_calls_paragraph("fastq", False, False, STATS)
     assert "1,226" in text and "800 reference" in text and "4 variant" in text
-    assert "422 positions had no reads" in text
+    assert "422 with no reads" in text
     assert "at least 7 good reads for the reference" in text
-    assert "not reference calls" in text
+    assert "is a no-call" in text
     assert "not called" in text
     assert "not applied" not in text
 
 
 def test_the_paragraph_says_when_requested_flags_were_set_aside():
     text = explicit_calls_paragraph("bam", True, True, STATS)
-    assert "assume-reference flags were set for this run and not applied" in text
+    assert "assume-reference flags set for this run were not applied" in text
 
 
 def test_a_gvcf_gets_only_the_set_aside_note():
@@ -206,7 +206,7 @@ def test_a_plain_vcf_gets_no_paragraph():
 def test_missing_counts_still_say_what_the_calls_rest_on():
     text = explicit_calls_paragraph("cram", False, False, None)
     assert "called from the alignment" in text
-    assert "no-call, not a reference call" in text
+    assert "is a no-call" in text
 
 
 # --------------------------------------------------------------------------
@@ -778,11 +778,10 @@ def test_the_report_says_what_the_call_did_not_use():
         ]
     )
     assert (
-        "Matched as reference although the data carries an allele PharmCAT does "
-        "not define there: DPYD rs148799944 (C/T)"
+        "Allele PharmCAT does not define, matched as reference: DPYD rs148799944 (C/T)"
     ) in text
     assert (
-        "Read as missing because PharmCAT could not use the record there as written: "
+        "Record PharmCAT could not read, taken as missing: "
         "RYR1 chr19:38440747 (REF C where PharmCAT expects CGAT)"
     ) in text
     assert "CFTR" not in text
@@ -855,9 +854,8 @@ def test_a_dropped_record_is_named_with_what_pharmcat_used_instead(tmp_path):
     ]
     text = unread_variants_alert(genes)
     assert (
-        "Taken as reference by this run's assume-reference setting, though the data "
-        "has a record there PharmCAT could not use as written: DPYD rs72549303 "
-        "(REF TGG where PharmCAT expects TG)"
+        "Record PharmCAT could not read, taken as reference by the assume-reference "
+        "setting: DPYD rs72549303 (REF TGG where PharmCAT expects TG)"
     ) in text
     assert "DPYD rs141044036 (REF TA where PharmCAT expects T)" in text
 

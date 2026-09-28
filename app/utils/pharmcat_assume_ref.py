@@ -96,23 +96,21 @@ def explicit_calls_paragraph(
             )
             parts.append(
                 f"Genotypes at PharmCAT's {total:,} positions were called from the "
-                f"alignment: {ref:,} reference and {var:,} variant. A reference call "
-                f"needs at least {reads} good reads for the reference and next to none "
-                f"for anything else. {no_reads:,} positions had no reads and {unsure:,} "
-                "had too few, or reads for another allele without a confident call; "
-                "those are no-calls, not reference calls, and a gene with none of its "
-                "positions called is reported as not called."
+                f"alignment: {ref:,} reference, {var:,} variant, {no_reads:,} with no "
+                f"reads and {unsure:,} uncertain. A reference call needs at least "
+                f"{reads} good reads for the reference and next to none for anything "
+                "else. Anything less is a no-call, and a gene with no position called is "
+                "reported as not called."
             )
         else:
             parts.append(
-                "Genotypes at PharmCAT's positions were called from the alignment; a "
-                "position without enough reads is a no-call, not a reference call."
+                "Genotypes at PharmCAT's positions were called from the alignment. A "
+                "position without enough reads is a no-call."
             )
     if requested_absent or requested_unspecified:
         parts.append(
-            "PharmCAT's assume-reference flags were set for this run and not applied: "
-            "on this input they could only turn positions the data did not cover into "
-            "reference calls."
+            "The assume-reference flags set for this run were not applied; on this "
+            "input they would only turn uncovered positions into reference calls."
         )
     if not parts:
         return None

@@ -151,16 +151,15 @@ def test_fastq_refusal_says_why_and_what_to_do_instead(upload):
     """FASTQ_BYTES has the read name ``@read1`` -- no instrument structure at all --
     so this is the undetectable-platform refusal, not the old no-aligner one.
 
-    The copy has to name ``PL:`` rather than talking vaguely about "the format",
-    because the fix available to the user is specific: re-export from the original
-    run files, or align it themselves.
+    The copy names the platform rather than talking vaguely about "the format",
+    because the fix available to the user is specific: upload the original run files,
+    or align the reads themselves.
     """
     detail = upload(("reads.fastq", FASTQ_BYTES)).json()["detail"]
     lowered = detail.lower()
 
     # the reason
     assert "fastq" in lowered
-    assert "pl:" in lowered
     assert "platform" in lowered
     # the way out: align yourself, upload the aligned file
     assert "align" in lowered

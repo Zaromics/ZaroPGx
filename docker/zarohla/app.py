@@ -288,9 +288,8 @@ running_processes: Dict[str, Dict[str, Any]] = {}
 
 
 NO_HLA_READS_MESSAGE = (
-    "No HLA reads in the input, so there is nothing to type. This is "
-    "normal for a targeted PGx panel that does not capture the HLA "
-    "region; the rest of the analysis is unaffected."
+    "No HLA reads in the input, so nothing to type. Normal for a targeted "
+    "panel without the HLA region."
 )
 
 

@@ -61,15 +61,6 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-# Why an uncovered PharmCAT position arrives as a present ./. row rather than as an
-# absent one. Said once, used by both arms below, because the two arms are the same
-# fact told to a reader who did and did not turn the flag on.
-_WHY_UNSPECIFIED = (
-    "the reference pass emits a row at every position in PharmCAT's list, so a "
-    "position your file did not cover arrives as a present <code>./.</code> row "
-    "rather than as a missing one"
-)
-
 
 def _as_count(value: Any) -> Optional[int]:
     """An int count, or None for anything that is not one.
@@ -118,10 +109,7 @@ def gvcf_provenance_paragraph(
         # The conversion ran but did not report usable counts. Still say what it was
         # -- what the reference calls rest on is the part the reader cannot afford to
         # miss, and it does not depend on the numbers.
-        coverage = (
-            "Reference genotypes at the pharmacogene positions come from those "
-            "blocks."
-        )
+        coverage = ""
     else:
         absent = _as_count(output_data.get("n_positions_absent"))
         if absent is None:
@@ -137,16 +125,13 @@ def gvcf_provenance_paragraph(
         ).format(absent=absent)
         uncertain = _as_count(output_data.get("n_positions_uncertain")) or 0
         unsure = (
-            f" {uncertain:,} more were covered but not called with confidence -- "
-            "too few reads, low confidence, or reads for another allele without a "
-            "confident call -- and are no-calls too."
+            f" {uncertain:,} more were covered but not called with confidence."
             if uncertain
             else ""
         )
         coverage = (
-            f"Reference genotypes at the pharmacogene positions come from those "
-            f"blocks: {called:,} of PharmCAT's {total:,} positions carried a call, "
-            f"{fate}.{unsure}"
+            f"{called:,} of PharmCAT's {total:,} positions carried a call, {fate}."
+            f"{unsure} "
         )
 
     if unspecified_to_ref:
@@ -158,45 +143,25 @@ def gvcf_provenance_paragraph(
             else "<code>--unspecified-to-ref</code>"
         )
         assume_ref = (
-            f"Those uncovered positions did NOT stay no-calls: this run used PharmCAT's "
-            f"{used}, and on this lane that is the flag that matters — "
-            f"{_WHY_UNSPECIFIED}, which is exactly what "
-            f"<code>--unspecified-to-ref</code> rewrites to homozygous reference. The "
-            f"genotypes analysed at the uncovered positions are therefore assumed, not "
-            f"called; only the covered ones came out of your file's reference-confidence "
-            f"blocks. "
+            f"The uncovered positions did NOT stay no-calls: this run used {used}, "
+            "which made them reference. They are assumed, not called; only the "
+            "covered ones came from the file. "
         )
     elif absent_to_ref:
         assume_ref = (
-            "This run used PharmCAT's <code>--absent-to-ref</code>, which fabricates a "
-            "homozygous-reference call at any pharmacogene position missing from the "
-            "analysed VCF. It has little to act on here, and that is worth knowing "
-            f"rather than reassuring: {_WHY_UNSPECIFIED}. The flag that would have "
-            "turned those rows into reference calls is "
-            "<code>--unspecified-to-ref</code>, which was not used on this run, so the "
-            "uncovered positions above stayed no-calls. "
+            "This run used <code>--absent-to-ref</code>, which has nothing to act on "
+            "here: an uncovered position arrives as <code>./.</code>, not missing. The "
+            "uncovered positions stayed no-calls. "
         )
     else:
-        assume_ref = (
-            "They are called data, not assumed — neither of PharmCAT's "
-            "assume-reference flags was used on this run, and this lane does not need "
-            f"them. Had one been used it would have been "
-            f"<code>--unspecified-to-ref</code>, not <code>--absent-to-ref</code>: "
-            f"{_WHY_UNSPECIFIED}. "
-        )
+        assume_ref = "Reference genotypes are called data, not assumed. "
 
     return (
-        "<p><strong>gVCF genotyping:</strong> This run was uploaded as a gVCF and "
-        "genotyped with GATK <code>GenotypeGVCFs</code> before analysis, using "
-        "<code>--include-non-variant-sites</code> over PharmCAT's own position list. "
-        f"{coverage} {assume_ref}Two caveats: "
-        "<code>GenotypeGVCFs</code> re-derives each genotype from the recorded "
-        "likelihoods rather than copying the original caller's, so the genotypes "
-        "analysed here are not guaranteed identical to that caller's output (at "
-        "PharmCAT's positions the calling-confidence threshold was set to zero and "
-        "ZaroPGx applied its own, so a site the caller marked variant with low "
-        "confidence is a no-call there); and a variant whose indel "
-        "representation PharmCAT cannot match stays a no-call, the same as it would "
-        "from a plain VCF. Reference calls at indel positions are written with "
-        "PharmCAT's own alleles, so PharmCAT reads them.</p>"
+        "<p><strong>gVCF genotyping:</strong> This gVCF was genotyped with GATK "
+        "<code>GenotypeGVCFs</code> over PharmCAT's positions "
+        "(<code>--include-non-variant-sites</code>) before analysis. "
+        f"{coverage}{assume_ref}Genotypes are re-derived from the recorded likelihoods "
+        "and may differ from the original caller's; low-confidence sites are "
+        "no-calls. An indel PharmCAT cannot match stays a no-call, as with a plain "
+        "VCF.</p>"
     )

@@ -650,40 +650,24 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
     if size > FASTQ_MAX_UPLOAD_BYTES:
         workflow["unsupported"] = True
         workflow["unsupported_reason"] = (
-            f"This FASTQ is {size / 1024**3:.1f} GB, above the {cap_gb} GB limit for "
-            "the alignment lane. ZaroPGx aligns targeted-panel and exome-sized read "
-            "sets: alignment writes the reads out three times (unaligned, aligned and "
-            "duplicate-marked BAM) on one machine, so a whole-genome read set would "
-            "need several times its own size in scratch disk and hold the stack for "
-            "many hours. Align whole-genome reads yourself (nf-core/sarek, or bwa-mem "
-            "against GRCh38) and upload the BAM or CRAM."
+            f"This FASTQ is {size / 1024**3:.1f} GB, above the {cap_gb} GB limit. "
+            "Only targeted-panel and exome-sized read sets are aligned here. Align "
+            "whole-genome reads yourself (nf-core/sarek, or bwa-mem against GRCh38) "
+            "and upload the BAM or CRAM."
         )
         workflow["recommendations"].append(
-            "<p>• Run nf-core/sarek, or bwa-mem against GRCh38, and upload the BAM or CRAM.</p>"
-        )
-        workflow["recommendations"].append(
-            "<p>ZaroPGx accepts BAM, CRAM and SAM directly; a GRCh38/hg38 VCF is the fastest input of all.</p>"
+            "<p>BAM, CRAM and SAM are accepted directly. A GRCh38 VCF is fastest.</p>"
         )
         return
 
     call = analysis.fastq_platform
     if call is None or not call.determined:
-        evidence = getattr(call, "evidence", "the reads could not be inspected")
-        reason = (
-            getattr(call, "reason", None) or "the platform could not be established"
-        )
+        reason = getattr(call, "reason", None) or "the reads could not be inspected"
         workflow["unsupported"] = True
         workflow["unsupported_reason"] = (
-            "ZaroPGx could not establish which sequencing platform produced this "
-            f"FASTQ, so the read group's PL: field cannot be filled in honestly. "
-            f"Observed: {evidence}. That is, {reason}. GATK and PyPGx both read PL:, "
-            "and guessing it would write a claim about your data into every result "
-            "that follows. Upload reads that still carry their instrument's own read "
-            "names, or align them yourself and upload the BAM, CRAM or SAM."
-        )
-        workflow["recommendations"].append(
-            "<p>• A FASTQ re-exported from SRA loses the original read names; the "
-            "original run files keep them.</p>"
+            f"The sequencing platform of this FASTQ could not be determined: {reason}. "
+            "Upload the original run files, or align the reads yourself and upload the "
+            "BAM, CRAM or SAM."
         )
         return
 
@@ -694,15 +678,9 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
     if call.platform not in SHORT_READ_PLATFORMS:
         workflow["unsupported"] = True
         workflow["unsupported_reason"] = (
-            f"This FASTQ was produced by a long-read platform ({call.platform}: "
-            f"{call.evidence}). ZaroPGx aligns short reads only -- its aligner is "
-            "bwa-mem and its HLA typing is OptiType, both built for short reads -- so "
-            "it would analyse these reads with tools that cannot read them properly "
-            "rather than refuse. Align long reads with minimap2 against GRCh38 and "
-            "upload the resulting BAM or CRAM."
-        )
-        workflow["recommendations"].append(
-            "<p>• Long reads: align with minimap2 against GRCh38, then upload the BAM or CRAM.</p>"
+            f"This FASTQ is from a long-read platform ({call.platform}). Only short "
+            "reads are aligned here. Align long reads with minimap2 against GRCh38 "
+            "and upload the BAM or CRAM."
         )
         return
 
@@ -716,16 +694,12 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
     workflow["recommendations"].append(
         f"<p>Detected platform: {call.platform} ({call.evidence}).</p>"
     )
-    workflow["recommendations"].append(
-        "<p>Step 1: Align reads to GRCh38 with BWA against a PyPGx-compliant "
-        "reference (main contigs plus chr22_KI270879v1_alt, so GSTT1 can be called).</p>"
-    )
+    workflow["recommendations"].append("<p>Step 1: Align reads to GRCh38 with BWA.</p>")
     workflow["recommendations"].append(
         "<p>Step 2: HLA typing with OptiType, then PyPGx star-allele calling, then PharmCAT.</p>"
     )
     workflow["warnings"].append(
-        "<p>⚠️ Alignment is the slowest step in the stack; expect this to take "
-        "substantially longer than uploading an aligned file.</p>"
+        "<p>⚠️ Alignment is slow. An aligned BAM or CRAM is much faster.</p>"
     )
 
 
@@ -2019,50 +1993,28 @@ class FileProcessor:
                     "<p>gVCF files are genotyped into a plain VCF before analysis:</p>"
                 )
                 workflow["recommendations"].append(
-                    "<p>Step 0: GATK GenotypeGVCFs, run inside ZaroPGx, twice: once "
-                    "over PharmCAT's own position list with "
-                    "--include-non-variant-sites, and once over everything else. The "
-                    "first pass is why uploading the gVCF is better than converting it "
-                    "yourself — the reference genotypes at the pharmacogene positions "
-                    "come from your file's own reference-confidence blocks, so they "
-                    "are called data rather than assumed.</p>"
+                    "<p>Step 0: GATK GenotypeGVCFs. Reference genotypes at PharmCAT's "
+                    "positions come from the file's reference blocks, not assumed.</p>"
                 )
                 # main.nf switches both assume-reference flags off for a gVCF, whatever
                 # the checkboxes say (EXPLICIT_CALL_INPUT_TYPES in
                 # app/utils/pharmcat_assume_ref.py): the reference pass emits a row at
                 # every PharmCAT position, so a missing or ./. one means "not covered".
                 workflow["recommendations"].append(
-                    "<p>PharmCAT's assume-reference flags (<code>--absent-to-ref</code>, "
-                    "<code>--unspecified-to-ref</code>) are not applied on this lane, "
-                    "whatever the checkboxes under PharmCAT say: a position your file "
-                    "did not cover arrives as <code>./.</code>, and assuming reference "
-                    "there would make a call your file does not support.</p>"
+                    "<p>PharmCAT's assume-reference flags are not applied to a gVCF. "
+                    "Positions the file does not cover are no-calls.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ GenotypeGVCFs re-genotypes each site from the recorded "
-                    "likelihoods rather than copying the original caller's genotype. At "
-                    "PharmCAT's positions ZaroPGx runs it with the calling-confidence "
-                    "threshold set to zero and applies its own, so a site your caller "
-                    "marked variant with low confidence comes out as a no-call, and the "
-                    "emitted genotypes are still not guaranteed identical to your "
-                    "caller's.</p>"
+                    "<p>⚠️ Genotypes are re-derived by GenotypeGVCFs and may differ from "
+                    "your caller's. Low-confidence sites are no-calls.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ Positions your gVCF does not cover are no-calls: a "
-                    "reference block that is absent is not a reference call. The run "
-                    "reports how many of PharmCAT's positions carried a call.</p>"
-                )
-                workflow["warnings"].append(
-                    "<p>⚠️ A variant whose indel representation PharmCAT cannot match "
-                    "stays a no-call, the same outcome a plain VCF gets. Reference calls "
-                    "at indel positions are written with PharmCAT's own alleles, so "
-                    "PharmCAT reads them.</p>"
+                    "<p>⚠️ An indel PharmCAT cannot match stays a no-call, as with a "
+                    "plain VCF.</p>"
                 )
                 workflow["recommendations"].append(
-                    "<p>Everything below therefore describes a VCF analysis, and every "
-                    "VCF caveat applies: no HLA typing, and degraded accuracy for "
-                    "CYP2D6 and for genes whose phenotypes depend on structural or "
-                    "copy-number variants.</p>"
+                    "<p>From here it is a VCF analysis: no HLA typing, and degraded "
+                    "accuracy for CYP2D6 and for structural and copy-number variants.</p>"
                 )
                 self._plan_variant_call_workflow(workflow, analysis)
 
@@ -2303,9 +2255,8 @@ class FileProcessor:
 
         if len(mates) != 1:
             return refuse(
-                f"This upload has {len(mates) + 1} data files. A FASTQ upload is either "
-                "one single-end file or the two mates of one paired-end run (R1 and "
-                "R2). Upload each other file as its own analysis."
+                f"This upload has {len(mates) + 1} data files. Upload one FASTQ, or "
+                "the R1 and R2 of one run; upload other files as separate analyses."
             )
 
         mate = mates[0]
@@ -2321,35 +2272,32 @@ class FileProcessor:
         if self._detect_file_type(mate_path) != FileType.FASTQ:
             return refuse(
                 f"The second file ({html.escape(str(mate.filename or ''))}) is not a "
-                "FASTQ, so it cannot be the other mate of this read set. Upload each "
-                "data file as its own analysis."
+                "FASTQ. Upload it as a separate analysis."
             )
 
         combined = os.path.getsize(r1_path) + os.path.getsize(mate_path)
         if combined > FASTQ_MAX_UPLOAD_BYTES:
             return refuse(
                 f"These two FASTQs total {combined / 1024 ** 3:.1f} GB, above the "
-                f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for the alignment lane "
-                "(both mates count together). Align them yourself (nf-core/sarek, or "
-                "bwa-mem against GRCh38) and upload the BAM or CRAM."
+                f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit. Align them yourself "
+                "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM or CRAM."
             )
 
         r1_call = detect_fastq_platform(r1_path)
         r2_call = detect_fastq_platform(mate_path)
         if r1_call.platform != r2_call.platform:
             return refuse(
-                "The two FASTQs do not come from the same sequencing run: the first "
-                f"reads as {r1_call.platform or 'undetermined'} and the second as "
-                f"{r2_call.platform or 'undetermined'}. Upload the matching R1 and R2, "
-                "or each file as its own single-end analysis."
+                "The two FASTQs do not come from the same sequencing run "
+                f"({r1_call.platform or 'undetermined'}, "
+                f"{r2_call.platform or 'undetermined'}). Upload the matching R1 and R2, "
+                "or each file as its own analysis."
             )
 
         paired, evidence = mate_names_agree(r1_path, mate_path)
         if not paired:
             return refuse(
-                "These two FASTQs are not mates of one paired-end run: "
-                f"{evidence}. Upload the matching R1 and R2, or each file as its own "
-                "single-end analysis."
+                f"These two FASTQs are not mates: {evidence}. Upload the matching R1 "
+                "and R2, or each file as its own analysis."
             )
 
         workflow["input2"] = str(mate_path)
@@ -2490,9 +2438,8 @@ class FileProcessor:
                 ):
                     workflow["warnings"].append(
                         f"<p>⚠️ {html.escape(str(primary_file.filename))} looks like one "
-                        "mate of a paired-end run. Aligned alone, heterozygous variants "
-                        "in genes with close paralogs (CYP2B6, CYP2D6) can be missed. "
-                        "Upload R1 and R2 together.</p>"
+                        "mate of a paired-end run. Alone, it can miss heterozygous "
+                        "variants in CYP2B6 and CYP2D6. Upload R1 and R2 together.</p>"
                     )
 
                 if ignored_files:

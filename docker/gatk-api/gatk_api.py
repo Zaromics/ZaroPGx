@@ -3064,11 +3064,8 @@ async def _stream_capped_fastq(file, dest, budget):
                     status_code=413,
                     detail=(
                         f"FASTQ upload exceeds the "
-                        f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit for this lane "
-                        "(both mates of a pair count together). ZaroPGx aligns "
-                        "targeted-panel and exome-sized read sets on one machine; a "
-                        "whole-genome read set needs several times its own size in "
-                        "scratch disk and many hours. Align whole-genome reads yourself "
+                        f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit (both mates "
+                        "count together). Align whole-genome reads yourself "
                         "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM "
                         "or CRAM."
                     ),
@@ -3251,12 +3248,8 @@ async def align_fastq(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "Could not establish which sequencing platform produced this "
-                    "FASTQ, so the read group's PL: field cannot be filled in "
-                    f"honestly. Observed: {call.evidence}. That is, {call.reason}. "
-                    "GATK and PyPGx both read PL:, and guessing it would write a claim "
-                    "about your data into every result that follows. Upload reads that "
-                    "still carry their instrument's own read names, or align them "
+                    "The sequencing platform of this FASTQ could not be determined: "
+                    f"{call.reason}. Upload the original run files, or align the reads "
                     "yourself and upload the BAM, CRAM or SAM."
                 ),
             )
@@ -3269,10 +3262,9 @@ async def align_fastq(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"This FASTQ was produced by a long-read platform ({call.platform}: "
-                    f"{call.evidence}). This route aligns short reads only, with "
-                    "bwa-mem. Align long reads with minimap2 against GRCh38 and upload "
-                    "the resulting BAM or CRAM."
+                    f"This FASTQ is from a long-read platform ({call.platform}). Only "
+                    "short reads are aligned here. Align long reads with minimap2 "
+                    "against GRCh38 and upload the BAM or CRAM."
                 ),
             )
         if mate_path:
@@ -3284,12 +3276,10 @@ async def align_fastq(
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        "The two FASTQs do not come from the same sequencing run: the "
-                        f"first reads as {call.platform or 'undetermined'} "
-                        f"({call.evidence}) and the second as "
-                        f"{mate_call.platform or 'undetermined'} ({mate_call.evidence}). "
-                        "A mate pair is two halves of one run. Upload the matching R1 "
-                        "and R2, or each as its own single-end analysis."
+                        "The two FASTQs do not come from the same sequencing run "
+                        f"({call.platform or 'undetermined'}, "
+                        f"{mate_call.platform or 'undetermined'}). Upload the matching "
+                        "R1 and R2, or each file as its own analysis."
                     ),
                 )
         logger.info(
@@ -3400,10 +3390,8 @@ async def align_fastq(
                 status_code=422,
                 detail=(
                     f"Only {mapped} of {total} reads ({share}) aligned to GRCh38. "
-                    "Human short-read data aligns at well over 90%, so these are not "
-                    "usable human reads: another species, the wrong library, or mostly "
-                    "adapter. Reporting on them would read as 'nothing found', not as "
-                    "a failed run."
+                    "These are not usable human reads (another species, the wrong "
+                    "library, or mostly adapter)."
                 ),
             )
 

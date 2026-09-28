@@ -149,7 +149,7 @@ def test_sra_normalised_names_are_not_guessed(tmp_path):
 
     assert call.platform is None
     assert not call.determined
-    assert "do not identify a platform" in (call.reason or "")
+    assert "do not identify one" in (call.reason or "")
 
 
 def test_illumina_names_on_long_reads_are_refused_not_resolved(tmp_path):

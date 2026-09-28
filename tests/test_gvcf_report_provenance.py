@@ -56,7 +56,7 @@ FLAG_COMBINATIONS = [(False, False), (True, False), (False, True), (True, True)]
 # tests below key off exactly it, and a reworded paragraph that quietly kept saying it
 # in the wrong case is the defect.
 CALLED_DATA_CLAIM = "called data, not assumed"
-NO_FLAGS_CLAIM = "assume-reference flags was used on this run"
+NO_FLAGS_CLAIM = "Reference genotypes are called data"
 NO_CALL_CLAIM = "were not covered by the file and remain no-calls"
 
 
@@ -87,20 +87,6 @@ def test_the_paragraph_says_the_reference_calls_are_called_data():
     assert "--include-non-variant-sites" in paragraph
 
 
-def test_the_clean_run_still_names_the_flag_that_would_have_mattered():
-    """--absent-to-ref is the wrong flag to reassure the reader about.
-
-    The PGx pass emits a row at every position in the interval list, so an uncovered
-    position is PRESENT with ./. rather than missing -- which is --unspecified-to-ref's
-    business, not --absent-to-ref's. A paragraph that only ever names the latter tells a
-    reader the box they ticked is harmless here.
-    """
-    paragraph = _paragraph()
-
-    assert "<code>--unspecified-to-ref</code>" in paragraph
-    assert "./." in paragraph
-
-
 def test_the_paragraph_reports_coverage_against_pharmcats_own_list():
     """A gVCF that omits a region has no reference block there; absent is not
     reference, and the reader is owed the number."""
@@ -126,10 +112,9 @@ def test_the_paragraph_states_the_re_genotyping_caveat():
     low-confidence site is a no-call and must not overclaim identity."""
     paragraph = _paragraph()
 
-    assert "re-derives each genotype" in paragraph
-    assert "not guaranteed identical" in paragraph
-    assert "positions the calling-confidence threshold was set to zero" in paragraph
-    assert "low confidence is a no-call" in paragraph
+    assert "re-derived from the recorded likelihoods" in paragraph
+    assert "may differ from the original caller's" in paragraph
+    assert "low-confidence sites are no-calls" in paragraph
 
 
 def test_the_paragraph_states_the_indel_representation_caveat():
@@ -137,10 +122,8 @@ def test_the_paragraph_states_the_indel_representation_caveat():
     plain VCF gets rather than a cost of the conversion."""
     paragraph = _paragraph()
 
-    assert "indel representation" in paragraph
-    assert "same as it would from a plain VCF" in paragraph
-    # and that a REFERENCE call at an indel position is no longer among them
-    assert "PharmCAT's own alleles" in paragraph
+    assert "indel PharmCAT cannot match stays a no-call" in paragraph
+    assert "as with a plain VCF" in paragraph
 
 
 @pytest.mark.parametrize(

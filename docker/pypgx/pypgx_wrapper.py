@@ -873,8 +873,7 @@ def no_reads_note(gene: str) -> str:
     note = "No reads over this gene in the alignment"
     if gene in WHOLE_GENE_DELETION_GENES:
         note += (
-            f". For {gene} that means either it was not sequenced or both copies are "
-            "deleted, a common genotype; the alignment cannot tell which"
+            f": either not sequenced, or both copies deleted (common for {gene})"
         )
     return note
 

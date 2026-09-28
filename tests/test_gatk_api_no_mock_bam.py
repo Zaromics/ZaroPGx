@@ -333,8 +333,8 @@ def test_align_fastq_refuses_an_undetectable_platform(
     )
     assert resp.status_code == 422, resp.text
     detail = resp.json()["detail"]
-    assert "PL:" in detail
     assert "platform" in detail.lower()
+    assert "align the reads yourself" in detail
 
 
 def test_align_fastq_no_longer_claims_the_image_ships_no_aligner(gatk_api):

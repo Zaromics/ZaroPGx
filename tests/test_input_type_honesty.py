@@ -372,9 +372,8 @@ def test_the_gvcf_plan_says_the_reference_calls_are_called_data():
     recommendations = " ".join(workflow["recommendations"]).lower()
 
     assert "genotypegvcfs" in recommendations
-    assert "--include-non-variant-sites" in recommendations
-    assert "called data" in recommendations
-    assert "--absent-to-ref" in recommendations
+    assert "reference blocks, not assumed" in recommendations
+    assert "assume-reference flags are not applied" in recommendations
 
 
 def test_the_gvcf_plan_states_the_three_things_that_stay_no_calls():
@@ -382,13 +381,11 @@ def test_the_gvcf_plan_states_the_three_things_that_stay_no_calls():
     workflow = _gvcf_workflow(vcf_info=None)
     warnings = " ".join(workflow["warnings"]).lower()
 
-    # re-genotyping from likelihoods, and the threshold ZaroPGx sets
-    assert "re-genotypes" in warnings
-    assert "threshold" in warnings
-    # coverage: a position with no reference block is not a reference call
-    assert "no-calls" in warnings
-    # PharmCAT's own indel-representation discards
-    assert "indel representation" in warnings
+    # re-genotyping, and what happens to a low-confidence site
+    assert "re-derived" in warnings
+    assert "low-confidence sites are no-calls" in warnings
+    # PharmCAT's own indel discards
+    assert "indel pharmcat cannot match" in warnings
     # and the VCF caveats, unchanged, from the shared planner
     assert "hla typing can not be performed" in warnings
     assert "cyp2d6" in warnings

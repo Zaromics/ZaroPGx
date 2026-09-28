@@ -972,15 +972,14 @@ def partial_coverage_alert(
         return (
             "<p>⚠️ Genes called from part of their positions: "
             + "; ".join(parts)
-            + " could not be assessed, because the uploaded VCF has no record at the "
-            "positions that define them (a VCF that lists variants only says nothing "
-            "about the rest). Those calls rest on the positions the file lists.</p>"
+            + " could not be assessed; the VCF has no record at the positions that "
+            "define them.</p>"
         )
     return (
         "<p>⚠️ Partly covered genes: "
         + "; ".join(parts)
-        + " could not be assessed, because the data did not cover the positions "
-        "that define them. Those calls rest on the positions that were covered.</p>"
+        + " could not be assessed; the data did not cover the positions that define "
+        "them.</p>"
     )
 
 
@@ -1099,18 +1098,16 @@ def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
     parts = []
     if undocumented:
         parts.append(
-            "Matched as reference although the data carries an allele PharmCAT does "
-            f"not define there: {listed(undocumented)}"
+            f"Allele PharmCAT does not define, matched as reference: {listed(undocumented)}"
         )
     if discarded:
         parts.append(
-            "Read as missing because PharmCAT could not use the record there as "
-            f"written: {listed(discarded)}"
+            f"Record PharmCAT could not read, taken as missing: {listed(discarded)}"
         )
     if assumed:
         parts.append(
-            "Taken as reference by this run's assume-reference setting, though the "
-            f"data has a record there PharmCAT could not use as written: {listed(assumed)}"
+            "Record PharmCAT could not read, taken as reference by the "
+            f"assume-reference setting: {listed(assumed)}"
         )
     if not parts:
         return None

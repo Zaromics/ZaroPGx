@@ -729,9 +729,8 @@ async def _call_from_alignment(
             "chrm_vcf": None,
             "report_html": None,
             "report_unavailable_reason": (
-                "The alignment carries no mitochondrial reads, so there was nothing "
-                "to call. This is normal for a targeted panel that does not capture "
-                "the mitochondrial genome."
+                "No mitochondrial reads in the alignment, so nothing to call. "
+                "Normal for a targeted panel without the mitochondrial genome."
             ),
         }
 
