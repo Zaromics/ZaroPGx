@@ -188,6 +188,17 @@ mkdir -p reference
 echo "🔐 Setting permissions..."
 chmod -R 755 data/
 chmod -R 755 reference/
+# zarohla and mtdna run as their own user (uid 999), not the host user, and write their
+# scratch under data/temp (zarohla's /scratch; mtdna's /data/temp/mtdna) and a progress
+# log in data/. On a native Linux host the 755 above leaves them unable to write, and
+# every job fails at HLA typing or mtDNA with "Permission denied" (found upgrading a
+# server to v0.3.2; WSL's /mnt/c mounts hide it). data/temp becomes a shared scratch
+# like /tmp: world-writable and sticky. An operator-set ZAROPGX_SCRATCH is theirs to own.
+mkdir -p data/temp/mtdna
+chmod 1777 data/temp data/temp/mtdna
+for log in mtdna_progress.log hlatyping_progress.log; do
+    touch "data/$log" && chmod 666 "data/$log"
+done
 
 # Start containers
 echo "🐳 Starting ZaroPGx Docker Compose containers..."
