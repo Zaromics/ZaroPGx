@@ -2,12 +2,15 @@
 reference/
 reference/*
 
-# Python cache files
-__pycache__/
-*.py[cod]
-*$py.class
+# Python cache files (at any depth: a bare pattern only matches the context root)
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
 *.so
 .Python
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Distribution / packaging
 dist/
@@ -36,6 +39,33 @@ docker-compose*
 *.swp
 .env
 .env.*
+
+# Gitignored, local-only files. The image copies the whole context, so anything in a
+# working tree that is not listed here ships in the published image.
+CLAUDE.md
+.claude/
+.cursor/
+.cursorrules
+.cursorignore
+.condarc
+.superpowers/
+.worktrees/
+dev-notes/
+dev-docs/
+resources/
+docs/_build/
+docs/superpowers/
+compose.override.yml
+
+# Run output
+.nextflow/
+.nextflow.log*
+work/
+e2e-logs/
+e2e-logs*
+e2e-ci-logs*
+**/*.log
+test.db
 
 # Virtual environments
 venv/
