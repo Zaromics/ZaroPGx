@@ -17,7 +17,7 @@ The system is a docker compose stack centered on a core FastAPI app with support
 - ZaroHLA (`zarohla`): OptiType v1.5 HLA class I typing, gated on `OPTITYPE_ENABLED`.
 - mtDNA-Server 2 (`mtdna`): Mitochondrial variant/haplogroup calling and the MT-RNR1
   outside call, built FROM `quay.io/genepi/mtdna-server-2:v2.1.16` (mutserve, haplogrep3,
-  haplocheck). See `docker/mtdna-server-2/README.md` and `DOCKER_STACK_NOTES.md`.
+  haplocheck). See `docker/mtdna-server-2/README.md`.
 - HAPI FHIR (`fhir-server`): Bundled FHIR R4 server for EHR/PHR integration.
 - Nextflow runner (`nextflow`): Executes the `pipelines/pgx` pipeline; mounts the project workspace.
 - Kroki + Mermaid (`kroki`, `mermaid`): Renders diagrams (Mermaid, Graphviz, etc.).

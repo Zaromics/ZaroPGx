@@ -3,25 +3,71 @@
 Changes that need action on an existing install. Newest first. If a version is not listed,
 upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
 
-## Unreleased
+## v0.3.1 → v0.3.2
 
-- PharmCAT assume-reference (42b): per-run Form `pharmcat_absent_to_ref` /
-  `pharmcat_unspecified_to_ref` (UI seeded from env). Rebuild `pharmcat` and
-  `nextflow`. Methodology reports effective flags; VCF env-only Alerts copy removed.
-- Form job_id residue: container multipart Zaro Job PK is `job_id` (not `workflow_id`);
-  Nextflow curls `-F job_id=${JOB_ID}`. Rebuild `gatk-api`, `pharmcat`, `pypgx`, `zarohla`, `nextflow`.
-- Lexicon wiring (66/125/42a): PharmCAT image ships allele translator + map;
-  rebuild `pharmcat` so uploaded outside-call TSVs get ABCG2/IFNL3/VKORC1 synonym rewrite.
+### Stage PharmCAT's position list
 
-### 137c naming hard-cuts (developers / API clients)
+Aligned input (BAM, CRAM, SAM, FASTQ) and gVCFs are genotyped at every PharmCAT position,
+read from `reference/pharmcat/pharmcat_positions.vcf`. The genome downloader fetches it on a
+fresh install but skips a reference tree it has already filled, so an upgraded install may
+not have it. Those jobs then fail and name the missing file.
+
+```bash
+mkdir -p reference/pharmcat
+docker compose cp pharmcat:/pharmcat/pharmcat_positions.vcf reference/pharmcat/
+```
+
+Repeat this after every PharmCAT upgrade: the list is specific to the PharmCAT version.
+
+### FASTQ needs an alignment index
+
+FASTQ is aligned against a reference and index built once on the host:
+
+```bash
+scripts/build-align-index.sh
+```
+
+It reads `reference/hg38/Homo_sapiens_assembly38.fasta` (staged by the genome downloader),
+takes about an hour and several GB of RAM, and writes ~8 GB to `reference/pypgx/` (set
+`ZAROPGX_ALIGN_REFERENCE` to put it elsewhere). Until it exists, FASTQ jobs fail and say so.
+No other input needs it.
+
+### Scratch directories on native Linux
+
+ZaroHLA and mtDNA-Server 2 run as uid 999 and write under `data/temp`. `start-docker.sh`
+now makes `data/temp` and `data/temp/mtdna` writable for them. If you start the stack with
+`docker compose up` directly:
+
+```bash
+mkdir -p data/temp/mtdna && chmod 1777 data/temp data/temp/mtdna
+```
+
+Without it, HLA typing and mtDNA calling fail with "Permission denied". Docker Desktop on
+Windows is not affected.
+
+## v0.2.8 → v0.3.0
+
+### Rebuild or pull every service image
+
+- PharmCAT's assume-reference settings are per run: form fields `pharmcat_absent_to_ref`
+  and `pharmcat_unspecified_to_ref`, with the UI's defaults taken from `.env`. The report
+  states the settings each run used.
+- Services take the job as the multipart field `job_id` (was `workflow_id`), and the job
+  client is mounted at `/job-client`.
+- The PharmCAT image ships the allele translator and map, so uploaded outside-call TSVs get
+  their ABCG2, IFNL3 and VKORC1 synonyms rewritten.
+
+`docker compose pull` (or `docker compose build`), then `docker compose up -d`.
+
+### API renames (developers / API clients)
 
 - Upload/status JSON field `file_id` → `data_id` (same UUID as `genetic_data.data_id`).
 - Cancel payloads: `job_id` only (no `workflow_id` dual-accept).
 - Cleanup: `POST /api/cleanup/job/{job_id}` (old `/api/cleanup/workflow/...` removed).
 - WebSocket envelope type: `job_update` (was `workflow_update`).
 - Report artifacts: `/data/reports/{patient_id}/{job_id}/`; display `report_id` = `job_id`.
-- Container JobClient mount: `/job-client` (rebuild images).
-No DB migration. Local stacks: rebuild containers; old flat report dirs are not migrated.
+
+No database migration. Report directories in the old flat layout are not moved.
 
 ### PharmCAT references volume no longer masks `/pharmcat`
 
@@ -34,13 +80,6 @@ clean cache (`docker volume rm zaropgx_pharmcat-references` then `up`).
 `PHARMCAT_VERSION` is now passed as a runtime env var as well as a build arg, so
 `/data/versions/pharmcat.json` matches `.env`. Those version JSON files are runtime
 stamps and are gitignored.
-
-### Full-stack e2e harness (developers / CI)
-
-Local and CI now share `./scripts/e2e.sh` / `./scripts/e2e-up.sh` against isolated
-compose project `zaropgx_e2e` on host port `18765` (auth open). Fast pytest excludes
-`@pytest.mark.e2e`; the e2e job builds via Buildx with GHA cache. No action required
-for runtime installs — this is a test/CI change only.
 
 ### Auth gate defaults to open (no behaviour change)
 
@@ -81,8 +120,7 @@ profiles set those to `true` (matching the previous compose overrides).
 
 **What to do:** after `git pull`, re-copy or merge the new defaults if you still
 have `INCLUDE_PHARMCAT_JSON=false` from an older profile and want the JSON/TSV
-artifacts in reports. CORS for the live reference instance is
-`pgx.zaromics.com` (replacing the retired zimerguz hostname).
+artifacts in reports.
 
 ### Per-install secrets; missing `DB_PASSWORD` is a hard compose failure
 

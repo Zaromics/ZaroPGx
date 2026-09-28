@@ -186,7 +186,7 @@ cython_debug/
 /scripts/example-workflow-usage.sh
 /scripts/test_cancel_endpoints.py
 
-/data/sample_cpic.vcf.bgz
+/data/sample_cpic.vcf.bgz*
 
 /docker/pharmcat/header.txt
 
@@ -216,9 +216,12 @@ reference/*
 # Developer documentation
 /dev-docs/*
 
-# Cursor rules
+# Editor, IDE and per-user tool settings
+.vscode/
+.cursorignore
 .cursorrules
 .cursor/rules/*
+.condarc
 
 # Nextflow
 .nextflow/

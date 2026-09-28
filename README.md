@@ -383,9 +383,11 @@ ZaroPGx/
 ├── docker/                 # Service Dockerfiles and service wrappers
 │   ├── gatk-api/             # GATK service FastAPI
 │   ├── genome-downloader/    # Reference genome fetcher (typically needs to only run once)
+│   ├── mtdna-server-2/       # mtDNA-Server 2 service with FastAPI
 │   ├── nextflow/             # Nextflow executor wrapper
 │   ├── pharmcat/             # PharmCAT service with FastAPI
-│   └── pypgx/                # PyPGx service with FastAPI
+│   ├── pypgx/                # PyPGx service with FastAPI
+│   └── zarohla/              # ZaroHLA (OptiType) service with FastAPI
 ├── docs/                   # Sphinx docs with readthedocs theme (hosted internally, allowing for offline access)
 ├── pipelines/              # Nextflow config
 ├── reference/              # Reference genomes and annotation files

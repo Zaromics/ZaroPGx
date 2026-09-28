@@ -1,1 +1,0 @@
-About PostgreSQL 17 latest
