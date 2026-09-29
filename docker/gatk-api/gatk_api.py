@@ -524,6 +524,11 @@ def update_job_status(job_id, status, progress=None, message=None, output_file=N
 async def run_variant_calling(local_job_id, input_path, output_path, reference_path, regions=None, zaro_job_id=None, patient_id=None):
     """Run GATK HaplotypeCaller with dynamic memory allocation based on input file size."""
     try:
+        # HaplotypeCaller refuses a reference without its .dict. Synchronous on purpose:
+        # this coroutine always runs under asyncio.run on its own worker thread (see
+        # /variant-call), so blocking here never stalls the server's event loop.
+        ensure_sequence_dictionary(reference_path)
+
         # Initialize job client if Zaro Job PK is provided
         job_client = None
         if zaro_job_id:
@@ -1545,7 +1550,6 @@ async def variant_call(
                                  message=f"Starting variant calling for {file_ext} file")
                 
                 # Start variant calling in a background thread
-                import asyncio
                 def run_async_variant_calling():
                     # Wait for a variant-calling slot so concurrent jobs don't each
                     # launch a full-heap HaplotypeCaller at once (see the semaphore note).
@@ -1637,23 +1641,45 @@ async def job_status(job_id: str):
     logger.info(f"Job status request for job {job_id}: {job.get('status')}, progress: {job.get('progress')}%")
     return response
 
+_dictionary_lock = threading.Lock()
+
+
+def ensure_sequence_dictionary(fasta_path):
+    """Create `<fasta>.dict` beside `fasta_path` if it is missing. Best effort, never raises.
+
+    Called where a GATK/Picard tool is about to be handed the reference, not only at
+    startup. On a fresh install this container starts as soon as genome-downloader
+    answers /health -- long before the FASTAs exist -- so the startup pass alone found
+    nothing, created nothing, and every tool that needs the dictionary (LiftoverVcf,
+    HaplotypeCaller, GenotypeGVCFs) failed until someone restarted the container.
+    The lock keeps two concurrent jobs from both writing the same .dict. On failure
+    it logs and returns False; the tool's own "must have an associated Dictionary"
+    error is then the one the job reports.
+    """
+    dict_path = os.path.splitext(fasta_path)[0] + '.dict'
+    if os.path.exists(dict_path):
+        return True
+    with _dictionary_lock:
+        if os.path.exists(dict_path):
+            return True
+        logger.info(f"Creating sequence dictionary at {dict_path}")
+        try:
+            subprocess.run(
+                ["gatk", "CreateSequenceDictionary", "-R", fasta_path],
+                check=True, capture_output=True, text=True,
+            )
+            logger.info(f"Created sequence dictionary at {dict_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create sequence dictionary for {fasta_path}: {str(e)}")
+            return False
+
+
 def ensure_reference_dictionaries():
     """Check if GATK dictionaries exist for reference genomes and create them if needed"""
     for genome_name, fasta_path in REFERENCE_PATHS.items():
         if os.path.exists(fasta_path):
-            # Check if dictionary exists
-            dict_path = os.path.splitext(fasta_path)[0] + '.dict'
-            if not os.path.exists(dict_path):
-                logger.info(f"Creating sequence dictionary for {genome_name} at {dict_path}")
-                try:
-                    cmd = f"gatk CreateSequenceDictionary -R {fasta_path}"
-                    subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
-                    logger.info(f"Created sequence dictionary for {genome_name}")
-                except Exception as e:
-                    logger.error(f"Failed to create sequence dictionary for {genome_name}: {str(e)}")
-
-            else:
-                logger.info(f"Sequence dictionary for {genome_name} already exists at {dict_path}")
+            ensure_sequence_dictionary(fasta_path)
         else:
             logger.warning(f"Reference genome {genome_name} not found at {fasta_path}")
 
@@ -2894,6 +2920,10 @@ async def liftover_vcf(
                     "(genome-downloader fetches it on a fresh deploy)."
                 ),
             )
+
+        # Every prerequisite above is checked before any tool runs. LiftoverVcf refuses
+        # a reference without its .dict (see ensure_sequence_dictionary).
+        await asyncio.to_thread(ensure_sequence_dictionary, reference_path)
 
         # Sanitised for the same reason as every other route here: file.filename is
         # attacker-controlled and this name reaches subprocess argv and the shared
@@ -4961,6 +4991,10 @@ async def gvcf_to_vcf(
                     "under this name would still be refused downstream."
                 ),
             )
+
+        # Every prerequisite above is checked before any tool runs. GATK refuses a
+        # reference without its .dict (see ensure_sequence_dictionary).
+        await asyncio.to_thread(ensure_sequence_dictionary, reference_path)
 
         # Chunked for the same reason as the CRAM route: never buffer the upload.
         with open(input_path, "wb") as f:
