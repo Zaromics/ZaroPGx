@@ -123,8 +123,14 @@ def extract_tar_file(file_path, output_path, genome_name):
         download_status["genomes"][genome_name]["status"] = "extracting"
         save_status()
         
-        # Extract tar file to output directory
-        subprocess.run(["tar", "-xf", file_path, "-C", os.path.dirname(output_path)], check=True)
+        # Extract tar file to output directory. --no-same-owner: tar running as root
+        # otherwise chowns to the archive's uid (197609 in PharmCAT's tarball), which a
+        # rootless/userns-remapped daemon cannot map -- tar exits 2 with every file
+        # already written, and this step used to report that as a failed download.
+        subprocess.run(
+            ["tar", "--no-same-owner", "-xf", file_path, "-C", os.path.dirname(output_path)],
+            check=True,
+        )
         
         download_status["genomes"][genome_name]["status"] = "extracted"
         save_status()
@@ -185,7 +191,9 @@ def download_genomes():
         },
         {
             "name": "grch37",
-            "url": "ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/human_g1k_v37.fasta.gz",
+            # https, not ftp: requests has no FTP adapter, so the ftp:// URL failed on
+            # every install. EBI serves the same tree over HTTPS.
+            "url": "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/human_g1k_v37.fasta.gz",
             "gz_path": "/reference/grch37/human_g1k_v37.fasta.gz",
             "fasta_path": "/reference/grch37/human_g1k_v37.fasta"
         },
@@ -193,7 +201,11 @@ def download_genomes():
             "name": "pharmcat_grch38",
             "url": "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar",
             "gz_path": "/reference/pharmcat/GRCh38_reference_fasta.tar",
-            "fasta_path": "/reference/pharmcat/GRCh38_reference_fasta",
+            # The file the tarball actually contains. It ships its own .fai/.gzi, so
+            # the ".fai exists" skip check below works and no indexing step runs.
+            # (This used to name a path the tarball never creates, so indexing it
+            # failed on every host and .download_complete was never written.)
+            "fasta_path": "/reference/pharmcat/reference.fna.bgz",
             "is_tar": True
         },
         {
@@ -254,6 +266,10 @@ def download_genomes():
     success = True
     
     for genome in genomes:
+        # Status is reloaded from disk at startup, so a previous run's error would
+        # otherwise ride along on an item this run completes.
+        download_status["genomes"][genome["name"]].pop("error", None)
+
         # Skip if already completed
         if os.path.exists(genome["fasta_path"] + ".fai"):
             download_status["genomes"][genome["name"]]["status"] = "ready"
@@ -291,8 +307,19 @@ def download_genomes():
                     continue
         
         # Index
-        if genome.get("is_vcf") or genome.get("is_bed") or genome.get("is_chain"):
-            # VCF, BED and chain files don't need indexing
+        if genome.get("is_tar"):
+            # The PharmCAT tarball ships its own .fai/.gzi alongside the bgzipped FASTA.
+            download_status["genomes"][genome["name"]]["status"] = "ready"
+            download_status["genomes"][genome["name"]]["progress"] = 100
+            save_status()
+            continue
+        elif genome.get("is_vcf") or genome.get("is_bed") or genome.get("is_chain"):
+            # VCF, BED and chain files don't need indexing. They download straight to
+            # their final path, so the copy branch above (the only other place that
+            # marks them ready) never runs and they otherwise sit at "downloading".
+            download_status["genomes"][genome["name"]]["status"] = "ready"
+            download_status["genomes"][genome["name"]]["progress"] = 100
+            save_status()
             continue
         elif not index_genome(genome["fasta_path"], genome["name"]):
             success = False
