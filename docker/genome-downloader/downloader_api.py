@@ -85,7 +85,10 @@ def download_file(url, dest_path, genome_name):
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
-                    progress = (downloaded / file_size) * 100
+                    # Capped: file_size is the HEAD's Content-Length, which for a
+                    # gzip-encoded response (GitHub raw) is the compressed size, while
+                    # iter_content counts decoded bytes -- pharmcat_regions read 189%.
+                    progress = min((downloaded / file_size) * 100, 100) if file_size else 0
                     download_status["genomes"][genome_name]["progress"] = progress
                     calculate_overall_progress()
                     save_status()
