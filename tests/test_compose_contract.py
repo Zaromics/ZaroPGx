@@ -147,9 +147,10 @@ def test_bootstrap_profiles_pin_the_compose_image_tag():
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
         tag = values.get("ZAROPGX_TAG", "")
-        assert tag in ("", default), (
-            f"{name} pins ZAROPGX_TAG={tag!r}; compose.yml default is {default}"
-        )
+        assert tag in (
+            "",
+            default,
+        ), f"{name} pins ZAROPGX_TAG={tag!r}; compose.yml default is {default}"
 
 
 def test_tracked_env_templates_ship_no_working_credentials():

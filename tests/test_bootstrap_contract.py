@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE = "0.3.2"
 ZAROPGX_SERVICES = {
@@ -78,7 +77,9 @@ def test_update_force_fetches_the_selected_release_tag(tmp_path: Path):
     origin = tmp_path / "origin.git"
     publisher = tmp_path / "publisher"
     clone = tmp_path / "clone"
-    subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--bare", str(origin)], check=True, capture_output=True
+    )
     subprocess.run(["git", "init", str(publisher)], check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(publisher), "config", "user.email", "bootstrap@test.invalid"],
@@ -91,19 +92,40 @@ def test_update_force_fetches_the_selected_release_tag(tmp_path: Path):
     tracked = publisher / "release.txt"
     tracked.write_text("old\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(publisher), "add", "release.txt"], check=True)
-    subprocess.run(["git", "-C", str(publisher), "commit", "-m", "old"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(publisher), "commit", "-m", "old"],
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(["git", "-C", str(publisher), "tag", "v0.3.2"], check=True)
-    subprocess.run(["git", "-C", str(publisher), "remote", "add", "origin", str(origin)], check=True)
-    subprocess.run(["git", "-C", str(publisher), "push", "origin", "HEAD", "--tags"], check=True, capture_output=True)
-    subprocess.run(["git", "clone", str(origin), str(clone)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(publisher), "remote", "add", "origin", str(origin)],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(publisher), "push", "origin", "HEAD", "--tags"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "clone", str(origin), str(clone)], check=True, capture_output=True
+    )
     old_tag = subprocess.check_output(
         ["git", "-C", str(clone), "rev-parse", "v0.3.2"],
         text=True,
     ).strip()
 
     tracked.write_text("new\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(publisher), "commit", "-am", "new"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(publisher), "tag", "-f", "v0.3.2"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(publisher), "commit", "-am", "new"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(publisher), "tag", "-f", "v0.3.2"],
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(
         ["git", "-C", str(publisher), "push", "--force", "origin", "refs/tags/v0.3.2"],
         check=True,
@@ -176,9 +198,9 @@ def test_start_scripts_migrate_before_stopping_the_stack():
 
     powershell = _text("start-docker.ps1")
     assert f'$ReleaseVersion = "{RELEASE}"' in powershell
-    assert powershell.index("Update-KnownReleaseTag -ReleaseVersion $ReleaseVersion") < (
-        powershell.index('Invoke-Docker "docker compose down --remove-orphans"')
-    )
+    assert powershell.index(
+        "Update-KnownReleaseTag -ReleaseVersion $ReleaseVersion"
+    ) < (powershell.index('Invoke-Docker "docker compose down --remove-orphans"'))
 
 
 def test_bootstraps_require_compose_v2_24_or_newer():
@@ -240,12 +262,11 @@ def test_startup_rejects_a_failed_wsl_update():
 
 def test_powershell_checks_native_wsl_install_and_update_exit_codes():
     powershell = _text("bootstrap.ps1")
-    assert powershell.count(
-        'if ($LASTEXITCODE -ne 0) { throw "WSL installation failed'
-    ) == 2
-    assert powershell.count(
-        'if ($LASTEXITCODE -ne 0) { throw "WSL update failed'
-    ) == 2
+    assert (
+        powershell.count('if ($LASTEXITCODE -ne 0) { throw "WSL installation failed')
+        == 2
+    )
+    assert powershell.count('if ($LASTEXITCODE -ne 0) { throw "WSL update failed') == 2
     assert powershell.count("if (-not $script:NeedsReboot) {") >= 2
 
 
@@ -269,13 +290,17 @@ def test_powershell_update_refusals_exit_before_startup():
     )
     assert dirty_branch
     assert "exit 1" in dirty_branch.group("body")
-    assert 'Existing directory is not a Git repository; refusing to update.' in powershell
+    assert (
+        "Existing directory is not a Git repository; refusing to update." in powershell
+    )
 
 
 def test_piped_powershell_elevation_downloads_a_complete_script():
     powershell = _text("bootstrap.ps1")
     install_function = powershell[powershell.index("function Install-Dependencies") :]
-    install_function = install_function[: install_function.index("\n# Check dependencies")]
+    install_function = install_function[
+        : install_function.index("\n# Check dependencies")
+    ]
     assert "$MyInvocation.MyCommand.ScriptBlock.ToString()" not in powershell
     assert "Downloading complete bootstrap script for elevation" in install_function
     assert "Invoke-WebRequest -Uri $downloadUrl" in install_function
@@ -285,8 +310,8 @@ def test_elevated_powershell_child_invokes_dependency_installer():
     powershell = _text("bootstrap.ps1")
     top_level = powershell[powershell.index("# Check dependencies") :]
     child_call = re.search(
-        r'if \(\$SkipDependencyCheck -and \$MissingDeps\.Count -gt 0\) \{'
-        r'(?P<body>.*?)\n\}',
+        r"if \(\$SkipDependencyCheck -and \$MissingDeps\.Count -gt 0\) \{"
+        r"(?P<body>.*?)\n\}",
         top_level,
         re.DOTALL,
     )
@@ -298,7 +323,9 @@ def test_elevated_powershell_child_invokes_dependency_installer():
 def test_powershell_does_not_continue_with_missing_dependencies():
     powershell = _text("bootstrap.ps1")
     assert 'Read-ConsoleLine "Continue anyway?' not in powershell
-    assert "Re-run the same bootstrap command after completing those steps." in powershell
+    assert (
+        "Re-run the same bootstrap command after completing those steps." in powershell
+    )
 
 
 def test_architecture_checks_query_the_docker_server():
