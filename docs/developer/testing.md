@@ -14,12 +14,25 @@ There are exactly two, split by the `e2e` pytest marker:
 
 | Suite | Selector | Needs Docker | What it exercises |
 |---|---|---|---|
-| **Fast** | `-m "not e2e"` | no | Pure functions, parsers, FastAPI routes via `TestClient`, contract assertions over `compose.yml` |
+| **Fast** | `-m "not e2e"` | yes, or a PostgreSQL URL | Pure functions, parsers, FastAPI routes via `TestClient`, database code on PostgreSQL, contract assertions over `compose.yml` |
 | **Full-stack e2e** | `-m e2e` | yes | A real Compose stack: upload a VCF, wait for the workflow, assert a report artifact exists |
 
-The fast suite is the one you run while working. It builds its database as an **in-memory
-SQLite** engine (`tests/conftest.py`) rather than talking to Postgres, so it needs no services
-at all.
+The fast suite is the one you run while working. Its database is a **real PostgreSQL**:
+`tests/postgres.py` starts the image `compose.yml`'s `db` service runs, initialised from
+`db/init` exactly as production is, in a throwaway container with its data on tmpfs (about two
+seconds once the image is pulled). It connects over a Unix socket in a bind-mounted directory rather than a published
+port, because rootless Docker does not always forward new ports. To use a database you already
+run instead, set `ZAROPGX_TEST_POSTGRES_URL`; `db/init` is applied to it if `public.jobs` is
+missing, and its role must be `zaropgx_user`, which `db/init` grants to.
+
+Without Docker or that URL, tests that ask for the database through a fixture skip, and those
+that reach it only through the app's own sessions fail with "no PostgreSQL to test against"
+(a skip cannot get out of a request). Everything else still runs. Under `CI` the whole run
+fails instead, so the job cannot pass without the database tests.
+
+It used to be an in-memory SQLite. That needed shims for schemas, JSONB and UUIDs, returned
+naive timestamps (commit `8bb100e` fixed a crash only SQLite could cause), and never enforced a
+`VARCHAR` length.
 
 ## Running the tests
 
@@ -104,10 +117,14 @@ enforced** anywhere — not in `addopts`, not in CI.
 - It sets `ZAROPGX_DEV_MODE`, `FHIR_EXPORT_ENABLED`, `SECRET_KEY`, `DATABASE_URL` and
   `DB_PASSWORD` **before** importing anything from `app.*`, because `app.main` and `app.api.db`
   read configuration at import time.
-- `engine` (session-scoped) — an in-memory SQLite engine on a `StaticPool`. SQLite has no
-  `CREATE SCHEMA`, so each Postgres schema the ORM models are qualified with is `ATTACH`ed as
-  its own in-memory database; `Base.metadata.create_all()` then works unmodified.
-- `database` (autouse) — creates every table before each test and drops them after.
+- `engine` (session-scoped) — the PostgreSQL above. `app.api.db.SessionLocal` and
+  `app.api.db.engine` are rebound to it, so app code that opens its own session reaches the
+  test database too, not the placeholder `DATABASE_URL`.
+- `database` (autouse) — after each test that wrote anything, truncates every table except the
+  ones `db/init` seeds (the `cpic` reference rows and the gene groups), in one statement and
+  without `CASCADE`. A test that writes to seeded tables fails, since they are not reset. If a
+  session the test leaked still holds a lock, its connection is terminated and the truncate
+  retried. `tests/test_postgres_test_database.py` checks all of this.
 - `db_session`, `job_service`, `connection_manager` — a session and the two services most tests
   need.
 - `override_db_dependency` (autouse) — points FastAPI's `get_db` at the test session and unwinds
@@ -193,7 +210,8 @@ names. A full `flake8` still reports many style findings (mostly `E501`); it run
 `|| true` so a non-zero exit does not paint a red annotation on a green job.
 
 **`test`** (20 min) — `uv python install 3.12`, `uv sync --frozen --extra dev`, then
-`uv run pytest -q -m "not e2e"`. No service containers: the fast suite is SQLite-backed.
+`uv run pytest -q -m "not e2e"`. No service containers: the suite starts its own PostgreSQL
+with the runner's Docker (`tests/postgres.py`).
 
 **`e2e`** (90 min) — sets up Buildx (with `actions: write` so it can persist a `type=gha`
 cache), syncs dependencies, runs `./scripts/e2e-up.sh`, then
@@ -218,8 +236,9 @@ Being explicit so nobody assumes otherwise:
 - **Almost no frontend tests.** The one exception is the render harness described above, which
   covers the post-upload Workflow Details panel. There is no JS unit-test runner, no headless
   browser, and no coverage of `app/static/js/**` or of any other template.
-- **No database-integration tests against real Postgres.** The fast suite is SQLite; the e2e
-  stack exercises Postgres only incidentally.
+- **The fast suite's database is built from `db/init` only.** It does not run the migrations
+  under `db/init/migrations/` (the 00 schema already embeds them); `tests/test_db_migrations.py`
+  covers the applier's logic, not a live upgrade.
 
 ## Adding a test
 
