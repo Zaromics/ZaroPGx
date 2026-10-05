@@ -5,7 +5,7 @@ every other ZaroPGx sidecar reports as a permanent "no call." A FastAPI wrapper
 around the tools [mtDNA-Server 2](https://github.com/genepi/mtdna-server-2)
 ships in its own container image: [mutserve](https://github.com/seppinho/mutserve),
 [haplogrep3](https://github.com/genepi/haplogrep3) (with the
-`phylotree-fu-rcrs@1.2` phylotree pre-installed) and
+`phylotree-fu-rcrs@1.3` phylotree installed) and
 [haplocheck](https://github.com/genepi/haplocheck).
 
 ## Why FROM the upstream image, not upstream's own pipeline
@@ -26,9 +26,9 @@ pypgx, zarohla).
 |---|---|
 | mtDNA-Server 2 (base image / pipeline release) | v2.1.16 |
 | mutserve | 2.0.3 |
-| haplogrep3 | 3.2.2 |
+| haplogrep3 | 3.3.2 (installed over the base image's 3.2.2) |
 | haplocheck | 1.3.3 |
-| phylotree | fu-rcrs@1.2 |
+| phylotree | fu-rcrs@1.3 |
 
 The vendored `files/rcrs_mutserve.fasta` and `report.Rmd` are fetched from
 the `v2.1.16` tag of the upstream repository

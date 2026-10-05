@@ -133,7 +133,7 @@ MUTSERVE_JAR = "/opt/mutserve/mutserve.jar"
 HAPLOGREP_JAR = "/opt/haplogrep/haplogrep3.jar"
 HAPLOCHECK_JAR = "/opt/haplocheck/haplocheck.jar"
 RCRS_FASTA = "/opt/mtdna-files/rcrs_mutserve.fasta"
-PHYLOTREE = "phylotree-fu-rcrs@1.2"
+PHYLOTREE = "phylotree-fu-rcrs@1.3"
 CHAIN_PATH = "/reference/chain/hg19ToHg38.over.chain.gz"
 
 # The pipeline release this image and the vendored files/ + report.Rmd all come

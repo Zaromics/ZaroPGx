@@ -1,6 +1,6 @@
 # The upstream pipeline's own image, used as a base rather than run as a
 # pipeline. It already carries every tool this service needs -- mutserve 2.0.3,
-# haplogrep3 3.2.2 with phylotree-fu-rcrs@1.2 pre-installed, haplocheck 1.3.3,
+# haplogrep3 (upgraded below), haplocheck 1.3.3,
 # and the R/rmarkdown/pandoc stack that renders upstream's report.Rmd -- so the
 # sidecar invokes those directly.
 #
@@ -18,6 +18,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
        "uvicorn[standard]" gunicorn fastapi python-multipart httpx httptools psutil \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# haplogrep3 3.3.2 over the base image's 3.2.2: upstream mtdna-server-2 has not
+# released since v2.1.16. 3.3.x adds Mitotree support and a graphviz fix; the
+# classifier is unchanged. The tree stays phylotree-fu-rcrs: 1.3 differs from 1.2
+# only in its version and citation fields. Only the jar and launcher are replaced,
+# so the base image's haplogrep3.yaml and trees/ survive; install-tree registers 1.3.
+ARG HAPLOGREP_VERSION=3.3.2
+ARG PHYLOTREE=phylotree-fu-rcrs@1.3
+RUN mkdir /tmp/hg \
+    && curl -fsSL "https://github.com/genepi/haplogrep3/releases/download/v${HAPLOGREP_VERSION}/haplogrep3-${HAPLOGREP_VERSION}-linux.tar.gz" \
+       | tar -xz -C /tmp/hg \
+    && cp /tmp/hg/haplogrep3.jar /tmp/hg/haplogrep3 /opt/haplogrep/ \
+    && rm -rf /tmp/hg \
+    && cd /opt/haplogrep && ./haplogrep3 install-tree "${PHYLOTREE}"
+ENV HAPLOGREP_VERSION=${HAPLOGREP_VERSION}
 
 WORKDIR /app
 
