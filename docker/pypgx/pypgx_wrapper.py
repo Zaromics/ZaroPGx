@@ -735,6 +735,7 @@ async def create_input_vcf(
     local_job_id = str(uuid.uuid4())
     job_dir = TEMP_DIR / local_job_id
     os.makedirs(job_dir, exist_ok=True)
+    input_path = None
 
     try:
         # Save uploaded alignment file under a generated name - the client's
@@ -776,7 +777,6 @@ async def create_input_vcf(
         payload: Dict[str, Any] = {
             "success": True,
             "job_id": local_job_id,
-            "input_file": str(input_path),
             "vcf_path": str(output_vcf_gz),
             "tbi_path": str(output_vcf_gz) + ".tbi",
             "pharmcat_vcf_path": res.get("pharmcat_vcf"),
@@ -797,6 +797,12 @@ async def create_input_vcf(
             await job_client.log_progress(f"BAM to VCF conversion failed: {str(e)}", {"error": str(e)})
             await job_client.fail_step(f"BAM to VCF conversion failed: {str(e)}", {"error": str(e)})
         raise HTTPException(status_code=500, detail=f"Error creating VCF from alignment with PyPGx: {str(e)}")
+    finally:
+        # The stored alignment is this request's input, not a result: /genotype works
+        # from the VCF, and PharmCAT from the positions VCF, both already written.
+        # Kept, a 30x genome left a 41 GB BAM in the temp dir per job, never removed.
+        if input_path is not None:
+            discard_input_copy(input_path)
 
 def _reference_fasta_for_assembly(assembly: str) -> Path:
     """Path to the reference FASTA PyPGx create-input-vcf needs for this assembly."""
@@ -1215,6 +1221,16 @@ def genotype_pharmcat_positions(
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
+
+def discard_input_copy(path) -> None:
+    """Remove a stored upload and any index pysam wrote beside it."""
+    for candidate in (str(path), f"{path}.bai", f"{path}.crai", f"{path}.csi"):
+        try:
+            os.remove(candidate)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning(f"Could not remove input copy {candidate}: {exc}")
 
 def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly: str) -> Dict[str, Any]:
     """Run PyPGx create-input-vcf to generate a VCF from an alignment file.
