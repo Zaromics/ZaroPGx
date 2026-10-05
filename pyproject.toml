@@ -32,7 +32,7 @@ dependencies = [
   "pydantic-settings>=2.10.1,<3.0.0",
   "python-dotenv>=1.1.1,<2.0.0",
   # Reporting
-  "weasyprint>=66.0,<67.0", # Capped at minor version due to nonstandard versioning.
+  "weasyprint>=70.0,<71.0", # Capped at major: each major has changed page layout.
   "jinja2>=3.1.6,<4.0.0",
   "graphviz>=0.21,<1.0.0",
   "pillow>=11.3.0,<13.0.0",

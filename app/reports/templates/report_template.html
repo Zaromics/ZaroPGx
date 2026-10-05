@@ -728,11 +728,17 @@
                 break-inside: avoid !important;
             }
             
-            /* PDF-specific styling for drugs grid */
+            /* PDF-specific styling for drugs grid. The grid itself must stay
+               breakable: real reports list 100+ drugs, taller than a page, and
+               WeasyPrint >= 67 asserts in layout/page.py when told not to break
+               it. The grid items are the links, so they carry the avoid. */
             .drugs-grid {
                 grid-template-columns: repeat(2, 1fr) !important;
                 gap: 6px 10px !important;
-                page-break-inside: avoid !important;
+            }
+            .drugs-grid > .drug-item-link {
+                break-inside: avoid;
+                page-break-inside: avoid;
             }
             .drug-item {
                 page-break-inside: avoid !important;
