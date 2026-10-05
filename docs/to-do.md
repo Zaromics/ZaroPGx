@@ -86,6 +86,12 @@ curation: full
 
 - Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
 - Add preprocessing glyph (e.g., Liftover) where applicable & mtDNA glyph
+- Interactive report's drug-gene network graph needs a design, not a patch. Measured on
+  a 30x NA12878 report (Oct 2026): it is laid out at page load while its tab is hidden,
+  so the SVG is created 0 px wide; with that fixed, the unbounded force layout of 217
+  gene and drug nodes leaves 213 of them off-canvas, and clamping them in only piles
+  them on the borders of a card that clips at 300 px. Decide what it should show at
+  whole-genome scale (actionable drugs only? genes grouped?) before touching it.
 - Unify/clean redundant text
 - **Front-end test harness — nothing renders the page today.** What exists is
   Node-executed *logic* tests: `tests/test_ui_workflow_flag_reads.py` and
