@@ -633,8 +633,11 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
 
                         try:
                             # Pass the job_service's database session to ensure consistency
+                            # Keyed by job: under the default key (the report's
+                            # title, i.e. the patient) a patient's second job
+                            # reported the first job's calls.
                             pharmcat_run_id = load_pharmcat_file(
-                                pharmcat_json_file, job_service.db
+                                pharmcat_json_file, job_service.db, run_id=str(job_id)
                             )
 
                             if pharmcat_run_id:
