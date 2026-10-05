@@ -287,9 +287,14 @@ import json,sys
 data=json.load(open('hla_result.json'))
 results=data.get('results') or {}
 lines=[]
+# zarohla gives OptiType's pair as "B*08:01,B*56:01". PharmCAT's outside-call
+# diplotype is "*08:01/*56:01": handed the comma form, it strips only the first gene
+# letter and reports the call as "*08:01,B*56:01". (The phenotypes were still right.)
 for gene,call in results.items():
     if call and gene.startswith('HLA-'):
-        lines.append(f"{gene}\t{call}")
+        alleles=[a.strip() for a in call.split(',') if a.strip()]
+        alleles=['*'+a.split('*',1)[1] if '*' in a else a for a in alleles]
+        lines.append(f"{gene}\t{'/'.join(alleles)}")
 if lines:
     open('pharmcat.hla_calls.tsv','w',encoding='utf-8').write('\\n'.join(lines)+'\\n')
 PY
