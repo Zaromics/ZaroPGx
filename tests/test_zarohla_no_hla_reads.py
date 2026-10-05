@@ -111,6 +111,10 @@ def fake_tools(zarohla, monkeypatch):
         "optitype_returncode": 0,
         "mhc_reads": 1,
         "layout": "paired",
+        # header: what `samtools view -H` reports; subset_ok: whether extracting the
+        # HLA reads (view -b / cat) succeeds.
+        "header": b"@SQ\tSN:chr6\tLN:170805979\n",
+        "subset_ok": True,
     }
 
     class FakeProc:
@@ -132,11 +136,16 @@ def fake_tools(zarohla, monkeypatch):
         if tool == "samtools" and cmd[1] == "view" and "-H" in cmd:
             if state["mhc_reads"] is None:
                 return FakeProc(1)
-            return FakeProc(0, stdout=b"@SQ\tSN:chr6\tLN:170805979\n")
+            return FakeProc(0, stdout=state["header"])
         if tool == "samtools" and cmd[1] == "view" and "-c" in cmd:
             if state["mhc_reads"] is None:
                 return FakeProc(1)
             return FakeProc(0, stdout=str(state["mhc_reads"]).encode() + b"\n")
+        if tool == "samtools" and cmd[1] in ("view", "cat") and "-o" in cmd:
+            if not state["subset_ok"]:
+                return FakeProc(1)
+            Path(cmd[cmd.index("-o") + 1]).write_bytes(BAM_BYTES)
+            return FakeProc(0)
         if tool == "samtools" and cmd[1] == "collate":
             Path(cmd[cmd.index("-o") + 1]).write_bytes(BAM_BYTES)
             return FakeProc(0)
@@ -494,3 +503,69 @@ def test_a_build_without_verified_loci_is_unprobeable_not_empty(client, fake_too
         data={"reference_genome": "hg19"},
     )
     assert "optitype" in _tools_run(fake_tools)
+
+
+# --------------------------------------------------------------------------
+# HLA reads present: type the MHC subset, not the whole alignment
+# --------------------------------------------------------------------------
+#
+# Found running a 30x NA12878 BAM (41 GB, 767 M reads) end to end on 2026-10-05:
+# after the probe counted 7,240 HLA class I reads, the whole alignment went through
+# a single-threaded collate on its way to ~250 GB of FASTQ. Typing the MHC, HLA and
+# chr6 alt contigs and the unplaced unmapped reads instead called NA12878's published
+# alleles exactly, in under two minutes.
+
+
+def _collate_input(fake_tools):
+    collate = next(c for c in fake_tools.calls if c[:2] == ["samtools", "collate"])
+    return Path(collate[-1]).name
+
+
+def test_hla_reads_are_typed_from_the_subset_not_the_whole_file(client, fake_tools):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+
+    _post_bam(client)
+
+    assert _collate_input(fake_tools) == "hla_subset.bam"
+
+
+def test_the_subset_covers_the_mhc_hla_contigs_and_unmapped_reads(client, fake_tools):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["header"] = (
+        b"@SQ\tSN:chr1\tLN:248956422\n@SQ\tSN:chr6\tLN:170805979\n"
+        b"@SQ\tSN:chr6_GL000250v2_alt\tLN:4672374\n"
+        b"@SQ\tSN:chr1_KI270706v1_random\tLN:175055\n"
+        b"@SQ\tSN:HLA-A*01:01:01:01\tLN:3503\n"
+    )
+
+    _post_bam(client)
+
+    views = [c for c in fake_tools.calls if c[:3] == ["samtools", "view", "-b"]]
+    # samtools view -b -o OUT INPUT REGIONS...
+    placed, unplaced = views[0][6:], views[1][6:]
+    assert placed == [
+        "chr6:28510120-33480577",
+        "HLA-A*01:01:01:01",
+        "chr6_GL000250v2_alt",
+    ]
+    assert unplaced == ["*"]
+
+
+def test_a_failed_extraction_falls_back_to_the_whole_file(client, fake_tools):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["subset_ok"] = False
+
+    body = _post_bam(client).json()
+
+    assert _collate_input(fake_tools) != "hla_subset.bam"
+    assert body["results"]["HLA-A"] == "A*01:01,A*02:01"
+
+
+def test_an_unprobeable_input_is_not_subset(client, fake_tools):
+    """No probe result means no index and no known chromosome 6: convert it all."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = None
+
+    _post_bam(client)
+
+    assert not [c for c in fake_tools.calls if c[:3] == ["samtools", "view", "-b"]]
