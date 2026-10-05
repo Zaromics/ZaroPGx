@@ -41,8 +41,8 @@ curation: full
   hg19ToHg38.over.chain.gz, contig-prefix normalisation in front of it, a reject VCF with
   per-record reasons, and a reject-rate guard. Plain `bcftools annotate --rename-chrs` was
   tried and deleted earlier (Aug 2026) because it only renames contigs, it does not
-  convert coordinates. Remaining nicety: surface the per-run reject count in the report
-  itself, not only in the job log/step message.
+  convert coordinates. Both report lanes state the per-run counts ("N variants lifted,
+  N dropped as unliftable"), read from the liftover step's output_data.
 - Clarify workflow vs job IDs; define single source for workflow definition and per-run job state
 - Represent workflows as finite state matrix, each unique and deterministic workflow should have an assigned ID which can be quickly spot checked 
 - Nextflow orchestration
@@ -52,7 +52,8 @@ curation: full
 - Accept uploads by URL (streamed) and multi-file selects (main + index) with proper pairing
 - Recognize and/or regenerate index files as needed; map unaligned to appropriate reference: currently GRCh38.p14
 - Consider preprocessing complementing PyPGx-led VCF generation (evaluate necessity)
-- Add mtdna-server-2
+- [DONE] Add mtdna-server-2: mutserve, haplogrep3 and haplocheck in the `mtdna` sidecar,
+  supplying the MT-RNR1 outside call and the report's mtDNA section.
 - Finish wiring in ZaroHLA
 - Improve analysis, make better use of samtools and bcftools
 
@@ -76,7 +77,7 @@ curation: full
 - Unified report generation combining PharmCAT clinical recommendations with PyPGx gene coverage
 - Add demographics mini-section: mitochondrial lineage/haplogroup and variant rarity context
 - Standardize folder naming of generated reports (timestamp-based) and place logs under `data/logs/`
-- Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
+- [DONE] Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
 - Abstract report theme so cross-pipeline outputs remain stylistically consistent
 - Custom reports: add a QR code containing the raw data
@@ -127,7 +128,7 @@ curation: full
 
 ## Docker & CI/CD
 
-- Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
+- [DONE] Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
 - Implement CI/CD github action to dockerhub image build
 - Clean up deprecated flags
 
