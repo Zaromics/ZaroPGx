@@ -39,7 +39,8 @@ empty panels rather than an error.
 
 `GET /health` reports the mutserve/haplogrep3/haplocheck versions from the
 `MUTSERVE_VERSION` / `HAPLOGREP_VERSION` / `HAPLOCHECK_VERSION` environment
-variables the base image already sets, plus `mtdna-server-2` (the pipeline
+variables (the base image sets the first and last; the Dockerfile sets
+`HAPLOGREP_VERSION` for the haplogrep3 it installs), plus `mtdna-server-2` (the pipeline
 release, hardcoded to the pinned tag). It also publishes the same information
 to `/data/versions/mtdna-server-2.json`, in the shared per-tool manifest
 format `VersionManager` reads for report citations.
