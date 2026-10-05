@@ -38,10 +38,78 @@ download_status = {
     "overall_progress": 0
 }
 
+STATUS_FILE = '/reference/download_status.json'
+
 def save_status():
     """Save the current status to a file"""
-    with open('/reference/download_status.json', 'w') as f:
+    with open(STATUS_FILE, 'w') as f:
         json.dump(download_status, f)
+
+def load_saved_status():
+    """Restore the status a previous run saved.
+
+    A saved in_progress=True is always stale at startup: the download thread that
+    set it died with its process, and nothing else clears it. Trusting it made
+    schedule_download() and /start-download both report a download as already
+    running, so one cut off by a restart or reboot never resumed.
+
+    Saved genome entries are merged into the defaults rather than replacing the
+    whole dict, so an item added after the file was written (hg19_to_hg38_chain
+    arrived in 0.3.1) still has the entry download_file() and the loop index into.
+    """
+    if not os.path.exists(STATUS_FILE):
+        return
+    try:
+        with open(STATUS_FILE, 'r') as f:
+            saved = json.load(f)
+    except Exception as e:
+        print(f"Error loading status file: {str(e)}")
+        return
+    saved_genomes = saved.pop("genomes", None)
+    download_status.update(saved)
+    if isinstance(saved_genomes, dict):
+        for name, entry in saved_genomes.items():
+            if name in download_status["genomes"] and isinstance(entry, dict):
+                download_status["genomes"][name].update(entry)
+    if download_status["in_progress"]:
+        print("The previous run stopped mid-download; it can start again.")
+        download_status["in_progress"] = False
+        try:
+            save_status()
+        except OSError as e:
+            # The in-memory flag is what gates a new run. A status file this
+            # process cannot rewrite must not keep the service from starting:
+            # under restart: unless-stopped that would be a crash loop.
+            print(f"Could not rewrite {STATUS_FILE}: {e}")
+
+def discard_interrupted_output(genome, prior_status):
+    """Delete what a stage left behind if the previous process died during it.
+
+    A finished stage always moves the genome's status on, so a status saved as
+    downloading, extracting or indexing means that stage never completed. Before
+    downloads and extraction went through a .part file, they wrote their output in
+    place, and the loop trusts any file that exists: a truncated .fa.gz or FASTA
+    was carried on, indexed and reported ready. VCF, BED and chain entries are
+    small and land straight at their final path, so anything short of ready is
+    fetched again.
+    """
+    paths = []
+    if genome.get("is_vcf") or genome.get("is_bed") or genome.get("is_chain"):
+        if prior_status != "ready":
+            paths = [genome["fasta_path"]]
+    elif prior_status == "downloading":
+        paths = [genome["gz_path"]]
+    elif prior_status == "extracting":
+        paths = [genome["fasta_path"]]
+        if genome.get("is_tar"):
+            # The tarball ships its own index; a partial extraction can leave it.
+            paths += [genome["fasta_path"] + ".fai", genome["fasta_path"] + ".gzi"]
+    elif prior_status == "indexing":
+        paths = [genome["fasta_path"] + ".fai"]
+    for path in paths:
+        if os.path.exists(path):
+            print(f"Discarding {path}: the previous run stopped while {prior_status}")
+            os.remove(path)
 
 def calculate_overall_progress():
     """Calculate and update overall progress"""
@@ -56,6 +124,10 @@ def calculate_overall_progress():
 
 def download_file(url, dest_path, genome_name):
     """Download a file with progress tracking"""
+    # Into place only once the body has arrived in full. Written straight to
+    # dest_path, a download cut off by a restart left a truncated file there, and
+    # the next run's exists() check took it for a finished one.
+    part_path = dest_path + ".part"
     try:
         # Get file size
         response = requests.head(url, allow_redirects=True)
@@ -80,7 +152,7 @@ def download_file(url, dest_path, genome_name):
         response.raise_for_status()
         downloaded = 0
 
-        with open(dest_path, 'wb') as f:
+        with open(part_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=1024*1024):
                 if chunk:
                     f.write(chunk)
@@ -92,10 +164,13 @@ def download_file(url, dest_path, genome_name):
                     download_status["genomes"][genome_name]["progress"] = progress
                     calculate_overall_progress()
                     save_status()
-        
+
+        os.replace(part_path, dest_path)
         return True
     except Exception as e:
         print(f"Error downloading {url}: {str(e)}")
+        if os.path.exists(part_path):
+            os.remove(part_path)
         download_status["genomes"][genome_name]["status"] = "error"
         download_status["genomes"][genome_name]["error"] = str(e)
         save_status()
@@ -107,9 +182,22 @@ def extract_file(file_path, output_path, genome_name):
         download_status["genomes"][genome_name]["status"] = "extracting"
         save_status()
         
-        # Using gunzip to extract
-        subprocess.run(["gunzip", "-c", file_path], stdout=open(output_path, "wb"))
-        
+        # Through a .part file for the same reason as download_file(), and the exit
+        # status checked: it was ignored, so a truncated .gz extracted to a truncated
+        # FASTA that the next steps indexed and reported ready. gzip exits 1 on an
+        # error and 2 on a warning; human_g1k_v37.fasta.gz always draws "trailing
+        # garbage ignored" (exit 2) and decompresses in full, so only 1 fails.
+        part_path = output_path + ".part"
+        with open(part_path, "wb") as out:
+            result = subprocess.run(["gunzip", "-c", file_path], stdout=out)
+        if result.returncode not in (0, 2):
+            os.remove(part_path)
+            # Corrupt or truncated: remove it so the next run fetches it again
+            # instead of failing on the same file forever.
+            os.remove(file_path)
+            raise RuntimeError(f"gunzip exited {result.returncode}; removed {file_path}")
+        os.replace(part_path, output_path)
+
         download_status["genomes"][genome_name]["status"] = "extracted"
         save_status()
         return True
@@ -269,6 +357,8 @@ def download_genomes():
     success = True
     
     for genome in genomes:
+        discard_interrupted_output(genome, download_status["genomes"][genome["name"]].get("status"))
+
         # Status is reloaded from disk at startup, so a previous run's error would
         # otherwise ride along on an item this run completes.
         download_status["genomes"][genome["name"]].pop("error", None)
@@ -382,9 +472,9 @@ def health():
 def status():
     """Return current download status"""
     # Load from file if exists
-    if os.path.exists('/reference/download_status.json'):
+    if os.path.exists(STATUS_FILE):
         try:
-            with open('/reference/download_status.json', 'r') as f:
+            with open(STATUS_FILE, 'r') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Error reading status file: {str(e)}")
@@ -402,12 +492,7 @@ def start_download():
 
 if __name__ == "__main__":
     # Load existing status if available
-    if os.path.exists('/reference/download_status.json'):
-        try:
-            with open('/reference/download_status.json', 'r') as f:
-                download_status.update(json.load(f))
-        except Exception as e:
-            print(f"Error loading status file: {str(e)}")
+    load_saved_status()
     
     # Schedule downloads to start after the server has fully initialized
     if os.environ.get('DOWNLOAD_ON_STARTUP', 'true').lower() == 'true':
