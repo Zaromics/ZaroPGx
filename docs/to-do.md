@@ -56,6 +56,12 @@ curation: full
   supplying the MT-RNR1 outside call and the report's mtDNA section.
 - Finish wiring in ZaroHLA
 - Improve analysis, make better use of samtools and bcftools
+- Disk housekeeping at whole-genome scale. Measured on 30x NA12878 (Oct 2026): the
+  upload is kept after its job completes (41 GB a run), and a sidecar's working copy
+  under `data/temp/<sidecar>/<job_id>/` outlives a worker killed mid-request, because
+  the `finally` that removes it never runs (one cancelled run left 41 GB). Nothing
+  sweeps either. Decide how long uploads are kept, and sweep working copies of jobs
+  that are no longer running.
 
 ## Calling & Tools
 
