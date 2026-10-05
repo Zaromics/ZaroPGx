@@ -1999,6 +1999,107 @@ def verify_reference_matches(job_label, input_path, reference_genome):
     raise HTTPException(status_code=400, detail=message)
 
 
+def _sq_m5s(header_text):
+    """{contig: M5 or None} from the @SQ lines of a SAM header or a .dict file."""
+    contigs = {}
+    for line in header_text.splitlines():
+        if not line.startswith("@SQ"):
+            continue
+        fields = dict(f.split(":", 1) for f in line.split("\t")[1:] if ":" in f)
+        if "SN" in fields:
+            contigs[fields["SN"]] = fields.get("M5")
+    return contigs
+
+
+def cram_reference_conflicts(cram_sq, contigs_with_reads, reference_sq):
+    """Contigs that hold reads but cannot be decoded against this reference.
+
+    A contig counts when it is missing from the reference, or when both the CRAM and
+    the reference carry an M5 and they differ. A contig with no reads is never
+    decoded, so its M5 does not matter, and neither does a missing M5 (it is
+    optional in SAM): htslib has nothing to compare against there either.
+    """
+    conflicts = []
+    for contig in contigs_with_reads:
+        if contig not in reference_sq:
+            conflicts.append(f"{contig} (not in the reference)")
+            continue
+        wanted, have = cram_sq.get(contig), reference_sq.get(contig)
+        if wanted and have and wanted.lower() != have.lower():
+            conflicts.append(f"{contig} (M5 {wanted[:8]}, reference {have[:8]})")
+    return conflicts
+
+
+def verify_cram_reference_md5(job_label, input_path, reference_path):
+    """Refuse a CRAM whose reads sit on contigs this reference cannot decode.
+
+    verify_reference_matches() catches the wrong build. This catches the wrong FASTA
+    of the right build, which it cannot: two GRCh38 FASTAs share every contig name
+    and length, so htslib only notices when it reaches the first slice whose MD5
+    disagrees, minutes into the decode. It is the common case here. The hg38 the
+    genome-downloader stages is UCSC's hg38.fa.gz, which writes IUPAC codes as N, so
+    18 primary chromosomes differ in MD5 from the GRCh38 analysis sets Broad, the
+    1000 Genomes Project and NYGC align to, and it has none of their 2,911 decoy, HLA
+    and EBV contigs. A 1000 Genomes 30x CRAM failed at chr1:248,747,869 after five
+    minutes, and again on Nextflow's retry.
+
+    Only contigs that actually hold reads are compared, from `samtools idxstats` on
+    an index built here: indexing reads container headers, not sequence, so it needs
+    no reference. On a 16 GB CRAM that took 18 s on an idle NVMe disk and under two
+    minutes beside another job's I/O, against five minutes per failed decode.
+    Anything that cannot be established (no .dict beside the FASTA, an unreadable
+    header, a failed index) is logged and the conversion proceeds, so htslib remains
+    the final word.
+    """
+    dict_path = os.path.splitext(reference_path)[0] + ".dict"
+    if not os.path.exists(dict_path):
+        logger.info(f"Job {job_label}: no {dict_path}; skipping the CRAM M5 check")
+        return
+    with open(dict_path, encoding="utf-8", errors="replace") as handle:
+        reference_sq = _sq_m5s(handle.read())
+
+    def samtools(*args):
+        try:
+            result = subprocess.run(["samtools", *args], capture_output=True, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning(f"Job {job_label}: samtools {args[0]} failed ({exc}); skipping the CRAM M5 check")
+            return None
+        if result.returncode != 0:
+            stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+            logger.warning(f"Job {job_label}: samtools {args[0]} failed ({stderr}); skipping the CRAM M5 check")
+            return None
+        return (result.stdout or b"").decode("utf-8", errors="replace")
+
+    header = samtools("view", "-H", input_path)
+    if header is None or samtools("index", input_path) is None:
+        return
+    stats = samtools("idxstats", input_path)
+    if stats is None:
+        return
+
+    contigs_with_reads = []
+    for line in stats.splitlines():
+        fields = line.split("\t")
+        if len(fields) >= 4 and fields[0] != "*" and int(fields[2]) + int(fields[3]) > 0:
+            contigs_with_reads.append(fields[0])
+
+    conflicts = cram_reference_conflicts(_sq_m5s(header), contigs_with_reads, reference_sq)
+    if not conflicts:
+        logger.info(f"Job {job_label}: CRAM M5s agree with {reference_path} on every contig with reads")
+        return
+
+    shown = ", ".join(conflicts[:5]) + (f", and {len(conflicts) - 5} more" if len(conflicts) > 5 else "")
+    message = (
+        f"This CRAM was written against a different FASTA than the {reference_path} this "
+        f"install decodes with: {len(conflicts)} contig(s) holding reads cannot be decoded "
+        f"({shown}). A CRAM can only be read with the exact sequence it was compressed "
+        f"against. Convert it to BAM with its own reference (samtools view -b -T <that "
+        f"FASTA>) and upload the BAM, which needs no reference to read."
+    )
+    logger.error(f"Job {job_label}: {message}")
+    raise HTTPException(status_code=400, detail=message)
+
+
 def read_sort_order(job_label, input_path, reference_path=None):
     """Return the `@HD SO:` value from a SAM/CRAM header, or None if it does not say.
 
@@ -3526,6 +3627,9 @@ async def cram_to_bam(
         # The caller picked the reference; check the file agrees before decoding it.
         await asyncio.to_thread(
             verify_reference_matches, local_job_id, input_path, reference_genome
+        )
+        await asyncio.to_thread(
+            verify_cram_reference_md5, local_job_id, input_path, reference_path
         )
 
         # Update workflow with file information
