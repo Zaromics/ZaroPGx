@@ -87,6 +87,16 @@ curation: full
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
 - Abstract report theme so cross-pipeline outputs remain stylistically consistent
 - Custom reports: add a QR code containing the raw data
+- Gene table, DPYD on unphased input. Measured on 30x NA12878 (Oct 2026): PharmCAT
+  calls each allele separately (`c.1601G>A (*4)` and `c.1627A>G (*5)`, each
+  "Indeterminate") and gives the recommendation diplotype
+  `c.1601G>A (*4)/c.1627A>G (*5)` as a Normal Metabolizer, which is what its dosing
+  guidance uses. The table shows the first per-allele entry, "Indeterminate", and
+  letters the row P (PyPGx) though PyPGx made no DPYD call. Decide what the row
+  should show for a multi-allele unphased gene.
+- "Sample ID" in the reports is the job UUID, not the sample identifier entered at
+  upload (e.g. `NA12878-wgs-validation`): the generator swaps a UUID-like PharmCAT
+  title for the PharmCAT file stem, which is the job id.
 
 ## UI/UX
 
