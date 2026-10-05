@@ -77,9 +77,10 @@ listed only to say so. `.env.example` is the install-time template; this page is
 - **ZAROPGX_TAG**: Tag of the pre-built `zaromicsresearch/zaropgx-*` images to pull from Docker
   Hub. Default: `0.2.8`. Set to `latest` to track the newest. `docker compose build` (or
   `up --build`) overrides the pull with a local build.
-- **HAPI_FHIR_TAG**: Pinned tag for the bundled `hapiproject/hapi` image. Default: `v8.10.0-2`.
+- **HAPI_FHIR_TAG**: Pinned tag for the bundled `hapiproject/hapi` image. Default: `v8.12.0-2`.
   Bump deliberately — the service owns a live Postgres schema and point releases have shipped
-  non-zero-downtime migrations. Keep `data/versions/hapi.json` in step.
+  non-zero-downtime migrations. The migration runs on first boot and is one-way: back up the
+  `fhir` schema before bumping. The app reads the running version live from the server.
 - **PHARMCAT_VERSION**: Doubles as the build ARG for the PharmCAT image. See below.
 
 *runtime*
