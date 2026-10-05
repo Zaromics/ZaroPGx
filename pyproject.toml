@@ -20,8 +20,9 @@ dependencies = [
   # Auth and security
   "python-jose>=3.5.0,<4.0.0",
   # Database
-  # 2.1 autoflushes on every execute and widens filter_by; test it on its own first.
-  "sqlalchemy>=2.0.43,<2.1.0",
+  # 2.1: unconditional autoflush (SessionLocal has it off) and filter_by across all
+  # FROM entities (unused); tests/test_sqlalchemy_21_assumptions.py pins both.
+  "sqlalchemy>=2.1.3,<2.2.0",
   "psycopg[binary]>=3.1.0,<4.0.0",
   # Data processing - Pydantic v2 for compatibility with FastAPI
   "pandas>=3.0.3,<4.0.0",
