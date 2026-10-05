@@ -77,6 +77,11 @@ jobs:
         with:
           node-version: '22'
 
+      # WeasyPrint's native libraries, so tests/test_weasyprint_real_render.py
+      # renders with the real engine instead of skipping.
+      - name: Install Pango
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+
       # Fast suite: unit/API tests on in-memory SQLite (tests/conftest.py).
       # Full-stack compose e2e lives in the separate `e2e` job (-m e2e).
       - name: Install dependencies
