@@ -93,6 +93,7 @@ services:
       context: ./docker/genome-downloader
       dockerfile: Dockerfile.downloader
     container_name: pgx_genome_downloader
+    restart: unless-stopped
     volumes:
       - ./reference:/reference
     environment:
