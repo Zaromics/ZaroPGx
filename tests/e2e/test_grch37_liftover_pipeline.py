@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.report_links import assert_report_links_resolve
+
 VCF = Path(__file__).resolve().parents[2] / "test_data" / "grch37_pgx_snps.vcf"
 TERMINAL_OK = {"completed"}
 TERMINAL_BAD = {"failed", "cancelled", "error"}
@@ -78,3 +80,4 @@ def test_grch37_vcf_is_lifted_and_completes_with_report(e2e_client):
     ), f"completed but reports empty: {payload}"
     url_values = [v for v in reports.values() if isinstance(v, str) and v.strip()]
     assert url_values, f"completed but no report URL/path strings: {payload}"
+    assert_report_links_resolve(e2e_client, reports)
