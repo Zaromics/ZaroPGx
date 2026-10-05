@@ -1266,11 +1266,14 @@
     {% endif %}
     
     <!-- Store report data in a hidden element for JavaScript to access -->
+    {# JSON goes in single-quoted attributes: tojson escapes ' < > & but not ", so in a
+       double-quoted attribute the value ended at the JSON's first quote and
+       static/js/pgx-report.js's JSON.parse threw before it drew any chart. #}
     <div id="pgxData" 
          data-patient-id="{{ patient_id }}"
          data-report-id="{{ report_id }}"
          data-report-date="{{ report_date }}"
-         data-organized-recommendations="{{ organized_recommendations|tojson|safe }}"
+         data-organized-recommendations='{{ organized_recommendations|tojson }}'
          style="display:none;">
         
         <!-- Store diplotypes data -->
@@ -1293,7 +1296,7 @@
              data-gene="{{ rec.gene }}"
              data-recommendation="{{ rec.recommendation }}"
              data-classification="{{ rec.classification }}"
-             data-literature-references="{{ rec.literature_references|tojson|safe if rec.literature_references else '[]' }}">
+             data-literature-references='{{ rec.literature_references|tojson if rec.literature_references else "[]" }}'>
         </div>
         {% endfor %}
     </div>
