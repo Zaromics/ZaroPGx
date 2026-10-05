@@ -16,20 +16,26 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    # Same Ubuntu LTS as production (zimerguz). Move CI when zimerguz moves.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
+      # setup-uv has published only full-version tags since v8 (immutable releases):
+      # there is no @v10 to float on, so every job pins the exact release.
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
       # The full dependency set needs pysam, which has no wheel for every
       # platform and is irrelevant to formatting. Install just the tools.
+      # Pinned to uv.lock's black/isort/flake8 (tests/test_ci_lint_pins.py enforces
+      # it), the versions `uv sync --all-extras --dev` gives a developer. flake8's own
+      # plugins (pyflakes, pycodestyle) still float within its ranges.
       - name: Install lint tools
-        run: uv tool install black && uv tool install isort && uv tool install flake8
+        run: uv tool install black==26.10.0 && uv tool install isort==9.0.2 && uv tool install flake8==7.4.1
 
       - name: black
         run: uv tool run black --check app tests
@@ -50,13 +56,13 @@ jobs:
 
   test:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
@@ -65,9 +71,9 @@ jobs:
 
       # Pins the Node guarantee that tests/test_ui_workflow_flag_reads.py's two
       # skipif(shutil.which("node") is None) tests currently get only by luck
-      # (ubuntu-latest happens to ship Node). Without this step they skip silently.
+      # (the runner image happens to ship Node). Without this step they skip silently.
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -81,20 +87,20 @@ jobs:
 
   e2e:
     name: E2E (compose)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     # actions: write required so buildx can write type=gha cache entries
     permissions:
       contents: read
       actions: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
@@ -119,7 +125,7 @@ jobs:
           mkdir -p e2e-logs
           docker compose --env-file .env.e2e -p zaropgx_e2e -f compose.yml -f compose.e2e.yml logs --no-color > e2e-logs/compose.log || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-logs
