@@ -55,6 +55,13 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # --preload does not fix it (fork happens after import, mutation after fork).
 # It is also what lets this write a single /data/mtdna_progress.log rather than
 # a per-pid one; tests/test_log_rotation_252.py pins that.
+#
+# --worker-tmp-dir /dev/shm: the arbiter kills a worker whose heartbeat file goes
+# 30 s without an update, and by default that file sits in /tmp, on the same disk a
+# whole-genome upload is being written to (Starlette spools the request there, then
+# the handler copies it to /data). Storing a 41 GB BAM, the heartbeat stalled and the
+# worker was SIGKILLed mid-request, twice per job. tmpfs is not behind that disk.
 CMD ["gunicorn", "app:app", "--workers", "1", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--worker-tmp-dir", "/dev/shm", \
      "--bind", "0.0.0.0:5000"]

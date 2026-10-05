@@ -31,6 +31,21 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # as the gatk-api sidecar.
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
+
+async def store_upload(upload: UploadFile, path) -> None:
+    """Stream an upload to disk without blocking the event loop.
+
+    Each write goes through a thread. On a busy disk a single write() can stall for
+    seconds, and this service runs one gunicorn worker: a stalled event loop misses
+    the arbiter's heartbeat, and after 30 s gunicorn SIGKILLs the worker mid-request.
+    Seen 2026-10-05 storing a 41 GB NA12878 BAM while the other sidecars stored the
+    same file: mtDNA's worker hit WORKER TIMEOUT twice, 8.4 GB in, and the job failed.
+    """
+    with open(path, "wb") as handle:
+        while chunk := await upload.read(UPLOAD_CHUNK_BYTES):
+            await asyncio.to_thread(handle.write, chunk)
+
+
 # --------------------------------------------------------------------------
 # Bounded logging (BACKLOG 252). Same block, same values, same failure
 # behaviour as every other ZaroPGx sidecar: docker/gatk-api/gatk_api.py,
@@ -1162,9 +1177,7 @@ async def call_mtdna(
     # BAM into memory blocks the single event loop for the duration, taking
     # /health and the broadcast /cancel down with it. Same value and same
     # reasoning as zarohla and gatk-api.
-    with open(upload_path, "wb") as handle:
-        while chunk := await file.read(UPLOAD_CHUNK_BYTES):
-            handle.write(chunk)
+    await store_upload(file, upload_path)
 
     wants_ref = str(absent_to_ref).strip().lower() in {"1", "true", "yes", "on"}
     try:
