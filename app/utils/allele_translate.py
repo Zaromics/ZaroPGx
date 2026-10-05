@@ -13,6 +13,13 @@ _MAP_NAME = "allele_map_pypgx_to_pharmcat.json"
 
 SYNONYM_GENES = frozenset({"ABCG2", "IFNL3", "VKORC1"})
 
+# PharmCAT names a CYP2D6 tandem arrangement with spaced plus signs ("*68 + *4");
+# PyPGx writes it unspaced ("*3/*68+*4"), and PharmCAT reports an allele it does not
+# recognise as Indeterminate, so NA12878's *3/*68+*4 came out Indeterminate instead
+# of a Poor Metabolizer. _clean_token adds the spaces. CYP2D6 only: elsewhere PharmCAT
+# spells a "+" unspaced (UGT1A1 "*80+*28", DPYD "c.1905+1G>A (*2A)").
+SPACED_TANDEM_GENES = frozenset({"CYP2D6"})
+
 _SPACE_RE = re.compile(r"\s+")
 _PLUS_RE = re.compile(r"\s*\+\s*")
 _COMMA_RE = re.compile(r"\s*,\s*")
@@ -121,7 +128,8 @@ def translate_outside_tsv_text(
         if gene.lower() == "gene":
             lines_out.append(raw + ending)
             continue
-        if gene in SYNONYM_GENES and len(parts) >= 2 and parts[1].strip():
+        translated = gene in SYNONYM_GENES or gene in SPACED_TANDEM_GENES
+        if translated and len(parts) >= 2 and parts[1].strip():
             new_dip, unmapped = translate_diplotype(gene, parts[1], mapping)
             for tok in unmapped:
                 logger.warning(
