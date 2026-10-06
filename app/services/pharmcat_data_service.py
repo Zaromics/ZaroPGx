@@ -14,12 +14,36 @@ from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session
 
 from app.api.db import Job
-from app.pharmcat.pharmcat_parser import PharmCATParser, get_pharmcat_summary
+from app.pharmcat.pharmcat_parser import (
+    PharmCATParser,
+    _as_float,
+    get_pharmcat_summary,
+)
+from app.pharmcat.report_json import recommendation_call_for_display
 from app.reports.evidence import classify_evidence
 from app.reports.provenance import resolve_called_by, resolve_guideline_source
 from app.utils.literature import format_literature_reference
 
 logger = logging.getLogger(__name__)
+
+
+def _diplotype_row(diplotype: Dict[str, Any]) -> Dict[str, Any]:
+    """A PharmCAT diplotype block in the shape of a stored diplotypes row."""
+    allele1 = diplotype.get("allele1") or {}
+    allele2 = diplotype.get("allele2") or {}
+    phenotypes = diplotype.get("phenotypes") or []
+    return {
+        "diplotype_label": diplotype.get("label"),
+        "phenotype": phenotypes[0] if phenotypes else None,
+        "activity_score": _as_float(diplotype.get("activityScore")),
+        "allele1_name": allele1.get("name"),
+        "allele1_function": allele1.get("function"),
+        "allele2_name": allele2.get("name"),
+        "allele2_function": allele2.get("function"),
+        "match_score": diplotype.get("matchScore"),
+        "inferred": diplotype.get("inferred", False),
+        "combination": diplotype.get("combination", False),
+    }
 
 
 class PharmCATDataService:
@@ -261,6 +285,11 @@ class PharmCATDataService:
 
             # Find the primary diplotype (usually the first one)
             primary_diplotype = diplotype_data[0] if diplotype_data else {}
+            recommendation = recommendation_call_for_display(
+                len(diplotype_data), gene.get("recommendation_diplotypes")
+            )
+            if recommendation is not None:
+                primary_diplotype = _diplotype_row(recommendation)
 
             # Report what the run recorded -- never a gene-name guess, never a
             # constant. "?"/"-" are legitimate values (BACKLOG 28 + 216).

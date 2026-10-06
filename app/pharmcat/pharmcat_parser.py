@@ -981,6 +981,11 @@ class PharmCATParser:
                     (r.gene_full_data or {}).get("uncalledHaplotypes") or []
                 ),
                 "unread_variants": unread_variants(r.gene_full_data),
+                # Stored in the gene JSON only; the diplotypes table holds the
+                # source calls (see report_json.recommendation_call_for_display).
+                "recommendation_diplotypes": list(
+                    (r.gene_full_data or {}).get("recommendationDiplotypes") or []
+                ),
             }
             for r in results
         ]
