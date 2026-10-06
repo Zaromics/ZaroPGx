@@ -19,7 +19,7 @@ from app.pharmcat.pharmcat_parser import (
     _as_float,
     get_pharmcat_summary,
 )
-from app.pharmcat.report_json import recommendation_call_for_display
+from app.pharmcat.report_json import annotation_genes, recommendation_call_for_display
 from app.reports.evidence import classify_evidence
 from app.reports.provenance import resolve_called_by, resolve_guideline_source
 from app.utils.literature import format_literature_reference
@@ -416,6 +416,11 @@ class PharmCATDataService:
         for rec in drug_recommendations:
             drug_name = rec.get("drug_name", "Unknown")
             gene_symbol = rec.get("gene_symbol", "Unknown")
+            # gene_symbol holds one gene per annotation; the stored annotation
+            # names every gene the recommendation rests on.
+            recommendation_genes = annotation_genes(rec.get("recommendation_data")) or [
+                gene_symbol
+            ]
 
             if drug_name not in drug_groups:
                 drug_groups[drug_name] = {
@@ -425,9 +430,10 @@ class PharmCATDataService:
                     "pharmgkb_id": rec.get("drug_id"),
                 }
 
-            # Add gene to genes list if not already present
-            if gene_symbol not in drug_groups[drug_name]["genes"]:
-                drug_groups[drug_name]["genes"].append(gene_symbol)
+            # Add genes to genes list if not already present
+            for gene in recommendation_genes:
+                if gene not in drug_groups[drug_name]["genes"]:
+                    drug_groups[drug_name]["genes"].append(gene)
 
             # Get recommendation text - prefer drugRecommendation over recommendation_text
             recommendation_text = rec.get("drug_recommendation") or rec.get(
@@ -470,6 +476,7 @@ class PharmCATDataService:
 
             recommendation_entry = {
                 "gene": gene_symbol,
+                "recommendation_genes": recommendation_genes,
                 "recommendation": (
                     recommendation_text
                     if recommendation_text

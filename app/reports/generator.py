@@ -1979,6 +1979,7 @@ def map_recommendations_for_template(
             # Create recommendation entry
             recommendation_entry = {
                 "gene": gene,
+                "recommendation_genes": drug_data.get("recommendation_genes") or [gene],
                 "recommendation": drug_data.get(
                     "recommendation", "See report for details"
                 ),
@@ -2007,6 +2008,10 @@ def map_recommendations_for_template(
                 "drug": drug_name,
                 "gene": gene,
                 "genes": gene,  # For backward compatibility
+                # Every gene the recommendation rests on, in PharmCAT's order.
+                # "gene" is each lane's own pick: the JSON lane's is the first, the
+                # database lane's the parser's (isoflurane: RYR1, or CACNA1S).
+                "recommendation_genes": rec.get("recommendation_genes") or [gene],
                 "recommendation": recommendation_text,
                 "classification": classification,
                 "evidence_rank": tier.rank,

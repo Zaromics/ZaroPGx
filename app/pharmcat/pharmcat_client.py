@@ -13,6 +13,7 @@ import httpx
 import requests
 
 from app.pharmcat.report_json import (
+    annotation_genes,
     detect_format,
     extract_display_call,
     iter_gene_blocks,
@@ -354,40 +355,10 @@ def normalize_pharmcat_results(response):
                                             else:
                                                 classification = str(class_obj)
 
-                                        # Identify genes for this drug
-                                        genes_for_drug = []
-
-                                        # Try to extract gene from lookupKey (e.g., {'HLA-B': '*57:01 positive'})
-                                        lookup_key = annotation.get("lookupKey", {})
-                                        if isinstance(lookup_key, dict) and lookup_key:
-                                            genes_for_drug = list(lookup_key.keys())
-
-                                        # Try phenotypes as fallback (e.g., {'HLA-B': '*57:01 positive'})
-                                        if not genes_for_drug:
-                                            phenotypes = annotation.get(
-                                                "phenotypes", {}
-                                            )
-                                            if (
-                                                isinstance(phenotypes, dict)
-                                                and phenotypes
-                                            ):
-                                                genes_for_drug = list(phenotypes.keys())
-
-                                        # Try genotypes array as another fallback
-                                        if not genes_for_drug:
-                                            genotypes = annotation.get("genotypes", [])
-                                            if genotypes and isinstance(
-                                                genotypes[0], dict
-                                            ):
-                                                diplotypes = genotypes[0].get(
-                                                    "diplotypes", []
-                                                )
-                                                if diplotypes and isinstance(
-                                                    diplotypes[0], dict
-                                                ):
-                                                    gene = diplotypes[0].get("gene")
-                                                    if gene:
-                                                        genes_for_drug = [gene]
+                                        # The genes the recommendation rests on:
+                                        # all of them, not the first (CPIC
+                                        # sertraline is CYP2B6 and CYP2C19).
+                                        genes_for_drug = annotation_genes(annotation)
 
                                         # Legacy fallbacks
                                         if not genes_for_drug:
@@ -404,22 +375,26 @@ def normalize_pharmcat_results(response):
                                             genes_for_drug = ["Unknown"]
 
                                         # Add genes to the drug's gene set (deduplication)
-                                        for gene in genes_for_drug:
-                                            drug_recommendations_by_drug[drug_name][
-                                                "genes"
-                                            ].add(gene)
+                                        drug_recommendations_by_drug[drug_name][
+                                            "genes"
+                                        ].update(genes_for_drug)
 
-                                            # Create recommendation entry
-                                            recommendation = {
-                                                "gene": gene,
-                                                "guideline": guideline_name,
-                                                "guideline_source": guideline_source,
-                                                "recommendation": recommendation_text,
-                                                "classification": classification,
-                                            }
-                                            drug_recommendations_by_drug[drug_name][
-                                                "recommendations"
-                                            ].append(recommendation)
+                                        # One entry per annotation. An entry per
+                                        # gene would repeat one recommendation for
+                                        # every gene it names.
+                                        recommendation = {
+                                            "gene": genes_for_drug[0],
+                                            "recommendation_genes": list(
+                                                genes_for_drug
+                                            ),
+                                            "guideline": guideline_name,
+                                            "guideline_source": guideline_source,
+                                            "recommendation": recommendation_text,
+                                            "classification": classification,
+                                        }
+                                        drug_recommendations_by_drug[drug_name][
+                                            "recommendations"
+                                        ].append(recommendation)
 
                     # Convert sets to lists and create final drug recommendations list
                     for drug_name, drug_data in drug_recommendations_by_drug.items():
