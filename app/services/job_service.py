@@ -349,14 +349,20 @@ class JobService:
             logger.error(f"Unexpected error getting workflow: {str(e)}")
             raise RuntimeError(f"Failed to get workflow: {str(e)}")
 
-    def _discard_uploads(self, job: Job) -> None:
-        """Remove the uploaded input of a job that has ended. Never raises."""
+    def _release_job_files(self, job: Job) -> None:
+        """Remove the uploaded input and the scratch of a job that has ended.
+
+        Scratch is the job-scoped part of cleanup_job_files only (its sidecar
+        working directories); no patient-level path, which other jobs of the same
+        patient may be using. Never raises.
+        """
         try:
             removed = cleanup_service.discard_job_uploads(job.job_metadata)
             if removed:
                 logger.info(f"Removed the upload of ended job {job.id}: {removed}")
+            cleanup_service.cleanup_job_files(job_id=str(job.id))
         except Exception as exc:
-            logger.warning(f"Could not remove the upload of job {job.id}: {exc}")
+            logger.warning(f"Could not clean up after job {job.id}: {exc}")
 
     def update_job(
         self, job_id: Union[str, uuid.UUID], update_data: JobUpdate
@@ -416,7 +422,7 @@ class JobService:
             self.db.commit()
             self.db.refresh(job)
             if ended:
-                self._discard_uploads(job)
+                self._release_job_files(job)
 
             # Log workflow update
             self._log_job_event(
@@ -1052,7 +1058,7 @@ class JobService:
                     cleanup_result = cleanup_service.cleanup_job_files(
                         job_id=str(job_id), patient_id=patient_id
                     )
-                    self._discard_uploads(job)
+                    self._release_job_files(job)
 
                     # Log cleanup results
                     if cleanup_result.get("success", False):

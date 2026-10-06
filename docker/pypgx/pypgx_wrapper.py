@@ -566,6 +566,21 @@ _warn_about_unopened_logs(logger)
 # Directory setup
 DATA_DIR = Path(os.getenv('DATA_DIR', '/data'))
 TEMP_DIR = DATA_DIR / 'temp'
+
+
+# Sidecar working directories live under the job they belong to,
+# TEMP_DIR/pypgx/<job id>/<random>, and the app removes
+# TEMP_DIR/pypgx/<job id> when the job ends (app/services/cleanup_service.py:
+# cleanup_job_files). That covers what this service cannot remove itself: outputs
+# Nextflow copies after the response, and whatever a killed worker left behind.
+# They used to sit at TEMP_DIR/<random>, which nothing could tie to a job, so they
+# stayed for good. A job id that is not a plain token never becomes a path part.
+_JOB_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+
+
+def job_work_dir(job_id: Optional[str], local_job_id: str) -> Path:
+    key = job_id if job_id and _JOB_KEY.match(job_id) else "no-job"
+    return TEMP_DIR / "pypgx" / key / local_job_id
 REFERENCE_DIR = Path(os.getenv('REFERENCE_DIR', '/reference'))
 REPORT_DIR = Path(os.getenv('REPORT_DIR', '/data/reports'))
 
@@ -733,7 +748,7 @@ async def create_input_vcf(
     pypgx_assembly = "GRCh37" if reference_genome in ("hg19", "GRCh37") else "GRCh38"
 
     local_job_id = str(uuid.uuid4())
-    job_dir = TEMP_DIR / local_job_id
+    job_dir = job_work_dir(job_id, local_job_id)
     os.makedirs(job_dir, exist_ok=True)
 
     try:
@@ -1411,7 +1426,7 @@ async def genotype(
     
     # Create a unique job directory
     local_job_id = str(uuid.uuid4())
-    job_dir = TEMP_DIR / local_job_id
+    job_dir = job_work_dir(job_id, local_job_id)
     os.makedirs(job_dir, exist_ok=True)
     
     
@@ -1578,38 +1593,11 @@ async def genotype(
                         "genes_in_batch": gene_batch,
                         "error": str(e)
                     })
-        # Move per-gene pipeline folders into per-patient reports dir if patient_id provided
-        try:
-            if patient_id:
-                dest_dir = REPORT_DIR / str(patient_id) / f"pypgx_{local_job_id}"
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                for item in os.listdir(job_dir):
-                    src_path = job_dir / item
-                    if src_path.is_dir() and item.endswith("-pipeline"):
-                        import shutil
-                        shutil.move(str(src_path), str(dest_dir / item))
-                aggregated["work_dir"] = str(dest_dir)
-        except Exception as mv_e:
-            logger.warning(f"Failed to move PyPGx work dirs: {mv_e}")
-        # Optionally persist a summary JSON
-        # Prefer writing into a per-patient reports directory when patient_id is provided
-        try:
-            if patient_id:
-                dest_dir = REPORT_DIR / str(patient_id)
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                output_path = dest_dir / f"{local_job_id}_pypgx_results.json"
-            else:
-                output_path = DATA_DIR / f"{local_job_id}_pypgx_results.json"
-        except Exception:
-            # Fallback to DATA_DIR on any error creating the reports dir
-            output_path = DATA_DIR / f"{local_job_id}_pypgx_results.json"
-        output_file = str(output_path)
-        try:
-            with open(output_file, "w") as f:
-                json.dump(aggregated, f, indent=2)
-            aggregated["output_file"] = output_file
-        except Exception:
-            logger.warning("Failed to persist aggregated PyPGx results file")
+        # The per-gene pipeline folders and a summary JSON used to be written into
+        # /data/reports/<patient>/ -- the patient's root, outside every job
+        # directory, where nothing reads them (the report reads pypgx_result.json in
+        # the job directory, which Nextflow writes from this response) and nothing
+        # removes them: one set per job, for good. The response carries the results.
         # Systemic-failure guard: if the run was not already failed by a batch
         # exception or cancellation, it succeeds as long as at least one gene came
         # back. Zero successful genes means something systemic (an unreadable VCF, a
@@ -1630,7 +1618,6 @@ async def genotype(
                     "total_genes": len(requested_genes),
                     "successful_genes": len([r for r in aggregated["results"].values() if r.get("success", False)]),
                     "failed_genes": len([r for r in aggregated["results"].values() if not r.get("success", False)]),
-                    "output_file": aggregated.get("output_file", "")
                 })
             else:
                 await job_client.fail_step(f"PyPGx analysis failed: {aggregated.get('error', 'Unknown error')}", {
@@ -1657,6 +1644,10 @@ async def genotype(
             "results": {},
             "job_id": local_job_id
         }
+    finally:
+        # The response carries everything this request produced; its working
+        # directory (the VCF copy and the per-gene pipelines) is not read again.
+        shutil.rmtree(job_dir, ignore_errors=True)
 
 def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19', job_id: str = None) -> Dict[str, Any]:
     """Run PyPGx for star allele calling on the input VCF"""

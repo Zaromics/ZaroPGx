@@ -29,6 +29,21 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 # storage (compose wires it to the ZAROPGX_SCRATCH bind mount). Defaults to the
 # old location, so an unconfigured deployment behaves exactly as before.
 TEMP_DIR = Path(os.getenv("HLA_TEMP_DIR") or (DATA_DIR / "temp"))
+
+
+# Sidecar working directories live under the job they belong to,
+# TEMP_DIR/zarohla/<job id>/<random>, and the app removes
+# TEMP_DIR/zarohla/<job id> when the job ends (app/services/cleanup_service.py:
+# cleanup_job_files). That covers what this service cannot remove itself: outputs
+# Nextflow copies after the response, and whatever a killed worker left behind.
+# They used to sit at TEMP_DIR/<random>, which nothing could tie to a job, so they
+# stayed for good. A job id that is not a plain token never becomes a path part.
+_JOB_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+
+
+def job_work_dir(job_id: Optional[str], local_job_id: str) -> Path:
+    key = job_id if job_id and _JOB_KEY.match(job_id) else "no-job"
+    return TEMP_DIR / "zarohla" / key / local_job_id
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Uploads are streamed to disk in chunks of this size rather than read into memory --
@@ -449,7 +464,7 @@ async def call_hla(
             logger.warning(f"Failed to initialize JobClient: {e}")
 
     local_job_id = str(uuid.uuid4())
-    job_dir = TEMP_DIR / local_job_id
+    job_dir = job_work_dir(job_id, local_job_id)
     os.makedirs(job_dir, exist_ok=True)
     outdir = job_dir / "results"
     os.makedirs(outdir, exist_ok=True)

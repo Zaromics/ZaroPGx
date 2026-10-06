@@ -117,9 +117,14 @@ class CleanupService:
                     str(self.temp_dir / "zarohla" / job_id),
                     str(self.temp_dir / "mtdna" / job_id),
                     str(self.data_dir / "temp" / job_id),
-                    # The mtdna sidecar works in DATA_DIR/temp/mtdna/<job>, not
-                    # in this container's /tmp (docker/mtdna-server-2/app.py).
+                    # The sidecars work in DATA_DIR/temp/<service>/<job>, not in
+                    # this container's /tmp (job_work_dir in docker/pypgx and
+                    # docker/zarohla; docker/mtdna-server-2/app.py).
                     str(self.data_dir / "temp" / "mtdna" / job_id),
+                    str(self.data_dir / "temp" / "pypgx" / job_id),
+                    # zarohla's /scratch is ./data/temp unless ZAROPGX_SCRATCH
+                    # points elsewhere; then only zarohla's own cleanup applies.
+                    str(self.data_dir / "temp" / "zarohla" / job_id),
                 ]
             )
 
