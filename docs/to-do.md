@@ -60,10 +60,16 @@ curation: full
   job completes, fails or is cancelled (`KEEP_UPLOADS=true` keeps it); it used to stay
   for good, 41 GB per 30x genome. The mtDNA sidecar's `data/temp/mtdna/<job_id>/`, left
   behind by a worker killed mid-request, is now in the completion cleanup.
-- Still unswept: the PyPGx and zarohla working directories under `data/temp/<random
-  uuid>/`, which no job id names, and the PyPGx outputs the sidecar writes into the
-  patient's report root (`pypgx_<run>/`, `<run>_pypgx_results.json`), one set per job,
-  outside every job directory; the report reads the copy in the job directory.
+- [DONE Oct 2026, fix/sidecar-work-dirs-per-job] Sidecars work in
+  `data/temp/<service>/<job_id>/`, removed when the job ends however it ends; PyPGx's
+  /genotype no longer copies its pipelines and a summary JSON into the patient's report
+  root.
+- Decide whether to turn PyPGx's per-gene evidence back on. `generator.py` merges the
+  per-gene PyPGx pipelines (`pypgx_*` in the job directory) into the report -- filling
+  fields the gene row lacks and attaching evidence -- but since reports moved into
+  per-job directories the pipelines never arrive there, so it has not run. Turning it
+  on would let PyPGx fill gaps in PharmCAT's rows (e.g. a blank phenotype); review
+  what it adds before re-enabling.
 
 ## Calling & Tools
 
@@ -97,7 +103,8 @@ curation: full
   show the recommendation call, as the dosing guidance does.
 - [DONE Oct 2026, fix/report-sample-identifier] The sample identifier entered at upload
   (else the file header's) is the reports' "Sample ID"; every report used to print the
-  job or patient UUID.
+  job or patient UUID. Without one it says "Not provided", and the job id is the
+  separate Report ID line in every report.
 
 ## UI/UX
 
