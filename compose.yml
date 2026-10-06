@@ -100,6 +100,9 @@ services:
       - ./reference:/reference
     environment:
       - DOWNLOAD_ON_STARTUP=${DOWNLOAD_ON_STARTUP:-true}
+      # The CRAM reference cache (/reference/ref_cache, REF_PATH below): 3.2 GB
+      # fetched, 5.3 GB kept. Off only where no CRAM is read (compose.e2e.yml).
+      - REF_CACHE_ENABLED=${REF_CACHE_ENABLED:-true}
       # Same pin as the pharmcat service below, and it has to stay the same: this
       # service fetches pharmcat_positions.vcf, which gatk-api's /gvcf-to-vcf uses as
       # its interval list, and that file is version-specific. A mismatch emits a gVCF
@@ -239,9 +242,11 @@ services:
       # Measured 2026-10-06 on NA12878's CRAM: the mtdna image (htslib 1.19.1)
       # fetched chrM from EBI by itself; gatk-api and zarohla (1.24) did not. A
       # local-only REF_PATH -- no URL in it -- makes it a decode error instead, on
-      # every service that reads alignments, whatever its htslib. The path is where
-      # MD5-named sequences can be placed to decode CRAMs written against another
-      # reference (samtools' seq_cache_populate.pl).
+      # every service that reads alignments, whatever its htslib. The path is the
+      # reference cache the genome downloader fills, by MD5, with UCSC hg38 and the
+      # 1000 Genomes GRCh38 analysis set (decoys, HLA): /cram-to-bam decodes through
+      # it when it holds every contig with reads, so a CRAM written against either
+      # build reads with its own sequences.
       # tests/test_no_external_service_defaults.py pins it.
       - REF_PATH=/reference/ref_cache/%2s/%2s/%s
       - REFERENCE_DIR=/reference

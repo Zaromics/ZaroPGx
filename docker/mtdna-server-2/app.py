@@ -636,9 +636,10 @@ async def _classify_haplogroup(vcf_gz: str, work: str, job_key: str):
 MIN_MEAN_COVERAGE = float(os.getenv("MTDNA_MIN_MEAN_COVERAGE", "50"))
 
 # CRAM stores no base sequence of its own -- decoding it needs the exact
-# reference it was compressed against. Without one, htslib falls back to its
-# default REF_PATH, EBI's reference server, which this container can reach
-# (checked 2026-10-05). These are the two FASTAs the
+# reference it was compressed against. Without one, this image's htslib (1.19.1)
+# fell back to its default REF_PATH, EBI's reference server, and fetched chrM
+# from it (checked 2026-10-05); compose.yml now sets a local-only REF_PATH, the
+# genome downloader's reference cache. These are the two FASTAs the
 # `reference` volume (compose.yml) actually stages; a build this service
 # calls but has no entry for here (e.g. hg19, already refused earlier) never
 # reaches this lookup.
@@ -687,9 +688,9 @@ async def _call_from_alignment(
         reference_fasta = _CRAM_REFERENCE_FASTA.get(build)
         if reference_fasta is None or not os.path.exists(reference_fasta):
             # Refuse up front with the expected path, rather than letting
-            # samtools fail obscurely, or fetch the reference from EBI's
-            # server by MD5: the container has a route out and REF_PATH is
-            # unset, so htslib's default would go there.
+            # samtools fail obscurely. (With REF_PATH unset, as it was before
+            # compose.yml set a local one, htslib would also have fetched the
+            # reference from EBI's server by MD5.)
             raise HTTPException(
                 status_code=422,
                 detail=(

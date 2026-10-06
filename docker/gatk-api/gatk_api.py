@@ -2081,8 +2081,44 @@ def cram_reference_conflicts(cram_sq, contigs_with_reads, reference_sq):
     return conflicts
 
 
+def _ref_path_file(template, md5):
+    """One REF_PATH entry expanded for an MD5 the way htslib expands it: each %Ns
+    takes the next N characters, %s the rest (so %2s/%2s/%s is ab/cd/ef...)."""
+    rest = [md5]
+
+    def take(match):
+        n = int(match.group(1)) if match.group(1) else None
+        piece, rest[0] = (rest[0][:n], rest[0][n:]) if n else (rest[0], "")
+        return piece
+
+    return re.sub(r"%(\d*)s", take, template)
+
+
+def ref_path_has(md5, ref_path=None):
+    """True when htslib's REF_PATH resolves this MD5 to a local sequence file.
+
+    compose.yml points REF_PATH at /reference/ref_cache, which the genome downloader
+    fills with the sequences of the GRCh38 builds CRAMs are commonly written
+    against, keyed by MD5. Only local entries count; this install sets no URL.
+    """
+    if ref_path is None:
+        ref_path = os.environ.get("REF_PATH", "")
+    for entry in ref_path.split(":"):
+        if not entry or entry in ("http", "https", "ftp") or entry.startswith("//"):
+            continue
+        if os.path.isfile(_ref_path_file(entry, md5.lower())):
+            return True
+    return False
+
+
 def verify_cram_reference_md5(job_label, input_path, reference_path):
-    """Refuse a CRAM whose reads sit on contigs this reference cannot decode.
+    """Choose what to decode a CRAM with, or refuse one nothing here can decode.
+
+    Returns None to decode through REF_PATH's reference cache (htslib finds each
+    sequence by the M5 the CRAM records), or reference_path to decode against the
+    staged FASTA. The cache is used when it holds every contig with reads: then the
+    CRAM decodes with exactly the sequences it was written against, whichever
+    GRCh38 build that was. Otherwise the staged FASTA, when its M5s agree.
 
     verify_reference_matches() catches the wrong build. This catches the wrong FASTA
     of the right build, which it cannot: two GRCh38 FASTAs share every contig name
@@ -2098,17 +2134,10 @@ def verify_cram_reference_md5(job_label, input_path, reference_path):
     an index built here: indexing reads container headers, not sequence, so it needs
     no reference. On a 16 GB CRAM that took 18 s on an idle NVMe disk and under two
     minutes beside another job's I/O, against five minutes per failed decode.
-    Anything that cannot be established (no .dict beside the FASTA, an unreadable
-    header, a failed index) is logged and the conversion proceeds, so htslib remains
-    the final word.
+    Anything that cannot be established (an unreadable header, a failed index, no
+    .dict that can be made) is logged and the staged FASTA is used, so htslib
+    remains the final word.
     """
-    dict_path = os.path.splitext(reference_path)[0] + ".dict"
-    if not os.path.exists(dict_path):
-        logger.info(f"Job {job_label}: no {dict_path}; skipping the CRAM M5 check")
-        return
-    with open(dict_path, encoding="utf-8", errors="replace") as handle:
-        reference_sq = _sq_m5s(handle.read())
-
     def samtools(*args):
         try:
             result = subprocess.run(["samtools", *args], capture_output=True, check=False)
@@ -2123,10 +2152,10 @@ def verify_cram_reference_md5(job_label, input_path, reference_path):
 
     header = samtools("view", "-H", input_path)
     if header is None or samtools("index", input_path) is None:
-        return
+        return reference_path
     stats = samtools("idxstats", input_path)
     if stats is None:
-        return
+        return reference_path
 
     contigs_with_reads = []
     for line in stats.splitlines():
@@ -2134,18 +2163,40 @@ def verify_cram_reference_md5(job_label, input_path, reference_path):
         if len(fields) >= 4 and fields[0] != "*" and int(fields[2]) + int(fields[3]) > 0:
             contigs_with_reads.append(fields[0])
 
-    conflicts = cram_reference_conflicts(_sq_m5s(header), contigs_with_reads, reference_sq)
+    cram_sq = _sq_m5s(header)
+    uncached = [c for c in contigs_with_reads if not (cram_sq.get(c) and ref_path_has(cram_sq[c]))]
+    if contigs_with_reads and not uncached:
+        logger.info(
+            f"Job {job_label}: all {len(contigs_with_reads)} contigs with reads are in the "
+            f"reference cache; decoding with the sequences the CRAM was written against"
+        )
+        return None
+
+    # The cache misses some: decode against the staged FASTA if its M5s agree. Its
+    # .dict holds them; /cram-to-bam can be the first thing on a fresh install to
+    # need one, and without it this check used to be skipped.
+    dict_path = os.path.splitext(reference_path)[0] + ".dict"
+    if not ensure_sequence_dictionary(reference_path) or not os.path.exists(dict_path):
+        logger.info(f"Job {job_label}: no {dict_path}; skipping the CRAM M5 check")
+        return reference_path
+    with open(dict_path, encoding="utf-8", errors="replace") as handle:
+        reference_sq = _sq_m5s(handle.read())
+
+    conflicts = cram_reference_conflicts(cram_sq, contigs_with_reads, reference_sq)
     if not conflicts:
         logger.info(f"Job {job_label}: CRAM M5s agree with {reference_path} on every contig with reads")
-        return
+        return reference_path
 
     shown = ", ".join(conflicts[:5]) + (f", and {len(conflicts) - 5} more" if len(conflicts) > 5 else "")
     message = (
-        f"This CRAM was written against a different FASTA than the {reference_path} this "
-        f"install decodes with: {len(conflicts)} contig(s) holding reads cannot be decoded "
-        f"({shown}). A CRAM can only be read with the exact sequence it was compressed "
-        f"against. Convert it to BAM with its own reference (samtools view -b -T <that "
-        f"FASTA>) and upload the BAM, which needs no reference to read."
+        f"This CRAM was written against a GRCh38 FASTA this install does not have: "
+        f"{len(conflicts)} contig(s) holding reads cannot be decoded with the staged "
+        f"{reference_path} ({shown}), and {len(uncached)} of them are not in the "
+        f"reference cache, which holds UCSC hg38 and the 1000 Genomes GRCh38 analysis "
+        f"set with decoys and HLA once the genome downloader has built it. A CRAM can "
+        f"only be read with the exact sequence it was compressed against. Convert it "
+        f"to BAM with its own reference (samtools view -b -T <that FASTA>) and upload "
+        f"the BAM, which needs no reference to read."
     )
     logger.error(f"Job {job_label}: {message}")
     raise HTTPException(status_code=400, detail=message)
@@ -3683,7 +3734,8 @@ async def cram_to_bam(
         await asyncio.to_thread(
             verify_reference_matches, local_job_id, input_path, reference_genome
         )
-        await asyncio.to_thread(
+        # None: decode through the reference cache, with the CRAM's own sequences.
+        decode_with = await asyncio.to_thread(
             verify_cram_reference_md5, local_job_id, input_path, reference_path
         )
 
@@ -3708,7 +3760,7 @@ async def cram_to_bam(
                 input_path,
                 output_bam,
                 work_dir,
-                reference_path,
+                decode_with,
             )
 
         # Update workflow with completion

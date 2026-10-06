@@ -21,6 +21,11 @@ services:
     ports: !reset []
   genome-downloader:
     ports: !reset []
+    environment:
+      # CI runs the VCF lane alone, so no CRAM is decoded: skip the CRAM reference
+      # cache's 3.2 GB download and 5.3 GB on the runner's disk. (A host running
+      # the reference lanes too, ZAROPGX_E2E_REFERENCE=1, stages ./reference first.)
+      - REF_CACHE_ENABLED=false
   pharmcat:
     ports: !reset []
     # Its reference cache: the named volume by default, filled from Zenodo at first

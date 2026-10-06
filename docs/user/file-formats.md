@@ -65,6 +65,14 @@ BAM → HLA Typing → PyPGx → PharmCAT → Reports
 ## Compressed BAM (CRAM)
 CRAM is a compressed version of BAM that uses reference-based compression for smaller file sizes.
 
+A CRAM stores reads as differences from the exact reference sequences it was written against, so it can only be decoded with those sequences. ZaroPGx decodes CRAMs written against:
+
+- UCSC hg38;
+- the 1000 Genomes GRCh38 analysis set with decoys and HLA (`GRCh38_full_analysis_set_plus_decoy_hla`);
+- NCBI's GRCh38 no-ALT analysis set, whose sequences are all among the two above.
+
+The genome downloader keeps their sequences in a local reference cache (about 5.3 GB) once its other downloads finish, and a CRAM is decoded with whichever sequences it names. A CRAM written against any other reference is refused before conversion, with a message naming the contigs that cannot be decoded. Convert such a file to BAM with its own reference (`samtools view -b -T <that FASTA>`) and upload the BAM, which needs no reference.
+
 ### Processing Path — CRAM
 ```
 CRAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports

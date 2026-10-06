@@ -139,12 +139,98 @@ def test_an_inconclusive_check_lets_htslib_decide(
     gatk_api.verify_cram_reference_md5("t", "in.cram", _reference(tmp_path))
 
 
-def test_no_dict_skips_the_check(gatk_api, tmp_path, monkeypatch):
-    calls = _stub_samtools(monkeypatch, gatk_api, GRCH38_HEADER, IDXSTATS)
-    gatk_api.verify_cram_reference_md5(
-        "t", "in.cram", _reference(tmp_path, with_dict=False)
+def test_no_dict_that_can_be_made_lets_htslib_decide(gatk_api, tmp_path, monkeypatch):
+    _stub_samtools(monkeypatch, gatk_api, GRCH38_HEADER, IDXSTATS)
+    monkeypatch.setattr(gatk_api, "ensure_sequence_dictionary", lambda fasta: False)
+    reference = _reference(tmp_path, with_dict=False)
+    assert gatk_api.verify_cram_reference_md5("t", "in.cram", reference) == reference
+
+
+def test_a_missing_dict_is_made_before_the_check(gatk_api, tmp_path, monkeypatch):
+    """/cram-to-bam can be the first thing on a fresh install to need the .dict;
+    without it the check used to be skipped, logged at INFO and nothing else."""
+    _stub_samtools(monkeypatch, gatk_api, GRCH38_HEADER, IDXSTATS)
+    made = []
+
+    def ensure(fasta):
+        made.append(fasta)
+        (tmp_path / "ref.dict").write_text(DICT)
+        return True
+
+    monkeypatch.setattr(gatk_api, "ensure_sequence_dictionary", ensure)
+    with pytest.raises(HTTPException):
+        gatk_api.verify_cram_reference_md5(
+            "t", "in.cram", _reference(tmp_path, with_dict=False)
+        )
+    assert made
+
+
+# ---------------------------------------------------------------------------
+# The reference cache: htslib's REF_PATH, filled by the genome downloader
+# ---------------------------------------------------------------------------
+
+
+def _cache(tmp_path, monkeypatch, md5s):
+    cache = tmp_path / "ref_cache"
+    for md5 in md5s:
+        path = cache / md5[:2] / md5[2:4] / md5[4:]  # htslib's %2s/%2s/%s
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"ACGT")
+    monkeypatch.setenv("REF_PATH", f"{cache}/%2s/%2s/%s")
+    return cache
+
+
+def test_a_cram_the_cache_covers_decodes_with_its_own_sequences(
+    gatk_api, tmp_path, monkeypatch
+):
+    """The 1000 Genomes CRAM refused above: its chr1 is in the cache, and chr4,
+    the only other contig with reads, too. No FASTA is used, so no .dict either."""
+    _stub_samtools(monkeypatch, gatk_api, GRCH38_HEADER, IDXSTATS)
+    _cache(
+        tmp_path,
+        monkeypatch,
+        ["6aef897c3d6ff0c78aff06ac189178dd", "23dccd106897542ad87d2765d28a19a1"],
     )
-    assert calls == []
+    monkeypatch.setattr(gatk_api, "ensure_sequence_dictionary", pytest.fail)
+    assert (
+        gatk_api.verify_cram_reference_md5(
+            "t", "in.cram", _reference(tmp_path, with_dict=False)
+        )
+        is None
+    )
+
+
+def test_a_cache_missing_one_contig_falls_back_to_the_fasta_check(
+    gatk_api, tmp_path, monkeypatch
+):
+    _stub_samtools(monkeypatch, gatk_api, GRCH38_HEADER, IDXSTATS)
+    _cache(tmp_path, monkeypatch, ["23dccd106897542ad87d2765d28a19a1"])  # no chr1
+    with pytest.raises(HTTPException) as err:
+        gatk_api.verify_cram_reference_md5("t", "in.cram", _reference(tmp_path))
+    assert "chr1 (M5 6aef897c, reference 2648ae1b)" in err.value.detail
+    assert "1 of them are not in the reference cache" in err.value.detail
+
+
+def test_a_contig_without_an_m5_cannot_come_from_the_cache(
+    gatk_api, tmp_path, monkeypatch
+):
+    header = UCSC_HEADER.replace("\tM5:2648ae1bacce4ec4b6cf337dcae37816", "")
+    _stub_samtools(monkeypatch, gatk_api, header, IDXSTATS)
+    _cache(tmp_path, monkeypatch, ["2648ae1bacce4ec4b6cf337dcae37816"])
+    reference = _reference(tmp_path)
+    assert gatk_api.verify_cram_reference_md5("t", "in.cram", reference) == reference
+
+
+def test_ref_path_expands_like_htslib(gatk_api, tmp_path):
+    md5 = "6aef897c3d6ff0c78aff06ac189178dd"
+    assert gatk_api._ref_path_file("/c/%2s/%2s/%s", md5) == f"/c/6a/ef/{md5[4:]}"
+    assert gatk_api._ref_path_file("/c/%s", md5) == f"/c/{md5}"
+    target = tmp_path / "6a" / "ef" / md5[4:]
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"N")
+    assert gatk_api.ref_path_has(md5, f"https://example.org/%s:{tmp_path}/%2s/%2s/%s")
+    assert not gatk_api.ref_path_has(md5, "https://www.ebi.ac.uk/ena/cram/md5/%s")
+    assert not gatk_api.ref_path_has(md5, "")
 
 
 def test_cram_to_bam_runs_the_check_before_converting():
@@ -154,3 +240,6 @@ def test_cram_to_bam_runs_the_check_before_converting():
     assert endpoint.index("verify_cram_reference_md5") < endpoint.index(
         "convert_to_indexed_bam"
     )
+    # ...and decodes with what the check chose, not always the staged FASTA.
+    call = endpoint[endpoint.index("convert_to_indexed_bam,") :]
+    assert "decode_with" in call[: call.index(")")]
