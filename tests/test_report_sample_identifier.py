@@ -20,7 +20,10 @@ import pytest
 
 import app.reports.generator as generator_module
 from app.api.db import Job
-from app.reports.generator import entered_sample_identifier
+from app.reports.generator import (
+    display_sample_identifier,
+    entered_sample_identifier,
+)
 
 PATIENT = "b5bab0f9-177e-4a5b-bab6-437c936628cd"
 JOB = "e2a0c2ac-3246-4d00-90ef-f6d84c3394cf"
@@ -86,6 +89,11 @@ def _render(monkeypatch, tmp_path, patient_info, lane, db_session=None):
     key = "html_path" if lane == "write_html" else "interactive_html_path"
     page = (tmp_path / result[key].split("/")[-1]).read_text(encoding="utf-8")
     (shown,) = set(re.findall(r"Sample ID:</strong>\s*([^<\s]+)", page))
+    # Whatever Sample ID shows, the report's own id is on its own line.
+    (report_id,) = set(re.findall(r"Report ID:</strong>\s*([^<\s]+)", page))
+    assert report_id != shown
+    if db_session:
+        assert report_id == JOB
     return shown
 
 
@@ -104,12 +112,13 @@ def test_the_identifier_in_the_jobs_metadata_is_printed(monkeypatch, tmp_path, l
 
 
 @pytest.mark.parametrize("lane", LANES)
-def test_with_no_identifier_the_old_fallback_stands(monkeypatch, tmp_path, lane):
+def test_with_no_identifier_every_lane_says_so(monkeypatch, tmp_path, lane):
     """upload_router falls back to the patient id, which is not an identifier. The
-    lanes' fallbacks stay as they were, and they differ: on 30x NA12878 the HTML
-    report printed the patient id and the interactive one the job id."""
+    lanes used to fall back differently -- on 30x NA12878 the HTML report printed
+    the patient UUID and the interactive one the job UUID -- and neither named the
+    sample."""
     info = {"id": PATIENT, "sample_identifier": PATIENT}
-    assert _render(monkeypatch, tmp_path, info, lane) in (PATIENT, JOB)
+    assert _render(monkeypatch, tmp_path, info, lane) == "Not"  # "Not provided"
 
 
 @pytest.mark.parametrize(
@@ -128,3 +137,8 @@ def test_with_no_identifier_the_old_fallback_stands(monkeypatch, tmp_path, lane)
 )
 def test_entered_sample_identifier(metadata, patient_info, expected):
     assert entered_sample_identifier(metadata, patient_info) == expected
+
+
+def test_a_uuid_is_never_shown_as_a_sample_name():
+    assert display_sample_identifier(PATIENT, JOB, " ", None) is None
+    assert display_sample_identifier(PATIENT, "NA12878", JOB) == "NA12878"

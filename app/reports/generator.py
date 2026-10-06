@@ -467,6 +467,19 @@ def _is_uuid_like(s: str) -> bool:
         return False
 
 
+def display_sample_identifier(*candidates: Any) -> Optional[str]:
+    """The first candidate that names a sample: non-blank and not a UUID.
+
+    The ids the pipeline mints (patient, job, PharmCAT run title) are UUIDs, and a
+    UUID under "Sample ID" was always one of those, never a sample's name.
+    """
+    for value in candidates:
+        text = str(value or "").strip()
+        if text and not _is_uuid_like(text):
+            return text
+    return None
+
+
 def entered_sample_identifier(
     job_metadata: Optional[Dict[str, Any]], patient_info: Optional[Dict[str, Any]]
 ) -> Optional[str]:
@@ -1633,7 +1646,7 @@ def create_interactive_html_report(
         report_data = {
             "patient_id": patient_id,
             "report_id": report_id,
-            "sample_identifier": sample_identifier if sample_identifier else patient_id,
+            "sample_identifier": sample_identifier,
             "report_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "diplotypes": diplotypes,
             "recommendations": template_recommendations,
@@ -1664,40 +1677,7 @@ def create_interactive_html_report(
             "pharmcat_data_version": matcher_meta["data_version"],
         }
 
-        # Compute unified display sample id for Interactive; if it's UUID-like, derive from PharmCAT filenames
-        display_sample = report_data.get("sample_identifier") or report_data.get(
-            "patient_id"
-        )
-        if not sample_identifier and (
-            (not display_sample) or _is_uuid_like(display_sample)
-        ):
-            try:
-                candidates = []
-                for name in os.listdir(patient_dir):
-                    if (
-                        name.endswith("_pgx_pharmcat.html")
-                        or name.endswith("_pgx_pharmcat.json")
-                        or name.endswith("_pgx_pharmcat.tsv")
-                    ):
-                        base = name.split("_pgx_pharmcat")[0]
-                        if (
-                            base
-                            and base != report_data.get("patient_id")
-                            and base not in candidates
-                        ):
-                            candidates.append(base)
-                if candidates:
-                    display_sample = candidates[0]
-                    logger.info(
-                        f"Derived display_sample_id from PharmCAT filenames: {display_sample}"
-                    )
-            except Exception as e:
-                logger.debug(
-                    "Interactive display_sample_id derivation failed: %s",
-                    e,
-                    exc_info=True,
-                )
-        report_data["display_sample_id"] = display_sample
+        report_data["display_sample_id"] = sample_identifier
 
         # Load and render the HTML template
         template = env.get_template("interactive_report.html")
@@ -2569,28 +2549,23 @@ def generate_report(
         "named_allele_matcher_version": matcher_meta["named_allele_matcher_version"],
         "pharmcat_data_version": matcher_meta["data_version"],
     }
-    # The sample identifier entered at upload (or read from the file header)
-    # comes first in every report.
-    entered_sample = entered_sample_identifier(job_metadata, patient_info)
-
-    # Inject unified display sample id sourced from workflow metadata or persisted field
-    try:
-        workflow_meta = (
-            data.get("workflow") if isinstance(data.get("workflow"), dict) else {}
-        )
-        display_sample = (
-            entered_sample
-            or data.get("sample_identifier")
-            or workflow_meta.get("display_sample_id")
-            or data.get("displayId")
-            or (patient_info.get("display_sample_id") if patient_info else None)
-            or (patient_info.get("id") if patient_info else None)
-        )
-        if display_sample:
-            template_data["sample_identifier"] = display_sample
-            template_data["display_sample_id"] = display_sample
-    except Exception as e:
-        logger.debug("Swallowed exception: %s", e, exc_info=True)
+    # "Sample ID" in every report: the identifier entered at upload (or read from
+    # the file header), else a name the run recorded, else none -- the templates
+    # then say "Not provided" and the job id stands on its own Report ID line.
+    # It used to fall back to the patient or job UUID, which named no sample.
+    workflow_meta = (
+        data.get("workflow") if isinstance(data.get("workflow"), dict) else {}
+    )
+    entered_sample = entered_sample_identifier(
+        job_metadata, patient_info
+    ) or display_sample_identifier(
+        data.get("sample_identifier"),
+        workflow_meta.get("display_sample_id"),
+        data.get("displayId"),
+        (patient_info or {}).get("display_sample_id"),
+    )
+    template_data["sample_identifier"] = entered_sample
+    template_data["display_sample_id"] = entered_sample
 
     logger.info(f"Template data prepared with {len(template_data)} fields")
     logger.info(f"Template data keys: {list(template_data.keys())}")
@@ -3199,51 +3174,9 @@ def generate_report(
                 logger.debug(
                     "Executive Summary row count log failed: %s", e, exc_info=True
                 )
-            # Inject display sample id for WeasyPrint HTML template
-            try:
-                display_sample = (
-                    entered_sample
-                    or data.get("sample_identifier")
-                    or data.get("displayId")
-                    or patient_id
-                )
-                if display_sample:
-                    template_data["sample_identifier"] = display_sample
-                    template_data["display_sample_id"] = display_sample
-                # If still UUID-like, try to derive from PharmCAT files in report_dir
-                if not entered_sample and (
-                    (not display_sample) or _is_uuid_like(display_sample)
-                ):
-                    try:
-                        # Look for any *_pgx_pharmcat.* files and extract base
-                        candidates = []
-                        for name in os.listdir(report_dir):
-                            if (
-                                name.endswith("_pgx_pharmcat.html")
-                                or name.endswith("_pgx_pharmcat.json")
-                                or name.endswith("_pgx_pharmcat.tsv")
-                            ):
-                                base = name.split("_pgx_pharmcat")[0]
-                                if (
-                                    base
-                                    and base != patient_id
-                                    and base not in candidates
-                                ):
-                                    candidates.append(base)
-                        if candidates:
-                            derived = candidates[0]
-                            template_data["sample_identifier"] = derived
-                            template_data["display_sample_id"] = derived
-                            logger.info(
-                                f"Derived display_sample_id from PharmCAT files: {derived}"
-                            )
-                    except Exception as e:
-                        logger.debug(
-                            f"Display sample derivation from files failed: {e}",
-                            exc_info=True,
-                        )
-            except Exception as e:
-                logger.debug("Display sample id injection failed: %s", e, exc_info=True)
+            # The shown sample identifier, as for template_data above.
+            template_data["sample_identifier"] = entered_sample
+            template_data["display_sample_id"] = entered_sample
 
             # Add debug information for troubleshooting
             try:
