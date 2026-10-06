@@ -64,12 +64,14 @@ curation: full
   `data/temp/<service>/<job_id>/`, removed when the job ends however it ends; PyPGx's
   /genotype no longer copies its pipelines and a summary JSON into the patient's report
   root.
-- Decide whether to turn PyPGx's per-gene evidence back on. `generator.py` merges the
-  per-gene PyPGx pipelines (`pypgx_*` in the job directory) into the report -- filling
-  fields the gene row lacks and attaching evidence -- but since reports moved into
-  per-job directories the pipelines never arrive there, so it has not run. Turning it
-  on would let PyPGx fill gaps in PharmCAT's rows (e.g. a blank phenotype); review
-  what it adds before re-enabling.
+- [DONE Oct 2026, fix/pypgx-full-record] PyPGx's per-gene evidence reaches the report.
+  The dormant merge (it read pipeline folders that never reach the job directory, with
+  column names results.zip does not have) is deleted; the wrapper now reads PyPGx's
+  whole record (phenotype where PyPGx has a rule, copy number, candidate alleles,
+  alternative phasings, supporting variants with allele fractions) and keeps the
+  copy-number and allele-fraction plots. PyPGx does not fill gaps in PharmCAT's rows:
+  PharmCAT stays the source of the phenotype for every gene it covers, and PyPGx's
+  calls reach it as diplotype-only outside calls.
 
 ## Calling & Tools
 

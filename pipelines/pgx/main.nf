@@ -676,16 +676,19 @@ except (json.JSONDecodeError, IOError) as e:
 
 # Only create outside.tsv if PyPGx service was actually available
 if pypgx_success:
+    # Gene and diplotype only. PharmCAT derives the phenotype and activity score
+    # from its own CPIC tables; an outside call that names a phenotype is taken as
+    # given, and its activity score dropped. PyPGx's own phenotype (docker/pypgx
+    # parse_pypgx_results) is evidence for the report, not input here: passing it
+    # turned 30x NA12878's CYP2D6 *3/*68+*4 from PharmCAT's activity score 0.0
+    # into "n/a".
     lines = []
     for gene, resu in res.items():
         if not isinstance(resu, dict) or not resu.get('success'):
             continue
         dip = resu.get('diplotype') or ''
-        det = resu.get('details') or {}
-        ph = det.get('phenotype') or det.get('Phenotype') or ''
-        act = det.get('activity_score') or det.get('activityScore') or ''
-        if any([dip, ph, act]):
-            lines.append(f"{gene}\t{dip}\t{ph}\t{act}")
+        if dip:
+            lines.append(f"{gene}\t{dip}")
 
     if lines:
         with open('pharmcat.outside.tsv', 'w', encoding='utf-8') as f:
