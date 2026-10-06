@@ -349,6 +349,15 @@ class JobService:
             logger.error(f"Unexpected error getting workflow: {str(e)}")
             raise RuntimeError(f"Failed to get workflow: {str(e)}")
 
+    def _discard_uploads(self, job: Job) -> None:
+        """Remove the uploaded input of a job that has ended. Never raises."""
+        try:
+            removed = cleanup_service.discard_job_uploads(job.job_metadata)
+            if removed:
+                logger.info(f"Removed the upload of ended job {job.id}: {removed}")
+        except Exception as exc:
+            logger.warning(f"Could not remove the upload of job {job.id}: {exc}")
+
     def update_job(
         self, job_id: Union[str, uuid.UUID], update_data: JobUpdate
     ) -> Optional[Job]:
@@ -394,17 +403,20 @@ class JobService:
                 job.job_metadata = _json_safe(update_data.metadata)
 
             # Update timing fields based on status
-            if update_data.status == JobStatus.RUNNING and not job.started_at:
-                job.started_at = datetime.now(timezone.utc)
-            elif update_data.status in [
+            ended = update_data.status in [
                 JobStatus.COMPLETED,
                 JobStatus.FAILED,
                 JobStatus.CANCELLED,
-            ]:
+            ]
+            if update_data.status == JobStatus.RUNNING and not job.started_at:
+                job.started_at = datetime.now(timezone.utc)
+            elif ended:
                 job.completed_at = datetime.now(timezone.utc)
 
             self.db.commit()
             self.db.refresh(job)
+            if ended:
+                self._discard_uploads(job)
 
             # Log workflow update
             self._log_job_event(
@@ -1040,6 +1052,7 @@ class JobService:
                     cleanup_result = cleanup_service.cleanup_job_files(
                         job_id=str(job_id), patient_id=patient_id
                     )
+                    self._discard_uploads(job)
 
                     # Log cleanup results
                     if cleanup_result.get("success", False):
