@@ -229,6 +229,16 @@ services:
       # so it is built once by scripts/build-align-index.sh rather than baked in.
       - ${ZAROPGX_ALIGN_REFERENCE:-./reference/pypgx}:/reference/pypgx:ro
     environment:
+      # Decoding a CRAM without a FASTA for a contig, htslib looks the sequence up
+      # by MD5 in REF_PATH, and some htslib versions default that to EBI's server.
+      # Measured 2026-10-06 on NA12878's CRAM: the mtdna image (htslib 1.19.1)
+      # fetched chrM from EBI by itself; gatk-api and zarohla (1.24) did not. A
+      # local-only REF_PATH -- no URL in it -- makes it a decode error instead, on
+      # every service that reads alignments, whatever its htslib. The path is where
+      # MD5-named sequences can be placed to decode CRAMs written against another
+      # reference (samtools' seq_cache_populate.pl).
+      # tests/test_no_external_service_defaults.py pins it.
+      - REF_PATH=/reference/ref_cache/%2s/%2s/%s
       - REFERENCE_DIR=/reference
       - DATA_DIR=/data
       - ALIGN_REFERENCE=/reference/pypgx/pypgx_grch38.fasta
@@ -267,6 +277,8 @@ services:
       - ./reference:/reference
       - ./config:/app/config
     environment:
+      # Local-only, never EBI: see gatk-api.
+      - REF_PATH=/reference/ref_cache/%2s/%2s/%s
       - DATA_DIR=/data
       - REFERENCE_DIR=/reference
       - PYPGX_MEMORY_LIMIT=${PYPGX_MEMORY_LIMIT:-7G}
@@ -306,6 +318,8 @@ services:
     container_name: pgx_zarohla
     restart: unless-stopped
     environment:
+      # Local-only, never EBI: see gatk-api.
+      - REF_PATH=/reference/ref_cache/%2s/%2s/%s
       - DATA_DIR=/data
       - JOB_API_BASE=http://app:8000/api/v1
       # The BAM->FASTQ conversion is the biggest write in the stack (a whole WGS
@@ -339,6 +353,8 @@ services:
     container_name: pgx_mtdna
     restart: unless-stopped
     environment:
+      # Local-only, never EBI: see gatk-api.
+      - REF_PATH=/reference/ref_cache/%2s/%2s/%s
       - DATA_DIR=/data
       - JOB_API_BASE=http://app:8000/api/v1
     volumes:

@@ -124,10 +124,10 @@ curation: full
 - Ensure self-hosted deployments never transmit genomic data externally. Audited
   Oct 2026: every service URL the app and sidecars fall back to names a compose service
   (pinned by `tests/test_no_external_service_defaults.py`), and the only other outbound
-  traffic is reference and bundle downloads. Open: the sidecars can reach the internet and
-  `REF_PATH` is unset, so htslib may fetch a CRAM's reference sequences from EBI by MD5
-  when the staged FASTA lacks them (a reference checksum, not sample data); point
-  `REF_PATH` at a local cache in gatk-api and mtdna to close it.
+  traffic is reference and bundle downloads. htslib's fallback of fetching a CRAM's
+  reference sequences from EBI by MD5 is closed (Oct 2026; the mtdna image's htslib 1.19
+  did it by default): every alignment reader sets a local-only `REF_PATH`
+  (`/reference/ref_cache/...`), pinned by the same test.
 - Add cookie/consent footer for public deployments with per-user access gating (configurable via `.env`)
 - Add Privacy Policy and legal page
 
