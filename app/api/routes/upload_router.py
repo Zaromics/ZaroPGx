@@ -404,10 +404,11 @@ async def delayed_cleanup_on_cancellation(job_id: str, job_metadata: dict):
             )
             return
 
-        # Define cleanup paths (nested job outdir + legacy flat patient dir)
+        # The cancelled job's own outdir. Not the patient's reports directory: it
+        # holds every other job of that patient, and listing it here (as the
+        # "legacy flat patient dir") deleted all of them when one was cancelled.
         cleanup_paths = [
             f"/data/reports/{patient_id}/{job_id}",  # Nested job outdir
-            f"/data/reports/{patient_id}",  # Legacy flat patient dir
             f"/data/temp/{patient_id}",  # Temporary files
             f"/data/uploads/{patient_id}",  # Uploaded files
             f"/data/results/{patient_id}",  # Results directory
