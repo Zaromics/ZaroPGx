@@ -467,6 +467,32 @@ def _is_uuid_like(s: str) -> bool:
         return False
 
 
+def entered_sample_identifier(
+    job_metadata: Optional[Dict[str, Any]], patient_info: Optional[Dict[str, Any]]
+) -> Optional[str]:
+    """The sample identifier the reports print, or None if there is none.
+
+    The one entered at upload, else the one read from the file's header; the
+    upload keeps both in the job's metadata, and upload_router also passes its
+    pick as ``patient_info["sample_identifier"]`` (falling back to the patient
+    id, which is not a sample identifier). Neither ever reached a report:
+    generate_report took the PharmCAT run's title first -- the patient UUID --
+    and swapped any UUID-like value for the job id read off the PharmCAT file
+    names, so every report's "Sample ID" was the job id.
+    """
+    meta = job_metadata or {}
+    info = patient_info or {}
+    for value in (
+        meta.get("sample_identifier"),
+        meta.get("header_sample_identifier"),
+        info.get("sample_identifier"),
+    ):
+        text = str(value or "").strip()
+        if text and text != str(info.get("id") or ""):
+            return text
+    return None
+
+
 # Read PharmCAT report configuration from environment variables
 INCLUDE_PHARMCAT_HTML = env_flag("INCLUDE_PHARMCAT_HTML", True)
 INCLUDE_PHARMCAT_JSON = env_flag("INCLUDE_PHARMCAT_JSON", False)
@@ -1642,7 +1668,9 @@ def create_interactive_html_report(
         display_sample = report_data.get("sample_identifier") or report_data.get(
             "patient_id"
         )
-        if (not display_sample) or _is_uuid_like(display_sample):
+        if not sample_identifier and (
+            (not display_sample) or _is_uuid_like(display_sample)
+        ):
             try:
                 candidates = []
                 for name in os.listdir(patient_dir):
@@ -2049,6 +2077,7 @@ def generate_report(
 
     # Try to get PharmCAT data from database first if job_id and db_session are provided
     data = None
+    job_metadata: Dict[str, Any] = {}
     workflow_warnings = []  # Initialize warnings list
     pharmcat_assume_ref_methodology = None
     liftover_provenance = None
@@ -2101,6 +2130,7 @@ def generate_report(
                 job_uuid = uuid.UUID(str(job_id))
                 job_row = db_session.query(Job).filter(Job.id == job_uuid).first()
                 meta = (job_row.job_metadata or {}) if job_row is not None else {}
+                job_metadata = meta
                 workflow_config = (
                     meta.get("workflow", {})
                     if isinstance(meta.get("workflow"), dict)
@@ -2539,13 +2569,18 @@ def generate_report(
         "named_allele_matcher_version": matcher_meta["named_allele_matcher_version"],
         "pharmcat_data_version": matcher_meta["data_version"],
     }
+    # The sample identifier entered at upload (or read from the file header)
+    # comes first in every report.
+    entered_sample = entered_sample_identifier(job_metadata, patient_info)
+
     # Inject unified display sample id sourced from workflow metadata or persisted field
     try:
         workflow_meta = (
             data.get("workflow") if isinstance(data.get("workflow"), dict) else {}
         )
         display_sample = (
-            data.get("sample_identifier")
+            entered_sample
+            or data.get("sample_identifier")
             or workflow_meta.get("display_sample_id")
             or data.get("displayId")
             or (patient_info.get("display_sample_id") if patient_info else None)
@@ -3167,13 +3202,18 @@ def generate_report(
             # Inject display sample id for WeasyPrint HTML template
             try:
                 display_sample = (
-                    data.get("sample_identifier") or data.get("displayId") or patient_id
+                    entered_sample
+                    or data.get("sample_identifier")
+                    or data.get("displayId")
+                    or patient_id
                 )
                 if display_sample:
                     template_data["sample_identifier"] = display_sample
                     template_data["display_sample_id"] = display_sample
                 # If still UUID-like, try to derive from PharmCAT files in report_dir
-                if (not display_sample) or _is_uuid_like(display_sample):
+                if not entered_sample and (
+                    (not display_sample) or _is_uuid_like(display_sample)
+                ):
                     try:
                         # Look for any *_pgx_pharmcat.* files and extract base
                         candidates = []
@@ -3323,6 +3363,7 @@ def generate_report(
             create_interactive_html_report(
                 patient_id=patient_id,
                 report_id=report_id,
+                sample_identifier=entered_sample,
                 diplotypes=data.get("genes", []),
                 recommendations=template_recommendations,
                 output_path=interactive_html_path,
