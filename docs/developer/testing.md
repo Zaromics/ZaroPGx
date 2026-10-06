@@ -20,10 +20,11 @@ There are exactly two, split by the `e2e` pytest marker:
 The fast suite is the one you run while working. Its database is a **real PostgreSQL**:
 `tests/postgres.py` starts the image `compose.yml`'s `db` service runs, initialised from
 `db/init` exactly as production is, in a throwaway container with its data on tmpfs (about two
-seconds once the image is pulled). It connects over a Unix socket in a bind-mounted directory rather than a published
-port, because rootless Docker does not always forward new ports. To use a database you already
-run instead, set `ZAROPGX_TEST_POSTGRES_URL`; `db/init` is applied to it if `public.jobs` is
-missing, and its role must be `zaropgx_user`, which `db/init` grants to.
+seconds once the image is pulled). It connects over a Unix socket in a bind-mounted directory
+rather than a published port, because a port Docker picks lies in the ephemeral range, which
+rootless Docker's pasta forwarding skips. To use a database you already run instead, set
+`ZAROPGX_TEST_POSTGRES_URL`; `db/init` is applied to it if `public.jobs` is missing, and its
+role must be `zaropgx_user`, which `db/init` grants to.
 
 Without Docker or that URL, tests that ask for the database through a fixture skip, and those
 that reach it only through the app's own sessions fail with "no PostgreSQL to test against"

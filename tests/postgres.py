@@ -91,7 +91,9 @@ def server() -> Iterator[str]:
         raise PostgresUnavailable(f"needs Docker, or {URL_ENV}")
     name = f"zaropgx-pytest-pg-{uuid.uuid4().hex[:8]}"
     # Reached through a Unix socket in a bind-mounted directory, not a published
-    # port: rootless Docker does not always forward new ports to the host.
+    # port. A port Docker picks lies in the ephemeral range (32768-60999), and
+    # rootless Docker's pasta forwarding (--tcp-ports=auto) skips that range: on the
+    # dev host such a port never reached 127.0.0.1, while 18799 did within 2 s.
     socket_dir = _socket_dir()
     started = subprocess.run(
         [
