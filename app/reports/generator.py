@@ -1987,6 +1987,8 @@ def map_recommendations_for_template(
                 "guideline": drug_data.get("guideline", ""),
                 "guideline_source": drug_data.get("guideline_source", ""),
                 "literature_references": drug_data.get("literature_references", []),
+                "prescribing_changes": drug_data.get("prescribing_changes", []),
+                "change_genes": drug_data.get("change_genes", []),
             }
 
             drug_groups[drug_name]["recommendations"].append(recommendation_entry)
@@ -2019,6 +2021,8 @@ def map_recommendations_for_template(
                 "guideline": guideline,
                 "guideline_source": guideline_source,
                 "literature_references": rec.get("literature_references", []),
+                "prescribing_changes": rec.get("prescribing_changes", []),
+                "change_genes": rec.get("change_genes", []),
             }
 
             # Add drug-level metadata if available
