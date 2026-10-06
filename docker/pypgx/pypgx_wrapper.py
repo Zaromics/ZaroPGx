@@ -1017,9 +1017,12 @@ def sv_inputs_from_vcf(vcf_path: str, temp_dir) -> Optional[Tuple[str, str]]:
     """The SV archives /create-input-vcf recorded in this VCF's header, or None.
 
     The paths arrive inside an uploaded file, so only ones this sidecar could have
-    written are honoured: both directly in one job directory under temp_dir, with
-    the expected names, and present. Anything else, including an uploaded VCF that
-    happens to carry the line, means no SV inputs.
+    written are honoured: both in one working directory below temp_dir, with the
+    expected names, and present. Anything else, including an uploaded VCF that
+    happens to carry the line, means no SV inputs. Below, at any depth: the
+    working directory has been temp/<random> and is temp/pypgx/<job>/<random>,
+    and a check pinned to one layout turned SV calling off for every job when
+    the layout changed, without a word in the log.
     """
     prefix = f"##{SV_INPUTS_HEADER_KEY}="
     with open(vcf_path, "rb") as probe:
@@ -1040,10 +1043,11 @@ def sv_inputs_from_vcf(vcf_path: str, temp_dir) -> Optional[Tuple[str, str]]:
     expected = (SV_DEPTH_SUFFIX, SV_CONTROL_SUFFIX)
     for path, suffix in zip(paths, expected):
         if (
-            path.parent.parent != root
+            root not in path.parent.parents
             or not path.name.endswith(suffix)
             or not path.is_file()
         ):
+            logger.warning(f"SV inputs in the VCF header not honoured: {path}")
             return None
     if paths[0].parent != paths[1].parent:
         return None

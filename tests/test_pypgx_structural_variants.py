@@ -227,8 +227,17 @@ def _sv_files(temp_dir, job="job1"):
     return str(depth), str(control)
 
 
-def test_the_header_line_round_trips(pypgx, tmp_path):
-    depth, control = _sv_files(tmp_path / "temp")
+@pytest.mark.parametrize(
+    "job",
+    [
+        "job1",
+        # The per-job working directory, temp/pypgx/<job>/<random>. A check
+        # pinned to temp/<dir> turned SV calling off for every job in it.
+        "pypgx/2b7763a0-4fdf-4102-9437-2024a478842c/8ada20b6",
+    ],
+)
+def test_the_header_line_round_trips(pypgx, tmp_path, job):
+    depth, control = _sv_files(tmp_path / "temp", job=job)
     vcf = _vcf(tmp_path, pypgx.sv_inputs_header_line(depth, control) + "\n")
 
     assert pypgx.sv_inputs_from_vcf(str(vcf), tmp_path / "temp") == (depth, control)
@@ -246,11 +255,17 @@ def test_an_uploaded_vcf_without_the_line_has_no_sv_inputs(pypgx, tmp_path):
         lambda d, c: (d, c.replace("abc.", "missing.")),  # not on disk
         lambda d, c: (d, c.replace("/job1/", "/job2/")),  # two job directories
         lambda d, c: (d.replace("/job1/", "/job1/../../"), c),  # walks out
+        lambda d, c: (
+            d.replace("/job1/", "/"),
+            c.replace("/job1/", "/"),
+        ),  # temp itself
     ],
 )
 def test_paths_the_sidecar_did_not_write_are_ignored(pypgx, tmp_path, rewrite):
     depth, control = _sv_files(tmp_path / "temp")
     _sv_files(tmp_path / "temp", job="job2")
+    for name in ("abc.depth-of-coverage.zip", "abc.control-statistics.zip"):
+        (tmp_path / "temp" / name).write_bytes(b"zip")  # in temp itself
     elsewhere = tmp_path / "elsewhere" / "job1"
     elsewhere.mkdir(parents=True)
     (elsewhere / "abc.depth-of-coverage.zip").write_bytes(b"zip")
