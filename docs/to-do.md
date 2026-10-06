@@ -56,12 +56,14 @@ curation: full
   supplying the MT-RNR1 outside call and the report's mtDNA section.
 - Finish wiring in ZaroHLA
 - Improve analysis, make better use of samtools and bcftools
-- Disk housekeeping at whole-genome scale. Measured on 30x NA12878 (Oct 2026): the
-  upload is kept after its job completes (41 GB a run), and a sidecar's working copy
-  under `data/temp/<sidecar>/<job_id>/` outlives a worker killed mid-request, because
-  the `finally` that removes it never runs (one cancelled run left 41 GB). Nothing
-  sweeps either. Decide how long uploads are kept, and sweep working copies of jobs
-  that are no longer running.
+- [DONE Oct 2026, fix/discard-uploads-when-job-ends] A job's upload is deleted when the
+  job completes, fails or is cancelled (`KEEP_UPLOADS=true` keeps it); it used to stay
+  for good, 41 GB per 30x genome. The mtDNA sidecar's `data/temp/mtdna/<job_id>/`, left
+  behind by a worker killed mid-request, is now in the completion cleanup.
+- Still unswept: the PyPGx and zarohla working directories under `data/temp/<random
+  uuid>/`, which no job id names, and the PyPGx outputs the sidecar writes into the
+  patient's report root (`pypgx_<run>/`, `<run>_pypgx_results.json`), one set per job,
+  outside every job directory; the report reads the copy in the job directory.
 
 ## Calling & Tools
 
@@ -87,16 +89,15 @@ curation: full
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
 - Abstract report theme so cross-pipeline outputs remain stylistically consistent
 - Custom reports: add a QR code containing the raw data
-- Gene table, DPYD on unphased input. Measured on 30x NA12878 (Oct 2026): PharmCAT
-  calls each allele separately (`c.1601G>A (*4)` and `c.1627A>G (*5)`, each
-  "Indeterminate") and gives the recommendation diplotype
-  `c.1601G>A (*4)/c.1627A>G (*5)` as a Normal Metabolizer, which is what its dosing
-  guidance uses. The table shows the first per-allele entry, "Indeterminate", and
-  letters the row P (PyPGx) though PyPGx made no DPYD call. Decide what the row
-  should show for a multi-allele unphased gene.
-- "Sample ID" in the reports is the job UUID, not the sample identifier entered at
-  upload (e.g. `NA12878-wgs-validation`): the generator swaps a UUID-like PharmCAT
-  title for the PharmCAT file stem, which is the job id.
+- [DONE Oct 2026, fix/report-recommendation-call] DPYD on unphased input. PharmCAT
+  lists each allele it found as its own "Indeterminate" source call and doses from the
+  one recommendation call it builds from them (30x NA12878: `c.1601G>A (*4)/c.1627A>G
+  (*5)`, Normal Metabolizer, 2.0). The gene table, Executive Summary and interactive
+  report showed the per-allele entries; where the source is not one diplotype they now
+  show the recommendation call, as the dosing guidance does.
+- [DONE Oct 2026, fix/report-sample-identifier] The sample identifier entered at upload
+  (else the file header's) is the reports' "Sample ID"; every report used to print the
+  job or patient UUID.
 
 ## UI/UX
 
