@@ -70,6 +70,7 @@ from app.utils.literature import (
     format_literature_reference,
     format_literature_references,
 )
+from app.utils.pharmcat_assume_ref import EXPLICIT_CALL_INPUT_TYPES
 from app.visualizations.workflow_diagram import (
     build_simple_html_from_workflow,
     render_kroki_mermaid_svg,
@@ -613,11 +614,13 @@ CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
 # to call. What that *means* depends on what the pipeline was given, so the report
 # says two different things:
 #
-#   VCF                 -> "Possibly Wild Type". A variant-only file is silent
-#                          about positions it does not list, so the absence of a
+#   VCF, BCF, 23andMe,  -> "Possibly Wild Type". A variant-only file is silent
+#   AncestryDNA            about positions it does not list, so the absence of a
 #                          variant call is not evidence of the reference allele.
-#   BAM/CRAM/SAM/FASTQ  -> "Likely Wild Type". Aligned reads cover the locus, so
-#                          the absence of a variant is positive evidence.
+#   BAM/CRAM/SAM/FASTQ, -> "Likely Wild Type". PharmCAT was given an explicit call
+#   gVCF                   at every one of its positions (from the reads, or the
+#                          gVCF's reference blocks), so the absence of a variant
+#                          is positive evidence.
 #   anything else       -> no label at all. An unknown provenance cannot support
 #                          either claim, and inventing one would be fabrication.
 #
@@ -636,8 +639,11 @@ _REFERENCE_DIPLOTYPES = frozenset(
 )
 # Spellings that mean "no phenotype reported", not a phenotype named "Unknown".
 _ABSENT_PHENOTYPES = frozenset({"n/a", "na", "unknown", "none", "-", "."})
-_VARIANT_ONLY_FILE_TYPES = frozenset({"vcf", "vcf.gz", "vcf.bgz"})
-_ALIGNED_READ_FILE_TYPES = frozenset({"bam", "fastq", "fq", "cram", "sam"})
+_VARIANT_ONLY_FILE_TYPES = frozenset(
+    {"vcf", "vcf.gz", "vcf.bgz", "bcf", "23andme", "ancestry"}
+)
+# The inputs main.nf genotypes at every PharmCAT position (pharmcat_assume_ref).
+_EXPLICIT_CALL_FILE_TYPES = EXPLICIT_CALL_INPUT_TYPES | {"fq"}
 
 
 def wild_type_phenotype(
@@ -659,7 +665,7 @@ def wild_type_phenotype(
     normalized_file_type = str(file_type or "").strip().lower()
     if normalized_file_type in _VARIANT_ONLY_FILE_TYPES:
         return WILD_TYPE_VARIANT_ONLY_LABEL
-    if normalized_file_type in _ALIGNED_READ_FILE_TYPES:
+    if normalized_file_type in _EXPLICIT_CALL_FILE_TYPES:
         return WILD_TYPE_ALIGNED_READS_LABEL
     return None
 
@@ -2334,6 +2340,14 @@ def generate_report(
         logger.info(
             f"DEBUG - First mapped recommendation sample: {template_recommendations[0]}"
         )
+
+    # The wild-type labels key on the input's type (wild_type_phenotype). Neither
+    # lane knows it -- the database lane says "vcf" -- so every BAM, CRAM and FASTQ
+    # report gave its reference calls the variant-only label. The job's metadata
+    # records it, whichever lane the data came from.
+    input_file_type = (job_metadata.get("file_analysis") or {}).get("file_type")
+    if input_file_type:
+        data["file_type"] = str(input_file_type).lower()
 
     # Add tool source information to diplotypes
     file_type = str(data.get("file_type", "vcf")).lower()
