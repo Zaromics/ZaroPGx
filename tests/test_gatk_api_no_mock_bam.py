@@ -1565,7 +1565,10 @@ def test_coordinate_sorted_input_is_not_re_sorted(
     assert resp.status_code == 200, resp.text
 
     assert samtools.ran("samtools", "sort") == [], "re-sorted an already-sorted input"
-    assert _conversion_argv(samtools)[:3] == ["samtools", "view", "-b"]
+    argv = _conversion_argv(samtools)
+    assert argv[:3] == ["samtools", "view", "-b"]
+    # Threaded like the sort: single-threaded, a whole-genome CRAM took over an hour.
+    assert argv[argv.index("-@") + 1] == gatk_api.SORT_THREADS
     assert resp.json()["sorted"] is False
 
 

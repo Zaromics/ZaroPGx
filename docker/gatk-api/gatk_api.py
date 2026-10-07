@@ -2325,7 +2325,10 @@ def convert_to_indexed_bam(job_label, input_path, output_bam, work_dir, referenc
         argv.append(input_path)
     else:
         logger.info(f"Job {job_label}: already coordinate-sorted; converting without a sort")
-        argv = ["samtools", "view", "-b"]
+        # -@ as for the sort: without it the whole conversion, CRAM decoding and BGZF
+        # compression both, ran on one core. 30x NA12878's 15 GB CRAM wrote its BAM
+        # at 9 MiB/s with samtools at 99% CPU, over an hour for one file.
+        argv = ["samtools", "view", "-b", "-@", SORT_THREADS]
         if reference_path:
             argv += ["-T", reference_path]
         argv += ["-o", output_bam, input_path]
