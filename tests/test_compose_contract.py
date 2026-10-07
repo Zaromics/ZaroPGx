@@ -361,3 +361,46 @@ def test_docs_do_not_ufw_allow_internal_service_ports():
         assert (
             f"ufw allow {port}" not in deployment
         ), f"deployment.md still opens internal port {port} in the firewall"
+
+
+def test_every_service_with_ref_path_mounts_the_reference_tree(compose):
+    """REF_PATH names /reference/ref_cache, the genome downloader's MD5-keyed reference
+    cache; a service without /reference mounted had the setting and nothing behind it
+    (zarohla), so a CRAM it was given could not be decoded."""
+
+    def mounts(service):
+        # (host, container) per volume. The container path is the last ":/..."
+        # field, before any :ro/:rw options; the host side may itself hold colons
+        # (${VAR:-default}).
+        out = []
+        for v in service.get("volumes") or []:
+            m = re.search(r"^(.*):(/[^:]+)(?::[a-z,]+)?$", str(v))
+            if m:
+                out.append((m.group(1), m.group(2).rstrip("/")))
+        return out
+
+    # The host directory the downloader fills, the cache inside it.
+    cache_host = dict(
+        (c, h) for h, c in mounts(compose["services"]["genome-downloader"])
+    )["/reference"]
+    checked = []
+    for name, service in compose["services"].items():
+        env = service.get("environment") or []
+        if isinstance(env, dict):
+            env = [f"{k}={v}" for k, v in env.items()]
+        ref_path = next(
+            (str(e).split("=", 1)[1] for e in env if str(e).startswith("REF_PATH=")),
+            None,
+        )
+        if ref_path is None:
+            continue
+        for entry in ref_path.split(":"):
+            if not entry.startswith("/"):
+                continue  # a URL; compose.yml keeps none, see gatk-api's comment
+            directory = entry.split("%", 1)[0]
+            assert any(
+                host == cache_host and directory.startswith(target + "/")
+                for host, target in mounts(service)
+            ), f"{name}: REF_PATH {entry} is not inside a mount of {cache_host}"
+        checked.append(name)
+    assert "zarohla" in checked

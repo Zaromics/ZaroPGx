@@ -337,6 +337,9 @@ services:
     volumes:
       - ./data:/data
       - ${ZAROPGX_SCRATCH:-./data/temp}:/scratch
+      # For REF_PATH above: without it the reference cache it names was not there, and
+      # a CRAM posted here could not be decoded. Read-only; zarohla writes none of it.
+      - ./reference:/reference:ro
     ports:
       - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5060:5000"
     healthcheck:
