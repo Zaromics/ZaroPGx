@@ -43,6 +43,7 @@ COPY docker/mtdna-server-2/app.py .
 COPY docker/mtdna-server-2/report.Rmd .
 COPY docker/mtdna-server-2/files/ /opt/mtdna-files/
 COPY app/utils/job_client.py /job-client/
+COPY app/utils/shared_input.py /job-client/
 COPY app/mtdna/ /mtdna-lib/mtdna/
 
 # Pre-built here, as root: /opt/mtdna-files stays root-owned below (only /app,

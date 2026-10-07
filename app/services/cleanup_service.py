@@ -85,7 +85,6 @@ class CleanupService:
                         str(self.data_dir / "temp" / job_id),
                         str(self.uploads_dir / patient_id),
                         str(self.data_dir / "results" / patient_id),
-                        str(self.data_dir / "results" / job_id),
                         # NOTHING UNDER /data/reports BELONGS HERE.
                         #
                         # This method runs on job COMPLETION (job_service.py, the
@@ -125,6 +124,11 @@ class CleanupService:
                     # zarohla's /scratch is ./data/temp unless ZAROPGX_SCRATCH
                     # points elsewhere; then only zarohla's own cleanup applies.
                     str(self.data_dir / "temp" / "zarohla" / job_id),
+                    # gatk-api's converted and aligned BAMs (conversion_output_dir).
+                    # Job-scoped, so a failed or cancelled job loses them too: listed
+                    # with the patient paths, only a completion removed them, and a
+                    # failed 30x CRAM job left its 41 GB BAM for good.
+                    str(self.data_dir / "results" / job_id),
                 ]
             )
 

@@ -51,6 +51,20 @@ def test_an_ended_job_loses_its_upload(job_service, uploads, status):
     assert not any(m.exists() for m in mates)
 
 
+@pytest.mark.parametrize(
+    "status", [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]
+)
+def test_an_ended_job_loses_its_converted_bam(job_service, uploads, tmp_path, status):
+    """gatk-api writes a BAM converted from CRAM or SAM, or aligned from FASTQ, to
+    /data/results/<job>/; only a completion with a patient id removed it."""
+    job_id, _ = _job_with_upload(job_service, uploads)
+    converted = tmp_path / "results" / str(job_id) / "local-1" / "converted.bam"
+    converted.parent.mkdir(parents=True)
+    converted.write_bytes(b"BAM")
+    job_service.update_job(job_id, JobUpdate(status=status))
+    assert not (tmp_path / "results" / str(job_id)).exists()
+
+
 def test_a_running_job_keeps_its_upload(job_service, uploads):
     job_id, mates = _job_with_upload(job_service, uploads)
     job_service.update_job(job_id, JobUpdate(status=JobStatus.RUNNING))

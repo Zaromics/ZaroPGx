@@ -45,6 +45,7 @@ WORKDIR /app
 # Copy application code
 COPY docker/zarohla/app.py .
 COPY app/utils/job_client.py /job-client/
+COPY app/utils/shared_input.py /job-client/
 
 # Create /data directory for uploads/results and set permissions
 RUN mkdir -p /data && chown -R zarouser:zarouser /app /data /job-client
