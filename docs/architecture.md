@@ -44,9 +44,10 @@ authenticate, so reach them over an SSH tunnel rather than re-pointing that vari
 | `mermaid` | *not published* (`expose` only) | 8002 |
 | `nextflow` | *not published at all* (`expose: 5055`) | 5055 |
 
-`nextflow` is deliberately unpublished: its `POST /run` is unauthenticated and the service
-bind-mounts `/var/run/docker.sock`, so a host mapping would be remote code execution. The app
-reaches it as `http://nextflow:5055` over the Compose network.
+`nextflow` is deliberately unpublished: its `POST /run` is unauthenticated, so a host mapping
+would let anything that can reach the port start pipelines. The app reaches it as
+`http://nextflow:5055` over the Compose network. It holds no Docker socket: every pipeline step
+runs in it and calls a service over HTTP.
 
 ## Data mounts
 

@@ -75,9 +75,10 @@ params.skip_report    = params.skip_report != null ? params.skip_report : false
 // pipeline param: a `val`/`params` string is interpolated verbatim into the shell
 // block (Nextflow escapes only `path` inputs), so a value containing a double quote
 // breaks out of the surrounding quoting and the rest runs as shell - unauthenticated
-// RCE, since this container holds the Docker socket. The value now travels to
-// PharmCATRun as the SAMPLE_IDENTIFIER environment variable (set by the runner,
-// exactly as JOB_ID already is) and is referenced there as "$SAMPLE_IDENTIFIER".
+// code execution in the pipeline container, which reads and writes all of /data.
+// The value now travels to PharmCATRun as the SAMPLE_IDENTIFIER environment variable
+// (set by the runner, exactly as JOB_ID already is) and is referenced there as
+// "$SAMPLE_IDENTIFIER".
 // A bash variable expansion is data, never re-parsed as code, whatever it contains -
 // which is the structural fix, not a smarter escape. Do not reintroduce a
 // params.sample_identifier that any shell block interpolates.

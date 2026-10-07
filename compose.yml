@@ -475,12 +475,14 @@ services:
       - ./data:/data
       - ./reference:/reference
       - ./data/nextflow:/opt/nextflow
-      # Allow Nextflow to launch docker tasks when using -profile docker
-      - /var/run/docker.sock:/var/run/docker.sock
+      # No Docker socket. Every process in main.nf runs here and calls a service over
+      # HTTP; none declares a container, so Nextflow never started one, and the socket
+      # only made this container root-equivalent on the host -- the one that runs an
+      # unauthenticated POST /run. Rootless Docker has no /var/run/docker.sock at all.
     working_dir: /workspace
-    # Deliberately NOT published to the host: runner.py's POST /run is unauthenticated and
-    # this service bind-mounts /var/run/docker.sock, so a host mapping is remote code
-    # execution. The app reaches it as http://nextflow:5055 over the compose network.
+    # Deliberately NOT published to the host: runner.py's POST /run is unauthenticated, so
+    # a host mapping would let anything that can reach the port start pipelines and shell
+    # steps. The app reaches it as http://nextflow:5055 over the compose network.
     expose:
       - "5055"
     networks:

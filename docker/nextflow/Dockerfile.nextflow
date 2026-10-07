@@ -11,12 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Docker CLI for Docker-in-Docker support
-RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-29.8.2.tgz | \
-    tar -xzC /usr/local/bin --strip-components=1 docker/docker && \
-    chmod +x /usr/local/bin/docker && \
-    chmod 755 /usr/local/bin/docker
-
 # Install the PINNED Nextflow version. The get.nextflow.io script ignores the ARG and
 # installs "latest" (which pulled an incompatible 26.x); download the versioned dist directly.
 RUN curl -fsSL "https://github.com/nextflow-io/nextflow/releases/download/v${NXF_VERSION}/nextflow-${NXF_VERSION}-dist" -o /usr/local/bin/nextflow \

@@ -81,19 +81,36 @@ def test_internal_bind_address_defaults_to_loopback(compose):
 
 
 def test_nextflow_is_never_published(compose):
-    """runner.py's POST /run is unauthenticated and the service mounts the docker socket.
-
-    A host mapping there is remote code execution, so loopback is not sufficient — it must
-    not be published at all.
+    """runner.py's POST /run is unauthenticated: anything that can reach it starts
+    pipelines, whose shell steps read and write all of /data. Loopback is not
+    sufficient -- it must not be published at all.
     """
     nextflow = compose["services"]["nextflow"]
     assert not nextflow.get("ports"), (
-        "nextflow must not publish a host port: it exposes an unauthenticated POST /run "
-        "and bind-mounts /var/run/docker.sock. Use expose: instead."
+        "nextflow must not publish a host port: it exposes an unauthenticated POST /run. "
+        "Use expose: instead."
     )
-    assert "/var/run/docker.sock" in " ".join(
-        nextflow.get("volumes") or []
-    ), "premise check: if nextflow no longer mounts the docker socket, revisit this test"
+
+
+def test_no_service_holds_the_docker_socket(compose):
+    """The socket makes a container root-equivalent on the host. nextflow held it for
+    containerised tasks, but no process in main.nf declares a container: every step
+    runs in the nextflow container and calls a service over HTTP. Rootless Docker has
+    no /var/run/docker.sock at all."""
+    for name, service in compose["services"].items():
+        mounts = " ".join(str(v) for v in service.get("volumes") or [])
+        assert "docker.sock" not in mounts, f"{name} mounts the Docker socket"
+
+
+def test_no_pipeline_process_declares_a_container():
+    """The premise of the test above: were a process to run in its own container,
+    Nextflow would need a Docker daemon to start it."""
+    pipeline = COMPOSE.parent / "pipelines" / "pgx"
+    main_nf = (pipeline / "main.nf").read_text(encoding="utf-8")
+    assert not re.search(r"^\s*container\s", main_nf, re.M)
+    # Nor one for every process (process.container, or a withName/withLabel block).
+    config = (pipeline / "nextflow.config").read_text(encoding="utf-8")
+    assert not re.search(r"\bcontainer\s*=", config)
 
 
 def test_every_service_comes_back_after_a_reboot(compose):
