@@ -20,6 +20,7 @@ class WorkflowMonitor {
      * @param {number} options.maxReconnectDelay - Maximum reconnect delay in ms (default: 30000)
      * @param {number} options.maxReconnectAttempts - Maximum reconnection attempts (default: 10)
      * @param {boolean} options.autoReconnect - Whether to automatically reconnect (default: true)
+     * @param {number} options.progressPollInterval - Progress poll interval in ms (default: 5000)
      * @param {Function} options.onProgress - Callback for progress updates
      * @param {Function} options.onComplete - Callback for workflow completion
      * @param {Function} options.onError - Callback for errors
@@ -43,6 +44,7 @@ class WorkflowMonitor {
             maxReconnectDelay: options.maxReconnectDelay || 30000,
             maxReconnectAttempts: options.maxReconnectAttempts || 10,
             autoReconnect: options.autoReconnect !== false,
+            progressPollInterval: options.progressPollInterval || 5000,
             ...options
         };
         
@@ -58,6 +60,7 @@ class WorkflowMonitor {
         this.currentReconnectDelay = this.config.reconnectDelay;
         this.lastMessageTime = null;
         this.reconnectTimer = null;
+        this.pollTimer = null;
         
         // WebSocket connection
         this.websocket = null;
@@ -97,6 +100,45 @@ class WorkflowMonitor {
         
         // Add visibility change detection to refresh progress when tab becomes visible
         this.setupVisibilityRefresh();
+
+        // The WebSocket only speaks when a step reports. A step that reports nothing
+        // for half an hour (a CRAM's conversion) left the bar frozen, though the
+        // server paces such a step by its elapsed time; so ask every few seconds.
+        this.startProgressPolling();
+    }
+
+    /**
+     * Poll the progress endpoint while the job runs. Progress only: completion
+     * stays with the WebSocket, whose message carries the report links that
+     * /progress does not.
+     */
+    startProgressPolling() {
+        this.pollTimer = setInterval(async () => {
+            if (this.isCompleted) {
+                this.stopProgressPolling();
+                return;
+            }
+            if (document.hidden) return;
+            try {
+                const response = await fetch(
+                    `${this.config.baseUrl}/api/v1/jobs/${this.workflowId}/progress`
+                );
+                if (!response.ok || this.isCompleted) return;
+                const data = await response.json();
+                if (data.status !== 'running' || data.progress_percentage === undefined) return;
+                this.currentProgress = data.progress_percentage;
+                this.callbacks.onProgress(data.progress_percentage, data);
+            } catch (error) {
+                this.logger.debug('Progress poll failed:', error);
+            }
+        }, this.config.progressPollInterval);
+    }
+
+    stopProgressPolling() {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
     }
     
     /**
@@ -622,6 +664,7 @@ class WorkflowMonitor {
     disconnect() {
         this.logger.info('Disconnecting from WebSocket');
         this.isCompleted = true;
+        this.stopProgressPolling();
         
         // Clear timers
         if (this.reconnectTimer) {

@@ -333,57 +333,27 @@ def test_the_gvcf_conversion_step_lands_in_the_gatk_stage():
     assert STEP_TO_STAGE["gvcf_to_vcf"] is WorkflowStage.GATK
 
 
-def test_the_gvcf_conversion_is_banded_and_ordered_like_the_other_conversions():
-    """A step with no band is dropped by _active_ordered_steps(), which filters on
-    membership of STEP_BASE_BANDS -- the defect that froze the bar for the whole
-    liftover."""
+@pytest.mark.parametrize("step_name", sorted(_templates()))
+def test_every_step_the_registry_mints_has_a_duration_for_the_bar(step_name):
+    """The progress bar weighs each step by what it takes. One the table does not
+    name gets a default weight rather than vanishing (as liftover once did, freezing
+    the bar for the whole lift), but a step this pipeline mints should be named,
+    and listed where it runs."""
     from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 
-    assert "gvcf_to_vcf" in WorkflowProgressCalculator.STEP_BASE_BANDS
-    assert "gvcf_to_vcf" in WorkflowProgressCalculator.CANONICAL_STEP_ORDER
-
-
-def test_the_progress_calculator_plans_the_conversion_the_registry_mints():
-    """Two independent readers of the same pair of flags; they must not disagree."""
-    from app.services.workflow_progress_calculator import WorkflowProgressCalculator
-
-    calculator = WorkflowProgressCalculator()
-    gvcf_plan = calculator._planned_steps_from_config(
-        {
-            "file_type": "gvcf",
-            "needs_conversion": True,
-            "needs_gvcf_genotyping": True,
-            "needs_gatk": True,
-            "needs_pypgx": True,
-        }
-    )
-    assert "gvcf_to_vcf" in gvcf_plan
-    assert "bcf_to_vcf" not in gvcf_plan
-    # A gVCF is a variant call set by the time PyPGx sees it, so it must not be given
-    # the BAM->VCF step, exactly as a BCF is not.
-    assert "pypgx_bam2vcf" not in gvcf_plan
-
-    bcf_plan = calculator._planned_steps_from_config(
-        {
-            "file_type": "bcf",
-            "needs_conversion": True,
-            "needs_gatk": True,
-            "needs_pypgx": True,
-        }
-    )
-    assert "bcf_to_vcf" in bcf_plan
-    assert "gvcf_to_vcf" not in bcf_plan
+    assert step_name in WorkflowProgressCalculator.STEP_EXPECTED_SECONDS
+    assert step_name in WorkflowProgressCalculator.CANONICAL_STEP_ORDER
 
 
 # --- gatk_alignment: registered, and still unreachable ------------------------
 
 
 def test_gatk_alignment_is_registered_so_the_registry_and_the_bar_agree():
-    """It has a progress band and a canonical-order slot; it needed a template too."""
+    """It has a duration and a canonical-order slot; it needed a template too."""
     from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 
     assert "gatk_alignment" in _templates()
-    assert "gatk_alignment" in WorkflowProgressCalculator.STEP_BASE_BANDS
+    assert "gatk_alignment" in WorkflowProgressCalculator.STEP_EXPECTED_SECONDS
     assert "gatk_alignment" in WorkflowProgressCalculator.CANONICAL_STEP_ORDER
 
 

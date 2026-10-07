@@ -810,6 +810,8 @@ class JobService:
                     "step_order": step.step_order,
                     "container_name": step.container_name,
                     "output_data": step.output_data,  # Include output_data for container progress
+                    # Paces a running step that reports no progress of its own.
+                    "started_at": step.started_at,
                     # NOTE: there used to be a "metadata": step.metadata entry here.
                     # JobStep has no metadata column, so that expression returned
                     # SQLAlchemy's MetaData object; WorkflowProgressCalculator gates on

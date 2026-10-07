@@ -1,6 +1,21 @@
-"""58/102 — progress skip renormalization."""
+"""58/102 — the bar spans only the steps a job has.
+
+A step the job does not need is never minted (workflow_registry), so it takes no
+share of the bar: a VCF job's 100% is header, PyPGx, PharmCAT and the report alone.
+This used to be done by laying bands end to end and renormalising them; the bar is
+now a weighted sum over the job's own steps (tests/test_progress_parallel_steps.py),
+which spans exactly those steps by construction.
+"""
 
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
+
+E = WorkflowProgressCalculator.STEP_EXPECTED_SECONDS
+VCF_STEPS = [
+    "header_analysis",
+    "pypgx_analysis",
+    "pharmcat_analysis",
+    "report_generation",
+]
 
 
 def _vcf_config(**overrides):
@@ -15,141 +30,64 @@ def _vcf_config(**overrides):
     return cfg
 
 
-def test_planned_steps_vcf_omits_gatk_hla_bam2vcf():
-    calc = WorkflowProgressCalculator()
-    planned = calc._planned_steps_from_config(_vcf_config())
-    assert "gatk_cram_sam_to_bam" not in planned
-    assert "gatk_alignment" not in planned
-    assert "hla_typing" not in planned
-    assert "pypgx_bam2vcf" not in planned
-    assert planned == [
-        "header_analysis",
-        "pypgx_analysis",
-        "pharmcat_analysis",
-        "diagram_generation",
-        "report_generation",
-    ]
-
-
-def test_renormalized_ranges_vcf_cover_0_to_100_no_gaps():
-    calc = WorkflowProgressCalculator()
-    active = calc._planned_steps_from_config(_vcf_config())
-    ranges = calc._renormalized_ranges(active)
-    assert ranges["header_analysis"] == (0, 15)
-    assert ranges["pypgx_analysis"] == (16, 43)
-    assert ranges["pharmcat_analysis"] == (44, 71)
-    assert ranges["diagram_generation"] == (72, 79)
-    assert ranges["report_generation"] == (80, 100)
-    # Contiguous / full cover
-    assert ranges["header_analysis"][0] == 0
-    assert ranges["report_generation"][1] == 100
-    ordered = list(ranges.values())
-    for i in range(len(ordered) - 1):
-        assert ordered[i][1] + 1 == ordered[i + 1][0]
-
-
-def test_vcf_header_complete_progress_is_end_of_first_range():
-    calc = WorkflowProgressCalculator()
-    steps = [
-        {"step_name": "header_analysis", "status": "completed", "step_order": 1},
-    ]
-    info = calc.calculate_progress_from_steps(steps, _vcf_config())
-    assert info.progress_percentage == 15
-
-
-def test_vcf_pypgx_running_50_maps_to_mid_range():
-    calc = WorkflowProgressCalculator()
-    steps = [
-        {"step_name": "header_analysis", "status": "completed", "step_order": 1},
+def _rows(**status):
+    return [
         {
-            "step_name": "pypgx_analysis",
-            "status": "running",
-            "step_order": 2,
-            "output_data": {"progress_percent": 50},
-        },
+            "step_name": name,
+            "step_order": i,
+            "status": status.get(name, "pending"),
+            "output_data": {},
+        }
+        for i, name in enumerate(VCF_STEPS, 1)
     ]
-    info = calc.calculate_progress_from_steps(steps, _vcf_config())
-    # range 16-43 width 28; 50% -> 16 + 14 = 30
-    assert info.progress_percentage == 30
+
+
+def test_vcf_pypgx_running_50_is_half_its_share():
+    rows = _rows(header_analysis="completed", pypgx_analysis="running")
+    rows[1]["output_data"] = {"progress_percent": 50}
+    info = WorkflowProgressCalculator().calculate_progress_from_steps(
+        rows, _vcf_config()
+    )
+    total = sum(E[s] for s in VCF_STEPS)
+    assert info.progress_percentage == int(
+        (E["header_analysis"] + E["pypgx_analysis"] / 2) * 100 / total
+    )
+
+
+def test_a_step_the_job_does_not_have_takes_no_share():
+    """With ZaroHLA minted, the same point in the run is a smaller share."""
+    calc = WorkflowProgressCalculator()
+    plain = calc.calculate_progress_from_steps(
+        _rows(header_analysis="completed", pypgx_analysis="completed"), _vcf_config()
+    )
+    with_hla = calc.calculate_progress_from_steps(
+        _rows(header_analysis="completed", pypgx_analysis="completed")
+        + [{"step_name": "hla_typing", "status": "pending"}],
+        _vcf_config(),
+    )
+    assert with_hla.progress_percentage < plain.progress_percentage
 
 
 def test_vcf_complete_is_100():
-    calc = WorkflowProgressCalculator()
-    steps = [
-        {"step_name": "header_analysis", "status": "completed", "step_order": 1},
-        {"step_name": "pypgx_analysis", "status": "completed", "step_order": 2},
-        {"step_name": "pharmcat_analysis", "status": "completed", "step_order": 3},
-        {"step_name": "diagram_generation", "status": "completed", "step_order": 4},
-        {"step_name": "report_generation", "status": "completed", "step_order": 5},
-    ]
-    info = calc.calculate_progress_from_steps(steps, _vcf_config())
+    info = WorkflowProgressCalculator().calculate_progress_from_steps(
+        _rows(**{s: "completed" for s in VCF_STEPS}), _vcf_config()
+    )
     assert info.progress_percentage == 100
 
 
-def test_bam_includes_bam2vcf_not_alignment():
-    calc = WorkflowProgressCalculator()
-    cfg = {
-        "needs_gatk": False,
-        "needs_hla": False,
-        "needs_pypgx": True,
-        "needs_pypgx_bam2vcf": True,
-        "file_analysis": {"file_type": "bam"},
-    }
-    planned = calc._planned_steps_from_config(cfg)
-    assert "gatk_alignment" not in planned
-    assert "pypgx_bam2vcf" in planned
-    # bam2vcf first: PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll reads. This
-    # assertion was the other way round, pinning the order the builder happened to
-    # append in -- which is membership-only, since _active_ordered_steps re-sorts
-    # through CANONICAL_STEP_ORDER before anything reaches the bar. CANONICAL_STEP_ORDER
-    # had the same inversion, and there it WAS the bar: on every BAM/CRAM/SAM job the
-    # progress jumped to bam2vcf's range and then fell back ~17 points when the
-    # genotyping it had already fed started reporting.
-    assert planned.index("pypgx_bam2vcf") < planned.index("pypgx_analysis")
-    ordered = calc._active_ordered_steps([], cfg)
-    assert ordered.index("pypgx_bam2vcf") < ordered.index("pypgx_analysis")
-
-
-def test_fastq_includes_gatk_alignment_when_needs_gatk():
-    calc = WorkflowProgressCalculator()
-    cfg = {
-        "needs_gatk": True,
-        "needs_hla": True,
-        "needs_pypgx": True,
-        "file_analysis": {"file_type": "fastq"},
-    }
-    planned = calc._planned_steps_from_config(cfg)
-    assert "gatk_alignment" in planned
-    assert "hla_typing" in planned
-    assert "pypgx_bam2vcf" in planned  # default for non-vcf
-    ranges = calc._renormalized_ranges(planned)
-    assert ranges["report_generation"][1] == 100
-    # Heavier base-weight steps get wider or equal ranges than lighter ones
-    w = lambda a, b: b - a + 1
-    assert w(*ranges["pypgx_analysis"]) >= w(*ranges["header_analysis"])
+def test_bam2vcf_is_listed_before_the_genotyping_it_feeds():
+    """PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll reads."""
+    order = WorkflowProgressCalculator.CANONICAL_STEP_ORDER
+    assert order.index("pypgx_bam2vcf") < order.index("pypgx_analysis")
 
 
 def test_no_decrease_with_workflow_id():
     calc = WorkflowProgressCalculator()
     cfg = _vcf_config()
-    steps_high = [
-        {"step_name": "header_analysis", "status": "completed", "step_order": 1},
-        {
-            "step_name": "pypgx_analysis",
-            "status": "running",
-            "step_order": 2,
-            "output_data": {"progress_percent": 80},
-        },
-    ]
-    steps_low = [
-        {"step_name": "header_analysis", "status": "completed", "step_order": 1},
-        {
-            "step_name": "pypgx_analysis",
-            "status": "running",
-            "step_order": 2,
-            "output_data": {"progress_percent": 10},
-        },
-    ]
+    steps_high = _rows(header_analysis="completed", pypgx_analysis="running")
+    steps_high[1]["output_data"] = {"progress_percent": 80}
+    steps_low = _rows(header_analysis="completed", pypgx_analysis="running")
+    steps_low[1]["output_data"] = {"progress_percent": 10}
     high = calc.calculate_progress_from_steps(steps_high, cfg, workflow_id="job-58")
     low = calc.calculate_progress_from_steps(steps_low, cfg, workflow_id="job-58")
     assert low.progress_percentage >= high.progress_percentage

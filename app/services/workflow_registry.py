@@ -115,8 +115,9 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         # /sam-to-bam. Registered for the same reason as the two above, and missing for
         # longer: main.nf's CramToBAM and SamToBAM used to post gatk_cram_to_bam and
         # gatk_sam_to_bam, names NOTHING app-side knew, while every other app-side file
-        # (workflow_stages.STEP_TO_STAGE, the progress calculator's bands, index.html's
-        # glyph map) carried this single name and this file carried no template at all.
+        # (workflow_stages.STEP_TO_STAGE, the progress calculator's step table,
+        # index.html's glyph map) carried this single name and this file carried no
+        # template at all.
         # So a CRAM or SAM upload -- both supported, shipping input types -- had its
         # conversion 404 its status updates and sit at [pending] until the whole step
         # finished. main.nf now posts this name from both processes; one name is right
@@ -140,8 +141,8 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         ),
         StepTemplate("hla_typing", "zarohla", when="needs_hla"),
         # FASTQ -> BAM, via gatk-api's /align-fastq. main.nf's FastqToBAM posts
-        # step_name=gatk_alignment and the progress calculator gives that name a band
-        # (35-49) and a slot in CANONICAL_STEP_ORDER, so registry and calculator agree.
+        # step_name=gatk_alignment and the progress calculator gives that name a
+        # duration and a slot in CANONICAL_STEP_ORDER, so registry and calculator agree.
         #
         # This is now REACHABLE. It used to be unreachable by construction: FASTQ was
         # refused at ingest because /align-fastq answered 501, so nothing ever set
