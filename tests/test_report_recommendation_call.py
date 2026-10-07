@@ -229,14 +229,16 @@ def test_executive_summary_shows_the_whole_lookup_call_for_dpyd():
             },
             ("*1/*3", "Normal Metabolizer", None),
         ),
-        # Several source calls but no lookup call: the source text stays.
+        # Several source calls but no lookup call: every candidate, combined as
+        # report_json.unresolved_call does (tests/test_report_unresolved_calls.py).
+        # The raw text was printed as-is and cut at its first "/" by the template.
         (
             {
                 "diplotype": "*1/*6 OR *4/*9",
                 "phenotype": "",
                 "rec_lookup_diplotype": "",
             },
-            ("*1/*6 OR *4/*9", "", None),
+            ("*1/*6 or *4/*9", "Unknown", None),
         ),
     ],
 )

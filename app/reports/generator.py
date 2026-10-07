@@ -57,6 +57,7 @@ from app.reports.evidence import classify_evidence
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
     parse_pharmcat_tsv,
+    unresolved_summary_call,
 )
 from app.reports.provenance import (
     CALLED_BY_NO_CALL,
@@ -1600,6 +1601,7 @@ def create_interactive_html_report(
     pharmcat_assume_ref_methodology: str | None = None,
     liftover_provenance: str | None = None,
     gvcf_provenance: str | None = None,
+    missing_positions_not_assumed: bool = False,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -1784,6 +1786,7 @@ def create_interactive_html_report(
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
             "gvcf_provenance": gvcf_provenance,
             "liftover_provenance": liftover_provenance,
+            "missing_positions_not_assumed": missing_positions_not_assumed,
             # 159: run-derived provenance (each rendered only if resolved)
             "genome_build": matcher_meta["genome_build"],
             "named_allele_matcher_version": matcher_meta[
@@ -2187,6 +2190,8 @@ def generate_report(
     pharmcat_assume_ref_methodology = None
     liftover_provenance = None
     gvcf_provenance = None
+    # Why a variant-only file left genes uncalled, when the job's flags say so.
+    missing_positions_not_assumed = False
     if job_id and db_session:
         try:
             logger.info(
@@ -2285,6 +2290,13 @@ def generate_report(
                 input_type = (meta.get("file_analysis") or {}).get("file_type")
                 absent_to_ref, unspecified_to_ref = pharmcat_flags_for_input(
                     input_type, requested_absent, requested_unspecified
+                )
+                # A variant-only VCF has no record where the sample matches the
+                # reference; without --missing-to-ref PharmCAT cannot call a gene
+                # whose defining positions are all absent from it.
+                missing_positions_not_assumed = (
+                    str(input_type or "").strip().lower() in _VARIANT_ONLY_INPUT_TYPES
+                    and not absent_to_ref
                 )
                 pharmcat_assume_ref_methodology = methodology_assume_ref_paragraph(
                     absent_to_ref,
@@ -2562,6 +2574,11 @@ def generate_report(
                     # Source columns, or the lookup call when the source is not
                     # one diplotype (unphased DPYD); then wild type logic.
                     diplotype_str, phenotype_str, activity = executive_summary_call(row)
+                    if diplotype_str.strip().lower() in ("", "no call") or not (
+                        gene_was_called(diplotype_str)
+                    ):
+                        # Not a call: named with the genes examined without one.
+                        continue
                     # Assign wild type phenotype if conditions are met
                     # (file_type already determined above)
                     wild_type_label = wild_type_phenotype(
@@ -2587,6 +2604,13 @@ def generate_report(
                             "rec_lookup_diplotype": diplotype_str,  # Use fallback value
                             "rec_lookup_phenotype": phenotype_str,
                             "rec_lookup_activity_score": activity,
+                            **{
+                                key: value
+                                for key, value in (
+                                    unresolved_summary_call(row) or {}
+                                ).items()
+                                if key in ("diplotype_display", "diplotype_candidates")
+                            },
                         }
                     )
     except Exception as _e_exec:
@@ -2660,6 +2684,7 @@ def generate_report(
             if (EXECSUM_USE_TSV and execsum_rows_from_tsv)
             else None
         ),
+        "missing_positions_not_assumed": missing_positions_not_assumed,
         # Add workflow warnings/alerts for report display
         "workflow_warnings": workflow_warnings,
         "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
@@ -3193,6 +3218,7 @@ def generate_report(
                     if (EXECSUM_USE_TSV and execsum_rows_from_tsv)
                     else None
                 ),
+                "missing_positions_not_assumed": missing_positions_not_assumed,
                 # Add workflow warnings/alerts for report display
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
@@ -3347,6 +3373,7 @@ def generate_report(
                 pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
                 liftover_provenance=liftover_provenance,
                 gvcf_provenance=gvcf_provenance,
+                missing_positions_not_assumed=missing_positions_not_assumed,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 

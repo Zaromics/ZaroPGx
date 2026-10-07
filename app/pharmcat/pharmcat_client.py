@@ -243,6 +243,10 @@ def normalize_pharmcat_results(response):
                             "guideline_source": block.source,
                             "call_source": block.call_source,
                         }
+                        # An unresolved unphased call: every candidate.
+                        for key in ("diplotype_display", "diplotype_candidates"):
+                            if call.get(key):
+                                gene_entry[key] = call[key]
                         genes_data.append(gene_entry)
                         logger.info(f"Added gene from v3format: {gene_entry}")
 
