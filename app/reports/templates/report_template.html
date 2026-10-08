@@ -586,6 +586,14 @@
             position: relative;
             z-index: 0;
         }
+        /* The licence lines never open a page alone: when what precedes them ends
+           at a page foot, its last lines come over with them. A VCF report's
+           header appendix ended at the foot of page 51, leaving page 52 to the
+           four licence lines. */
+        .footer {
+            page-break-before: avoid;
+            break-before: avoid;
+        }
         .page-break {
             page-break-before: always;
         }
