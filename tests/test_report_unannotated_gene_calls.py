@@ -5,8 +5,9 @@ report lane read that list, so the gene table named F2 and F5 among the genes
 examined without a call -- while the Executive Summary, built from PharmCAT's TSV,
 listed the same two genes as called, with phenotype "Unknown", and then again as
 not called. They are called: reference/reference is "Prothrombin 20210A negative"
-and "Factor V Leiden negative". PharmCAT gives them no phenotype ("n/a"), so the
-report says N/A, as for VKORC1.
+and "Factor V Leiden negative". PharmCAT gives them no phenotype ("n/a"): a
+reference call is labelled as CYP4F2's *1/*1 is ("Possibly Wild Type" from a VCF),
+any other call N/A, as for VKORC1.
 
 The blocks below are PharmCAT 3.4's for 30x NA12878 (public, GIAB), trimmed.
 """
@@ -149,8 +150,9 @@ def _summary_rows(page):
 @pytest.mark.parametrize("tsv", [True, False])
 def test_the_summary_shows_them_called_with_no_phenotype(monkeypatch, tmp_path, tsv):
     summary, rows = _summary_rows(_render(monkeypatch, tmp_path, tsv))
-    assert rows["F2"] == (F2_CALL, "N/A")
-    assert rows["F5"][1] == "N/A"
+    # Reference calls, from a VCF: the report's input type when none is recorded.
+    assert rows["F2"] == (F2_CALL, "Possibly Wild Type")
+    assert rows["F5"][1] == "Possibly Wild Type"
     not_called = _clean(summary[summary.index("Not called from this sample") :])
     assert not re.search(r"\bF2\b|\bF5\b", not_called)
 
