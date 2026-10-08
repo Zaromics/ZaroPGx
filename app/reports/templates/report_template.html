@@ -1364,17 +1364,6 @@
             </tbody>
         </table>
 
-        <!-- Genomic Header placed after Software Platform, on a new PDF page -->
-        {% if header_text %}
-        <div class="header-section">
-            <h3>Genomic Datafile Header</h3>
-            <p class="header-note">The sample genomic datafile's header is reproduced below. Please note that the information below is derived from the original submission, before any preprocessing (conversion, re-alignment, etc.) took place.</p>
-            <pre class="file-header">{{ header_text|e }}</pre>
-        </div>
-        <!-- Page break to return to normal margins after header section -->
-        <div class="page-break"></div>
-        {% endif %}
-
         <h3>Citations</h3>
         <ul>
             {% if citations and citations|length > 0 %}
@@ -1408,6 +1397,18 @@
     </div>
 
     
+
+    {# The genomic file header is an appendix: after the citations, on pages of
+       its own (narrow margins). It used to sit between the software table and
+       the citations, leaving the table alone on a page, and the citations
+       after it. The licence lines close its last page. #}
+    {% if header_text %}
+    <div class="header-section">
+        <h3>Genomic Datafile Header</h3>
+        <p class="header-note">The sample genomic datafile's header is reproduced below. Please note that the information below is derived from the original submission, before any preprocessing (conversion, re-alignment, etc.) took place.</p>
+        <pre class="file-header">{{ header_text|e }}</pre>
+    </div>
+    {% endif %}
 
     <div class="footer">
         <p>&copy; 2024-{{ current_year }} {{ author_name or 'Unknown Author' }}</p>
