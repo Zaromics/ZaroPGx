@@ -1989,6 +1989,7 @@ def map_recommendations_for_template(
                 "literature_references": drug_data.get("literature_references", []),
                 "prescribing_changes": drug_data.get("prescribing_changes", []),
                 "change_genes": drug_data.get("change_genes", []),
+                "conditions": drug_data.get("conditions", []),
             }
 
             drug_groups[drug_name]["recommendations"].append(recommendation_entry)
@@ -2023,6 +2024,7 @@ def map_recommendations_for_template(
                 "literature_references": rec.get("literature_references", []),
                 "prescribing_changes": rec.get("prescribing_changes", []),
                 "change_genes": rec.get("change_genes", []),
+                "conditions": rec.get("conditions", []),
             }
 
             # Add drug-level metadata if available
@@ -2033,7 +2035,111 @@ def map_recommendations_for_template(
 
             mapped_recommendations.append(mapped_rec)
 
+    label_conditional_recommendations(mapped_recommendations)
     return mapped_recommendations
+
+
+def _shown(diplotypes: List[str], limit: int = 3) -> str:
+    if len(diplotypes) <= limit:
+        return ", ".join(diplotypes)
+    return f"{', '.join(diplotypes[:limit])} or {len(diplotypes) - limit} more"
+
+
+def label_conditional_recommendations(recommendations: List[Dict[str, Any]]) -> None:
+    """Set "applies_if" where a drug's guidance depends on which candidate is true.
+
+    An unphased call can leave several diplotypes, and PharmCAT then gives one
+    recommendation per phenotype they could have: CPIC simvastatin for SLCO1B1
+    "Decreased Function" (*1/*15, *1/*45, *1/*47) and another for "Poor
+    Function". Listed together they read as two pieces of advice for one patient.
+
+    A gene is in question for a drug's guideline when its annotations were matched
+    on more than one set of candidates. Each block the report prints -- one
+    guideline's text, as the template groups it -- is labelled with the candidates
+    of those genes it was matched on, unless it covers all of them (FDA's
+    simvastatin text is the same for both: it holds whatever the truth). Genes
+    matched one way only are left out: DPWG writes one annotation per gene for
+    azathioprine (TPMT, NUDT15), and both hold at once.
+    """
+
+    def key(condition):
+        gene, phenotype, diplotypes = condition
+        return (gene, phenotype, tuple(diplotypes))
+
+    options: Dict[Tuple[str, str], Dict[str, set]] = {}
+    by_block: Dict[Tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    for rec in recommendations:
+        conditions = [key(c) for c in rec.get("conditions") or []]
+        if not conditions:
+            continue
+        guideline = (rec.get("drug"), rec.get("guideline_source") or "")
+        for gene, phenotype, diplotypes in conditions:
+            options.setdefault(guideline, {}).setdefault(gene, set()).add(
+                (phenotype, diplotypes)
+            )
+        block = guideline + (
+            rec.get("recommendation") or "",
+            rec.get("classification") or "",
+        )
+        by_block.setdefault(block, []).append(rec)
+
+    def in_question(rec, guideline):
+        return tuple(
+            key(c)
+            for c in rec.get("conditions") or []
+            if len(options[guideline][c[0]]) > 1
+        )
+
+    for (drug, source, _, _), recs in by_block.items():
+        guideline = (drug, source)
+        mine = {in_question(r, guideline) for r in recs} - {()}
+        if not mine:
+            continue
+        genes = {tuple(c[0] for c in conditions) for conditions in mine}
+        everything = {
+            in_question(r, guideline)
+            for r in recommendations
+            if (r.get("drug"), r.get("guideline_source") or "") == guideline
+            and r.get("conditions")
+        }
+        everything = {c for c in everything if tuple(g for g, _, _ in c) in genes}
+        if mine == everything:
+            continue
+        for rec in recs:
+            rec["applies_if"] = _applies_if(sorted(mine))
+
+
+def _applies_if(
+    condition_sets: List[Tuple[Tuple[str, str, Tuple[str, ...]], ...]],
+) -> str:
+    """The "Applies if" text for the condition sets one block of guidance was
+    matched on: "SLCO1B1 Decreased Function (*1/*15, *1/*45)". Per gene when exact (any mix of the
+    genes' options matches); otherwise each set in turn, so that SLCO1B1 normal
+    with CYP2C9 intermediate, or SLCO1B1 decreased with CYP2C9 normal, does not
+    read as also covering SLCO1B1 normal with CYP2C9 normal."""
+
+    def part(gene, phenotypes, diplotypes):
+        return f"{gene} {' or '.join(phenotypes) or 'call'} ({_shown(diplotypes)})"
+
+    options: Dict[str, List[Tuple[str, Tuple[str, ...]]]] = {}
+    for conditions in condition_sets:
+        for gene, phenotype, diplotypes in conditions:
+            if (phenotype, diplotypes) not in options.setdefault(gene, []):
+                options[gene].append((phenotype, diplotypes))
+    combinations = 1
+    for choices in options.values():
+        combinations *= len(choices)
+    if combinations == len(condition_sets):
+        parts = []
+        for gene, choices in options.items():
+            phenotypes = [p for p, _ in choices if p]
+            labels = [d for _, ds in choices for d in ds]
+            parts.append(part(gene, list(dict.fromkeys(phenotypes)), labels))
+        return " and ".join(parts)
+    return "; or ".join(
+        " and ".join(part(g, [p] if p else [], list(ds)) for g, p, ds in conditions)
+        for conditions in condition_sets
+    )
 
 
 def generate_report(

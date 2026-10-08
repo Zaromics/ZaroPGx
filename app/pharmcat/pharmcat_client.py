@@ -13,6 +13,7 @@ import httpx
 import requests
 
 from app.pharmcat.report_json import (
+    annotation_conditions,
     annotation_genes,
     detect_format,
     extract_display_call,
@@ -399,6 +400,10 @@ def normalize_pharmcat_results(response):
                                                 change_genes(annotation)
                                                 if changes
                                                 else []
+                                            ),
+                                            # What PharmCAT matched this one on.
+                                            "conditions": annotation_conditions(
+                                                annotation
                                             ),
                                         }
                                         drug_recommendations_by_drug[drug_name][
