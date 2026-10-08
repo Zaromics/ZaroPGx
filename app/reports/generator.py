@@ -3166,7 +3166,10 @@ def generate_report(
             template_data["sample_identifier"] = entered_sample
             template_data["display_sample_id"] = entered_sample
 
-            # Add debug information for troubleshooting
+            # What the HTML report is rendered from, for troubleshooting: logged at
+            # DEBUG. It used to be printed at the foot of every HTML report (a
+            # "debug veneer"), handing readers internal ids and Python reprs of the
+            # patient's first diplotype and recommendation.
             try:
                 debug_info = {
                     "workflow_config": per_sample_workflow,
@@ -3198,9 +3201,12 @@ def generate_report(
                         for k, v in list(template_data.items())[:5]
                     },
                 }
-                debug_json = json.dumps(debug_info, indent=2)
+                logger.debug(
+                    "HTML report context: %s",
+                    json.dumps(debug_info, indent=2, default=str),
+                )
             except Exception:
-                debug_json = "{}"
+                logger.debug("HTML report context could not be serialised")
 
             # Render the HTML template with error handling
             try:
@@ -3211,7 +3217,6 @@ def generate_report(
                     workflow_kroki_svg=workflow_kroki_svg_in_html,
                     workflow_png_data_uri=workflow_png_data_uri_html,
                     workflow_html_fallback=workflow_html_fallback_html,
-                    debug_json=debug_json,
                 )
                 logger.info(
                     f"✓ Template rendered successfully, HTML content length: {len(html_content)}"

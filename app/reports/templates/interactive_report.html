@@ -1258,12 +1258,6 @@
         <p>ZaroPGx is distributed under the <a href="{{ license_url }}" target="_blank" rel="noopener">{{ license_name }}</a>.</p>
         <p>Source code: <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>.</p>
     </footer>
-    <!-- Debug veneer: remove in production -->
-    {% if debug_json %}
-    <pre style="white-space: pre-wrap; font-size: 10px; color: #666; background: #f7f7f7; border: 1px dashed #ccc; padding: 8px; margin-top: 12px;">
-{{ debug_json }}
-    </pre>
-    {% endif %}
     
     <!-- Store report data in a hidden element for JavaScript to access -->
     {# JSON goes in single-quoted attributes: tojson escapes ' < > & but not ", so in a
