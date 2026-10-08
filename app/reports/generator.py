@@ -54,7 +54,7 @@ from app.pharmcat.report_json import (
     parse_pharmcat_version,
 )
 from app.reports.evidence import classify_evidence
-from app.reports.pdf_fit import fit_sections
+from app.reports.pdf_fit import fit_sections, mark_headings
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
     parse_pharmcat_tsv,
@@ -1433,7 +1433,7 @@ def render_pdf_document(html_content: str):
     else:
         stylesheets.append(CSS(string=pdf_css))
 
-    html = HTML(string=html_content)
+    html = HTML(string=mark_headings(html_content))
     font_config = FontConfiguration() if FontConfiguration else None
 
     def render(fit_css: str):
