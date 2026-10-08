@@ -1,0 +1,236 @@
+"""The Executive Summary is one page, and stays inside it.
+
+It is laid out to a page by design, but how much it holds depends on the sample.
+Twenty-two genes from a whole-genome VCF sent two rows and the notes onto a second
+page; without PharmCAT's TSV it listed every gene the run reported, so a BAM with
+PyPGx's whole record ran to 91 rows over four pages; and CFTR's "ivacaftor
+non-responsive in CF patients", unbroken, ran the table to the paper's edge.
+
+Now the summary covers PharmCAT's panel (the genes its guidelines use), only genes
+that were called, and the PDF tightens its proportions a step at a time when it
+would run over (app/reports/pdf_fit.py). The worst case below -- all 25 genes
+called, two unresolved, the long phenotypes -- must fit.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from html import unescape
+from pathlib import Path
+
+import pytest
+
+import app.reports.generator as generator_module
+from app.reports.pdf_fit import EXEC_SUMMARY, section_pages
+
+weasyprint = pytest.importorskip("weasyprint")
+
+DATA = Path(__file__).resolve().parents[1] / "test_data"
+EXAMPLE_JSON = DATA / "pharmcat.example.v340.report.json"
+EXAMPLE_TSV = DATA / "pharmcat.example.v340.report.tsv"
+UNPHASED_JSON = DATA / "pharmcat.unphased.example.report.json"
+UNPHASED_TSV = DATA / "pharmcat.unphased.example.report.tsv"
+
+
+def _row(gene, diplotype, phenotype="", score="", outside="no"):
+    """A PharmCAT 3.4 TSV row: source columns, then the lookup columns."""
+    return "\t".join(
+        [gene, diplotype, phenotype, score, "", "", "", "", "", "", outside, "", "no"]
+        + [diplotype, phenotype, score]
+    )
+
+
+def _tsv_rows(path):
+    return {
+        line.split("\t", 1)[0]: line
+        for line in path.read_text(encoding="utf-8").splitlines()[2:]
+        if line.strip()
+    }
+
+
+def _worst_case_tsv():
+    """PharmCAT's example, its seven missing genes added, two calls unresolved."""
+    lines = EXAMPLE_TSV.read_text(encoding="utf-8").splitlines()
+    rows = _tsv_rows(EXAMPLE_TSV)
+    unphased = _tsv_rows(UNPHASED_TSV)
+    rows["SLCO1B1"] = unphased["SLCO1B1"]
+    rows["CYP2B6"] = unphased["CYP2B6"]
+    rows["CYP2C9"] = _row("CYP2C9", "*1/*3", "Intermediate Metabolizer", "1.0")
+    rows.update(
+        {
+            "CYP2D6": _row(
+                "CYP2D6", "*1/*4", "Intermediate Metabolizer", "1.0", outside="yes"
+            ),
+            "F2": _row("F2", "rs1799963 reference (G)/rs1799963 reference (G)"),
+            "F5": _row("F5", "rs6025 reference (C)/rs6025 reference (C)"),
+            "HLA-A": _row("HLA-A", "*02:01/*31:01", "*31:01 positive", outside="yes"),
+            "HLA-B": _row("HLA-B", "*15:02/*57:01", "*57:01 positive", outside="yes"),
+            "MT-RNR1": _row(
+                "MT-RNR1",
+                "Reference",
+                "normal risk of aminoglycoside-induced hearing loss",
+                outside="yes",
+            ),
+            "NAT2": _row("NAT2", "*5/*6", "Poor Metabolizer"),
+        }
+    )
+    assert len(rows) == 25
+    return "\n".join(lines[:2] + list(rows.values())) + "\n"
+
+
+def _report_html(monkeypatch, tmp_path, data, tsv=None):
+    monkeypatch.setattr(generator_module, "EXECSUM_USE_TSV", tsv is not None)
+    for key in list(generator_module.REPORT_CONFIG):
+        if key.startswith(("write_", "show_")):
+            monkeypatch.setitem(
+                generator_module.REPORT_CONFIG, key, key == "write_html"
+            )
+    if tsv is not None:
+        (tmp_path / "p1_pgx_pharmcat.tsv").write_text(tsv, encoding="utf-8")
+    result = generator_module.generate_report(
+        {"data": data}, str(tmp_path), {"id": "p1"}, job_id=None
+    )
+    return (tmp_path / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
+
+
+def _summary(page):
+    return page[
+        page.index('id="exec-summary"') : page.index("<h2>Genetic Results</h2>")
+    ]
+
+
+def _clean(fragment):
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
+
+
+def _summary_genes(page):
+    return [
+        _clean(g)
+        for g in re.findall(r'class="exec-summary-gene">(.*?)</td>', _summary(page))
+    ]
+
+
+def _summary_table_overflow(document):
+    """Text in the summary table past the table's right edge, per page."""
+    found = []
+    for page in document.pages:
+
+        def walk(box, table_right=None):
+            element = getattr(box, "element", None)
+            if element is not None and "exec-summary-table" in (
+                element.get("class") or ""
+            ):
+                table_right = box.position_x + box.margin_width()
+            if table_right is not None and getattr(box, "text", None):
+                if box.position_x + box.width > table_right + 0.5:
+                    found.append(box.text)
+            for child in getattr(box, "children", None) or []:
+                walk(child, table_right)
+
+        walk(page._page_box)
+    return found
+
+
+def test_the_worst_case_fits_one_page(monkeypatch, tmp_path):
+    data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
+    page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
+    assert len(_summary_genes(page)) == 25
+    document, levels = generator_module.render_pdf_document(page)
+    assert len(section_pages(document, "exec-summary")) == 1
+    # It took tightening: the template's own proportions do not hold 25 rows.
+    assert levels["exec-summary"] >= 1
+    assert _summary_table_overflow(document) == []
+
+
+def test_a_short_summary_keeps_its_proportions(monkeypatch, tmp_path):
+    data = json.loads(UNPHASED_JSON.read_text(encoding="utf-8"))
+    page = _report_html(
+        monkeypatch, tmp_path, data, UNPHASED_TSV.read_text(encoding="utf-8")
+    )
+    document, levels = generator_module.render_pdf_document(page)
+    assert len(section_pages(document, "exec-summary")) == 1
+    assert levels["exec-summary"] == 0
+
+
+def test_the_long_phenotypes_wrap_inside_the_table(monkeypatch, tmp_path):
+    """Untightened: CFTR's phenotype and allele names, and a score beside
+    "Intermediate Metabolizer", all inside the table at full size."""
+    data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
+    page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
+    monkeypatch.setattr(
+        generator_module, "fit_sections", lambda render: (render(""), {})
+    )
+    document, _ = generator_module.render_pdf_document(page)
+    assert _summary_table_overflow(document) == []
+
+
+def test_every_step_is_tighter_than_the_last(monkeypatch, tmp_path):
+    data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
+    page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
+    heights = []
+    for css in ("",) + EXEC_SUMMARY.steps:
+        monkeypatch.setattr(
+            generator_module,
+            "fit_sections",
+            lambda render, css=css: (render(css), {}),
+        )
+        document, _ = generator_module.render_pdf_document(page)
+        # Its height laid end to end, over however many pages it takes.
+        heights.append(
+            sum(
+                box[3] - box[1]
+                for box in (
+                    document.pages[i].anchors["exec-summary"]
+                    for i in section_pages(document, "exec-summary")
+                )
+            )
+        )
+    assert all(a > b for a, b in zip(heights, heights[1:])), heights
+
+
+def test_without_the_tsv_it_keeps_to_pharmcats_panel(monkeypatch, tmp_path):
+    """The gene list holds PyPGx's whole record; the summary does not."""
+    data = {
+        "genes": [
+            {
+                "gene": "CYP2C19",
+                "diplotype": "*1/*2",
+                "phenotype": "Intermediate Metabolizer",
+                "call_source": "MATCHER",
+            },
+            {
+                "gene": "ABCB1",
+                "diplotype": "*1/*2",
+                "phenotype": None,
+                "tool_source": "PyPGx",
+                "pyPgxOnly": True,
+            },
+            {"gene": "HLA-A", "diplotype": "Unknown/Unknown", "phenotype": "Unknown"},
+        ],
+        "drugRecommendations": [],
+    }
+    page = _report_html(monkeypatch, tmp_path, data)
+    summary = _clean(_summary(page))
+    assert _summary_genes(page) == ["CYP2C19"]
+    # Uncalled: named, not tabled. Outside the panel: pointed to.
+    assert "HLA-A" in summary[summary.index("Not called from this sample") :]
+    assert "ABCB1" not in summary
+    assert "The 1 other gene this run called" in summary
+
+
+def test_not_called_never_names_a_gene_the_table_shows(monkeypatch, tmp_path):
+    """The table comes from PharmCAT's TSV, the list from the gene list: two
+    sources. A gene the TSV calls is not listed again as not called."""
+    page = _report_html(
+        monkeypatch,
+        tmp_path,
+        {"genes": [], "drugRecommendations": []},
+        EXAMPLE_TSV.read_text(encoding="utf-8"),
+    )
+    shown = set(_summary_genes(page))
+    assert len(shown) == 18
+    summary = _clean(_summary(page))
+    named = summary[summary.index("Not called from this sample") :]
+    named = named[named.index(":") + 1 : named.index(". No phenotype")]
+    assert {g.strip() for g in named.split(",")} & shown == set()
