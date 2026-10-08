@@ -1419,7 +1419,10 @@
     <div class="header-section">
         <h3>Genomic Datafile Header</h3>
         <p class="header-note">The sample genomic datafile's header is reproduced below. Please note that the information below is derived from the original submission, before any preprocessing (conversion, re-alignment, etc.) took place.</p>
-        <div class="file-header">{% for line in header_text.splitlines() %}<div class="file-header-line">{{ line|e }}</div>{% endfor %}</div>
+        {# Tabs expanded here, at the CSS tab-size: WeasyPrint gives a tab no width
+           when its field ends on a tab stop, so a VCF's #CHROM line printed
+           "QUALFILTER" and "INFOFORMAT". #}
+        <div class="file-header">{% for line in header_text.splitlines() %}<div class="file-header-line">{{ line.expandtabs(4)|e }}</div>{% endfor %}</div>
     </div>
     {% endif %}
 
