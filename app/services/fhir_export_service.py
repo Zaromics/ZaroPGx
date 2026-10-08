@@ -928,7 +928,13 @@ class FHIRExportService:
                     "url": terminology.EXT_WORKFLOW_RELATED_ARTIFACT,
                     "valueRelatedArtifact": {
                         "type": "citation",
-                        "display": f"{guideline_source} Guideline",
+                        # PharmCAT's section name ("CPIC Guideline Annotation")
+                        # as it stands; a short source ("CPIC") as "CPIC Guideline".
+                        "display": (
+                            guideline_source
+                            if " " in guideline_source.strip()
+                            else f"{guideline_source} Guideline"
+                        ),
                         "url": self._get_guideline_url(guideline_source, drug_name),
                     },
                 }
@@ -1166,7 +1172,11 @@ class FHIRExportService:
 
     def _get_guideline_url(self, source: str, drug_name: str) -> str:
         """Get the guideline URL based on source."""
-        source_upper = source.upper() if source else ""
+        # A letter (C, D, F), a short name, PharmCAT's code (CPIC_GUIDELINE) or its
+        # section name ("CPIC Guideline Annotation"): the first word decides.
+        source_upper = (
+            (source.upper().replace("_", " ").split() or [""])[0] if source else ""
+        )
         drug_lower = drug_name.lower().replace(" ", "-") if drug_name else ""
 
         if source_upper == "CPIC" or source_upper == "C":
