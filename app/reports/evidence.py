@@ -209,26 +209,55 @@ PRESCRIBING_CHANGES = (
 _ALL_CLEAR = re.compile(r"^normal risk\b|\bnegative$", re.IGNORECASE)
 
 
-def change_genes(annotation: Any) -> List[str]:
-    """The genes a PharmCAT annotation rests on, in annotation_genes order, less
-    those whose result is a risk screen's all-clear (_ALL_CLEAR). A gene it gives
-    no phenotype for (VKORC1 in warfarin's) stays: nothing clears it."""
-    if not isinstance(annotation, dict):
-        return []
-    results: Dict[str, List[str]] = {}
+def _calls(annotation: Dict[str, Any]) -> Dict[str, Tuple[str, List[str]]]:
+    """gene -> (diplotype label, phenotypes) as the annotation was looked up."""
+    calls: Dict[str, Tuple[str, List[str]]] = {}
     for genotype in annotation.get("genotypes") or []:
         if not isinstance(genotype, dict):
             continue
         for diplotype in genotype.get("diplotypes") or []:
             if isinstance(diplotype, dict) and isinstance(diplotype.get("gene"), str):
-                results.setdefault(diplotype["gene"].strip(), []).extend(
-                    str(p).strip() for p in diplotype.get("phenotypes") or []
+                label, phenotypes = calls.get(diplotype["gene"].strip(), ("", []))
+                calls[diplotype["gene"].strip()] = (
+                    label or str(diplotype.get("label") or "").strip(),
+                    phenotypes
+                    + [str(p).strip() for p in diplotype.get("phenotypes") or []],
                 )
+    return calls
+
+
+def _not_all_clear(annotation: Dict[str, Any]) -> List[str]:
+    """annotation_genes less those whose result is a risk screen's all-clear
+    (_ALL_CLEAR). A gene it gives no phenotype for (VKORC1 in warfarin's) stays:
+    nothing clears it."""
+    calls = _calls(annotation)
     return [
         gene
         for gene in annotation_genes(annotation)
-        if not (results.get(gene) and all(_ALL_CLEAR.search(p) for p in results[gene]))
+        if not (
+            calls.get(gene, ("", []))[1]
+            and all(_ALL_CLEAR.search(p) for p in calls[gene][1])
+        )
     ]
+
+
+def change_genes(annotation: Any) -> List[str]:
+    """The genes a change in a PharmCAT annotation comes from, in annotation_genes
+    order: those not cleared by a risk screen's all-clear, and, where another
+    remains, not a gene this sample has no call for. PharmCAT looks an uncalled
+    gene up as "Unknown/Unknown"; drawn as a hub it read "None" or "No Result"
+    beside the gene that set the dose (phenytoin: HLA-B unknown, CYP2C9 decreased).
+    """
+    if not isinstance(annotation, dict):
+        return []
+    genes = _not_all_clear(annotation)
+    calls = _calls(annotation)
+    called = [
+        gene
+        for gene in genes
+        if not calls.get(gene, ("", []))[0].lower().startswith("unknown")
+    ]
+    return called or genes
 
 
 def prescribing_changes(annotation: Any) -> List[str]:
@@ -240,6 +269,6 @@ def prescribing_changes(annotation: Any) -> List[str]:
     labels = [
         label for key, label in PRESCRIBING_CHANGES if annotation.get(key) is True
     ]
-    if labels and annotation_genes(annotation) and not change_genes(annotation):
+    if labels and annotation_genes(annotation) and not _not_all_clear(annotation):
         return []
     return labels

@@ -58,7 +58,9 @@ def _annotation(text, tags, *diplotypes):
     """A PharmCAT 3 annotation: lookupKey names the genes, genotypes their calls."""
     return {
         "drugRecommendation": text,
-        "lookupKey": [{gene: phenotypes[0] for gene, phenotypes in diplotypes}],
+        "lookupKey": [
+            {gene: (phenotypes or [""])[0] for gene, phenotypes in diplotypes}
+        ],
         "genotypes": [
             {
                 "diplotypes": [
@@ -269,3 +271,81 @@ def test_the_network_holds_only_what_changes_prescribing():
         "CYP2D6",
     ]
     assert dict((g[0], g[1]) for g in net["genes"])["CYP2D6"] == "Poor Metabolizer"
+
+
+def _with_label(annotation, gene, label):
+    for genotype in annotation["genotypes"]:
+        for diplotype in genotype["diplotypes"]:
+            if diplotype["gene"] == gene:
+                diplotype["label"] = label
+    return annotation
+
+
+def test_a_gene_without_a_call_is_not_a_hub_beside_one_with():
+    """PharmCAT looks an uncalled gene up as "Unknown/Unknown". On an unphased
+    variant-only VCF, phenytoin's guidance rests on HLA-B (not called) and CYP2C9:
+    HLA-B was drawn as a hub labelled "None" beside the gene that set the dose."""
+    phenytoin = _with_label(
+        _annotation(
+            "Reduce the starting dose ...",
+            "D",
+            ("HLA-B", []),
+            ("CYP2C9", ["Intermediate Metabolizer"]),
+        ),
+        "HLA-B",
+        "Unknown/Unknown",
+    )
+    assert change_genes(phenytoin) == ["CYP2C9"]
+    assert prescribing_changes(phenytoin) == ["dose change"]  # still a change
+    # With no called gene left, the guidance still has to hang somewhere.
+    alone = _with_label(
+        _annotation("Consider testing ...", "O", ("HLA-B", [])),
+        "HLA-B",
+        "Unknown/Unknown",
+    )
+    assert change_genes(alone) == ["HLA-B"]
+
+
+GENE_COLOR = r"""
+const fs = require('fs');
+const vm = require('vm');
+const context = { document: { addEventListener() {} }, console };
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const phenotypes = JSON.parse(fs.readFileSync(0, 'utf8'));
+context.phenotypes = phenotypes;
+process.stdout.write(JSON.stringify(vm.runInContext('phenotypes.map(geneColor)', context)));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_a_hub_with_several_possible_phenotypes_takes_no_colour():
+    """An unphased call's "Normal Function or ... Poor Function" matched "Poor"."""
+    proc = subprocess.run(
+        [shutil.which("node"), "-e", GENE_COLOR, str(SCRIPT)],
+        input=json.dumps(
+            [
+                "Poor Metabolizer",
+                "Normal Function or Decreased Function or Poor Function",
+                "Intermediate Metabolizer or Indeterminate",
+                "Normal Metabolizer",
+            ]
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    poor, unresolved, unresolved2, normal = json.loads(proc.stdout)
+    assert unresolved == unresolved2 == "#95a5a6"
+    assert poor != unresolved and normal != unresolved
+
+
+def test_a_missing_phenotype_is_never_printed_as_none():
+    """The data attribute the network reads printed Python's None as text."""
+    template = (
+        REPO / "app" / "reports" / "templates" / "interactive_report.html"
+    ).read_text(encoding="utf-8")
+    assert 'data-phenotype="{{ d.phenotype }}"' not in template
+    assert "data-phenotype=\"{{ d.phenotype or '' }}\"" in template

@@ -1306,7 +1306,7 @@
         <div class="diplotype-data"
              data-gene="{{ d.gene }}"
              data-diplotype="{{ d.diplotype }}"
-             data-phenotype="{{ d.phenotype }}"
+             data-phenotype="{{ d.phenotype or '' }}"
              data-activity-score="{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}">
         </div>
         {% endfor %}
