@@ -1080,6 +1080,7 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["literature_references"] = format_literature_references
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel
+    environment.globals["summary_rows"] = summary_rows
 
 
 _SUMMARY_PANEL: Optional[frozenset] = None
@@ -1094,6 +1095,11 @@ def in_summary_panel(gene) -> bool:
     whole record ran to 91 rows over four pages. The others are in Genetic
     Results. Without the config, every gene is covered, as before.
     """
+    panel = _summary_panel()
+    return not panel or str(gene or "").strip().upper() in panel
+
+
+def _summary_panel() -> frozenset:
     global _SUMMARY_PANEL
     if _SUMMARY_PANEL is None:
         try:
@@ -1106,7 +1112,76 @@ def in_summary_panel(gene) -> bool:
         except Exception as e:
             logger.warning(f"Executive Summary panel unavailable: {e}")
             _SUMMARY_PANEL = frozenset()
-    return not _SUMMARY_PANEL or str(gene or "").strip().upper() in _SUMMARY_PANEL
+    return _SUMMARY_PANEL
+
+
+def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
+    """The Executive Summary's rows: one for each gene of PharmCAT's panel, in
+    order, so every report lists the same genes.
+
+    A gene PharmCAT's TSV calls is shown from the TSV, as before. The TSV leaves
+    out the genes PharmCAT takes only as outside calls -- HLA-A, HLA-B and
+    MT-RNR1 -- so a called one was neither in the table nor among the genes not
+    called: the summary dropped it without a word. It is shown from the gene list
+    now. A gene neither source calls is a row that says so. Without the panel
+    config, the genes the run called, as before.
+    """
+    tsv = {
+        str(row.get("gene") or "").strip().upper(): row
+        for row in tsv_rows or []
+        if in_summary_panel(row.get("gene"))
+    }
+    genes = {
+        str(row.get("gene") or "").strip().upper(): row
+        for row in diplotypes or []
+        if in_summary_panel(row.get("gene"))
+    }
+    panel = sorted(_summary_panel()) or sorted(
+        set(tsv)
+        | {g for g, row in genes.items() if gene_was_called(row.get("diplotype"))}
+    )
+    rows = []
+    for gene in panel:
+        if gene in tsv:
+            row = tsv[gene]
+            rows.append(
+                {
+                    "gene": row.get("gene") or gene,
+                    "called": True,
+                    "diplotype": row.get("diplotype_display")
+                    or row.get("rec_lookup_diplotype")
+                    or "",
+                    "phenotype": row.get("rec_lookup_phenotype") or "",
+                    "activity_score": row.get("rec_lookup_activity_score"),
+                    "diplotype_candidates": row.get("diplotype_candidates"),
+                }
+            )
+        elif gene in genes and gene_was_called(genes[gene].get("diplotype")):
+            row = genes[gene]
+            rows.append(
+                {
+                    "gene": row.get("gene") or gene,
+                    "called": True,
+                    "diplotype": row.get("diplotype_display")
+                    or row.get("diplotype")
+                    or "",
+                    "phenotype": row.get("phenotype") or "Unknown",
+                    "activity_score": row.get("activity_score"),
+                    "diplotype_candidates": row.get("diplotype_candidates"),
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "gene": (genes.get(gene) or {}).get("gene") or gene,
+                    "called": False,
+                    "diplotype": "",
+                    "phenotype": "",
+                    "activity_score": None,
+                    "diplotype_candidates": None,
+                }
+            )
+    return rows
 
 
 def gene_was_called(diplotype) -> bool:

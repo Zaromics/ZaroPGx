@@ -6,10 +6,13 @@ page; without PharmCAT's TSV it listed every gene the run reported, so a BAM wit
 PyPGx's whole record ran to 91 rows over four pages; and CFTR's "ivacaftor
 non-responsive in CF patients", unbroken, ran the table to the paper's edge.
 
-Now the summary covers PharmCAT's panel (the genes its guidelines use), only genes
-that were called, and the PDF tightens its proportions a step at a time when it
-would run over (app/reports/pdf_fit.py). The worst case below -- all 25 genes
-called, two unresolved, the long phenotypes -- must fit.
+Now the summary is one sheet. Its table lists PharmCAT's panel, the 25 genes its
+guidelines use, in the same order on every report, called or not, and the PDF
+tightens its proportions a step at a time when it would run over
+(app/reports/pdf_fit.py). The worst case below -- all 25 genes called, two
+unresolved, the long phenotypes -- must fit. The table opens on a right-hand page
+and its notes take the page behind it, so a double-sided print holds both on one
+leaf.
 """
 
 from __future__ import annotations
@@ -111,6 +114,27 @@ def _summary_genes(page):
     ]
 
 
+def _called_genes(page):
+    return [
+        _clean(g)
+        for row, g in re.findall(
+            r'<tr( class="exec-summary-uncalled")?>\s*<td class="exec-summary-number">'
+            r'\d+\.</td>\s*<td class="exec-summary-gene">(.*?)</td>',
+            _summary(page),
+        )
+        if not row
+    ]
+
+
+PANEL = sorted(
+    json.loads(
+        (Path(__file__).resolve().parents[1] / "config" / "genes.json").read_text(
+            encoding="utf-8"
+        )
+    )["sets"]["pharmcat_all"]
+)
+
+
 def _summary_table_overflow(document):
     """Text in the summary table past the table's right edge, per page."""
     found = []
@@ -143,14 +167,41 @@ def test_the_worst_case_fits_one_page(monkeypatch, tmp_path):
     assert _summary_table_overflow(document) == []
 
 
-def test_a_short_summary_keeps_its_proportions(monkeypatch, tmp_path):
+def test_the_notes_are_on_the_page_behind_the_table(monkeypatch, tmp_path):
     data = json.loads(UNPHASED_JSON.read_text(encoding="utf-8"))
     page = _report_html(
         monkeypatch, tmp_path, data, UNPHASED_TSV.read_text(encoding="utf-8")
     )
-    document, levels = generator_module.render_pdf_document(page)
-    assert len(section_pages(document, "exec-summary")) == 1
-    assert levels["exec-summary"] == 0
+    assert _summary_genes(page) == PANEL
+    document, _ = generator_module.render_pdf_document(page)
+    (table,) = section_pages(document, "exec-summary")
+    assert table % 2 == 0  # page 3: a right-hand page
+    assert section_pages(document, "exec-summary-notes") == [table + 1]
+    assert "Notes on this table are on the next page" in page
+
+
+def test_after_long_alerts_the_table_still_opens_on_a_right_hand_page(
+    monkeypatch, tmp_path
+):
+    alert = (
+        '<div class="alert-box">&#9888; Partly covered genes: CYP2B6 (*2, *3, *5) '
+        "and SLCO1B1 (*2, *4) could not be assessed; the data did not cover the "
+        "positions that define them.</div>"
+    )
+    page = _report_html(monkeypatch, tmp_path, {"genes": [], "drugRecommendations": []})
+    page = re.sub(
+        r'(<div class="alerts-container"[^>]*>)(.*?)(</div>\s*</div>)',
+        lambda m: m.group(1) + alert * 30 + m.group(3),
+        page,
+        count=1,
+        flags=re.S,
+    )
+    document, _ = generator_module.render_pdf_document(page)
+    alerts = section_pages(document, "alerts-heading")
+    assert alerts == [1, 2]  # pages 2 and 3: they end on a right-hand page
+    (table,) = section_pages(document, "exec-summary")
+    assert table == alerts[-1] + 2  # a page left blank, then a right-hand page
+    assert section_pages(document, "exec-summary-notes") == [table + 1]
 
 
 def test_the_long_phenotypes_wrap_inside_the_table(monkeypatch, tmp_path):
@@ -212,25 +263,58 @@ def test_without_the_tsv_it_keeps_to_pharmcats_panel(monkeypatch, tmp_path):
     }
     page = _report_html(monkeypatch, tmp_path, data)
     summary = _clean(_summary(page))
-    assert _summary_genes(page) == ["CYP2C19"]
-    # Uncalled: named, not tabled. Outside the panel: pointed to.
+    assert _summary_genes(page) == PANEL
+    assert _called_genes(page) == ["CYP2C19"]
+    # Uncalled: a row that says so, and named in the notes. Outside the panel:
+    # pointed to.
     assert "HLA-A" in summary[summary.index("Not called from this sample") :]
     assert "ABCB1" not in summary
     assert "The 1 other gene this run called" in summary
 
 
 def test_not_called_never_names_a_gene_the_table_shows(monkeypatch, tmp_path):
-    """The table comes from PharmCAT's TSV, the list from the gene list: two
-    sources. A gene the TSV calls is not listed again as not called."""
+    """The table comes from PharmCAT's TSV and the gene list: two sources. A gene
+    the table shows as called is not listed again as not called."""
     page = _report_html(
         monkeypatch,
         tmp_path,
         {"genes": [], "drugRecommendations": []},
         EXAMPLE_TSV.read_text(encoding="utf-8"),
     )
-    shown = set(_summary_genes(page))
+    shown = set(_called_genes(page))
     assert len(shown) == 18
     summary = _clean(_summary(page))
     named = summary[summary.index("Not called from this sample") :]
     named = named[named.index(":") + 1 : named.index(". No phenotype")]
     assert {g.strip() for g in named.split(",")} & shown == set()
+
+
+def test_a_gene_pharmcats_tsv_leaves_out_is_shown_called(monkeypatch, tmp_path):
+    """PharmCAT 3.4's TSV has no row for HLA-A, HLA-B or MT-RNR1, the genes it
+    takes only as outside calls. Called, they were in neither the table nor the
+    not-called list: the summary dropped them."""
+    data = {
+        "genes": [
+            {
+                "gene": "MT-RNR1",
+                "diplotype": "Reference",
+                "phenotype": "normal risk of aminoglycoside-induced hearing loss",
+            },
+            {
+                "gene": "HLA-B",
+                "diplotype": "*15:02/*57:01",
+                "phenotype": "*57:01 positive",
+            },
+        ],
+        "drugRecommendations": [],
+    }
+    page = _report_html(
+        monkeypatch, tmp_path, data, EXAMPLE_TSV.read_text(encoding="utf-8")
+    )
+    assert "MT-RNR1" not in EXAMPLE_TSV.read_text(encoding="utf-8")
+    called = _called_genes(page)
+    assert {"MT-RNR1", "HLA-B"} <= set(called)
+    summary = _clean(_summary(page))
+    assert "normal risk of aminoglycoside-induced hearing loss" in summary
+    not_called = summary[summary.index("Not called from this sample") :]
+    assert "MT-RNR1" not in not_called and "HLA-B" not in not_called

@@ -428,6 +428,17 @@
             display: inline-block;
             white-space: normal;
         }
+        /* A gene of the panel this run did not call: its row stays, in grey, so
+           every summary lists the same genes. */
+        .exec-summary-uncalled td {
+            color: #666;
+        }
+        .exec-summary-uncalled .not-called {
+            font-style: italic;
+        }
+        .exec-summary-overleaf {
+            margin-top: 10px;
+        }
         /* 159: run-derived provenance line at the foot of the Executive Summary */
         .run-provenance {
             margin: 10px 0 0 0;
@@ -735,6 +746,17 @@
                 padding: 6px 6px !important;
                 vertical-align: middle !important;
             }
+            /* The Executive Summary opens on a right-hand page and its notes take
+               the page behind it, so printed double-sided they share a leaf. The
+               Alerts page before it keeps it on page 3; a blank page is left only
+               when Alerts run to two pages. Genetic Results starts after both. */
+            #exec-summary {
+                break-before: recto;
+            }
+            #exec-summary-notes {
+                page-break-after: always !important;
+                break-after: page !important;
+            }
             
             /* PDF-specific styling for Genetic Results table margins */
             .gene-table th:first-child,
@@ -1018,107 +1040,81 @@
         </div>
     </div>
 
+    {# The Executive Summary is one sheet: the table on a right-hand page, the notes
+       on the page behind it, so a double-sided print holds both on one leaf. The
+       table lists PharmCAT's panel, the 25 genes its guidelines use, in the same
+       order on every report (summary_rows); it is one page, and the PDF tightens
+       its proportions when it would run over (app/reports/pdf_fit.py). #}
+    {% set rows = summary_rows(execsum_from_tsv or [], diplotypes) %}
+    {% set called = rows|selectattr('called')|list %}
+    {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
+    {% set summary_notes %}
+        {{ pypgx.na_legend(called) }}
+        {% if called|selectattr('phenotype', 'equalto', 'Possibly Wild Type')|list %}
+        <p class="header-note"><strong>Possibly Wild Type</strong>: a reference call, with no phenotype given, from a file that may not cover every position PharmCAT checks (a VCF, BCF or genotyping array). A variant at a position the file does not cover would not have been seen.</p>
+        {% endif %}
+        {% if called|selectattr('phenotype', 'equalto', 'Likely Wild Type')|list %}
+        <p class="header-note"><strong>Likely Wild Type</strong>: a reference call, with no phenotype given, from data genotyped at every position PharmCAT checks (reads, or a gVCF's reference blocks), so the absence of a variant is itself evidence.</p>
+        {% endif %}
+        {{ unresolved.summary_legend(called) }}
+        {{ unresolved.summary_uncalled(rows|rejectattr('called')|list, missing_positions_not_assumed) }}
+        {% if summary_beyond %}
+        <p class="header-note">The {{ summary_beyond|length }} other gene{{ 's' if summary_beyond|length != 1 }} this run called, outside the genes PharmCAT's guidelines use, {{ 'are' if summary_beyond|length != 1 else 'is' }} listed under Genetic Results.</p>
+        {% endif %}
+    {% endset %}
     <div id="exec-summary" class="section">
         <h2>Executive Summary</h2>
         <p>This page provides pharmacogenomic information derived from in silico analysis of the sample's genetic data. The information to follow can inform interpretation of actionable gene-drug interactions when considered in context.</p>
-        
-        {# One page, by design. It covers PharmCAT's panel, the genes its
-           guidelines use (in_summary_panel), and only genes that were called:
-           the rest are named below it or listed under Genetic Results. The PDF
-           tightens its proportions when it would run over (app/reports/pdf_fit.py). #}
-        {% set summary_tsv = (execsum_from_tsv or [])|selectattr('gene', 'in_summary_panel')|list %}
-        {% set summary_called = diplotypes|selectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
-        {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
         <div class="summary-highlights">
             <p>This sample's genetic profile indicates:</p>
             <table class="exec-summary-table">
                 <tbody>
-                    {# Prefer TSV-driven Executive Summary rows when provided #}
-                    {% if execsum_from_tsv %}
-                        {% for r in summary_tsv|sort(attribute='gene') %}
-                        <tr>
-                            <td class="exec-summary-number">{{ loop.index }}.</td>
-                            <td class="exec-summary-gene">{{ r.gene }}</td>
-                            <td class="exec-summary-diplotype{% if (r.diplotype_display or r.rec_lookup_diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = (r.diplotype_display or r.rec_lookup_diplotype or '') %}{% if '/' in diplo and not r.diplotype_candidates %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
-                            <td class="exec-summary-phenotype">
-                                {% set ph = r.rec_lookup_phenotype or '' %}
-                                {% set asv = r.rec_lookup_activity_score|activity_score_num %}
-                                {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>{% endif %}
-                                {% if asv is not none %}
-                                    {% set s = asv if asv >= 0 else 0 %}
-                                    {% if s == 0 %}
-                                        {% set tier = 0 %}
-                                    {% elif s <= 0.25 %}
-                                        {% set tier = 1 %}
-                                    {% elif s <= 0.5 %}
-                                        {% set tier = 2 %}
-                                    {% elif s <= 0.75 %}
-                                        {% set tier = 3 %}
-                                    {% elif s <= 1.5 %}
-                                        {% set tier = 4 %}
-                                    {% elif s <= 2.25 %}
-                                        {% set tier = 5 %}
-                                    {% else %}
-                                        {% set tier = 6 %}
-                                    {% endif %}
-                                    <span class="as-badge as-tier-{{ tier }}" title="Activity Score">
-                                        <svg class="as-gauge" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                                            <path d="M12 20a8 8 0 1 1 8-8h-2a6 6 0 1 0-6 6v2z"></path>
-                                            <path d="M12 12l5-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"></path>
-                                        </svg>
-                                        <span class="as-text">{{ s }}</span>
-                                    </span>
+                    {% for r in rows %}
+                    <tr{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
+                        <td class="exec-summary-number">{{ loop.index }}.</td>
+                        <td class="exec-summary-gene">{{ r.gene }}</td>
+                        {% if r.called %}
+                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}</td>
+                        <td class="exec-summary-phenotype">
+                            {% set ph = r.phenotype %}
+                            {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>{% endif %}
+                            {% set asv = r.activity_score|activity_score_num %}
+                            {% if asv is not none %}
+                                {% set s = asv if asv >= 0 else 0 %}
+                                {% if s == 0 %}
+                                    {% set tier = 0 %}
+                                {% elif s <= 0.25 %}
+                                    {% set tier = 1 %}
+                                {% elif s <= 0.5 %}
+                                    {% set tier = 2 %}
+                                {% elif s <= 0.75 %}
+                                    {% set tier = 3 %}
+                                {% elif s <= 1.5 %}
+                                    {% set tier = 4 %}
+                                {% elif s <= 2.25 %}
+                                    {% set tier = 5 %}
+                                {% else %}
+                                    {% set tier = 6 %}
                                 {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    {% else %}
-                        {% for d in summary_called|sort(attribute='gene') %}
-                        <tr>
-                            <td class="exec-summary-number">{{ loop.index }}.</td>
-                            <td class="exec-summary-gene">{{ d.gene }}</td>
-                            <td class="exec-summary-diplotype{% if (d.diplotype_display or d.diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = d.diplotype_display or d.diplotype or '' %}{% if '/' in diplo and not d.diplotype_candidates %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
-                            <td class="exec-summary-phenotype">
-                                {% if d.diplotype_candidates %}<span class="phenotype-candidates">{{ d.phenotype or 'Unknown' }}</span>{% else %}<span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">{{ d.phenotype or 'Unknown' }}</span>{% endif %}
-                                {% set s = d.activity_score|activity_score_num %}
-                                {% if s is not none %}
-                                    {% set s = s if s >= 0 else 0 %}
-                                    {% if s == 0 %}
-                                        {% set tier = 0 %}
-                                    {% elif s <= 0.25 %}
-                                        {% set tier = 1 %}
-                                    {% elif s <= 0.5 %}
-                                        {% set tier = 2 %}
-                                    {% elif s <= 0.75 %}
-                                        {% set tier = 3 %}
-                                    {% elif s <= 1.5 %}
-                                        {% set tier = 4 %}
-                                    {% elif s <= 2.25 %}
-                                        {% set tier = 5 %}
-                                    {% else %}
-                                        {% set tier = 6 %}
-                                    {% endif %}
-                                    <span class="as-badge as-tier-{{ tier }}" title="Activity Score">
-                                        <svg class="as-gauge" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                                            <path d="M12 20a8 8 0 1 1 8-8h-2a6 6 0 1 0-6 6v2z"></path>
-                                            <path d="M12 12l5-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"></path>
-                                        </svg>
-                                        <span class="as-text">{{ s }}</span>
-                                    </span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    {% endif %}
+                                <span class="as-badge as-tier-{{ tier }}" title="Activity Score">
+                                    <svg class="as-gauge" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                                        <path d="M12 20a8 8 0 1 1 8-8h-2a6 6 0 1 0-6 6v2z"></path>
+                                        <path d="M12 12l5-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"></path>
+                                    </svg>
+                                    <span class="as-text">{{ s }}</span>
+                                </span>
+                            {% endif %}
+                        </td>
+                        {% else %}
+                        <td class="exec-summary-diplotype">&ndash;</td>
+                        <td class="exec-summary-phenotype"><span class="not-called">Not called</span></td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
                 </tbody>
             </table>
-            {% if execsum_from_tsv %}{{ pypgx.na_legend(summary_tsv, 'rec_lookup_phenotype') }}{% else %}{{ pypgx.na_legend(summary_called) }}{% endif %}
-            {{ unresolved.summary_legend(summary_tsv if execsum_from_tsv else summary_called) }}
-            {# Never a gene the table shows: the TSV and the gene list are two sources. #}
-            {% set summary_shown = (summary_tsv if execsum_from_tsv else summary_called)|map(attribute='gene')|list %}
-            {{ unresolved.summary_uncalled(diplotypes|selectattr('gene', 'in_summary_panel')|rejectattr('gene', 'in', summary_shown)|list, missing_positions_not_assumed) }}
-            {% if summary_beyond %}
-            <p class="header-note">The {{ summary_beyond|length }} other gene{{ 's' if summary_beyond|length != 1 }} this run called, outside the genes PharmCAT's guidelines use, {{ 'are' if summary_beyond|length != 1 else 'is' }} listed under Genetic Results.</p>
+            {% if summary_notes|trim %}
+            <p class="header-note exec-summary-overleaf">Notes on this table are on the next page.</p>
             {% endif %}
         </div>
         {# The run-provenance paragraph that stood here has moved.
@@ -1134,6 +1130,12 @@
            tooling's now sit under Methodology, which is the section that exists
            for them. Nothing was deleted, only re-homed. #}
     </div>
+    {% if summary_notes|trim %}
+    <div id="exec-summary-notes" class="section">
+        <h3>Notes to the Executive Summary</h3>
+        {{ summary_notes }}
+    </div>
+    {% endif %}
 
     <div class="section">
         <h2>Genetic Results</h2>
