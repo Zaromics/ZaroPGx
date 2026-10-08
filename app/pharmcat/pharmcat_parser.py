@@ -969,6 +969,15 @@ class PharmCATParser:
     # Query Methods
     # ============================================================================
 
+    def get_unannotated_gene_calls(self, run_id: str) -> List[Dict[str, Any]]:
+        """PharmCAT's unannotatedGeneCalls for a run, each as PharmCAT wrote it."""
+        results = (
+            self.db_session.query(PharmCATUnannotatedGeneCall)
+            .filter(PharmCATUnannotatedGeneCall.run_id == run_id)
+            .all()
+        )
+        return [dict(r.gene_call_data) for r in results if r.gene_call_data]
+
     def get_gene_summary(self, run_id: str) -> List[Dict[str, Any]]:
         """Get summary of all genes for a run"""
         results = (

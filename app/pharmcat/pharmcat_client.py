@@ -16,6 +16,7 @@ from app.pharmcat.report_json import (
     detect_format,
     extract_display_call,
     iter_gene_blocks,
+    iter_unannotated_gene_blocks,
 )
 from app.utils.outside_calls_override import get_override_file_path
 
@@ -278,6 +279,27 @@ def normalize_pharmcat_results(response):
                     logger.warning(
                         f"Unexpected PharmCAT JSON shape: json_data['genes'] is {type(json_data.get('genes'))}, expected dict"
                     )
+
+                # Genes PharmCAT calls without a guideline annotation (F2, F5).
+                called = {entry["gene"] for entry in genes_data}
+                for block in iter_unannotated_gene_blocks(
+                    json_data.get("unannotatedGeneCalls")
+                ):
+                    if block.gene_symbol in called:
+                        continue
+                    call = extract_display_call(block.gene_data)
+                    gene_entry = {
+                        "gene": block.gene_symbol,
+                        "diplotype": call["diplotype"],
+                        "phenotype": call["phenotype"],
+                        "activity_score": call["activity_score"],
+                        "guideline_source": block.source,
+                        "call_source": block.call_source,
+                    }
+                    for key in ("diplotype_display", "diplotype_candidates"):
+                        if call.get(key):
+                            gene_entry[key] = call[key]
+                    genes_data.append(gene_entry)
 
                 # Extract drug recommendations from drugs section if available
                 if "drugs" in json_data and isinstance(json_data["drugs"], dict):

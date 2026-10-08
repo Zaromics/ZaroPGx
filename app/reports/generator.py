@@ -674,8 +674,10 @@ NO_PHENOTYPE_STANDARD = "N/A"
 # genotype itself (CPIC warfarin on CYP4F2 and VKORC1, peginterferon on IFNL3). Its
 # example TSV and 30x NA12878's leave exactly these blank, apart from DPYD's
 # unphased source call there, whose lookup call has a phenotype. (2.x also left
-# NAT2 blank; 3.x gives it one.)
-PHARMCAT_GENES_WITHOUT_PHENOTYPE = frozenset({"CYP4F2", "IFNL3", "VKORC1"})
+# NAT2 blank; 3.x gives it one.) F2 and F5 too: PharmCAT calls them under
+# unannotatedGeneCalls, phenotype "n/a", each allele's function saying what the
+# call means ("Factor V Leiden negative").
+PHARMCAT_GENES_WITHOUT_PHENOTYPE = frozenset({"CYP4F2", "F2", "F5", "IFNL3", "VKORC1"})
 
 
 def defines_no_phenotype(row: Dict[str, Any]) -> bool:
