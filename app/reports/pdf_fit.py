@@ -362,3 +362,82 @@ def fit_sections(
                 "PDF: %s still runs to %d pages at its tightest", section.label, pages
             )
     return document, levels
+
+
+# How near the paper's right edge an Executive Summary pill may run: 8mm, in CSS
+# pixels (96 to the inch).
+PILL_EDGE = 8 / 25.4 * 96
+
+
+def _summary_pills(page_box):
+    """(row id, pill box, right edge of the phenotype cell's content) per row of the
+    Executive Summary table on this page that has a phenotype pill."""
+    found = []
+
+    def right_edge(box):
+        ends = [box.position_x + box.margin_width()]
+        for child in getattr(box, "children", None) or []:
+            ends.append(right_edge(child))
+        return max(ends)
+
+    def walk(box, row_id=None, pill=None):
+        element = getattr(box, "element", None)
+        if element is not None and element.tag.rsplit("}", 1)[-1] == "tr":
+            row_id = element.get("id") or None
+        classes = (element.get("class") or "").split() if element is not None else []
+        if (
+            row_id
+            and row_id.startswith("summary-")
+            and "exec-summary-phenotype" in classes
+        ):
+            pills = [b for b in _descendants(box) if _is_pill(b)]
+            if pills:
+                found.append(
+                    (row_id, pills[0], max(right_edge(c) for c in box.children))
+                )
+            return
+        for child in getattr(box, "children", None) or []:
+            walk(child, row_id)
+
+    walk(page_box)
+    return found
+
+
+def _descendants(box):
+    for child in getattr(box, "children", None) or []:
+        yield child
+        yield from _descendants(child)
+
+
+def _is_pill(box):
+    element = getattr(box, "element", None)
+    return (
+        element is not None
+        and box.__class__.__name__ == "InlineBlockBox"
+        and "gene-phenotype" in (element.get("class") or "").split()
+    )
+
+
+def shrink_wide_pills(document) -> str:
+    """CSS for each Executive Summary pill that would run within PILL_EDGE of the
+    paper's right edge: its type made smaller, so it ends there, and its
+    line-height raised to match, so its height stays that of every other pill.
+
+    The table's columns are fixed, so the pill's position does not move with its
+    size, and one layout settles it. Text scales with its type, so the type shrinks
+    by the share of the pill's text that is over, and a point more.
+    """
+    rules = []
+    for index in section_pages(document, "exec-summary"):
+        page_box = document.pages[index]._page_box
+        limit = page_box.margin_width() - PILL_EDGE
+        for row_id, pill, end in _summary_pills(page_box):
+            over = end - limit
+            if over <= 0 or pill.width <= over:
+                continue
+            scale = int((pill.width - over) / pill.width * 100) - 1
+            rules.append(
+                f"#{row_id} .gene-phenotype {{ font-size: {scale}% !important; "
+                f"line-height: {1.15 * 100 / scale:.4f} !important; }}"
+            )
+    return "\n".join(rules)

@@ -240,7 +240,8 @@ def test_a_no_call_row_leaves_the_summary_for_the_not_called_list(
     ]
     # Its row stays, every summary lists the same genes, but as not called.
     assert re.search(
-        r'<tr class="exec-summary-uncalled">\s*<td class="exec-summary-number">'
+        r'<tr id="summary-NAT2" class="exec-summary-uncalled">\s*'
+        r'<td class="exec-summary-number">'
         r'\d+\.</td>\s*<td class="exec-summary-gene">NAT2</td>',
         summary,
     )

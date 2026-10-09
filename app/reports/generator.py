@@ -54,7 +54,7 @@ from app.pharmcat.report_json import (
     parse_pharmcat_version,
 )
 from app.reports.evidence import classify_evidence
-from app.reports.pdf_fit import fit_sections, mark_headings
+from app.reports.pdf_fit import fit_sections, mark_headings, shrink_wide_pills
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
     parse_pharmcat_tsv,
@@ -1511,7 +1511,11 @@ def render_pdf_document(html_content: str):
     html = HTML(string=mark_headings(html_content))
     font_config = FontConfiguration() if FontConfiguration else None
 
+    # The stylesheet of the last layout: the one fit_sections returns.
+    last_css = [""]
+
     def render(fit_css: str):
+        last_css[0] = fit_css
         sheets = list(stylesheets)
         if fit_css:
             sheets.append(
@@ -1523,7 +1527,13 @@ def render_pdf_document(html_content: str):
             return html.render(stylesheets=sheets, font_config=font_config)
         return html.render(stylesheets=sheets)
 
-    return fit_sections(render)
+    document, levels = fit_sections(render)
+    # A summary pill too long for the room to the paper's edge: its type smaller,
+    # its height kept. One more layout, only when one is.
+    pills = shrink_wide_pills(document)
+    if pills:
+        document = render(last_css[0] + "\n" + pills)
+    return document, levels
 
 
 def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
