@@ -2048,7 +2048,17 @@
                 return;
             }
 
-            const file = fileInput.files[0];
+            // The first file that is not an index, as the upload picks it. files[0]
+            // is often the index: a file list is commonly alphabetical, and
+            // sample.bai sorts before sample.bam, sample.crai before sample.cram.
+            const INDEX_SUFFIXES = ['.bai', '.crai', '.csi', '.tbi', '.idx'];
+            const isIndex = f => INDEX_SUFFIXES.some(s => f.name.toLowerCase().endsWith(s));
+            const selected = Array.from(fileInput.files);
+            const file = selected.find(f => !isIndex(f));
+            if (!file) {
+                alert('Only an index file is selected. Select the data file (VCF, BAM, CRAM, ...) as well.');
+                return;
+            }
 
             // Show loading state
             viewHeaderButton.disabled = true;
@@ -2060,6 +2070,8 @@
                 // Create FormData with the selected file
                 const formData = new FormData();
                 formData.append('file', file);
+                // The index files by name only: enough to pair one with the file.
+                selected.filter(isIndex).forEach(f => formData.append('index_names', f.name));
 
                 // Make the request to the header inspection endpoint
                 const response = await fetch('/upload/inspect-header', {

@@ -42,7 +42,12 @@ from app.api.utils.fastq_platform import (
     looks_like_one_mate,
     mate_names_agree,
 )
-from app.api.utils.file_utils import has_index_file, is_compressed_file
+from app.api.utils.file_utils import (
+    has_index_file,
+    index_names,
+    is_compressed_file,
+    matching_index,
+)
 from app.api.utils.header_inspector import inspect_header
 from app.utils.env import env_flag
 
@@ -461,6 +466,43 @@ def _detect_consumer_array(file_path: Path) -> Optional[FileType]:
 # process_files does not use it yet (see the TODO there) - but it is not a second
 # dataset either, so it must not raise the "extra files were not analysed" warning.
 INDEX_FILE_SUFFIXES = (".bai", ".crai", ".csi", ".tbi", ".idx")
+
+
+def uploaded_index_messages(
+    data_name: str, index_files: List[str]
+) -> Tuple[Optional[str], List[str], List[str]]:
+    """What to say about the index files chosen with a data file: (the one that
+    indexes it, if any; recommendations; warnings).
+
+    An index was accepted with the upload and then dropped without a word, so the
+    page said the file had none. The pipeline makes its own index from the data, so
+    a matching one is named and not used. One that indexes some other file is named
+    as a warning: it can mean the wrong data file was chosen. Names are escaped: the
+    panel renders these with innerHTML.
+    """
+    paired = matching_index(data_name, index_files)
+    data = html.escape(data_name)
+    recommendations: List[str] = []
+    warnings: List[str] = []
+    if paired:
+        recommendations.append(
+            f"<p>Index {html.escape(paired)} matches {data}. The pipeline indexes "
+            "the data itself, so this index is not used.</p>"
+        )
+    names = index_names(data_name)
+    for name in index_files:
+        if name == paired:
+            continue
+        if names:
+            expected = " or ".join(html.escape(n) for n in names[:2])
+            why = f"An index of {data} is named {expected}."
+        else:
+            why = f"{data} is not a file that takes an index."
+        warnings.append(
+            f"<p>⚠️ {html.escape(name)} is not an index of {data} and was not used. "
+            f"{why}</p>"
+        )
+    return paired, recommendations, warnings
 
 
 # What to tell inspect_header when the stored filename has no usable suffix to
@@ -1460,13 +1502,12 @@ class FileProcessor:
                     "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
                 )
 
-        # Check if index exists
+        # Check if index exists. The pipeline indexes the VCF itself (tabix), as it
+        # does an alignment; this used to ask the user to make one "to speed up
+        # processing", which it would not, and called an uploaded index unsupported.
         if analysis.vcf_info and not analysis.vcf_info.has_index:
             workflow["recommendations"].append(
-                "<p>Create index for uploaded VCF file to speed up processing.</p>"
-            )
-            workflow["recommendations"].append(
-                "<p>Note: Although an existing index file can be uploaded along with the main VCF file, at the moment, its functionality is not yet supported. (TO DO)</p>"
+                "<p>Creating index for VCF file for faster processing</p>"
             )
 
     def _refuse_consumer_array(
@@ -1867,7 +1908,8 @@ class FileProcessor:
                 "<p>Step 4: PharmCAT with outside calls including HLA data</p>"
             )
             workflow["recommendations"].append(
-                "<p>Result: Complete 23/23 highest clinical evidence pharmacogenes</p>"
+                "<p>Result: every gene PharmCAT reports on, HLA-A, HLA-B, CYP2D6 "
+                "and MT-RNR1 included</p>"
             )
             workflow["recommendations"].append(
                 "<p>Reference: https://pharmcat.clinpgx.org/using/Calling-HLA/</p>"
@@ -2344,6 +2386,12 @@ class FileProcessor:
                 if not str(f.filename or "").lower().endswith(INDEX_FILE_SUFFIXES)
             ]
             primary_file = data_files[0] if data_files else files[0]
+            index_files = [
+                str(f.filename or "")
+                for f in files
+                if f is not primary_file
+                and str(f.filename or "").lower().endswith(INDEX_FILE_SUFFIXES)
+            ]
 
             # Every other data file is dropped on the floor, which for a second *data*
             # file is a silent wrong answer: a paired-read upload used to be analysed as
@@ -2434,6 +2482,18 @@ class FileProcessor:
                         "mate of a paired-end run. Alone, it can miss heterozygous "
                         "variants in CYP2B6 and CYP2D6. Upload R1 and R2 together.</p>"
                     )
+
+                paired, notes, index_warnings = uploaded_index_messages(
+                    str(primary_file.filename or ""), index_files
+                )
+                if paired:
+                    file_analysis = result.get("file_analysis")
+                    if file_analysis is not None:
+                        file_analysis.has_index = True
+                        if file_analysis.vcf_info is not None:
+                            file_analysis.vcf_info.has_index = True
+                workflow["recommendations"].extend(notes)
+                workflow["warnings"].extend(index_warnings)
 
                 if ignored_files:
                     # html.escape, not safe_upload_basename: the point of this warning is
