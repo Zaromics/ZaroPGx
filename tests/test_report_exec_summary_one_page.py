@@ -25,7 +25,13 @@ from pathlib import Path
 import pytest
 
 import app.reports.generator as generator_module
-from app.reports.pdf_fit import EXEC_SUMMARY, section_pages
+from app.reports.pdf_fit import (
+    EXEC_SUMMARY,
+    FitSection,
+    fit_sections,
+    section_fragments,
+    section_pages,
+)
 
 weasyprint = pytest.importorskip("weasyprint")
 
@@ -216,10 +222,14 @@ def test_the_long_phenotypes_wrap_inside_the_table(monkeypatch, tmp_path):
     assert _summary_table_overflow(document) == []
 
 
-def test_every_step_is_tighter_than_the_last(monkeypatch, tmp_path):
+def test_every_step_is_tighter_and_the_loosest_that_fits_is_used(monkeypatch, tmp_path):
+    """Fine steps, so the table fills its page: with three, a summary one step over
+    dropped to type that left a fifth of the page blank."""
     data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
     page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
+    fitted, levels = generator_module.render_pdf_document(page)
     heights = []
+    one_page = []
     for css in ("",) + EXEC_SUMMARY.steps:
         monkeypatch.setattr(
             generator_module,
@@ -227,6 +237,7 @@ def test_every_step_is_tighter_than_the_last(monkeypatch, tmp_path):
             lambda render, css=css: (render(css), {}),
         )
         document, _ = generator_module.render_pdf_document(page)
+        one_page.append(len(section_pages(document, "exec-summary")) == 1)
         # Its height laid end to end, over however many pages it takes.
         heights.append(
             sum(
@@ -238,6 +249,35 @@ def test_every_step_is_tighter_than_the_last(monkeypatch, tmp_path):
             )
         )
     assert all(a > b for a, b in zip(heights, heights[1:])), heights
+    assert levels["exec-summary"] == one_page.index(True) > 0
+    # And it fills the page: the three steps there were left this one at 91%.
+    ((_, used),) = section_fragments(fitted, "exec-summary")
+    assert used > 0.95, used
+
+
+def test_finding_the_step_takes_few_layouts(monkeypatch, tmp_path):
+    """The range of steps is halved each layout. Nine steps of which only the last
+    two fit take five layouts; tried in turn, they took nine."""
+    data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
+    page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
+    late = FitSection(
+        anchor="exec-summary",
+        label="Executive Summary",
+        steps=("",) * 7 + EXEC_SUMMARY.steps[-2:],
+    )
+    layouts = []
+
+    def counting(render):
+        def counted(css):
+            layouts.append(css)
+            return render(css)
+
+        return fit_sections(counted, (late,))
+
+    monkeypatch.setattr(generator_module, "fit_sections", counting)
+    _, levels = generator_module.render_pdf_document(page)
+    assert levels["exec-summary"] == 8
+    assert len(layouts) == 5, len(layouts)
 
 
 def test_without_the_tsv_it_keeps_to_pharmcats_panel(monkeypatch, tmp_path):
