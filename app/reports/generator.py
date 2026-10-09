@@ -2214,6 +2214,7 @@ def generate_report(
                     liftover_provenance_sentence,
                 )
                 from app.utils.pharmcat_assume_ref import (
+                    assume_ref_alert,
                     explicit_calls_paragraph,
                     methodology_assume_ref_paragraph,
                     pharmcat_flags_for_input,
@@ -2302,6 +2303,10 @@ def generate_report(
                     absent_to_ref,
                     unspecified_to_ref,
                 )
+                # Its caution is an alert, from the same two flags.
+                ref_alert = assume_ref_alert(absent_to_ref, unspecified_to_ref)
+                if ref_alert:
+                    workflow_warnings.append(ref_alert)
                 if pharmcat_assume_ref_methodology is None:
                     # An alignment's PharmCAT positions: counts from the step row,
                     # what happened rather than what was planned.
