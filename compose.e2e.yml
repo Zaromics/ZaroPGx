@@ -23,6 +23,11 @@ services:
     ports: !reset []
   pharmcat:
     ports: !reset []
+    # Its reference cache: the named volume by default, filled from Zenodo at first
+    # start, or a host directory holding the files already (E2E_PHARMCAT_REFERENCE;
+    # CI restores it from the Actions cache, .github/workflows/ci.yml).
+    volumes:
+      - ${E2E_PHARMCAT_REFERENCE:-pharmcat-references}:/pharmcat-references
   pypgx:
     ports: !reset []
   nextflow:
