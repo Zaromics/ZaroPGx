@@ -278,12 +278,14 @@ async def run(request: NextflowRunRequest):
         "status": "starting",
         "start_time": datetime.now(timezone.utc).isoformat(),
         "message": "Initializing Nextflow pipeline",
+        # Removed if the job is cancelled. Never the patient's own reports
+        # directory: it holds every other job of that patient, and listing it here
+        # deleted all of them whenever one job was cancelled.
         "cleanup_paths": [
             request.input,
             outdir,
             f"/data/temp/{request.patient_id}",
             f"/data/reports/{request.patient_id}/{report_id}",
-            f"/data/reports/{request.patient_id}",
         ]
     }
 
