@@ -388,7 +388,7 @@ async function checkStatus(jobId) {
 
 ### Test Structure
 
-- Fast suite: `tests/` excluding `@pytest.mark.e2e` — SQLite / `TestClient` unit and API tests.
+- Fast suite: `tests/` excluding `@pytest.mark.e2e` — unit and `TestClient` API tests on a throwaway PostgreSQL (`tests/postgres.py`; needs Docker or `ZAROPGX_TEST_POSTGRES_URL`).
 - Full-stack e2e: `tests/e2e/` — HTTP against a live compose stack (`ZAROPGX_E2E=1`).
 - CI runs the fast suite on every PR and a separate required `e2e` job with Buildx cache.
 

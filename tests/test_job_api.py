@@ -1,8 +1,8 @@
 """
-API-level workflow monitoring tests (SQLite).
+API-level workflow monitoring tests.
 
 Exercises workflow lifecycle, progress tracking, WebSocket hooks, and error
-handling through FastAPI TestClient against the in-memory SQLite test DB.
+handling through FastAPI TestClient against the suite's PostgreSQL.
 Full-stack coverage lives in tests/e2e/.
 """
 
