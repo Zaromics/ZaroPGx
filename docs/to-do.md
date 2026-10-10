@@ -101,10 +101,11 @@ curation: full
     end to end.
   - Every completed job deleting its own reports — needed a post-run check that
     the report links actually resolve.
-  Cheapest useful order, when we get to it: (1) assert report URLs return 200 in
-  the existing compose E2E job — catches the worst class, near-zero cost;
-  (2) Playwright smoke over upload → progress → report in both themes, with a
-  contrast assertion on the popups; (3) only then consider visual snapshots.
+  Cheapest useful order: (1) [DONE Oct 2026] every compose E2E lane fetches each
+  `/reports/` link its completed job lists and requires a 200 with a body
+  (`tests/e2e/report_links.py`); (2) Playwright smoke over upload → progress →
+  report in both themes, with a contrast assertion on the popups; (3) only then
+  consider visual snapshots.
 
 ## Data & Database
 

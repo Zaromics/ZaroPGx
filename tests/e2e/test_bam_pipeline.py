@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.report_links import assert_report_links_resolve
+
 # A tiny but valid GRCh38/hg38 BAM: 30 reads at a CYP2C19 locus (chr10) carrying one
 # SNV, with a read group and the full sequence dictionary. Built with samtools against
 # this deployment's own hg38 reference; HaplotypeCaller and PyPGx both accept it.
@@ -69,3 +71,4 @@ def test_bam_upload_completes_with_report_artifact(e2e_client):
     ), f"completed job but reports empty: {payload}"
     url_values = [v for v in reports.values() if isinstance(v, str) and v.strip()]
     assert url_values, f"completed job but no report URL/path strings: {payload}"
+    assert_report_links_resolve(e2e_client, reports)
