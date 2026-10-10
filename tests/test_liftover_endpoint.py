@@ -374,6 +374,47 @@ def test_missing_chain_file_is_a_clear_400(
 
     assert resp.status_code == 400, resp.text
     assert "chain" in resp.json()["detail"].lower()
+    assert (
+        fake_tools.argvs() == []
+    ), "nothing may run before the prerequisites are checked"
+
+
+# ---------------------------------------------------------------------------
+# The target reference's sequence dictionary
+# ---------------------------------------------------------------------------
+
+
+def test_a_missing_dictionary_is_created_before_liftover(
+    client, fake_tools, hg38_reference, chain_file
+):
+    """A fresh install starts gatk-api before genome-downloader has staged any FASTA,
+    so the startup dictionary pass finds nothing to do. LiftoverVcf then refused the
+    reference ("must have an associated Dictionary .dict file") until the container
+    was restarted. The route now creates it on demand."""
+    hg38_reference.with_suffix(".dict").unlink(missing_ok=True)
+
+    resp = _post_liftover(client, CHR_GRCH37_VCF)
+
+    assert resp.status_code == 200, resp.text
+    argvs = fake_tools.argvs()
+    create = ["gatk", "CreateSequenceDictionary", "-R", str(hg38_reference)]
+    assert create in argvs
+    lift = fake_tools.ran("gatk", "LiftoverVcf")[0]
+    assert argvs.index(create) < argvs.index(lift)
+
+
+def test_an_existing_dictionary_is_not_rebuilt(
+    client, fake_tools, hg38_reference, chain_file
+):
+    dict_path = hg38_reference.with_suffix(".dict")
+    dict_path.write_text("@HD\tVN:1.6\n", encoding="utf-8")
+    try:
+        resp = _post_liftover(client, CHR_GRCH37_VCF)
+    finally:
+        dict_path.unlink()
+
+    assert resp.status_code == 200, resp.text
+    assert fake_tools.ran("gatk", "CreateSequenceDictionary") == []
 
 
 # ---------------------------------------------------------------------------
