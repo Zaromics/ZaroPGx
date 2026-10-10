@@ -258,8 +258,8 @@ class FHIRExportService:
         """
         Export a PharmCAT run as a FHIR Bundle and save it to the reports directory.
 
-        Files are saved alongside other report outputs (PDF, HTML, etc.) in the
-        same patient/run subdirectory.
+        Files are saved alongside other report outputs (PDF, HTML, etc.): with a
+        workflow_id, in that job's directory under the patient, named after the job.
 
         Args:
             run_id: PharmCAT run ID to export
@@ -284,9 +284,18 @@ class FHIRExportService:
         try:
             # Use patient_id or run_id for the subdirectory
             subdir_id = patient_id or run_id or workflow_id
+            url_dir = subdir_id
+            stem = "pgx_fhir_report"
+            # A job's bundle goes in that job's directory, named like its other
+            # reports. Written to the patient directory under one fixed name, each
+            # job of a patient overwrote the last, and every earlier report's FHIR
+            # link served the newest job's bundle.
+            if workflow_id and str(workflow_id) != str(subdir_id):
+                url_dir = f"{subdir_id}/{workflow_id}"
+                stem = f"{workflow_id}_pgx_fhir_report"
 
             # Create reports subdirectory if it doesn't exist
-            report_subdir = REPORT_DIR / subdir_id
+            report_subdir = REPORT_DIR / url_dir
             report_subdir.mkdir(parents=True, exist_ok=True)
 
             files_saved = []
@@ -318,7 +327,7 @@ class FHIRExportService:
 
                 # Determine filename
                 extension = "xml" if fmt == "xml" else "json"
-                filename = f"pgx_fhir_report.{extension}"
+                filename = f"{stem}.{extension}"
                 filepath = report_subdir / filename
 
                 # Write the file
@@ -331,7 +340,7 @@ class FHIRExportService:
                         "format": fmt,
                         "path": str(filepath),
                         "filename": filename,
-                        "url": f"/reports/{subdir_id}/{filename}",
+                        "url": f"/reports/{url_dir}/{filename}",
                     }
                 )
 
