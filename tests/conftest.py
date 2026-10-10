@@ -14,22 +14,30 @@ os.environ.setdefault(
 )
 os.environ.setdefault("DB_PASSWORD", "pytest-db-password")
 
+import contextlib
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.api.db import Base, get_db
+from app.api import db as app_db
+from app.api.db import get_db
 from app.services.job_service import JobService
 from app.services.websocket_manager import ConnectionManager
+from tests import postgres as test_postgres
 from tests.e2e.harness import apply_e2e_env, e2e_requested, vacuous_e2e_failure
 
-# Postgres schemas the ORM models are qualified with. SQLite has no CREATE
-# SCHEMA, but an ATTACHed database occupies the same namespace, so attaching an
-# in-memory database under each schema name lets Base.metadata.create_all()
-# build the whole metadata unchanged -- no per-table allowlist to keep in sync.
-_PG_SCHEMAS = ("user_data",)
+# Why there is no PostgreSQL to test against, when there is none (outside CI).
+_NO_POSTGRES: list[str] = []
+
+
+def _skip_no_postgres():
+    pytest.skip(f"no PostgreSQL to test against: {_NO_POSTGRES[0]}")
+
+
+def _refuse_no_postgres(*args, **kwargs):
+    raise RuntimeError(f"no PostgreSQL to test against: {_NO_POSTGRES[0]}")
 
 
 def pytest_addoption(parser):
@@ -83,30 +91,51 @@ def _running_e2e(request: pytest.FixtureRequest) -> bool:
 
 @pytest.fixture(scope="session")
 def engine():
-    # Session-scoped: detect via env set by e2e scripts / CI / --zaropgx-e2e
+    """The suite's PostgreSQL (tests/postgres.py), with the app bound to it.
+
+    None under e2e, which runs against the live stack's database, and when there is
+    no PostgreSQL to start outside CI: the tests that need one then skip.
+    """
     if e2e_requested(os.environ):
         yield None
         return
-
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-
-    @event.listens_for(eng, "connect")
-    def _attach_pg_schemas(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        for schema in _PG_SCHEMAS:
-            cursor.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
-        cursor.close()
-
-    # Force the pooled connection (and therefore the ATTACHes) into existence
-    # before any DDL runs.
-    with eng.connect():
-        pass
-    yield eng
+    stack = contextlib.ExitStack()
+    try:
+        url = stack.enter_context(test_postgres.server())
+    except test_postgres.PostgresUnavailable as exc:
+        if os.environ.get("CI"):
+            pytest.fail(f"PostgreSQL is required in CI: {exc}")
+        _NO_POSTGRES.append(str(exc))
+        # A test that reaches the database through the app's own SessionLocal, not
+        # a fixture, cannot skip from inside a request (Starlette's middleware turns
+        # the skip into "No response returned"). It fails saying why, instead of
+        # with a refused connection to the placeholder DATABASE_URL.
+        previous = app_db.engine
+        no_postgres = create_engine(
+            "postgresql+psycopg://", creator=_refuse_no_postgres
+        )
+        app_db.SessionLocal.configure(bind=no_postgres)
+        app_db.engine = no_postgres
+        try:
+            yield None
+        finally:
+            app_db.SessionLocal.configure(bind=previous)
+            app_db.engine = previous
+        return
+    with stack:
+        eng = create_engine(url, future=True, pool_pre_ping=True)
+        test_postgres.ensure_schema(eng)
+        # App code that opens its own sessions (SessionLocal()) lands here too,
+        # rather than on the placeholder DATABASE_URL set above.
+        previous = app_db.engine
+        app_db.SessionLocal.configure(bind=eng)
+        app_db.engine = eng
+        try:
+            yield eng
+        finally:
+            app_db.SessionLocal.configure(bind=previous)
+            app_db.engine = previous
+            eng.dispose()
 
 
 @pytest.fixture(scope="session")
@@ -118,15 +147,25 @@ def session_factory(engine):
     )
 
 
+@pytest.fixture(scope="session")
+def _db_reset(engine):
+    return None if engine is None else test_postgres.Reset(engine)
+
+
 @pytest.fixture(autouse=True)
-def database(request, engine):
-    """Build every table before each test and tear them down afterwards."""
-    if _running_e2e(request):
+def database(request, _db_reset):
+    """After each test, empty the tables it wrote to (tests/postgres.py: Reset)."""
+    if _db_reset is None or _running_e2e(request):
         yield
         return
-    Base.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=engine)
+    seeds_written = _db_reset.after_test()
+    if seeds_written:
+        pytest.fail(
+            f"wrote to tables db/init seeds, which are not reset between tests: "
+            f"{sorted(seeds_written)}",
+            pytrace=False,
+        )
 
 
 @pytest.fixture
@@ -134,6 +173,8 @@ def db_session(request, database, session_factory):
     if _running_e2e(request):
         yield None
         return
+    if session_factory is None:
+        _skip_no_postgres()
     session = session_factory()
     try:
         yield session
@@ -143,15 +184,16 @@ def db_session(request, database, session_factory):
 
 
 @pytest.fixture(autouse=True)
-def override_db_dependency(request, db_session):
-    """Point FastAPI's get_db at the SQLite test database.
+def override_db_dependency(request, engine):
+    """Point FastAPI's get_db at the test's own session.
 
     Applied per test and unwound afterwards, so it cannot leak into other test
     modules the way the old module-level assignment did.
     """
-    if _running_e2e(request):
+    if _running_e2e(request) or engine is None:
         yield
         return
+    db_session = request.getfixturevalue("db_session")
 
     from app.main import app
 
@@ -169,7 +211,7 @@ def override_db_dependency(request, db_session):
 
 
 @pytest.fixture
-def client(override_db_dependency):
+def client(override_db_dependency, db_session):
     from app.main import app
 
     # Startup/shutdown hooks reach for Postgres and sibling containers.

@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.utils.env import env_flag
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +117,14 @@ class CleanupService:
                     str(self.temp_dir / "zarohla" / job_id),
                     str(self.temp_dir / "mtdna" / job_id),
                     str(self.data_dir / "temp" / job_id),
+                    # The sidecars work in DATA_DIR/temp/<service>/<job>, not in
+                    # this container's /tmp (job_work_dir in docker/pypgx and
+                    # docker/zarohla; docker/mtdna-server-2/app.py).
+                    str(self.data_dir / "temp" / "mtdna" / job_id),
+                    str(self.data_dir / "temp" / "pypgx" / job_id),
+                    # zarohla's /scratch is ./data/temp unless ZAROPGX_SCRATCH
+                    # points elsewhere; then only zarohla's own cleanup applies.
+                    str(self.data_dir / "temp" / "zarohla" / job_id),
                 ]
             )
 
@@ -166,6 +176,39 @@ class CleanupService:
             cleanup_stats["error"] = str(e)
             cleanup_stats["success"] = False
             return cleanup_stats
+
+    def discard_job_uploads(self, job_metadata: Optional[Dict[str, Any]]) -> List[str]:
+        """Delete an ended job's uploaded files; return the paths removed.
+
+        An upload is stored at /data/uploads/upload_<random>_<name>, and the job
+        records it in job_metadata["file_paths"] (both mates of a FASTQ pair).
+        Only a cancellation removed it (the Nextflow runner deletes its input on
+        /cancel). cleanup_job_files and the app's cancellation sweep look for
+        /data/uploads/{patient_id}, a directory uploads are never written to, so
+        every completed or failed 30x genome left its 41 GB behind for good. Once
+        the job has ended the
+        reports hold its results and the input is not read again (the reprocess
+        route looks for VCFs in that per-patient directory too, not here).
+
+        Only regular files inside uploads_dir are touched. KEEP_UPLOADS=true keeps
+        them.
+        """
+        if env_flag("KEEP_UPLOADS"):
+            return []
+        removed: List[str] = []
+        root = self.uploads_dir.resolve()
+        for raw in (job_metadata or {}).get("file_paths") or []:
+            path = Path(str(raw)).resolve()
+            if path == root or not path.is_relative_to(root) or not path.is_file():
+                continue
+            try:
+                path.unlink()
+                removed.append(str(path))
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.warning(f"Could not remove upload {path}: {exc}")
+        return removed
 
     def cleanup_old_temp_files(self, max_age_hours: int = 24) -> Dict[str, Any]:
         """
