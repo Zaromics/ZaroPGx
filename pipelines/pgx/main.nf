@@ -26,6 +26,12 @@ nextflow.enable.dsl=2
   into a work-dir file nobody reads; on stderr it reaches .command.err and therefore
   Nextflow's error report. Two call sites are deliberately exempt and say so inline:
   PyPGxGenotypeAll and PharmCATRun.
+
+  A 4xx is the service refusing this input (a CRAM compressed against another FASTA,
+  a file too large, a malformed VCF), and the same input is refused again. Those calls
+  exit 65, which nextflow.config's errorStrategy terminates on instead of retrying:
+  the retry re-sent the whole input, so NA12878's 15 GB CRAM took 7 minutes to be
+  refused rather than 3. A 5xx, or no response (000), still exits 1 and is retried.
 */
 
 params.input          = params.input ?: ''
@@ -140,9 +146,10 @@ process FastqToBAM {
     # native (libbwa.Linux.so inside the fat jar), so /align-fastq now runs FastqToSam,
     # BwaSpark and MarkDuplicatesSpark instead of answering 501. The endpoint was what
     # was missing, not the tool.
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq > align_response.json; then
-      echo "gatk-api /align-fastq returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o align_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq); then
+      echo "gatk-api /align-fastq returned an error (HTTP $HTTP_CODE):" >&2
       cat align_response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     BAM_PATH=$(python3 - <<'PY'
@@ -193,9 +200,10 @@ process CramToBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam > cram_response.json; then
-      echo "gatk-api /cram-to-bam returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o cram_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/cram-to-bam); then
+      echo "gatk-api /cram-to-bam returned an error (HTTP $HTTP_CODE):" >&2
       cat cram_response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     BAM_PATH=$(python3 - <<'PY'
@@ -231,9 +239,10 @@ process SamToBAM {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam > sam_response.json; then
-      echo "gatk-api /sam-to-bam returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o sam_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/sam-to-bam); then
+      echo "gatk-api /sam-to-bam returned an error (HTTP $HTTP_CODE):" >&2
       cat sam_response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     BAM_PATH=$(python3 - <<'PY'
@@ -277,9 +286,10 @@ process OptiTypeHLAFromBAM {
     # the parser below found no HLA- keys, and the run completed reporting no HLA calls -
     # indistinguishable from OptiType legitimately finding none. Untick OptiType
     # (--skip_hla) to opt out of HLA typing; a failing service is not that.
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://zarohla:5000/call-hla > hla_result.json; then
-      echo "zarohla /call-hla returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o hla_result.json -w '%{http_code}' "${CURL_ARGS[@]}" http://zarohla:5000/call-hla); then
+      echo "zarohla /call-hla returned an error (HTTP $HTTP_CODE):" >&2
       cat hla_result.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     python3 - <<'PY'
@@ -332,9 +342,10 @@ process MtdnaCall {
     # error JSON landing in the result file, parsed for keys that are not there,
     # is indistinguishable from a sample with no mitochondrial variants. Untick
     # mtDNA (--skip_mtdna) to opt out; a failing service is not that.
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://mtdna:5000/call-mtdna > mtdna_result.json; then
-      echo "mtdna /call-mtdna returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o mtdna_result.json -w '%{http_code}' "${CURL_ARGS[@]}" http://mtdna:5000/call-mtdna); then
+      echo "mtdna /call-mtdna returned an error (HTTP $HTTP_CODE):" >&2
       cat mtdna_result.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     python3 - <<'PY'
@@ -387,9 +398,10 @@ process BcfToVCF {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=bcf_to_vcf )
     fi
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/bcf-to-vcf > bcf_response.json; then
-      echo "gatk-api /bcf-to-vcf returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o bcf_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/bcf-to-vcf); then
+      echo "gatk-api /bcf-to-vcf returned an error (HTTP $HTTP_CODE):" >&2
       cat bcf_response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     VCF_PATH=$(python3 - <<'PY'
@@ -448,9 +460,10 @@ process GVCFToVCF {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gvcf_to_vcf )
     fi
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/gvcf-to-vcf > gvcf_response.json; then
-      echo "gatk-api /gvcf-to-vcf returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o gvcf_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/gvcf-to-vcf); then
+      echo "gatk-api /gvcf-to-vcf returned an error (HTTP $HTTP_CODE):" >&2
       cat gvcf_response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     VCF_PATH=$(python3 - <<'PY'
@@ -513,9 +526,10 @@ process LiftoverVCF {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=liftover )
     fi
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://gatk-api:5000/liftover-vcf > liftover_response.json; then
-      echo "gatk-api /liftover-vcf returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o liftover_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/liftover-vcf); then
+      echo "gatk-api /liftover-vcf returned an error (HTTP $HTTP_CODE):" >&2
       cat liftover_response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     VCF_PATH=$(python3 - <<'PY'
@@ -565,9 +579,10 @@ process PyPGxBam2Vcf {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_bam2vcf )
     fi
-    if ! curl -sS --fail-with-body "${CURL_ARGS[@]}" http://pypgx:5000/create-input-vcf > response.json; then
-      echo "pypgx /create-input-vcf returned an error:" >&2
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://pypgx:5000/create-input-vcf); then
+      echo "pypgx /create-input-vcf returned an error (HTTP $HTTP_CODE):" >&2
       cat response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     read -r VCF_PATH PHARMCAT_VCF_PATH < <(python3 - <<'PY'
