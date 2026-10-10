@@ -41,8 +41,8 @@ curation: full
   hg19ToHg38.over.chain.gz, contig-prefix normalisation in front of it, a reject VCF with
   per-record reasons, and a reject-rate guard. Plain `bcftools annotate --rename-chrs` was
   tried and deleted earlier (Aug 2026) because it only renames contigs, it does not
-  convert coordinates. Remaining nicety: surface the per-run reject count in the report
-  itself, not only in the job log/step message.
+  convert coordinates. Both report lanes state the per-run counts ("N variants lifted,
+  N dropped as unliftable"), read from the liftover step's output_data.
 - Clarify workflow vs job IDs; define single source for workflow definition and per-run job state
 - Represent workflows as finite state matrix, each unique and deterministic workflow should have an assigned ID which can be quickly spot checked 
 - Nextflow orchestration
@@ -52,9 +52,24 @@ curation: full
 - Accept uploads by URL (streamed) and multi-file selects (main + index) with proper pairing
 - Recognize and/or regenerate index files as needed; map unaligned to appropriate reference: currently GRCh38.p14
 - Consider preprocessing complementing PyPGx-led VCF generation (evaluate necessity)
-- Add mtdna-server-2
+- [DONE] Add mtdna-server-2: mutserve, haplogrep3 and haplocheck in the `mtdna` sidecar,
+  supplying the MT-RNR1 outside call and the report's mtDNA section.
 - Finish wiring in ZaroHLA
 - Improve analysis, make better use of samtools and bcftools
+- [DONE Oct 2026, fix/discard-uploads-when-job-ends] A job's upload is deleted when the
+  job completes, fails or is cancelled (`KEEP_UPLOADS=true` keeps it); it used to stay
+  for good, 41 GB per 30x genome. The mtDNA sidecar's `data/temp/mtdna/<job_id>/`, left
+  behind by a worker killed mid-request, is now in the completion cleanup.
+- [DONE Oct 2026, fix/sidecar-work-dirs-per-job] Sidecars work in
+  `data/temp/<service>/<job_id>/`, removed when the job ends however it ends; PyPGx's
+  /genotype no longer copies its pipelines and a summary JSON into the patient's report
+  root.
+- Decide whether to turn PyPGx's per-gene evidence back on. `generator.py` merges the
+  per-gene PyPGx pipelines (`pypgx_*` in the job directory) into the report -- filling
+  fields the gene row lacks and attaching evidence -- but since reports moved into
+  per-job directories the pipelines never arrive there, so it has not run. Turning it
+  on would let PyPGx fill gaps in PharmCAT's rows (e.g. a blank phenotype); review
+  what it adds before re-enabling.
 
 ## Calling & Tools
 
@@ -76,15 +91,31 @@ curation: full
 - Unified report generation combining PharmCAT clinical recommendations with PyPGx gene coverage
 - Add demographics mini-section: mitochondrial lineage/haplogroup and variant rarity context
 - Standardize folder naming of generated reports (timestamp-based) and place logs under `data/logs/`
-- Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
+- [DONE] Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
 - Abstract report theme so cross-pipeline outputs remain stylistically consistent
 - Custom reports: add a QR code containing the raw data
+- [DONE Oct 2026, fix/report-recommendation-call] DPYD on unphased input. PharmCAT
+  lists each allele it found as its own "Indeterminate" source call and doses from the
+  one recommendation call it builds from them (30x NA12878: `c.1601G>A (*4)/c.1627A>G
+  (*5)`, Normal Metabolizer, 2.0). The gene table, Executive Summary and interactive
+  report showed the per-allele entries; where the source is not one diplotype they now
+  show the recommendation call, as the dosing guidance does.
+- [DONE Oct 2026, fix/report-sample-identifier] The sample identifier entered at upload
+  (else the file header's) is the reports' "Sample ID"; every report used to print the
+  job or patient UUID. Without one it says "Not provided", and the job id is the
+  separate Report ID line in every report.
 
 ## UI/UX
 
 - Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
 - Add preprocessing glyph (e.g., Liftover) where applicable & mtDNA glyph
+- Interactive report's drug-gene network graph needs a design, not a patch. Measured on
+  a 30x NA12878 report (Oct 2026): it is laid out at page load while its tab is hidden,
+  so the SVG is created 0 px wide; with that fixed, the unbounded force layout of 217
+  gene and drug nodes leaves 213 of them off-canvas, and clamping them in only piles
+  them on the borders of a card that clips at 300 px. Decide what it should show at
+  whole-genome scale (actionable drugs only? genes grouped?) before touching it.
 - Unify/clean redundant text
 - **Front-end test harness — nothing renders the page today.** What exists is
   Node-executed *logic* tests: `tests/test_ui_workflow_flag_reads.py` and
@@ -127,7 +158,7 @@ curation: full
 
 ## Docker & CI/CD
 
-- Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
+- [DONE] Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
 - Implement CI/CD github action to dockerhub image build
 - Clean up deprecated flags
 
