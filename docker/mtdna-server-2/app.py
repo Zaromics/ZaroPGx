@@ -1182,6 +1182,10 @@ async def call_mtdna(
         raise
     finally:
         running_processes.pop(job_key, None)
+        # The upload is this request's input, not a result: every output the caller
+        # copies (report, chrM.bam, variants) is already written beside it. Kept, a
+        # 30x genome left a 41 GB BAM here per job, never removed.
+        _discard_input_copy(upload_path)
 
     if result.get("mt_rnr1"):
         with open(
@@ -1194,6 +1198,17 @@ async def call_mtdna(
         await client.complete_step(f"mtDNA calling complete ({input_type})")
 
     return {"success": True, "patient_id": patient_id, **result}
+
+
+def _discard_input_copy(path: str) -> None:
+    """Remove the stored upload and any index samtools wrote beside it."""
+    for candidate in (path, path + ".bai", path + ".crai", path + ".csi"):
+        try:
+            os.remove(candidate)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning(f"Could not remove input copy {candidate}: {exc}")
 
 
 @app.post("/cancel/{job_key}")
