@@ -121,7 +121,13 @@ curation: full
 
 ## Security & Privacy
 
-- Ensure self-hosted deployments never transmit genomic data externally
+- Ensure self-hosted deployments never transmit genomic data externally. Audited
+  Oct 2026: every service URL the app and sidecars fall back to names a compose service
+  (pinned by `tests/test_no_external_service_defaults.py`), and the only other outbound
+  traffic is reference and bundle downloads. Open: the sidecars can reach the internet and
+  `REF_PATH` is unset, so htslib may fetch a CRAM's reference sequences from EBI by MD5
+  when the staged FASTA lacks them (a reference checksum, not sample data); point
+  `REF_PATH` at a local cache in gatk-api and mtdna to close it.
 - Add cookie/consent footer for public deployments with per-user access gating (configurable via `.env`)
 - Add Privacy Policy and legal page
 
