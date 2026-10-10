@@ -130,6 +130,29 @@ def test_db_password_has_no_shared_default(compose):
     )
 
 
+def test_bootstrap_profiles_pin_the_compose_image_tag():
+    """One-command setup copies .env.local. A stale pin pulls tags that were never published."""
+    import re
+
+    text = COMPOSE.read_text(encoding="utf-8")
+    match = re.search(r"zaropgx-app:\$\{ZAROPGX_TAG:-([^}]+)\}", text)
+    assert match, "compose.yml must default ZAROPGX_TAG"
+    default = match.group(1)
+    root = COMPOSE.parent
+    for name in (".env.local", ".env.production"):
+        values = {}
+        for line in (root / name).read_text(encoding="utf-8").splitlines():
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+        tag = values.get("ZAROPGX_TAG", "")
+        assert tag in (
+            "",
+            default,
+        ), f"{name} pins ZAROPGX_TAG={tag!r}; compose.yml default is {default}"
+
+
 def test_tracked_env_templates_ship_no_working_credentials():
     """Tracked profiles must not publish a real SECRET_KEY or DB_PASSWORD."""
     root = COMPOSE.parent

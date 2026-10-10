@@ -21,6 +21,11 @@ iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
+**Stock Alpine (run as root; installs Bash and curl first):**
+```sh
+apk add --no-cache bash curl && curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
+```
+
 <img width="600" height="1100" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
 
 ## Status
@@ -101,15 +106,15 @@ Containerized services are orchestrated with Docker Compose with a core Nextflow
 
 **Linux** environment preferred
 - *Docker*; *Docker Compose* (>= 2.24); *Git* -- at minimum
-- Auto-install supported via: apt, yum, dnf, pacman
+- Auto-install supported via: apt, dnf, yum, zypper, pacman, apk
 
 **Windows 10/11** requires *WSL2* installed and configured
 - *WSL2*; *Docker*; *Docker Compose*; *Git*
 - Auto-install supported via: winget or chocolatey
+- A first install of WSL itself needs a reboot. Run the same command again afterwards. Creating the Ubuntu user is a one-time prompt. Installing Docker Engine inside WSL does not ask for the Linux password.
 
-**macOS** requires either *Docker Desktop* or to run a Linux VM (e.g. Crossover)
-- Auto-install supported via: homebrew (Git only; Docker Desktop must be installed manually)
-- (macOS support needs testing)
+**macOS** requires *Docker Desktop* (the bootstrap installs Git via Homebrew, and does not install Docker)
+- Published images are `linux/amd64`. Apple Silicon runs them only when Docker Desktop can emulate amd64 (Rosetta, in Docker Desktop's settings).
 
 <u>Hardware</u>
 
@@ -149,6 +154,11 @@ iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
+**Stock Alpine (run as root; installs Bash and curl first):**
+```sh
+apk add --no-cache bash curl && curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
+```
+
 This single command will:
 - Check for required dependencies (Git, Docker, Docker Compose)
 - Offer to automatically install missing dependencies (with your permission)
@@ -157,8 +167,13 @@ This single command will:
 - Create necessary directories
 - Start the Docker compose containers
 
+The bootstrap checks out the `v0.3.2` release tag and pulls matching `0.3.2` images. Installing
+Docker may require logging out and back in so group membership takes effect; installing WSL may
+require a reboot. In either case, run the same command again. Existing `latest` and custom image
+tags are preserved during updates.
+
 **Note:** If Git, Docker, or Docker Compose are not installed, the script will:
-1. Detect your package manager (winget, chocolatey, apt, yum, dnf, brew, pacman)
+1. Detect your package manager (winget, chocolatey, apt, dnf, yum, zypper, pacman, apk, brew)
 2. Ask if you want to install missing dependencies automatically
 3. Request elevated privileges if required
 4. Install the dependencies and guide you through next steps

@@ -1,9 +1,27 @@
 # Upgrading ZaroPGx
 
-Changes that need action on an existing install. Newest first. If a version is not listed,
-upgrading to it needs nothing beyond `git pull` and `docker compose up -d`.
+Changes that need action on an existing install. Newest first. One-command installs are
+checked out at a release tag, so update them with the documented bootstrap update command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash -s -- --update
+```
+
+```powershell
+iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1) } -Update"
+```
+
+Development installs that deliberately track a branch can continue to use `git pull` followed
+by `docker compose up -d`.
 
 ## v0.3.1 → v0.3.2
+
+### Image tag correction
+
+Early copies of `.env.local` and `.env.production` pinned `ZAROPGX_TAG=0.2.8`.
+That release predates the mtDNA image, so a complete `0.2.8` image set does not
+exist. The startup scripts migrate that exact obsolete default to `0.3.2` before
+stopping the current stack. Blank, `latest`, and custom tags are left unchanged.
 
 ### Documentation and API explorer addresses
 
