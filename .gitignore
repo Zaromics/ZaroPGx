@@ -178,6 +178,9 @@ cython_debug/
 /data/uploads/
 /data/reports/
 /data/temp/
+# gatk-api's conversion outputs (CRAM/SAM/FASTQ -> BAM), whole-genome sized;
+# app/services/cleanup_service.py reaps them per job.
+/data/results/
 # Runtime version stamps written by container start scripts into the ./data bind mount.
 # Keep data/versions/about.md tracked; ignore the generated JSON manifests.
 /data/versions/*.json
