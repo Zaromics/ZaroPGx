@@ -402,6 +402,41 @@ def stored_stem(name):
     return name[: len(name) - len(extension)] if extension else name
 
 
+def parse_heap_gb(value, default=20):
+    """MAX_MEMORY as whole GiB: `20g`, `20G`, `20` (GiB) or `20480m`/`20480M`.
+
+    Anything else logs and returns `default` rather than raising: this runs once per
+    job, and an operator's typo should not fail variant calling outright.
+    """
+    text = str(value).strip().lower()
+    try:
+        if text.endswith("g"):
+            gb = int(text[:-1])
+        elif text.endswith("m"):
+            gb = int(text[:-1]) // 1024
+        else:
+            gb = int(text)
+    except ValueError:
+        logger.warning(f"MAX_MEMORY={value!r} is not a heap size; using {default}g")
+        return default
+    return max(gb, 1)
+
+
+def haplotypecaller_java_options(file_size_gb, total_memory_gb=None, max_memory=None):
+    """The HaplotypeCaller JVM flags, sized by MAX_MEMORY.
+
+    Inputs under 2 GB (and a host whose memory could not be read) get MAX_MEMORY.
+    Larger inputs get 70% of the container's memory, capped at MAX_MEMORY. The
+    first two used to pin -Xms20G/-Xmx20G whatever MAX_MEMORY said, while the log
+    line claimed MAX_MEMORY.
+    """
+    heap_gb = parse_heap_gb(MAX_MEMORY if max_memory is None else max_memory)
+    if file_size_gb > 2.0 and total_memory_gb is not None:
+        heap_gb = max(min(int(total_memory_gb * 0.7), heap_gb), 1)
+        return f"-Xms{heap_gb}G -Xmx{heap_gb}G -XX:ParallelGCThreads=2 -XX:+UseG1GC"
+    return f"-Xms{heap_gb}G -Xmx{heap_gb}G -XX:ParallelGCThreads=2"
+
+
 def build_haplotypecaller_argv(
     java_options, reference_path, input_path, output_path, regions=None, excluded_contigs=None
 ):
@@ -544,22 +579,12 @@ async def run_variant_calling(local_job_id, input_path, output_path, reference_p
             # Log memory information
             logger.info(f"Job {local_job_id}: System memory - Total: {total_memory_gb:.2f}GB, File size: {file_size_gb:.2f}GB")
             
-            # For very large files (> 2GB), use 70% of available memory
-            # For smaller files, use default MAX_MEMORY
-            if file_size_gb > 2.0:
-                # Use 70% of available memory, but cap at MAX_MEMORY if set
-                memory_to_use = min(int(total_memory_gb * 0.7), 
-                                   int(MAX_MEMORY.replace('g', '')) if MAX_MEMORY.endswith('g') else int(MAX_MEMORY))
-                java_options = f"-Xms{memory_to_use}G -Xmx{memory_to_use}G -XX:ParallelGCThreads=2 -XX:+UseG1GC"
-                logger.info(f"Job {local_job_id}: Large file detected, using {memory_to_use}g memory for Java")
-            else:
-                # Use standard memory settings
-                java_options = f"-Xms20G -Xmx20G -XX:ParallelGCThreads=2"
-                logger.info(f"Job {local_job_id}: Using standard memory setting {MAX_MEMORY}")
+            java_options = haplotypecaller_java_options(file_size_gb, total_memory_gb)
+            logger.info(f"Job {local_job_id}: HaplotypeCaller JVM options: {java_options}")
         except Exception as mem_error:
-            # Fall back to default if we can't get memory info
-            logger.warning(f"Job {local_job_id}: Failed to get system memory info: {str(mem_error)}. Using default {MAX_MEMORY}")
-            java_options = f"-Xms20G -Xmx20G -XX:ParallelGCThreads=2"
+            # Fall back to MAX_MEMORY if we can't get memory info
+            logger.warning(f"Job {local_job_id}: Failed to get system memory info: {str(mem_error)}. Using MAX_MEMORY={MAX_MEMORY}")
+            java_options = haplotypecaller_java_options(file_size_gb)
                 
         # Update job status
         update_job_status(local_job_id, JOB_STATUS_RUNNING, progress=30, 
