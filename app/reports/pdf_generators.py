@@ -206,12 +206,11 @@ class ReportLabGenerator(PDFGenerator):
             )
 
             # Compute display sample once and reuse
-            display_sample = (
-                template_data.get("display_sample_id")
-                or template_data.get("sample_identifier")
-                or template_data.get("patient_id")
-                or template_data.get("sample_id")
-            )
+            # A sample's name, never the patient UUID (app.reports.generator.
+            # display_sample_identifier); None when the run has none.
+            display_sample = template_data.get(
+                "display_sample_id"
+            ) or template_data.get("sample_identifier")
 
             # Title
             title = (
@@ -222,27 +221,30 @@ class ReportLabGenerator(PDFGenerator):
             story.append(Paragraph(title, title_style))
             story.append(Spacer(1, 12))
 
-            # Sample Information
-            if display_sample:
-                story.append(Paragraph("Sample Information", heading_style))
-                story.append(
-                    Paragraph(f"<b>Sample ID:</b> {display_sample}", normal_style)
+            # Sample Information -- always, so a run with no sample name still
+            # carries its Report ID.
+            story.append(Paragraph("Sample Information", heading_style))
+            story.append(
+                Paragraph(
+                    f"<b>Sample ID:</b> {display_sample or 'Not provided'}",
+                    normal_style,
                 )
-                if "report_id" in template_data:
-                    story.append(
-                        Paragraph(
-                            f"<b>Report ID:</b> {template_data['report_id']}",
-                            normal_style,
-                        )
+            )
+            if "report_id" in template_data:
+                story.append(
+                    Paragraph(
+                        f"<b>Report ID:</b> {template_data['report_id']}",
+                        normal_style,
                     )
-                if "file_type" in template_data:
-                    story.append(
-                        Paragraph(
-                            f"<b>File Type:</b> {template_data['file_type']}",
-                            normal_style,
-                        )
+                )
+            if "file_type" in template_data:
+                story.append(
+                    Paragraph(
+                        f"<b>File Type:</b> {template_data['file_type']}",
+                        normal_style,
                     )
-                story.append(Spacer(1, 12))
+                )
+            story.append(Spacer(1, 12))
 
             # Add timestamp if available
             current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
