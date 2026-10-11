@@ -72,17 +72,30 @@ _env_value() {
 
 _migrate_release_tag() {
     local release_version="$1"
-    local current tmp
+    local current tmp i older=0
+    local -a have want
     current="$(grep -E '^ZAROPGX_TAG=' .env 2>/dev/null | tail -n 1 || true)"
     current="${current#ZAROPGX_TAG=}"
     current="${current%$'\r'}"
 
-    # 0.2.8 predates the mtDNA image, so a complete 0.2.8 image set never
-    # existed. Migrate only that known-bad shipped default; preserve latest,
-    # blank values, and operator-managed/custom tags.
-    if [[ "$current" != "0.2.8" ]]; then
-        return 0
-    fi
+    # Updating a checkout keeps .env, and with it the ZAROPGX_TAG it was installed
+    # with, so the new code would run on the old release's service images. A plain
+    # release older than this checkout's is therefore moved up to it; that includes
+    # 0.2.8, which never had a complete image set (it predates the mtDNA image).
+    # Blank, latest, this release or a newer one, and anything that is not a plain
+    # X.Y.Z (a local build, a release candidate) are an operator's choice and stay.
+    # Compared field by field as numbers, so 0.3.9 is older than 0.3.10.
+    [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+    [[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+    IFS=. read -r -a have <<<"$current"
+    IFS=. read -r -a want <<<"$release_version"
+    for i in 0 1 2; do
+        if ((10#${have[i]} != 10#${want[i]})); then
+            ((10#${have[i]} < 10#${want[i]})) && older=1
+            break
+        fi
+    done
+    ((older)) || return 0
 
     if ! tmp="$(mktemp)"; then
         echo "❌ ERROR: could not create a temporary file to update .env" >&2
@@ -107,7 +120,7 @@ _migrate_release_tag() {
         echo "❌ ERROR: ZAROPGX_TAG migration did not persist" >&2
         exit 1
     fi
-    echo "⬆️  Updated the obsolete ZAROPGX_TAG=0.2.8 default to ${release_version}"
+    echo "⬆️  Updated ZAROPGX_TAG from ${current} to ${release_version}, the release this checkout is"
 }
 
 _is_secret_sentinel() {
