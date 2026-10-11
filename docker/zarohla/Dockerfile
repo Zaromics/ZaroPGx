@@ -103,4 +103,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # tests/test_log_rotation_252.py pins this: dropping to one worker is what lets
 # app.py write a single /data/zarohla_progress.log again instead of a per-pid
 # one, and a future `--workers 2` here must go back through both.
-CMD ["gunicorn", "app:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:5000"]
+# --worker-tmp-dir /dev/shm: see docker/mtdna-server-2/Dockerfile. The heartbeat
+# file must not share a disk with the whole-genome upload being written.
+CMD ["gunicorn", "app:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--worker-tmp-dir", "/dev/shm", "--bind", "0.0.0.0:5000"]

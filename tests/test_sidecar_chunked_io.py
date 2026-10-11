@@ -287,11 +287,12 @@ def test_zarohla_upload_sites_no_longer_buffer_whole_file(zarohla_source):
             f"zarohla/app.py still has the old one-line save shape {bad!r}; "
             "it must stream via UPLOAD_CHUNK_BYTES"
         )
-    # The paired upload (file1, file2) and the single-file upload: one chunked
-    # read loop apiece.
-    assert zarohla_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 1
-    assert zarohla_source.count("await file1.read(UPLOAD_CHUNK_BYTES)") == 1
-    assert zarohla_source.count("await file2.read(UPLOAD_CHUNK_BYTES)") == 1
+    # The paired upload (file1, file2) and the single-file upload all go through
+    # store_upload(), which holds the one chunked read loop (and writes each chunk
+    # off the event loop; see tests/test_sidecar_upload_off_event_loop.py).
+    assert zarohla_source.count("await upload.read(UPLOAD_CHUNK_BYTES)") == 1
+    for name in ("file1", "file2", "file"):
+        assert f"await store_upload({name}, " in zarohla_source
 
 
 def test_pharmcat_upload_sites_no_longer_buffer_whole_file(pharmcat_source):
