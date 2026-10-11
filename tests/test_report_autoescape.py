@@ -214,15 +214,22 @@ def test_no_template_variable_is_interpolated_inside_a_script_block():
     HTML escaping inside a ``<script>`` body would corrupt it -- that is the one
     place ``autoescape`` is actively wrong. Neither template does it, and this
     fails the day one starts.
+
+    The one exception is a whole script body that is ``inline_script(...) | safe``:
+    the interactive report's bundled libraries, raw JavaScript passed through
+    unescaped (generator.inline_script makes it safe to sit in the element).
     """
     from pathlib import Path
 
     import app.reports.generator as generator
 
+    inlined = re.compile(r'\s*\{\{\s*inline_script\("[^"]+"\)\s*\|\s*safe\s*\}\}\s*')
     offenders = []
     for name in TEMPLATES:
         text = Path(generator.TEMPLATE_DIR, name).read_text(encoding="utf-8")
         for match in re.finditer(r"<script\b[^>]*>(.*?)</script>", text, re.S | re.I):
+            if inlined.fullmatch(match.group(1)):
+                continue
             for var in re.findall(r"\{\{.*?\}\}", match.group(1)):
                 offenders.append(f"{name}: {var}")
     assert offenders == [], offenders

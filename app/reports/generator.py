@@ -1172,6 +1172,36 @@ def register_report_template_helpers(environment) -> None:
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel
     environment.globals["summary_rows"] = summary_rows
+    environment.globals["inline_script"] = inline_script
+
+
+# The interactive report's scripts travel inside the file. It is downloaded (the
+# results page's ZIP) and opened offline, where neither a CDN nor this app's
+# /static is reachable: from jsDelivr and d3js.org every opened report also told
+# two third parties that someone was reading one, and pgx-report.js, linked as
+# /static/js/pgx-report.js, did not load at all outside the app.
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+_INLINE_SCRIPTS = {
+    "chart.js": "vendor/chartjs/chart.umd.min.js",
+    "d3": "vendor/d3/d3.min.js",
+    "pgx-report.js": "js/pgx-report.js",
+}
+_SCRIPT_END_TAG = re.compile(r"</(script)", re.IGNORECASE)
+_inline_script_cache: Dict[str, str] = {}
+
+
+def inline_script(name: str) -> str:
+    """The source of one of _INLINE_SCRIPTS, safe to place in a <script> element.
+
+    A literal ``</script`` inside the source would end the element early; written
+    ``<\\/script`` it means the same in any JavaScript string or regex, the only
+    places it can occur. None of the three files contains one today.
+    """
+    if name not in _inline_script_cache:
+        path = os.path.join(_STATIC_DIR, _INLINE_SCRIPTS[name])
+        with open(path, encoding="utf-8") as fh:
+            _inline_script_cache[name] = _SCRIPT_END_TAG.sub(r"<\\/\1", fh.read())
+    return _inline_script_cache[name]
 
 
 _SUMMARY_PANEL: Optional[frozenset] = None
