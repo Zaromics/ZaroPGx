@@ -54,7 +54,7 @@ from app.pharmcat.report_json import (
     parse_pharmcat_version,
 )
 from app.reports.evidence import classify_evidence
-from app.reports.pdf_fit import fit_sections, mark_headings, shrink_wide_pills
+from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
     parse_pharmcat_tsv,
@@ -1695,11 +1695,9 @@ def render_pdf_document(html_content: str):
         return html.render(stylesheets=sheets)
 
     document, levels = fit_sections(render)
-    # A summary pill too long for the room to the paper's edge: its type smaller,
-    # its height kept. One more layout, only when one is.
-    pills = shrink_wide_pills(document)
-    if pills:
-        document = render(last_css[0] + "\n" + pills)
+    # The summary fitted, its leftover height shared out between its rows, so it
+    # fills its page: one more layout.
+    document = fill_summary_page(render, document, last_css[0])
     return document, levels
 
 

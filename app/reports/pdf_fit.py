@@ -6,8 +6,10 @@ twenty-five from a whole genome -- so no one set of proportions suits every
 report: generous spacing that suits ten rows sends a twenty-two-row summary two
 rows and its notes onto a second page. So the PDF is laid out, each such section
 measured, and one that runs over is laid out again with tighter spacing and
-smaller type, a step at a time, until it fits or the steps run out. A report that
-fits is laid out once and printed as designed.
+smaller type, a step at a time, until it fits or the steps run out. The Executive
+Summary is then laid out once more with the height left under it shared out
+between its rows (fill_summary_page), so it fills its page whatever its type size
+and rows.
 
 Other sections run to several pages, and only need to end well: one that spills
 a few lines onto a page of their own (the Drugs list, Platform and Citations) is
@@ -80,6 +82,7 @@ def _summary_step(
 #exec-summary .exec-summary-table {{ font-size: {font:g}px !important; }}
 #exec-summary .exec-summary-diplotype.long-diplotype {{ font-size: {14 - 3 * t:.3g}px !important; }}
 #exec-summary .gene-phenotype {{ padding: {3 - 3 * t:.2g}px {10 - 3 * t:.3g}px !important; }}
+#exec-summary .phenotype-line {{ line-height: {1.15 * font + 2 * (3 - 3 * t) + 6:.3g}px !important; }}
 #exec-summary .as-badge svg {{ width: {16 - 4 * t:.3g}px !important; height: {16 - 4 * t:.3g}px !important; }}
 """
 
@@ -364,43 +367,13 @@ def fit_sections(
     return document, levels
 
 
-# How near the paper's right edge an Executive Summary pill may run: 8mm, in CSS
-# pixels (96 to the inch).
+# How near the paper's right edge Executive Summary text may run: 8mm, in CSS pixels
+# (96 to the inch). The template lets a phenotype run that far into the 16mm margin.
 PILL_EDGE = 8 / 25.4 * 96
 
-
-def _summary_pills(page_box):
-    """(row id, pill box, right edge of the phenotype cell's content) per row of the
-    Executive Summary table on this page that has a phenotype pill."""
-    found = []
-
-    def right_edge(box):
-        ends = [box.position_x + box.margin_width()]
-        for child in getattr(box, "children", None) or []:
-            ends.append(right_edge(child))
-        return max(ends)
-
-    def walk(box, row_id=None, pill=None):
-        element = getattr(box, "element", None)
-        if element is not None and element.tag.rsplit("}", 1)[-1] == "tr":
-            row_id = element.get("id") or None
-        classes = (element.get("class") or "").split() if element is not None else []
-        if (
-            row_id
-            and row_id.startswith("summary-")
-            and "exec-summary-phenotype" in classes
-        ):
-            pills = [b for b in _descendants(box) if _is_pill(b)]
-            if pills:
-                found.append(
-                    (row_id, pills[0], max(right_edge(c) for c in box.children))
-                )
-            return
-        for child in getattr(box, "children", None) or []:
-            walk(child, row_id)
-
-    walk(page_box)
-    return found
+# Left between the filled summary and the foot of its page, in CSS pixels, so
+# rounding in the layout cannot push its last line over.
+FILL_MARGIN = 1.0
 
 
 def _descendants(box):
@@ -409,35 +382,93 @@ def _descendants(box):
         yield from _descendants(child)
 
 
-def _is_pill(box):
-    element = getattr(box, "element", None)
-    return (
-        element is not None
-        and box.__class__.__name__ == "InlineBlockBox"
-        and "gene-phenotype" in (element.get("class") or "").split()
-    )
+def _summary_cells(page_box):
+    """(row id, cell box) for the cells of the Executive Summary table's rows on
+    this page."""
+    cells = []
+
+    def walk(box, row_id=None):
+        element = getattr(box, "element", None)
+        tag = element.tag.rsplit("}", 1)[-1] if element is not None else ""
+        if tag == "tr" and (element.get("id") or "").startswith("summary-"):
+            row_id = element.get("id")
+        if row_id and box.__class__.__name__ == "TableCellBox":
+            cells.append((row_id, box))
+            return
+        for child in getattr(box, "children", None) or []:
+            walk(child, row_id)
+
+    walk(page_box)
+    return cells
 
 
-def shrink_wide_pills(document) -> str:
-    """CSS for each Executive Summary pill that would run within PILL_EDGE of the
-    paper's right edge: its type made smaller, so it ends there, and its
-    line-height raised to match, so its height stays that of every other pill.
+def summary_pill_lines(page_box):
+    """(row id, line boxes of its pill) for each summary row with a phenotype pill:
+    one box per line the pill takes."""
+    found = []
 
-    The table's columns are fixed, so the pill's position does not move with its
-    size, and one layout settles it. Text scales with its type, so the type shrinks
-    by the share of the pill's text that is over, and a point more.
+    def walk(box, row_id=None):
+        element = getattr(box, "element", None)
+        if element is not None and element.tag.rsplit("}", 1)[-1] == "tr":
+            row_id = element.get("id") or None
+        if (
+            row_id
+            and row_id.startswith("summary-")
+            and element is not None
+            and ("exec-summary-phenotype" in (element.get("class") or "").split())
+        ):
+            pills = [
+                b
+                for b in _descendants(box)
+                if b.__class__.__name__ == "InlineBox"
+                and "gene-phenotype"
+                in (getattr(b, "element", None).get("class") or "").split()
+            ]
+            if pills:
+                found.append((row_id, pills))
+            return
+        for child in getattr(box, "children", None) or []:
+            walk(child, row_id)
+
+    walk(page_box)
+    return found
+
+
+def fill_summary_page(render, document, css: str):
+    """The Executive Summary laid out again to fill its page: the height left under
+    it, whatever the type size and however many rows, shared out between its rows
+    as cell padding, so its last line meets the foot of the page.
+
+    ``css`` is the stylesheet ``document`` was laid out with. Padding does not
+    change where any line wraps, so the rows grow by exactly what is added and one
+    layout lands it; a layout that would push the summary onto a second page is
+    discarded. A summary that already runs over is returned as it is.
     """
-    rules = []
-    for index in section_pages(document, "exec-summary"):
-        page_box = document.pages[index]._page_box
-        limit = page_box.margin_width() - PILL_EDGE
-        for row_id, pill, end in _summary_pills(page_box):
-            over = end - limit
-            if over <= 0 or pill.width <= over:
-                continue
-            scale = int((pill.width - over) / pill.width * 100) - 1
-            rules.append(
-                f"#{row_id} .gene-phenotype {{ font-size: {scale}% !important; "
-                f"line-height: {1.15 * 100 / scale:.4f} !important; }}"
-            )
-    return "\n".join(rules)
+    pages = section_pages(document, EXEC_SUMMARY.anchor)
+    if len(pages) != 1:
+        return document
+    page_box = document.pages[pages[0]]._page_box
+    section = _outer_box(page_box, _section_element(page_box, EXEC_SUMMARY.anchor))
+    cells = _summary_cells(page_box)
+    rows = len({row_id for row_id, _ in cells})
+    # To the section's last line: its own bottom margin may sit in the page's.
+    bottom = section.border_box_y() + section.border_height()
+    slack = page_box.content_box_y() + page_box.height - bottom - FILL_MARGIN
+    if not rows or slack < 1:
+        return document
+    # Every cell has the same vertical padding, the template's or a fitting step's.
+    # Read the specified value: WeasyPrint centres a cell's content by adding to its
+    # laid-out top padding.
+    cell_y = cells[0][1].style["padding_top"].value
+    for share in (1.0, 0.98):
+        extra = slack * share / rows / 2
+        rule = (
+            "#exec-summary .exec-summary-table td { "
+            f"padding-top: {cell_y + extra:.3f}px !important; "
+            f"padding-bottom: {cell_y + extra:.3f}px !important; }}"
+        )
+        filled = render(f"{css}\n{rule}")
+        if len(section_pages(filled, EXEC_SUMMARY.anchor)) == 1:
+            return filled
+    logger.warning("PDF: Executive Summary could not be filled to its page")
+    return document

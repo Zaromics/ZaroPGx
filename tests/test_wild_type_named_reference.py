@@ -75,7 +75,7 @@ def test_vkorc1_is_labelled_as_cyp4f2_is(monkeypatch, tmp_path, file_type, label
     for gene in ("CYP4F2", "VKORC1"):
         assert re.search(
             rf'exec-summary-gene">{gene}</td>.*?exec-summary-phenotype">\s*'
-            rf'<span class="gene-phenotype [a-z-]+">{label}',
+            rf'<div class="phenotype-line">\s*<span class="gene-phenotype [a-z-]+">{label}',
             summary,
             re.S,
         ), gene
