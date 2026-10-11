@@ -289,6 +289,12 @@
         .drug-item.evidence-unclassified .drug-indicator {
             background-color: #adb5bd;
         }
+        .call-note {
+            font-size: 0.85em;
+            color: #555;
+            margin-top: 2px;
+        }
+
         .evidence-legend {
             margin-bottom: 15px;
             padding: 10px;
@@ -910,6 +916,7 @@
     </style>
 </head>
 <body>
+{% import "_pypgx_evidence.html" as pypgx %}
     <div class="header">
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
@@ -1069,6 +1076,7 @@
                     {% endif %}
                 </tbody>
             </table>
+            {% if execsum_from_tsv %}{{ pypgx.na_legend(execsum_from_tsv, 'rec_lookup_phenotype') }}{% else %}{{ pypgx.na_legend(diplotypes) }}{% endif %}
         </div>
         {# The run-provenance paragraph that stood here has moved.
 
@@ -1125,7 +1133,7 @@
                 {% for d in called_genes %}
                 <tr>
                     <td>{{ d.gene }}</td>
-                    <td>{{ d.diplotype }}</td>
+                    <td>{{ d.diplotype }}{{ pypgx.call_notes(d) }}</td>
                     <td>{{ d.phenotype or '' }}</td>
                     {# A truthiness test dropped an activity score of 0 -- 0.0,
                        Decimal("0.0000") and "0" are all falsy here, and 0 is the
@@ -1154,6 +1162,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        {{ pypgx.na_legend(called_genes) }}
 
         {% if uncalled_genes %}
         <div class="uncalled-genes">

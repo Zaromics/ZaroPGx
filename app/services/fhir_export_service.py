@@ -740,8 +740,9 @@ class FHIRExportService:
             }
         )
 
-        # Add phenotype component
-        if phenotype and phenotype != "Unknown":
+        # Add phenotype component. "N/A" (app/reports/generator.py) says the
+        # calling tool defines none for the gene: there is no phenotype to state.
+        if phenotype and phenotype not in ("Unknown", "N/A"):
             observation["component"].append(
                 {
                     "code": {

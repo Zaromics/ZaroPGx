@@ -8,6 +8,7 @@ import gzip
 import os
 import json
 import logging
+import math
 import re
 from logging.handlers import RotatingFileHandler
 import tempfile
@@ -1811,6 +1812,16 @@ async def genotype(
         # directory, where nothing reads them (the report reads pypgx_result.json in
         # the job directory, which Nextflow writes from this response) and nothing
         # removes them: one set per job, for good. The response carries the results.
+        # A copy-number call's plots are the exception: images, not results, so they
+        # go into the job's report folder and the response names them.
+        for gene_name, gene_result in aggregated["results"].items():
+            gene_details = gene_result.get("details") or {}
+            if gene_result.get("success") and gene_details.get("copy_number"):
+                plots = save_profile_plots(
+                    job_dir / f"{gene_name}-pipeline", gene_name, patient_id, report_id
+                )
+                if plots:
+                    gene_details["plots"] = plots
         # Systemic-failure guard: if the run was not already failed by a batch
         # exception or cancellation, it succeeds as long as at least one gene came
         # back. Zero successful genes means something systemic (an unreadable VCF, a
@@ -2004,67 +2015,185 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
             'error': f"Error running PyPGx: {str(e)}"
         }
 
-def parse_pypgx_results(pipeline_dir: Path, gene: str) -> tuple:
-    """Parse the PyPGx results to extract diplotype and details for a gene.
+# --- PyPGx's own per-gene record --------------------------------------------
+#
+# PyPGx writes each gene's call to <gene>-pipeline/results.zip (data.tsv: Genotype,
+# Phenotype, Haplotype1, Haplotype2, AlternativePhase, VariantData, CNV) and the
+# genotype alone to genotypes.zip. This used to read genotypes.zip first and stop
+# there, so everything but the genotype was dropped: on 30x NA12878, CYP2D6's
+# "Tandem1A" copy-number call and Poor Metabolizer phenotype, GSTM1's "WholeDel1",
+# and the variants (with allele fractions) behind every allele.
 
-    Strategy:
-    - Prefer genotypes.zip if present; look for TSV/CSV containing rows per gene
-    - Fallback to results.zip; scan for TSV/CSV with gene and diplotype fields
-    - If nothing parseable is found, return (None, {})
+_PHENOTYPE_METHODS: Optional[Dict[str, Optional[str]]] = None
+# PyPGx's two ways of deriving a phenotype. Its gene table writes "N/A" for the
+# 75 genes that have neither, a string a truthiness test would take for a method.
+_KNOWN_PHENOTYPE_METHODS = frozenset({"Diplotype", "Score"})
+
+
+def load_phenotype_methods(table: Path) -> Dict[str, Optional[str]]:
+    """Gene -> PhenotypeMethod from PyPGx's gene-table.csv; None for no method."""
+    methods: Dict[str, Optional[str]] = {}
+    with open(table, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            method = (row.get("PhenotypeMethod") or "").strip()
+            methods[row["Gene"].strip().upper()] = (
+                method if method in _KNOWN_PHENOTYPE_METHODS else None
+            )
+    return methods
+
+
+def pypgx_phenotype_method(gene: str) -> Optional[str]:
+    """PyPGx's PhenotypeMethod for a gene ('Diplotype' or 'Score'), or None.
+
+    PyPGx 0.27 defines phenotypes for 18 genes, all of them genes PharmCAT also
+    covers; for every other gene its Phenotype column says "Indeterminate", which
+    there means no phenotype rule exists, not an uncertain call.
+    """
+    global _PHENOTYPE_METHODS
+    if _PHENOTYPE_METHODS is None:
+        try:
+            import pypgx
+
+            _PHENOTYPE_METHODS = load_phenotype_methods(
+                Path(pypgx.__file__).parent / "api" / "data" / "gene-table.csv"
+            )
+        except Exception as exc:
+            logger.warning(f"Could not read PyPGx's gene table: {exc}")
+            _PHENOTYPE_METHODS = {}
+    return _PHENOTYPE_METHODS.get(gene.upper())
+
+
+def _first_pypgx_row(zip_path: Path) -> Optional[Dict[str, str]]:
+    """The first sample row of a PyPGx archive's data.tsv, or None."""
+    if not os.path.exists(zip_path):
+        return None
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        member = next((n for n in zf.namelist() if n.endswith("data.tsv")), None)
+        if member is None:
+            return None
+        text = zf.read(member).decode("utf-8", errors="replace")
+    rows = list(csv.DictReader(io.StringIO(text), delimiter="\t"))
+    return rows[0] if rows else None
+
+
+def _pypgx_list(value: Optional[str]) -> List[str]:
+    """PyPGx's ';'-terminated lists ("*4;*10;*74;") as a list."""
+    return [item.strip() for item in str(value or "").split(";") if item.strip()]
+
+
+def _supporting_variants(value: Optional[str]) -> List[Dict[str, Any]]:
+    """PyPGx's VariantData: the variants behind each candidate allele.
+
+    "*3:22-42128241-CT-C:0.417;*10:22-42130692-G-A,22-42126611-C-G:0.617,0.476;
+    *1:default;" -- an allele with no defining variants ("default") is left out.
+    A VCF with genotypes but no read depths gets "nan" for a fraction; that is no
+    fraction (None), never a float NaN, which the JSON response cannot carry.
+    """
+    alleles = []
+    for entry in _pypgx_list(value):
+        parts = entry.split(":")
+        if len(parts) != 3:
+            continue
+        allele, variants, fractions = parts
+        rows = []
+        for variant, fraction in zip(variants.split(","), fractions.split(",")):
+            try:
+                af: Optional[float] = float(fraction)
+            except ValueError:
+                af = None
+            if af is not None and not math.isfinite(af):
+                af = None
+            if variant:
+                rows.append({"variant": variant, "allele_fraction": af})
+        if rows:
+            # By position: PyPGx joins an allele's variants from a set, so their order
+            # changes from run to run (seen between two runs of one sample).
+            rows.sort(key=_variant_position)
+            alleles.append({"allele": allele, "variants": rows})
+    return alleles
+
+
+def _variant_position(row: Dict[str, Any]) -> tuple:
+    """Sort key for PyPGx's chrom-pos-ref-alt variant names."""
+    chrom, _, rest = row["variant"].partition("-")
+    pos = rest.split("-", 1)[0]
+    return (chrom, int(pos) if pos.isdigit() else 0, row["variant"])
+
+
+def parse_pypgx_results(pipeline_dir: Path, gene: str) -> tuple:
+    """(genotype, details) for one gene, from PyPGx's results.zip.
+
+    details carries everything else PyPGx reported: its phenotype (only for the
+    genes it has a phenotype rule for), the candidate alleles on each haplotype,
+    alternative phasings, the copy-number call, and the supporting variants with
+    their allele fractions. genotypes.zip is a fallback for the genotype alone.
     """
     try:
-        gene_upper = gene.upper()
-
-        def parse_zip_for_calls(zip_path: Path) -> Optional[tuple]:
-            if not os.path.exists(zip_path):
-                return None
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                # Iterate members; prefer tsv/csv
-                members = zf.namelist()
-                for name in members:
-                    lower = name.lower()
-                    if not (lower.endswith('.tsv') or lower.endswith('.csv')):
-                        continue
-                    try:
-                        with zf.open(name, 'r') as fh:
-                            raw = fh.read()
-                        text = raw.decode('utf-8', errors='replace')
-                        # Detect delimiter
-                        delimiter = '\t' if '\t' in text.splitlines()[0] else ','
-                        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-                        # Try common column names
-                        for row in reader:
-                            # Match by gene column if present; else try file-scoped gene
-                            row_gene = (row.get('gene') or row.get('Gene') or row.get('GENE') or '').strip().upper()
-                            if row_gene and row_gene != gene_upper:
-                                continue
-                            diplotype = (row.get('diplotype') or row.get('Diplotype') or row.get('DIPLOTYPE') or row.get('genotype') or row.get('Genotype'))
-                            phenotype = (row.get('phenotype') or row.get('Phenotype') or row.get('PHENOTYPE'))
-                            activity = (row.get('activity_score') or row.get('Activity_Score') or row.get('activityScore') or row.get('ActivityScore'))
-                            if diplotype or phenotype or activity:
-                                details = {}
-                                if phenotype:
-                                    details['phenotype'] = str(phenotype).strip()
-                                if activity is not None and str(activity).strip() != '':
-                                    details['activity_score'] = str(activity).strip()
-                                return (str(diplotype).strip() if diplotype else None, details)
-                    except Exception:
-                        continue
-            return None
-
-        # Try genotypes.zip first
-        parsed = parse_zip_for_calls(pipeline_dir / 'genotypes.zip')
-        if parsed:
-            return parsed
-        # Fallback to results.zip
-        parsed = parse_zip_for_calls(pipeline_dir / 'results.zip')
-        if parsed:
-            return parsed
-        # Nothing found
-        return None, {}
+        record = _first_pypgx_row(Path(pipeline_dir) / "results.zip")
+        if record is None:
+            fallback = _first_pypgx_row(Path(pipeline_dir) / "genotypes.zip") or {}
+            return (fallback.get("Genotype") or "").strip() or None, {}
+        method = pypgx_phenotype_method(gene)
+        details: Dict[str, Any] = {"phenotype_method": method}
+        phenotype = (record.get("Phenotype") or "").strip()
+        if method and phenotype:
+            details["phenotype"] = phenotype
+        for column, key in (
+            ("Haplotype1", "haplotype1"),
+            ("Haplotype2", "haplotype2"),
+            ("AlternativePhase", "alternative_phase"),
+        ):
+            values = _pypgx_list(record.get(column))
+            if values:
+                details[key] = values
+        copy_number = (record.get("CNV") or "").strip()
+        if copy_number:
+            details["copy_number"] = copy_number
+        support = _supporting_variants(record.get("VariantData"))
+        if support:
+            details["supporting_variants"] = support
+        return (record.get("Genotype") or "").strip() or None, details
     except Exception as e:
         logger.exception(f"Error parsing PyPGx results for {gene}: {str(e)}")
         return None, {}
+
+
+_REPORT_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+
+
+def save_profile_plots(
+    pipeline_dir: Path, gene: str, patient_id: Optional[str], report_id: Optional[str]
+) -> Dict[str, str]:
+    """Copy a gene's copy-number and allele-fraction plots into its job's report
+    folder; return their paths relative to that folder.
+
+    PyPGx draws both for the genes it calls structural variants in. They are the
+    evidence for a copy-number call (CYP2D6 Tandem1A, GSTM1 WholeDel1), and the
+    working directory they are drawn in is removed when this request answers. An
+    id that is not a plain token never becomes a path component.
+    """
+    if not (patient_id and report_id):
+        return {}
+    if not (_REPORT_KEY.match(patient_id) and _REPORT_KEY.match(report_id)):
+        return {}
+    plots: Dict[str, str] = {}
+    for key, folder in (
+        ("copy_number", "copy-number-profile"),
+        ("allele_fraction", "allele-fraction-profile"),
+    ):
+        images = sorted((Path(pipeline_dir) / folder).glob("*.png"))
+        if not images:
+            continue
+        relative = f"pypgx/{gene}.{folder}.png"
+        dest = REPORT_DIR / patient_id / report_id / relative
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(images[0], dest)
+            plots[key] = relative
+        except OSError as exc:
+            logger.warning(f"Could not save the {gene} {folder} plot: {exc}")
+    return plots
+
 
 @app.post("/cancel")
 async def cancel_workflow_job(request: CancelRequest):

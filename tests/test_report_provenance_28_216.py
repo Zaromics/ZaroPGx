@@ -301,11 +301,13 @@ def test_pypgx_only_row_keeps_its_tool_attribution():
     assert by_gene["CYP2D6"]["called_by"] == CALLED_BY_PYPGX
 
 
-def test_both_pypgx_merges_write_the_same_tool_marker_key():
-    """merge-1 wrote ``source``, merge-2 ``tool_source`` -- same fact, two keys."""
+def test_the_pypgx_merge_writes_the_tool_marker_key():
+    """merge-1 wrote ``source``, merge-2 ``tool_source`` -- same fact, two keys.
+    merge-2, the per-gene pipeline scrape, is gone; the merge that remains writes
+    the key resolve_called_by reads first."""
     src = REPO_ROOT.joinpath("app/reports/generator.py").read_text(encoding="utf-8")
     assert '"source": "PyPGx"' not in src
-    assert src.count('"tool_source": "PyPGx"') >= 2
+    assert '"tool_source": "PyPGx"' in src
 
 
 # ---------------------------------------------------------------------------

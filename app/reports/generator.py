@@ -63,7 +63,6 @@ from app.reports.provenance import (
     resolve_called_by,
     resolve_guideline_source,
 )
-from app.reports.pypgx_pipeline_parser import parse_gene_pipeline
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.utils.env import env_flag
 from app.utils.literature import (
@@ -662,6 +661,122 @@ def wild_type_phenotype(
     if normalized_file_type in _ALIGNED_READ_FILE_TYPES:
         return WILD_TYPE_ALIGNED_READS_LABEL
     return None
+
+
+# The Phenotype for a call whose calling tool defines no phenotype for the gene, as
+# PharmCAT's own report prints it. Not "Indeterminate": CPIC reserves that for a
+# diplotype with uncertain- or unknown-function alleles in a gene that does have
+# phenotype rules. Not "Unknown": nothing about this sample is unknown.
+NO_PHENOTYPE_STANDARD = "N/A"
+
+# The genes PharmCAT 3.4 calls without a phenotype: their guidance keys on the
+# genotype itself (CPIC warfarin on CYP4F2 and VKORC1, peginterferon on IFNL3). Its
+# example TSV and 30x NA12878's leave exactly these blank, apart from DPYD's
+# unphased source call there, whose lookup call has a phenotype. (2.x also left
+# NAT2 blank; 3.x gives it one.)
+PHARMCAT_GENES_WITHOUT_PHENOTYPE = frozenset({"CYP4F2", "IFNL3", "VKORC1"})
+
+
+def defines_no_phenotype(row: Dict[str, Any]) -> bool:
+    """Whether the tool that called this row's gene defines no phenotype for it:
+    PyPGx, for a gene its gene table gives no PhenotypeMethod; PharmCAT, for
+    PHARMCAT_GENES_WITHOUT_PHENOTYPE. A blank phenotype anywhere else is missing
+    data, not "N/A". PyPGx's "Indeterminate" genotype is no call at all."""
+    if not gene_was_called(row.get("diplotype")):
+        return False
+    if str(row.get("diplotype") or "").strip().lower() == "indeterminate":
+        return False
+    if row.get("pyPgxOnly"):
+        return not row.get("pypgx_phenotype_method")
+    return (
+        str(row.get("gene") or "").strip().upper() in PHARMCAT_GENES_WITHOUT_PHENOTYPE
+    )
+
+
+# PyPGx's copy-number codes (pypgx/api/data/cnv-table.csv), by family, longest
+# prefix first. The code itself is always shown beside the description: PyPGx
+# documents what each numbered variant is, gene by gene.
+_COPY_NUMBER_FAMILIES = (
+    ("ParalogPartialDel", "partial deletion of the paralog"),
+    ("ParalogWholeDel", "whole deletion of the paralog"),
+    ("ParalogWholeDup", "duplication of the paralog"),
+    ("NoncodingDel", "deletion of non-coding sequence"),
+    ("NoncodingDup", "duplication of non-coding sequence"),
+    ("WholeMultip", "whole-gene multiplication (two or more extra copies)"),
+    ("WholeDup", "whole-gene duplication"),
+    ("WholeDel", "whole-gene deletion"),
+    ("PartialDel", "partial-gene deletion"),
+    ("PartialDup", "partial-gene duplication"),
+    ("Hybrid", "hybrid gene"),
+    ("Tandem", "tandem arrangement (see diplotype)"),
+    ("Unknown", "unclassified copy-number pattern"),
+)
+# Families whose event sits on one chromosome unless the code ends in "Hom".
+_ONE_CHROMOSOME_FAMILIES = frozenset(
+    {
+        "NoncodingDel",
+        "NoncodingDup",
+        "WholeDup",
+        "WholeDel",
+        "PartialDel",
+        "PartialDup",
+        "Hybrid",
+    }
+)
+# G6PD is on chromosome X: there PyPGx's copy-number call is the X count.
+_X_CHROMOSOME_CALLS = {"Female": "two X chromosomes", "Male": "one X chromosome"}
+
+
+def copy_number_summary(code: Optional[str]) -> Optional[str]:
+    """A plain description of a PyPGx copy-number code, or None for none."""
+    text = str(code or "").strip()
+    if not text:
+        return None
+    parts = []
+    for part in text.split("+"):
+        if part == "Normal":
+            parts.append("normal copy number")
+            continue
+        if part in _X_CHROMOSOME_CALLS:
+            parts.append(_X_CHROMOSOME_CALLS[part])
+            continue
+        family = next((f for f in _COPY_NUMBER_FAMILIES if part.startswith(f[0])), None)
+        if family is None:
+            parts.append("structural variant")
+        elif part.endswith("Hom"):
+            parts.append(f"{family[1]} on both chromosomes")
+        elif family[0] in _ONE_CHROMOSOME_FAMILIES:
+            parts.append(f"{family[1]} on one chromosome")
+        else:
+            parts.append(family[1])
+    return " + ".join(parts)
+
+
+def _same_diplotype(a: Any, b: Any) -> bool:
+    """Same call, ignoring the spacing PharmCAT and PyPGx write tandems with
+    ("*68 + *4" against "*68+*4")."""
+    left, right = "".join(str(a or "").split()), "".join(str(b or "").split())
+    return bool(left) and left == right
+
+
+def pypgx_record(details: Dict[str, Any]) -> Dict[str, Any]:
+    """What PyPGx reported for a gene beyond its genotype (docker/pypgx's
+    parse_pypgx_results): candidate alleles, alternative phasings, the copy-number
+    call, the variants behind each allele, and its plots."""
+    record: Dict[str, Any] = {}
+    for key in (
+        "haplotype1",
+        "haplotype2",
+        "alternative_phase",
+        "supporting_variants",
+        "plots",
+    ):
+        if details.get(key):
+            record[key] = details[key]
+    if details.get("copy_number"):
+        record["copy_number"] = details["copy_number"]
+        record["copy_number_summary"] = copy_number_summary(details["copy_number"])
+    return record
 
 
 def activity_score_num(value: Any) -> Optional[float]:
@@ -1898,6 +2013,16 @@ def _build_canonical_diplotypes(
                         f"Assigned '{wild_type_label}' to {row.get('gene')} "
                         f"(diplotype: {row.get('diplotype')}, file_type: {file_type})"
                     )
+                elif defines_no_phenotype(row) and (
+                    str(row.get("phenotype") or "").strip().lower()
+                    in _ABSENT_PHENOTYPES | {""}
+                ):
+                    # A call the calling tool assigns no phenotype to: PharmCAT
+                    # for VKORC1, IFNL3 and CYP4F2, PyPGx for most genes outside
+                    # PharmCAT's. PharmCAT's own report prints "N/A" there. This
+                    # one printed a blank in the PDF, "Unknown" in the interactive
+                    # report, and "Unknown" again for every PyPGx-only gene.
+                    row["phenotype"] = NO_PHENOTYPE_STANDARD
             except Exception as e:
                 logger.debug("Swallowed exception: %s", e, exc_info=True)
             canonical_rows.append(row)
@@ -2447,6 +2572,14 @@ def generate_report(
                         logger.debug(
                             f"TSV HTML: Assigned '{wild_type_label}' to {row.get('gene')}"
                         )
+                    elif defines_no_phenotype(
+                        {"gene": row.get("gene"), "diplotype": diplotype_str}
+                    ) and (
+                        str(phenotype_str or "").strip().lower()
+                        in _ABSENT_PHENOTYPES | {""}
+                    ):
+                        # PharmCAT's TSV: the same "N/A" as the gene table.
+                        phenotype_str = NO_PHENOTYPE_STANDARD
 
                     execsum_rows_from_tsv.append(
                         {
@@ -2662,16 +2795,44 @@ def generate_report(
                 if isinstance(g, dict)
             }
             added_count = 0
+            rows_by_gene = {
+                (g.get("gene") or g.get("name") or "").strip().upper(): g
+                for g in data.get("genes", [])
+                if isinstance(g, dict)
+            }
             for gene_key, gene_res in results_obj.items():
                 try:
                     if not isinstance(gene_res, dict) or not gene_res.get("success"):
                         continue
                     gene_name = str(gene_key).strip()
+                    details = gene_res.get("details") or {}
+                    record = pypgx_record(details)
                     if gene_name.upper() in existing_genes:
+                        # A PharmCAT row whose call PyPGx supplied -- an outside
+                        # call with PyPGx's diplotype, as for CYP2D6 -- is PyPGx's
+                        # call: it carries PyPGx's evidence and Call letter. A row
+                        # PharmCAT called itself, or an outside call PyPGx did not
+                        # make (the manual override file), does not.
+                        row = rows_by_gene.get(gene_name.upper())
+                        if (
+                            row is not None
+                            and str(row.get("call_source") or "").upper() == "OUTSIDE"
+                            and _same_diplotype(
+                                row.get("diplotype"), gene_res.get("diplotype")
+                            )
+                        ):
+                            row["tool_source"] = "PyPGx"
+                            if record:
+                                row["pypgx"] = record
                         continue
                     diplotype = gene_res.get("diplotype")
-                    details = gene_res.get("details") or {}
-                    phenotype = details.get("phenotype") or details.get("Phenotype")
+                    # PyPGx's own phenotype, only where it has a rule for the gene;
+                    # elsewhere its "Indeterminate" means no rule exists.
+                    phenotype = (
+                        details.get("phenotype")
+                        if details.get("phenotype_method")
+                        else None
+                    )
                     # `a or b` would swallow a PyPGx activity score of 0 -- falsy,
                     # so it falls through to the alternate key and ends up None,
                     # blanking the cell before any template sees it. 0 is the Poor
@@ -2683,11 +2844,15 @@ def generate_report(
                         "gene": gene_name,
                         # Align with normalized PharmCAT structure minimally
                         "diplotype": diplotype if diplotype else "Unknown",
-                        "phenotype": phenotype if phenotype else "Unknown",
+                        "phenotype": phenotype,
                         "activity_score": activity_score,
                         "tool_source": "PyPGx",
                         "pyPgxOnly": True,
+                        # None where PyPGx has no phenotype rule for the gene.
+                        "pypgx_phenotype_method": details.get("phenotype_method"),
                     }
+                    if record:
+                        gene_entry["pypgx"] = record
                     # activity_score is already included in the gene_entry above
                     data.setdefault("genes", []).append(gene_entry)
                     existing_genes.add(gene_name.upper())
@@ -2702,117 +2867,6 @@ def generate_report(
         else:
             logger.info("No PyPGx results available for enrichment (embedded or file)")
 
-        # Deep enrichment from per-gene pipeline artifacts if available
-        try:
-            # Locate any per-gene pipelines under a pypgx_* directory in this report_dir
-            # Only directories - "pypgx_*" also matches the singular pypgx_result.json
-            # file the Nextflow lane drops here, and listdir() on a file raises.
-            pipelines_root_candidates = [
-                d
-                for d in glob.glob(os.path.join(report_dir, "pypgx_*"))
-                if os.path.isdir(d)
-            ]
-            if pipelines_root_candidates:
-                pipelines_root = pipelines_root_candidates[0]
-                pipeline_dirs = [
-                    os.path.join(pipelines_root, d)
-                    for d in os.listdir(pipelines_root)
-                    if d.endswith("-pipeline")
-                    and os.path.isdir(os.path.join(pipelines_root, d))
-                ]
-                if pipeline_dirs:
-                    logger.info(
-                        f"Found {len(pipeline_dirs)} PyPGx per-gene pipelines for enrichment"
-                    )
-                # Build index for quick update
-                gene_index = {}
-                for idx, g in enumerate(data.get("genes", [])):
-                    if isinstance(g, dict):
-                        key = (g.get("gene") or g.get("name") or "").strip().upper()
-                        if key:
-                            gene_index[key] = idx
-                enriched_count = 0
-                for pdir in pipeline_dirs:
-                    gene_name = os.path.basename(pdir).replace("-pipeline", "")
-                    parsed = parse_gene_pipeline(pdir, gene_name)
-                    key = gene_name.strip().upper()
-                    # Merge into existing entry if present, else append as PyPGx-only
-                    if key in gene_index:
-                        target = data["genes"][gene_index[key]]
-                        if isinstance(target, dict):
-                            # Only fill fields that are missing; attach evidence regardless
-                            if not target.get("diplotype") and parsed.get("diplotype"):
-                                target["diplotype"] = parsed["diplotype"]
-                            if not target.get("phenotype") and parsed.get("phenotype"):
-                                target["phenotype"] = parsed["phenotype"]
-                            # Both halves were truthiness tests, and both were wrong
-                            # for a score of 0: a parsed 0 never filled an empty
-                            # target, and a stored 0 counted as missing and got
-                            # overwritten. Presence is numeric here as everywhere
-                            # else -- which also stops "N/A"/"Unknown" from being
-                            # treated as a score worth keeping or copying.
-                            if activity_score_num(
-                                target.get("activity_score")
-                            ) is None and (
-                                activity_score_num(parsed.get("activity_score"))
-                                is not None
-                            ):
-                                target["activity_score"] = parsed["activity_score"]
-                            if parsed.get("call_confidence") and not target.get(
-                                "call_confidence"
-                            ):
-                                target["call_confidence"] = parsed["call_confidence"]
-                            # Evidence
-                            if parsed.get("evidence"):
-                                target.setdefault("evidence", {})
-                                if parsed["evidence"].get("alleles"):
-                                    target["evidence"]["alleles"] = parsed["evidence"][
-                                        "alleles"
-                                    ]
-                                if parsed["evidence"].get("variants"):
-                                    target["evidence"]["variants"] = parsed["evidence"][
-                                        "variants"
-                                    ]
-                            if parsed.get("phased") is True:
-                                target["phased"] = True
-                            if parsed.get("copy_number") and not target.get(
-                                "copy_number"
-                            ):
-                                target["copy_number"] = parsed["copy_number"]
-                            # Always set tool source if not present
-                            if not target.get("tool_source"):
-                                target["tool_source"] = "PyPGx"
-                            enriched_count += 1
-                    else:
-                        # Append new PyPGx-only gene
-                        entry = {
-                            "gene": gene_name,
-                            "diplotype": parsed.get("diplotype") or "Unknown",
-                            "phenotype": parsed.get("phenotype") or "Unknown",
-                            "activity_score": parsed.get("activity_score"),
-                            "tool_source": "PyPGx",
-                            "pyPgxOnly": True,
-                        }
-                        if parsed.get("call_confidence"):
-                            entry["call_confidence"] = parsed["call_confidence"]
-                        if parsed.get("evidence"):
-                            entry["evidence"] = parsed["evidence"]
-                        if parsed.get("phased") is True:
-                            entry["phased"] = True
-                        if parsed.get("copy_number"):
-                            entry["copy_number"] = parsed["copy_number"]
-                        data.setdefault("genes", []).append(entry)
-                        enriched_count += 1
-                if enriched_count:
-                    data["used_pypgx"] = True
-                    logger.info(
-                        f"Enriched PyPGx details for {enriched_count} genes from per-gene pipelines"
-                    )
-        except Exception as enrich_e:
-            logger.warning(
-                f"PyPGx per-gene enrichment skipped due to error: {enrich_e}",
-                exc_info=True,
-            )
     except Exception as e:
         logger.warning(f"PyPGx enrichment step failed: {e}", exc_info=True)
 

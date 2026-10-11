@@ -267,69 +267,6 @@ def test_pypgx_only_gene_still_falls_back_to_the_camelcase_key(monkeypatch, tmp_
     assert genes["CYP2C19"]["activity_score"] == 2.0
 
 
-def _stage_pipeline_dir(tmp_path, gene):
-    pipeline = tmp_path / "pypgx_run" / f"{gene}-pipeline"
-    pipeline.mkdir(parents=True)
-    return pipeline
-
-
-def test_pipeline_merge_does_not_overwrite_a_stored_zero(monkeypatch, tmp_path):
-    """``not target.get("activity_score")`` read a stored 0 as "missing"."""
-    import app.reports.generator as generator_module
-
-    _stage_pipeline_dir(tmp_path, "CYP2D6")
-    monkeypatch.setattr(
-        generator_module,
-        "parse_gene_pipeline",
-        lambda pdir, gene: {"gene": gene, "activity_score": "2.0", "evidence": {}},
-    )
-
-    genes = _run_generate_report(
-        monkeypatch,
-        tmp_path,
-        {},
-        genes=[
-            {
-                "gene": "CYP2D6",
-                "diplotype": "*4/*4",
-                "phenotype": "Poor Metabolizer",
-                "activity_score": Decimal("0.0000"),
-            }
-        ],
-    )
-    assert float(genes["CYP2D6"]["activity_score"]) == 0.0, (
-        "a stored activity score of 0 was treated as missing and overwritten by "
-        "the PyPGx pipeline value"
-    )
-
-
-def test_pipeline_merge_still_fills_a_genuinely_missing_score(monkeypatch, tmp_path):
-    """The other half: an absent score must still be filled, including with 0."""
-    import app.reports.generator as generator_module
-
-    _stage_pipeline_dir(tmp_path, "CYP2D6")
-    monkeypatch.setattr(
-        generator_module,
-        "parse_gene_pipeline",
-        lambda pdir, gene: {"gene": gene, "activity_score": "0.0", "evidence": {}},
-    )
-
-    genes = _run_generate_report(
-        monkeypatch,
-        tmp_path,
-        {},
-        genes=[
-            {
-                "gene": "CYP2D6",
-                "diplotype": "*4/*4",
-                "phenotype": "Poor Metabolizer",
-                "activity_score": None,
-            }
-        ],
-    )
-    assert float(genes["CYP2D6"]["activity_score"]) == 0.0
-
-
 # ---------------------------------------------------------------------------
 # ReportLab fallback PDF: flowing text, not a table
 # ---------------------------------------------------------------------------

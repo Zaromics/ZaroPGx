@@ -1,0 +1,63 @@
+{# What PyPGx reported for a gene beyond its genotype (generator.pypgx_record):
+   the copy-number call, the candidate alleles on each haplotype, alleles that a
+   different phasing would give, the variants behind each allele, and its plots.
+   Shared by report_template.html (the notes) and interactive_report.html (the
+   notes and the evidence panel). #}
+
+{% macro call_notes(d) -%}
+{#- "Normal" stays in the evidence panel: a note on every gene PyPGx
+    checks for copy-number changes would bury the ones that have one. #}
+{%- if d.pypgx and d.pypgx.copy_number and d.pypgx.copy_number != 'Normal' %}
+<div class="call-note">Copy number: {{ d.pypgx.copy_number_summary }} ({{ d.pypgx.copy_number }})</div>
+{%- endif %}
+{%- if d.pypgx and d.pypgx.alternative_phase %}
+<div class="call-note">Phase-dependent: with these variants on one chromosome PyPGx would also find {{ d.pypgx.alternative_phase|join(', ') }}</div>
+{%- endif %}
+{%- endmacro %}
+
+{% macro na_legend(rows, attribute='phenotype') -%}
+{%- if rows|selectattr(attribute, 'equalto', 'N/A')|list %}
+<p class="header-note"><strong>N/A</strong> phenotype: the tool that called the gene (PharmCAT, applying CPIC, or PyPGx) defines no phenotype for it, so the genotype is reported as called. A guideline that uses such a gene works from the genotype directly, as CPIC's warfarin guideline does with VKORC1.</p>
+{%- endif %}
+{%- endmacro %}
+
+{% macro evidence_panel(rows) -%}
+{%- set with_evidence = rows|selectattr('pypgx')|list %}
+{%- if with_evidence %}
+<div class="pypgx-evidence">
+    <h4>PyPGx evidence</h4>
+    <p>What PyPGx observed for each gene it called: the candidate alleles on each
+       chromosome (its call first), the variants that define them with the fraction
+       of reads carrying each, and, for copy-number genes, its copy-number and
+       allele-fraction plots.</p>
+    {%- for d in with_evidence|sort(attribute='gene') %}
+    {%- set e = d.pypgx %}
+    <details class="pypgx-gene">
+        <summary><strong>{{ d.gene }}</strong> {{ d.diplotype }}{% if e.copy_number %} &middot; copy number {{ e.copy_number }}{% endif %}</summary>
+        {%- if e.haplotype1 or e.haplotype2 %}
+        <p>Candidate alleles &mdash; chromosome 1: {{ (e.haplotype1 or ['–'])|join(', ') }}; chromosome 2: {{ (e.haplotype2 or ['–'])|join(', ') }}</p>
+        {%- endif %}
+        {{ call_notes(d) }}
+        {%- if e.supporting_variants %}
+        <table class="evidence-table">
+            <thead><tr><th>Allele</th><th>Defining variant</th><th>Allele fraction</th></tr></thead>
+            <tbody>
+            {%- for a in e.supporting_variants %}
+                {%- for v in a.variants %}
+                <tr><td>{{ a.allele }}</td><td>{{ v.variant }}</td><td>{{ '%.2f'|format(v.allele_fraction) if v.allele_fraction is not none else '–' }}</td></tr>
+                {%- endfor %}
+            {%- endfor %}
+            </tbody>
+        </table>
+        {%- endif %}
+        {%- if e.plots %}
+        <div class="evidence-plots">
+            {%- if e.plots.copy_number %}<figure><img src="{{ e.plots.copy_number }}" alt="{{ d.gene }} copy-number profile"><figcaption>Copy-number profile</figcaption></figure>{% endif %}
+            {%- if e.plots.allele_fraction %}<figure><img src="{{ e.plots.allele_fraction }}" alt="{{ d.gene }} allele-fraction profile"><figcaption>Allele-fraction profile</figcaption></figure>{% endif %}
+        </div>
+        {%- endif %}
+    </details>
+    {%- endfor %}
+</div>
+{%- endif %}
+{%- endmacro %}
