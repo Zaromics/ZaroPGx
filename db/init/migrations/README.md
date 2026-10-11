@@ -1,31 +1,15 @@
-# Database Migrations
+# Database migrations
 
-This directory contains database migration scripts that should be run on existing databases when schema changes are made.
+The app applies these at startup, in order, and records each in `schema_migrations`; see
+`db/README.md`. PostgreSQL's init entrypoint does not run this directory.
 
-## Running Migrations
+| File | Change |
+|---|---|
+| `02_fix_variant_column_lengths.sql` | Widen the `pharmcat.variants` columns |
+| `03_drop_job_monitoring.sql` | Drop the unused `job_monitoring` schema |
+| `04_rename_workflows_to_jobs.sql` | Rename `workflows*` to `jobs*` |
+| `05_job_workflow_type_snapshot.sql` | Add `jobs.workflow_type` and `jobs.workflow_snapshot` |
+| `06_allow_gvcf_file_format.sql` | Allow `GVCF` in `genomic_file_headers.file_format` |
 
-### Manual Migration (Recommended for now)
-
-Connect to the database and run the migration:
-
-```bash
-# Connect to database
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db
-
-# Run the migration
-\i /docker-entrypoint-initdb.d/migrations/{migration}}
-
-# Or run directly:
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -f /docker-entrypoint-initdb.d/migrations/{migration}
-```
-
-### Check Current Schema
-
-
-## Migration Files
-
-- `02_fix_variant_column_lengths.sql` — widen variant columns
-- `03_drop_job_monitoring.sql` — hand-run drop of unused `job_monitoring` schema (CASCADE)
-- `04_rename_workflows_to_jobs.sql` — hand-run rename workflows* → jobs* (137a)
-- `06_allow_gvcf_file_format.sql` — allow `GVCF` in `genomic_file_headers.file_format` (every gVCF upload failed header analysis); applied automatically at startup
-
+02-05 are historical and not idempotent; a database that already has the `jobs` table records
+them without running them. A new migration takes the next number and must be idempotent.

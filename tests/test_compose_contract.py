@@ -371,9 +371,7 @@ def test_docs_do_not_teach_bare_bind_address_zero():
 
 def test_docs_do_not_ufw_allow_internal_service_ports():
     root = COMPOSE.parent
-    deployment = (root / "docs" / "developer" / "deployment.md").read_text(
-        encoding="utf-8"
-    )
+    deployment = (root / "docs" / "user" / "deployment.md").read_text(encoding="utf-8")
     for port in ("5444", "5001", "5002", "5053", "8090"):
         assert (
             f"ufw allow {port}" not in deployment

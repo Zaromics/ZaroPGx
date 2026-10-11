@@ -1,0 +1,86 @@
+---
+title: Configuration
+curation: not
+---
+
+# Configuration
+
+Settings are environment variables in `.env`, which Compose reads for `compose.yml` and
+passes to the app. After changing one, apply it with `docker compose up -d`. Change
+`compose.yml` itself only through `compose.override.yml` (gitignored), which Compose merges
+in.
+
+A boolean is on for `1`, `true`, `yes` or `on`; blank or anything else is off. Exceptions:
+`PDF_FALLBACK`, `DOWNLOAD_ON_STARTUP` and `REF_CACHE_ENABLED` are on only for `true`.
+
+Where a template ships a different value from the code's default, both are given.
+
+## Required
+
+| Variable | |
+|---|---|
+| `DB_PASSWORD` | The database password. `start-docker.sh` generates one on first run; Compose will not start without it. Do not change it once the database volume exists |
+| `SECRET_KEY` | Signs login tokens. `start-docker.sh` generates one; the app refuses to start with it blank or a known placeholder |
+
+## Access
+
+| Variable | Default | |
+|---|---|---|
+| `BIND_ADDRESS` | `8765` | The app's host port, optionally with an address: `127.0.0.1:8765` for this machine only. A bare port listens on every interface |
+| `INTERNAL_BIND_ADDRESS` | `127.0.0.1` | The address every other service publishes on (database, PharmCAT, GATK, PyPGx, ZaroHLA, mtDNA, genome downloader, HAPI FHIR, Kroki, docs). None of them authenticates: keep it on loopback and use an SSH tunnel |
+| `ZAROPGX_AUTH_MODE` | `open` | `open`: no login. `password`: every request needs the shared password (a session cookie from `/login`, or a Bearer token from `/token`). `audit`: no login, but logs what `password` would refuse |
+| `ZAROPGX_AUTH_PASSWORD` | | The shared password for `password` mode. Anyone who has it can read every report on the instance |
+| `ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES` | `HS256`, `30` | Login token signing and lifetime |
+| `ZAROPGX_DEV_MODE` | `true` | Legacy; it no longer turns authentication on or off |
+
+## Images and network
+
+| Variable | Default | |
+|---|---|---|
+| `ZAROPGX_TAG` | the release | Tag of the `zaromicsresearch/zaropgx-*` images to pull. `latest` follows the newest |
+| `HAPI_FHIR_TAG` | `v8.12.0-2` | The HAPI FHIR image. A new version migrates its database schema on first start, one way: back up first |
+| `PHARMCAT_VERSION` | `3.4.0` | The PharmCAT release built into the PharmCAT image |
+| `NETWORK_SUBNET` | `172.28.0.0/16` (`.env.local`: `172.20.0.0/16`) | The Compose network's subnet; change it if it collides with yours |
+| `JAVA_OPTS` | `-Xmx4g` | PharmCAT's JVM options |
+
+## Analysis
+
+| Variable | Default | |
+|---|---|---|
+| `GATK_ENABLED`, `PYPGX_ENABLED`, `OPTITYPE_ENABLED`, `MTDNA_ENABLED` | `true` | The default state of the step switches on the upload page. The services run either way. With GATK off, inputs that need conversion (CRAM, SAM, BCF, gVCF, FASTQ) fail |
+| `PHARMCAT_ABSENT_TO_REF`, `PHARMCAT_UNSPECIFIED_TO_REF` | `false` | The default state of PharmCAT's assume-reference options on the upload page; see {doc}`usage` |
+| `REF_CACHE_ENABLED` | `true` | Build the CRAM reference cache (3.2 GB download, 5.3 GB kept). Without it, only CRAMs written against UCSC hg38 decode |
+| `DOWNLOAD_ON_STARTUP` | `true` | Let the genome downloader stage references when it starts |
+| `NEXTFLOW_MAX_WAIT_SECONDS` | `86400` | How long the app waits for a pipeline run before failing the job |
+| `PYPGX_MEMORY_LIMIT`, `PYPGX_MAX_PARALLEL_GENES`, `PYPGX_BATCH_SIZE` | `7G`, `8`, `4` | PyPGx's memory and parallelism |
+| `PYPGX_PHARMCAT_PREFERENCE` | `auto` (templates: `pharmcat`) | Which genes PyPGx genotypes. `pharmcat`: not those PharmCAT calls itself (it still calls CYP2D6, which PharmCAT takes from it). `pypgx`: all 87. `auto`: the first for VCFs, the second for alignments |
+| `OUTSIDECALLSOVERRIDE` | off | Use a hand-written outside-calls file instead of the generated one |
+| `MAX_HEADER_READ_BYTES`, `MAX_HEADER_PARSE_TIMEOUT_SEC` | `1000000000`, `300` | Limits on reading an upload's header |
+
+## Reports
+
+| Variable | Default | |
+|---|---|---|
+| `INCLUDE_PHARMCAT_HTML`, `INCLUDE_PHARMCAT_JSON`, `INCLUDE_PHARMCAT_TSV` | `true`, `false`, `false` (templates: all `true`) | Offer PharmCAT's own reports with the results |
+| `EXECSUM_USE_TSV` | `false` (templates: `true`) | Build the Executive Summary from PharmCAT's TSV rather than its JSON |
+| `PDF_ENGINE` | `weasyprint` | `weasyprint` or `reportlab` |
+| `PDF_FALLBACK` | `true` | Try the other engine if the first fails |
+| `AUTHOR_NAME`, `SOURCE_URL`, `ZAROPGX_VERSION` | from `pyproject.toml`, the GitHub URL | Shown in the reports' footer and Platform table |
+| `FHIR_EXPORT_ENABLED` | `true` | The `/fhir` endpoints and the FHIR bundles written with each report |
+| `KEEP_UPLOADS` | `false` | Keep an upload after its job ends. By default it is deleted when the job completes, fails or is cancelled |
+
+## Storage
+
+| Variable | Default | |
+|---|---|---|
+| `ZAROPGX_SCRATCH` | `./data/temp` | Where ZaroHLA works. HLA typing a whole genome needs tens of GB; point this at a large disk if `data/` is small |
+| `ZAROPGX_ALIGN_REFERENCE` | `./reference/pypgx` | Where the FASTQ alignment index is read from |
+| `LOG_LEVEL` | `DEBUG` (`.env.production`: `INFO`) | The app's log level |
+
+## Set by Compose
+
+`compose.yml` sets the services' URLs (`PHARMCAT_API_URL`, `GATK_API_URL`, `PYPGX_API_URL`,
+`FHIR_SERVER_URL`, `KROKI_URL`, `NEXTFLOW_RUNNER_URL`, `JOB_API_BASE`), `DATABASE_URL`, and
+the services' paths. Values for these in `.env` are ignored; they matter only to code run
+outside Compose. `GENOME_DOWNLOADER_API_URL` and `DATA_DIR` in the templates have no
+effect, and PharmCAT always logs at `DEBUG` whatever `PHARMCAT_LOG_LEVEL` says.

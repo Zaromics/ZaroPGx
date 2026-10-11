@@ -1,143 +1,54 @@
-# Database Schema Management
+# Database schema
 
-## Overview
+- `init/00_complete_database_schema.sql`: the complete schema for a fresh database.
+- `init/99_wait_for_ready.sql`: checks the fresh initialisation.
+- `init/migrations/`: changes for existing databases, applied by the app at startup.
 
-This directory contains ZaroPGx's canonical fresh-install schema and deliberately hand-run SQL
-for existing volumes. No automatic migration runner exists.
+## Fresh databases
 
-## Structure
+Compose mounts `db/init` at `/docker-entrypoint-initdb.d`. PostgreSQL runs the top-level
+files there only when the `zaropgx_pgdata` volume is empty, so a fresh database comes from
+`00_complete_database_schema.sql`, which already includes every migration's end state.
 
-- `init/00_complete_database_schema.sql` - **Single source of truth** for a fresh ZaroPGx schema
-- `init/99_wait_for_ready.sql` - Fresh-initialization validation
-- `init/migrations/` - Operator-reviewed SQL that is available inside the container but is
-  never run automatically
+## Existing databases
 
-## What's Included
+PostgreSQL never re-runs the init files, so a schema change reaches an existing volume only
+as a migration. At startup the app (`app/api/db_migrations.py`) applies, in order, each
+`init/migrations/NN_*.sql` not yet recorded in the `schema_migrations` table, under an
+advisory lock so concurrent workers do not race.
 
-The consolidated schema includes:
+Migrations 02-05 are historical: they turn a pre-`jobs` schema into the current one, and
+they are not idempotent. The first time the app finds a database that already has `jobs` but
+no `schema_migrations`, it records 02-05 as applied without running them. From 06 on, every
+migration runs on every database that has not recorded it, so it must be idempotent
+(`IF EXISTS`, `IF NOT EXISTS`, or a guarded `DO` block).
 
-### Core Schemas
-- **`cpic`** - Pharmacogenomic guidelines and reference data
-- **`user_data`** - Patient and genetic data (HIPAA-compliant, UUID-based)
-- **`reports`** - Generated reports and analysis outputs
-- **`job_monitoring`** - Workflow and job tracking system
-- **`fhir`** - HAPI FHIR server tables
-- **`pharmcat`** - PharmCAT analysis results and pharmacogenomic data
+To change the schema, edit `00_complete_database_schema.sql` and add the next numbered file
+to `init/migrations/` that brings an existing database to the same state. Release notes that
+need an operator's hand go in `UPGRADING.md`.
 
-### Public Tables
-- **`genomic_file_headers`** - File metadata storage
-- **`gene_groups`** - Gene categorization for UI
-- **`gene_group_members`** - Gene-to-group relationships
-- **`workflows`** - Workflow orchestration tracking
-- **`workflow_steps`** - Individual step tracking within workflows
-- **`workflow_logs`** - Execution logs for debugging and monitoring
+## Schemas
 
-### PharmCAT Schema Details
-The `pharmcat` schema includes 9 tables and 3 convenience views:
+| Schema | In use |
+|---|---|
+| `public` | `jobs`, `job_steps`, `job_logs`, `genomic_file_headers`, `schema_migrations` |
+| `user_data` | `patients`, `genetic_data` |
+| `pharmcat` | PharmCAT's results, loaded from its JSON: `results`, `gene_summary`, `diplotypes`, `drug_gene_map`, `messages`, `variants`, `drug_recommendations`, `recommendation_conditions`, `unannotated_gene_calls`, and three views |
+| `fhir` | HAPI FHIR's tables, which it manages itself |
 
-**Tables:**
-- `results` - Raw PharmCAT JSON results and metadata
-- `gene_summary` - Flattened gene information
-- `diplotypes` - Individual diplotype calls and phenotypes
-- `drug_gene_map` - Drug-gene relationships
-- `messages` - Analysis warnings and errors
-- `variants` - Genetic variants found
-- `drug_recommendations` - CPIC/DPWG drug recommendations
-- `recommendation_conditions` - Conditions triggering recommendations
-- `unannotated_gene_calls` - Gene calls that couldn't be fully annotated
+`cpic`, `reports`, `user_data.patient_alleles` and the `gene_groups` tables are created but
+not used.
 
-**Views:**
-- `actionable_findings` - Non-normal phenotypes requiring action
-- `drug_recommendations_summary` - Aggregated drug recommendations
-- `gene_analysis_summary` - Gene analysis overview with counts
-
-### Features
-- ✅ UUID primary keys throughout
-- ✅ Proper foreign key relationships
-- ✅ Performance indexes
-- ✅ Sample data for testing
-- ✅ Utility functions
-- ✅ Complete permissions setup
-
-## Schema Lifecycle
-
-### Fresh Volumes
-
-Compose mounts `db/init` at `/docker-entrypoint-initdb.d`. The PostgreSQL image runs the
-top-level initialization files only when `zaropgx_pgdata` is empty. A fresh schema therefore
-comes from `db/init/00_complete_database_schema.sql`.
-
-### Existing Volumes
-
-PostgreSQL skips `/docker-entrypoint-initdb.d` when the data directory already contains a
-database. Editing the canonical schema or restarting the container does not update an existing
-volume.
-
-Every existing-volume change must be deliberate:
-1. Back up the database.
-2. Review the exact SQL required by the release.
-3. Stop services that write to the database.
-4. Hand-run the reviewed file and verify the result.
-
-There is no migration ledger, application-startup DDL, or automatic migration runner.
-
-### Break-Glass Manual Upgrade
-
-The nested `init/migrations` directory is mounted into the database container but is not
-executed by the PostgreSQL entrypoint. This makes a reviewed file available for an explicit
-operator command without turning it into startup automation:
+## Backup and reset
 
 ```bash
-# Back up the target database first.
-docker compose exec -T db pg_dump \
-  -U zaropgx_user \
-  -d zaropgx_db > zaropgx-before-manual-upgrade.sql
+# Dump
+docker compose exec -T db pg_dump -U zaropgx_user zaropgx_db > zaropgx.sql
 
-# Apply one reviewed upgrade and stop on the first SQL error.
-docker compose exec -T db psql \
-  -v ON_ERROR_STOP=1 \
-  -U zaropgx_user \
-  -d zaropgx_db \
-  -f /docker-entrypoint-initdb.d/migrations/02_fix_variant_column_lengths.sql
-```
-
-Use the database role and name configured for the target volume. Release-specific operator
-steps belong in `UPGRADING.md`; the v0.2.4 to v0.2.5 credential recovery uses
-`scripts/fix-legacy-credentials.sh`.
-
-## Testing
-
-To test the schema after a fresh initialization:
-
-```bash
-# Start the database with a fresh volume
-docker compose down -v
-docker compose up -d db
-
-# Connect and verify all schemas exist
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dn"
-
-# Check that all tables exist in each schema
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt cpic.*"
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt user_data.*"
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt job_monitoring.*"
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt pharmcat.*"
-
-# Verify PharmCAT views were created
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dv pharmcat.*"
-
-# Check public tables
-docker exec -it pgx_db psql -U zaropgx_user -d zaropgx_db -c "\dt public.*"
-```
-
-## Fresh Database Reset
-
-To reset the database and re-run initialization scripts:
-
-```bash
-# Stop containers and remove database volume
-docker compose down -v
-
-# Start fresh (init scripts will run automatically)
+# Reset to a fresh database: deletes every job record and loaded result
+docker compose down
+docker volume rm zaropgx_pgdata
 docker compose up -d
 ```
+
+Use the role and database name set in `.env` (`DB_USER`, `DB_NAME`) if you changed them.

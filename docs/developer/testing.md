@@ -1,262 +1,67 @@
 ---
-title: Testing Guide
-curation: partial
+title: Testing
+curation: not
 ---
 
-# Testing Guide
+# Testing
 
-How ZaroPGx is tested today. Everything below is derived from `pyproject.toml`, the `tests/`
-tree and `.github/workflows/ci.yml` — if this page and those files disagree, they are right.
-
-## Two suites
-
-There are exactly two, split by the `e2e` pytest marker:
-
-| Suite | Selector | Needs Docker | What it exercises |
-|---|---|---|---|
-| **Fast** | `-m "not e2e"` | yes, or a PostgreSQL URL | Pure functions, parsers, FastAPI routes via `TestClient`, database code on PostgreSQL, contract assertions over `compose.yml` |
-| **Full-stack e2e** | `-m e2e` | yes | A real Compose stack: upload a VCF, wait for the workflow, assert a report artifact exists |
-
-The fast suite is the one you run while working. Its database is a **real PostgreSQL**:
-`tests/postgres.py` starts the image `compose.yml`'s `db` service runs, initialised from
-`db/init` exactly as production is, in a throwaway container with its data on tmpfs (about two
-seconds once the image is pulled). It connects over a Unix socket in a bind-mounted directory
-rather than a published port, because a port Docker picks lies in the ephemeral range, which
-rootless Docker's pasta forwarding skips. To use a database you already run instead, set
-`ZAROPGX_TEST_POSTGRES_URL`; `db/init` is applied to it if `public.jobs` is missing, and its
-role must be `zaropgx_user`, which `db/init` grants to.
-
-Without Docker or that URL, tests that ask for the database through a fixture skip, and those
-that reach it only through the app's own sessions fail with "no PostgreSQL to test against"
-(a skip cannot get out of a request). Everything else still runs. Under `CI` the whole run
-fails instead, so the job cannot pass without the database tests.
-
-It used to be an in-memory SQLite. That needed shims for schemas, JSONB and UUIDs, returned
-naive timestamps (commit `8bb100e` fixed a crash only SQLite could cause), and never enforced a
-`VARCHAR` length.
-
-## Running the tests
-
-**Fast suite:**
+## The unit and API suite
 
 ```bash
 uv run pytest -q -m "not e2e"
 ```
 
-On Windows, prefer the project venv — `uv run` will otherwise try to rebuild `pysam`, which has
-no wheel for every platform:
+It needs Docker: `tests/postgres.py` starts a throwaway `postgres:18.6` container, its data on
+tmpfs, built from `db/init` exactly as production is, and empties the tables each test wrote
+to after it. To use a database you already run, set `ZAROPGX_TEST_POSTGRES_URL` (the role must
+be `zaropgx_user`); the schema is built on it if missing. Under `CI=true` a missing database is
+an error, not a skip.
 
-```powershell
-.venv\Scripts\python.exe -m pytest -q -m "not e2e"
-```
+Fixtures from `tests/conftest.py`: `db_session` and `session_factory` (SQLAlchemy sessions on
+that database) and `client` (a FastAPI `TestClient` with the database dependency overridden).
 
-```bash
-# Unix equivalent
-.venv/bin/python -m pytest -q -m "not e2e"
-```
+Tests that need Node 22 (two that run the interactive report's JavaScript) or Pango and the
+Liberation fonts (the WeasyPrint layout tests) skip without them. CI installs both.
 
-**Full-stack e2e** — brings the stack up, runs the marked tests, tears down on success:
+Use the public fixtures in `test_data/` (described in `test_data/README.md`): PharmCAT's
+example VCFs, GRCh37 and T2T SNP sets for the liftover and refusal paths, and small BAM, CRAM
+and SAM files over the pharmacogenes and HLA. Never commit a real person's genotypes.
+
+## The end-to-end suite
 
 ```bash
 ./scripts/e2e.sh
 ```
 
-Use Git Bash or WSL on Windows. Give Docker Desktop plenty of RAM (16 GB+). The first run
-builds images cold and downloads PharmCAT's GRCh38 reference, so budget a long wait; later runs
-reuse the BuildKit cache. **On failure the stack is deliberately left up** and the combined
-logs are written to `e2e-logs/compose.log`.
+This brings up a separate stack (Compose project `zaropgx_e2e`, app on `127.0.0.1:18765`)
+from `compose.yml` plus `compose.e2e.yml`, waits for it to be healthy (up to
+`E2E_HEALTH_TIMEOUT` seconds, default 1500), then runs `pytest -m e2e --zaropgx-e2e`
+against it. On success it tears the stack down; on failure it leaves it up and writes
+`e2e-logs/compose.log`. Tear it down afterwards with `./scripts/e2e-down.sh`.
 
-The e2e stack is fully isolated from a developer stack: Compose project `zaropgx_e2e`,
-`--env-file .env.e2e`, `-f compose.yml -f compose.e2e.yml`, and only the app published, at
-`127.0.0.1:18765`. `scripts/e2e-up.sh` and `scripts/e2e-down.sh` are the two halves if you want
-to drive them separately (`scripts/e2e-up.ps1` is the PowerShell counterpart).
+`scripts/e2e-env.sh` writes `.env.e2e` on the first run and reuses it after. The e2e stack
+turns the mtDNA step and the CRAM reference cache off.
 
-## Layout
+| Test | Input | Runs when |
+|---|---|---|
+| `test_vcf_pipeline` | `test_data/pharmcat.example.vcf` | always |
+| `test_bam_pipeline`, `test_alignment_conversion_pipeline` | BAM, CRAM, SAM | `ZAROPGX_E2E_REFERENCE=1` |
+| `test_bam_hla_pipeline` | BAM with HLA reads | `ZAROPGX_E2E_REFERENCE=1` |
+| `test_grch37_liftover_pipeline` | GRCh37 VCF | `ZAROPGX_E2E_REFERENCE=1` |
 
-```
-tests/
-├── conftest.py                 # the only shared fixture module for the fast suite
-├── e2e/
-│   ├── conftest.py             # e2e_base_url / e2e_client fixtures (skip when not enabled)
-│   ├── harness.py              # enable-flag plumbing shared with the root conftest
-│   └── test_vcf_pipeline.py    # upload → poll → assert a report artifact
-├── js/
-│   └── render_workflow_panel.js  # Node driver that renders index.html's inline <script>
-├── run_workflow_tests.py       # optional convenience runner for the workflow modules
-└── test_*.py                   # flat modules, one per behaviour under test
-```
+The reference lanes need a populated `./reference` (the genome downloader's). Each test also
+checks that every report link the job returns resolves. FASTQ and mtDNA have no end-to-end
+test.
 
-`tests/js/` is a driver directory, not a JS test suite — see *The frontend render harness*
-below. There are no `unit/`, `integration/`, `performance/` or `fixtures/` subdirectories, and
-no generated test-data tree — the modules are flat and named for what they pin down
-(`test_tsv_parser.py`, `test_report_path_jail.py`, `test_compose_contract.py`,
-`test_workflow_progress_renormalize_58.py`, …). Sample inputs live in `test_data/` at the repo
-root; the e2e test uploads `test_data/pharmcat.example.vcf`.
+PharmCAT downloads its 844 MB GRCh38 reference on first start, into a volume the harness
+deletes on success. To skip the download, point `E2E_PHARMCAT_REFERENCE` at a directory that
+holds `reference.fna.bgz` and its `.fai` and `.gzi`.
 
-## Configuration
+## CI
 
-There is no `pytest.ini`. All pytest configuration lives in `[tool.pytest.ini_options]` in
-`pyproject.toml`:
+`.github/workflows/ci.yml` runs on every push and pull request:
 
-- `testpaths = ["tests"]` — a bare `pytest` collects only that tree.
-- `pythonpath = ["."]` — `tests/` has no `__init__.py` at the top level, so without this a bare
-  `pytest` from the repo root cannot `import app.main`.
-- `asyncio_mode = "strict"` — every async test carries an explicit `@pytest.mark.asyncio`.
-  `auto` would also hijack the sync tests that drive `asyncio.run()` themselves.
-- `addopts = "--strict-markers"` — an unregistered marker is an error, not a silent skip.
-- `markers` — only two are registered: `asyncio` and `e2e`.
-- `norecursedirs` — restates pytest's defaults (setting it *replaces* them) plus `.venv`,
-  `reference`, `test_data`, `_build`, `work`.
-
-Coverage is available (`pytest-cov` is in the `dev` extra) but **no coverage threshold is
-enforced** anywhere — not in `addopts`, not in CI.
-
-## Fixtures
-
-`tests/conftest.py` is the whole fixture story for the fast suite:
-
-- It sets `ZAROPGX_DEV_MODE`, `FHIR_EXPORT_ENABLED`, `SECRET_KEY`, `DATABASE_URL` and
-  `DB_PASSWORD` **before** importing anything from `app.*`, because `app.main` and `app.api.db`
-  read configuration at import time.
-- `engine` (session-scoped) — the PostgreSQL above. `app.api.db.SessionLocal` and
-  `app.api.db.engine` are rebound to it, so app code that opens its own session reaches the
-  test database too, not the placeholder `DATABASE_URL`.
-- `database` (autouse) — after each test that wrote anything, truncates every table except the
-  ones `db/init` seeds (the `cpic` reference rows and the gene groups), in one statement and
-  without `CASCADE`. A test that writes to seeded tables fails, since they are not reset. If a
-  session the test leaked still holds a lock, its connection is terminated and the truncate
-  retried. `tests/test_postgres_test_database.py` checks all of this.
-- `db_session`, `job_service`, `connection_manager` — a session and the two services most tests
-  need.
-- `override_db_dependency` (autouse) — points FastAPI's `get_db` at the test session and unwinds
-  afterwards, so it cannot leak between modules.
-- `client` — a `TestClient` with the app's startup/shutdown hooks cleared (they reach for
-  Postgres and sibling containers).
-
-`tests/e2e/` adds `e2e_base_url` and `e2e_client`, which **skip** unless e2e was explicitly
-enabled, and skip again if `/health` is not reachable.
-
-## The frontend render harness
-
-`tests/js/render_workflow_panel.js` plus `tests/test_ui_workflow_flag_reads.py` are the repo's
-**only template-rendering coverage**. Everything else asserts against Python; this pair asserts
-against the HTML the browser would actually receive. Worth knowing about before you write a
-weaker test.
-
-It exists because asserting on template *source text* is weak evidence. BACKLOG 137b moved the
-upload response's workflow flags from `workflow.<flag>` down to `workflow.options.<flag>`;
-`app/templates/index.html` kept reading the old level, every read silently evaluated to
-`undefined`, and the post-upload "Workflow Details" panel rendered nothing at all. No test
-noticed, because nothing tied the template's read paths to the server's field names.
-
-How it works:
-
-1. The pytest module drives the **real** `POST /upload/genomic-data` endpoint through
-   `TestClient`. Only the DB, Nextflow and file-IO edges are stubbed — the workflow dict comes
-   from the real `FileProcessor.determine_workflow` and the response body is assembled by the
-   real `upload_router`, so both the user-visible copy and the JSON nesting are the real ones.
-2. It writes that exact response to a temp file and shells out to `node
-   tests/js/render_workflow_panel.js <index.html> <payload.json>`.
-3. The Node driver extracts the one inline `<script>` block that defines
-   `window.updateFileAnalysis` (skipping `<script src=…>` tags), runs it in Node's `vm` under a
-   hand-written DOM shim, fires the `DOMContentLoaded` handlers the renderer registers, then
-   calls `window.updateFileAnalysis(payload)`.
-4. The shim seeds each element's `classList` from the classes it really carries in the markup,
-   so `#warnings` genuinely starts out `d-none` and "it became visible" means something. It
-   prints `{ok, errors, elements: {<id>: {html, classes}}}` on stdout; the test asserts on the
-   rendered HTML and on which alerts lost `d-none`.
-
-Three supporting tests come with it: a **negative control** that feeds the pre-137b payload
-shape and asserts the panel renders nothing from it (without which the positive test would
-prove nothing), a **rename guard** that intersects every `wf.<field>` the template reads with
-`WorkflowOptions.model_fields` so a server-side rename breaks a test instead of the UI, and a
-check that the flat `compat` shape `/upload/inspect-header` returns stays flat.
-
-Nothing here ships to the browser — the driver is a test fixture. It writes its own logs to
-stderr to keep stdout parseable.
-
-**Node is required but not installed by anything.** Both rendering tests carry
-`@pytest.mark.skipif(shutil.which("node") is None)`, and neither `pyproject.toml` nor CI sets up
-a Node toolchain — CI's `test` job runs `uv sync` only. They therefore execute only where a
-`node` binary already happens to be on `PATH`, and pass vacuously by skipping where it is not.
-Check for `s` in the pytest output if you are relying on them. The rename guard needs no Node
-and always runs.
-
-### The e2e enable flag
-
-e2e is opt-in via `ZAROPGX_E2E=1` **or** `--zaropgx-e2e`. The CLI flag exists because on
-Windows/Git Bash a shell `export` frequently does not reach a Win32 `python.exe`, which used to
-turn a whole e2e run into a silent all-skipped pass. `pytest_sessionfinish` in the root
-conftest guards that case: if e2e was requested and zero tests passed, the run is failed with an
-explanatory message instead of exiting green.
-
-## Continuous integration
-
-`.github/workflows/ci.yml` runs on every push to any branch, on pull requests, and on manual
-dispatch, with in-progress runs cancelled per ref. Three jobs:
-
-**`lint`** (10 min) — installs `black`, `isort` and `flake8` as standalone `uv` tools rather
-than syncing the project (the full dependency set needs `pysam`, which is irrelevant to
-formatting), then:
-
-```bash
-black --check app tests
-isort --check-only --profile black app tests
-flake8 --select=E9,F63,F7,F82 app tests      # blocking
-flake8 app tests || true                     # informational only
-```
-
-The blocking selector is deliberately narrow: syntax errors, broken asserts and undefined
-names. A full `flake8` still reports many style findings (mostly `E501`); it runs with
-`|| true` so a non-zero exit does not paint a red annotation on a green job.
-
-**`test`** (20 min) — `uv python install 3.12`, `uv sync --frozen --extra dev`, then
-`uv run pytest -q -m "not e2e"`. No service containers: the suite starts its own PostgreSQL
-with the runner's Docker (`tests/postgres.py`).
-
-**`e2e`** (90 min) — sets up Buildx (with `actions: write` so it can persist a `type=gha`
-cache), syncs dependencies, runs `./scripts/e2e-up.sh`, then
-`uv run pytest -m e2e -q --tb=short --zaropgx-e2e` against `http://127.0.0.1:18765`. On failure
-it dumps Compose logs and uploads them as the `e2e-logs` artifact; teardown runs `if: always()`.
-
-`mypy` is configured in `pyproject.toml` but is **not** part of the CI gate — the settings there
-are an adoption baseline, not a ratchet. The only other workflow in the repo is
-`render-diagrams.yml`, which re-renders `app/visualizations/**/*.mmd` and is unrelated to tests.
-
-## What is not covered
-
-Being explicit so nobody assumes otherwise:
-
-- **No coverage gate.** `pytest-cov` is installed; nothing fails on low coverage.
-- **No performance or load tests.** No timing or memory assertions exist anywhere.
-- **No PharmCAT / PyPGx / GATK service doubles.** The fast suite never starts those services;
-  anything that needs them is e2e or untested.
-- **A single e2e case.** `test_vcf_pipeline.py` covers one GRCh38 VCF upload through to a report
-  artifact, with GATK and OptiType switched off. BAM/CRAM/FASTQ paths have no automated
-  coverage.
-- **Almost no frontend tests.** The one exception is the render harness described above, which
-  covers the post-upload Workflow Details panel. There is no JS unit-test runner, no headless
-  browser, and no coverage of `app/static/js/**` or of any other template.
-- **The fast suite's database is built from `db/init` only.** It does not run the migrations
-  under `db/init/migrations/` (the 00 schema already embeds them); `tests/test_db_migrations.py`
-  covers the applier's logic, not a live upgrade.
-
-## Adding a test
-
-1. Put it in a flat `tests/test_<behaviour>.py` module. Name the module for the behaviour, not
-   the source file.
-2. Use the existing fixtures (`client`, `db_session`, `job_service`) rather than building your
-   own engine.
-3. Async tests need an explicit `@pytest.mark.asyncio` — `asyncio_mode` is `strict`.
-4. Anything that needs a live stack belongs under `tests/e2e/` and must carry
-   `@pytest.mark.e2e`, or it will run in the fast suite and in CI's `test` job.
-5. Only `asyncio` and `e2e` are registered markers. `--strict-markers` makes a new one an error,
-   so register it in `pyproject.toml` first.
-6. Run `black app tests` and `isort --profile black app tests` before pushing; CI checks both.
-
-## Next Steps
-
-- **Development Setup**: {doc}`development-setup`
-- **Architecture**: {doc}`architecture`
-- **API Reference**: {doc}`api-reference`
-- **Contributing**: {doc}`contributing`
+- **Lint**: black, isort and flake8 at the versions in {doc}`development-setup`.
+- **Tests**: the unit suite, with Node 22, Pango and the Liberation fonts installed.
+- **E2E (compose)**: the VCF lane. It keeps PharmCAT's reference in the Actions cache and
+  downloads it from Zenodo only when the cache is empty.
