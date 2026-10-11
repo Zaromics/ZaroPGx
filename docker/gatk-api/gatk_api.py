@@ -160,7 +160,7 @@ logger.info(f"Data directories ready: DATA_DIR={DATA_DIR}, TEMP_DIR={TEMP_DIR}")
 app = FastAPI(
     title="GATK API Wrapper",
     description="REST API wrapper around GATK for the ZaroPGx pipeline",
-    version="0.3.2"
+    version="0.4.0"
 )
 
 app.add_middleware(

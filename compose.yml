@@ -4,7 +4,7 @@ services:
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~
   app:
     # Default: pull the published image. Fallback: `docker compose build` builds locally.
-    image: zaromicsresearch/zaropgx-app:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-app:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: .
@@ -90,7 +90,7 @@ services:
 
   # Reference material downloader service
   genome-downloader:
-    image: zaromicsresearch/zaropgx-genome-downloader:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-genome-downloader:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: ./docker/genome-downloader
@@ -132,7 +132,7 @@ services:
 
   # PharmCAT Service Wrapper - combines JAR and API
   pharmcat:
-    image: zaromicsresearch/zaropgx-pharmcat:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-pharmcat:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: .
@@ -220,7 +220,7 @@ services:
 
   # GATK Service Wrapper
   gatk-api:
-    image: zaromicsresearch/zaropgx-gatk-api:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-gatk-api:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: .
@@ -274,7 +274,7 @@ services:
 
   # PyPGx Service Wrapper
   pypgx:
-    image: zaromicsresearch/zaropgx-pypgx:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-pypgx:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: .
@@ -323,7 +323,7 @@ services:
   # submits an HLA job itself. Do not prune this service on the strength of the
   # app's references alone.
   zarohla:
-    image: zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: .
@@ -362,7 +362,7 @@ services:
   # upstream's Nextflow pipeline -- that needs a mounted Docker socket, the
   # thing that got the hlatyping service below disabled.
   mtdna:
-    image: zaromicsresearch/zaropgx-mtdna:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-mtdna:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: .
@@ -464,7 +464,7 @@ services:
   # Nextflow executor orchestrating the ZaroPGx pipeline
   nextflow:
     # CORE pipeline orchestrator — the app submits every analysis here (USE_NEXTFLOW=True).
-    image: zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG:-0.3.2}
+    image: zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG:-0.4.0}
     platform: linux/amd64
     build:
       context: .
