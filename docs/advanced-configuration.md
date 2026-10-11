@@ -41,6 +41,10 @@ listed only to say so. `.env.example` is the install-time template; this page is
   `app/services/fhir_export_service.py` — the single parser for this name — which strips
   whitespace first, so a trailing space in `.env` does not disable export.
 
+- **KEEP_UPLOADS**: Keep each job's uploaded input after the job ends. Default: `false` -- an
+  upload is deleted when its job completes, fails or is cancelled (a 30x genome BAM is about
+  41 GB); the reports keep the results. Set `true` to keep them, e.g. while debugging a lane.
+
 *Application configs*
 - **LOG_LEVEL**: Logging level for the app. Default: `DEBUG`.
 - **SECRET_KEY**: Secret key for auth/token signing. Required; start-docker generates a per-install value. Empty or known placeholders refuse to start.
