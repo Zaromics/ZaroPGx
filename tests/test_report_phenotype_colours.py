@@ -2,11 +2,11 @@
 get one.
 
 "Decreased Function" (SLCO1B1, ABCG2) matched none of the badge rules, which knew
-only metabolizer words, and printed in the neutral grey of "Indeterminate". CPIC's
-data ranks it with Intermediate Metabolizer: both are "Abnormal/Priority" EHR
-results. So decreased function takes the intermediate amber, poor function the
-poor red, increased function the rapid blue. The three copies of the rule in the
-two templates are now one filter.
+only metabolizer words, and printed in the neutral grey of "Indeterminate"; so did
+G6PD Deficient, an HLA risk allele found, Malignant Hyperthermia Susceptible and
+increased hearing-loss risk. CPIC's data ranks every phenotype by EHR priority,
+and the badges follow it. The three copies of the rule in the two templates are
+now one filter.
 """
 
 from pathlib import Path
@@ -34,10 +34,22 @@ TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "reports" / "templates
         ("Increased Function", "increased-function"),
         ("Possibly Wild Type", "possibly-wild-type"),
         ("Likely Wild Type", "likely-wild-type"),
-        # Risk, not function: MT-RNR1's labels stay neutral.
-        ("increased risk of aminoglycoside-induced hearing loss", ""),
-        ("Indeterminate", ""),
+        # CPIC's other terms, by its EHR priority.
+        ("*57:01 positive", "poor-metabolizer"),
+        ("*58:01 negative", "normal-metabolizer"),
+        ("Normal", "normal-metabolizer"),  # G6PD
+        ("Variable", "intermediate-metabolizer"),
+        ("Deficient", "poor-metabolizer"),
+        ("Deficient with CNSHA", "poor-metabolizer"),
+        ("Malignant Hyperthermia Susceptible", "poor-metabolizer"),
+        ("increased risk of aminoglycoside-induced hearing loss", "poor-metabolizer"),
+        ("normal risk of aminoglycoside-induced hearing loss", "normal-metabolizer"),
+        # Neither normal nor abnormal: grey.
+        ("uncertain risk of aminoglycoside-induced hearing loss", ""),
         ("Uncertain Susceptibility", ""),
+        ("Indeterminate", ""),
+        ("ivacaftor non-responsive in CF patients", ""),
+        ("Normal Function or Poor Function", ""),
         (None, ""),
     ],
 )

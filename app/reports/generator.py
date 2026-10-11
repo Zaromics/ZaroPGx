@@ -1204,30 +1204,50 @@ env = Environment(
 # Which colour a phenotype's badge gets. No standards body assigns colours to
 # phenotypes (CPIC standardised the terms, Caudle et al. 2017, not their colours;
 # PharmCAT's report colours none). CPIC's own data does rank them: each phenotype
-# carries an EHR priority, "Abnormal/Priority" or "Normal/Routine". The badges follow
-# it: green for normal, amber for decreased function and intermediate metabolism
-# (both Priority), red for poor function and poor metabolism, blue for increased
-# function and rapid metabolism, which is not "better" (a CYP2D6 ultrarapid
-# metabolizer is at risk on codeine). Everything else keeps the neutral grey.
-# The label is always printed: the colour is never the only cue.
-_PHENOTYPE_BADGE_CLASSES = (
-    ("Likely Wild Type", "likely-wild-type"),
-    ("Possibly Wild Type", "possibly-wild-type"),
-    ("Normal", "normal-metabolizer"),
-    ("Poor", "poor-metabolizer"),
-    ("Intermediate", "intermediate-metabolizer"),
-    ("Decreased Function", "decreased-function"),
-    ("Ultrarapid", "rapid-metabolizer"),
-    ("Rapid", "rapid-metabolizer"),
-    ("Increased Function", "increased-function"),
+# carries an EHR priority, "Abnormal/Priority/High Risk" or "Normal/Routine/Low
+# Risk". The badges follow it, in four colours:
+#
+# - green, normal: Normal Metabolizer or Function, G6PD Normal, an HLA risk allele
+#   negative, normal risk of aminoglycoside-induced hearing loss;
+# - amber, Priority: intermediate metabolism, decreased function, G6PD Variable;
+# - red, Priority at its strongest: poor metabolism or function, G6PD Deficient, an
+#   HLA risk allele positive, Malignant Hyperthermia Susceptible, increased risk of
+#   aminoglycoside-induced hearing loss;
+# - blue: rapid metabolism and increased function, which is not "better" (a CYP2D6
+#   ultrarapid metabolizer is at risk on codeine).
+#
+# Uncertain and indeterminate results, an unresolved "A or B", and anything else
+# keep the neutral grey. The label is always printed: colour is never the only cue.
+# The CSS classes are colour tiers; their names predate the non-metabolizer terms.
+_PHENOTYPE_BADGE_CLASSES = tuple(
+    (re.compile(pattern, re.IGNORECASE), css_class)
+    for pattern, css_class in (
+        (r"\bLikely Wild Type\b", "likely-wild-type"),
+        (r"\bPossibly Wild Type\b", "possibly-wild-type"),
+        (r"\sor\s", ""),
+        (r"\buncertain\b|\bindeterminate\b", ""),
+        (r"\bpositive\b", "poor-metabolizer"),
+        (r"\bnegative\b", "normal-metabolizer"),
+        (r"\bsusceptible\b", "poor-metabolizer"),
+        (r"\bincreased risk\b", "poor-metabolizer"),
+        (r"\bnormal risk\b", "normal-metabolizer"),
+        (r"\bdeficient\b", "poor-metabolizer"),
+        (r"\bvariable\b", "intermediate-metabolizer"),
+        (r"\bnormal\b", "normal-metabolizer"),
+        (r"\bpoor\b", "poor-metabolizer"),
+        (r"\bintermediate\b", "intermediate-metabolizer"),
+        (r"\bdecreased function\b", "decreased-function"),
+        (r"\b(?:ultra)?rapid\b", "rapid-metabolizer"),
+        (r"\bincreased function\b", "increased-function"),
+    )
 )
 
 
 def phenotype_badge_class(phenotype) -> str:
     """The colour class of a phenotype badge, "" for the neutral default."""
     text = str(phenotype or "")
-    for word, css_class in _PHENOTYPE_BADGE_CLASSES:
-        if word in text:
+    for pattern, css_class in _PHENOTYPE_BADGE_CLASSES:
+        if pattern.search(text):
             return css_class
     return ""
 

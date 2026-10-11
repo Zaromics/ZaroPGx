@@ -232,19 +232,35 @@ function actionableNetwork(recommendations, diplotypes) {
 
 /**
  * A phenotype's colour in the charts, in the badges' tiers
- * (app/reports/generator.py, phenotype_badge_class): green normal, amber
- * intermediate metabolism and decreased function, red poor, blue rapid
- * metabolism and increased function, grey anything else.
+ * (app/reports/generator.py, phenotype_badge_class): green normal; amber
+ * intermediate metabolism, decreased function, G6PD Variable; red poor metabolism
+ * or function, G6PD Deficient, an HLA risk allele positive, malignant hyperthermia
+ * susceptible, increased hearing-loss risk; blue rapid metabolism and increased
+ * function; grey uncertain, indeterminate, unresolved and anything else.
  */
+const PHENOTYPE_COLOURS = [
+    [/\sor\s/i, '#95a5a6'],
+    [/\buncertain\b|\bindeterminate\b/i, '#95a5a6'],
+    [/\bpositive\b/i, '#e74c3c'],
+    [/\bnegative\b/i, '#2ecc71'],
+    [/\bsusceptible\b/i, '#e74c3c'],
+    [/\bincreased risk\b/i, '#e74c3c'],
+    [/\bnormal risk\b/i, '#2ecc71'],
+    [/\bdeficient\b/i, '#e74c3c'],
+    [/\bvariable\b/i, '#f39c12'],
+    [/\bnormal\b/i, '#2ecc71'],
+    [/\bpoor\b/i, '#e74c3c'],
+    [/\bintermediate\b|\bdecreased function\b/i, '#f39c12'],
+    [/\b(?:ultra)?rapid\b|\bincreased function\b/i, '#3498db'],
+];
+
 function geneColor(phenotype) {
-    const p = String(phenotype || '');
     // Several possibilities ("Normal Function or ... Poor Function", an unphased
     // call): no one colour fits, and matching words made SLCO1B1's hub red.
-    if (p.includes(' or ')) return '#95a5a6';
-    if (p.includes('Poor')) return '#e74c3c';
-    if (p.includes('Intermediate') || p.includes('Decreased Function')) return '#f39c12';
-    if (p.includes('Rapid') || p.includes('Ultrarapid') || p.includes('Increased Function')) return '#3498db';
-    if (p.includes('Normal')) return '#2ecc71';
+    const p = String(phenotype || '');
+    for (const [pattern, colour] of PHENOTYPE_COLOURS) {
+        if (pattern.test(p)) return colour;
+    }
     return '#95a5a6';
 }
 
