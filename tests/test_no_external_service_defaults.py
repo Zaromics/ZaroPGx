@@ -81,3 +81,23 @@ def test_service_url_defaults_stay_inside_the_stack():
     ), "service URLs that default to a host outside the stack:\n  " + "\n  ".join(
         outside
     )
+
+
+# Every service that reads alignments with htslib (samtools, pysam, bcftools).
+ALIGNMENT_READERS = ("gatk-api", "mtdna", "zarohla", "pypgx")
+
+
+@pytest.mark.parametrize("service", ALIGNMENT_READERS)
+def test_htslib_never_falls_back_to_ebi(service):
+    """With REF_PATH unset, htslib looks up a CRAM's reference sequences by MD5 on
+    EBI's server whenever the staged FASTA lacks one. A REF_PATH with no URL in it
+    keeps that lookup on the machine."""
+    compose = yaml.safe_load((ROOT / "compose.yml").read_text(encoding="utf-8"))
+    environment = dict(
+        entry.split("=", 1) for entry in compose["services"][service]["environment"]
+    )
+    ref_path = environment.get("REF_PATH", "")
+    assert ref_path, f"{service}: REF_PATH unset, so htslib defaults to EBI"
+    for entry in ref_path.split(":"):
+        assert not re.match(r"(?i)(https?|ftp|url)$", entry), ref_path
+        assert "://" not in entry and "ebi.ac.uk" not in entry, ref_path
