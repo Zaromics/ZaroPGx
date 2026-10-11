@@ -404,6 +404,122 @@ def index_genome(fasta_path, genome_name):
         save_status()
         return False
 
+
+# Everything the downloader stages, in order.
+GENOMES = [
+    {
+        "name": "hg19",
+        "url": "http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz",
+        "gz_path": "/reference/hg19/ucsc.hg19.fasta.gz",
+        "fasta_path": "/reference/hg19/ucsc.hg19.fasta"
+    },
+    {
+        "name": "hg38",
+        "url": "http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz",
+        "gz_path": "/reference/hg38/Homo_sapiens_assembly38.fasta.gz",
+        "fasta_path": "/reference/hg38/Homo_sapiens_assembly38.fasta"
+    },
+    {
+        "name": "grch37",
+        # https, not ftp: requests has no FTP adapter, so the ftp:// URL failed on
+        # every install. EBI serves the same tree over HTTPS.
+        "url": "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/human_g1k_v37.fasta.gz",
+        "gz_path": "/reference/grch37/human_g1k_v37.fasta.gz",
+        "fasta_path": "/reference/grch37/human_g1k_v37.fasta"
+    },
+    {
+        "name": "pharmcat_grch38",
+        "url": "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar",
+        "gz_path": "/reference/pharmcat/GRCh38_reference_fasta.tar",
+        # The file the tarball actually contains. It ships its own .fai/.gzi, so
+        # the ".fai exists" skip check below works and no indexing step runs.
+        # (This used to name a path the tarball never creates, so indexing it
+        # failed on every host and .download_complete was never written.)
+        "fasta_path": "/reference/pharmcat/reference.fna.bgz",
+        "is_tar": True
+    },
+    {
+        # PharmCAT's own position list. Consumed by gatk-api's /gvcf-to-vcf as the
+        # interval list its --include-non-variant-sites pass is emitted over, so a
+        # gVCF upload's reference genotypes land at exactly the positions PharmCAT
+        # genotypes -- see PHARMCAT_POSITIONS_PATH in docker/gatk-api/gatk_api.py,
+        # which points at exactly this path.
+        #
+        # PINNED TO THE PHARMCAT VERSION THE STACK RUNS, not to the `development`
+        # branch it used to fetch. This file is the matcher's definition of which
+        # positions matter and it changes between releases: fetching `development`
+        # against a pinned 3.4.0 image means the reference calls are emitted at one
+        # release's positions while PharmCAT genotypes another's, and the
+        # difference surfaces as no-calls nobody ordered rather than as an error.
+        # The release asset carries the version in its own filename
+        # (pharmcat_positions_3.4.0.vcf), which is why the URL and the destination
+        # differ here where they match everywhere else in this list.
+        #
+        # RE-STAGE THIS ON EVERY PHARMCAT BUMP. Bumping PHARMCAT_VERSION alone is
+        # not enough on an existing deployment: download_genomes() is short-
+        # circuited by /reference/.download_complete (see schedule_download), so a
+        # reference tree populated before this entry existed -- or before the bump
+        # -- keeps whatever it already has, or nothing. Delete
+        # /reference/.download_complete to force a re-fetch, or copy the file out
+        # of the pgx_pharmcat image, where it lives at
+        # /pharmcat/pharmcat_positions.vcf.
+        "name": "pharmcat_positions",
+        "url": (
+            f"https://github.com/PharmGKB/PharmCAT/releases/download/"
+            f"v{PHARMCAT_VERSION}/pharmcat_positions_{PHARMCAT_VERSION}.vcf"
+        ),
+        "gz_path": "/reference/pharmcat/pharmcat_positions.vcf",
+        "fasta_path": "/reference/pharmcat/pharmcat_positions.vcf",
+        "is_vcf": True
+    },
+    {
+        "name": "pharmcat_regions",
+        "url": "https://github.com/PharmGKB/PharmCAT/raw/development/pharmcat_regions.bed",
+        "gz_path": "/reference/pharmcat/pharmcat_regions.bed",
+        "fasta_path": "/reference/pharmcat/pharmcat_regions.bed",
+        "is_bed": True
+    },
+    {
+        # UCSC hg19 -> hg38 liftover chain, consumed by gatk-api's /liftover-vcf
+        # (Picard LiftoverVcf). Stays gzipped: htsjdk reads .gz chains directly,
+        # and gatk_api.py's LIFTOVER_CHAIN_PATHS points at exactly this path. No
+        # extraction and no indexing, so it is flagged is_chain and treated like
+        # the VCF/BED entries above: downloaded straight to its final path.
+        "name": "hg19_to_hg38_chain",
+        "url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+        "gz_path": "/reference/chain/hg19ToHg38.over.chain.gz",
+        "fasta_path": "/reference/chain/hg19ToHg38.over.chain.gz",
+        "is_chain": True
+    }
+]
+
+
+def discard_archive(genome):
+    """Remove a genome's downloaded archive once the FASTA it held is extracted and
+    indexed: the .fai is what the loop below takes to mean finished. The archives
+    sat beside their FASTAs for good, 3.7 GB (hg38 984 MB, hg19 949 MB, grch37
+    892 MB, PharmCAT's tarball 883 MB) that nothing reads. VCF, BED and chain files
+    download straight to their final path and have no archive."""
+    if genome.get("is_vcf") or genome.get("is_bed") or genome.get("is_chain"):
+        return
+    archive = genome["gz_path"]
+    if os.path.exists(archive) and os.path.exists(genome["fasta_path"] + ".fai"):
+        os.remove(archive)
+        print(f"Removed {archive}: {genome['fasta_path']} is extracted and indexed")
+
+
+def sweep_archives(complete_flag='/reference/.download_complete'):
+    """At startup, remove the archives an install staged before they were removed
+    still holds. Only once every genome is staged: a restart during an extraction
+    leaves a FASTA and .fai that look finished (PharmCAT's tarball unpacks in
+    place), and download_genomes() discards those and extracts again, from the
+    archive."""
+    if not os.path.exists(complete_flag):
+        return
+    for genome in GENOMES:
+        discard_archive(genome)
+
+
 def download_genomes():
     """Main function to download and process all genomes"""
     global download_status
@@ -413,98 +529,10 @@ def download_genomes():
     # Create required directories
     for dir_name in ["hg19", "hg38", "grch37", "grch38", "pharmcat", "chain"]:
         os.makedirs(f"/reference/{dir_name}", exist_ok=True)
-    
-    # Start downloads
-    genomes = [
-        {
-            "name": "hg19",
-            "url": "http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz",
-            "gz_path": "/reference/hg19/ucsc.hg19.fasta.gz",
-            "fasta_path": "/reference/hg19/ucsc.hg19.fasta"
-        },
-        {
-            "name": "hg38",
-            "url": "http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz",
-            "gz_path": "/reference/hg38/Homo_sapiens_assembly38.fasta.gz",
-            "fasta_path": "/reference/hg38/Homo_sapiens_assembly38.fasta"
-        },
-        {
-            "name": "grch37",
-            # https, not ftp: requests has no FTP adapter, so the ftp:// URL failed on
-            # every install. EBI serves the same tree over HTTPS.
-            "url": "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/human_g1k_v37.fasta.gz",
-            "gz_path": "/reference/grch37/human_g1k_v37.fasta.gz",
-            "fasta_path": "/reference/grch37/human_g1k_v37.fasta"
-        },
-        {
-            "name": "pharmcat_grch38",
-            "url": "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar",
-            "gz_path": "/reference/pharmcat/GRCh38_reference_fasta.tar",
-            # The file the tarball actually contains. It ships its own .fai/.gzi, so
-            # the ".fai exists" skip check below works and no indexing step runs.
-            # (This used to name a path the tarball never creates, so indexing it
-            # failed on every host and .download_complete was never written.)
-            "fasta_path": "/reference/pharmcat/reference.fna.bgz",
-            "is_tar": True
-        },
-        {
-            # PharmCAT's own position list. Consumed by gatk-api's /gvcf-to-vcf as the
-            # interval list its --include-non-variant-sites pass is emitted over, so a
-            # gVCF upload's reference genotypes land at exactly the positions PharmCAT
-            # genotypes -- see PHARMCAT_POSITIONS_PATH in docker/gatk-api/gatk_api.py,
-            # which points at exactly this path.
-            #
-            # PINNED TO THE PHARMCAT VERSION THE STACK RUNS, not to the `development`
-            # branch it used to fetch. This file is the matcher's definition of which
-            # positions matter and it changes between releases: fetching `development`
-            # against a pinned 3.4.0 image means the reference calls are emitted at one
-            # release's positions while PharmCAT genotypes another's, and the
-            # difference surfaces as no-calls nobody ordered rather than as an error.
-            # The release asset carries the version in its own filename
-            # (pharmcat_positions_3.4.0.vcf), which is why the URL and the destination
-            # differ here where they match everywhere else in this list.
-            #
-            # RE-STAGE THIS ON EVERY PHARMCAT BUMP. Bumping PHARMCAT_VERSION alone is
-            # not enough on an existing deployment: download_genomes() is short-
-            # circuited by /reference/.download_complete (see schedule_download), so a
-            # reference tree populated before this entry existed -- or before the bump
-            # -- keeps whatever it already has, or nothing. Delete
-            # /reference/.download_complete to force a re-fetch, or copy the file out
-            # of the pgx_pharmcat image, where it lives at
-            # /pharmcat/pharmcat_positions.vcf.
-            "name": "pharmcat_positions",
-            "url": (
-                f"https://github.com/PharmGKB/PharmCAT/releases/download/"
-                f"v{PHARMCAT_VERSION}/pharmcat_positions_{PHARMCAT_VERSION}.vcf"
-            ),
-            "gz_path": "/reference/pharmcat/pharmcat_positions.vcf",
-            "fasta_path": "/reference/pharmcat/pharmcat_positions.vcf",
-            "is_vcf": True
-        },
-        {
-            "name": "pharmcat_regions",
-            "url": "https://github.com/PharmGKB/PharmCAT/raw/development/pharmcat_regions.bed",
-            "gz_path": "/reference/pharmcat/pharmcat_regions.bed",
-            "fasta_path": "/reference/pharmcat/pharmcat_regions.bed",
-            "is_bed": True
-        },
-        {
-            # UCSC hg19 -> hg38 liftover chain, consumed by gatk-api's /liftover-vcf
-            # (Picard LiftoverVcf). Stays gzipped: htsjdk reads .gz chains directly,
-            # and gatk_api.py's LIFTOVER_CHAIN_PATHS points at exactly this path. No
-            # extraction and no indexing, so it is flagged is_chain and treated like
-            # the VCF/BED entries above: downloaded straight to its final path.
-            "name": "hg19_to_hg38_chain",
-            "url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
-            "gz_path": "/reference/chain/hg19ToHg38.over.chain.gz",
-            "fasta_path": "/reference/chain/hg19ToHg38.over.chain.gz",
-            "is_chain": True
-        }
-    ]
-    
+
     success = True
     
-    for genome in genomes:
+    for genome in GENOMES:
         discard_interrupted_output(genome, download_status["genomes"][genome["name"]].get("status"))
 
         # Status is reloaded from disk at startup, so a previous run's error would
@@ -513,6 +541,7 @@ def download_genomes():
 
         # Skip if already completed
         if os.path.exists(genome["fasta_path"] + ".fai"):
+            discard_archive(genome)
             download_status["genomes"][genome["name"]]["status"] = "ready"
             download_status["genomes"][genome["name"]]["progress"] = 100
             save_status()
@@ -550,6 +579,7 @@ def download_genomes():
         # Index
         if genome.get("is_tar"):
             # The PharmCAT tarball ships its own .fai/.gzi alongside the bgzipped FASTA.
+            discard_archive(genome)
             download_status["genomes"][genome["name"]]["status"] = "ready"
             download_status["genomes"][genome["name"]]["progress"] = 100
             save_status()
@@ -565,6 +595,7 @@ def download_genomes():
         elif not index_genome(genome["fasta_path"], genome["name"]):
             success = False
             continue
+        discard_archive(genome)
     
     # Create symlink for GRCh38
     if success:
@@ -666,6 +697,8 @@ def start_download():
 if __name__ == "__main__":
     # Load existing status if available
     load_saved_status()
+
+    sweep_archives()
     
     # Schedule downloads to start after the server has fully initialized
     if os.environ.get('DOWNLOAD_ON_STARTUP', 'true').lower() == 'true':
