@@ -196,7 +196,8 @@ def render_with_kroki(
     Args:
         mermaid_source: Mermaid DSL string
         fmt: output format ('svg', 'png', or 'pdf')
-        kroki_url: base URL of Kroki service; defaults to env KROKI_URL or https://kroki.io
+        kroki_url: base URL of Kroki service; defaults to env KROKI_URL, then the local
+            http://localhost:8001 (never the public kroki.io: the diagram describes a run)
 
     Returns:
         bytes of rendered image
