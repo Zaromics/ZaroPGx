@@ -1236,24 +1236,24 @@
             </div>
 
             <div id="export" class="tab-content">
-                <h3>Export to Electronic Health Record</h3>
-                <p>FHIR export functionality is currently under construction. You can access the HAPI FHIR server directly for testing and development purposes.</p>
-
+                <h3>Export</h3>
+                {% if downloads %}
+                <p>This analysis's files, for other programs or records. The FHIR R4 bundle holds
+                   the genotype results in the HL7 format health record systems import; nothing has
+                   been sent to one.</p>
                 <div class="card">
-                    <div style="text-align: center; padding: 20px;">
-                        <h4 style="margin-bottom: 15px; color: var(--warning-color);">🚧 Under Construction 🚧</h4>
-                        <p style="margin-bottom: 20px;">The FHIR export feature is being developed. For now, you can access the HAPI FHIR server directly.</p>
-                        <a href="http://localhost:8090"
-                           target="_blank"
-                           class="btn btn-primary"
-                           style="padding: 12px 24px; font-size: 16px;">
-                            Open HAPI FHIR Server
-                        </a>
-                        <p style="margin-top: 15px; font-size: 0.9em; color: #666;">
-                            HAPI FHIR Server is available at: <code>http://localhost:8090</code>
-                        </p>
-                    </div>
+                    <table>
+                        <thead><tr><th>File</th><th>Format</th></tr></thead>
+                        <tbody>
+                        {% for d in downloads %}
+                            <tr><td><a href="{{ d.href }}" download>{{ d.label }}</a></td><td>{{ d.format }}</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
+                {% else %}
+                <p>No export files were written for this analysis.</p>
+                {% endif %}
             </div>
 
             <div id="header" class="tab-content">
