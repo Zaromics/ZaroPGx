@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.report_links import assert_report_links_resolve
+
 TEST_DATA = Path(__file__).resolve().parents[2] / "test_data"
 TERMINAL_OK = {"completed"}
 TERMINAL_BAD = {"failed", "cancelled", "error"}
@@ -81,3 +83,4 @@ def test_alignment_upload_completes_with_report_artifact(
     ), f"completed but reports empty: {payload}"
     url_values = [v for v in reports.values() if isinstance(v, str) and v.strip()]
     assert url_values, f"completed but no report URL/path strings: {payload}"
+    assert_report_links_resolve(e2e_client, reports)
