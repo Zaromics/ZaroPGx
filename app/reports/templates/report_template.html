@@ -416,6 +416,8 @@
            runs on into the page margin, to 8mm from the paper's edge, before it
            wraps. The outlined wild-type pills have a 2px border; the filled ones
            a transparent one, for the same height. */
+        /* "Not called" sits in the same line box, so an uncalled row is as tall as
+           a row with a one-line pill. */
         .exec-summary-phenotype .phenotype-line {
             line-height: calc(1.15em + 12px);
         }
@@ -1181,7 +1183,7 @@
                         </div></td>
                         {% else %}
                         <td class="exec-summary-diplotype">&ndash;</td>
-                        <td class="exec-summary-phenotype"><span class="not-called">Not called</span></td>
+                        <td class="exec-summary-phenotype"><div class="phenotype-line"><span class="not-called">Not called</span></div></td>
                         {% endif %}
                     </tr>
                     {% endfor %}

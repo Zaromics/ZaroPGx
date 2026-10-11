@@ -434,3 +434,36 @@ def test_the_summary_fills_its_page_to_the_foot(monkeypatch, tmp_path, case):
         section.border_box_y() + section.border_height()
     )
     assert 0 <= gap < 2, gap
+
+
+def test_an_uncalled_row_is_as_tall_as_a_called_one(monkeypatch, tmp_path):
+    """ "Not called" had a plain line box, shorter than a pill's: the grey rows of a
+    sparse summary were thinner than the rest."""
+    data = json.loads(UNPHASED_JSON.read_text(encoding="utf-8"))
+    page = _report_html(
+        monkeypatch, tmp_path, data, UNPHASED_TSV.read_text(encoding="utf-8")
+    )
+    assert 'class="exec-summary-uncalled"' in page
+    document, _ = generator_module.render_pdf_document(page)
+    (index,) = section_pages(document, "exec-summary")
+    heights = {}
+
+    def walk(box):
+        element = getattr(box, "element", None)
+        if box.__class__.__name__ == "TableRowBox" and (
+            element.get("id") or ""
+        ).startswith("summary-"):
+            heights[element.get("id")] = (
+                round(box.height, 1),
+                "exec-summary-uncalled" in (element.get("class") or ""),
+            )
+            return
+        for child in getattr(box, "children", None) or []:
+            walk(child)
+
+    walk(document.pages[index]._page_box)
+    uncalled = [h for h, grey in heights.values() if grey]
+    called = [h for h, grey in heights.values() if not grey]
+    assert uncalled and called, heights
+    # The shortest called row is a one-line pill's; no grey row is shorter.
+    assert min(uncalled) >= min(called) - 0.5, heights
