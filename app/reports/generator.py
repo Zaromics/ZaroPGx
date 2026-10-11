@@ -55,8 +55,8 @@ from app.pharmcat.report_json import (
 )
 from app.reports.evidence import classify_evidence
 from app.reports.pharmcat_tsv_parser import (
+    executive_summary_call,
     parse_pharmcat_tsv,
-    prefer_source_over_lookup,
 )
 from app.reports.provenance import (
     CALLED_BY_NO_CALL,
@@ -2424,17 +2424,9 @@ def generate_report(
                 except Exception as e:
                     logger.debug("Swallowed exception: %s", e, exc_info=True)
                 for row in diplos:
-                    # Get phenotype, applying wild type logic if needed
-                    # Prefer source; fallback to recommendation lookup
-                    rec_lookup_dip = (row.get("rec_lookup_diplotype") or "").strip()
-                    source_dip = (row.get("diplotype") or "").strip()
-                    diplotype_str = prefer_source_over_lookup(
-                        source_dip, rec_lookup_dip
-                    )
-                    phenotype_str = prefer_source_over_lookup(
-                        str(row.get("phenotype") or ""),
-                        str(row.get("rec_lookup_phenotype") or ""),
-                    )
+                    # Source columns, or the lookup call when the source is not
+                    # one diplotype (unphased DPYD); then wild type logic.
+                    diplotype_str, phenotype_str, activity = executive_summary_call(row)
                     # Assign wild type phenotype if conditions are met
                     # (file_type already determined above)
                     wild_type_label = wild_type_phenotype(
@@ -2451,11 +2443,7 @@ def generate_report(
                             "gene": row.get("gene", ""),
                             "rec_lookup_diplotype": diplotype_str,  # Use fallback value
                             "rec_lookup_phenotype": phenotype_str,
-                            "rec_lookup_activity_score": (
-                                row.get("activity_score")
-                                if row.get("activity_score") not in (None, "")
-                                else row.get("rec_lookup_activity_score")
-                            ),
+                            "rec_lookup_activity_score": activity,
                         }
                     )
     except Exception as _e_exec:

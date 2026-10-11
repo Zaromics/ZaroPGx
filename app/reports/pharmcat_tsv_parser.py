@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+import re
 from typing import Any, Dict, List, Tuple
 
 
@@ -10,6 +11,40 @@ def prefer_source_over_lookup(source: str | None, lookup: str | None) -> str:
     if s:
         return s
     return (lookup or "").strip()
+
+
+def executive_summary_call(row: dict) -> Tuple[str, str, Any]:
+    """(diplotype, phenotype, activity score) the Executive Summary shows for a row.
+
+    Source columns first (440), field by field -- except when the Source
+    Diplotype is not one diplotype. Unphased DPYD lists the alleles PharmCAT found
+    ("c.1601G>A (*4) AND c.1627A>G (*5)", Phenotype blank) and the Recommendation
+    Lookup columns carry the call PharmCAT built from them ("c.1601G>A (*4)/
+    c.1627A>G (*5)", Normal Metabolizer, 2.0); mixing the two showed the allele
+    list with "Unknown" and a 2.0 score. There the whole lookup call is shown.
+    (See app.pharmcat.report_json.recommendation_call_for_display.)
+    """
+    source = (row.get("diplotype") or "").strip()
+    lookup = (row.get("rec_lookup_diplotype") or "").strip()
+    several = re.search(r"\s(?:AND|OR)\s", source) is not None
+    if several and lookup and not lookup.lower().startswith("unknown"):
+        return (
+            lookup,
+            str(row.get("rec_lookup_phenotype") or "").strip() or "Unknown",
+            row.get("rec_lookup_activity_score"),
+        )
+    activity = row.get("activity_score")
+    return (
+        prefer_source_over_lookup(source, lookup),
+        prefer_source_over_lookup(
+            str(row.get("phenotype") or ""), str(row.get("rec_lookup_phenotype") or "")
+        ),
+        (
+            activity
+            if activity not in (None, "")
+            else row.get("rec_lookup_activity_score")
+        ),
+    )
 
 
 def tsv_entry_to_source_diplotype(entry: dict) -> dict:

@@ -114,6 +114,44 @@ def iter_gene_blocks(
             yield GeneBlock(gene_symbol, gene_data, source, gene_data.get("callSource"))
 
 
+def recommendation_call_for_display(
+    source_count: int, recommendation: Any
+) -> Optional[Mapping[str, Any]]:
+    """The recommendation diplotype to show in place of the source call, or None.
+
+    The report shows PharmCAT's ``sourceDiplotypes`` call (440), except when it is
+    not one diplotype. On unphased DPYD PharmCAT lists each allele it found as its
+    own "Indeterminate" entry, then combines them into the single
+    ``recommendationDiplotypes`` entry its dosing guidance uses: on 30x NA12878,
+    c.1601G>A (*4) and c.1627A>G (*5) became "c.1601G>A (*4)/c.1627A>G (*5)", a
+    Normal Metabolizer with activity score 2.0. Showing the first source entry put
+    "c.1601G>A (*4), Indeterminate" in the gene table, above Normal Metabolizer
+    guidance in the same report. A blank or Unknown recommendation is not a call.
+    """
+    if source_count == 1 or not isinstance(recommendation, (list, tuple)):
+        return None
+    if len(recommendation) != 1 or not isinstance(recommendation[0], Mapping):
+        return None
+    label = str(recommendation[0].get("label") or "").strip()
+    if not label or label.lower().startswith("unknown"):
+        return None
+    return recommendation[0]
+
+
+def extract_display_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """The diplotype/phenotype/activity the report shows for a gene block: the
+    source call, or the recommendation call when the source is not one diplotype
+    (``recommendation_call_for_display``)."""
+    source = gene_data.get("sourceDiplotypes")
+    recommendation = recommendation_call_for_display(
+        len(source) if isinstance(source, list) else 0,
+        gene_data.get("recommendationDiplotypes"),
+    )
+    if recommendation is None:
+        return extract_source_call(gene_data)
+    return extract_source_call({"sourceDiplotypes": [recommendation]})
+
+
 def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
     """Pull the primary display diplotype/phenotype/activity from a gene block.
 
