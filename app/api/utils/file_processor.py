@@ -104,12 +104,13 @@ GVCF_HEADER_MARKER = "##GVCFBlock"
 # check into an unbounded read.
 #
 # The line cap was 2000, justified as "far above any real VCF header (a few hundred
-# lines)". That is false for the build this pipeline actually runs on:
-# Homo_sapiens_assembly38.fasta - the GRCh38 full analysis set that genome-downloader
-# stages and that /gvcf-to-vcf genotypes against - has 3,366 contigs, so a VCF called
-# against it carries ~3,400 `##contig` records before the first data row. At 2000 the
-# scans below ran out of budget inside the contig block, which is not a corner case,
-# it is the ordinary GRCh38 file. 20000 clears that with an order of magnitude spare
+# lines)". That is false for ordinary GRCh38 files: the analysis sets most
+# sequencing providers align to (1000 Genomes' and Broad's, with decoys and HLA) have
+# 3,366 contigs, so a VCF called against one carries ~3,400 `##contig` records before
+# the first data row. (The Homo_sapiens_assembly38.fasta genome-downloader stages is
+# UCSC's hg38 under Broad's filename, 455 contigs.) At 2000 the scans below ran out of
+# budget inside the contig block, which is not a corner case, it is the ordinary
+# GRCh38 file. 20000 clears that with an order of magnitude spare
 # and still cannot be turned into an unbounded read.
 GVCF_HEADER_SCAN_LINES = 20000
 GVCF_HEADER_MAX_LINE_BYTES = 64 * 1024

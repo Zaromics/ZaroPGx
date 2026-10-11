@@ -33,12 +33,16 @@ download_status = {
         "pharmcat_grch38": {"progress": 0, "size_mb": 150, "status": "pending"},
         "pharmcat_positions": {"progress": 0, "size_mb": 5, "status": "pending"},
         "pharmcat_regions": {"progress": 0, "size_mb": 1, "status": "pending"},
-        "hg19_to_hg38_chain": {"progress": 0, "size_mb": 1, "status": "pending"}
+        "hg19_to_hg38_chain": {"progress": 0, "size_mb": 1, "status": "pending"},
+        "ref_cache_ucsc_hg38": {"progress": 0, "size_mb": 0, "status": "pending"},
+        "ref_cache_1kg_analysis_set": {"progress": 0, "size_mb": 3113, "status": "pending"}
     },
     "overall_progress": 0
 }
 
 STATUS_FILE = '/reference/download_status.json'
+# Written once every genome above is staged; the reference cache keeps its own markers.
+DOWNLOAD_COMPLETE_FLAG = '/reference/.download_complete'
 
 def save_status():
     """Save the current status to a file"""
@@ -110,6 +114,150 @@ def discard_interrupted_output(genome, prior_status):
         if os.path.exists(path):
             print(f"Discarding {path}: the previous run stopped while {prior_status}")
             os.remove(path)
+
+REF_CACHE_DIR = "/reference/ref_cache"
+# Off where no CRAM is decoded and the 3.2 GB download and 5.3 GB cache would only
+# cost disk: compose.e2e.yml (CI runs the VCF lane alone). Without the cache a CRAM
+# still decodes against the staged FASTA when its MD5s match it.
+REF_CACHE_ENABLED = os.environ.get("REF_CACHE_ENABLED", "true").lower() == "true"
+
+# The GRCh38 builds whose sequences go into the reference cache, so a CRAM written
+# against any of them decodes exactly. Measured against 30x NA12878's CRAM and the
+# builds themselves (2026-10): the 1000 Genomes analysis set with decoys and HLA
+# holds all 3,366 sequences that CRAM names; UCSC hg38, staged above for analysis,
+# adds 18 (the chromosomes where it keeps IUPAC codes the analysis sets write as N)
+# and shares its other 437; NCBI's no-ALT analysis set adds none of its 195, so it
+# is not fetched. 5.3 GB in all. The 1000 Genomes FASTA is only published
+# uncompressed; it is removed once its sequences are cached.
+REF_CACHE_SOURCES = [
+    {
+        "name": "ref_cache_ucsc_hg38",
+        "fasta_path": "/reference/hg38/Homo_sapiens_assembly38.fasta",
+    },
+    {
+        "name": "ref_cache_1kg_analysis_set",
+        "url": (
+            "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/"
+            "GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa"
+        ),
+        "fasta_path": "/reference/ref_cache_sources/GRCh38_full_analysis_set_plus_decoy_hla.fa",
+        "remove_after": True,
+    },
+]
+
+
+def ref_cache_marker(source):
+    """Written once a source's sequences are all in the cache."""
+    return os.path.join(REF_CACHE_DIR, f".{source['name']}.done")
+
+
+def ref_cache_pending():
+    return [src for src in REF_CACHE_SOURCES if not os.path.exists(ref_cache_marker(src))]
+
+
+def populate_reference_cache():
+    """Stage every REF_CACHE_SOURCES build into the cache; True when all are in.
+
+    Runs on installs whose genomes finished before the cache existed: it has its
+    own per-source markers rather than /reference/.download_complete.
+    """
+    success = True
+    for src in REF_CACHE_SOURCES:
+        entry = download_status["genomes"][src["name"]]
+        entry.pop("error", None)
+        if os.path.exists(ref_cache_marker(src)):
+            if src.get("remove_after") and os.path.exists(src["fasta_path"]):
+                # The marker is written first; a stop between the two left it.
+                os.remove(src["fasta_path"])
+            entry.update(status="ready", progress=100)
+            save_status()
+            continue
+        fasta = src["fasta_path"]
+        if src.get("url") and not os.path.exists(fasta):
+            os.makedirs(os.path.dirname(fasta), exist_ok=True)
+            if not download_file(src["url"], fasta, src["name"]):
+                success = False
+                continue
+        if not os.path.exists(fasta):
+            entry.update(status="error", error=f"{fasta} is not staged")
+            save_status()
+            success = False
+            continue
+        try:
+            entry["status"] = "caching"
+            save_status()
+            names = populate_ref_cache(fasta, REF_CACHE_DIR)
+            with open(ref_cache_marker(src), "w") as fh:
+                fh.write(f"{len(names)} sequences from {fasta}\n")
+            if src.get("remove_after"):
+                os.remove(fasta)
+            entry.update(status="ready", progress=100)
+            print(f"Reference cache: {len(names)} sequences from {fasta}")
+        except Exception as e:
+            print(f"Error caching {fasta}: {e}")
+            entry.update(status="error", error=str(e))
+            success = False
+        save_status()
+    return success
+
+
+def ref_cache_path(cache_dir, md5):
+    """htslib's REF_PATH layout, %2s/%2s/%s (see compose.yml). Each %Ns consumes
+    the next N characters of the MD5 and %s takes what is left, so abcdef... lives
+    at ab/cd/ef...: the file is named by the last 28, not the whole MD5."""
+    return os.path.join(cache_dir, md5[:2], md5[2:4], md5[4:])
+
+
+def populate_ref_cache(fasta_path, cache_dir):
+    """Write every sequence of a FASTA into an MD5-keyed reference cache.
+
+    The cache is what htslib reads a CRAM through: a CRAM records each reference
+    sequence's MD5 (the @SQ M5 tag) and stores only differences from it, so it can
+    be decoded with the exact sequence it was written against and no other. The
+    format is samtools' seq_cache_populate.pl: one file per sequence, named by the
+    MD5 of the sequence uppercased with whitespace removed, holding exactly those
+    bytes. Keyed by content, the cache holds several GRCh38 builds at once with
+    shared sequences stored once.
+
+    Each file is written to a .part name and renamed, so an interrupted run leaves
+    no partial sequence under a real MD5. Returns {name: md5} for the FASTA.
+    """
+    import hashlib
+
+    written = {}
+
+    def finish(name, part, digest):
+        md5 = digest.hexdigest()
+        dest = ref_cache_path(cache_dir, md5)
+        if os.path.exists(dest):
+            os.remove(part)
+        else:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            os.replace(part, dest)
+        written[name] = md5
+
+    os.makedirs(cache_dir, exist_ok=True)
+    part = os.path.join(cache_dir, ".populate.part")
+    name, out, digest = None, None, None
+    with open(fasta_path, "rb") as fasta:
+        for line in fasta:
+            if line.startswith(b">"):
+                if out is not None:
+                    out.close()
+                    finish(name, part, digest)
+                name = line[1:].split()[0].decode("ascii", "replace") if line[1:].split() else ""
+                out, digest = open(part, "wb"), hashlib.md5()
+                continue
+            if out is None:
+                continue
+            seq = b"".join(line.split()).upper()
+            out.write(seq)
+            digest.update(seq)
+    if out is not None:
+        out.close()
+        finish(name, part, digest)
+    return written
+
 
 def calculate_overall_progress():
     """Calculate and update overall progress"""
@@ -429,16 +577,26 @@ def download_genomes():
         except Exception as e:
             print(f"Error creating symlink: {str(e)}")
     
-    # Update status
-    download_status["in_progress"] = False
-    download_status["completed"] = success
-    
-    # Create a flag file to indicate completion
+    finish_download(success)
+
+
+def finish_download(success):
+    """Mark the genomes staged, then build the CRAM reference cache.
+
+    The cache needs UCSC hg38 above; it keeps its own markers, so
+    .download_complete stays about the genomes alone. The run is in progress until
+    the cache is built too: it is a 3.2 GB download of its own.
+    """
     if success:
-        with open('/reference/.download_complete', 'w') as f:
+        with open(DOWNLOAD_COMPLETE_FLAG, 'w') as f:
             f.write('Completed')
-    
-    save_status()
+    try:
+        if success and REF_CACHE_ENABLED:
+            success = populate_reference_cache()
+    finally:
+        download_status["in_progress"] = False
+        download_status["completed"] = success
+        save_status()
 
 def schedule_download(delay_seconds=5):
     """Schedule download to start after a delay"""
@@ -449,7 +607,22 @@ def schedule_download(delay_seconds=5):
         download_genomes()
     
     # Check if downloads were already completed
-    if os.path.exists('/reference/.download_complete'):
+    if os.path.exists(DOWNLOAD_COMPLETE_FLAG):
+        if REF_CACHE_ENABLED and ref_cache_pending():
+            # Genomes staged before the reference cache existed: add just the cache.
+            print("Reference genomes already downloaded; building the CRAM reference cache.")
+
+            def cache_only():
+                download_status["in_progress"] = True
+                save_status()
+                try:
+                    download_status["completed"] = populate_reference_cache()
+                finally:
+                    download_status["in_progress"] = False
+                    save_status()
+
+            threading.Thread(target=cache_only).start()
+            return
         print("Reference genomes already downloaded.")
         download_status["completed"] = True
         return

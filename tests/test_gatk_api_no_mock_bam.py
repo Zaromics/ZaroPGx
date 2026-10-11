@@ -1524,7 +1524,8 @@ def test_record_count_is_reported_and_read_from_the_index(
     assert resp.status_code == 200, resp.text
     assert resp.json()["records"] == 110
     # idxstats answers from the .bai, so counting must not stream the BAM.
-    counts = samtools.ran("samtools", "idxstats")
+    # (The input CRAM's idxstats, for the reference check, is not a count.)
+    counts = [c for c in samtools.ran("samtools", "idxstats") if c[-1].endswith(".bam")]
     assert len(counts) == 1
     assert samtools.ran("samtools", "view", "-c") == []
 
@@ -1645,7 +1646,10 @@ def test_output_is_indexed_whether_or_not_it_was_sorted(
         resp = _post_cram(client, samtools, header)
         assert resp.status_code == 200, resp.text
 
-        indexes = samtools.ran("samtools", "index")
+        # The input CRAM is indexed too, for the reference check; count the output.
+        indexes = [
+            c for c in samtools.ran("samtools", "index") if c[-1].endswith(".bam")
+        ]
         assert len(indexes) == 1, f"{header!r}: expected one index call, got {indexes}"
         bam_path = resp.json()["bam_path"]
         assert indexes[0][-1] == bam_path
