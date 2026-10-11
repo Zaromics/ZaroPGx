@@ -72,14 +72,14 @@ from app.utils.literature import (
     format_literature_references,
 )
 from app.utils.pharmcat_assume_ref import EXPLICIT_CALL_INPUT_TYPES
-from app.visualizations.workflow_diagram import (
-    build_simple_html_from_workflow,
-    render_kroki_mermaid_svg,
-    render_simple_png_from_workflow,
-    render_with_graphviz,
-    render_workflow,
-    render_workflow_png_data_uri,
+from app.visualizations.job_workflow import (
+    build_job_graph,
+    load_job_file_type,
+    load_job_steps,
+    to_html,
+    to_mermaid,
 )
+from app.visualizations.workflow_diagram import render_with_kroki
 
 # Keep below import commented out; this prevents circular import
 # from app.reports.pdf_generators import generate_pdf_report_dual_lane
@@ -266,6 +266,52 @@ _REPORT_COMPONENTS: Dict[str, str] = {
 # now resolves a real one instead of publishing a status string for software
 # that never ran.
 _PROVISIONAL_COMPONENTS: Dict[str, str] = {}
+
+
+# A run whose steps were not recorded gets no diagram rather than a generic one, which
+# would describe some other run.
+WORKFLOW_NOT_RECORDED_HTML = (
+    '<p class="workflow-text">The steps of this run were not recorded.</p>'
+)
+
+
+def job_workflow_diagram(steps, file_type: Optional[str]) -> Dict[str, Any]:
+    """The run's workflow diagram in each form the reports use.
+
+    ``steps`` is the job's (step_name, status) rows (job_workflow.load_job_steps).
+    Kroki draws the graph as SVG (HTML reports) and PNG (PDF, which renders Kroki's
+    SVG text badly); ``html`` is the same steps as text, for when Kroki cannot.
+    """
+    diagram = {
+        "recorded": bool(steps),
+        "svg": "",
+        "svg_bytes": b"",
+        "png": b"",
+        "png_data_uri": "",
+        "html": WORKFLOW_NOT_RECORDED_HTML,
+    }
+    if not steps:
+        return diagram
+    graph = build_job_graph(steps, file_type)
+    diagram["html"] = to_html(graph)
+    source = to_mermaid(graph)
+    try:
+        svg_bytes = render_with_kroki(source, fmt="svg")
+        diagram["svg_bytes"] = svg_bytes
+        diagram["svg"] = _sanitize_graphviz_svg(
+            svg_bytes.decode("utf-8", errors="ignore")
+        )
+    except Exception as e:
+        logger.warning(f"Kroki could not draw the workflow diagram as SVG: {e}")
+    try:
+        png = render_with_kroki(source, fmt="png")
+        diagram["png"] = png
+        diagram["png_data_uri"] = "data:image/png;base64," + base64.b64encode(
+            png
+        ).decode("ascii")
+    except Exception as e:
+        logger.warning(f"Kroki could not draw the workflow diagram as PNG: {e}")
+    return diagram
 
 
 def report_branding_context() -> Dict[str, Any]:
@@ -1878,6 +1924,7 @@ def create_interactive_html_report(
     gvcf_provenance: str | None = None,
     missing_positions_not_assumed: bool = False,
     downloads: Optional[List[Dict[str, str]]] = None,
+    workflow_diagram: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -1908,12 +1955,20 @@ def create_interactive_html_report(
         ):
             template_recommendations = map_recommendations_for_template(recommendations)
 
-        # Prepare workflow assets with robust fallbacks
+        # The run's diagram, from generate_report's job_workflow_diagram: inline, so
+        # the report needs neither the app nor a network to show it.
+        diagram = workflow_diagram or job_workflow_diagram([], None)
         workflow_png_url = ""
-        workflow_png_data_uri = ""
         workflow_svg_inline = ""
-        workflow_kroki_svg_inline = ""
-        workflow_html_fallback = ""
+        workflow_kroki_svg_inline = diagram["svg"]
+        workflow_png_data_uri = (
+            "" if workflow_kroki_svg_inline else diagram["png_data_uri"]
+        )
+        workflow_html_fallback = (
+            ""
+            if (workflow_kroki_svg_inline or workflow_png_data_uri)
+            else diagram["html"]
+        )
         report_dir = os.path.dirname(output_path)
         # Patient directory is the directory containing the report files
         patient_dir = report_dir
@@ -1947,81 +2002,6 @@ def create_interactive_html_report(
                 )
         except Exception as _e:
             logger.debug(f"Interactive header text load skipped: {_e}")
-
-        # Generate Kroki Mermaid SVG for comparison
-        try:
-            kroki_svg_bytes = render_kroki_mermaid_svg(workflow=workflow)
-            if kroki_svg_bytes:
-                kroki_svg_text = kroki_svg_bytes.decode("utf-8", errors="ignore")
-                workflow_kroki_svg_inline = _sanitize_graphviz_svg(kroki_svg_text)
-                logger.info(
-                    f"✓ Generated Kroki Mermaid SVG for interactive report: {len(workflow_kroki_svg_inline)} chars"
-                )
-            else:
-                logger.warning(
-                    "⚠ Kroki Mermaid SVG generation returned empty result for interactive report"
-                )
-        except Exception as e:
-            logger.error(
-                f"✗ Kroki Mermaid SVG generation failed for interactive report: {str(e)}"
-            )
-            workflow_kroki_svg_inline = ""
-
-        try:
-            # Prefer a pre-rendered PNG served by the app (nested patient/job layout)
-            png_path_local = os.path.join(report_dir, f"{report_id}_workflow.png")
-            if os.path.exists(png_path_local):
-                workflow_png_url = (
-                    f"/reports/{patient_id}/{report_id}/{report_id}_workflow.png"
-                )
-        except Exception:
-            workflow_png_url = ""
-        if not workflow_png_url:
-            # Try to render a PNG, save it, and expose as URL
-            try:
-                png_bytes = render_workflow(fmt="png", workflow=workflow)
-                if png_bytes:
-                    with open(
-                        os.path.join(report_dir, f"{report_id}_workflow.png"), "wb"
-                    ) as f_out:
-                        f_out.write(png_bytes)
-                    workflow_png_url = (
-                        f"/reports/{patient_id}/{report_id}/{report_id}_workflow.png"
-                    )
-            except Exception:
-                workflow_png_url = ""
-        if not workflow_png_url:
-            # Fall back to data-URI PNG
-            try:
-                workflow_png_data_uri = render_workflow_png_data_uri(workflow=workflow)
-            except Exception:
-                workflow_png_data_uri = ""
-        if not workflow_png_url and not workflow_png_data_uri:
-            # Try pure-Python Pillow PNG
-            try:
-                png_bytes = render_simple_png_from_workflow(workflow)
-                if png_bytes:
-                    b64 = base64.b64encode(png_bytes).decode("ascii")
-                    workflow_png_data_uri = f"data:image/png;base64,{b64}"
-            except Exception as e:
-                logger.debug("Swallowed exception: %s", e, exc_info=True)
-        if not workflow_png_url and not workflow_png_data_uri:
-            # Try inline SVG as a last renderer option
-            try:
-                svg_bytes = render_workflow(fmt="svg", workflow=workflow)
-                if svg_bytes:
-                    svg_text = svg_bytes.decode("utf-8", errors="ignore")
-                    workflow_svg_inline = _sanitize_graphviz_svg(svg_text)
-                else:
-                    workflow_svg_inline = ""
-            except Exception:
-                workflow_svg_inline = ""
-        if not (workflow_png_url or workflow_png_data_uri or workflow_svg_inline):
-            # Final: HTML breadcrumb fallback
-            try:
-                workflow_html_fallback = build_simple_html_from_workflow(workflow)
-            except Exception:
-                workflow_html_fallback = ""
 
         # 159: run-derived provenance. `report_dir` is os.path.dirname(output_path)
         # -- the same directory the other two lanes probe -- so the interactive
@@ -3350,119 +3330,32 @@ def generate_report(
         f"Drug recommendations count: {len(data.get('drugRecommendations', []))}"
     )
 
-    # Optionally write workflow images alongside the report outputs
-    # Use patient_id for filenames to match the directory structure
+    # The run's own workflow diagram, drawn once from its job_steps rows and used by
+    # every output below: the PDF's PNG, the HTML reports' SVG, the files beside them.
     workflow_svg_filename = f"{report_id}_workflow.svg"
     workflow_png_filename = f"{report_id}_workflow.png"
-
-    logger.info(f"=== WORKFLOW DIAGRAM GENERATION START ===")
-    logger.info(f"Workflow configuration: {per_sample_workflow}")
-
-    try:
-        if REPORT_CONFIG.get("write_workflow_svg", True):
-            logger.info(
-                "Generating Graphviz SVG workflow diagram (true Graphviz renderer)..."
-            )
-            svg_bytes = render_with_graphviz(per_sample_workflow, fmt="svg")
-            if svg_bytes:
-                svg_path = os.path.join(report_dir, workflow_svg_filename)
-                with open(svg_path, "wb") as f_out:
-                    f_out.write(svg_bytes)
-                logger.info(
-                    f"✓ Graphviz Workflow SVG generated successfully: {svg_path} ({len(svg_bytes)} bytes)"
-                )
-            else:
-                logger.warning(
-                    "⚠ Graphviz Workflow SVG generation returned empty result"
-                )
-    except Exception as e:
-        logger.error(
-            f"✗ Graphviz Workflow SVG generation failed: {str(e)}", exc_info=True
-        )
-
-    # Generate Kroki Mermaid SVG for comparison
-    try:
-        if REPORT_CONFIG.get("write_workflow_svg", True):
-            logger.info(
-                "Generating Kroki Mermaid SVG workflow diagram for comparison..."
-            )
-            kroki_svg_bytes = render_kroki_mermaid_svg(workflow=per_sample_workflow)
-            if kroki_svg_bytes:
-                kroki_svg_filename = f"{report_id}_workflow_kroki_mermaid.svg"
-                kroki_svg_path = os.path.join(report_dir, kroki_svg_filename)
-                with open(kroki_svg_path, "wb") as f_out:
-                    f_out.write(kroki_svg_bytes)
-                logger.info(
-                    f"✓ Kroki Mermaid Workflow SVG generated successfully: {kroki_svg_path} ({len(kroki_svg_bytes)} bytes)"
-                )
-            else:
-                logger.warning(
-                    "⚠ Kroki Mermaid Workflow SVG generation returned empty result"
-                )
-    except Exception as e:
-        logger.error(
-            f"✗ Kroki Mermaid Workflow SVG generation failed: {str(e)}", exc_info=True
-        )
-
-    try:
-        # Always generate PNG for reliable PDF embedding (default True)
-        if REPORT_CONFIG.get("write_workflow_png", True):
-            logger.info("Generating PNG workflow diagram...")
-            png_bytes = None
-
-            # Try Kroki Mermaid first (best quality, same as HTML report)
+    workflow_diagram = job_workflow_diagram(
+        load_job_steps(db_session, job_id),
+        load_job_file_type(db_session, job_id) or file_type,
+    )
+    for filename, content, enabled in (
+        (
+            workflow_svg_filename,
+            workflow_diagram["svg_bytes"],
+            REPORT_CONFIG.get("write_workflow_svg", True),
+        ),
+        (
+            workflow_png_filename,
+            workflow_diagram["png"],
+            REPORT_CONFIG.get("write_workflow_png", True),
+        ),
+    ):
+        if enabled and content:
             try:
-                from app.visualizations.workflow_diagram import (
-                    read_workflow_mermaid,
-                    render_with_kroki,
-                )
-
-                logger.info("Attempting PNG generation via Kroki Mermaid...")
-                mermaid_src = read_workflow_mermaid()
-                png_bytes = render_with_kroki(mermaid_src, fmt="png")
-                if png_bytes:
-                    logger.info(
-                        f"✓ PNG generated from Kroki Mermaid: {len(png_bytes)} bytes"
-                    )
-            except Exception as e:
-                logger.warning(f"Kroki Mermaid PNG generation failed: {e}")
-
-            # Fallback to Graphviz PNG if Kroki failed
-            if not png_bytes:
-                try:
-                    logger.info("Attempting PNG generation via Graphviz...")
-                    png_bytes = render_workflow(fmt="png", workflow=per_sample_workflow)
-                    if png_bytes:
-                        logger.info(
-                            f"✓ PNG generated from Graphviz: {len(png_bytes)} bytes"
-                        )
-                except Exception as e:
-                    logger.warning(f"Graphviz PNG generation failed: {e}")
-
-            # Final fallback to pure-Python text-based PNG
-            if not png_bytes:
-                logger.info("Both renderers failed, using pure-Python fallback...")
-                png_bytes = render_simple_png_from_workflow(per_sample_workflow)
-                if png_bytes:
-                    logger.info(
-                        f"✓ PNG generated from Python fallback: {len(png_bytes)} bytes"
-                    )
-
-            if png_bytes:
-                png_path = os.path.join(report_dir, workflow_png_filename)
-                with open(png_path, "wb") as f_out:
-                    f_out.write(png_bytes)
-                logger.info(
-                    f"✓ Workflow PNG saved successfully: {png_path} ({len(png_bytes)} bytes)"
-                )
-            else:
-                logger.warning("⚠ All PNG generation methods failed")
-        else:
-            logger.info("PNG workflow generation disabled in config")
-    except Exception as e:
-        logger.error(f"✗ Workflow PNG generation failed: {str(e)}", exc_info=True)
-
-    logger.info(f"=== WORKFLOW DIAGRAM GENERATION END ===")
+                with open(os.path.join(report_dir, filename), "wb") as f_out:
+                    f_out.write(content)
+            except OSError as e:
+                logger.warning(f"Could not write {filename}: {e}")
 
     # Create a unique filename based on patient_id
     base_filename = f"{report_id}_pgx_report"
@@ -3488,108 +3381,14 @@ def generate_report(
             template = env.get_template("report_template.html")
             logger.info("HTML template loaded successfully")
 
-            # Prepare workflow visuals for HTML, preferring pre-rendered files
+            # The run's diagram (job_workflow_diagram above): its SVG, or the same
+            # steps as text when Kroki could not draw it.
             workflow_svg_in_html = ""
-            workflow_kroki_svg_in_html = ""
+            workflow_kroki_svg_in_html = workflow_diagram["svg"]
             workflow_png_data_uri_html = ""
-            workflow_html_fallback_html = ""
-
-            # Prefer previously written assets
-            svg_path = os.path.join(report_dir, workflow_svg_filename)
-            kroki_svg_filename = f"{report_id}_workflow_kroki_mermaid.svg"
-            kroki_svg_path = os.path.join(report_dir, kroki_svg_filename)
-            png_path = os.path.join(report_dir, workflow_png_filename)
-
-            logger.info(f"Checking for pre-generated workflow files...")
-            logger.info(
-                f"Graphviz SVG path: {svg_path} (exists: {os.path.exists(svg_path)})"
+            workflow_html_fallback_html = (
+                "" if workflow_kroki_svg_in_html else workflow_diagram["html"]
             )
-            logger.info(
-                f"Kroki Mermaid SVG path: {kroki_svg_path} (exists: {os.path.exists(kroki_svg_path)})"
-            )
-            logger.info(f"PNG path: {png_path} (exists: {os.path.exists(png_path)})")
-
-            if os.path.exists(svg_path):
-                try:
-                    with open(svg_path, "r", encoding="utf-8") as f_svg:
-                        workflow_svg_in_html = f_svg.read()
-                    logger.info(
-                        f"✓ Loaded pre-generated Graphviz SVG workflow: {len(workflow_svg_in_html)} chars"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"✗ Failed to read pre-generated Graphviz SVG: {str(e)}"
-                    )
-                    workflow_svg_in_html = ""
-
-            # Load Kroki Mermaid SVG for comparison
-            if os.path.exists(kroki_svg_path):
-                try:
-                    with open(kroki_svg_path, "r", encoding="utf-8") as f_kroki_svg:
-                        workflow_kroki_svg_in_html = f_kroki_svg.read()
-                    logger.info(
-                        f"✓ Loaded pre-generated Kroki Mermaid SVG workflow: {len(workflow_kroki_svg_in_html)} chars"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"✗ Failed to read pre-generated Kroki Mermaid SVG: {str(e)}"
-                    )
-                    workflow_kroki_svg_in_html = ""
-
-            if not workflow_svg_in_html and os.path.exists(png_path):
-                try:
-                    with open(png_path, "rb") as f_png:
-                        b64 = base64.b64encode(f_png.read()).decode("ascii")
-                        workflow_png_data_uri_html = f"data:image/png;base64,{b64}"
-                    logger.info(
-                        f"✓ Loaded pre-generated PNG workflow: {len(workflow_png_data_uri_html)} chars"
-                    )
-                except Exception as e:
-                    logger.error(f"✗ Failed to read pre-generated PNG: {str(e)}")
-                    workflow_png_data_uri_html = ""
-
-            # If no local assets available, try dynamic renderers and finally HTML fallback
-            if not workflow_svg_in_html and not workflow_png_data_uri_html:
-                logger.info(
-                    "No pre-generated workflow files found, trying dynamic generation..."
-                )
-                try:
-                    logger.info("Attempting SVG generation...")
-                    svg_bytes = render_workflow(fmt="svg", workflow=per_sample_workflow)
-                    svg_text = svg_bytes.decode("utf-8", errors="ignore")
-                    workflow_svg_in_html = _sanitize_graphviz_svg(svg_text)
-                    logger.info(
-                        f"✓ Generated SVG workflow dynamically: {len(workflow_svg_in_html)} chars"
-                    )
-                except Exception as e:
-                    logger.error(f"✗ Dynamic SVG generation failed: {str(e)}")
-                    workflow_svg_in_html = ""
-
-                if not workflow_svg_in_html:
-                    try:
-                        logger.info("Attempting PNG data URI generation...")
-                        workflow_png_data_uri_html = render_workflow_png_data_uri(
-                            workflow=per_sample_workflow
-                        )
-                        logger.info(
-                            f"✓ Generated PNG data URI: {len(workflow_png_data_uri_html)} chars"
-                        )
-                    except Exception as e:
-                        logger.error(f"✗ PNG data URI generation failed: {str(e)}")
-                        workflow_png_data_uri_html = ""
-
-                if not workflow_svg_in_html and not workflow_png_data_uri_html:
-                    try:
-                        logger.info("Attempting HTML fallback generation...")
-                        workflow_html_fallback_html = build_simple_html_from_workflow(
-                            per_sample_workflow
-                        )
-                        logger.info(
-                            f"✓ Generated HTML fallback: {len(workflow_html_fallback_html)} chars"
-                        )
-                    except Exception as e:
-                        logger.error(f"✗ HTML fallback generation failed: {str(e)}")
-                        workflow_html_fallback_html = ""
 
             # Log what we have for the template
             logger.info(f"Workflow content prepared for HTML template:")
@@ -3664,10 +3463,7 @@ def generate_report(
                 debug_info = {
                     "workflow_config": per_sample_workflow,
                     "workflow_assets": {
-                        "svg_path_exists": bool(os.path.exists(svg_path)),
-                        "kroki_svg_path_exists": bool(os.path.exists(kroki_svg_path)),
-                        "pre_png_path_exists": bool(os.path.exists(png_path)),
-                        "used_inline_svg": bool(workflow_svg_in_html),
+                        "workflow_steps_recorded": workflow_diagram["recorded"],
                         "used_kroki_svg": bool(workflow_kroki_svg_in_html),
                         "used_png_data_uri": bool(workflow_png_data_uri_html),
                         "used_html_fallback": bool(workflow_html_fallback_html),
@@ -3747,17 +3543,7 @@ def generate_report(
                 )
                 data["workflow_svg_url"] = report_paths["workflow_svg_path"]
                 logger.info(
-                    f"✓ Workflow Graphviz SVG URL added: {report_paths['workflow_svg_path']}"
-                )
-
-            kroki_svg_path = os.path.join(report_dir, kroki_svg_filename)
-            if os.path.exists(kroki_svg_path):
-                report_paths["workflow_kroki_svg_path"] = (
-                    f"{reports_url_prefix}/{kroki_svg_filename}"
-                )
-                data["workflow_kroki_svg_url"] = report_paths["workflow_kroki_svg_path"]
-                logger.info(
-                    f"✓ Workflow Kroki Mermaid SVG URL added: {report_paths['workflow_kroki_svg_path']}"
+                    f"✓ Workflow SVG URL added: {report_paths['workflow_svg_path']}"
                 )
 
             png_path = os.path.join(report_dir, workflow_png_filename)
@@ -3781,110 +3567,16 @@ def generate_report(
             logger.info(f"=== PDF GENERATION START (Engine: {PDF_ENGINE}) ===")
             logger.info(f"Workflow data: {per_sample_workflow}")
 
-            # For PDF, prefer PNG over SVG to avoid WeasyPrint text rendering issues
-            # PNG ensures the diagram is reliably visible with proper scaling
-            pdf_png_data_uri = ""
+            # The run's diagram as a PNG: WeasyPrint draws Kroki's SVG text badly. Without
+            # one, the same steps as text.
+            pdf_png_data_uri = workflow_diagram["png_data_uri"]
             workflow_kroki_svg_for_pdf = ""
             workflow_graphviz_svg_for_pdf = ""
-
-            try:
-                png_path = os.path.join(report_dir, f"{report_id}_workflow.png")
-
-                # First, try to load pre-rendered PNG
-                if os.path.exists(png_path):
-                    try:
-                        with open(png_path, "rb") as f_png:
-                            png_bytes = f_png.read()
-                            pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
-                        logger.info(
-                            f"✓ Loaded pre-rendered PNG for PDF: {len(png_bytes)} bytes"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed reading pre-rendered PNG for PDF: {e}")
-
-                # If no PNG exists, generate one from Kroki Mermaid (preferred) or Graphviz
-                if not pdf_png_data_uri:
-                    try:
-                        # Try Kroki Mermaid → PNG first (best quality)
-                        logger.info("Generating PNG from Kroki Mermaid for PDF...")
-                        from app.visualizations.workflow_diagram import (
-                            read_workflow_mermaid,
-                            render_with_kroki,
-                        )
-
-                        mermaid_src = read_workflow_mermaid()
-                        png_bytes = render_with_kroki(mermaid_src, fmt="png")
-                        if png_bytes:
-                            pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
-                            # Save for future use
-                            with open(png_path, "wb") as f_out:
-                                f_out.write(png_bytes)
-                            logger.info(
-                                f"✓ Generated PNG from Kroki Mermaid for PDF: {len(png_bytes)} bytes"
-                            )
-                    except Exception as e:
-                        logger.warning(f"Kroki Mermaid → PNG generation failed: {e}")
-
-                    # If Kroki failed, try Graphviz → PNG
-                    if not pdf_png_data_uri:
-                        try:
-                            logger.info("Generating PNG from Graphviz for PDF...")
-                            png_bytes = render_workflow(
-                                fmt="png", workflow=per_sample_workflow
-                            )
-                            if png_bytes:
-                                pdf_png_data_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
-                                # Save for future use
-                                with open(png_path, "wb") as f_out:
-                                    f_out.write(png_bytes)
-                                logger.info(
-                                    f"✓ Generated PNG from Graphviz for PDF: {len(png_bytes)} bytes"
-                                )
-                        except Exception as e:
-                            logger.warning(f"Graphviz → PNG generation failed: {e}")
-
-                # If PNG generation failed completely, fall back to SVG (last resort)
-                if not pdf_png_data_uri:
-                    logger.warning(
-                        "⚠ PNG generation failed, falling back to SVG for PDF (may have rendering issues)"
-                    )
-                    svg_kroki_path = os.path.join(
-                        report_dir, f"{report_id}_workflow_kroki_mermaid.svg"
-                    )
-                    svg_graphviz_path = os.path.join(
-                        report_dir, f"{patient_id}_workflow.svg"
-                    )
-
-                    # Try Kroki SVG
-                    if os.path.exists(svg_kroki_path):
-                        try:
-                            with open(svg_kroki_path, "r", encoding="utf-8") as f_svg:
-                                workflow_kroki_svg_for_pdf = f_svg.read()
-                            logger.info(
-                                f"✓ Loaded Kroki Mermaid SVG as fallback for PDF: {len(workflow_kroki_svg_for_pdf)} chars"
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed reading Kroki SVG fallback: {e}")
-
-                    # Try Graphviz SVG
-                    if not workflow_kroki_svg_for_pdf and os.path.exists(
-                        svg_graphviz_path
-                    ):
-                        try:
-                            with open(
-                                svg_graphviz_path, "r", encoding="utf-8"
-                            ) as f_svg:
-                                workflow_graphviz_svg_for_pdf = f_svg.read()
-                            logger.info(
-                                f"✓ Loaded Graphviz SVG as fallback for PDF: {len(workflow_graphviz_svg_for_pdf)} chars"
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed reading Graphviz SVG fallback: {e}")
-
-            except Exception as e:
-                logger.warning(
-                    f"⚠ PDF workflow rendering block failed, template will use text fallback: {e}"
-                )
+            # For the ReportLab lane (pdf_generators), which renders from template_data.
+            template_data["job_workflow_diagram"] = {
+                "png_data_uri": workflow_diagram["png_data_uri"],
+                "html": workflow_diagram["html"],
+            }
 
             # Render the HTML template with workflow diagram
             # Prefer PNG for reliable PDF rendering; SVG as fallback only
@@ -3894,7 +3586,9 @@ def generate_report(
                 workflow_kroki_svg=workflow_kroki_svg_for_pdf,
                 workflow_svg=workflow_graphviz_svg_for_pdf,
                 workflow_png_file_url="",
-                workflow_html_fallback="",
+                workflow_html_fallback=(
+                    "" if pdf_png_data_uri else workflow_diagram["html"]
+                ),
             )
 
             # Add the PDF HTML content to template_data for PDF generators
@@ -4242,6 +3936,7 @@ def generate_report(
                 gvcf_provenance=gvcf_provenance,
                 missing_positions_not_assumed=missing_positions_not_assumed,
                 downloads=export_downloads(report_dir, report_id),
+                workflow_diagram=workflow_diagram,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 

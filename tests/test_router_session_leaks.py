@@ -207,15 +207,6 @@ def test_final_stages_progression_returns_its_report_session(
     db_session.commit()
     job_id = str(job.id)
 
-    # Diagram renderers reach for Graphviz/Kroki; neither exists in unit tests.
-    for name in (
-        "render_with_graphviz",
-        "render_kroki_mermaid_svg",
-        "render_workflow",
-        "render_simple_png_from_workflow",
-    ):
-        monkeypatch.setattr(upload_router_module, name, lambda *a, **k: b"")
-
     captured = {}
 
     def _fake_generate_report(*args, **kwargs):

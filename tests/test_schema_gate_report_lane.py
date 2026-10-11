@@ -196,11 +196,6 @@ def final_stage(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(ur, "schedule_coroutine", lambda *a, **k: None)
 
-    monkeypatch.setattr(ur, "render_with_graphviz", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_kroki_mermaid_svg", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_workflow", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_simple_png_from_workflow", lambda *a, **k: None)
-
     # The ordering tape the TSV-rescue warning's constraint is pinned against:
     # the warning has to be committed before generate_report's own session is
     # even opened, because that session's empty identity map is the only reason
@@ -651,10 +646,6 @@ def real_final_stage(monkeypatch, tmp_path, session_factory):
     from app.services.job_service import JobService
 
     monkeypatch.setattr(ur, "schedule_coroutine", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_with_graphviz", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_kroki_mermaid_svg", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_workflow", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_simple_png_from_workflow", lambda *a, **k: None)
     monkeypatch.setattr(
         generator, "generate_report", lambda **kwargs: {"pdf_path": "/x.pdf"}
     )

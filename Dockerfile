@@ -34,8 +34,6 @@ RUN apt-get update && \
          libgirepository-1.0-1 \
          libjpeg-dev \
          libopenjp2-7-dev \
-         graphviz \
-         python3-graphviz \
          fonts-dejavu \
          libharfbuzz0b \
          libpangoft2-1.0-0 \
@@ -80,7 +78,6 @@ COPY pyproject.toml uv.lock ./
 # Export locked requirements and sync them into the system environment
 RUN uv export --frozen --no-dev --format requirements-txt > requirements.lock \
     && uv pip sync --system requirements.lock \
-    && uv pip install --system "graphviz>=0.21,<1.0.0" \
     && rm -f requirements.lock
 
 # Install Sphinx docs requirements separately (kept lightweight)

@@ -86,12 +86,6 @@ def final_stage(monkeypatch, tmp_path):
     monkeypatch.setattr(api_db, "get_db", lambda: iter([_FakeSession()]))
     monkeypatch.setattr(ur, "schedule_coroutine", lambda *a, **k: None)
 
-    # Diagram rendering reaches Kroki/Graphviz over the network.
-    monkeypatch.setattr(ur, "render_with_graphviz", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_kroki_mermaid_svg", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_workflow", lambda *a, **k: None)
-    monkeypatch.setattr(ur, "render_simple_png_from_workflow", lambda *a, **k: None)
-
     report_calls = []
     monkeypatch.setattr(
         generator,
