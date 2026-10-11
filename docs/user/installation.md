@@ -11,7 +11,7 @@ Detailed installation instructions for different deployment scenarios.
 - **CPU**: 4 cores (8+ recommended)
 - **RAM**: 16 GB (64+ GB recommended)
 - **Storage**: 50 GB free space (1000+ GB recommended)
-- **OS**: Linux, macOS, or Windows with WSL2
+- **OS**: Linux, macOS, or Windows with WSL2. Published images are `linux/amd64`. Apple Silicon and ARM Linux run them only when Docker can emulate amd64.
 - **Network**: Stable internet needed for the first run only — see [Network and offline use](#network-and-offline-use)
 - **Docker and docker compose**
 
@@ -41,6 +41,24 @@ you commit to it.
 - This is particularly handy if you are on Windows w/ WSL2 or macOS.
 - On Windows, ensure WSL2 backend is enabled in Docker Desktop.
 - Otherwise, here's an example for Debian/Ubuntu-based systems:
+
+### One-command release setup
+
+Linux, macOS, and WSL systems that already have Bash and curl can install the current release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
+```
+
+Stock Alpine needs Bash and curl installed before it can interpret the bootstrap:
+
+```sh
+apk add --no-cache bash curl && curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
+```
+
+The bootstrap checks out `v0.3.2`, pulls matching `linux/amd64` images, and requires Docker
+Compose 2.24.0 or newer. On ARM, Docker must provide amd64 emulation. A Docker group change or
+first-time WSL installation can require logging out or rebooting; run the same command again.
 
 **Ubuntu/Debian:**
 ```bash
@@ -118,8 +136,8 @@ DB_PASSWORD=
 BIND_ADDRESS=8765
 # Host interface for the internal services; loopback by default, and it should stay there
 INTERNAL_BIND_ADDRESS=127.0.0.1
-# Which pre-built image tag to pull (or "latest")
-ZAROPGX_TAG=0.2.8
+# Which pre-built image tag to pull (or "latest"). Same value as compose.yml's default.
+ZAROPGX_TAG=0.3.2
 # Feature toggles
 GATK_ENABLED=true
 PYPGX_ENABLED=true

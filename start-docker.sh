@@ -3,6 +3,8 @@
 # Works in WSL and when run with bash from PowerShell
 # For native PowerShell support, use start-docker.ps1 instead
 
+RELEASE_VERSION="0.3.2"
+
 # Parse command line arguments
 AUTO_LOCAL=false
 while [[ "$#" -gt 0 ]]; do
@@ -19,10 +21,13 @@ echo "======================================"
 # Detect environment
 if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
     echo "📱 Detected: Windows environment"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "🍎 Detected: macOS"
+elif [[ "$OSTYPE" == "linux-gnu"* ]] || [[ "$OSTYPE" == "linux-musl"* ]]; then
     echo "🐧 Detected: Linux or WSL environment"
 else
     echo "❓ Unknown environment: $OSTYPE"
+    echo "   This start script supports Linux (glibc and musl), macOS, and Git Bash / Cygwin."
     exit 1
 fi
 
@@ -62,7 +67,47 @@ _env_value() {
     local key="$1"
     local line
     line="$(grep -E "^${key}=" ".env" 2>/dev/null | tail -n 1 || true)"
-    printf '%s' "${line#${key}=}"
+    printf '%s' "${line#"${key}"=}"
+}
+
+_migrate_release_tag() {
+    local release_version="$1"
+    local current tmp
+    current="$(grep -E '^ZAROPGX_TAG=' .env 2>/dev/null | tail -n 1 || true)"
+    current="${current#ZAROPGX_TAG=}"
+    current="${current%$'\r'}"
+
+    # 0.2.8 predates the mtDNA image, so a complete 0.2.8 image set never
+    # existed. Migrate only that known-bad shipped default; preserve latest,
+    # blank values, and operator-managed/custom tags.
+    if [[ "$current" != "0.2.8" ]]; then
+        return 0
+    fi
+
+    if ! tmp="$(mktemp)"; then
+        echo "❌ ERROR: could not create a temporary file to update .env" >&2
+        exit 1
+    fi
+    if ! awk -v v="$release_version" '
+        BEGIN { done = 0 }
+        /^ZAROPGX_TAG=/ { print "ZAROPGX_TAG=" v; done = 1; next }
+        { print }
+        END { if (!done) print "ZAROPGX_TAG=" v }
+    ' .env >"$tmp"; then
+        rm -f "$tmp"
+        echo "❌ ERROR: could not update ZAROPGX_TAG in .env" >&2
+        exit 1
+    fi
+    if ! mv "$tmp" .env; then
+        rm -f "$tmp"
+        echo "❌ ERROR: could not replace .env with its migrated copy" >&2
+        exit 1
+    fi
+    if [[ "$(grep -E '^ZAROPGX_TAG=' .env | tail -n 1)" != "ZAROPGX_TAG=${release_version}" ]]; then
+        echo "❌ ERROR: ZAROPGX_TAG migration did not persist" >&2
+        exit 1
+    fi
+    echo "⬆️  Updated the obsolete ZAROPGX_TAG=0.2.8 default to ${release_version}"
 }
 
 _is_secret_sentinel() {
@@ -74,6 +119,22 @@ _is_secret_sentinel() {
             return 1
             ;;
     esac
+}
+
+_rand_hex() {
+    local nbytes="$1"
+    local hex=""
+    if command -v openssl >/dev/null 2>&1; then
+        hex="$(openssl rand -hex "$nbytes" 2>/dev/null || true)"
+    fi
+    if [[ -z "$hex" ]]; then
+        hex="$(od -An -N"$nbytes" -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+    fi
+    if [[ -z "$hex" ]]; then
+        echo "❌ ERROR: could not generate a secret (need openssl or od)." >&2
+        exit 1
+    fi
+    printf '%s' "$hex"
 }
 
 _pgdata_volume_exists() {
@@ -93,7 +154,7 @@ _ensure_install_secrets() {
     local secret_key db_password
     secret_key="$(_env_value SECRET_KEY)"
     if _is_secret_sentinel "$secret_key"; then
-        secret_key="$(openssl rand -hex 32)"
+        secret_key="$(_rand_hex 32)" || exit 1
         _set_env_var SECRET_KEY "$secret_key"
         echo "🔐 Generated a per-install SECRET_KEY in .env"
     fi
@@ -109,7 +170,7 @@ _ensure_install_secrets() {
             echo "       -c \"ALTER USER zaropgx_user WITH PASSWORD '...';\""
             exit 1
         fi
-        db_password="$(openssl rand -hex 24)"
+        db_password="$(_rand_hex 24)" || exit 1
         _set_env_var DB_PASSWORD "$db_password"
         echo "🔐 Generated a per-install DB_PASSWORD in .env (fresh volume)"
     fi
@@ -129,7 +190,7 @@ if [[ ! -f ".env" ]]; then
         echo "   3) .env.example    (Complete configuration with documentation)"
         echo "   4) Abort           (compose now requires DB_PASSWORD in .env)"
         echo ""
-        read -p "Select option [1-4]: " env_choice
+        read -r -p "Select option [1-4]: " env_choice
         
         env_source=""
         case "$env_choice" in
@@ -156,6 +217,7 @@ else
     echo "✅ Environment configuration found (.env)"
 fi
 
+_migrate_release_tag "$RELEASE_VERSION"
 _ensure_install_secrets
 echo ""
 
@@ -200,21 +262,86 @@ for log in mtdna_progress.log hlatyping_progress.log; do
     touch "data/$log" && chmod 666 "data/$log"
 done
 
+# Published images are linux/amd64 only. On any other machine, continue only
+# when this daemon can actually run that architecture.
+require_compose_v2() {
+    local minimum_major=2
+    local minimum_minor=24
+    local version major minor
+
+    if ! version="$(docker compose version --short 2>/dev/null)"; then
+        echo "Docker Compose V2 is not installed."
+        exit 1
+    fi
+    version="${version#v}"
+    version="${version%%[^0-9.]*}"
+    IFS=. read -r major minor _ <<<"$version"
+    if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ ]] \
+        || (( major < minimum_major || (major == minimum_major && minor < minimum_minor) )); then
+        echo "Docker Compose ${version} is too old; ZaroPGx requires 2.24.0 or newer."
+        exit 1
+    fi
+}
+
+require_published_image_arch() {
+    local server_platform
+    if ! server_platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>/dev/null)"; then
+        echo "Could not query the Docker daemon platform."
+        echo "Start Docker and make sure this user can access it, then re-run."
+        exit 1
+    fi
+    case "$server_platform" in
+        linux/amd64|linux/x86_64) return 0 ;;
+        linux/*) ;;
+        *)
+            echo "ZaroPGx requires Linux containers; this Docker daemon reports ${server_platform}."
+            echo "Switch Docker Desktop to Linux containers and re-run."
+            exit 1
+            ;;
+    esac
+    echo "Published ZaroPGx images are linux/amd64 only (the Docker daemon is ${server_platform})."
+    echo "Checking whether Docker can run them under emulation..."
+    local probe_output
+    if probe_output="$(docker run --rm --platform linux/amd64 hello-world 2>&1)"; then
+        echo "Emulation is available. The stack will run, and it will be much slower than native amd64."
+        return 0
+    fi
+    echo "$probe_output"
+    echo "Docker could not run the linux/amd64 test image."
+    echo "This can mean emulation is unavailable, or that Docker could not pull the test image."
+    echo "Linux: install qemu-user-static (or your distro's binfmt package) and re-run."
+    echo "macOS: turn on Rosetta in Docker Desktop (Settings > General) and re-run."
+    echo "A local build still needs that emulator when a base image is amd64-only."
+    exit 1
+}
+
 # Start containers
 echo "🐳 Starting ZaroPGx Docker Compose containers..."
-docker compose down --remove-orphans
+require_compose_v2
+require_published_image_arch
+if ! docker compose down --remove-orphans; then
+    echo "❌ docker compose down failed."
+    exit 1
+fi
 # Published images by default: pull pre-built images from Docker Hub.
 # Build-only services (no published image) are skipped here and built on `up`.
 # To build everything locally instead, run: docker compose build
-docker compose pull
-docker compose up -d
+if ! docker compose pull; then
+    echo "❌ docker compose pull failed."
+    echo "   Check ZAROPGX_TAG in .env. It must be a tag that exists for every zaropgx image, including mtdna."
+    exit 1
+fi
+if ! docker compose up -d; then
+    echo "❌ docker compose up failed."
+    exit 1
+fi
 
 # Wait for app ready state by watching logs
 echo "⏳ Waiting for ZaroPGx to be ready (up to 5 minutes)..."
 
 timeout=300
 start_ts=$(date +%s)
-spin='|/-\'
+spin="|/-\\"
 i=0
 ready=0
 

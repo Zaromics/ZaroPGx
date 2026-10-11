@@ -6,7 +6,8 @@ set -euo pipefail
 # Clones (or optionally updates) the repository and launches the startup script
 
 REPO_URL="https://github.com/Zaromics/ZaroPGx.git"
-BRANCH="main"
+RELEASE_VERSION="0.3.2"
+BRANCH="v${RELEASE_VERSION}"
 TARGET_DIR="ZaroPGx"
 UPDATE="false"
 SKIP_DEPENDENCY_CHECK="false"
@@ -57,6 +58,8 @@ detect_package_manager() {
     echo "zypper"
   elif command -v pacman >/dev/null 2>&1; then
     echo "pacman"
+  elif command -v apk >/dev/null 2>&1; then
+    echo "apk"
   elif command -v brew >/dev/null 2>&1; then
     echo "brew"
   else
@@ -78,6 +81,62 @@ has_systemd() {
   command -v systemctl >/dev/null 2>&1 && [ "$(ps -p 1 -o comm=)" = "systemd" ]
 }
 
+# curl | bash feeds the script on stdin, so `read` must use the terminal.
+prompt_yes() {
+  local prompt="$1"
+  local reply=""
+  if [[ ! -r /dev/tty ]]; then
+    echo "No terminal is available to answer prompts." >&2
+    echo "Install Git and Docker, then re-run, or save the script and run: bash bootstrap.sh" >&2
+    return 1
+  fi
+  read -r -n 1 -p "$prompt" reply </dev/tty || return 1
+  echo "" >/dev/tty
+  [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+# Start the daemon we just installed. WSL with systemd can run it too.
+start_docker_daemon() {
+  local sudo_cmd="$1"
+  if has_systemd; then
+    $sudo_cmd systemctl enable --now docker
+    return
+  fi
+  if command -v service >/dev/null 2>&1; then
+    $sudo_cmd service docker start
+    return
+  fi
+  if command -v rc-service >/dev/null 2>&1; then
+    $sudo_cmd rc-update add docker default
+    $sudo_cmd rc-service docker start
+    return
+  fi
+  echo "Start the Docker daemon yourself, then re-run this bootstrap."
+}
+
+require_compose_v2() {
+  local minimum_major=2
+  local minimum_minor=24
+  local version major minor
+
+  if ! version="$(docker compose version --short 2>/dev/null)"; then
+    echo "Docker Compose V2 is not installed." >&2
+    return 1
+  fi
+  version="${version#v}"
+  version="${version%%[^0-9.]*}"
+  IFS=. read -r major minor _ <<<"$version"
+  if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ ]]; then
+    echo "Could not parse Docker Compose version: ${version}" >&2
+    return 1
+  fi
+  if (( major < minimum_major || (major == minimum_major && minor < minimum_minor) )); then
+    echo "Docker Compose ${version} is too old; ZaroPGx requires 2.24.0 or newer." >&2
+    return 1
+  fi
+  echo "  ✓ Docker Compose ${version} found"
+}
+
 # Function to install dependencies
 install_dependencies() {
   local missing_deps=("$@")
@@ -86,10 +145,11 @@ install_dependencies() {
   echo "Missing dependencies detected: ${missing_deps[*]}"
   echo ""
   
-  local pkg_mgr=$(detect_package_manager)
+  local pkg_mgr
+  pkg_mgr="$(detect_package_manager)"
   
   if [[ "$pkg_mgr" == "none" ]]; then
-    echo "No supported package manager found (apt, dnf, yum, zypper, pacman, brew)."
+    echo "No supported package manager found (apt, dnf, yum, zypper, pacman, apk, brew)."
     echo ""
     echo "Please install dependencies manually:"
     echo "  Git:            https://git-scm.com/downloads"
@@ -102,15 +162,14 @@ install_dependencies() {
   echo "Detected package manager: $pkg_mgr"
   echo ""
   
-  read -p "Would you like to automatically install missing dependencies? (y/N) " -n 1 -r
-  echo ""
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  if ! prompt_yes "Would you like to automatically install missing dependencies? (y/N) "; then
     echo "Installation cancelled. Please install dependencies manually."
     return 1
   fi
   
   # Check if we need sudo
   local sudo_cmd=""
+  local install_failed=0
   if [[ $EUID -ne 0 ]]; then
     if command -v sudo >/dev/null 2>&1; then
       echo "Administrator privileges required for installation."
@@ -136,6 +195,7 @@ install_dependencies() {
           yum) $sudo_cmd yum install -y git ;;
           zypper) $sudo_cmd zypper install -y git ;;
           pacman) $sudo_cmd pacman -S --noconfirm git ;;
+          apk) $sudo_cmd apk add --no-cache git ;;
           brew) brew install git ;;
         esac
         ;;
@@ -151,6 +211,7 @@ install_dependencies() {
             repo_distro="debian"
             distro_codename=""
             if [[ -r /etc/os-release ]]; then
+              # shellcheck source=/etc/os-release
               . /etc/os-release
               if [[ "${ID:-}" = "ubuntu" || "${ID_LIKE:-}" =~ ubuntu ]]; then
                 repo_distro="ubuntu"
@@ -177,6 +238,7 @@ install_dependencies() {
             # Install Docker
             $sudo_cmd apt-get update
             $sudo_cmd apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            start_docker_daemon "$sudo_cmd"
             ;;
           yum)
             echo "Installing Docker via official Docker repository (CentOS/YUM)..."
@@ -185,18 +247,14 @@ install_dependencies() {
             $sudo_cmd yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
             # Install Docker CE and Compose plugin
             $sudo_cmd yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-            # Enable and start Docker where systemd is available (not in WSL)
-            if ! is_wsl && has_systemd; then
-              $sudo_cmd systemctl enable --now docker
-            else
-              echo "Skipping systemctl enable/start (WSL or non-systemd environment detected)."
-            fi
+            start_docker_daemon "$sudo_cmd"
             ;;
           dnf)
             echo "Installing Docker via official Docker repository (RHEL/Fedora/DNF)..."
             # Set up Docker CE repo (choose RHEL vs Fedora appropriately)
             $sudo_cmd dnf -y install dnf-plugins-core
             if [[ -r /etc/os-release ]]; then
+              # shellcheck source=/etc/os-release
               . /etc/os-release
             fi
             if [[ "${ID:-}" = "fedora" || "${ID_LIKE:-}" =~ fedora ]]; then
@@ -206,52 +264,89 @@ install_dependencies() {
             fi
             # Install Docker CE and Compose plugin
             $sudo_cmd dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-            # Enable and start Docker where systemd is available (not in WSL)
-            if ! is_wsl && has_systemd; then
-              $sudo_cmd systemctl enable --now docker
-            else
-              echo "Skipping systemctl enable/start (WSL or non-systemd environment detected)."
-            fi
+            start_docker_daemon "$sudo_cmd"
             ;;
           zypper)
             echo "Installing Docker via zypper (openSUSE/SUSE)..."
             # Install Docker from official SUSE repositories
             $sudo_cmd zypper refresh
             $sudo_cmd zypper install -y docker docker-compose
-            # Enable and start Docker where systemd is available (not in WSL)
-            if ! is_wsl && has_systemd; then
-              $sudo_cmd systemctl enable --now docker
-            else
-              echo "Skipping systemctl enable/start (WSL or non-systemd environment detected)."
-            fi
+            start_docker_daemon "$sudo_cmd"
             ;;
           pacman)
             echo "Installing Docker via pacman (Arch Linux)..."
             $sudo_cmd pacman -Sy --noconfirm docker docker-compose
-            # Enable and start Docker where systemd is available (not in WSL)
-            if ! is_wsl && has_systemd; then
-              $sudo_cmd systemctl enable --now docker
-            else
-              echo "Skipping systemctl enable/start (WSL or non-systemd environment detected)."
-            fi
+            start_docker_daemon "$sudo_cmd"
+            ;;
+          apk)
+            echo "Installing Docker via apk (Alpine)..."
+            $sudo_cmd apk add --no-cache docker docker-cli docker-cli-compose docker-openrc
+            start_docker_daemon "$sudo_cmd"
             ;;
           brew)
-            echo "On macOS, please install Docker Desktop manually:"
-            echo "https://www.docker.com/products/docker-desktop"
+            echo "On macOS, Docker Desktop is not installed by this script."
+            echo "Install it from https://www.docker.com/products/docker-desktop"
+            echo "Then re-run this bootstrap."
+            install_failed=1
+            ;;
+        esac
+        ;;
+      "Docker Compose")
+        case "$pkg_mgr" in
+          apt)
+            $sudo_cmd apt-get update
+            $sudo_cmd apt-get install -y docker-compose-plugin
+            ;;
+          dnf) $sudo_cmd dnf install -y docker-compose-plugin ;;
+          yum) $sudo_cmd yum install -y docker-compose-plugin ;;
+          zypper) $sudo_cmd zypper install -y docker-compose ;;
+          pacman) $sudo_cmd pacman -S --noconfirm docker-compose ;;
+          apk) $sudo_cmd apk add --no-cache docker-cli-compose ;;
+          brew)
+            echo "Install or update Docker Desktop to get Docker Compose 2.24.0 or newer."
+            install_failed=1
             ;;
         esac
         ;;
     esac
   done
   
+  if [[ "$install_failed" -ne 0 ]]; then
+    return 1
+  fi
+
+  local dep
+  local installed_docker=0
+  for dep in "${missing_deps[@]}"; do
+    if [[ "$dep" == "Docker" ]]; then
+      installed_docker=1
+    fi
+  done
+  if [[ "$installed_docker" -eq 1 && "$EUID" -ne 0 ]]; then
+    if command -v usermod >/dev/null 2>&1; then
+      $sudo_cmd usermod -aG docker "$USER" || true
+    elif command -v addgroup >/dev/null 2>&1; then
+      $sudo_cmd addgroup "$USER" docker || true
+    fi
+    if ! docker ps >/dev/null 2>&1; then
+      if $sudo_cmd docker ps >/dev/null 2>&1; then
+        echo ""
+        echo "Docker is installed and the daemon is running."
+        echo "Log out and back in so this user joins the docker group, then re-run this bootstrap."
+        echo ""
+        return 2
+      fi
+      echo ""
+      echo "Docker is installed, but the daemon is not responding."
+      echo "Start it, then re-run this bootstrap."
+      echo ""
+      return 1
+    fi
+  fi
+
   echo ""
-  echo "Dependencies installed! You may need to:"
-  echo "  1. Restart your terminal session (or run: source ~/.bashrc)"
-  echo "  2. Add your user to the docker group: sudo usermod -aG docker \$USER"
-  echo "  3. Log out and back in for group changes to take effect"
-  echo "  4. Re-run this bootstrap script"
+  echo "Dependencies installed."
   echo ""
-  
   return 0
 }
 
@@ -296,18 +391,23 @@ if [[ "$SKIP_DEPENDENCY_CHECK" != "true" ]]; then
     fi
   fi
   
-  # Check Docker Compose
-  if command -v docker-compose >/dev/null 2>&1; then
-    echo "  ✓ Docker Compose found"
-  elif docker compose version >/dev/null 2>&1; then
-    echo "  ✓ Docker Compose (V2) found"
-  else
-    echo "  ⚠ Docker Compose not found (usually included with Docker installation)"
+  # start-docker.sh uses Compose V2 long-form env_file syntax.
+  if ! require_compose_v2; then
+    # Installing Docker through the supported branches installs its Compose
+    # plugin too; avoid trying to install the same package twice.
+    if [[ ! " ${missing_deps[*]} " =~ " Docker " ]]; then
+      missing_deps+=("Docker Compose")
+    fi
   fi
   
   # Handle missing dependencies
   if [[ ${#missing_deps[@]} -gt 0 ]]; then
-    if ! install_dependencies "${missing_deps[@]}"; then
+    install_rc=0
+    install_dependencies "${missing_deps[@]}" || install_rc=$?
+    if [[ "$install_rc" -eq 2 ]]; then
+      exit 0
+    fi
+    if [[ "$install_rc" -ne 0 ]]; then
       echo ""
       echo "Please install the following and re-run this script:"
       for dep in "${missing_deps[@]}"; do
@@ -321,14 +421,16 @@ if [[ "$SKIP_DEPENDENCY_CHECK" != "true" ]]; then
       echo ""
       exit 1
     fi
-    
-    # After installation, prompt to continue
-    read -p "Dependencies installed. Continue with setup? (y/N) " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+
+    if ! prompt_yes "Dependencies installed. Continue with setup? (y/N) "; then
       echo "Setup cancelled. Please restart this script when ready."
       exit 0
     fi
+  fi
+
+  if ! require_compose_v2 >/dev/null; then
+    echo "Docker Compose 2.24.0 or newer is required before setup can continue." >&2
+    exit 1
   fi
   
   echo ""
@@ -358,7 +460,9 @@ else
       popd >/dev/null
       exit 1
     fi
-    if ! git fetch --all --prune; then
+    # Release hotfix tags may be replaced deliberately. Force-fetch tags so an
+    # existing clone does not retain an older tag object locally.
+    if ! git fetch --all --prune --force --tags; then
       echo "Error: Failed to fetch updates" >&2
       popd >/dev/null
       exit 1
@@ -368,11 +472,15 @@ else
       popd >/dev/null
       exit 1
     fi
-    if ! git pull --ff-only; then
-      echo "Error: Failed to pull updates (fast-forward only)" >&2
-      echo "       Repository may have diverged. Manual merge required." >&2
-      popd >/dev/null
-      exit 1
+    # Release defaults are tags and therefore have no upstream to pull.
+    # A caller-supplied branch still updates by fast-forward only.
+    if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+      if ! git pull --ff-only; then
+        echo "Error: Failed to pull updates (fast-forward only)" >&2
+        echo "       Repository may have diverged. Manual merge required." >&2
+        popd >/dev/null
+        exit 1
+      fi
     fi
     echo "Repository updated successfully."
     popd >/dev/null
