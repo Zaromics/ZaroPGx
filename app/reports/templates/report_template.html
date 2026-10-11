@@ -559,6 +559,16 @@
         .rapid-metabolizer, .ultrarapid-metabolizer {
             background-color: #17a2b8;
         }
+        /* Function phenotypes (SLCO1B1, ABCG2) in their metabolizer counterparts'
+           colours: decreased as intermediate, increased as rapid
+           (generator.phenotype_badge_class). */
+        .decreased-function {
+            background-color: #ffc107;
+            color: #333;
+        }
+        .increased-function {
+            background-color: #17a2b8;
+        }
         /* Possibly Wild Type: transparent background with black border (VCF only) */
         .possibly-wild-type {
             background-color: transparent;
@@ -1153,7 +1163,7 @@
                         <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
                             {% set ph = r.phenotype %}
-                            {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>{% endif %}
+                            {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {{ ph|phenotype_badge_class }}">{{ ph }}</span>{% endif %}
                             {% set asv = r.activity_score|activity_score_num %}
                             {% if asv is not none %}
                                 {% set s = asv if asv >= 0 else 0 %}

@@ -147,6 +147,15 @@ th {
     background-color: #17a2b8;
 }
 
+.decreased-function {
+    background-color: #ffc107;
+    color: #333;
+}
+
+.increased-function {
+    background-color: #17a2b8;
+}
+
 /* Possibly Wild Type: transparent background with black border (VCF only) */
 .possibly-wild-type {
     background-color: transparent;

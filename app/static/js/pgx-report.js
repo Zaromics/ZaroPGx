@@ -102,18 +102,7 @@ function createGenePhenotypeChart() {
         genes.push(gene);
         phenotypes.push(phenotype);
 
-        const p = String(phenotype);
-        if (p.includes('Normal')) {
-            colors.push('#2ecc71'); // success-color
-        } else if (p.includes('Poor')) {
-            colors.push('#e74c3c'); // danger-color
-        } else if (p.includes('Intermediate')) {
-            colors.push('#f39c12'); // warning-color
-        } else if (p.includes('Rapid') || p.includes('Ultrarapid')) {
-            colors.push('#3498db'); // info-color
-        } else {
-            colors.push('#95a5a6'); // gray
-        }
+        colors.push(geneColor(phenotype));
     });
 
     // Create the chart (Chart.js v3+)
@@ -241,14 +230,20 @@ function actionableNetwork(recommendations, diplotypes) {
     return { genes: [...genes.values()], drugs: [...drugs.values()], links: links };
 }
 
+/**
+ * A phenotype's colour in the charts, in the badges' tiers
+ * (app/reports/generator.py, phenotype_badge_class): green normal, amber
+ * intermediate metabolism and decreased function, red poor, blue rapid
+ * metabolism and increased function, grey anything else.
+ */
 function geneColor(phenotype) {
     const p = String(phenotype || '');
     // Several possibilities ("Normal Function or ... Poor Function", an unphased
     // call): no one colour fits, and matching words made SLCO1B1's hub red.
     if (p.includes(' or ')) return '#95a5a6';
     if (p.includes('Poor')) return '#e74c3c';
-    if (p.includes('Intermediate')) return '#f39c12';
-    if (p.includes('Rapid') || p.includes('Ultrarapid')) return '#3498db';
+    if (p.includes('Intermediate') || p.includes('Decreased Function')) return '#f39c12';
+    if (p.includes('Rapid') || p.includes('Ultrarapid') || p.includes('Increased Function')) return '#3498db';
     if (p.includes('Normal')) return '#2ecc71';
     return '#95a5a6';
 }

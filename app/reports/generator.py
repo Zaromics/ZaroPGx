@@ -1201,6 +1201,37 @@ env = Environment(
 )
 
 
+# Which colour a phenotype's badge gets. No standards body assigns colours to
+# phenotypes (CPIC standardised the terms, Caudle et al. 2017, not their colours;
+# PharmCAT's report colours none). CPIC's own data does rank them: each phenotype
+# carries an EHR priority, "Abnormal/Priority" or "Normal/Routine". The badges follow
+# it: green for normal, amber for decreased function and intermediate metabolism
+# (both Priority), red for poor function and poor metabolism, blue for increased
+# function and rapid metabolism, which is not "better" (a CYP2D6 ultrarapid
+# metabolizer is at risk on codeine). Everything else keeps the neutral grey.
+# The label is always printed: the colour is never the only cue.
+_PHENOTYPE_BADGE_CLASSES = (
+    ("Likely Wild Type", "likely-wild-type"),
+    ("Possibly Wild Type", "possibly-wild-type"),
+    ("Normal", "normal-metabolizer"),
+    ("Poor", "poor-metabolizer"),
+    ("Intermediate", "intermediate-metabolizer"),
+    ("Decreased Function", "decreased-function"),
+    ("Ultrarapid", "rapid-metabolizer"),
+    ("Rapid", "rapid-metabolizer"),
+    ("Increased Function", "increased-function"),
+)
+
+
+def phenotype_badge_class(phenotype) -> str:
+    """The colour class of a phenotype badge, "" for the neutral default."""
+    text = str(phenotype or "")
+    for word, css_class in _PHENOTYPE_BADGE_CLASSES:
+        if word in text:
+            return css_class
+    return ""
+
+
 def register_report_template_helpers(environment) -> None:
     """Register everything report_template.html needs to compile.
 
@@ -1214,6 +1245,7 @@ def register_report_template_helpers(environment) -> None:
     One function, called by all three, so adding a helper cannot half-land again.
     """
     environment.filters["activity_score_num"] = activity_score_num
+    environment.filters["phenotype_badge_class"] = phenotype_badge_class
     environment.filters["literature_references"] = format_literature_references
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel
