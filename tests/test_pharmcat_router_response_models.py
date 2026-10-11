@@ -1,7 +1,7 @@
 """End-to-end contract tests for ``app/api/routes/pharmcat_router.py``.
 
 These exercise the real router, the real ``PharmCATParser`` and the real
-``get_pharmcat_summary`` composition against an in-memory SQLite database, so a
+``get_pharmcat_summary`` composition against the suite's PostgreSQL, so a
 response-model/payload mismatch surfaces as the HTTP 500 a caller would see
 rather than as a mocked stand-in for one.
 
@@ -20,18 +20,9 @@ import uuid
 from pathlib import Path
 
 import pytest
-import sqlalchemy.sql.sqltypes as sqltypes
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.api.db import Base as AppBase
-from app.api.db import Job, get_db
+from app.api.db import Job
 from app.pharmcat import pharmcat_parser
-from app.pharmcat.pharmcat_parser import Base as PharmcatBase
 from app.pharmcat.pharmcat_parser import (
     PharmCATDiplotype,
     PharmCATParser,
@@ -45,91 +36,14 @@ REPORT_JSON = (
 )
 
 
-# The PharmCAT tables are declared with PostgreSQL JSONB columns.  SQLite has no
-# JSONB, but it stores JSON as TEXT, so teach the SQLite DDL compiler to emit a
-# plain JSON column.  DDL-only and scoped to the sqlite dialect.
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_as_json_on_sqlite(type_, compiler, **kw):  # pragma: no cover
-    return "JSON"
-
-
-@pytest.fixture(scope="module")
-def pgx_engine():
-    """SQLite engine carrying both the app schema and the ``pharmcat`` schema."""
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-
-    @event.listens_for(engine, "connect")
-    def _attach_schemas(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        for schema in ("user_data", "pharmcat"):
-            cursor.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
-        cursor.close()
-
-    with engine.connect():
-        pass
-
-    AppBase.metadata.create_all(bind=engine)
-    PharmcatBase.metadata.create_all(bind=engine)
-    yield engine
-    engine.dispose()
+@pytest.fixture
+def pgx_session(db_session):
+    """The suite's PostgreSQL session; db/init creates the pharmcat schema."""
+    return db_session
 
 
 @pytest.fixture
-def pgx_session(pgx_engine):
-    factory = sessionmaker(
-        autocommit=False, autoflush=False, bind=pgx_engine, expire_on_commit=False
-    )
-    session = factory()
-    try:
-        yield session
-    finally:
-        session.rollback()
-        # Leave the schema behind for the next test in the module.
-        for table in reversed(PharmcatBase.metadata.sorted_tables):
-            session.execute(table.delete())
-        session.query(Job).delete()
-        session.commit()
-        session.close()
-
-
-@pytest.fixture
-def pg_uuid_binds(monkeypatch):
-    """Let SQLite bind a str to a UUID column, the way PostgreSQL casts one.
-
-    ``PharmCATDataService`` filters ``Job.id == workflow_id`` with the raw path
-    string.  PostgreSQL casts text to uuid; SQLite stores UUIDs as CHAR(32) and
-    its bind processor calls ``value.hex``, so a str raises ``AttributeError``.
-    Normalising str -> UUID at bind time reproduces the PostgreSQL behaviour and
-    lets the production query run unmodified.  Backend emulation only, in the
-    same spirit as the JSONB DDL shim above.
-    """
-    original = sqltypes.Uuid.bind_processor
-
-    def _tolerant_bind_processor(self, dialect):
-        processor = original(self, dialect)
-        if processor is None:
-            return None
-
-        def process(value):
-            if isinstance(value, str):
-                try:
-                    value = uuid.UUID(value)
-                except ValueError:
-                    return processor(value)
-            return processor(value)
-
-        return process
-
-    monkeypatch.setattr(sqltypes.Uuid, "bind_processor", _tolerant_bind_processor)
-
-
-@pytest.fixture
-def sessionless_sessions(pgx_engine, monkeypatch):
+def sessionless_sessions(session_factory, monkeypatch):
     """Capture every session PharmCATParser opens for itself.
 
     ``PharmCATParser`` falls back to ``app.api.db.SessionLocal`` -- the app's
@@ -142,12 +56,9 @@ def sessionless_sessions(pgx_engine, monkeypatch):
     the request transaction.
     """
     opened = []
-    _TestSessionLocal = sessionmaker(
-        autocommit=False, autoflush=False, bind=pgx_engine, expire_on_commit=False
-    )
 
     def _session_local(*args, **kwargs):
-        session = _TestSessionLocal(*args, **kwargs)
+        session = session_factory(*args, **kwargs)
         opened.append(session)
         return session
 
@@ -156,25 +67,9 @@ def sessionless_sessions(pgx_engine, monkeypatch):
 
 
 @pytest.fixture
-def pgx_client(pgx_session, pg_uuid_binds, sessionless_sessions):
-    """TestClient whose ``get_db`` hands out the PharmCAT-aware session."""
-    from app.main import app
-
-    def _get_pgx_db():
-        yield pgx_session
-
-    previous = app.dependency_overrides.get(get_db)
-    app.dependency_overrides[get_db] = _get_pgx_db
-    app.router.on_startup.clear()
-    app.router.on_shutdown.clear()
-    try:
-        with TestClient(app) as client:
-            yield client
-    finally:
-        if previous is None:
-            app.dependency_overrides.pop(get_db, None)
-        else:
-            app.dependency_overrides[get_db] = previous
+def pgx_client(client, sessionless_sessions):
+    """TestClient whose ``get_db`` hands out ``pgx_session`` (conftest's override)."""
+    return client
 
 
 @pytest.fixture

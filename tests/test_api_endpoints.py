@@ -253,7 +253,7 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
         # The upload endpoint passes this into our fake JobService but we don't use it.
         yield object()
 
-    # monkeypatch.setitem so the previous entry (conftest's SQLite override) is
+    # monkeypatch.setitem so the previous entry (conftest's override) is
     # restored even when an assertion below fails; the old code cleared it only
     # on the happy path, leaking onto the shared app singleton for the session.
     monkeypatch.setitem(main.app.dependency_overrides, main.get_db, _fake_get_db)
