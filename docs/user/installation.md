@@ -63,11 +63,10 @@ cp .env.local .env
 ./start-docker.sh          # Windows without WSL: .\start-docker.ps1
 ```
 
-The three templates differ in a few values:
+The three templates differ in a few values (all bind the app to `127.0.0.1:8765`):
 
 | | `.env.local` | `.env.production` | `.env.example` |
 |---|---|---|---|
-| `BIND_ADDRESS` | `8765` | `0.0.0.0:8765` | `8765` |
 | `LOG_LEVEL` | `DEBUG` | `INFO` | `DEBUG` |
 | `NETWORK_SUBNET` | `172.20.0.0/16` | `172.28.0.0/16` | `172.20.0.0/16` |
 
@@ -103,11 +102,12 @@ staged: `./scripts/build-align-index.sh` (about an hour).
 
 ## Who can reach it
 
-`BIND_ADDRESS=8765` listens on every network interface, and the default
-`ZAROPGX_AUTH_MODE=open` asks for no password: anyone who can reach the machine on port 8765
-can upload data and read reports. To keep it to this machine, set
-`BIND_ADDRESS=127.0.0.1:8765` in `.env` and run `docker compose up -d`. To share it, see
-{doc}`deployment`.
+The app listens on `127.0.0.1:8765`: this machine only. The default
+`ZAROPGX_AUTH_MODE=open` asks for no password, so before opening it to your network
+(`BIND_ADDRESS=0.0.0.0:8765`, then `docker compose up -d`), turn on the shared password:
+anyone who can reach the port can upload data and read every report. See {doc}`deployment`.
+
+An install made before this default keeps the `BIND_ADDRESS` in its `.env`; check it.
 
 The other services publish on `127.0.0.1` only (`INTERNAL_BIND_ADDRESS`) and do not
 authenticate. Leave them there.
@@ -121,8 +121,9 @@ that contains `ZaroPGx/`:
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash -s -- --update
 ```
 
-It refuses to update a checkout with local changes. Read `UPGRADING.md` in the repository
-for what each release changes.
+It refuses to update a checkout with local changes. On the next start, `start-docker.sh`
+moves an older release's `ZAROPGX_TAG` in `.env` to the new release; `latest` and custom
+tags are left alone. Read `UPGRADING.md` in the repository for what each release changes.
 
 ## Removing
 

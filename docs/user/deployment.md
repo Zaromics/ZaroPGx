@@ -21,7 +21,7 @@ cp .env.production .env
 In `.env`:
 
 ```bash
-BIND_ADDRESS=127.0.0.1:8765      # only the proxy reaches the app
+BIND_ADDRESS=127.0.0.1:8765      # the template's default: only the proxy reaches the app
 ZAROPGX_AUTH_MODE=password
 ZAROPGX_AUTH_PASSWORD=<a long random password>
 ```
@@ -76,8 +76,9 @@ Analyses run on the host; uploads and reports stay in `data/`. Outside connectio
 - At install and update: the repository from GitHub, the images from Docker Hub.
 - On first start: PharmCAT's reference data from Zenodo, and reference genomes and chain
   files for the genome downloader.
-- When someone opens an interactive HTML report: their browser loads Chart.js and D3 from
-  public CDNs.
+- When someone opens the API explorer (`/api/docs` or `/api/redoc`): their browser loads
+  Swagger UI or ReDoc from jsDelivr. The upload page and the reports load nothing from
+  outside.
 
 ## Backups
 

@@ -78,8 +78,5 @@ diplotype fits. Phased data, or reads, can resolve it.
 
 **No HLA calls.** HLA typing needs reads: a VCF cannot provide them.
 
-**The interactive report's charts are empty.** They load Chart.js and D3 from public CDNs;
-open the report with a network connection.
-
 **The PDF failed.** `docker compose logs app` names the error. With `PDF_FALLBACK=true`, a
 WeasyPrint failure falls back to ReportLab, which produces a plainer PDF.

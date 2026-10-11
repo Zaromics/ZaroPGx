@@ -13,12 +13,12 @@ HTTP; each tool reports its progress back to the app.
 
 Every service except `app` publishes to `${INTERNAL_BIND_ADDRESS:-127.0.0.1}`, the Docker
 host's loopback. None of them authenticates; reach them through an SSH tunnel rather than
-widening that address. `app` publishes `${BIND_ADDRESS:-8765}`, which with no address
-given listens on every interface.
+widening that address. `app` publishes `${BIND_ADDRESS:-127.0.0.1:8765}`; the templates
+set the same, and a bare port there would listen on every interface.
 
 | Service | Image | Host port → container | Role |
 |---|---|---|---|
-| `app` | `zaromicsresearch/zaropgx-app` | `${BIND_ADDRESS:-8765}` → 8000 | Web UI, API, job tracking, report generation, the docs at `/docs` |
+| `app` | `zaromicsresearch/zaropgx-app` | `${BIND_ADDRESS:-127.0.0.1:8765}` → 8000 | Web UI, API, job tracking, report generation, the docs at `/docs` |
 | `db` | `postgres:18.6` | 5444 → 5432 | Jobs, steps and logs; loaded PharmCAT results; HAPI FHIR's schema |
 | `nextflow` | `zaromicsresearch/zaropgx-nextflow` | not published (5055) | Runs `pipelines/pgx/main.nf` for each job |
 | `genome-downloader` | `zaromicsresearch/zaropgx-genome-downloader` | 5050 → 5050 | Stages reference genomes, chain files, PharmCAT's position list and the CRAM reference cache into `./reference` |
@@ -112,7 +112,9 @@ reads or writes them.
 - `<job_id>_pgx_report.pdf`, through WeasyPrint. `app/reports/pdf_fit.py` lays the PDF out,
   measures the sections that must fit their pages (the Executive Summary is one page) and
   tightens their spacing and type a step at a time until they do.
-- `<job_id>_pgx_report_interactive.html`, with `app/static/js/pgx-report.js`.
+- `<job_id>_pgx_report_interactive.html`, written last so its Export tab can list the other
+  files. It inlines `app/static/js/pgx-report.js` and the vendored Chart.js and D3
+  (`app/static/vendor/`), so it needs neither the app nor a network to open.
 - The workflow diagram (SVG and PNG), rendered by Kroki.
 
 PharmCAT writes its own `<job_id>_pgx_pharmcat.{html,json,tsv}` into the same directory;

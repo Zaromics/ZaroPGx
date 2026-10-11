@@ -16,16 +16,25 @@ by `docker compose up -d`.
 
 ## v0.3.2 → next release
 
-### Set the image tag
+### The image tag moves with the release
 
-`.env` pins the images with `ZAROPGX_TAG=0.3.2`, and neither the update nor the startup
-scripts change it. Set it to the new release, then pull:
+`start-docker.sh` and `start-docker.ps1` now replace an older release's `ZAROPGX_TAG` in
+`.env` (such as `0.3.2`) with the new release, and say so; `latest`, newer and custom tags
+are left alone. If you start the stack with `docker compose` directly, set it yourself, then
+pull:
 
 ```bash
 docker compose pull && docker compose up -d
 ```
 
 Left at `0.3.2`, the services run the old images under the new code.
+
+### The app binds to loopback in new installs
+
+The templates now set `BIND_ADDRESS=127.0.0.1:8765` (they had `8765`, and `.env.production`
+`0.0.0.0:8765`, which listen on every interface with no password by default). Your `.env`
+keeps its value. If it has a bare port or `0.0.0.0`, anyone on your network can open the
+app: change it to `127.0.0.1:8765`, or turn on `ZAROPGX_AUTH_MODE=password`.
 
 ### Uploads are deleted when their job ends
 

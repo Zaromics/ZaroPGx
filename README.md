@@ -64,10 +64,10 @@ Docker Desktop. The images are `linux/amd64` only (Apple Silicon needs Rosetta e
 VCF needs little memory; alignments need much more (the stack allows GATK up to 28 GB and
 PyPGx up to 20 GB). See [Installation](docs/user/installation.md).
 
-**Access.** With the default `BIND_ADDRESS=8765` the app listens on every network interface,
-and there is no login (`ZAROPGX_AUTH_MODE=open`). On a shared network, set
-`BIND_ADDRESS=127.0.0.1:8765`, or turn on the shared password. To serve it beyond your machine,
-see [Running a server](docs/user/deployment.md).
+**Access.** The app listens on `127.0.0.1:8765`, this machine only, and asks for no login
+(`ZAROPGX_AUTH_MODE=open`). Before opening it to your network (`BIND_ADDRESS=0.0.0.0:8765`),
+turn on the shared password; to serve it beyond your network, see
+[Running a server](docs/user/deployment.md).
 
 ## Documentation
 

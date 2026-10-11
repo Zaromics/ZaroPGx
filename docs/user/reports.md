@@ -81,9 +81,10 @@ versions), and the **Genomic Datafile Header** as uploaded.
 ## The interactive report
 
 A single HTML file with tabs: Alerts, Summary, Genes, mtDNA, Drugs, Recs, Visualizations
-(phenotype chart, drug-gene network, recommendations chart), Method, Header,
-Acknowledgements, and an Export tab that is not finished. It loads Chart.js and D3 from
-public CDNs when opened, so the charts need a network connection.
+(phenotype chart, drug-gene network, recommendations chart), Method, Export, Header and
+Acknowledgements. It carries its own scripts (Chart.js and D3 included), so it works offline
+and when opened from the downloaded ZIP. **Export** links the job's FHIR bundle, PharmCAT's
+JSON, TSV and HTML, and the PDF, whichever were written.
 
 ## FHIR
 

@@ -31,8 +31,9 @@ A variant-only VCF does not say which positions match the reference. See
 
 **Does my data leave my machine?**
 The analysis runs on your host and the files stay in `data/`. Installing and the first start
-download software and reference data; opening an interactive report loads two JavaScript
-libraries from public CDNs. Nothing about your data is sent. See {doc}`deployment`.
+download software and reference data. The upload page and the reports load nothing from
+outside; only the API explorer pages do. Nothing about your data is sent. See
+{doc}`deployment`.
 
 **How long are files kept?**
 An upload is deleted when its job ends (`KEEP_UPLOADS=true` keeps it). Reports stay until you
