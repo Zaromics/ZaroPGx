@@ -340,10 +340,15 @@ def test_pypgx_create_input_vcf_streams_upload_in_chunks(pypgx_api, monkeypatch)
     # a slow multi-megabyte test fixture.
     monkeypatch.setattr(pypgx_api, "UPLOAD_CHUNK_BYTES", 4)
     # The actual PyPGx CLI is not installed in this environment; only the save
-    # step is under test here.
-    monkeypatch.setattr(
-        pypgx_api, "run_pypgx_create_input_vcf", lambda *a, **k: {"success": True}
-    )
+    # step is under test here. The stub reads the saved file while it exists: the
+    # endpoint deletes its input copy when the request ends.
+    saved = {}
+
+    def fake_create_input_vcf(alignment_path, *a, **k):
+        saved["bytes"] = Path(alignment_path).read_bytes()
+        return {"success": True}
+
+    monkeypatch.setattr(pypgx_api, "run_pypgx_create_input_vcf", fake_create_input_vcf)
     read_sizes = _spy_on_upload_reads(monkeypatch)
 
     payload = bytes(range(37))  # not a multiple of the 4-byte chunk size
@@ -354,8 +359,7 @@ def test_pypgx_create_input_vcf_streams_upload_in_chunks(pypgx_api, monkeypatch)
     )
 
     assert response.status_code == 200, response.text
-    written = Path(response.json()["input_file"]).read_bytes()
-    assert written == payload, "the saved file does not match what was uploaded"
+    assert saved["bytes"] == payload, "the saved file does not match what was uploaded"
 
     assert read_sizes, "file.read() was never called"
     assert set(read_sizes) == {
@@ -366,8 +370,8 @@ def test_pypgx_create_input_vcf_streams_upload_in_chunks(pypgx_api, monkeypatch)
 
 def test_pypgx_genotype_streams_upload_in_chunks(pypgx_api, monkeypatch):
     monkeypatch.setattr(pypgx_api, "UPLOAD_CHUNK_BYTES", 4)
-    # /genotype never returns its saved path in the response body (unlike
-    # /create-input-vcf), and nothing here rmtree's job_dir -- so the path is
+    # /genotype never returns its saved path in the response body, and nothing here
+    # rmtree's job_dir -- so the path is
     # made predictable instead, by pinning the two uuid4() calls that build it
     # (local_job_id, then safe_upload_name()'s own stem) to one fixed value.
     fixed_uuid = pypgx_api.uuid.uuid4()
