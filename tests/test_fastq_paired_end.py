@@ -125,7 +125,8 @@ def test_fastq_to_bam_takes_and_sends_the_second_mate():
     assert "path fastq2" in block
     # Sent only when real: the single-end placeholder is the 0-byte assets/empty.tsv.
     assert '[ -s "!{fastq2}" ]' in block
-    assert "file2=@!{fastq2}" in block
+    # As an upload (file2) or, on the shared volume, by path (shared_input2).
+    assert 'input-args file2 shared_input2 "!{fastq2}"' in block
 
 
 def test_the_single_end_placeholder_is_empty():

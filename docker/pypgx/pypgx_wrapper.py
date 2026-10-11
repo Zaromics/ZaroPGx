@@ -37,6 +37,10 @@ from pydantic import BaseModel
 import sys
 sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
+try:
+    from shared_input import SharedInputRefused, link_shared_input  # pyright: ignore[reportMissingImports]
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
+    from app.utils.shared_input import SharedInputRefused, link_shared_input
 
 # --------------------------------------------------------------------------
 # Upload name hardening
@@ -719,7 +723,8 @@ def get_gene_sets():
 
 @app.post("/create-input-vcf")
 async def create_input_vcf(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    shared_input: Optional[str] = Form(None),
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
@@ -733,15 +738,20 @@ async def create_input_vcf(
     """
     if reference_genome not in ["hg19", "hg38", "GRCh37", "GRCh38"]:
         raise HTTPException(status_code=400, detail=f"Reference genome {reference_genome} is not supported. Use hg19/GRCh37 or hg38/GRCh38.")
+    # The alignment arrives as an upload, or as the path of a file already on the
+    # shared /data volume (app/utils/shared_input.py), which is read in place.
+    if (file is None) == (shared_input is None):
+        raise HTTPException(status_code=400, detail="Send the alignment as file, or its shared path as shared_input -- one of them.")
+    filename = file.filename if file is not None else os.path.basename(shared_input)
 
     # Initialize workflow client if job_id is provided
     job_client = None
     if job_id:
         try:
             job_client = JobClient(job_id=job_id, step_name=step_name)
-            await job_client.start_step(f"Starting BAM to VCF conversion for {file.filename}")
-            await job_client.log_progress(f"Converting {file.filename} to VCF", {
-                "filename": file.filename,
+            await job_client.start_step(f"Starting BAM to VCF conversion for {filename}")
+            await job_client.log_progress(f"Converting {filename} to VCF", {
+                "filename": filename,
                 "reference_genome": reference_genome
             })
         except Exception as e:
@@ -759,11 +769,17 @@ async def create_input_vcf(
     try:
         # Save uploaded alignment file under a generated name - the client's
         # filename never reaches the filesystem or a command line.
-        safe_name = safe_upload_name(file.filename, ".bam")
+        safe_name = safe_upload_name(filename, ".bam")
         input_path = job_dir / safe_name
-        with open(input_path, "wb") as f:
-            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
-                f.write(chunk)
+        if shared_input is not None:
+            try:
+                link_shared_input(shared_input, input_path)
+            except SharedInputRefused as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+        else:
+            with open(input_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
 
         # Determine output VCF path. Derived from the generated stem, not from
         # the client's name; `safe_name` is `<hex><suffix>` and the hex part
@@ -1451,8 +1467,14 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         if not (fasta.parent / (fasta.name + ".fai")).exists():
             logger.info(f"Indexing reference FASTA (faidx): {fasta}")
             pysam.faidx(str(fasta))
-        logger.info(f"Indexing alignment (bai): {alignment_path}")
-        pysam.index(str(alignment_path))
+        # A shared BAM arrives with its current index already beside it
+        # (app/utils/shared_input.py); indexing a 30x genome again took 8 minutes.
+        index = Path(f"{alignment_path}.bai")
+        if index.is_file() and index.stat().st_mtime >= Path(alignment_path).stat().st_mtime:
+            logger.info(f"Using the existing index {index}")
+        else:
+            logger.info(f"Indexing alignment (bai): {alignment_path}")
+            pysam.index(str(alignment_path))
 
         cmd = [
             "pypgx", "create-input-vcf",

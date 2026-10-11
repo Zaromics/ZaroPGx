@@ -34,6 +34,10 @@ from pydantic import BaseModel
 import sys
 sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
+try:
+    from shared_input import SharedInputRefused, link_shared_input  # pyright: ignore[reportMissingImports]
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
+    from app.utils.shared_input import SharedInputRefused, link_shared_input
 # The FASTQ platform detector. ONE implementation, two import paths, because this
 # module is loaded two ways: inside the image, where Dockerfile.gatk-api copies the
 # file in beside it, and out of the container by the test suite, which execs this
@@ -1870,7 +1874,7 @@ def conversion_output_dir(local_job_id, job_id=None, patient_id=None):
     """Return the directory a converted BAM must be written to.
 
     Not this container's /tmp. The caller is a Nextflow process running in the
-    nextflow container, which copies `bam_path` by path; the only filesystem both
+    nextflow container, which links `bam_path` by path; the only filesystem both
     containers share is the ./data bind mount (`/data` in each). A BAM under
     TMPDIR=/tmp/gatk_temp lives on this container's private writable layer and is
     unreadable to the caller, so reporting it as a success would repeat the defect
@@ -3252,6 +3256,38 @@ def _gatk_error_summary(output, limit=600):
     return output.strip()[-limit:]
 
 
+def _link_shared(shared_input, dest):
+    """Read an input already on the shared /data volume in place, linked at `dest`
+    (app/utils/shared_input.py); a path it may not read is the caller's mistake."""
+    try:
+        return link_shared_input(shared_input, dest)
+    except SharedInputRefused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _one_input(file, shared_input):
+    """The display name of the one input sent: an upload, or a shared path."""
+    if (file is None) == (shared_input is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Send the input as file, or its shared path as shared_input -- one of them.",
+        )
+    return file.filename if file is not None else os.path.basename(shared_input)
+
+
+def _fastq_over_budget():
+    return HTTPException(
+        status_code=413,
+        detail=(
+            f"FASTQ upload exceeds the "
+            f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit (both mates "
+            "count together). Align whole-genome reads yourself "
+            "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM "
+            "or CRAM."
+        ),
+    )
+
+
 async def _stream_capped_fastq(file, dest, budget):
     """Write one FASTQ upload to `dest`, drawing down the shared byte budget.
 
@@ -3270,16 +3306,7 @@ async def _stream_capped_fastq(file, dest, budget):
             if budget[0] < 0:
                 handle.close()
                 _discard_output(dest)
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        f"FASTQ upload exceeds the "
-                        f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit (both mates "
-                        "count together). Align whole-genome reads yourself "
-                        "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM "
-                        "or CRAM."
-                    ),
-                )
+                raise _fastq_over_budget()
             handle.write(chunk)
 
 
@@ -3332,9 +3359,12 @@ def _run_align_step(job_label, argv, label):
 
 @app.post("/align-fastq")
 async def align_fastq(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     # The second mate of a paired-end run. Absent means single-end.
     file2: Optional[UploadFile] = File(None),
+    # Or the paths of files already on the shared /data volume, read in place.
+    shared_input: Optional[str] = Form(None),
+    shared_input2: Optional[str] = Form(None),
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
@@ -3390,6 +3420,12 @@ async def align_fastq(
     work_dir = None
     output_dir = None
     try:
+        name = _one_input(file, shared_input)
+        if file2 is not None and shared_input2 is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Send the second mate as file2, or its shared path as shared_input2 -- one of them.",
+            )
         # Opened BEFORE the validation below, deliberately. A caller that reaches this
         # route is mid-run, and the refusals here are the ones most likely to fire on a
         # deployment that never staged the reference -- so they have to reach the job
@@ -3398,7 +3434,7 @@ async def align_fastq(
         if job_id:
             try:
                 job_client = JobClient(job_id=job_id, step_name=step_name)
-                await job_client.start_step(f"Aligning {file.filename} to GRCh38")
+                await job_client.start_step(f"Aligning {name} to GRCh38")
             except Exception as e:
                 logger.warning(f"Failed to initialize workflow client: {e}")
                 job_client = None
@@ -3434,24 +3470,39 @@ async def align_fastq(
 
         local_job_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        filename = safe_upload_name(file.filename or "reads.fastq", local_job_id)
+        filename = safe_upload_name(name or "reads.fastq", local_job_id)
         input_path = os.path.join(work_dir, filename)
         # A distinct prefix, because safe_upload_name keeps only the extension of the
         # caller's name: two mates called reads_1.fq.gz / reads_2.fq.gz would otherwise
         # sanitise to the same path and the second would overwrite the first.
         mate_path = None
-        if file2 is not None:
+        mate_name = (
+            file2.filename if file2 is not None
+            else os.path.basename(shared_input2) if shared_input2 is not None
+            else None
+        )
+        if mate_name is not None:
             mate_path = os.path.join(
                 work_dir,
-                "mate2_" + safe_upload_name(file2.filename or "reads.fastq", local_job_id),
+                "mate2_" + safe_upload_name(mate_name or "reads.fastq", local_job_id),
             )
 
-        # Capped while streaming, not by trusting a client-supplied Content-Length,
-        # and the partial file is discarded on breach. One budget across both mates.
+        # One budget across both mates. An upload is capped while streaming, not by
+        # trusting a client-supplied Content-Length, and the partial file is discarded
+        # on breach; a mate already on disk spends its size. Each mate may arrive
+        # either way: bin/input-args decides per file.
         budget = [FASTQ_MAX_UPLOAD_BYTES]
-        await _stream_capped_fastq(file, input_path, budget)
-        if file2 is not None:
-            await _stream_capped_fastq(file2, mate_path, budget)
+        for upload, shared, dest in (
+            (file, shared_input, input_path),
+            (file2, shared_input2, mate_path),
+        ):
+            if shared is not None:
+                _link_shared(shared, dest)
+                budget[0] -= os.path.getsize(dest)
+                if budget[0] < 0:
+                    raise _fastq_over_budget()
+            elif upload is not None:
+                await _stream_capped_fastq(upload, dest, budget)
 
         call = detect_fastq_platform(input_path)
         if not call.determined:
@@ -3643,7 +3694,9 @@ async def align_fastq(
 
 @app.post("/cram-to-bam")
 async def cram_to_bam(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    # Or the path of a file already on the shared /data volume, read in place.
+    shared_input: Optional[str] = Form(None),
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
@@ -3676,13 +3729,14 @@ async def cram_to_bam(
     work_dir = None
     output_dir = None
     try:
+        name = _one_input(file, shared_input)
         # Initialize job client if Zaro Job PK is provided
         if job_id:
             try:
                 job_client = JobClient(job_id=job_id, step_name=step_name)
-                await job_client.start_step(f"Starting CRAM to BAM conversion for {file.filename}")
-                await job_client.log_progress(f"Converting {file.filename} to BAM", {
-                    "filename": file.filename,
+                await job_client.start_step(f"Starting CRAM to BAM conversion for {name}")
+                await job_client.log_progress(f"Converting {name} to BAM", {
+                    "filename": name,
                     "reference_genome": reference_genome
                 })
             except Exception as e:
@@ -3715,7 +3769,7 @@ async def cram_to_bam(
         # from this name, so it carried them onto the *shared* volume as well.
         local_job_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        filename = safe_upload_name(file.filename or "input.cram", local_job_id)
+        filename = safe_upload_name(name or "input.cram", local_job_id)
         input_path = os.path.join(work_dir, filename)
         # Output goes on the shared volume, not beside the input -- see
         # conversion_output_dir().
@@ -3725,13 +3779,19 @@ async def cram_to_bam(
         # misdirected `.vcf.gz` post here would otherwise yield `<name>.vcf.bam`.
         output_bam = os.path.join(output_dir, f"{stored_stem(filename)}.bam")
 
-        # Copied in chunks: a whole-genome CRAM does not fit in this container's heap,
-        # and now that the conversion is real, whole-genome CRAMs actually arrive here.
-        with open(input_path, "wb") as f:
-            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
-                f.write(chunk)
+        if shared_input is not None:
+            _link_shared(shared_input, input_path)
+        else:
+            # Copied in chunks: a whole-genome CRAM does not fit in this container's
+            # heap, and now that the conversion is real, whole-genome CRAMs arrive here.
+            with open(input_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
 
-        logger.info(f"Job {local_job_id}: Saved CRAM file to {input_path}")
+        logger.info(
+            f"Job {local_job_id}: CRAM input at {input_path}"
+            + (f" (linked to {shared_input})" if shared_input is not None else "")
+        )
 
         # The caller picked the reference; check the file agrees before decoding it.
         await asyncio.to_thread(
@@ -3810,7 +3870,9 @@ async def cram_to_bam(
 
 @app.post("/sam-to-bam")
 async def sam_to_bam(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    # Or the path of a file already on the shared /data volume, read in place.
+    shared_input: Optional[str] = Form(None),
     reference_genome: str = Form("hg38"),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
@@ -3834,13 +3896,14 @@ async def sam_to_bam(
     work_dir = None
     output_dir = None
     try:
+        name = _one_input(file, shared_input)
         # Initialize job client if Zaro Job PK is provided
         if job_id:
             try:
                 job_client = JobClient(job_id=job_id, step_name=step_name)
-                await job_client.start_step(f"Starting SAM to BAM conversion for {file.filename}")
-                await job_client.log_progress(f"Converting {file.filename} to BAM", {
-                    "filename": file.filename,
+                await job_client.start_step(f"Starting SAM to BAM conversion for {name}")
+                await job_client.log_progress(f"Converting {name} to BAM", {
+                    "filename": name,
                     "reference_genome": reference_genome
                 })
             except Exception as e:
@@ -3851,19 +3914,25 @@ async def sam_to_bam(
         # every shell and glob metacharacter in a name that reaches the shared volume.
         local_job_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        filename = safe_upload_name(file.filename or "input.sam", local_job_id)
+        filename = safe_upload_name(name or "input.sam", local_job_id)
         input_path = os.path.join(work_dir, filename)
         # Shared volume, for the same reason as the CRAM route.
         output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
         # stored_stem(), for the same reason as the CRAM route.
         output_bam = os.path.join(output_dir, f"{stored_stem(filename)}.bam")
 
-        # Chunked for the same reason as the CRAM route: never buffer the whole upload.
-        with open(input_path, "wb") as f:
-            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
-                f.write(chunk)
+        if shared_input is not None:
+            _link_shared(shared_input, input_path)
+        else:
+            # Chunked for the same reason as the CRAM route: never buffer the upload.
+            with open(input_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
 
-        logger.info(f"Job {local_job_id}: Saved SAM file to {input_path}")
+        logger.info(
+            f"Job {local_job_id}: SAM input at {input_path}"
+            + (f" (linked to {shared_input})" if shared_input is not None else "")
+        )
 
         # Update workflow with file information
         if job_client:

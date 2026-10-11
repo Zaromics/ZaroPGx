@@ -18,6 +18,19 @@ from pydantic import BaseModel
 sys.path.append("/job-client")
 from job_client import JobClient
 
+try:
+    from shared_input import (  # pyright: ignore[reportMissingImports]
+        SharedInputRefused,
+        link_shared_input,
+        resolve_shared_input,
+    )
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
+    from app.utils.shared_input import (
+        SharedInputRefused,
+        link_shared_input,
+        resolve_shared_input,
+    )
+
 # Read (and created) before logging is configured because the progress-log handler
 # below writes into DATA_DIR. Same ordering as gatk_api.py.
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
@@ -1149,7 +1162,8 @@ async def _render_report(work: str, job_key: str) -> Optional[str]:
 
 @app.post("/call-mtdna")
 async def call_mtdna(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    shared_input: Optional[str] = Form(None),
     patient_id: str = Form(...),
     report_id: str = Form(...),
     input_type: str = Form("vcf"),
@@ -1159,6 +1173,22 @@ async def call_mtdna(
     step_name: Optional[str] = Form(None),
 ) -> Dict[str, Any]:
     job_key = job_id or f"{patient_id}_{uuid.uuid4().hex[:8]}"
+
+    # The input arrives as an upload, or as the path of a file already on the
+    # shared /data volume, read in place (app/utils/shared_input.py). Checked before
+    # the step starts or anything in the job's work dir is touched: a refused path
+    # is the caller's mistake, and must not cost the job a file.
+    if (file is None) == (shared_input is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Send the input as file, or its shared path as shared_input -- one of them.",
+        )
+    source = None
+    if shared_input is not None:
+        try:
+            source = resolve_shared_input(shared_input)
+        except SharedInputRefused as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     # Same construction as docker/zarohla/app.py's call_hla: JobClient's own
     # __init__ takes (base_url, job_id, step_name) as keywords, and tolerates a
@@ -1173,14 +1203,25 @@ async def call_mtdna(
             logger.warning(f"Failed to initialize JobClient: {exc}")
             client = None
 
+    name = file.filename if file is not None else source.name
     work = str(TEMP_DIR / "mtdna" / job_key)
     os.makedirs(work, exist_ok=True)
-    upload_path = os.path.join(work, os.path.basename(file.filename or "input"))
-    # Streamed, not `await file.read()`: with one worker, reading a whole-genome
-    # BAM into memory blocks the single event loop for the duration, taking
-    # /health and the broadcast /cancel down with it. Same value and same
-    # reasoning as zarohla and gatk-api.
-    await store_upload(file, upload_path)
+    upload_path = os.path.join(work, os.path.basename(name or "input"))
+    if source is not None:
+        # The work dir is per job, not per request: a request killed before its
+        # cleanup leaves its input here, which an upload would have overwritten.
+        if os.path.lexists(upload_path):
+            os.remove(upload_path)
+        try:
+            link_shared_input(str(source), upload_path)
+        except SharedInputRefused as exc:  # moved or replaced since the check
+            raise HTTPException(status_code=400, detail=str(exc))
+    else:
+        # Streamed, not `await file.read()`: with one worker, reading a whole-genome
+        # BAM into memory blocks the single event loop for the duration, taking
+        # /health and the broadcast /cancel down with it. Same value and same
+        # reasoning as zarohla and gatk-api.
+        await store_upload(file, upload_path)
 
     wants_ref = str(absent_to_ref).strip().lower() in {"1", "true", "yes", "on"}
     try:

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# The curl arguments that hand FILE to a ZaroPGx service, NUL-separated: its path,
+# when the file is on the shared /data volume, or else the file itself as an upload.
+#
+#   input-args file shared_input "$FILE" > input.args
+#   mapfile -d '' -t IN < input.args; CURL_ARGS+=( "${IN[@]}" )
+#
+# Every service that reads alignments mounts ./data at /data, as the nextflow
+# container does, so a path under /data/uploads or /data/results names the same file
+# in all of them and the service reads it in place (app/utils/shared_input.py, which
+# reads the same SHARED_INPUT_ROOTS with the same default). A whole-genome BAM was
+# otherwise copied into each service, 41 GB apiece. Anything else -- a file only in a
+# Nextflow work directory -- is uploaded as before. Nextflow puts this directory
+# (bin/) on every process's PATH.
+set -euo pipefail
+upload_field=$1 shared_field=$2 file=$3
+real=$(readlink -f -- "$file")
+IFS=: read -r -a roots <<<"${SHARED_INPUT_ROOTS:-/data/uploads:/data/results}"
+for root in "${roots[@]}"; do
+  [[ -n "$root" ]] || continue
+  root=$(readlink -m -- "$root")  # canonical, as the services resolve theirs
+  if [[ "$real" == "$root"/* ]]; then
+    # --form-string: the path is sent as it is, never parsed for @, < or ;type=.
+    printf '%s\0%s\0' --form-string "$shared_field=$real"
+    exit 0
+  fi
+done
+printf '%s\0%s\0' -F "$upload_field=@$file"

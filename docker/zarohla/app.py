@@ -18,6 +18,19 @@ import sys
 sys.path.append("/job-client")
 from job_client import JobClient
 
+try:
+    from shared_input import (  # pyright: ignore[reportMissingImports]
+        SharedInputRefused,
+        link_shared_input,
+        resolve_shared_input,
+    )
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
+    from app.utils.shared_input import (
+        SharedInputRefused,
+        link_shared_input,
+        resolve_shared_input,
+    )
+
 # Read (and created) before logging is configured because the progress-log handler
 # below writes into DATA_DIR. Same ordering as gatk_api.py.
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
@@ -521,6 +534,7 @@ async def call_hla(
     file: Optional[UploadFile] = File(None),
     file1: Optional[UploadFile] = File(None),
     file2: Optional[UploadFile] = File(None),
+    shared_input: Optional[str] = Form(None),
     seq_type: str = Form("dna"),
     mapper: str = Form("yara"),
     reference_genome: Optional[str] = Form("GRCh38"),
@@ -529,6 +543,21 @@ async def call_hla(
     job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("zarohla"),
 ) -> Dict[str, Any]:
+
+    # An alignment already on the shared /data volume is read in place
+    # (app/utils/shared_input.py). Checked first: the handler below answers any
+    # exception with a 500, and a refused path is the caller's mistake, which must
+    # not leave the job's step started and never finished.
+    if shared_input is not None:
+        if file or file1 or file2:
+            raise HTTPException(
+                status_code=400,
+                detail="Send the reads as files, or their shared path as shared_input -- not both.",
+            )
+        try:
+            resolve_shared_input(shared_input)
+        except SharedInputRefused as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     job_client = None
     if job_id:
@@ -565,13 +594,21 @@ async def call_hla(
             )
             await store_upload(file1, f1_path)
             await store_upload(file2, f2_path)
-        elif file:
-            input_path = job_dir / safe_upload_name(file.filename, ".fastq")
-            logger.info(
-                f"Job {local_job_id}: storing upload {file.filename!r} as "
-                f"{input_path.name!r}"
-            )
-            await store_upload(file, input_path)
+        elif file or shared_input:
+            name = file.filename if file else os.path.basename(shared_input)
+            input_path = job_dir / safe_upload_name(name, ".fastq")
+            if shared_input:
+                logger.info(
+                    f"Job {local_job_id}: reading {shared_input!r} in place as "
+                    f"{input_path.name!r}"
+                )
+                link_shared_input(shared_input, input_path)
+            else:
+                logger.info(
+                    f"Job {local_job_id}: storing upload {file.filename!r} as "
+                    f"{input_path.name!r}"
+                )
+                await store_upload(file, input_path)
 
             if (
                 input_path.name.lower().endswith(".bam")

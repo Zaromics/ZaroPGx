@@ -135,9 +135,14 @@ process FastqToBAM {
     shell:
     '''
     set -euo pipefail
-    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{fastq} )
+    # The reads go by path when they are on the shared /data volume (bin/input-args).
+    input-args file shared_input "!{fastq}" > input.args
+    mapfile -d '' -t IN < input.args
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} "${IN[@]}" )
     if [ -s "!{fastq2}" ]; then
-      CURL_ARGS+=( -F file2=@!{fastq2} )
+      input-args file2 shared_input2 "!{fastq2}" > input2.args
+      mapfile -d '' -t IN < input2.args
+      CURL_ARGS+=( "${IN[@]}" )
     fi
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_alignment )
@@ -158,7 +163,10 @@ data=json.load(open('align_response.json'))
 print(data.get('bam_path') or data.get('bam') or '')
 PY
 )
-    test -n "$BAM_PATH" && cp "$BAM_PATH" .
+    # Linked, not copied: gatk-api wrote it on the shared volume, where the next
+    # services read it in place. publishDir above copies it into the report folder:
+    # aligned reads are this lane's product, and /data/results goes when the job ends.
+    test -n "$BAM_PATH" && ln -s "$BAM_PATH" .
     '''
 }
 
@@ -181,7 +189,9 @@ PY
 // tests/test_pipeline_step_names_are_registered.py fails the build if it does not exist.
 process CramToBAM {
     tag "cram2bam_${patient_id}"
-    publishDir { outdir }, mode: 'copy'
+    // Not published: the converted BAM is the upload in another format, 41 GB for a
+    // 30x genome, and kept it doubled the input's footprint for good. It is linked
+    // below, read in place by the services, and goes with /data/results at job end.
 
     input:
     path cram
@@ -196,7 +206,9 @@ process CramToBAM {
     shell:
     '''
     set -euo pipefail
-    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{cram} )
+    input-args file shared_input "!{cram}" > input.args
+    mapfile -d '' -t IN < input.args
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} "${IN[@]}" )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
@@ -212,7 +224,7 @@ data=json.load(open('cram_response.json'))
 print(data.get('bam_path') or data.get('bam') or '')
 PY
 )
-    test -n "$BAM_PATH" && cp "$BAM_PATH" .
+    test -n "$BAM_PATH" && ln -s "$BAM_PATH" .
     '''
 }
 
@@ -220,7 +232,9 @@ PY
 // process's comment for why the two share one name and what the mismatch broke.
 process SamToBAM {
     tag "sam2bam_${patient_id}"
-    publishDir { outdir }, mode: 'copy'
+    // Not published: the converted BAM is the upload in another format, 41 GB for a
+    // 30x genome, and kept it doubled the input's footprint for good. It is linked
+    // below, read in place by the services, and goes with /data/results at job end.
 
     input:
     path sam
@@ -235,7 +249,9 @@ process SamToBAM {
     shell:
     '''
     set -euo pipefail
-    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{sam} )
+    input-args file shared_input "!{sam}" > input.args
+    mapfile -d '' -t IN < input.args
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} "${IN[@]}" )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gatk_cram_sam_to_bam )
     fi
@@ -251,7 +267,7 @@ data=json.load(open('sam_response.json'))
 print(data.get('bam_path') or data.get('bam') or '')
 PY
 )
-    test -n "$BAM_PATH" && cp "$BAM_PATH" .
+    test -n "$BAM_PATH" && ln -s "$BAM_PATH" .
     '''
 }
 
@@ -278,7 +294,9 @@ process OptiTypeHLAFromBAM {
     shell:
     '''
     set -euo pipefail
-    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
+    input-args file shared_input "!{bam}" > input.args
+    mapfile -d '' -t IN < input.args
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} "${IN[@]}" )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=hla_typing )
     fi
@@ -337,9 +355,14 @@ process MtdnaCall {
     shell:
     '''
     set -euo pipefail
+    case "!{input_type}" in
+      bam|cram|sam) input-args file shared_input "!{variants_file}" > input.args ;;
+      *) printf '%s\0%s\0' -F "file=@!{variants_file}" > input.args ;;
+    esac
+    mapfile -d '' -t IN < input.args
     CURL_ARGS=( -X POST -F patient_id=!{patient_id} -F report_id=!{report_id} \
                 -F input_type=!{input_type} -F reference_genome=!{source_build} \
-                -F absent_to_ref=!{absent_to_ref} -F file=@!{variants_file} )
+                -F absent_to_ref=!{absent_to_ref} "${IN[@]}" )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=mtdna_analysis )
     fi
@@ -580,7 +603,9 @@ process PyPGxBam2Vcf {
     shell:
     '''
     set -euo pipefail
-    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{bam} )
+    input-args file shared_input "!{bam}" > input.args
+    mapfile -d '' -t IN < input.args
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} "${IN[@]}" )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_bam2vcf )
     fi
