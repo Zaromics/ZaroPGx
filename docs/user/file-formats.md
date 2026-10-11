@@ -55,6 +55,8 @@ BAM files contain aligned sequencing reads and are commonly used for variant cal
 
 For aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT gets a call at each of its positions, made from your reads. Reference needs at least 7 good reads for the reference and next to none for anything else; a variant needs a confident call (genotype quality 20). Anything else is a no-call, so a gene your data did not cover is reported as not called, not as normal. PharmCAT's assume-reference checkboxes are not applied. The report states how many positions were called, had no reads, or were uncertain.
 
+Structural variants (gene deletions, duplications and hybrids, such as *CYP2D6* \*5, \*36 and \*68, or *GSTM1*, *GSTT1* and *UGT2B17* deletions) are called by PyPGx from read depth, normalised against the *VDR* gene, for GRCh38 whole-genome data only: the alignment needs a median depth of at least 15x at a set of loci no pharmacogene panel targets. A targeted panel does not qualify, because depth across capture targets is too uneven to count gene copies from one sample, and its genes get calls from small variants alone.
+
 ### Processing Path — BAM
 ```
 BAM → HLA Typing → PyPGx → PharmCAT → Reports

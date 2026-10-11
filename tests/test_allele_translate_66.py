@@ -108,3 +108,18 @@ def test_repo_lexicon_candidate_resolves_app_utils_layout(tmp_path: Path):
     mod.write_text("# stub\n", encoding="utf-8")
     expected = tmp_path / "lexicon" / "allele_map_pypgx_to_pharmcat.json"
     assert at._repo_lexicon_candidate(mod) == expected
+
+
+def test_cyp2d6_tandem_gets_pharmcats_spaced_name():
+    """PyPGx's "*68+*4" is Indeterminate to PharmCAT; "*68 + *4" is activity 0.
+
+    Uses the shipped map, so it also proves the lexicon carries PharmCAT's name.
+    """
+    text = "CYP2D6\t*3/*68+*4\t\t\nCYP2D6\t*36+*10/*1x2\t\t\n"
+    out = at.translate_outside_tsv_text(text, at.load_map()).splitlines()
+    assert out == ["CYP2D6\t*3/*68 + *4\t\t", "CYP2D6\t*36 + *10/*1x2\t\t"]
+
+
+def test_plus_signs_elsewhere_keep_pharmcats_unspaced_spelling():
+    text = "UGT1A1\t*1/*80+*28\t\t\nDPYD\tReference/c.1905+1G>A (*2A)\t\t\n"
+    assert at.translate_outside_tsv_text(text, at.load_map()) == text

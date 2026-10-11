@@ -16,7 +16,9 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
+import functools
+import statistics
 import zipfile
 import io
 import csv
@@ -415,7 +417,8 @@ async def process_gene_batch_parallel(
     reference_genome: str,
     max_workers: int = None,
     job_id: str = None,
-    job_client = None
+    job_client = None,
+    sv_inputs: Optional[Tuple[str, str]] = None,
 ) -> Dict[str, Any]:
     """Process a batch of genes in parallel using ThreadPoolExecutor"""
     if max_workers is None:
@@ -458,7 +461,7 @@ async def process_gene_batch_parallel(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all gene processing tasks
         future_to_gene = {
-            executor.submit(run_pypgx, vcf_gz, job_dir, gene, reference_genome, job_id): gene 
+            executor.submit(run_pypgx, vcf_gz, job_dir, gene, reference_genome, job_id, sv_inputs): gene 
             for gene in genes
         }
         
@@ -781,6 +784,7 @@ async def create_input_vcf(
             "tbi_path": str(output_vcf_gz) + ".tbi",
             "pharmcat_vcf_path": res.get("pharmcat_vcf"),
             "pharmcat_positions": res.get("pharmcat_positions"),
+            "sv_inputs": res.get("sv_inputs"),
             "assembly": pypgx_assembly,
         }
         if patient_id:
@@ -878,6 +882,178 @@ def no_reads_note(gene: str) -> str:
     return note
 
 
+# ---------------------------------------------------------------------------
+# Structural variants: CYP2D6 *5/*36/*68 and gene duplications, GSTM1/GSTT1/UGT2B17
+# deletions, and the rest of PyPGx's SV-defined alleles
+# ---------------------------------------------------------------------------
+#
+# run-ngs-pipeline calls an SV-defined star allele only when it is given the
+# alignment's depth of coverage over the gene and statistics for a control gene
+# (VDR) to normalise it against; without them it returns the SNV-only call. On
+# NA12878 (1000 Genomes 30x) that was CYP2D6 *3/*4, where GeT-RM's consensus is
+# *3/*68+*4. Given both inputs, PyPGx 0.27 calls *3/*68+*4 (CNV Tandem1A).
+#
+# Copy number from one sample's depth assumes whole-genome coverage. On a capture
+# panel, per-target efficiency moves depth by more than a copy, and the same call
+# would invent deletions and duplications. So the inputs are prepared only for an
+# alignment with whole-genome-like depth at loci no PGx panel targets: these 14
+# windows, each 10 kb inside GIAB HG001's high-confidence regions and more than
+# 2 Mb from every PyPGx and PharmCAT gene region and from the MHC. NA12878 30x
+# measured 31.9-34.5x in every one; the repo's panel-like test BAMs have no read in
+# any. GRCh38 only: other builds keep the SNV-only call.
+WGS_PROBE_WINDOWS_GRCH38 = (
+    ("chr1", 92093238, 92103238),
+    ("chr2", 88733626, 88743626),
+    ("chr3", 73402996, 73412996),
+    ("chr4", 71117931, 71127931),
+    ("chr5", 67151819, 67161819),
+    ("chr8", 55273219, 55283219),
+    ("chr9", 38751224, 38761224),
+    ("chr11", 44703087, 44713087),
+    ("chr12", 50283343, 50293343),
+    ("chr13", 42320621, 42330621),
+    ("chr14", 39600867, 39610867),
+    ("chr17", 32374270, 32384270),
+    ("chr18", 29731566, 29741566),
+    ("chr20", 23874127, 23884127),
+)
+# Median depth across the windows. PyPGx's SV calling is built for 30x WGS; below
+# 15x a single copy is too close to sampling noise to call.
+WGS_MIN_MEDIAN_DEPTH = 15.0
+SV_INPUTS_HEADER_KEY = "ZaroPGx_sv_inputs"
+SV_DEPTH_SUFFIX = ".depth-of-coverage.zip"
+SV_CONTROL_SUFFIX = ".control-statistics.zip"
+
+
+def whole_genome_depth(alignment_path: str, assembly: str) -> Optional[float]:
+    """Median depth over WGS_PROBE_WINDOWS_GRCH38, or None for a non-GRCh38 alignment.
+
+    Counts aligned bases of primary, mapped, non-duplicate reads at MAPQ >= 1, the
+    same reads samtools depth counts by default. A window on a contig the alignment
+    does not have counts as zero depth.
+    """
+    if assembly != "GRCh38":
+        return None
+    import pysam
+
+    depths = []
+    with pysam.AlignmentFile(alignment_path) as bam:
+        contigs = set(bam.references)
+        prefixed = any(c.startswith("chr") for c in contigs)
+        for chrom, start, end in WGS_PROBE_WINDOWS_GRCH38:
+            name = chrom if prefixed else chrom[len("chr"):]
+            bases = 0
+            if name in contigs:
+                for read in bam.fetch(name, start, end):
+                    if (
+                        read.mapping_quality < 1
+                        or read.is_unmapped
+                        or read.is_secondary
+                        or read.is_supplementary
+                        or read.is_duplicate
+                    ):
+                        continue
+                    overlap = min(read.reference_end, end) - max(read.reference_start, start)
+                    if overlap > 0:
+                        bases += overlap
+            depths.append(bases / (end - start))
+    return statistics.median(depths)
+
+
+@functools.lru_cache(maxsize=1)
+def sv_target_genes() -> frozenset:
+    """PyPGx's target genes that have SV-defined star alleles, from its own gene table."""
+    from pypgx.api import core as pypgx_core
+
+    table = pypgx_core.load_gene_table()
+    return frozenset(table[table.SV & table.Target].Gene)
+
+
+def prepare_sv_inputs(
+    alignment_path: str, out_prefix: str, assembly: str
+) -> Optional[Tuple[str, str]]:
+    """(depth of coverage, control statistics) archives for SV calling, or None.
+
+    None when the alignment is not whole-genome-like (see WGS_PROBE_WINDOWS_GRCH38)
+    or when PyPGx fails: the genes then get the SNV-only call, as before.
+    """
+    depth = whole_genome_depth(alignment_path, assembly)
+    if depth is None or depth < WGS_MIN_MEDIAN_DEPTH:
+        logger.info(
+            f"SV calling off: median depth {depth} at the whole-genome probe loci "
+            f"(needs >= {WGS_MIN_MEDIAN_DEPTH} on GRCh38)"
+        )
+        return None
+    depth_zip = out_prefix + SV_DEPTH_SUFFIX
+    control_zip = out_prefix + SV_CONTROL_SUFFIX
+    commands = (
+        [
+            "pypgx", "prepare-depth-of-coverage", depth_zip, alignment_path,
+            "--assembly", assembly, "--genes", *sorted(sv_target_genes()),
+        ],
+        [
+            "pypgx", "compute-control-statistics", "VDR", control_zip, alignment_path,
+            "--assembly", assembly,
+        ],
+    )
+    for cmd in commands:
+        logger.info(f"Running {shlex.join(cmd)}")
+        proc = subprocess.run(cmd, text=True, capture_output=True)
+        if proc.returncode != 0:
+            logger.error(f"{cmd[1]} failed, SV calling off: {proc.stderr}")
+            for path in (depth_zip, control_zip):
+                if os.path.exists(path):
+                    os.remove(path)
+            return None
+    logger.info(f"SV calling on: median depth {depth:.1f}x at the whole-genome probe loci")
+    return depth_zip, control_zip
+
+
+def sv_inputs_header_line(depth_zip: str, control_zip: str) -> str:
+    return f"##{SV_INPUTS_HEADER_KEY}={depth_zip},{control_zip}"
+
+
+def sv_inputs_from_vcf(vcf_path: str, temp_dir) -> Optional[Tuple[str, str]]:
+    """The SV archives /create-input-vcf recorded in this VCF's header, or None.
+
+    The paths arrive inside an uploaded file, so only ones this sidecar could have
+    written are honoured: both in one working directory below temp_dir, with the
+    expected names, and present. Anything else, including an uploaded VCF that
+    happens to carry the line, means no SV inputs. Below, at any depth: the
+    working directory has been temp/<random> and is temp/pypgx/<job>/<random>,
+    and a check pinned to one layout turned SV calling off for every job when
+    the layout changed, without a word in the log.
+    """
+    prefix = f"##{SV_INPUTS_HEADER_KEY}="
+    with open(vcf_path, "rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    value = None
+    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip()
+                break
+    if not value or value.count(",") != 1:
+        return None
+    root = Path(temp_dir).resolve()
+    paths = [Path(v).resolve() for v in value.split(",")]
+    expected = (SV_DEPTH_SUFFIX, SV_CONTROL_SUFFIX)
+    for path, suffix in zip(paths, expected):
+        if (
+            root not in path.parent.parents
+            or not path.name.endswith(suffix)
+            or not path.is_file()
+        ):
+            logger.warning(f"SV inputs in the VCF header not honoured: {path}")
+            return None
+    if paths[0].parent != paths[1].parent:
+        return None
+    return str(paths[0]), str(paths[1])
+
+
 def uncovered_genes_in_alignment(alignment_path: str, assembly: str) -> list:
     """PyPGx genes with no confidently placed read in the alignment.
 
@@ -919,14 +1095,19 @@ def uncovered_genes_in_alignment(alignment_path: str, assembly: str) -> list:
 
 
 def annotate_uncovered_genes(vcf_gz: str, genes) -> None:
-    """Write the uncovered-genes line into a bgzipped VCF's header, in place.
+    """Write the uncovered-genes line into a bgzipped VCF's header, in place."""
+    annotate_header_line(vcf_gz, uncovered_genes_header_line(genes))
+
+
+def annotate_header_line(vcf_gz: str, line: str) -> None:
+    """Add one header line to a bgzipped VCF, in place.
 
     bcftools rather than pysam's writer: it leaves every record byte-identical and only
     adds the header line. Re-indexed afterwards, since the file is rewritten.
     """
-    header_file = f"{vcf_gz}.uncovered.hdr"
+    header_file = f"{vcf_gz}.extra.hdr"
     with open(header_file, "w", encoding="utf-8") as fh:
-        fh.write(uncovered_genes_header_line(genes) + "\n")
+        fh.write(line + "\n")
     annotated = f"{vcf_gz}.annotated.vcf.gz"
     subprocess.run(
         ["bcftools", "annotate", "--header-lines", header_file, "-Oz", "-o", annotated, vcf_gz],
@@ -1276,6 +1457,13 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             + (f": {', '.join(uncovered)}" if uncovered else "")
         )
 
+        # SV inputs for /genotype, carried the same way: in the VCF's own header.
+        sv_inputs = prepare_sv_inputs(
+            str(alignment_path), output_vcf_gz[: -len(".vcf.gz")], str(assembly)
+        )
+        if sv_inputs:
+            annotate_header_line(output_vcf_gz, sv_inputs_header_line(*sv_inputs))
+
         # PharmCAT's own input -- see genotype_pharmcat_positions. GRCh38 only, as
         # PharmCAT's positions are; a non-GRCh38 alignment is refused at upload, so
         # the None here only ever reaches main.nf as a missing output, which fails.
@@ -1292,6 +1480,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             "vcf": output_vcf_gz,
             "tbi": tbi_path,
             "uncovered_genes": uncovered,
+            "sv_inputs": list(sv_inputs) if sv_inputs else None,
             "pharmcat_vcf": pharmcat_vcf,
             "pharmcat_positions": pharmcat_positions,
         }
@@ -1463,6 +1652,13 @@ async def genotype(
         # Genes the source alignment never covered get no call -- see
         # UNCOVERED_GENES_HEADER_KEY. None (an uploaded VCF) changes nothing here.
         uncovered = uncovered_genes_from_vcf(str(input_filepath)) or set()
+        sv_inputs = sv_inputs_from_vcf(str(input_filepath), TEMP_DIR)
+        if sv_inputs:
+            # With whole-genome depth and a control gene, no reads over a gene whose
+            # common null allele deletes it is a homozygous deletion PyPGx can call,
+            # not an unsequenced gene: let it through. See WGS_PROBE_WINDOWS_GRCH38.
+            uncovered -= WHOLE_GENE_DELETION_GENES
+            logger.info("SV inputs present: calling SV-defined alleles")
         not_sequenced = {}
         for gene in [g for g in requested_genes if g in uncovered]:
             note = no_reads_note(gene)
@@ -1519,7 +1715,8 @@ async def genotype(
                     pypgx_assembly,
                     max_workers=min(len(gene_batch), PYPGX_MAX_PARALLEL_GENES),
                     job_id=job_id,
-                    job_client=job_client
+                    job_client=job_client,
+                    sv_inputs=sv_inputs,
                 )
                 
                 # Check if batch processing was cancelled
@@ -1658,7 +1855,7 @@ async def genotype(
             "job_id": local_job_id
         }
 
-def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19', job_id: str = None) -> Dict[str, Any]:
+def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19', job_id: str = None, sv_inputs: Optional[Tuple[str, str]] = None) -> Dict[str, Any]:
     """Run PyPGx for star allele calling on the input VCF"""
     try:
         # VCF should already be compressed and indexed by the batch processing function
@@ -1698,6 +1895,11 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
             "--variants", str(vcf_gz),
             "--assembly", pypgx_assembly,
         ]
+        if sv_inputs and gene in sv_target_genes():
+            pypgx_cmd += [
+                "--depth-of-coverage", sv_inputs[0],
+                "--control-statistics", sv_inputs[1],
+            ]
 
         logger.info(f"Running PyPGx command: {shlex.join(pypgx_cmd)}")
 

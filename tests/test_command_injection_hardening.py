@@ -162,6 +162,7 @@ def _pypgx_namespace(recorder, **extra):
         "uuid": uuid,
         "Path": Path,
         "Optional": Optional,
+        "Tuple": tuple,
         "Dict": dict,
         "Any": object,
         "List": list,
@@ -472,6 +473,9 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
             # is checked for argv safety below.
             uncovered_genes_in_alignment=lambda *a, **k: [],
             annotate_uncovered_genes=lambda *a, **k: None,
+            # SV inputs (a whole-genome depth gate, then two pypgx commands) likewise;
+            # covered in tests/test_pypgx_structural_variants.py.
+            prepare_sv_inputs=lambda *a, **k: None,
             # PharmCAT's force-called input, likewise after the conversion; its
             # subprocess sinks are checked for argv safety in
             # tests/test_pharmcat_explicit_calls.py.
@@ -481,13 +485,14 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
 
 
 def test_the_coverage_annotation_sink_is_argv_safe():
-    """annotate_uncovered_genes adds a subprocess sink: bcftools, as an argv list,
-    never through a shell -- the same rule every other sink in the wrapper follows."""
+    """annotate_header_line (behind annotate_uncovered_genes and the SV inputs line)
+    adds a subprocess sink: bcftools, as an argv list, never through a shell -- the
+    same rule every other sink in the wrapper follows."""
     tree = ast.parse(PYPGX_WRAPPER.read_text(encoding="utf-8"))
     fn = next(
         n
         for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "annotate_uncovered_genes"
+        if isinstance(n, ast.FunctionDef) and n.name == "annotate_header_line"
     )
     calls = [
         n
@@ -561,6 +566,7 @@ def test_run_ngs_pipeline_is_argv_for_both_path_and_gene(tmp_path):
             register_process=lambda *a, **k: None,
             unregister_process=lambda *a, **k: None,
             parse_pypgx_results=lambda *a, **k: ("*1/*1", {}),
+            sv_target_genes=lambda: frozenset(),
         ),
     )
 
