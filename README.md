@@ -65,8 +65,9 @@ VCF needs little memory; alignments need much more (the stack allows GATK up to 
 PyPGx up to 20 GB). See [Installation](docs/user/installation.md).
 
 **Access.** The app listens on `127.0.0.1:8765`, this machine only, and asks for no login
-(`ZAROPGX_AUTH_MODE=open`). Before opening it to your network (`BIND_ADDRESS=0.0.0.0:8765`),
-turn on the shared password; to serve it beyond your network, see
+(`ZAROPGX_AUTH_MODE=open`). To use it from other devices on your network, set
+`BIND_ADDRESS=0.0.0.0:8765`; anyone who can reach it then gets in unless you turn on the
+shared password. To serve it beyond your network, see
 [Running a server](docs/user/deployment.md).
 
 ## Documentation
@@ -85,11 +86,7 @@ The full documentation is served by the app at `http://localhost:8765/docs`, and
 
 ## Status
 
-**This project is in early development.** NGS-derived GRCh38 VCFs are the most mature input.
-The end-to-end tests run VCF, GRCh37 VCF, BAM, CRAM and SAM inputs through the whole stack;
-BCF, gVCF and FASTQ have unit tests only. On the NA12878 (GIAB HG001) 30x genome as BAM and
-CRAM, PharmCAT's calls matched the truth set for 19 of 19 genes, and HLA typing for 6 of 6
-alleles (October 2026).
+**This project is in early development.**
 
 *Input formats*
 - [X] Priority 0 (*Supported*): **VCF, GRCh38**/hg38, NGS-derived.

@@ -33,8 +33,9 @@ Left at `0.3.2`, the services run the old images under the new code.
 
 The templates now set `BIND_ADDRESS=127.0.0.1:8765` (they had `8765`, and `.env.production`
 `0.0.0.0:8765`, which listen on every interface with no password by default). Your `.env`
-keeps its value. If it has a bare port or `0.0.0.0`, anyone on your network can open the
-app: change it to `127.0.0.1:8765`, or turn on `ZAROPGX_AUTH_MODE=password`.
+keeps its value. With a bare port or `0.0.0.0`, anyone on your network can open the app.
+If you use it from other devices, that is what you want: consider turning on
+`ZAROPGX_AUTH_MODE=password`. If you do not, change it to `127.0.0.1:8765`.
 
 ### Uploads are deleted when their job ends
 

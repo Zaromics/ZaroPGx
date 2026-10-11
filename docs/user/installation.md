@@ -102,10 +102,15 @@ staged: `./scripts/build-align-index.sh` (about an hour).
 
 ## Who can reach it
 
-The app listens on `127.0.0.1:8765`: this machine only. The default
-`ZAROPGX_AUTH_MODE=open` asks for no password, so before opening it to your network
-(`BIND_ADDRESS=0.0.0.0:8765`, then `docker compose up -d`), turn on the shared password:
-anyone who can reach the port can upload data and read every report. See {doc}`deployment`.
+The app listens on `127.0.0.1:8765`: this machine only.
+
+To run it on one machine and use it from others on your network (a desktop or home server
+reached from a laptop, say), set `BIND_ADDRESS=0.0.0.0:8765` and run `docker compose up -d`;
+then open `http://<that machine's address>:8765`. This is a supported way to run it. With
+the default `ZAROPGX_AUTH_MODE=open` there is no password, so anyone who can reach the port
+can upload data and read every report: on a network you do not fully trust, turn on the
+shared password ({doc}`configuration`). To serve it beyond your network, see
+{doc}`deployment`.
 
 An install made before this default keeps the `BIND_ADDRESS` in its `.env`; check it.
 

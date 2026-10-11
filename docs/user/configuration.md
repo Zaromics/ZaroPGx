@@ -26,7 +26,7 @@ Where a template ships a different value from the code's default, both are given
 
 | Variable | Default | |
 |---|---|---|
-| `BIND_ADDRESS` | `127.0.0.1:8765` | The app's address and port. The default serves this machine only. A bare port (`8765`) or `0.0.0.0:8765` listens on every interface: only with `password` mode, and behind a TLS proxy beyond your network |
+| `BIND_ADDRESS` | `127.0.0.1:8765` | The app's address and port. The default serves this machine only. `0.0.0.0:8765` (or a bare `8765`) listens on every interface, for using the app from other devices on your network; without `password` mode, anyone who can reach it gets in. Beyond your network, put it behind a TLS proxy ({doc}`deployment`) |
 | `INTERNAL_BIND_ADDRESS` | `127.0.0.1` | The address every other service publishes on (database, PharmCAT, GATK, PyPGx, ZaroHLA, mtDNA, genome downloader, HAPI FHIR, Kroki, docs). None of them authenticates: keep it on loopback and use an SSH tunnel |
 | `ZAROPGX_AUTH_MODE` | `open` | `open`: no login. `password`: every request needs the shared password (a session cookie from `/login`, or a Bearer token from `/token`). `audit`: no login, but logs what `password` would refuse |
 | `ZAROPGX_AUTH_PASSWORD` | | The shared password for `password` mode. Anyone who has it can read every report on the instance |
