@@ -211,6 +211,10 @@ HLA_CLASS_I_LOCI = {
 # keeps 167 / 265 / 53 of its reads on A / B / C (97-100%), and drops both of the
 # panel's strays.
 PROBE_MIN_MAPQ = 1
+# The GRC's MHC region on GRCh38. Only these reads, the HLA and chr6 alt contigs, and
+# the unplaced unmapped reads go to OptiType once the probe has found HLA reads; see
+# _extract_hla_reads.
+MHC_REGION = {"GRCh38": (28510120, 33480577)}
 
 _BUILD_ALIASES = {
     "hg38": "GRCh38",
@@ -389,6 +393,68 @@ async def _probe_hla_read_count(
         return None
 
 
+def _hla_subset_regions(contig_names, chr6, build):
+    """Regions whose reads can carry HLA class I sequence.
+
+    The MHC on the primary chromosome, every HLA-* contig and chr6 alt or MHC
+    haplotype contig the alignment has (GRCh38 analysis sets place class I reads
+    there), and "*", the unplaced unmapped reads, which include HLA reads too
+    divergent from the reference to map.
+    """
+    start, end = MHC_REGION[build]
+    regions = [f"{chr6}:{start}-{end}"]
+    regions += sorted(
+        name
+        for name in contig_names
+        if name.startswith("HLA-")
+        or (name.startswith(("chr6_", "6_")) and name.endswith(("_alt", "_MHC")))
+    )
+    return regions
+
+
+async def _extract_hla_reads(
+    input_path: Path, job_dir: Path, reference_genome: Optional[str]
+) -> Optional[Path]:
+    """A BAM of just the reads OptiType can use, or None to convert the whole input.
+
+    The FASTQ conversion below used to run over the entire alignment. On a 30x
+    genome (NA12878, 41 GB BAM, 767 M reads) that is a single-threaded collate and
+    about 250 GB of FASTQ before OptiType even starts, and OptiType's read filter
+    would then hold all of it. Typing this subset instead called NA12878's published
+    HLA-A/-B/-C alleles exactly (A*01:01/A*11:01, B*08:01/B*56:01, C*01:02/C*07:01).
+
+    Runs only after the probe found reads on HLA-A/-B/-C, so the input is indexed
+    and has a chromosome 6. Any failure returns None and the caller converts the
+    whole file as before: slower, never wrong.
+    """
+    build = _BUILD_ALIASES.get((reference_genome or "hg38").strip().lower())
+    if build not in MHC_REGION:
+        return None
+    rc, header = await _samtools("view", "-H", str(input_path))
+    if rc != 0:
+        return None
+    names = [n.decode() for n in re.findall(rb"\sSN:(\S+)", header)]
+    chr6 = next((c for c in ("chr6", "6") if c in names), None)
+    if chr6 is None:
+        return None
+
+    placed = job_dir / "hla_placed.bam"
+    unplaced = job_dir / "hla_unplaced.bam"
+    subset = job_dir / "hla_subset.bam"
+    regions = _hla_subset_regions(names, chr6, build)
+    steps = (
+        ("view", "-b", "-o", str(placed), str(input_path), *regions),
+        ("view", "-b", "-o", str(unplaced), str(input_path), "*"),
+        ("cat", "-o", str(subset), str(placed), str(unplaced)),
+    )
+    for step in steps:
+        if (await _samtools(*step))[0] != 0:
+            return None
+    placed.unlink(missing_ok=True)
+    unplaced.unlink(missing_ok=True)
+    return subset
+
+
 @app.get("/health")
 def health():
     return {"status": "healthy", "service": "zarohla"}
@@ -501,6 +567,23 @@ async def call_hla(
                     return await _no_hla_reads_result(job_client)
                 logger.info(f"Job {local_job_id}: {hla_reads} HLA class I reads")
 
+                fastq_source = input_path
+                if hla_reads:
+                    subset = await _extract_hla_reads(
+                        input_path, job_dir, reference_genome
+                    )
+                    if subset is not None:
+                        logger.info(
+                            f"Job {local_job_id}: typing from {subset.name} (MHC, HLA "
+                            "and chr6 alt contigs, unplaced unmapped reads)"
+                        )
+                        fastq_source = subset
+                    else:
+                        logger.warning(
+                            f"Job {local_job_id}: could not extract the HLA reads; "
+                            "converting the whole alignment"
+                        )
+
                 if job_client:
                     await job_client.log_progress(
                         f"Converting BAM to FASTQ using samtools"
@@ -527,7 +610,7 @@ async def call_hla(
                     "-u",
                     "-o",
                     str(collated_path),
-                    str(input_path),
+                    str(fastq_source),
                 ]
                 logger.info(f"Running samtools: {' '.join(collate_cmd)}")
                 collate_proc = await asyncio.create_subprocess_exec(
