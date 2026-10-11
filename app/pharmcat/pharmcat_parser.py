@@ -429,12 +429,16 @@ class PharmCATParser:
         with open(filepath, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def parse_and_load(self, data: Dict[str, Any]) -> str:
+    def parse_and_load(self, data: Dict[str, Any], run_id: Optional[str] = None) -> str:
         """
         Parse PharmCAT JSON data and load into database
 
         Args:
             data: PharmCAT JSON data dictionary
+            run_id: What to store the run under; the report lane passes the job
+                id. Defaults to the report's title, which PharmCAT takes from its
+                input file and the sidecar names after the PATIENT -- so keyed by
+                title, every later job of a patient landed on the first job's run.
 
         Returns:
             run_id: The unique identifier for this PharmCAT run
@@ -457,7 +461,7 @@ class PharmCATParser:
 
         try:
             # Extract basic metadata
-            run_id = data.get("title", str(uuid.uuid4()))
+            run_id = run_id or data.get("title", str(uuid.uuid4()))
             run_timestamp = self._parse_timestamp(data.get("timestamp"))
             pharmcat_version = data.get("pharmcatVersion")
             data_version = data.get("dataVersion")
@@ -476,11 +480,11 @@ class PharmCATParser:
             )
 
             if existing_result:
-                logger.info(f"PharmCAT run {run_id} already exists, updating...")
-                existing_result.raw_data = data
-                existing_result.loaded_at = datetime.now(timezone.utc)
-                self.db_session.commit()
-                return run_id
+                # Replace it, rows and all. This used to swap raw_data alone,
+                # leaving the gene, diplotype and recommendation rows the reports
+                # read on the earlier payload.
+                logger.info(f"PharmCAT run {run_id} already exists, replacing it")
+                self._delete_run(existing_result)
 
             # Create main result record
             result = PharmCATResult(
@@ -528,6 +532,12 @@ class PharmCATParser:
 
             logger.error(f"Full traceback: {traceback.format_exc()}")
             raise
+
+    def _delete_run(self, result: "PharmCATResult") -> None:
+        """Delete a run; the schema's ON DELETE CASCADE removes every row keyed to
+        it (db/init/00_complete_database_schema.sql, mirrored on the models)."""
+        self.db_session.delete(result)
+        self.db_session.flush()
 
     def _parse_timestamp(self, timestamp_str: Optional[str]) -> Optional[datetime]:
         """Parse timestamp string to datetime object"""
@@ -1167,7 +1177,9 @@ class PharmCATParser:
 
 
 def load_pharmcat_file(
-    filepath: Union[str, Path], db_session: Optional[Session] = None
+    filepath: Union[str, Path],
+    db_session: Optional[Session] = None,
+    run_id: Optional[str] = None,
 ) -> str:
     """
     Convenience function to load a PharmCAT file into the database
@@ -1175,13 +1187,14 @@ def load_pharmcat_file(
     Args:
         filepath: Path to PharmCAT JSON file
         db_session: Optional database session
+        run_id: What to store the run under (see PharmCATParser.parse_and_load)
 
     Returns:
         run_id: The unique identifier for this PharmCAT run
     """
     with PharmCATParser(db_session) as parser:
         data = parser.load_json_file(filepath)
-        return parser.parse_and_load(data)
+        return parser.parse_and_load(data, run_id=run_id)
 
 
 def get_pharmcat_summary(
@@ -1222,7 +1235,9 @@ def get_pharmcat_summary(
             "pharmcat_version": result.pharmcat_version,
             "data_version": result.data_version,
             "created_at": result.created_at,
-            "sample_identifier": run_id,  # run_id is typically the sample identifier/title
+            # The title, as before: run_id used to be the title, and the report
+            # lane now keys runs by job id.
+            "sample_identifier": (result.raw_data or {}).get("title") or run_id,
             "total_genes": len(genes),
             "total_diplotypes": len(diplotypes),
             "actionable_findings_count": len(actionable),
