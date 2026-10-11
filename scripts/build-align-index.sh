@@ -64,9 +64,21 @@ echo "==> Building PyPGx-compliant GRCh38 (main contigs + chr22_KI270879v1_alt)"
 if [ ! -f "$TARGET" ]; then
   CONTIGS=$(awk '$1 ~ /^chr([0-9]+|X|Y|M)$/ {print $1}' "${SOURCE_FASTA}.fai")
   echo "    main contigs: $(echo "$CONTIGS" | wc -w) + chr22_KI270879v1_alt"
-  # shellcheck disable=SC2086
-  samtools faidx "$SOURCE_FASTA" $CONTIGS chr22_KI270879v1_alt > "$TARGET"
-  samtools faidx "$TARGET"
+  # Written aside and renamed: an interrupted run must not leave a truncated
+  # $TARGET that the next run would take for a finished one and index.
+  if command -v samtools >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    samtools faidx "$SOURCE_FASTA" $CONTIGS chr22_KI270879v1_alt > "${TARGET}.partial"
+  else
+    # samtools is not a documented host prerequisite; the image below ships it.
+    echo "    no samtools on this host; running it inside ${IMAGE}"
+    SOURCE_DIR="$(cd "$(dirname "$SOURCE_FASTA")" && pwd)"
+    # shellcheck disable=SC2086
+    $DOCKER run --rm -v "$SOURCE_DIR":/src:ro "$IMAGE" \
+      samtools faidx "/src/$(basename "$SOURCE_FASTA")" $CONTIGS chr22_KI270879v1_alt \
+      > "${TARGET}.partial"
+  fi
+  mv "${TARGET}.partial" "$TARGET"
 else
   echo "    reference already built, reusing $TARGET"
 fi
@@ -75,6 +87,7 @@ echo "==> Creating the sequence dictionary and bwa-mem index image (expect ~1 ho
 $DOCKER run --rm -v "$ABS_OUT":/ref --memory=16g "$IMAGE" sh -lc '
 set -e
 R=/ref/'"$(basename "$TARGET")"'
+[ -f "$R.fai" ] || samtools faidx "$R"
 [ -f "${R%.fasta}.dict" ] || gatk CreateSequenceDictionary -R "$R"
 gatk --java-options "-Xmx12g" BwaMemIndexImageCreator -I "$R" -O "${R}.img"
 '
