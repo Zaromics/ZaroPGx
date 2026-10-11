@@ -20,7 +20,8 @@ concurrency:
 
 jobs:
   render:
-    runs-on: ubuntu-latest
+    # Same Ubuntu LTS as production (zimerguz). Move CI when zimerguz moves.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Needed by git-auto-commit-action to push the rendered SVG/PNG. Scoped to
     # this job so it is the only place holding a write-capable token.
@@ -28,10 +29,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -41,7 +42,7 @@ jobs:
         # holding contents:write. Pinning also keeps the rendered output
         # reproducible. Bump deliberately:
         #   npm view @mermaid-js/mermaid-cli version
-        run: npm i -g @mermaid-js/mermaid-cli@11.16.0
+        run: npm i -g @mermaid-js/mermaid-cli@12.0.0
 
       - name: Render diagrams
         run: |
@@ -49,7 +50,7 @@ jobs:
           mmdc -i app/visualizations/workflow.mmd -o app/visualizations/workflow.png --scale 2 --backgroundColor white
 
       - name: Commit rendered diagrams
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: 'chore: render Mermaid diagrams'
           file_pattern: app/visualizations/*.svg app/visualizations/*.png

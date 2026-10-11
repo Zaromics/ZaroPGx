@@ -414,7 +414,7 @@ def build_citations() -> List[Dict[str, str]]:
             # same fact the old wording explained from the other direction
             # (an empty row); PharmCAT still cannot call MT-RNR1 itself
             # (config/genes.json, categories.pharmcat_outside_callers).
-            "text": f"mtDNA-Server 2, version {mtdna_ver} (mutserve 2.0.3, haplogrep3 3.2.2, haplocheck 1.3.3). Mitochondrial variant calling and haplogroup assignment, supplying the MT-RNR1 outside call. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
+            "text": f"mtDNA-Server 2, version {mtdna_ver} (mutserve 2.0.3, haplogrep3 3.3.2, haplocheck 1.3.3). Mitochondrial variant calling and haplogroup assignment, supplying the MT-RNR1 outside call. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
             "repo": "https://github.com/genepi/mtdna-server-2",
         }
     )

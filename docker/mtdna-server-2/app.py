@@ -133,7 +133,7 @@ MUTSERVE_JAR = "/opt/mutserve/mutserve.jar"
 HAPLOGREP_JAR = "/opt/haplogrep/haplogrep3.jar"
 HAPLOCHECK_JAR = "/opt/haplocheck/haplocheck.jar"
 RCRS_FASTA = "/opt/mtdna-files/rcrs_mutserve.fasta"
-PHYLOTREE = "phylotree-fu-rcrs@1.2"
+PHYLOTREE = "phylotree-fu-rcrs@1.3"
 CHAIN_PATH = "/reference/chain/hg19ToHg38.over.chain.gz"
 
 # The pipeline release this image and the vendored files/ + report.Rmd all come
@@ -145,7 +145,8 @@ running_processes: Dict[str, Dict[str, Any]] = {}
 
 
 def _tool_versions() -> Dict[str, str]:
-    """Versions the base image bakes in as env vars (see upstream Dockerfile)."""
+    """Versions baked in as env vars: mutserve and haplocheck by the base image,
+    haplogrep3 by this repo's Dockerfile, which installs 3.3.2 over the base's 3.2.2."""
     return {
         "mtdna-server-2": PIPELINE_VERSION,
         "mutserve": os.getenv("MUTSERVE_VERSION", "unknown"),
