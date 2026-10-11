@@ -198,6 +198,45 @@ def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def annotation_genes(annotation: Any) -> List[str]:
+    """The genes a drug annotation's recommendation rests on, in PharmCAT's order.
+
+    ``lookupKey`` names them -- the genes whose calls the recommendation was looked
+    up by: CPIC sertraline's is CYP2B6 and CYP2C19. PharmCAT 3 writes it as a list
+    of one-entry-per-gene dicts, older releases as a dict. Where it is empty (CPIC
+    warfarin, a dosing algorithm over CYP2C9, CYP4F2 and VKORC1) the genes are
+    those of its ``genotypes``. Taking only the first, as both report lanes did,
+    filed 30 of 30x NA12878's 246 annotations under one of their genes.
+    """
+    if not isinstance(annotation, Mapping):
+        return []
+    genes: List[str] = []
+
+    def add(gene: Any) -> None:
+        if isinstance(gene, str) and gene.strip() and gene.strip() not in genes:
+            genes.append(gene.strip())
+
+    lookup_key = annotation.get("lookupKey")
+    for entry in lookup_key if isinstance(lookup_key, list) else [lookup_key]:
+        if isinstance(entry, Mapping):
+            for gene in entry:
+                add(gene)
+    if genes:
+        return genes
+    for genotype in annotation.get("genotypes") or []:
+        if isinstance(genotype, Mapping):
+            for diplotype in genotype.get("diplotypes") or []:
+                if isinstance(diplotype, Mapping):
+                    add(diplotype.get("gene"))
+    if genes:
+        return genes
+    phenotypes = annotation.get("phenotypes")
+    if isinstance(phenotypes, Mapping):
+        for gene in phenotypes:
+            add(gene)
+    return genes
+
+
 def _clean(value: Any) -> Optional[str]:
     """Return a stripped string, or ``None`` for absent/blank values."""
     if value is None:

@@ -1280,7 +1280,11 @@
                     {% if rec_key not in recommendation_groups %}
                         {% set _ = recommendation_groups.update({rec_key: {'rec': rec, 'genes': []}}) %}
                     {% endif %}
-                    {% set _ = recommendation_groups[rec_key]['genes'].append(rec.gene) %}
+                    {# Every gene the recommendation rests on: CPIC sertraline is CYP2B6 and
+                       CYP2C19, and was headed with the first alone. #}
+                    {% for g in (rec.recommendation_genes or [rec.gene]) %}
+                        {% if g not in recommendation_groups[rec_key]['genes'] %}{% set _ = recommendation_groups[rec_key]['genes'].append(g) %}{% endif %}
+                    {% endfor %}
                 {% endfor %}
                 
                 {% for rec_key, group_data in recommendation_groups.items() %}
