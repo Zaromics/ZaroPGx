@@ -377,6 +377,10 @@ def test_pypgx_genotype_streams_upload_in_chunks(pypgx_api, monkeypatch):
     # (local_job_id, then safe_upload_name()'s own stem) to one fixed value.
     fixed_uuid = pypgx_api.uuid.uuid4()
     monkeypatch.setattr(pypgx_api.uuid, "uuid4", lambda: fixed_uuid)
+    # The handler removes its working directory as it answers; hold that here, since
+    # this test reads the saved file back (tests/test_sidecar_work_dirs.py covers
+    # the removal).
+    monkeypatch.setattr(pypgx_api.shutil, "rmtree", lambda *args, **kwargs: None)
     read_sizes = _spy_on_upload_reads(monkeypatch)
 
     payload = bytes(range(29))
@@ -391,7 +395,9 @@ def test_pypgx_genotype_streams_upload_in_chunks(pypgx_api, monkeypatch):
     # that failure is not what this test is about.
     assert response.status_code in (200, 500), response.text
 
-    expected_path = pypgx_api.TEMP_DIR / str(fixed_uuid) / f"{fixed_uuid.hex}.vcf"
+    expected_path = (
+        pypgx_api.job_work_dir(None, str(fixed_uuid)) / f"{fixed_uuid.hex}.vcf"
+    )
     assert (
         expected_path.read_bytes() == payload
     ), "the saved file does not match what was uploaded"
