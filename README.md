@@ -124,19 +124,29 @@ See [contributing](docs/developer/contributing.md).
 If your work is a part of ZaroPGx and you wish to add or amend text recognizing yourself, your work, and/or your organization, please send me a message and I will gladly attend to your request.**
 
 - **PharmCAT** (Pharmacogenomics Clinical Annotation Tool, Pharmacogenomics Knowledge Base, managed at Stanford University & University of Pennsylvania)
-  - Sangkuhl K, Whirl-Carrillo M, et al. *Clinical Pharmacology & Therapeutics.* 2020;107(1):203–210; Li B, Sangkuhl K, et al. How to Run the Pharmacogenomics Clinical Annotation Tool (PharmCAT). *Clinical Pharmacology & Therapeutics.* 2023;113(5):1036–1047.  Docs: https://pharmcat.clinpgx.org/
+  - Sangkuhl K, Whirl-Carrillo M, et al. Pharmacogenomics Clinical Annotation Tool (PharmCAT). *Clinical Pharmacology & Therapeutics.* 2020;107(1):203–210. doi: 10.1002/cpt.1568
+  - Li B, Sangkuhl K, et al. How to Run the Pharmacogenomics Clinical Annotation Tool (PharmCAT). *Clinical Pharmacology & Therapeutics.* 2023;113(5):1036–1047. doi: 10.1002/cpt.2790
+  - Docs: https://pharmcat.clinpgx.org/
 - **PyPGx** (by Dr. Seung-been "Steven" Lee)
-  - Lee S‑B, et al. *PLOS ONE.* 2022 (ClinPharmSeq); Lee S‑B, et al. *Genetics in Medicine.* 2018 (Stargazer); Lee S‑B, et al. *Clinical Pharmacology & Therapeutics.* 2019 (Stargazer, 28 genes).  Docs: https://pypgx.readthedocs.io/en/latest/index.html
-- **ZaroHLA** (based on OptiType, by Schubert B, Kohlbacher O, et al.)
-  - Schubert B, et al. OptiType: precision HLA typing from next-generation sequencing data. *Bioinformatics.* 2014;30(23):3310-3316. doi: 10.1093/bioinformatics/btu548. Docs: https://github.com/FRED-2/OptiType
+  - Lee S-B, et al. ClinPharmSeq: A targeted sequencing panel for clinical pharmacogenetics implementation. *PLOS ONE.* 2022;17(7):e0272129. doi: 10.1371/journal.pone.0272129
+  - Lee S-B, et al. Stargazer: a software tool for calling star alleles from next-generation sequencing data using CYP2D6 as a model. *Genetics in Medicine.* 2019;21(2):361–372. doi: 10.1038/s41436-018-0054-0
+  - Lee S-B, et al. Calling Star Alleles With Stargazer in 28 Pharmacogenes With Whole Genome Sequences. *Clinical Pharmacology & Therapeutics.* 2019;106(6):1328–1337. doi: 10.1002/cpt.1552
+  - Docs: https://pypgx.readthedocs.io/en/latest/index.html
+- **ZaroHLA** (based on OptiType, by Szolek A, Schubert B, Kohlbacher O, et al.)
+  - Szolek A, Schubert B, et al. OptiType: precision HLA typing from next-generation sequencing data. *Bioinformatics.* 2014;30(23):3310–3316. doi: 10.1093/bioinformatics/btu548
+  - Docs: https://github.com/FRED-2/OptiType
 - **mtDNA-Server 2** (Institute of Genetic Epidemiology, Medical University of Innsbruck)
-  - Weissensteiner H, Forer L, Kronenberg F, Schönherr S. mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics. *Nucleic Acids Res*. 2024 May 6:gkae296. doi: 10.1093/nar/gkae296. Epub ahead of print. PMID: 38709886.
+  - Weissensteiner H, Forer L, Kronenberg F, Schönherr S. mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics. *Nucleic Acids Research.* 2024;52(W1):W102–W107. doi: 10.1093/nar/gkae296
+  - The tools it runs: mutserve (Weissensteiner H, et al. mtDNA-Server: next-generation sequencing data analysis of human mitochondrial DNA in the cloud. *Nucleic Acids Research.* 2016;44(W1):W64–W69. doi: 10.1093/nar/gkw247); HaploGrep 3 (Schönherr S, et al. Haplogrep 3 – an interactive haplogroup classification and analysis platform. *Nucleic Acids Research.* 2023;51(W1):W263–W268. doi: 10.1093/nar/gkad284); haplocheck (Weissensteiner H, et al. Contamination detection in sequencing studies using the mitochondrial phylogeny. *Genome Research.* 2021;31(2):309–316. doi: 10.1101/gr.256545.119)
+  - Docs: https://github.com/genepi/mtdna-server-2
 - **GATK** (Genome Analysis Toolkit, Broad Institute)
-  - McKenna A, et al. Genome Research. 2010;20(9):1297–1303; DePristo MA, et al. *Nature Genetics.* 2011;43(5):491–498.  Docs: https://gatk.broadinstitute.org/
+  - McKenna A, et al. The Genome Analysis Toolkit: a MapReduce framework for analyzing next-generation DNA sequencing data. *Genome Research.* 2010;20(9):1297–1303. doi: 10.1101/gr.107524.110
+  - DePristo MA, et al. A framework for variation discovery and genotyping using next-generation DNA sequencing data. *Nature Genetics.* 2011;43(5):491–498. doi: 10.1038/ng.806
+  - Docs: https://gatk.broadinstitute.org/
 - **SAMtools and BCFtools**
-  - Danecek P, et al. Twelve years of SAMtools and BCFtools. *GigaScience.* 2021;10(2):giab008.
+  - Danecek P, et al. Twelve years of SAMtools and BCFtools. *GigaScience.* 2021;10(2):giab008. doi: 10.1093/gigascience/giab008
 - **Nextflow**
-  - Di Tommaso P, et al. Nextflow enables reproducible computational workflows. *Nature Biotechnology.* 2017;35(4):316–319.
+  - Di Tommaso P, et al. Nextflow enables reproducible computational workflows. *Nature Biotechnology.* 2017;35(4):316–319. doi: 10.1038/nbt.3820
 
 This project was originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
 - Zampatti, S.; Fabrizio, C.; Ragazzo, M.; Campoli, G.; Caputo, V.; Strafella, C.; Pellicano, C.; Cascella, R.; Spalletta, G.; Petrosini, L.; et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *J. Pers. Med.* 2021, 11, 851. https://doi.org/10.3390/jpm11090851
