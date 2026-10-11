@@ -104,7 +104,41 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --extra dev
 
+      # PharmCAT's preprocessor needs its GRCh38 reference (reference.fna.bgz, 844 MB).
+      # The pharmcat container downloaded it from Zenodo at startup into an empty
+      # volume, every run: 31 PRs pushed at once ran some 60 of those downloads
+      # together, Zenodo throttled them past pharmcat's 20-minute health start period,
+      # and nearly every E2E run failed before a test ran. Kept in the Actions cache
+      # and bound into the stack (compose.e2e.yml), it comes from Zenodo only on a
+      # cache miss. Saved in its own step, so a run that fails later still keeps it.
+      - name: Restore the PharmCAT reference
+        id: pharmcat-reference
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/pharmcat-reference
+          key: pharmcat-reference-zenodo-7288118
+
+      - name: Download the PharmCAT reference (cache miss)
+        if: steps.pharmcat-reference.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .cache/pharmcat-reference
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 \
+            -o "$RUNNER_TEMP/GRCh38_reference_fasta.tar" \
+            https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar
+          tar -xf "$RUNNER_TEMP/GRCh38_reference_fasta.tar" -C .cache/pharmcat-reference
+          gzip -t .cache/pharmcat-reference/reference.fna.bgz
+          ls -l .cache/pharmcat-reference
+
+      - name: Save the PharmCAT reference
+        if: steps.pharmcat-reference.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/pharmcat-reference
+          key: pharmcat-reference-zenodo-7288118
+
       - name: Bring up e2e stack
+        env:
+          E2E_PHARMCAT_REFERENCE: ./.cache/pharmcat-reference
         run: ./scripts/e2e-up.sh
 
       - name: Run e2e tests
