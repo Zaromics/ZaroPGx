@@ -153,13 +153,32 @@ def test_alerts_spilling_onto_a_second_page_are_pulled_back(monkeypatch, tmp_pat
 
 
 def test_platform_and_citations_end_on_one_page(monkeypatch, tmp_path):
-    """Its content is fixed: the software table, the citations, the tools'."""
+    """Its content is the software table, the citations and the papers of the tools
+    the job ran. Here GATK, PyPGx and OptiType: a few lines over, pulled back."""
+    monkeypatch.setattr(
+        generator_module,
+        "tools_run_for_job",
+        lambda db, job: frozenset({"GATK", "PyPGx", "OptiType"}),
+    )
     html = _html(monkeypatch, tmp_path)
     before = _untightened(monkeypatch, html)["platform-heading"]
     assert len(before) == 2 and before[-1][1] <= 0.5, before
     after, levels = _layout(monkeypatch, html)
     assert len(after["platform-heading"]) == 1
     assert levels["platform-heading"] >= 1
+
+
+def test_platform_and_citations_well_over_a_page_print_as_designed(
+    monkeypatch, tmp_path
+):
+    """Every tool ran (mtDNA-Server 2 adds four papers): most of a second page,
+    which tightening could not save and is no sparse page."""
+    html = _html(monkeypatch, tmp_path)
+    before = _untightened(monkeypatch, html)["platform-heading"]
+    assert len(before) == 2 and before[-1][1] > 0.5, before
+    after, levels = _layout(monkeypatch, html)
+    assert len(after["platform-heading"]) == 2
+    assert levels["platform-heading"] == 0
 
 
 def test_tightening_one_section_leaves_the_others_alone(monkeypatch, tmp_path):
