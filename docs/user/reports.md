@@ -63,8 +63,10 @@ guidelines, FDA labels and FDA's pharmacogenetic associations, with the strength
 literature. When the input is unphased and a gene has several possible diplotypes, guidance
 that differs between them is marked "Applies if".
 
-**Workflow Diagram**, **Platform and Citations** (the tools that ran on this sample, with
-versions), and the **Genomic Datafile Header** as uploaded.
+**Workflow Diagram**: the steps this run took, in the order they ran, and what each
+passed to PharmCAT; a step that was skipped is drawn dashed, off the path. Then
+**Platform and Citations** (the tools that ran on this sample, with versions), and the
+**Genomic Datafile Header** as uploaded.
 
 ## Labels
 

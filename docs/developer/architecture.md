@@ -115,7 +115,9 @@ reads or writes them.
 - `<job_id>_pgx_report_interactive.html`, written last so its Export tab can list the other
   files. It inlines `app/static/js/pgx-report.js` and the vendored Chart.js and D3
   (`app/static/vendor/`), so it needs neither the app nor a network to open.
-- The workflow diagram (SVG and PNG), rendered by Kroki.
+- The run's workflow diagram (`app/visualizations/job_workflow.py`): the job's own steps
+  from `job_steps`, wired as `main.nf` runs them, drawn by Kroki as SVG (HTML) and PNG
+  (PDF). Without Kroki, the same steps as a list; with no steps recorded, no diagram.
 
 PharmCAT writes its own `<job_id>_pgx_pharmcat.{html,json,tsv}` into the same directory;
 the mtDNA step adds `mtdna_result.json`, `mtdna_variants.vcf.gz` and, for alignments,
@@ -135,7 +137,7 @@ app/
   reports/           report generator, PDF fitting, Jinja templates
   mtdna/             mtDNA report context
   utils/             job_client (sidecar callbacks), assume-reference rules, provenance
-  visualizations/    workflow diagrams
+  visualizations/    the per-job workflow diagram, the Kroki client
   templates/         the upload page (index.html)
   static/            JavaScript, demo files
 docker/              one directory per sidecar: Dockerfile and its FastAPI wrapper

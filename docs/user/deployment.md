@@ -76,9 +76,9 @@ Analyses run on the host; uploads and reports stay in `data/`. Outside connectio
 - At install and update: the repository from GitHub, the images from Docker Hub.
 - On first start: PharmCAT's reference data from Zenodo, and reference genomes and chain
   files for the genome downloader.
-- When someone opens the API explorer (`/api/docs` or `/api/redoc`): their browser loads
-  Swagger UI or ReDoc from jsDelivr. The upload page and the reports load nothing from
-  outside.
+
+The app's pages, its API explorer and the reports load nothing from other hosts: their
+scripts, styles and fonts are served by the app or carried in the report.
 
 ## Backups
 
