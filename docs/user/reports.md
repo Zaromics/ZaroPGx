@@ -70,6 +70,11 @@ passed to PharmCAT; a step that was skipped is drawn dashed, off the path. Then
 
 ## Labels
 
+Badge colours follow CPIC's ranking of each phenotype (its EHR priority): green for normal;
+amber for intermediate metabolism and decreased function; red for poor metabolism and poor
+function; blue for rapid metabolism and increased function, which is not necessarily better;
+grey for the rest. The label is always printed beside the colour.
+
 | Label | Meaning |
 |---|---|
 | Normal / Intermediate / Poor / Rapid / Ultrarapid Metabolizer, Normal / Decreased / Poor Function, etc. | The phenotype PharmCAT assigns from the alleles' functions in its guideline data |
