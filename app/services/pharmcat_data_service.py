@@ -20,7 +20,11 @@ from app.pharmcat.pharmcat_parser import (
     get_pharmcat_summary,
 )
 from app.pharmcat.report_json import annotation_genes, recommendation_call_for_display
-from app.reports.evidence import classify_evidence
+from app.reports.evidence import (
+    change_genes,
+    classify_evidence,
+    prescribing_changes,
+)
 from app.reports.provenance import resolve_called_by, resolve_guideline_source
 from app.utils.literature import format_literature_reference
 
@@ -473,6 +477,10 @@ class PharmCATDataService:
             )
 
             tier = classify_evidence(evidence_level)
+            # From the stored annotation: what it says to do differently, and the
+            # genes that comes from.
+            annotation = rec.get("recommendation_data")
+            changes = prescribing_changes(annotation)
 
             recommendation_entry = {
                 "gene": gene_symbol,
@@ -490,6 +498,8 @@ class PharmCATDataService:
                 ),  # Keep original for reference
                 "implications": rec.get("implications"),
                 "literature_references": literature_references,
+                "prescribing_changes": changes,
+                "change_genes": change_genes(annotation) if changes else [],
             }
 
             if guideline_source:

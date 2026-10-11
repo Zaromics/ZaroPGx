@@ -440,6 +440,23 @@
             height: 300px;
             margin: 20px 0;
         }
+
+        /* The Visualizations cards grow with what they hold: the network sizes
+           itself to its layout, and 300 px with overflow hidden cut it off. */
+        .chart-container.sized-by-content {
+            height: auto;
+        }
+
+        .chart-canvas {
+            position: relative;
+            height: 260px;
+        }
+
+        .network-note,
+        .network-legend {
+            font-size: 0.9em;
+            color: #555;
+        }
         
         .disclaimer {
             margin-top: 50px;
@@ -1104,14 +1121,15 @@
             
             <div id="visualizations" class="tab-content">
                 <h3>Interactive Visualizations</h3>
-                <div class="chart-container">
+                <div class="chart-container sized-by-content">
                     <h4>Drug-Gene Interaction Network</h4>
                     <div id="networkVisualization"></div>
                 </div>
                 
-                <div class="chart-container">
-                    <h4>Drug Recommendations by Risk</h4>
-                    <canvas id="recommendationChart"></canvas>
+                <div class="chart-container sized-by-content">
+                    <h4>Recommendations by What They Change</h4>
+                    <p class="network-note">Each guideline recommendation in this report, by the most decisive change it makes: a different drug, then a dose change, then other guidance such as monitoring.</p>
+                    <div class="chart-canvas"><canvas id="recommendationChart"></canvas></div>
                 </div>
             </div>
 
@@ -1314,7 +1332,9 @@
              data-recommendation-genes='{{ (rec.recommendation_genes or [rec.gene])|tojson }}'
              data-recommendation="{{ rec.recommendation }}"
              data-classification="{{ rec.classification }}"
-             data-literature-references='{{ rec.literature_references|tojson if rec.literature_references else "[]" }}'>
+             data-literature-references='{{ rec.literature_references|tojson if rec.literature_references else "[]" }}'
+             data-prescribing-changes='{{ (rec.prescribing_changes or [])|tojson }}'
+             data-change-genes='{{ (rec.change_genes or [])|tojson }}'>
         </div>
         {% endfor %}
     </div>

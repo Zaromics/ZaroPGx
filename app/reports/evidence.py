@@ -75,8 +75,11 @@ copy stays source-neutral.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from app.pharmcat.report_json import annotation_genes
 
 
 @dataclass(frozen=True)
@@ -179,3 +182,64 @@ def max_evidence(classifications: Iterable[Optional[str]]) -> EvidenceTier:
         if tier.rank > best.rank:
             best = tier
     return best
+
+
+# What a recommendation tells the prescriber to do differently. Each PharmCAT
+# annotation carries ClinPGx's three prescribing tags. They describe what the text
+# contains, not whether the genotype changes anything: CPIC's advice for MT-RNR1
+# "normal risk" ("Use aminoglycoside antibiotics at standard doses ... Evaluate
+# regularly for hearing loss") is tagged other guidance for its monitoring
+# sentence. So a tag counts only where some gene the recommendation rests on has
+# a result other than a risk screen's all-clear. Measured on 30x NA12878 (265
+# annotations): elsewhere the curators leave standard-dose advice untagged (CPIC's
+# celecoxib for a CYP2C9 intermediate, tacrolimus for a CYP3A5 poor metabolizer;
+# DPWG's "NO action is needed"), and every tag on an all-clear was such a sentence
+# (the 11 aminoglycosides).
+PRESCRIBING_CHANGES = (
+    ("alternateDrugAvailable", "alternative drug"),
+    ("dosingInformation", "dose change"),
+    ("otherPrescribingGuidance", "other guidance"),
+)
+
+# A risk screen's all-clear: an HLA allele that is absent ("*57:01 negative") or
+# MT-RNR1's "normal risk of aminoglycoside-induced hearing loss". Absent the risk,
+# the guidance is the standard. Not a metabolizer's "Normal": a CYP3A5 normal
+# metabolizer gets 1.5 to 2 times the starting dose of tacrolimus, and a CYP2C19
+# one up to double a PPI's (CPIC, both in PharmCAT's example report).
+_ALL_CLEAR = re.compile(r"^normal risk\b|\bnegative$", re.IGNORECASE)
+
+
+def change_genes(annotation: Any) -> List[str]:
+    """The genes a PharmCAT annotation rests on, in annotation_genes order, less
+    those whose result is a risk screen's all-clear (_ALL_CLEAR). A gene it gives
+    no phenotype for (VKORC1 in warfarin's) stays: nothing clears it."""
+    if not isinstance(annotation, dict):
+        return []
+    results: Dict[str, List[str]] = {}
+    for genotype in annotation.get("genotypes") or []:
+        if not isinstance(genotype, dict):
+            continue
+        for diplotype in genotype.get("diplotypes") or []:
+            if isinstance(diplotype, dict) and isinstance(diplotype.get("gene"), str):
+                results.setdefault(diplotype["gene"].strip(), []).extend(
+                    str(p).strip() for p in diplotype.get("phenotypes") or []
+                )
+    return [
+        gene
+        for gene in annotation_genes(annotation)
+        if not (results.get(gene) and all(_ALL_CLEAR.search(p) for p in results[gene]))
+    ]
+
+
+def prescribing_changes(annotation: Any) -> List[str]:
+    """The prescribing changes a PharmCAT annotation recommends, most decisive
+    first; empty when it keeps the standard dose and drug, or rests only on
+    all-clear results. An annotation naming no gene keeps its tags."""
+    if not isinstance(annotation, dict):
+        return []
+    labels = [
+        label for key, label in PRESCRIBING_CHANGES if annotation.get(key) is True
+    ]
+    if labels and annotation_genes(annotation) and not change_genes(annotation):
+        return []
+    return labels

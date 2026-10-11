@@ -18,6 +18,7 @@ from app.pharmcat.report_json import (
     extract_display_call,
     iter_gene_blocks,
 )
+from app.reports.evidence import change_genes, prescribing_changes
 from app.utils.outside_calls_override import get_override_file_path
 
 # Import pysam for VCF sample extraction
@@ -382,6 +383,7 @@ def normalize_pharmcat_results(response):
                                         # One entry per annotation. An entry per
                                         # gene would repeat one recommendation for
                                         # every gene it names.
+                                        changes = prescribing_changes(annotation)
                                         recommendation = {
                                             "gene": genes_for_drug[0],
                                             "recommendation_genes": list(
@@ -391,6 +393,13 @@ def normalize_pharmcat_results(response):
                                             "guideline_source": guideline_source,
                                             "recommendation": recommendation_text,
                                             "classification": classification,
+                                            "prescribing_changes": changes,
+                                            # The genes the change comes from.
+                                            "change_genes": (
+                                                change_genes(annotation)
+                                                if changes
+                                                else []
+                                            ),
                                         }
                                         drug_recommendations_by_drug[drug_name][
                                             "recommendations"
