@@ -673,11 +673,14 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                             error_str = str(db_error).lower()
                             if "value too long" in error_str or "varchar" in error_str:
                                 logger.error(f"Database constraint error: {db_error}")
+                                # The app applies db/init/migrations at startup
+                                # (app/api/db_migrations.py); there is no file to
+                                # run by hand. A column still too short means one
+                                # of them did not apply.
                                 logger.error(
-                                    "This usually means the database schema needs to be updated."
-                                )
-                                logger.error(
-                                    "Run migration: db/init/migrations/01_fix_pharmcat_variant_allele_length.sql"
+                                    "The database schema is older than the app's. Check the "
+                                    "app's startup log for a migration that failed, and the "
+                                    "schema_migrations table for which ones applied."
                                 )
                             else:
                                 logger.error(
