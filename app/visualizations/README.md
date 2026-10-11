@@ -2,7 +2,7 @@
 
 This folder contains architecture and workflow diagrams for ZaroPGx.
 
-- `workflow.md`: Mermaid diagram of the end-to-end processing pipeline (upload → processing → reporting → optional FHIR export).
+- `workflow.md`: Mermaid diagram of the end-to-end processing pipeline (upload → processing → reporting).
 - `workflow.mmd`: The sophisticated Mermaid template used by the application for generating workflow diagrams in reports.
 
 Render options
