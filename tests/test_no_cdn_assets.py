@@ -31,7 +31,8 @@ REPO = Path(__file__).resolve().parent.parent
 VENDOR = REPO / "app" / "static" / "vendor"
 
 # sha256 of each vendored file as published on npm (chart.js 4.5.1, d3 7.9.0,
-# bootstrap 5.3.2, bootstrap-icons 1.11.1). A changed file means a changed library:
+# bootstrap 5.3.2, bootstrap-icons 1.11.1, swagger-ui-dist 5.33.1, redoc 2.5.4). A
+# changed file means a changed library:
 # update the version in the templates' comments and here together.
 EXPECTED_SHA256 = {
     "chartjs/chart.umd.min.js": "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a",
@@ -41,12 +42,18 @@ EXPECTED_SHA256 = {
     "bootstrap-icons/bootstrap-icons.css": "bb6fd8cd85394cb367e8ac58e47292f2d68eb288fa12fab68e65430a5ddfce48",
     "bootstrap-icons/fonts/bootstrap-icons.woff2": "bacd70afda7da1deac2bbd49b5717a4dd133bcd59c379525d705b8492f678e95",
     "bootstrap-icons/fonts/bootstrap-icons.woff": "4d4572ef314e1b734cdd6485f913b0396d81bedf4d216a47cfde0cdf32a9316e",
+    "swagger-ui/swagger-ui-bundle.js": "050bc415ee7048dcd881682678f720264e7da5e373f7461d7c58c755305255f7",
+    "swagger-ui/swagger-ui.css": "1ac324f7dcd27e4b9386b4bd6421271ec147e922a22c05ba24b11515e9aa6321",
+    "redoc/redoc.standalone.js": "dcaf76612bc4a3fbcc923a8966dee2f6146a5f32e5ce1b6f02dd60cbbf89500b",
 }
 LICENCES = [
     "chartjs/LICENSE.md",
     "d3/LICENSE",
     "bootstrap/LICENSE",
     "bootstrap-icons/LICENSE",
+    "swagger-ui/LICENSE",
+    "swagger-ui/NOTICE",
+    "redoc/LICENSE",
 ]
 
 # A script, stylesheet or font fetched from another host. Plain links (<a href>) to
@@ -92,7 +99,13 @@ def test_vendored_library_is_present_and_unmodified(name):
 @pytest.mark.parametrize("name", LICENCES)
 def test_vendored_library_ships_its_licence(name):
     text = (VENDOR / name).read_text(encoding="utf-8")
-    assert "Permission" in text and "copyright" in text.lower()
+    if name.endswith("NOTICE"):
+        # Apache-2.0 section 4(d): the NOTICE travels with the code.
+        assert "Copyright" in text
+    elif "Apache License" in text:
+        assert "Version 2.0" in text  # Swagger UI
+    else:
+        assert "Permission" in text and "copyright" in text.lower()  # MIT, ISC
 
 
 def test_icon_fonts_resolve_next_to_the_stylesheet():
@@ -181,3 +194,35 @@ def test_icon_font_is_served_where_its_stylesheet_points(client):
     resp = client.get(f"/static/{path}")
     assert resp.status_code == 200
     assert resp.content == (REPO / "app" / "static" / path).read_bytes()
+
+
+@pytest.mark.parametrize(
+    "page, assets",
+    [
+        (
+            "/api/docs",
+            [
+                "vendor/swagger-ui/swagger-ui-bundle.js",
+                "vendor/swagger-ui/swagger-ui.css",
+            ],
+        ),
+        ("/api/redoc", ["vendor/redoc/redoc.standalone.js"]),
+    ],
+)
+def test_the_api_explorer_loads_nothing_from_another_host(client, page, assets):
+    """FastAPI's own pages load Swagger UI and ReDoc from jsDelivr, ReDoc's fonts
+    from Google and a favicon from fastapi.tiangolo.com: offline they were blank."""
+    html = client.get(page).text
+    assert not EXTERNAL_LOAD.search(html), html
+    assert "fastapi.tiangolo.com" not in html
+    for asset in assets:
+        url = re.search(rf'"(/static/{re.escape(asset)}[^"]*)"', html).group(1)
+        resp = client.get(url)
+        assert resp.status_code == 200
+        assert resp.content == (VENDOR.parent / asset).read_bytes()
+
+
+def test_swagger_ui_has_its_oauth2_redirect(client):
+    resp = client.get("/api/docs/oauth2-redirect")
+    assert resp.status_code == 200
+    assert "oauth2" in resp.text.lower()

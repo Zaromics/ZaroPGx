@@ -27,8 +27,6 @@ def client():
 
 
 def test_the_api_explorer_is_under_api(client):
-    assert client.app.docs_url == "/api/docs"
-    assert client.app.redoc_url == "/api/redoc"
     resp = client.get("/api/docs")
     assert resp.status_code == 200
     assert "swagger" in resp.text.lower()

@@ -37,6 +37,11 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -307,11 +312,16 @@ app = FastAPI(
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
     version="0.3.2",
     # /docs is the project documentation (mounted below); FastAPI's API explorer
-    # lives under /api instead of taking that path.
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect",
+    # lives under /api instead of taking that path. FastAPI's own explorer pages load
+    # Swagger UI and ReDoc from jsDelivr (and ReDoc's fonts from Google), so they are
+    # served below from app/static/vendor instead.
+    docs_url=None,
+    redoc_url=None,
 )
+
+API_DOCS_URL = "/api/docs"
+API_REDOC_URL = "/api/redoc"
+API_DOCS_OAUTH2_REDIRECT_URL = "/api/docs/oauth2-redirect"
 
 # Set up static file serving for application static assets
 app.mount("/static", RevalidatedStaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -781,7 +791,35 @@ async def notice_text():
 
 @app.get("/api")
 async def api_root():
-    return {"message": "Welcome to ZaroPGx API", "docs": "/api/docs"}
+    return {"message": "Welcome to ZaroPGx API", "docs": API_DOCS_URL}
+
+
+@app.get(API_DOCS_URL, include_in_schema=False)
+async def api_docs():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - API",
+        oauth2_redirect_url=API_DOCS_OAUTH2_REDIRECT_URL,
+        swagger_js_url=static_url("vendor/swagger-ui/swagger-ui-bundle.js"),
+        swagger_css_url=static_url("vendor/swagger-ui/swagger-ui.css"),
+        swagger_favicon_url="/static/favicon.png",
+    )
+
+
+@app.get(API_DOCS_OAUTH2_REDIRECT_URL, include_in_schema=False)
+async def api_docs_oauth2_redirect():
+    return get_swagger_ui_oauth2_redirect_html()
+
+
+@app.get(API_REDOC_URL, include_in_schema=False)
+async def api_redoc():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - API",
+        redoc_js_url=static_url("vendor/redoc/redoc.standalone.js"),
+        redoc_favicon_url="/static/favicon.png",
+        with_google_fonts=False,
+    )
 
 
 # Make the health check endpoint simple and dependency-free
