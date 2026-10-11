@@ -248,7 +248,8 @@ def test_guarded_curl_failures_surface_the_server_message():
     # call site except the two DELIBERATELY EXEMPT ones. One fewer than before because
     # OptiTypeHLAFromFastq -- a guarded site -- was removed with its process.
     assert len(guarded) == 9, f"{len(guarded)} guarded call sites, expected 9"
-    assert text.count("returned an error:") == 9, "each guarded call must echo the body"
+    echo = "returned an error (HTTP $HTTP_CODE):"
+    assert text.count(echo) == 9, "each guarded call must echo the body"
     # `2>service.log` buried curl's own error in a work-dir file nobody reads; -sS puts
     # it on stderr, where Nextflow picks it up into .command.err and the error report.
     for swallowed in ("2>gatk.log", "2>hla.log", "2>pypgx_bam2vcf.log"):
