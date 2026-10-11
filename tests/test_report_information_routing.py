@@ -79,9 +79,14 @@ def test_the_reference_build_is_stated_in_the_header_block():
 
 
 def test_the_header_block_does_not_repeat_the_id_twice():
-    """Sample ID and Report ID rendered the same UUID on consecutive lines."""
-    block = _section(_render(), '<div class="report-info">')
-    assert "Report ID" not in block, block
+    """Sample ID and Report ID once rendered the same UUID on consecutive lines.
+    Sample ID is now a sample's name or "Not provided", and the job id is shown
+    once, as Report ID."""
+    block = _section(_render(sample_identifier=None), '<div class="report-info">')
+    assert "<strong>Sample ID:</strong> Not provided" in block, block
+    assert block.count("<strong>Report ID:</strong> r") == 1, block
+    named = _section(_render(sample_identifier="NA12878"), '<div class="report-info">')
+    assert "<strong>Sample ID:</strong> NA12878" in named, named
 
 
 def test_a_native_grch38_run_states_no_build_line():
