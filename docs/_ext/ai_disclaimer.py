@@ -1,75 +1,38 @@
+"""Notice on each page that it was composed with generative AI.
+
+Every page gets the notice unless its front matter says ``curated: true``, which marks a
+page the maintainer has curated personally. The flag is not shown anywhere.
+"""
+
 from typing import Any, Dict
+
 from docutils import nodes
 
 
+def _front_matter_flag(doctree, name: str):
+    """A field from the page's YAML front matter (MyST puts it in the docinfo)."""
+    if doctree is None:
+        return None
+    for field in doctree.traverse(nodes.field):
+        if len(field) >= 2 and field[0].astext().strip().lower() == name:
+            return field[1].astext().strip().lower()
+    return None
+
+
 def setup(app):
-    """Sphinx extension to inject per-page curation status for AI disclaimer.
-
-    Authors can set page-level metadata using the MyST/Docutils meta directive, e.g.:
-
-    ```md
-    ```{meta}
-    :curation: fully
-    ```
-    ```
-
-    Allowed values: "fully", "partial", "not" (case-insensitive). Defaults to "partial".
-    """
-
-    def _inject_curation_status(app, pagename: str, templatename: str, context: Dict[str, Any], doctree):
+    def _inject(app, pagename: str, templatename: str, context: Dict[str, Any], doctree):
+        metadata = {}
         env = getattr(app.builder, "env", None)
-        metadata: Dict[str, Any] = {}
         if env is not None and hasattr(env, "metadata"):
             metadata = env.metadata.get(pagename, {}) or {}
+        curated = _front_matter_flag(doctree, "curated")
+        if curated is None:
+            curated = str(metadata.get("curated", "")).strip().lower()
+        context["ai_notice"] = curated not in {"true", "yes", "1"}
 
-        # Prefer explicit meta directive or front-matter fields in the doctree
-        raw_status = None
-        if doctree is not None:
-            # 1) meta nodes (from {meta} directive)
-            for node in doctree.traverse(nodes.meta):
-                if node.get('name', '').lower() == 'curation':
-                    raw_status = str(node.get('content', '')).strip().lower()
-                    break
-            # 2) YAML front-matter becomes field nodes in docinfo
-            if not raw_status:
-                for field in doctree.traverse(nodes.field):
-                    if len(field) >= 2 and getattr(field[0], 'astext', None):
-                        name = field[0].astext().strip().lower()
-                        if name == 'curation':
-                            value = field[1].astext().strip().lower()
-                            raw_status = value
-                            break
-
-        if not raw_status:
-            raw_status = str(metadata.get("curation", "partial")).strip().lower()
-
-        # Normalize synonyms to three canonical states: fully, partial, not
-        synonyms = {
-            "full": "fully",
-            "fully": "fully",
-            "complete": "fully",
-            "completed": "fully",
-            "partial": "partial",
-            "partially": "partial",
-            "incomplete": "partial",
-            "none": "not",
-            "no": "not",
-            "not": "not",
-            "uncurated": "not",
-        }
-        canonical = synonyms.get(raw_status, "partial")
-
-        # Map to grammatically correct display tokens
-        display_map = {"fully": "fully", "partial": "partially", "not": "not"}
-        context["curation_status"] = canonical
-        context["curation_display"] = display_map.get(canonical, "partially")
-
-    app.connect("html-page-context", _inject_curation_status)
-
+    app.connect("html-page-context", _inject)
     return {
-        "version": "0.1.0",
+        "version": "0.2.0",
         "parallel_read_safe": True,
         "parallel_write_safe": True,
     }
-
-

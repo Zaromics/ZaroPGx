@@ -1,6 +1,5 @@
 ---
 title: Running a server
-curation: not
 ---
 
 # Running a server

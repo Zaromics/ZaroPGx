@@ -1,6 +1,5 @@
 ---
 title: FHIR R4 Sample Exports
-curation: partial
 ---
 
 # ZaroPGx FHIR R4 Sample Exports

@@ -1,6 +1,5 @@
 ---
 title: API
-curation: not
 ---
 
 # API
