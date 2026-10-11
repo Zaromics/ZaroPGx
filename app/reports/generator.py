@@ -1334,6 +1334,12 @@ def _summary_panel() -> frozenset:
     return _SUMMARY_PANEL
 
 
+# PharmCAT's own label for a diplotype of its reference alleles. Its TSV prints the
+# alleles' names instead, and CFTR's reference allele is named "ivacaftor
+# non-responsive CFTR sequence": the summary's longest cell by far, twice over.
+_PHARMCAT_REFERENCE_LABEL = re.compile(r"Reference(?:/Reference)?")
+
+
 def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
     """The Executive Summary's rows: one for each gene of PharmCAT's panel, in
     order, so every report lists the same genes.
@@ -1363,16 +1369,33 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
     for gene in panel:
         if gene in tsv:
             row = tsv[gene]
+            diplotype = (
+                row.get("diplotype_display") or row.get("rec_lookup_diplotype") or ""
+            )
+            # Where PharmCAT labels the call "Reference/Reference" and the TSV
+            # spells out the reference allele's name, the summary shows PharmCAT's
+            # label, and its notes give the name.
+            label = str((genes.get(gene) or {}).get("diplotype") or "")
+            reference_name = None
+            if (
+                _PHARMCAT_REFERENCE_LABEL.fullmatch(label)
+                and diplotype
+                and diplotype != label
+                and not row.get("diplotype_candidates")
+            ):
+                names = {part.strip() for part in diplotype.split("/")}
+                if len(names) == 1:
+                    reference_name = names.pop()
+                    diplotype = label
             rows.append(
                 {
                     "gene": row.get("gene") or gene,
                     "called": True,
-                    "diplotype": row.get("diplotype_display")
-                    or row.get("rec_lookup_diplotype")
-                    or "",
+                    "diplotype": diplotype,
                     "phenotype": row.get("rec_lookup_phenotype") or "",
                     "activity_score": row.get("rec_lookup_activity_score"),
                     "diplotype_candidates": row.get("diplotype_candidates"),
+                    "reference_name": reference_name,
                 }
             )
         elif gene in genes and gene_was_called(genes[gene].get("diplotype")):
@@ -1387,6 +1410,7 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
                     "phenotype": row.get("phenotype") or "Unknown",
                     "activity_score": row.get("activity_score"),
                     "diplotype_candidates": row.get("diplotype_candidates"),
+                    "reference_name": None,
                 }
             )
         else:
@@ -1398,6 +1422,7 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
                     "phenotype": "",
                     "activity_score": None,
                     "diplotype_candidates": None,
+                    "reference_name": None,
                 }
             )
     return rows
