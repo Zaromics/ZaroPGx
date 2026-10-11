@@ -405,9 +405,10 @@ def test_completed_steps_written_by_update_job_progress_reaches_the_database(ses
 def test_get_job_progress_survives_a_running_job_with_started_at(sessions):
     """The estimated-completion branch must not blow up on a naive ``started_at``.
 
-    Pre-existing, and not caused by the re-read: on a backend without timezone
-    support (SQLite) ``started_at`` comes back naive, and subtracting it from an aware
-    ``datetime.now(timezone.utc)`` raises TypeError. ``get_job_progress`` wraps that
+    Pre-existing, and not caused by the re-read: on the old SQLite test database
+    ``started_at`` came back naive, and subtracting it from an aware
+    ``datetime.now(timezone.utc)`` raised TypeError. On PostgreSQL (TIMESTAMPTZ) it
+    is aware; this pins that the estimate works on the real backend. ``get_job_progress`` wraps that
     into RuntimeError, which ``_update_job_progress`` does not catch, so it propagates
     and takes the whole ``update_job_step`` call down. Reachable for any RUNNING job
     with a started_at and non-zero progress -- i.e. every job, for most of its life.
