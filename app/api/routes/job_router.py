@@ -601,42 +601,42 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
 async def cancel_nextflow_job(job_id: str, job_metadata: dict):
     """
-    Cancel a running Nextflow job by calling the Nextflow runner API.
+    Cancel a running Nextflow job through the runner's POST /cancel.
+
+    This used to post to /cancel/{patient_id}_{data_id}, a route the runner does not
+    have, under a key it does not use (it registers {patient_id}_{report_id}, and
+    report_id is the job id). The 404 was logged as "may have already completed",
+    so Nextflow kept launching steps: a cancelled 30x job still ran PyPGx's BAM to
+    VCF conversion for 26 minutes. The runner matches on job_id, the one value both
+    sides agree on.
 
     Args:
         job_id: The workflow ID to cancel
         job_metadata: Job metadata containing job information
     """
     try:
-        # Get Nextflow runner URL
         nextflow_url = os.getenv("NEXTFLOW_RUNNER_URL", "http://nextflow:5055")
-
-        # Extract job information from metadata
-        patient_id = job_metadata.get("patient_id")
-        data_id = job_metadata.get("data_id")
-
-        if not patient_id:
-            logger.warning(f"No patient_id found in workflow metadata for {job_id}")
-            return
-
-        # Construct job key (same format as used in Nextflow runner)
-        job_key = f"{patient_id}_{data_id or patient_id}"
-
-        # Call Nextflow cancel endpoint
-        cancel_url = f"{nextflow_url}/cancel/{job_key}"
-        logger.info(f"Cancelling Nextflow job {job_key} at {cancel_url}")
-
-        response = requests.post(cancel_url, timeout=10)
+        payload = {
+            "job_id": str(job_id),
+            # Required by the runner's CancelRequest; informational only there.
+            "patient_id": str(job_metadata.get("patient_id") or ""),
+            "action": "cancel",
+        }
+        logger.info(f"Cancelling Nextflow job {job_id} at {nextflow_url}/cancel")
+        # Off the event loop, and longer than the runner's own 30 s wait for Nextflow
+        # to exit after SIGTERM, so a clean shutdown is not reported as a timeout.
+        response = await asyncio.to_thread(
+            requests.post, f"{nextflow_url}/cancel", json=payload, timeout=45
+        )
 
         if response.status_code == 200:
-            logger.info(f"Successfully cancelled Nextflow job {job_key}")
-        elif response.status_code == 404:
             logger.info(
-                f"Nextflow job {job_key} not found (may have already completed)"
+                f"Nextflow runner cancelled job {job_id}: "
+                f"{response.json().get('terminated_processes', 0)} process(es) stopped"
             )
         else:
             logger.warning(
-                f"Failed to cancel Nextflow job {job_key}: {response.status_code} - {response.text}"
+                f"Failed to cancel Nextflow job {job_id}: {response.status_code} - {response.text}"
             )
 
     except Exception as e:

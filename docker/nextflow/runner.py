@@ -507,6 +507,17 @@ class CancelRequest(BaseModel):
     patient_id: str
     action: str
 
+def _is_cancel_target(job: dict, job_id: str) -> bool:
+    """Whether a registered run belongs to the job being cancelled.
+
+    By job id only. This also matched any run of the same patient and any key
+    containing the id as a substring, so cancelling one job stopped, and deleted the
+    files of, every other run for that patient. That stayed latent only because the
+    app's cancel never reached this endpoint.
+    """
+    return job.get("job_id") == job_id or job.get("workflow_id") == job_id
+
+
 @app.post("/cancel")
 async def cancel_workflow_job(request: CancelRequest):
     """
@@ -531,11 +542,7 @@ async def cancel_workflow_job(request: CancelRequest):
         # Method 1: Check our stored job registry
         job_found = False
         for job_key, job in running_jobs.items():
-            if (job.get("patient_id") == patient_id or
-                job.get("job_id") == job_id or
-                job.get("workflow_id") == job_id or
-                job_id in job_key or
-                patient_id in job_key):
+            if _is_cancel_target(job, job_id):
                 
                 job_found = True
                 
@@ -582,11 +589,7 @@ async def cancel_workflow_job(request: CancelRequest):
         
         # Clean up specific tracked file paths from jobs
         for job_key, job in running_jobs.items():
-            if (job.get("patient_id") == patient_id or
-                job.get("job_id") == job_id or
-                job.get("workflow_id") == job_id or
-                job_id in job_key or
-                patient_id in job_key):
+            if _is_cancel_target(job, job_id):
                 
                 # Clean up job-specific files
                 cleanup_paths = job.get("cleanup_paths", [])
