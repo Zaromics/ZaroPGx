@@ -36,7 +36,8 @@ Read these first.
 
 **Executive Summary.** The 25 genes PharmCAT reports on, on one page, the same genes in the
 same order in every report. Each row has the diplotype, the phenotype and, where the
-guideline uses one, the activity score. A gene the data did not call is a grey "Not called"
+guideline uses one, the activity score. A reference call is shown as PharmCAT labels it
+(CFTR's as "Reference/Reference"; the notes give the allele's name). A gene the data did not call is a grey "Not called"
 row. The page is a right-hand page, and its notes are on the page behind it, so a
 double-sided print holds both on one sheet.
 
@@ -70,10 +71,17 @@ passed to PharmCAT; a step that was skipped is drawn dashed, off the path. Then
 
 ## Labels
 
-Badge colours follow CPIC's ranking of each phenotype (its EHR priority): green for normal;
-amber for intermediate metabolism and decreased function; red for poor metabolism and poor
-function; blue for rapid metabolism and increased function, which is not necessarily better;
-grey for the rest. The label is always printed beside the colour.
+Badge colours follow CPIC's ranking of each phenotype (its EHR priority):
+
+- green: normal metabolism or function, G6PD Normal, an HLA risk allele negative, normal
+  risk of aminoglycoside-induced hearing loss;
+- amber: intermediate metabolism, decreased function, G6PD Variable;
+- red: poor metabolism or function, G6PD Deficient, an HLA risk allele positive, Malignant
+  Hyperthermia Susceptible, increased risk of aminoglycoside-induced hearing loss;
+- blue: rapid metabolism and increased function, which is not necessarily better;
+- grey: uncertain and indeterminate results, unresolved calls ("A or B"), and the rest.
+
+The label is always printed beside the colour.
 
 | Label | Meaning |
 |---|---|
