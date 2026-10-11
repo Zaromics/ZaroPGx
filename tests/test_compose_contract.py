@@ -96,6 +96,25 @@ def test_nextflow_is_never_published(compose):
     ), "premise check: if nextflow no longer mounts the docker socket, revisit this test"
 
 
+def test_every_service_comes_back_after_a_reboot(compose):
+    """Every service is a long-running server, so each needs a restart policy.
+
+    depends_on only orders `docker compose up`. After a host reboot the daemon restarts
+    containers by their restart policy alone, so genome-downloader, the one service without
+    one, stayed down while gatk-api and pypgx, which depend on it being healthy, came back
+    without it. A one-shot service added later would set `restart: "no"` and belong in an
+    exemption here.
+    """
+    missing = sorted(
+        name
+        for name, svc in compose["services"].items()
+        if svc.get("restart") != "unless-stopped"
+    )
+    assert not missing, "services without restart: unless-stopped:\n  " + "\n  ".join(
+        missing
+    )
+
+
 def test_app_port_is_operator_controlled(compose):
     """The app is the one service meant to be reachable; keep BIND_ADDRESS in charge."""
     ports = compose["services"]["app"].get("ports") or []
