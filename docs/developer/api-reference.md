@@ -203,8 +203,8 @@ render its pre-flight summary.
    This is a boundary guard, not cosmetics: `pipelines/pgx/main.nf` assembles
    `curl` argv inside a bash `shell:` block, and Nextflow does not escape
    `val`/`params` strings before interpolating them, so an unfiltered value would
-   be spliced verbatim into a shell running in a container that bind-mounts the
-   Docker socket. The same allowlist is applied to the sample name derived from
+   be spliced verbatim into a shell running in the pipeline container, which reads
+   and writes all of `/data`. The same allowlist is applied to the sample name derived from
    the VCF header, which is equally attacker-controlled; there an unusual value is
    silently **dropped** rather than rejected, so it never fails an otherwise-valid
    job.

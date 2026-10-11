@@ -200,9 +200,9 @@ them from elsewhere is deliberately an SSH tunnel away
 | **Mermaid** | not published | 8002 | Kroki's Mermaid renderer, internal only |
 | **Nextflow** | **not published** | 5055 | Pipeline executor; see note below |
 
-`nextflow` has no host mapping by design — its `POST /run` is unauthenticated and it
-bind-mounts the Docker socket, so publishing it would be remote code execution. The app calls
-it as `http://nextflow:5055` inside the Compose network.
+`nextflow` has no host mapping by design — its `POST /run` is unauthenticated, so publishing it
+would let anything that can reach the port start pipelines. The app calls it as
+`http://nextflow:5055` inside the Compose network.
 
 ## Initial Setup
 

@@ -120,8 +120,9 @@ def health() -> Dict[str, str]:
 
 # Strings that get interpolated into main.nf's bash `shell:` blocks must not carry
 # shell metacharacters: Nextflow escapes `path` inputs but not `val`/`params` strings,
-# so a `"` in one of them breaks out of the quoting and the rest runs as code - inside
-# a container holding the Docker socket. sample_identifier is additionally passed via
+# so a `"` in one of them breaks out of the quoting and the rest runs as code - in the
+# container that holds the shared /data volume and reaches every service on the
+# network. sample_identifier is additionally passed via
 # the environment (never interpolated), but reference IS still interpolated, so this
 # allowlist is what keeps it safe. The alphabet matches the app's boundary validator:
 # alphanumerics plus dot/underscore/hyphen, 1-64 chars, first char alphanumeric.
@@ -340,7 +341,7 @@ def build_nextflow_command(input_path: str, input_type: str, patient_id: str, re
     # Nextflow command - JVM options should be set via environment variables, not command line args
     cmd = [
         'nextflow',
-        'run', 'pipelines/pgx/main.nf', '-profile', 'docker',
+        'run', 'pipelines/pgx/main.nf', '-profile', 'standard',
         '--input', input_path,
         '--input_type', input_type,
         '--patient_id', str(patient_id),
