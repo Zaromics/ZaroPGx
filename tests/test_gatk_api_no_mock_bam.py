@@ -1277,6 +1277,45 @@ def test_sink_haplotypecaller_keeps_metacharacters_as_single_tokens(gatk_api):
     assert not any("'" in element for element in argv)
 
 
+@pytest.mark.parametrize(
+    "value, expected",
+    [("20g", 20), ("20G", 20), ("12", 12), ("16384m", 16), ("8192M", 8), ("lots", 20)],
+)
+def test_max_memory_parses_every_spelling(gatk_api, value, expected):
+    """`20G` used to raise inside the large-file branch (only a lowercase `g` was
+    stripped), so an uppercase MAX_MEMORY silently fell back to the pinned 20G."""
+    assert gatk_api.parse_heap_gb(value) == expected
+
+
+def test_the_default_heap_is_unchanged(gatk_api):
+    """MAX_MEMORY defaults to 20g, so the flags are exactly what was hard-coded."""
+    assert (
+        gatk_api.haplotypecaller_java_options(0.5, 16.0, "20g")
+        == "-Xms20G -Xmx20G -XX:ParallelGCThreads=2"
+    )
+    assert (
+        gatk_api.haplotypecaller_java_options(5.0, 64.0, "20g")
+        == "-Xms20G -Xmx20G -XX:ParallelGCThreads=2 -XX:+UseG1GC"
+    )
+
+
+def test_a_small_input_honours_max_memory(gatk_api):
+    """Inputs under 2 GB pinned -Xmx20G whatever MAX_MEMORY said -- on a 16 GB host,
+    a heap larger than the machine."""
+    options = gatk_api.haplotypecaller_java_options(0.5, 16.0, "8g")
+    assert "-Xmx8G" in options.split()
+    assert "-Xms8G" in options.split()
+
+
+def test_unreadable_host_memory_falls_back_to_max_memory(gatk_api):
+    assert "-Xmx12G" in gatk_api.haplotypecaller_java_options(0.5, None, "12g").split()
+
+
+def test_a_large_input_is_capped_by_host_memory_and_max_memory(gatk_api):
+    assert "-Xmx11G" in gatk_api.haplotypecaller_java_options(5.0, 16.0, "20g").split()
+    assert "-Xmx20G" in gatk_api.haplotypecaller_java_options(5.0, 64.0, "20G").split()
+
+
 def test_module_has_no_shell_true_on_request_data(source):
     """Sweep every real `shell=True` in the module, parsed rather than grepped.
 
