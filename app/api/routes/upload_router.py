@@ -53,7 +53,11 @@ from app.api.models import (
     WorkflowInfo,
     WorkflowOptions,
 )
-from app.api.utils.file_processor import FileProcessor, safe_upload_basename
+from app.api.utils.file_processor import (
+    FileProcessor,
+    safe_upload_basename,
+    uploaded_index_messages,
+)
 from app.api.utils.header_inspector import (
     extract_raw_header_text,
     filter_header_to_canonical_contigs,
@@ -2088,12 +2092,17 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
 
 @router.post("/inspect-header")
 async def inspect_file_header(
-    file: UploadFile = File(...), db: Session = Depends(get_db)
+    file: UploadFile = File(...),
+    index_names: Optional[List[str]] = Form(None),
+    db: Session = Depends(get_db),
 ):
     """
     Inspect the header of a genomic file without processing the full analysis.
     This endpoint allows users to preview file header information before
     committing to the full upload and analysis process.
+
+    ``index_names``: the index files chosen with it, by name. Only the names are
+    needed, to pair one with the file and say so, as the upload does.
     """
     try:
         # Save uploaded file temporarily. The suffix carries the uploaded name because
@@ -2195,6 +2204,19 @@ async def inspect_file_header(
                     }
             except Exception as e:
                 logger.debug(f"Header inspect workflow derivation failed: {e}")
+
+            if index_names:
+                paired, notes, index_warnings = uploaded_index_messages(
+                    str(file.filename or ""), list(index_names)
+                )
+                if paired and isinstance(header_info.get("file_info"), dict):
+                    header_info["file_info"]["has_index"] = True
+                compat_workflow["recommendations"] = (
+                    list(compat_workflow["recommendations"]) + notes
+                )
+                compat_workflow["warnings"] = (
+                    list(compat_workflow["warnings"]) + index_warnings
+                )
 
             return {
                 "status": "success",
