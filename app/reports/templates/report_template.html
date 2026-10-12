@@ -340,10 +340,13 @@
             background-color: #adb5bd;
         }
         /* Executive summary invisible columns */
+        /* Fixed columns (the colgroup's), so a long phenotype runs on past the
+           table rather than taking width from the diplotypes: sized by content,
+           MT-RNR1's one-line label squeezed CFTR's allele names onto five lines. */
         .exec-summary-table {
             width: 100%;
             border-collapse: collapse; /* tightly packed, no extra gaps */
-            table-layout: auto; /* let content determine widths dynamically */
+            table-layout: fixed;
             margin-top: 10px;
         }
         .exec-summary-table td {
@@ -406,12 +409,24 @@
             overflow: visible;
             width: 42%;
         }
-        /* A long phenotype wraps inside its pill, leaving room for a score.
-           Kept on one line, CFTR's "ivacaftor non-responsive in CF patients"
-           ran to the paper's edge. */
+        /* Every pill one line and one height. A long one runs on into the page
+           margin; one that would come within 8mm of the paper's edge has its type
+           made smaller to end there, its height kept by the line-height
+           (app/reports/pdf_fit.py, shrink_wide_pills). Wrapped, they were two and
+           three lines tall beside one-line pills. The outlined wild-type pills
+           have a 2px border; the filled ones a transparent one, for the same
+           height. */
         .exec-summary-phenotype .gene-phenotype {
-            white-space: normal;
-            max-width: calc(100% - 56px);
+            white-space: nowrap;
+            max-width: none;
+            line-height: 1.15;
+            border: 2px solid transparent;
+        }
+        .exec-summary-phenotype .possibly-wild-type {
+            border-color: #000;
+        }
+        .exec-summary-phenotype .likely-wild-type {
+            border-color: #90EE90;
         }
         .exec-summary-phenotype .gene-phenotype,
         .exec-summary-phenotype .as-badge {
@@ -1111,9 +1126,12 @@
         <div class="summary-highlights">
             <p>This sample's genetic profile indicates:</p>
             <table class="exec-summary-table">
+                <colgroup>
+                    <col style="width: 4.5%"><col style="width: 13%"><col style="width: 40%"><col style="width: 42.5%">
+                </colgroup>
                 <tbody>
                     {% for r in rows %}
-                    <tr{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
+                    <tr id="summary-{{ r.gene }}"{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
                         <td class="exec-summary-number">{{ loop.index }}.</td>
                         <td class="exec-summary-gene">{{ r.gene }}</td>
                         {% if r.called %}

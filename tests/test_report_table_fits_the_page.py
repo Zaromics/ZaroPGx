@@ -86,10 +86,12 @@ def test_every_declared_column_is_used_in_the_markup():
 
 
 def test_the_colgroup_matches_the_header_count():
+    # The gene table's own: the Executive Summary's table has a colgroup too.
     source = _source()
-    colgroup = re.search(r"<colgroup>(.*?)</colgroup>", source, re.S).group(1)
+    table = source[source.index('<table class="gene-table">') :]
+    colgroup = re.search(r"<colgroup>(.*?)</colgroup>", table, re.S).group(1)
     cols = len(re.findall(r"<col\b", colgroup))
-    header = re.search(r"<thead>\s*<tr>(.*?)</tr>", source, re.S).group(1)
+    header = re.search(r"<thead>\s*<tr>(.*?)</tr>", table, re.S).group(1)
     headers = len(re.findall(r"<th\b", header))
     assert cols == headers, f"{cols} <col> vs {headers} <th> -- columns will skew"
 

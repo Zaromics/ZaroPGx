@@ -27,7 +27,10 @@ import pytest
 import app.reports.generator as generator_module
 from app.reports.pdf_fit import (
     EXEC_SUMMARY,
+    PILL_EDGE,
     FitSection,
+    _descendants,
+    _summary_pills,
     fit_sections,
     section_fragments,
     section_pages,
@@ -124,7 +127,8 @@ def _called_genes(page):
     return [
         _clean(g)
         for row, g in re.findall(
-            r'<tr( class="exec-summary-uncalled")?>\s*<td class="exec-summary-number">'
+            r'<tr id="summary-[^"]+"( class="exec-summary-uncalled")?>\s*'
+            r'<td class="exec-summary-number">'
             r'\d+\.</td>\s*<td class="exec-summary-gene">(.*?)</td>',
             _summary(page),
         )
@@ -141,25 +145,40 @@ PANEL = sorted(
 )
 
 
-def _summary_table_overflow(document):
-    """Text in the summary table past the table's right edge, per page."""
+def _past_the_paper_edge(document):
+    """Text in the summary table nearer the paper's right edge than PILL_EDGE: a
+    long pill may run on past the table into the margin, but not to the edge."""
     found = []
     for page in document.pages:
+        limit = page._page_box.margin_width() - PILL_EDGE
 
-        def walk(box, table_right=None):
+        def walk(box, inside=False):
             element = getattr(box, "element", None)
             if element is not None and "exec-summary-table" in (
                 element.get("class") or ""
             ):
-                table_right = box.position_x + box.margin_width()
-            if table_right is not None and getattr(box, "text", None):
-                if box.position_x + box.width > table_right + 0.5:
+                inside = True
+            if inside and getattr(box, "text", None):
+                if box.position_x + box.width > limit + 0.5:
                     found.append(box.text)
             for child in getattr(box, "children", None) or []:
-                walk(child, table_right)
+                walk(child, inside)
 
         walk(page._page_box)
     return found
+
+
+def _pills(document):
+    """(row id, height, line count) of each summary pill, on every page it takes."""
+    return [
+        (
+            row,
+            round(pill.margin_height(), 1),
+            sum(1 for b in _descendants(pill) if b.__class__.__name__ == "LineBox"),
+        )
+        for index in section_pages(document, "exec-summary")
+        for row, pill, _ in _summary_pills(document.pages[index]._page_box)
+    ]
 
 
 def test_the_worst_case_fits_one_page(monkeypatch, tmp_path):
@@ -170,7 +189,7 @@ def test_the_worst_case_fits_one_page(monkeypatch, tmp_path):
     assert len(section_pages(document, "exec-summary")) == 1
     # It took tightening: the template's own proportions do not hold 25 rows.
     assert levels["exec-summary"] >= 1
-    assert _summary_table_overflow(document) == []
+    assert _past_the_paper_edge(document) == []
 
 
 def test_the_notes_are_on_the_page_behind_the_table(monkeypatch, tmp_path):
@@ -210,16 +229,27 @@ def test_after_long_alerts_the_table_still_opens_on_a_right_hand_page(
     assert section_pages(document, "exec-summary-notes") == [table + 1]
 
 
-def test_the_long_phenotypes_wrap_inside_the_table(monkeypatch, tmp_path):
-    """Untightened: CFTR's phenotype and allele names, and a score beside
-    "Intermediate Metabolizer", all inside the table at full size."""
+@pytest.mark.parametrize("step", [0, len(EXEC_SUMMARY.steps)], ids=["full", "tightest"])
+def test_every_pill_is_one_line_and_one_height(monkeypatch, tmp_path, step):
+    """CFTR's "ivacaftor non-responsive in CF patients" and MT-RNR1's "normal risk
+    of aminoglycoside-induced hearing loss" wrapped to two and three lines, beside
+    one-line pills, and the outlined wild-type pills were taller than the filled
+    ones. Now every pill is one line and one height: a long one runs on into the
+    margin, and MT-RNR1's has smaller type to end short of the paper's edge."""
     data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
     page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
+    css = EXEC_SUMMARY.steps[step - 1] if step else ""
     monkeypatch.setattr(
-        generator_module, "fit_sections", lambda render: (render(""), {})
+        generator_module, "fit_sections", lambda render: (render(css), {})
     )
     document, _ = generator_module.render_pdf_document(page)
-    assert _summary_table_overflow(document) == []
+    pills = _pills(document)
+    assert {"summary-CFTR", "summary-MT-RNR1", "summary-CYP4F2"} <= {
+        row for row, _, _ in pills
+    }
+    assert {lines for _, _, lines in pills} == {1}, pills
+    assert len({height for _, height, _ in pills}) == 1, pills
+    assert _past_the_paper_edge(document) == []
 
 
 def test_every_step_is_tighter_and_the_loosest_that_fits_is_used(monkeypatch, tmp_path):
