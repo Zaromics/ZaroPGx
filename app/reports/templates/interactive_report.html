@@ -889,16 +889,22 @@
                         </p>
                         <p>
                             <strong>Clinical Impact:</strong>
-                            {% if d.phenotype and 'Normal' in d.phenotype %}
+                            {# Metabolism wording for a metabolizer phenotype only: SLCO1B1
+                               (a transporter), G6PD, RYR1 and F5 read "metabolized by". An
+                               unresolved call is said to be one: "Normal Function or ...
+                               Poor Function" matched "Normal", "Standard ... expected". #}
+                            {% if d.diplotype_candidates %}
+                                PharmCAT could not narrow this call to one diplotype. Every possibility is listed under Genes; guidance that differs between them is marked "Applies if" under Recs.
+                            {% elif d.phenotype and 'Metabolizer' in d.phenotype and 'Normal' in d.phenotype %}
                                 Standard drug metabolism expected for medications metabolized by {{ d.gene }}.
-                            {% elif d.phenotype and 'Poor' in d.phenotype %}
+                            {% elif d.phenotype and 'Metabolizer' in d.phenotype and 'Poor' in d.phenotype %}
                                 Reduced drug metabolism may require dose adjustments for medications metabolized by {{ d.gene }}.
-                            {% elif d.phenotype and 'Intermediate' in d.phenotype %}
+                            {% elif d.phenotype and 'Metabolizer' in d.phenotype and 'Intermediate' in d.phenotype %}
                                 Slightly reduced metabolism may require monitoring for medications metabolized by {{ d.gene }}.
-                            {% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}
+                            {% elif d.phenotype and 'Metabolizer' in d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}
                                 Increased metabolism may reduce efficacy at standard doses for medications metabolized by {{ d.gene }}.
                             {% else %}
-                                Consult clinical guidelines for medications metabolized by {{ d.gene }}.
+                                Consult clinical guidelines for medications affected by {{ d.gene }}.
                             {% endif %}
                         </p>
                     </div>

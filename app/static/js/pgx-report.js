@@ -512,29 +512,8 @@ function createGeneInfoSection() {
         const geneInfo = document.createElement('div');
         geneInfo.className = 'section';
         
-        let geneDescription = '';
-        if (d.gene === 'CYP2D6') {
-            geneDescription = 'Cytochrome P450 Family a Subfamily D Member 6 is responsible for metabolizing approximately 25% of clinically used drugs.';
-        } else if (d.gene === 'CYP2C19') {
-            geneDescription = 'Cytochrome P450 Family 2 Subfamily C Member 19 is involved in the metabolism of several important drug classes including proton pump inhibitors and antidepressants.';
-        } else if (d.gene === 'SLCO1B1') {
-            geneDescription = 'Solute Carrier Organic Anion Transporter Family Member 1B1 mediates the sodium-independent uptake of numerous drugs and endogenous compounds.';
-        } else {
-            geneDescription = 'A gene involved in drug metabolism.';
-        }
-        
-        let clinicalImplications = '';
-        if (d.phenotype.includes('Normal')) {
-            clinicalImplications = `This patient has normal ${d.gene} activity, which means they should respond normally to medications metabolized by ${d.gene}.`;
-        } else if (d.phenotype.includes('Poor')) {
-            clinicalImplications = `This patient has reduced ${d.gene} activity, which may result in reduced metabolism of drugs processed by ${d.gene}. This could lead to increased drug concentrations and potential adverse effects at standard doses.`;
-        } else if (d.phenotype.includes('Intermediate')) {
-            clinicalImplications = `This patient has moderately reduced ${d.gene} activity, which may result in somewhat reduced metabolism of drugs processed by ${d.gene}. Careful monitoring may be required when using medications metabolized by ${d.gene}.`;
-        } else if (d.phenotype.includes('Rapid') || d.phenotype.includes('Ultrarapid')) {
-            clinicalImplications = `This patient has increased ${d.gene} activity, which may result in faster metabolism of drugs processed by ${d.gene}. This could lead to reduced drug concentrations and potential loss of efficacy at standard doses.`;
-        } else {
-            clinicalImplications = `The clinical implications of this ${d.gene} phenotype should be evaluated by a healthcare professional.`;
-        }
+        const description = geneDescription(d.gene);
+        const clinicalImplications = clinicalImplication(d.gene, d.phenotype);
         
         let relatedMedications = '';
         if (d.gene === 'CYP2D6') {
@@ -557,25 +536,71 @@ function createGeneInfoSection() {
                 <li>Methotrexate</li>
                 <li>Repaglinide</li>
             `;
-        } else {
-            relatedMedications = `<li>Various medications</li>`;
         }
         
         geneInfo.innerHTML = `
             <h3>${d.gene} Information</h3>
-            <p><strong>Description:</strong> ${geneDescription}</p>
-            <p><strong>Diplotype:</strong> ${d.diplotype}</p>
+            ${description ? `<p><strong>Description:</strong> ${description}</p>` : ''}
+            <p><strong>Diplotype:</strong> ${diplotypeShown(d.diplotype)}</p>
             <p><strong>Phenotype:</strong> ${d.phenotype}</p>
-            <p><strong>Activity Score:</strong> ${d.activityScore}</p>
+            ${d.activityScore ? `<p><strong>Activity Score:</strong> ${d.activityScore}</p>` : ''}
             <h4>Clinical Implications</h4>
             <p>${clinicalImplications}</p>
-            
-            <h4>Related Medications</h4>
-            <ul>${relatedMedications}</ul>
+            ${relatedMedications ? `<h4>Related Medications</h4><ul>${relatedMedications}</ul>` : ''}
         `;
         
         geneInfoSection.appendChild(geneInfo);
     });
+}
+
+/**
+ * What the gene panel says about a gene, and about this sample's phenotype.
+ *
+ * Only what is known. A description for the genes written up here and none for
+ * the rest: every other gene, RYR1, HLA-B and F5 among them, was "a gene involved
+ * in drug metabolism". Metabolism wording only for a metabolizer phenotype: it
+ * had SLCO1B1, a transporter, "metabolize" drugs. And an unresolved call said to
+ * be one: its "Normal Function or ... Poor Function" matched "Normal", so a call
+ * that may be Poor Function read "should respond normally".
+ */
+const GENE_DESCRIPTIONS = {
+    CYP2D6: 'Cytochrome P450 Family 2 Subfamily D Member 6 is responsible for metabolizing approximately 25% of clinically used drugs.',
+    CYP2C19: 'Cytochrome P450 Family 2 Subfamily C Member 19 is involved in the metabolism of several important drug classes including proton pump inhibitors and antidepressants.',
+    SLCO1B1: 'Solute Carrier Organic Anion Transporter Family Member 1B1 mediates the sodium-independent uptake of numerous drugs and endogenous compounds.',
+};
+
+function geneDescription(gene) {
+    return GENE_DESCRIPTIONS[gene] || '';
+}
+
+function clinicalImplication(gene, phenotype) {
+    const text = String(phenotype || '');
+    if (/ or /.test(text)) {
+        return `PharmCAT could not narrow this ${gene} call to one diplotype; the phenotype may be ${text}. Guidance that differs between them is marked "Applies if" under Recs.`;
+    }
+    if (text.includes('Metabolizer')) {
+        if (text.includes('Normal')) {
+            return `This patient has normal ${gene} activity: medications metabolized by ${gene} are expected to be metabolized as usual.`;
+        }
+        if (text.includes('Poor')) {
+            return `This patient has reduced ${gene} activity, which may result in reduced metabolism of drugs processed by ${gene}. This could lead to increased drug concentrations and potential adverse effects at standard doses.`;
+        }
+        if (text.includes('Intermediate')) {
+            return `This patient has moderately reduced ${gene} activity, which may result in somewhat reduced metabolism of drugs processed by ${gene}. Careful monitoring may be required when using medications metabolized by ${gene}.`;
+        }
+        if (text.includes('Rapid') || text.includes('Ultrarapid')) {
+            return `This patient has increased ${gene} activity, which may result in faster metabolism of drugs processed by ${gene}. This could lead to reduced drug concentrations and potential loss of efficacy at standard doses.`;
+        }
+    }
+    return `The clinical implications of this ${gene} phenotype should be evaluated by a healthcare professional.`;
+}
+
+/** An unresolved call names its first candidate and counts the rest, as the tables do. */
+function diplotypeShown(diplotype) {
+    const candidates = String(diplotype || '').split(' or ');
+    return candidates.length > 3
+        ? `${candidates[0]} or ${candidates.length - 1} other possible diplotypes`
+        : String(diplotype || '');
 }
 
 /**
