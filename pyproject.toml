@@ -24,17 +24,14 @@ dependencies = [
   # FROM entities (unused); tests/test_sqlalchemy_21_assumptions.py pins both.
   "sqlalchemy>=2.1.3,<2.2.0",
   "psycopg[binary]>=3.1.0,<4.0.0",
-  # Data processing - Pydantic v2 for compatibility with FastAPI
-  "pandas>=3.0.3,<4.0.0",
-  "pyarrow>=21.0.0,<26.0.0", # Backs pandas' PyArrow-based string dtype.
-  "numpy>=2.0.0,<3.0.0",
+  # Models and settings. (pandas, pyarrow, numpy and pydantic-settings were listed
+  # here and imported nowhere; numpy still comes in with Biopython.)
   "pydantic>=2.11.7,<3.0.0",
-  "pydantic-settings>=2.10.1,<3.0.0",
   "python-dotenv>=1.1.1,<2.0.0",
   # Reporting
   "weasyprint>=70.0,<71.0", # Capped at major: each major has changed page layout.
   "jinja2>=3.1.6,<4.0.0",
-  "graphviz>=0.21,<1.0.0",
+  # WeasyPrint and ReportLab draw images with it; the tests read the diagram's PNG.
   "pillow>=11.3.0,<13.0.0",
   "reportlab>=4.4.3,<6.0.0", # Professional PDF generation lane
   # HTTP and async utilities
@@ -96,7 +93,7 @@ filterwarnings = ["default"]
 [tool.mypy]
 python_version = "3.12"
 files = ["app"]
-# Third-party stubs are mostly absent (pysam, weasyprint, graphviz, ...); without
+# Third-party stubs are mostly absent (pysam, weasyprint, ...); without
 # this the run drowns in import-untyped noise.
 ignore_missing_imports = true
 follow_imports = "silent"

@@ -1214,7 +1214,7 @@
                 <div class="card workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
                     <h4>Workflow</h4>
                     
-                    <!-- Primary Workflow Diagram (Mermaid preferred, Graphviz fallback) -->
+                    <!-- The run's workflow diagram (Kroki/Mermaid), or its steps as text -->
                     <div class="workflow-figure">
                         {% if workflow_kroki_svg %}
                           <!-- Prefer Mermaid diagram -->
@@ -1225,9 +1225,6 @@
                         {% elif workflow_png_data_uri %}
                           <!-- Fallback to PNG data URI -->
                           <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
-                        {% elif workflow_svg %}
-                          <!-- Fallback to Graphviz SVG -->
-                          {{ workflow_svg | safe }}
                         {% elif workflow_html_fallback %}
                           <!-- Fallback to HTML -->
                           {{ workflow_html_fallback | safe }}
