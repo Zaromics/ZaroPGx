@@ -1360,6 +1360,47 @@
     
     
     
+    {# The workflow diagram comes before Platform and Citations, not after: in the
+       PDF it fills a page of its own, and after the citations it left their tail
+       on a mostly empty page and the closing licence lines alone on another. Now
+       the licence closes the citations' last page. #}
+    <div class="section workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
+        <h2>Workflow Diagram</h2>
+        
+        <!-- Primary Workflow Diagram (PNG preferred for PDF, SVG for screen) -->
+        <div class="workflow-figure">
+            {% if workflow_png_data_uri %}
+              <!-- Prefer PNG data URI for reliable PDF rendering -->
+              <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
+            {% elif workflow_png_file_url %}
+              <!-- PNG file URL -->
+              <img src="{{ workflow_png_file_url }}" alt="Workflow Diagram" />
+            {% elif workflow_kroki_svg %}
+              <!-- Kroki Mermaid SVG (good for screen, may have issues in PDF) -->
+              {{ workflow_kroki_svg | safe }}
+            {% elif workflow_svg %}
+              <!-- Graphviz SVG (fallback) -->
+              {{ workflow_svg | safe }}
+            {% elif workflow_html_fallback %}
+              <!-- HTML fallback -->
+              {{ workflow_html_fallback | safe }}
+            {% else %}
+              <!-- Hard fail-safe directly in template -->
+              <div class="workflow-text">
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Upload</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Detect</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>VCF</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>PharmCAT</span>
+                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
+                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Reports</span>
+              </div>
+            {% endif %}
+        </div>
+    </div>
+
     <div class="section">
         <h2>Platform and Citations</h2>
         <h3>Software Platform</h3>
@@ -1430,43 +1471,6 @@
     </div>
 
     
-
-    <div class="section workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
-        <h2>Workflow Diagram</h2>
-        
-        <!-- Primary Workflow Diagram (PNG preferred for PDF, SVG for screen) -->
-        <div class="workflow-figure">
-            {% if workflow_png_data_uri %}
-              <!-- Prefer PNG data URI for reliable PDF rendering -->
-              <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
-            {% elif workflow_png_file_url %}
-              <!-- PNG file URL -->
-              <img src="{{ workflow_png_file_url }}" alt="Workflow Diagram" />
-            {% elif workflow_kroki_svg %}
-              <!-- Kroki Mermaid SVG (good for screen, may have issues in PDF) -->
-              {{ workflow_kroki_svg | safe }}
-            {% elif workflow_svg %}
-              <!-- Graphviz SVG (fallback) -->
-              {{ workflow_svg | safe }}
-            {% elif workflow_html_fallback %}
-              <!-- HTML fallback -->
-              {{ workflow_html_fallback | safe }}
-            {% else %}
-              <!-- Hard fail-safe directly in template -->
-              <div class="workflow-text">
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Upload</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Detect</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>VCF</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>PharmCAT</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Reports</span>
-              </div>
-            {% endif %}
-        </div>
-    </div>
 
     <div class="footer">
         <p>&copy; 2024-{{ current_year }} {{ author_name or 'Unknown Author' }}</p>
