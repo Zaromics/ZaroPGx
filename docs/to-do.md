@@ -48,7 +48,10 @@ curation: full
 - Nextflow orchestration
   - Dynamic resource allocation (CPU/memory by attempt, file type+size, etc.)
   - Track active tool/stage; reflect in UI icons and progress
-- Improve progress calculation by normalizing step/substep points to 100%
+- [DONE Oct 2026, fix/progress-bar-weighted-steps] Progress is a weighted sum of the
+  steps a job runs, each weighted by its measured duration and paced by how long it has
+  been running, so it reaches 100% across any input type; it used to freeze for minutes
+  when steps ran in parallel.
 - Accept uploads by URL (streamed) and multi-file selects (main + index) with proper pairing
 - Recognize and/or regenerate index files as needed; map unaligned to appropriate reference: currently GRCh38.p14
 - Consider preprocessing complementing PyPGx-led VCF generation (evaluate necessity)
@@ -90,7 +93,9 @@ curation: full
 
 ## Reporting
 
-- Unified report generation combining PharmCAT clinical recommendations with PyPGx gene coverage
+- [DONE Oct 2026] Unified report: PharmCAT's recommendations with PyPGx's calls for the
+  genes PharmCAT does not call ("P" in the Call column), and PyPGx's per-gene evidence
+  (fix/pypgx-full-record).
 - Add demographics mini-section: mitochondrial lineage/haplogroup and variant rarity context
 - Standardize folder naming of generated reports (timestamp-based) and place logs under `data/logs/`
 - [DONE] Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
@@ -107,6 +112,28 @@ curation: full
   (else the file header's) is the reports' "Sample ID"; every report used to print the
   job or patient UUID. Without one it says "Not provided", and the job id is the
   separate Report ID line in every report.
+
+- [DONE Oct 2026] Unphased input: a call PharmCAT could not narrow to one diplotype is shown
+  as every candidate, in every view, not the first as if certain
+  (fix/report-unresolved-calls); where the guidance differs by candidate, each
+  recommendation says which it applies to ("Applies if: SLCO1B1 Poor Function ...",
+  fix/recommendations-per-candidate). Genes not called are named, with the reason.
+- [DONE Oct 2026] Recommendation headings name their guideline (CPIC / DPWG / FDA) in
+  reports from uploads; they read "General" (fix/report-guideline-source-names).
+- [DONE Oct 2026] The network graph draws only genes that set the guidance, never an
+  uncalled gene, and colours an unresolved call grey (fix/network-hubs-uncalled-unresolved).
+- [DONE Oct 2026] The HTML report no longer ends with a debug dump of its template
+  context (fix/report-no-debug-dump).
+- [DONE Oct 2026] PDF layout: page 1 holds the whole disclaimer; the workflow diagram
+  keeps its proportions; the genomic file header prints in full (it ran off the page) as
+  an appendix after the citations; the licence never opens a page alone. Major sections
+  keep their own pages (decided). The Executive Summary is one page: it covers PharmCAT's
+  panel, and the PDF tightens it step by step when it would run over; a section spilling
+  a few lines onto a page (Alerts, Drugs, Platform and Citations) is tightened to end a
+  page sooner (app/reports/pdf_fit.py; fix/report-exec-summary-one-page,
+  fix/pdf-sections-fit-pages). F2 and F5 are read as called
+  (fix/report-unannotated-gene-calls); score badges are legible.
+- Open: should "Decreased Function" get a warning colour (it is neutral grey)?
 
 ## UI/UX
 
@@ -161,6 +188,31 @@ curation: full
 
 ## Docker & CI/CD
 
+- Publish new images before pointing new installs at them: `bootstrap.sh` pins
+  `ZAROPGX_TAG=0.3.2`, and that release's genome-downloader image fails two stages on a
+  fresh install, both fixed on main since (fix/downloader-reference-staging): grch37 is
+  fetched over `ftp://`, which `requests` cannot do (every host), and the PharmCAT
+  reference tarball's chown fails under rootless or userns-remapped Docker. Found by
+  running `bootstrap.sh` end to end on a clean daemon (Oct 2026); the rest of the
+  install and a VCF job were fine.
+- [DONE Oct 2026, fix/sidecars-read-shared-inputs] Services read an alignment on the
+  shared /data volume in place instead of each storing an upload copy: on 30x NA12878
+  the 41.2 GB copies in `data/temp/mtdna/` and `data/temp/zarohla/` (about 124 GB at
+  once with the upload) and PyPGx's are gone, and the BAM run took 17 minutes against
+  35 to 42 in the three runs before it.
+- [DONE Oct 2026, fix/sidecars-read-shared-inputs] A CRAM or SAM job no longer keeps
+  the BAM it was converted to in its report folder (41 GB beside 25 MB of reports); a
+  FASTQ job still publishes its aligned BAM, that lane's product.
+- [DONE Oct 2026, fix/downloader-drop-archives] The genome downloader removes each
+  archive once its FASTA is indexed (3.7 GB: the three .fa.gz and PharmCAT's tarball),
+  on existing installs too.
+- [DONE Oct 2026, fix/nextflow-no-docker-socket] nextflow no longer mounts the Docker
+  socket: no process declares a container, so nothing used it, and it made the
+  container that runs the unauthenticated POST /run root-equivalent on the host. Rootless
+  installs need no socket remap.
+- [DONE Oct 2026, fix/zarohla-reference-mount] zarohla mounts `/reference` for its
+  `REF_PATH`, so a CRAM posted to it directly can be decoded.
+
 - [DONE] Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
 - Implement CI/CD github action to dockerhub image build
 - Clean up deprecated flags
@@ -168,7 +220,9 @@ curation: full
 ## Documentation
 
 - Achieve complete docs curation
-- Provide example `.env` guidance; clarify build/run expectations for local Docker
+- [DONE] Example `.env` guidance and local Docker build/run: `.env.example`,
+  `docs/user/installation.md` (setup and options), `docs/advanced-configuration.md`
+  (every key).
 
 ## Engineering
 
@@ -177,7 +231,8 @@ curation: full
 ## Open Questions
 
 - Where should indexing responsibility live (always regenerate vs recognize existing)?
-- How to unify pipeline progress across heterogeneous inputs (FASTQ/BAM/VCF)?
+- How to unify pipeline progress across heterogeneous inputs (FASTQ/BAM/VCF)? (In
+  part answered Oct 2026: steps weighted by measured duration per input path.)
 - Which schema to implement, ultimately?
 - Visualizations: what would be useful?
 - Should we integrate ClinPGx datasets directly for annotations, instead of (or alongside) a lexicon layer?
