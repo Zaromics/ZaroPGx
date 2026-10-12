@@ -405,22 +405,33 @@
            score, and the score ran past the page margin. */
         .exec-summary-phenotype {
             text-align: left;
-            white-space: nowrap;
             overflow: visible;
             width: 42%;
         }
-        /* Every pill one line and one height. A long one runs on into the page
-           margin; one that would come within 8mm of the paper's edge has its type
-           made smaller to end there, its height kept by the line-height
-           (app/reports/pdf_fit.py, shrink_wide_pills). Wrapped, they were two and
-           three lines tall beside one-line pills. The outlined wild-type pills
-           have a 2px border; the filled ones a transparent one, for the same
-           height. */
+        /* Every pill line one height. A pill too long for its line goes on to a
+           second line that starts at this column, drawn as a pill of its own
+           (box-decoration-break: clone), never in smaller type and never as one
+           tall block beside one-line pills. The line-height leaves each line's
+           pill, its padding and border, room above and below. In print the line
+           runs on into the page margin, to 8mm from the paper's edge, before it
+           wraps. The outlined wild-type pills have a 2px border; the filled ones
+           a transparent one, for the same height. */
+        /* "Not called" sits in the same line box, so an uncalled row is as tall as
+           a row with a one-line pill. */
+        .exec-summary-phenotype .phenotype-line {
+            line-height: calc(1.15em + 12px);
+        }
         .exec-summary-phenotype .gene-phenotype {
-            white-space: nowrap;
+            display: inline;
+            white-space: normal;
             max-width: none;
             line-height: 1.15;
             border: 2px solid transparent;
+            -webkit-box-decoration-break: clone;
+            box-decoration-break: clone;
+        }
+        .exec-summary-phenotype .as-badge {
+            white-space: nowrap;
         }
         .exec-summary-phenotype .possibly-wild-type {
             border-color: #000;
@@ -802,6 +813,10 @@
                 padding: 6px 6px !important;
                 vertical-align: middle !important;
             }
+            /* The page margin is 16mm: a phenotype may run 8mm into it. */
+            #exec-summary .phenotype-line {
+                margin-right: -8mm;
+            }
             /* The Executive Summary opens on a right-hand page and its notes take
                the page behind it, so printed double-sided they share a leaf. The
                Alerts page before it keeps it on page 3; a blank page is left only
@@ -1136,7 +1151,7 @@
                         <td class="exec-summary-gene">{{ r.gene }}</td>
                         {% if r.called %}
                         <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}</td>
-                        <td class="exec-summary-phenotype">
+                        <td class="exec-summary-phenotype"><div class="phenotype-line">
                             {% set ph = r.phenotype %}
                             {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>{% endif %}
                             {% set asv = r.activity_score|activity_score_num %}
@@ -1165,10 +1180,10 @@
                                     <span class="as-text">{{ s }}</span>
                                 </span>
                             {% endif %}
-                        </td>
+                        </div></td>
                         {% else %}
                         <td class="exec-summary-diplotype">&ndash;</td>
-                        <td class="exec-summary-phenotype"><span class="not-called">Not called</span></td>
+                        <td class="exec-summary-phenotype"><div class="phenotype-line"><span class="not-called">Not called</span></div></td>
                         {% endif %}
                     </tr>
                     {% endfor %}

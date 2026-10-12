@@ -29,11 +29,11 @@ from app.reports.pdf_fit import (
     EXEC_SUMMARY,
     PILL_EDGE,
     FitSection,
-    _descendants,
-    _summary_pills,
+    _summary_cells,
     fit_sections,
     section_fragments,
     section_pages,
+    summary_pill_lines,
 )
 
 weasyprint = pytest.importorskip("weasyprint")
@@ -169,16 +169,27 @@ def _past_the_paper_edge(document):
 
 
 def _pills(document):
-    """(row id, height, line count) of each summary pill, on every page it takes."""
-    return [
-        (
-            row,
-            round(pill.margin_height(), 1),
-            sum(1 for b in _descendants(pill) if b.__class__.__name__ == "LineBox"),
-        )
-        for index in section_pages(document, "exec-summary")
-        for row, pill, _ in _summary_pills(document.pages[index]._page_box)
-    ]
+    """(row id, [(x, height) of each line of its pill], x where its cell's content
+    starts) for each summary pill."""
+    found = []
+    for index in section_pages(document, "exec-summary"):
+        page_box = document.pages[index]._page_box
+        starts = {}
+        for row, cell in _summary_cells(page_box):
+            if "exec-summary-phenotype" in (cell.element.get("class") or ""):
+                starts[row] = cell.content_box_x()
+        for row, lines in summary_pill_lines(page_box):
+            found.append(
+                (
+                    row,
+                    [
+                        (round(b.position_x, 1), round(b.margin_height(), 1))
+                        for b in lines
+                    ],
+                    round(starts[row], 1),
+                )
+            )
+    return found
 
 
 def test_the_worst_case_fits_one_page(monkeypatch, tmp_path):
@@ -230,12 +241,13 @@ def test_after_long_alerts_the_table_still_opens_on_a_right_hand_page(
 
 
 @pytest.mark.parametrize("step", [0, len(EXEC_SUMMARY.steps)], ids=["full", "tightest"])
-def test_every_pill_is_one_line_and_one_height(monkeypatch, tmp_path, step):
-    """CFTR's "ivacaftor non-responsive in CF patients" and MT-RNR1's "normal risk
-    of aminoglycoside-induced hearing loss" wrapped to two and three lines, beside
-    one-line pills, and the outlined wild-type pills were taller than the filled
-    ones. Now every pill is one line and one height: a long one runs on into the
-    margin, and MT-RNR1's has smaller type to end short of the paper's edge."""
+def test_every_pill_line_is_one_height_and_a_long_one_wraps_at_its_column(
+    monkeypatch, tmp_path, step
+):
+    """A pill too long for its line goes on to a second line, which starts where the
+    phenotype column does and is a pill of the same height as every other: not
+    smaller type (MT-RNR1's label used to be shrunk to fit), and not one tall block
+    beside one-line pills."""
     data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
     page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
     css = EXEC_SUMMARY.steps[step - 1] if step else ""
@@ -247,8 +259,13 @@ def test_every_pill_is_one_line_and_one_height(monkeypatch, tmp_path, step):
     assert {"summary-CFTR", "summary-MT-RNR1", "summary-CYP4F2"} <= {
         row for row, _, _ in pills
     }
-    assert {lines for _, _, lines in pills} == {1}, pills
-    assert len({height for _, height, _ in pills}) == 1, pills
+    assert len({height for _, lines, _ in pills for _, height in lines}) == 1, pills
+    wrapped = [(row, lines, start) for row, lines, start in pills if len(lines) > 1]
+    assert wrapped, "the worst case has a phenotype too long for one line"
+    for row, lines, start in wrapped:
+        # Each continuation starts at the column, inside its padding and border.
+        for x, _ in lines[1:]:
+            assert abs(x - start) < 1, (row, lines, start)
     assert _past_the_paper_edge(document) == []
 
 
@@ -260,6 +277,10 @@ def test_every_step_is_tighter_and_the_loosest_that_fits_is_used(monkeypatch, tm
     fitted, levels = generator_module.render_pdf_document(page)
     heights = []
     one_page = []
+    # Each step's own height: without the fill, which makes every page full.
+    monkeypatch.setattr(
+        generator_module, "fill_summary_page", lambda render, document, css: document
+    )
     for css in ("",) + EXEC_SUMMARY.steps:
         monkeypatch.setattr(
             generator_module,
@@ -280,9 +301,10 @@ def test_every_step_is_tighter_and_the_loosest_that_fits_is_used(monkeypatch, tm
         )
     assert all(a > b for a, b in zip(heights, heights[1:])), heights
     assert levels["exec-summary"] == one_page.index(True) > 0
-    # And it fills the page: the three steps there were left this one at 91%.
+    # And it fills the page to its foot: the leftover height is shared out between
+    # the rows. Three coarse steps once left it at 91%; nine fine ones at 92%.
     ((_, used),) = section_fragments(fitted, "exec-summary")
-    assert used > 0.95, used
+    assert used > 0.997, used
 
 
 def test_finding_the_step_takes_few_layouts(monkeypatch, tmp_path):
@@ -388,3 +410,60 @@ def test_a_gene_pharmcats_tsv_leaves_out_is_shown_called(monkeypatch, tmp_path):
     assert "normal risk of aminoglycoside-induced hearing loss" in summary
     not_called = summary[summary.index("Not called from this sample") :]
     assert "MT-RNR1" not in not_called and "HLA-B" not in not_called
+
+
+@pytest.mark.parametrize("case", ["worst", "unphased"])
+def test_the_summary_fills_its_page_to_the_foot(monkeypatch, tmp_path, case):
+    """No blank chin under the table, whatever its type size and rows: once the
+    loosest step that fits is found, the height left under the summary is shared
+    out between its rows, and its last line meets the foot of the page."""
+    from app.reports.pdf_fit import _outer_box, _section_element
+
+    if case == "worst":
+        data = json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
+        tsv = _worst_case_tsv()
+    else:
+        data = json.loads(UNPHASED_JSON.read_text(encoding="utf-8"))
+        tsv = UNPHASED_TSV.read_text(encoding="utf-8")
+    page = _report_html(monkeypatch, tmp_path, data, tsv)
+    document, _ = generator_module.render_pdf_document(page)
+    (index,) = section_pages(document, "exec-summary")
+    page_box = document.pages[index]._page_box
+    section = _outer_box(page_box, _section_element(page_box, "exec-summary"))
+    gap = (page_box.content_box_y() + page_box.height) - (
+        section.border_box_y() + section.border_height()
+    )
+    assert 0 <= gap < 2, gap
+
+
+def test_an_uncalled_row_is_as_tall_as_a_called_one(monkeypatch, tmp_path):
+    """ "Not called" had a plain line box, shorter than a pill's: the grey rows of a
+    sparse summary were thinner than the rest."""
+    data = json.loads(UNPHASED_JSON.read_text(encoding="utf-8"))
+    page = _report_html(
+        monkeypatch, tmp_path, data, UNPHASED_TSV.read_text(encoding="utf-8")
+    )
+    assert 'class="exec-summary-uncalled"' in page
+    document, _ = generator_module.render_pdf_document(page)
+    (index,) = section_pages(document, "exec-summary")
+    heights = {}
+
+    def walk(box):
+        element = getattr(box, "element", None)
+        if box.__class__.__name__ == "TableRowBox" and (
+            element.get("id") or ""
+        ).startswith("summary-"):
+            heights[element.get("id")] = (
+                round(box.height, 1),
+                "exec-summary-uncalled" in (element.get("class") or ""),
+            )
+            return
+        for child in getattr(box, "children", None) or []:
+            walk(child)
+
+    walk(document.pages[index]._page_box)
+    uncalled = [h for h, grey in heights.values() if grey]
+    called = [h for h, grey in heights.values() if not grey]
+    assert uncalled and called, heights
+    # The shortest called row is a one-line pill's; no grey row is shorter.
+    assert min(uncalled) >= min(called) - 0.5, heights

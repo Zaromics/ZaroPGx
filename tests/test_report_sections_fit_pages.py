@@ -122,7 +122,9 @@ def test_a_well_used_last_page_is_left_as_designed(monkeypatch, tmp_path):
     monkeypatch.setattr(generator_module, "fit_sections", counted)
     after, levels = _layout(monkeypatch, html)
     assert levels["drugs-heading"] == 0
-    assert after["drugs-heading"] == before
+    # Ends as designed. (It may start a page sooner: the summary before it, all 25
+    # rows uncalled here, is fitted to its one page.)
+    assert [used for _, used in after["drugs-heading"]] == [used for _, used in before]
     # No step tried for it (Platform and Citations, in the same report, is).
     assert not any("#drugs-heading" in css for css in renders)
 
@@ -162,9 +164,12 @@ def test_platform_and_citations_end_on_one_page(monkeypatch, tmp_path):
 
 def test_tightening_one_section_leaves_the_others_alone(monkeypatch, tmp_path):
     """Drugs pulled back; the summary and Platform measured on their own."""
+    alone_dir = tmp_path / "no-drugs"
+    alone_dir.mkdir()
+    _, alone = _layout(monkeypatch, _html(monkeypatch, alone_dir, 0))
     html = _html(monkeypatch, tmp_path, 40)
-    before = _untightened(monkeypatch, html)
     after, levels = _layout(monkeypatch, html)
-    assert levels["exec-summary"] == 0
+    # The summary takes the step it takes without the Drugs list at all.
+    assert levels["exec-summary"] == alone["exec-summary"]
     assert levels["alerts-heading"] == 0
-    assert len(after["exec-summary"]) == len(before["exec-summary"]) == 1
+    assert len(after["exec-summary"]) == 1
