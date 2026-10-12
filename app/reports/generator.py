@@ -74,9 +74,10 @@ from app.utils.literature import (
 )
 from app.utils.pharmcat_assume_ref import EXPLICIT_CALL_INPUT_TYPES
 from app.visualizations.job_workflow import (
+    RunFacts,
     build_job_graph,
     load_job_file_type,
-    load_job_steps,
+    load_job_step_records,
     to_html,
     to_mermaid,
 )
@@ -276,10 +277,13 @@ WORKFLOW_NOT_RECORDED_HTML = (
 )
 
 
-def job_workflow_diagram(steps, file_type: Optional[str]) -> Dict[str, Any]:
+def job_workflow_diagram(
+    steps, file_type: Optional[str], facts: Optional[RunFacts] = None
+) -> Dict[str, Any]:
     """The run's workflow diagram in each form the reports use.
 
-    ``steps`` is the job's (step_name, status) rows (job_workflow.load_job_steps).
+    ``steps`` is the job's (step_name, status) rows (job_workflow.load_job_steps);
+    ``facts``, what the run produced (workflow_run_facts).
     Kroki draws the graph as a PNG, which every report shows: WeasyPrint drops the
     node labels of Kroki's SVG, and the HTML reports' CSS restyled its text. The SVG
     is kept as a file beside the reports. ``pdf_style`` sizes the PNG on the PDF's
@@ -296,7 +300,7 @@ def job_workflow_diagram(steps, file_type: Optional[str]) -> Dict[str, Any]:
     }
     if not steps:
         return diagram
-    graph = build_job_graph(steps, file_type)
+    graph = build_job_graph(steps, file_type, facts)
     diagram["html"] = to_html(graph)
     source = to_mermaid(graph)
     try:
@@ -350,6 +354,127 @@ def workflow_pdf_style(png: bytes) -> str:
         f"width: {width:.1f}mm; height: {height:.1f}mm; "
         f"margin: {top:.1f}mm auto 0 auto;"
     )
+
+
+def _count(value) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def workflow_run_facts(
+    records: List[Dict[str, Any]],
+    platform: List[Dict[str, str]],
+    genes: List[Dict[str, Any]],
+    mtdna_result: Optional[Dict[str, Any]],
+    absent_to_ref: Optional[bool],
+    drug_count: Optional[int],
+    outputs: List[str],
+    summary: Optional[List[Dict[str, Any]]] = None,
+    input_build: Optional[str] = None,
+) -> RunFacts:
+    """What the run produced, for its workflow diagram: each tool's version (as
+    the Platform table gives it), each step's time, and per step what it yielded.
+    Only facts the run recorded; nothing is inferred.
+
+    ``summary`` is the Executive Summary's rows (summary_rows), whose called genes
+    PharmCAT's count repeats. ``outputs`` is lines naming what the run writes.
+    ``input_build`` is the build the upload's header analysis detected, which is
+    recorded for VCFs."""
+    facts = RunFacts()
+    facts.versions = {
+        item["name"]: item["version"]
+        for item in platform
+        if item.get("version") and item["version"] not in ("not recorded", "N/A")
+    }
+    by_name = {r["name"]: r for r in records}
+    facts.seconds = {
+        r["name"]: r["seconds"] for r in records if r.get("seconds") is not None
+    }
+    called = {
+        str(g.get("gene") or "").upper(): g
+        for g in genes or []
+        if gene_was_called(g.get("diplotype"))
+    }
+    panel = _summary_panel()
+
+    lift = by_name.get("liftover")
+    if lift and lift.get("status") == "completed":
+        out = lift.get("output") or {}
+        lifted, rejected = _count(out.get("n_lifted")), _count(out.get("n_rejected"))
+        if lifted is not None:
+            line = f"{lifted:,} variants lifted"
+            if rejected:
+                line += f", {rejected:,} could not be"
+            facts.details["liftover"] = [line]
+        source = str(out.get("source_build") or "").strip() or "GRCh37"
+        target = str(out.get("target_build") or "").strip() or "GRCh38"
+        facts.input_detail = f"{source}, lifted to {target}"
+    elif input_build and not lift:
+        facts.input_detail = str(input_build)
+
+    positions = (by_name.get("pypgx_bam2vcf") or {}).get("output") or {}
+    positions = positions.get("pharmcat_positions") or {}
+    total = _count(positions.get("n_pharmcat_positions"))
+    if total:
+        genotyped = (_count(positions.get("n_reference")) or 0) + (
+            _count(positions.get("n_variant")) or 0
+        )
+        no_reads = _count(positions.get("n_no_reads")) or 0
+        unsure = _count(positions.get("n_uncertain")) or 0
+        line = f"PharmCAT's {total:,} positions: {genotyped:,} called"
+        if no_reads:
+            line += f", {no_reads:,} no reads"
+        if unsure:
+            line += f", {unsure:,} uncertain"
+        facts.details["pypgx_bam2vcf"] = [line]
+
+    pypgx = (by_name.get("pypgx_analysis") or {}).get("output") or {}
+    done, of = _count(pypgx.get("successful_genes")), _count(pypgx.get("total_genes"))
+    if done is not None and of:
+        facts.details["pypgx_analysis"] = [f"{done} of {of} genes genotyped"]
+    facts.produced["cyp2d6"] = "CYP2D6" in called
+    facts.produced["other_genes"] = any(
+        name not in panel and g.get("called_by") == "P" for name, g in called.items()
+    )
+
+    hla = [name for name in ("HLA-A", "HLA-B", "HLA-C") if name in called]
+    facts.produced["hla"] = bool({"HLA-A", "HLA-B"} & set(hla))
+    facts.produced["hla_c"] = "HLA-C" in hla
+    if (by_name.get("hla_typing") or {}).get("status") == "completed":
+        facts.details["hla_typing"] = [
+            ", ".join(hla) + " typed" if hla else "no HLA allele called"
+        ]
+
+    mtdna_ran = (by_name.get("mtdna_analysis") or {}).get("status") == "completed"
+    if mtdna_result is not None and mtdna_ran:
+        haplogroup = mtdna_result.get("haplogroup")
+        mt_rnr1 = mtdna_result.get("mt_rnr1")
+        facts.produced["haplogroup"] = bool(haplogroup)
+        facts.produced["mt_rnr1"] = bool(mt_rnr1)
+        if mtdna_result.get("mt_rnr1_no_call_reason") == NO_CALL_NO_CHRM_DATA:
+            line = "no calls on chrM: no haplogroup, no MT-RNR1"
+        else:
+            line = f"haplogroup {haplogroup}" if haplogroup else "no haplogroup"
+            line += f" · MT-RNR1 {mt_rnr1}" if mt_rnr1 else " · MT-RNR1 not called"
+        facts.details["mtdna_analysis"] = [line]
+
+    if summary:
+        done = sum(1 for row in summary if row.get("called"))
+        facts.details["pharmcat_analysis"] = [f"{done} of {len(summary)} genes called"]
+        if drug_count:
+            facts.details["pharmcat_analysis"].append(
+                f"{drug_count} drugs with guidance"
+            )
+        if absent_to_ref:
+            facts.details["pharmcat_analysis"].append(
+                "positions absent from the file read as reference"
+            )
+
+    if outputs:
+        facts.details["report_generation"] = list(outputs)
+    return facts
 
 
 def report_branding_context() -> Dict[str, Any]:
@@ -2645,6 +2770,9 @@ def generate_report(
     workflow_warnings = []  # Initialize warnings list
     pharmcat_assume_ref_methodology = None
     liftover_provenance = None
+    # What PharmCAT ran with for positions absent from the file (the workflow
+    # diagram says so); None when the job's settings could not be read.
+    run_absent_to_ref = None
     gvcf_provenance = None
     # Why a variant-only file left genes uncalled, when the job's flags say so.
     missing_positions_not_assumed = False
@@ -2748,6 +2876,7 @@ def generate_report(
                 absent_to_ref, unspecified_to_ref = pharmcat_flags_for_input(
                     input_type, requested_absent, requested_unspecified
                 )
+                run_absent_to_ref = absent_to_ref
                 # A variant-only VCF has no record where the sample matches the
                 # reference; without --missing-to-ref PharmCAT cannot call a gene
                 # whose defining positions are all absent from it.
@@ -3417,9 +3546,57 @@ def generate_report(
     # every output below: the PDF's PNG, the HTML reports' SVG, the files beside them.
     workflow_svg_filename = f"{report_id}_workflow.svg"
     workflow_png_filename = f"{report_id}_workflow.png"
+    workflow_records = load_job_step_records(db_session, job_id)
+    try:
+        with open(
+            os.path.join(report_dir, "mtdna_result.json"), "r", encoding="utf-8"
+        ) as fh:
+            workflow_mtdna = json.load(fh)
+    except (OSError, ValueError):
+        workflow_mtdna = None
+    # What this run is set to write: the reports on one line, the FHIR export on
+    # its own. The diagram is drawn before, and into, the reports, so it says what
+    # they are, not that each was written.
+    workflow_reports = [
+        label
+        for label, enabled in (
+            ("PDF", REPORT_CONFIG.get("write_pdf")),
+            ("HTML", REPORT_CONFIG.get("write_html")),
+            ("interactive HTML", REPORT_CONFIG.get("write_interactive_html")),
+        )
+        if enabled
+    ]
+    workflow_outputs = [", ".join(workflow_reports)] if workflow_reports else []
+    # The export needs the job's database rows (see its block below).
+    if fhir_export_enabled() and db_session is not None:
+        workflow_outputs.append("FHIR R4 bundle")
+    # Counted as the Drugs section lists them: one per drug name.
+    workflow_drugs = {
+        r.get("drug") for r in template_recommendations if isinstance(r, dict)
+    } - {None, ""}
     workflow_diagram = job_workflow_diagram(
-        load_job_steps(db_session, job_id),
+        [(r["name"], r["status"]) for r in workflow_records],
         load_job_file_type(db_session, job_id) or file_type,
+        workflow_run_facts(
+            workflow_records,
+            platform,
+            data.get("genes", []),
+            workflow_mtdna,
+            run_absent_to_ref,
+            len(workflow_drugs),
+            workflow_outputs,
+            summary_rows(
+                (
+                    execsum_rows_from_tsv
+                    if (EXECSUM_USE_TSV and execsum_rows_from_tsv)
+                    else None
+                ),
+                data.get("genes", []),
+            ),
+            ((job_metadata.get("file_analysis") or {}).get("vcf_info") or {}).get(
+                "reference_genome"
+            ),
+        ),
     )
     for filename, content, enabled in (
         (

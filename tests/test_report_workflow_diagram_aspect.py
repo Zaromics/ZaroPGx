@@ -36,7 +36,7 @@ def _png(width, height):
 
 
 def _pdf(monkeypatch, png):
-    def diagram(steps, file_type):
+    def diagram(steps, file_type, facts=None):
         return {
             "recorded": True,
             "svg": "",
@@ -49,7 +49,7 @@ def _pdf(monkeypatch, png):
         }
 
     monkeypatch.setattr(generator_module, "job_workflow_diagram", diagram)
-    monkeypatch.setattr(generator_module, "load_job_steps", lambda db, job: [])
+    monkeypatch.setattr(generator_module, "load_job_step_records", lambda db, job: [])
     for key in list(generator_module.REPORT_CONFIG):
         if key.startswith(("write_", "show_")):
             monkeypatch.setitem(
