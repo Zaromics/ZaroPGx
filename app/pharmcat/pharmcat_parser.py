@@ -996,6 +996,11 @@ class PharmCATParser:
                 "recommendation_diplotypes": list(
                     (r.gene_full_data or {}).get("recommendationDiplotypes") or []
                 ),
+                # In PharmCAT's order, which the diplotypes table does not keep:
+                # an unresolved call's candidates (report_json.unresolved_call).
+                "source_diplotypes": list(
+                    (r.gene_full_data or {}).get("sourceDiplotypes") or []
+                ),
             }
             for r in results
         ]

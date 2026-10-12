@@ -2,7 +2,9 @@ import csv
 import io
 import os
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from app.pharmcat.report_json import unresolved_call
 
 
 def prefer_source_over_lookup(source: str | None, lookup: str | None) -> str:
@@ -11,6 +13,31 @@ def prefer_source_over_lookup(source: str | None, lookup: str | None) -> str:
     if s:
         return s
     return (lookup or "").strip()
+
+
+def unresolved_summary_call(row: dict) -> Optional[Dict[str, Any]]:
+    """A TSV row whose Source Diplotype lists candidates ("*1/*15 OR *1/*45") and
+    that PharmCAT made no lookup call for, combined as report_json.unresolved_call
+    does for the JSON; None otherwise. The Phenotype and Activity Score cells hold
+    one value per candidate, " / "-joined in the same order (a blank for none)."""
+    source = (row.get("diplotype") or "").strip()
+    lookup = (row.get("rec_lookup_diplotype") or "").strip()
+    if " OR " not in source or (lookup and not lookup.lower().startswith("unknown")):
+        return None
+    labels = [label.strip() for label in source.split(" OR ")]
+
+    def per_candidate(cell: Any) -> List[str]:
+        values = [v.strip() for v in str(cell or "").split("/")]
+        return values if len(values) == len(labels) else [""] * len(labels)
+
+    phenotypes = per_candidate(row.get("phenotype"))
+    scores = per_candidate(row.get("activity_score"))
+    return unresolved_call(
+        [
+            {"label": label, "phenotypes": [phenotype], "activityScore": score}
+            for label, phenotype, score in zip(labels, phenotypes, scores)
+        ]
+    )
 
 
 def executive_summary_call(row: dict) -> Tuple[str, str, Any]:
@@ -24,6 +51,13 @@ def executive_summary_call(row: dict) -> Tuple[str, str, Any]:
     list with "Unknown" and a 2.0 score. There the whole lookup call is shown.
     (See app.pharmcat.report_json.recommendation_call_for_display.)
     """
+    unresolved = unresolved_summary_call(row)
+    if unresolved is not None:
+        return (
+            unresolved["diplotype"],
+            unresolved["phenotype"],
+            unresolved["activity_score"],
+        )
     source = (row.get("diplotype") or "").strip()
     lookup = (row.get("rec_lookup_diplotype") or "").strip()
     several = re.search(r"\s(?:AND|OR)\s", source) is not None

@@ -158,6 +158,10 @@
             color: #000;
             border: 2px solid #90EE90;
         }
+        /* An unresolved call's phenotypes, "A or B": plain text, not a pill. */
+        .phenotype-candidates {
+            font-weight: bold;
+        }
         
         table {
             width: 100%;
@@ -797,6 +801,7 @@
 </head>
 <body>
 {% import "_pypgx_evidence.html" as pypgx %}
+{% import "_unresolved_calls.html" as unresolved %}
     <header>
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
@@ -869,12 +874,14 @@
                     {% for d in diplotypes|sort(attribute='gene') %}
                     <div class="card">
                         <h3>{{ d.gene }}</h3>
-                        <p><strong>Diplotype:</strong> {{ d.diplotype }}</p>{{ pypgx.call_notes(d) }}
+                        <p><strong>Diplotype:</strong> {{ d.diplotype_display or d.diplotype }}</p>{{ pypgx.call_notes(d) }}
                         <p>
                             <strong>Phenotype:</strong> 
-                            <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">
+                            {% if d.diplotype_candidates %}<span class="phenotype-candidates">
                                 {{ d.phenotype or 'Unknown' }}
-                            </span>
+                            </span>{% else %}<span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">
+                                {{ d.phenotype or 'Unknown' }}
+                            </span>{% endif %}
                         </p>
                         <p>
                             <strong>Clinical Impact:</strong>
@@ -940,11 +947,13 @@
                         {% for d in diplotypes|sort(attribute='gene') %}
                         <tr>
                             <td>{{ d.gene }}</td>
-                            <td>{{ d.diplotype }}{{ pypgx.call_notes(d) }}</td>
+                            <td>{{ d.diplotype_display or d.diplotype }}{{ pypgx.call_notes(d) }}</td>
                             <td>
-                                <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">
+                                {% if d.diplotype_candidates %}<span class="phenotype-candidates">
                                     {{ d.phenotype or 'Unknown' }}
-                                </span>
+                                </span>{% else %}<span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">
+                                    {{ d.phenotype or 'Unknown' }}
+                                </span>{% endif %}
                             </td>
                             {# A truthiness test dropped an activity score of 0 --
                                0.0, Decimal("0.0000") and "0" are all falsy here, and
@@ -972,6 +981,8 @@
                     </tbody>
                 </table>
                 {{ pypgx.na_legend(diplotypes) }}
+                {{ unresolved.candidates_note(diplotypes) }}
+                {{ unresolved.summary_uncalled(diplotypes, missing_positions_not_assumed) }}
                 {{ pypgx.evidence_panel(diplotypes) }}
 
                 <div class="tool-key">

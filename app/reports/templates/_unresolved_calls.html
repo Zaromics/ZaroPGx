@@ -1,0 +1,56 @@
+{#- Calls PharmCAT could not narrow to one diplotype, and genes it could not call.
+
+An unphased file can leave several diplotypes that fit it equally well, each with
+its own phenotype and guidance (report_json.unresolved_call). The tables show the
+first and how many others ("diplotype_display"); these macros say what that means
+and list every candidate. Rows carry "diplotype_candidates" only when unresolved.
+-#}
+
+{% macro summary_legend(rows) -%}
+{%- if rows|selectattr('diplotype_candidates')|list %}
+<p class="header-note"><strong>"or"</strong>: the input is unphased, so for this gene
+PharmCAT found more than one diplotype that fits, each with its own phenotype and
+guidance. Every possibility is listed under Genetic Results.</p>
+{%- endif %}
+{%- endmacro %}
+
+{% macro candidates_note(rows) -%}
+{%- set unresolved = rows|selectattr('diplotype_candidates')|list %}
+{%- if unresolved %}
+<div class="unresolved-calls">
+    <p class="header-note"><strong>Several possible diplotypes.</strong> The input is
+       unphased: it does not record which variants lie on the same chromosome, so for
+       these genes PharmCAT found more than one pair of alleles that fits. Each is
+       possible, with its own phenotype and its own guidance; the phenotype shown
+       above is the one they share, or each one they could be. Phased data, or reads
+       (BAM/CRAM), can resolve them.</p>
+    <ul class="unresolved-list">
+    {%- for d in unresolved %}
+        <li><strong>{{ d.gene }}</strong> ({{ d.diplotype_candidates|length }}):
+            {% for c in d.diplotype_candidates %}{{ c.diplotype }} ({{ c.phenotype }}){% if not loop.last %}; {% endif %}{% endfor %}</li>
+    {%- endfor %}
+    </ul>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{% macro uncalled_reason(missing_positions_not_assumed) -%}
+{%- if missing_positions_not_assumed %}
+<p>This file lists variant sites only, and the run did not assume the reference
+   allele where the file has no record ("Assume absent sites = reference", under
+   PharmCAT on the upload page, was off). So PharmCAT could not call a gene whose
+   defining positions are absent from the file, as they are wherever the sample
+   matches the reference. If the file is a whole-genome or whole-exome call set,
+   running it again with that option on calls these genes.</p>
+{%- endif %}
+{%- endmacro %}
+
+{% macro summary_uncalled(rows, missing_positions_not_assumed) -%}
+{%- set uncalled = rows|sort(attribute='gene')|rejectattr('diplotype', 'a_call')|list %}
+{%- if uncalled %}
+<p class="header-note"><strong>Not called from this sample's data ({{ uncalled|length }}):</strong>
+   {% for d in uncalled %}{{ d.gene }}{% if not loop.last %}, {% endif %}{% endfor %}.
+   No phenotype or guidance follows from them.</p>
+{{ uncalled_reason(missing_positions_not_assumed) }}
+{%- endif %}
+{%- endmacro %}

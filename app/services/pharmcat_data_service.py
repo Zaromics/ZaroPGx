@@ -14,6 +14,7 @@ from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session
 
 from app.api.db import Job
+from app.pharmcat import report_json
 from app.pharmcat.pharmcat_parser import (
     PharmCATParser,
     _as_float,
@@ -294,6 +295,12 @@ class PharmCATDataService:
             )
             if recommendation is not None:
                 primary_diplotype = _diplotype_row(recommendation)
+            # Several candidates and no combined call: show them all, not the first.
+            unresolved = (
+                report_json.unresolved_call(gene.get("source_diplotypes"))
+                if recommendation is None
+                else None
+            )
 
             # Report what the run recorded -- never a gene-name guess, never a
             # constant. "?"/"-" are legitimate values (BACKLOG 28 + 216).
@@ -327,6 +334,25 @@ class PharmCATDataService:
                 "uncalled_haplotypes": list(gene.get("uncalled_haplotypes") or []),
                 "unread_variants": list(gene.get("unread_variants") or []),
             }
+            if unresolved is not None:
+                # No one pair of alleles to name, nor a match score for "the" call.
+                report_gene.update(
+                    {
+                        key: unresolved[key]
+                        for key in (
+                            "diplotype",
+                            "diplotype_display",
+                            "phenotype",
+                            "activity_score",
+                            "diplotype_candidates",
+                        )
+                    },
+                    confidence=None,
+                    allele1=None,
+                    allele2=None,
+                    function1=None,
+                    function2=None,
+                )
 
             report_gene["called_by"] = provenance.letter
             report_gene["called_by_label"] = provenance.label

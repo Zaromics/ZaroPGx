@@ -400,6 +400,17 @@
         .exec-summary-phenotype .as-badge {
             vertical-align: middle;
         }
+        /* An unresolved call's phenotypes, "A or B": plain text that wraps. A
+           coloured pill would claim one phenotype, and nowrap ran the list off
+           the page. */
+        .phenotype-candidates {
+            font-weight: bold;
+            color: #333;
+        }
+        .exec-summary-phenotype .phenotype-candidates {
+            display: inline-block;
+            white-space: normal;
+        }
         /* 159: run-derived provenance line at the foot of the Executive Summary */
         .run-provenance {
             margin: 10px 0 0 0;
@@ -917,6 +928,7 @@
 </head>
 <body>
 {% import "_pypgx_evidence.html" as pypgx %}
+{% import "_unresolved_calls.html" as unresolved %}
     <div class="header">
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
@@ -1003,11 +1015,11 @@
                         <tr>
                             <td class="exec-summary-number">{{ loop.index }}.</td>
                             <td class="exec-summary-gene">{{ r.gene }}</td>
-                            <td class="exec-summary-diplotype{% if (r.rec_lookup_diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = (r.rec_lookup_diplotype or '') %}{% if '/' in diplo %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
+                            <td class="exec-summary-diplotype{% if (r.diplotype_display or r.rec_lookup_diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = (r.diplotype_display or r.rec_lookup_diplotype or '') %}{% if '/' in diplo and not r.diplotype_candidates %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
                             <td class="exec-summary-phenotype">
                                 {% set ph = r.rec_lookup_phenotype or '' %}
                                 {% set asv = r.rec_lookup_activity_score|activity_score_num %}
-                                <span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>
+                                {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {% if 'Likely Wild Type' in ph %}likely-wild-type{% elif 'Possibly Wild Type' in ph %}possibly-wild-type{% elif 'Normal' in ph %}normal-metabolizer{% elif 'Poor' in ph %}poor-metabolizer{% elif 'Intermediate' in ph %}intermediate-metabolizer{% elif 'Rapid' in ph or 'Ultrarapid' in ph %}rapid-metabolizer{% endif %}">{{ ph }}</span>{% endif %}
                                 {% if asv is not none %}
                                     {% set s = asv if asv >= 0 else 0 %}
                                     {% if s == 0 %}
@@ -1041,9 +1053,9 @@
                         <tr>
                             <td class="exec-summary-number">{{ loop.index }}.</td>
                             <td class="exec-summary-gene">{{ d.gene }}</td>
-                            <td class="exec-summary-diplotype{% if (d.diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = d.diplotype or '' %}{% if '/' in diplo %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
+                            <td class="exec-summary-diplotype{% if (d.diplotype_display or d.diplotype or '')|length > 60 %} long-diplotype{% endif %}">{% set diplo = d.diplotype_display or d.diplotype or '' %}{% if '/' in diplo and not d.diplotype_candidates %}{% set parts = diplo.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ diplo }}{% endif %}</td>
                             <td class="exec-summary-phenotype">
-                                <span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">{{ d.phenotype or 'Unknown' }}</span>
+                                {% if d.diplotype_candidates %}<span class="phenotype-candidates">{{ d.phenotype or 'Unknown' }}</span>{% else %}<span class="gene-phenotype {% if d.phenotype and 'Likely Wild Type' in d.phenotype %}likely-wild-type{% elif d.phenotype and 'Possibly Wild Type' in d.phenotype %}possibly-wild-type{% elif d.phenotype and 'Normal' in d.phenotype %}normal-metabolizer{% elif d.phenotype and 'Poor' in d.phenotype %}poor-metabolizer{% elif d.phenotype and 'Intermediate' in d.phenotype %}intermediate-metabolizer{% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}rapid-metabolizer{% endif %}">{{ d.phenotype or 'Unknown' }}</span>{% endif %}
                                 {% set s = d.activity_score|activity_score_num %}
                                 {% if s is not none %}
                                     {% set s = s if s >= 0 else 0 %}
@@ -1077,6 +1089,8 @@
                 </tbody>
             </table>
             {% if execsum_from_tsv %}{{ pypgx.na_legend(execsum_from_tsv, 'rec_lookup_phenotype') }}{% else %}{{ pypgx.na_legend(diplotypes) }}{% endif %}
+            {{ unresolved.summary_legend(execsum_from_tsv or diplotypes) }}
+            {{ unresolved.summary_uncalled(diplotypes, missing_positions_not_assumed) }}
         </div>
         {# The run-provenance paragraph that stood here has moved.
 
@@ -1133,7 +1147,7 @@
                 {% for d in called_genes %}
                 <tr>
                     <td>{{ d.gene }}</td>
-                    <td>{{ d.diplotype }}{{ pypgx.call_notes(d) }}</td>
+                    <td>{{ d.diplotype_display or d.diplotype }}{{ pypgx.call_notes(d) }}</td>
                     <td>{{ d.phenotype or '' }}</td>
                     {# A truthiness test dropped an activity score of 0 -- 0.0,
                        Decimal("0.0000") and "0" are all falsy here, and 0 is the
@@ -1163,6 +1177,7 @@
             </tbody>
         </table>
         {{ pypgx.na_legend(called_genes) }}
+        {{ unresolved.candidates_note(called_genes) }}
 
         {% if uncalled_genes %}
         <div class="uncalled-genes">
@@ -1178,6 +1193,7 @@
                document. The provenance is the point of BACKLOG 28/216; it travels
                with the gene rather than being dropped for tidiness. #}
             <p class="uncalled-list">{% for d in uncalled_genes %}{{ d.gene }} ({{ d.called_by or '?' }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+            {{ unresolved.uncalled_reason(missing_positions_not_assumed) }}
         </div>
         {% endif %}
     </div>

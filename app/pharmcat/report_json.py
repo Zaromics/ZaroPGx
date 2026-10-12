@@ -138,18 +138,108 @@ def recommendation_call_for_display(
     return recommendation[0]
 
 
+# Above this many candidates a table cell names the first and counts the rest
+# (``diplotype_display``); the full list goes with the gene's note.
+UNRESOLVED_SHOWN = 3
+
+
+# How PharmCAT writes "no phenotype" for one candidate (SLCO1B1's "n/a").
+_NO_PHENOTYPE = frozenset({"", "n/a", "na", "unknown", "none", "-", ".", "no result"})
+
+
+def _either(values: Sequence[str]) -> str:
+    """One value if every candidate has it, else each distinct one, in order."""
+    distinct: List[str] = []
+    for value in values:
+        value = "Unknown" if value.strip().lower() in _NO_PHENOTYPE else value.strip()
+        if value not in distinct:
+            distinct.append(value)
+    return " or ".join(distinct)
+
+
+def _score(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def unresolved_call(diplotypes: Any) -> Optional[Dict[str, Any]]:
+    """PharmCAT's candidates for a call it could not narrow to one diplotype, as one
+    call: every candidate, and a phenotype or activity score only as far as all of
+    them agree. None for fewer than two candidates.
+
+    An unphased file can leave several diplotypes that fit it equally well, each
+    with its own phenotype and guidance; a variant-only VCF run without
+    --missing-to-ref leaves many (test_data/pharmcat.unphased.example.vcf, four
+    heterozygous sites: CYP2B6 any of 15, all Intermediate Metabolizer; SLCO1B1 any
+    of 6, Decreased or Poor Function). Both report lanes showed the first candidate
+    as the call ("SLCO1B1 *1/*15, Decreased Function"), and the Executive Summary
+    printed PharmCAT's TSV cells raw, cut at the first "/".
+    PharmCAT's own combined call, where it makes one (unphased DPYD), comes first:
+    ``recommendation_call_for_display``.
+    """
+    if not isinstance(diplotypes, (list, tuple)):
+        return None
+    candidates: List[Dict[str, Any]] = []
+    for entry in diplotypes:
+        if not isinstance(entry, Mapping):
+            continue
+        label = str(entry.get("label") or "").strip()
+        if not label or label.lower().startswith("unknown"):
+            continue
+        if any(c["diplotype"] == label for c in candidates):
+            continue
+        phenotypes = entry.get("phenotypes")
+        if isinstance(phenotypes, (list, tuple)):
+            phenotype = ", ".join(str(p) for p in phenotypes if p)
+        else:
+            phenotype = str(phenotypes or "")
+        candidates.append(
+            {
+                "diplotype": label,
+                "phenotype": (
+                    "Unknown"
+                    if phenotype.strip().lower() in _NO_PHENOTYPE
+                    else phenotype.strip()
+                ),
+                "activity_score": _score(entry.get("activityScore")),
+            }
+        )
+    if len(candidates) < 2:
+        return None
+    labels = [c["diplotype"] for c in candidates]
+    scores = {c["activity_score"] for c in candidates}
+    shown = (
+        " or ".join(labels)
+        if len(labels) <= UNRESOLVED_SHOWN
+        else f"{labels[0]} or {len(labels) - 1} other possible diplotypes"
+    )
+    return {
+        "diplotype": " or ".join(labels),
+        "diplotype_display": shown,
+        "phenotype": _either([c["phenotype"] for c in candidates]),
+        "activity_score": next(iter(scores)) if len(scores) == 1 else None,
+        "diplotype_candidates": candidates,
+    }
+
+
 def extract_display_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
     """The diplotype/phenotype/activity the report shows for a gene block: the
-    source call, or the recommendation call when the source is not one diplotype
-    (``recommendation_call_for_display``)."""
+    source call; the recommendation call when the source is not one diplotype
+    (``recommendation_call_for_display``); else every candidate
+    (``unresolved_call``)."""
     source = gene_data.get("sourceDiplotypes")
     recommendation = recommendation_call_for_display(
         len(source) if isinstance(source, list) else 0,
         gene_data.get("recommendationDiplotypes"),
     )
-    if recommendation is None:
-        return extract_source_call(gene_data)
-    return extract_source_call({"sourceDiplotypes": [recommendation]})
+    if recommendation is not None:
+        return extract_source_call({"sourceDiplotypes": [recommendation]})
+    unresolved = unresolved_call(source)
+    if unresolved is not None:
+        return unresolved
+    return extract_source_call(gene_data)
 
 
 def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
