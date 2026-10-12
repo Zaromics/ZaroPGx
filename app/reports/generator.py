@@ -1839,6 +1839,30 @@ def organize_gene_drug_recommendations(
     return organized
 
 
+# The Export tab's files: each job's outputs that another program can take in. Listed
+# by what is on disk once every other output is written, as links relative to the
+# interactive report, which sits in the same directory -- so they work when the job's
+# directory is opened from the downloaded ZIP as well as through the app.
+_EXPORT_FILES = (
+    ("{report_id}_pgx_fhir_report.json", "FHIR R4 bundle", "JSON"),
+    ("{report_id}_pgx_fhir_report.xml", "FHIR R4 bundle", "XML"),
+    ("{report_id}_pgx_pharmcat.json", "PharmCAT report", "JSON"),
+    ("{report_id}_pgx_pharmcat.tsv", "PharmCAT report", "TSV"),
+    ("{report_id}_pgx_pharmcat.html", "PharmCAT report", "HTML"),
+    ("{report_id}_pgx_report.pdf", "This report", "PDF"),
+)
+
+
+def export_downloads(report_dir: str, report_id: str) -> List[Dict[str, str]]:
+    """The Export tab's entries: the files in _EXPORT_FILES that exist in report_dir."""
+    downloads = []
+    for pattern, label, fmt in _EXPORT_FILES:
+        filename = pattern.format(report_id=report_id)
+        if os.path.isfile(os.path.join(report_dir, filename)):
+            downloads.append({"label": label, "format": fmt, "href": filename})
+    return downloads
+
+
 def create_interactive_html_report(
     patient_id: str,
     report_id: str,
@@ -1853,6 +1877,7 @@ def create_interactive_html_report(
     liftover_provenance: str | None = None,
     gvcf_provenance: str | None = None,
     missing_positions_not_assumed: bool = False,
+    downloads: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -2048,6 +2073,7 @@ def create_interactive_html_report(
         }
 
         report_data["display_sample_id"] = sample_identifier
+        report_data["downloads"] = downloads or []
 
         # Load and render the HTML template
         template = env.get_template("interactive_report.html")
@@ -3748,32 +3774,6 @@ def generate_report(
         else:
             logger.info("HTML report generation disabled in config")
 
-        # Generate interactive HTML report if enabled
-        if REPORT_CONFIG["write_interactive_html"]:
-            create_interactive_html_report(
-                patient_id=patient_id,
-                report_id=report_id,
-                sample_identifier=entered_sample,
-                diplotypes=data.get("genes", []),
-                recommendations=template_recommendations,
-                output_path=interactive_html_path,
-                workflow=per_sample_workflow,
-                tools_run=tools_run,
-                workflow_warnings=workflow_warnings,
-                pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
-                liftover_provenance=liftover_provenance,
-                gvcf_provenance=gvcf_provenance,
-                missing_positions_not_assumed=missing_positions_not_assumed,
-            )
-            logger.info(f"Interactive HTML report generated: {interactive_html_path}")
-
-            # Add to report paths
-            server_interactive_html_path = (
-                f"{reports_url_prefix}/{base_filename}_interactive.html"
-            )
-            report_paths["interactive_html_path"] = server_interactive_html_path
-            data["interactive_html_report_url"] = server_interactive_html_path
-
         # Generate PDF report using configured engine
         if REPORT_CONFIG["write_pdf"]:
             pdf_path = os.path.join(report_dir, f"{base_filename}.pdf")
@@ -4223,6 +4223,34 @@ def generate_report(
             logger.debug(
                 "FHIR export disabled via FHIR_EXPORT_ENABLED environment variable"
             )
+
+        # Generate interactive HTML report if enabled. Last, so its Export tab can
+        # list the PDF, PharmCAT's files and the FHIR bundle that exist by now.
+        if REPORT_CONFIG["write_interactive_html"]:
+            create_interactive_html_report(
+                patient_id=patient_id,
+                report_id=report_id,
+                sample_identifier=entered_sample,
+                diplotypes=data.get("genes", []),
+                recommendations=template_recommendations,
+                output_path=interactive_html_path,
+                workflow=per_sample_workflow,
+                tools_run=tools_run,
+                workflow_warnings=workflow_warnings,
+                pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
+                liftover_provenance=liftover_provenance,
+                gvcf_provenance=gvcf_provenance,
+                missing_positions_not_assumed=missing_positions_not_assumed,
+                downloads=export_downloads(report_dir, report_id),
+            )
+            logger.info(f"Interactive HTML report generated: {interactive_html_path}")
+
+            # Add to report paths
+            server_interactive_html_path = (
+                f"{reports_url_prefix}/{base_filename}_interactive.html"
+            )
+            report_paths["interactive_html_path"] = server_interactive_html_path
+            data["interactive_html_report_url"] = server_interactive_html_path
 
         # Add the processed data to the report paths for reference
         report_paths["processed_data"] = data
