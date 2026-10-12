@@ -1201,6 +1201,57 @@ env = Environment(
 )
 
 
+# Which colour a phenotype's badge gets. No standards body assigns colours to
+# phenotypes (CPIC standardised the terms, Caudle et al. 2017, not their colours;
+# PharmCAT's report colours none). CPIC's own data does rank them: each phenotype
+# carries an EHR priority, "Abnormal/Priority/High Risk" or "Normal/Routine/Low
+# Risk". The badges follow it, in four colours:
+#
+# - green, normal: Normal Metabolizer or Function, G6PD Normal, an HLA risk allele
+#   negative, normal risk of aminoglycoside-induced hearing loss;
+# - amber, Priority: intermediate metabolism, decreased function, G6PD Variable;
+# - red, Priority at its strongest: poor metabolism or function, G6PD Deficient, an
+#   HLA risk allele positive, Malignant Hyperthermia Susceptible, increased risk of
+#   aminoglycoside-induced hearing loss;
+# - blue: rapid metabolism and increased function, which is not "better" (a CYP2D6
+#   ultrarapid metabolizer is at risk on codeine).
+#
+# Uncertain and indeterminate results, an unresolved "A or B", and anything else
+# keep the neutral grey. The label is always printed: colour is never the only cue.
+# The CSS classes are colour tiers; their names predate the non-metabolizer terms.
+_PHENOTYPE_BADGE_CLASSES = tuple(
+    (re.compile(pattern, re.IGNORECASE), css_class)
+    for pattern, css_class in (
+        (r"\bLikely Wild Type\b", "likely-wild-type"),
+        (r"\bPossibly Wild Type\b", "possibly-wild-type"),
+        (r"\sor\s", ""),
+        (r"\buncertain\b|\bindeterminate\b", ""),
+        (r"\bpositive\b", "poor-metabolizer"),
+        (r"\bnegative\b", "normal-metabolizer"),
+        (r"\bsusceptible\b", "poor-metabolizer"),
+        (r"\bincreased risk\b", "poor-metabolizer"),
+        (r"\bnormal risk\b", "normal-metabolizer"),
+        (r"\bdeficient\b", "poor-metabolizer"),
+        (r"\bvariable\b", "intermediate-metabolizer"),
+        (r"\bnormal\b", "normal-metabolizer"),
+        (r"\bpoor\b", "poor-metabolizer"),
+        (r"\bintermediate\b", "intermediate-metabolizer"),
+        (r"\bdecreased function\b", "decreased-function"),
+        (r"\b(?:ultra)?rapid\b", "rapid-metabolizer"),
+        (r"\bincreased function\b", "increased-function"),
+    )
+)
+
+
+def phenotype_badge_class(phenotype) -> str:
+    """The colour class of a phenotype badge, "" for the neutral default."""
+    text = str(phenotype or "")
+    for pattern, css_class in _PHENOTYPE_BADGE_CLASSES:
+        if pattern.search(text):
+            return css_class
+    return ""
+
+
 def register_report_template_helpers(environment) -> None:
     """Register everything report_template.html needs to compile.
 
@@ -1214,6 +1265,7 @@ def register_report_template_helpers(environment) -> None:
     One function, called by all three, so adding a helper cannot half-land again.
     """
     environment.filters["activity_score_num"] = activity_score_num
+    environment.filters["phenotype_badge_class"] = phenotype_badge_class
     environment.filters["literature_references"] = format_literature_references
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel

@@ -69,7 +69,9 @@ def test_every_coloured_badge_reads_at_three_to_one():
     names = {"white": "#ffffff", "black": "#000000"}
     checked = 0
     for selector, body in rules.items():
-        if not re.fullmatch(r"\.(as-tier-\d|gene-phenotype|\w+-metabolizer)", selector):
+        if not re.fullmatch(
+            r"\.(as-tier-\d|gene-phenotype|\w+-metabolizer|\w+-function)", selector
+        ):
             continue
         background = re.search(r"background-color:\s*(#\w+|white|black)", body)
         if not background:
