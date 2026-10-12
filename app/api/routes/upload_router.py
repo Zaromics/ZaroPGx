@@ -70,12 +70,6 @@ from app.services.job_service import JobService, schedule_coroutine
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.utils.env import env_flag
 from app.utils.pharmcat_assume_ref import resolve_assume_ref_flags
-from app.visualizations.workflow_diagram import (
-    render_kroki_mermaid_svg,
-    render_simple_png_from_workflow,
-    render_with_graphviz,
-    render_workflow,
-)
 
 from ..utils.security import get_optional_user
 
@@ -502,7 +496,6 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         patient_id = metadata.get("patient_id")
         data_id = metadata.get("data_id")
         workflow_config = metadata.get("workflow", {})
-        file_analysis = metadata.get("file_analysis", {})
 
         if not patient_id or not data_id:
             raise RuntimeError(f"Missing patient_id or data_id in workflow metadata")
@@ -855,98 +848,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         )
         job_service.update_job_step(job_id, "report_generation", step_update)
 
-        # Generate workflow diagrams for this sample
-        logger.info("=== WORKFLOW DIAGRAM GENERATION START ===")
-        try:
-
-            # Determine workflow configuration based on the data
-            workflow_config_diagram = {
-                "file_type": workflow_config.get("file_type")
-                or file_analysis.get("file_type", "vcf"),
-                "used_gatk": workflow_config.get("needs_gatk", False),
-                "used_hla": workflow_config.get("needs_hla", False),
-                "used_pypgx": workflow_config.get("needs_pypgx", False),
-                "used_pypgx_bam2vcf": workflow_config.get("needs_pypgx_bam2vcf", False),
-                "used_pharmcat": True,
-                "used_mtdna": workflow_config.get("needs_mtdna", False),
-                "exported_to_fhir": False,
-            }
-
-            logger.info(f"Workflow configuration: {workflow_config_diagram}")
-
-            # Generate SVG workflow diagram (true Graphviz renderer for PDF-safe text)
-            try:
-                svg_bytes = render_with_graphviz(workflow_config_diagram, fmt="svg")
-                if svg_bytes:
-                    svg_path = patient_dir / f"{job_id}_workflow.svg"
-                    with open(svg_path, "wb") as f_out:
-                        f_out.write(svg_bytes)
-                    logger.info(
-                        f"✓ Graphviz Workflow SVG generated successfully: {svg_path} ({len(svg_bytes)} bytes)"
-                    )
-                else:
-                    logger.warning(
-                        "⚠ Graphviz Workflow SVG generation returned empty result"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"✗ Graphviz Workflow SVG generation failed: {str(e)}",
-                    exc_info=True,
-                )
-
-            # Generate Kroki Mermaid SVG workflow diagram for comparison
-            try:
-                kroki_svg_bytes = render_kroki_mermaid_svg(
-                    workflow=workflow_config_diagram
-                )
-                if kroki_svg_bytes:
-                    kroki_svg_path = (
-                        patient_dir / f"{job_id}_workflow_kroki_mermaid.svg"
-                    )
-                    with open(kroki_svg_path, "wb") as f_out:
-                        f_out.write(kroki_svg_bytes)
-                    logger.info(
-                        f"✓ Kroki Mermaid Workflow SVG generated successfully: {kroki_svg_path} ({len(kroki_svg_bytes)} bytes)"
-                    )
-                else:
-                    logger.warning(
-                        "⚠ Kroki Mermaid Workflow SVG generation returned empty result"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"✗ Kroki Mermaid Workflow SVG generation failed: {str(e)}",
-                    exc_info=True,
-                )
-
-            # Generate PNG workflow diagram
-            try:
-                png_bytes = render_workflow(fmt="png", workflow=workflow_config_diagram)
-                if not png_bytes:
-                    # Force pure-Python PNG fallback so a file is always present
-                    logger.info("PNG generation failed, trying Python fallback...")
-                    png_bytes = render_simple_png_from_workflow(workflow_config_diagram)
-                if png_bytes:
-                    png_path = patient_dir / f"{job_id}_workflow.png"
-                    with open(png_path, "wb") as f_out:
-                        f_out.write(png_bytes)
-                    logger.info(
-                        f"✓ Workflow PNG generated successfully: {png_path} ({len(png_bytes)} bytes)"
-                    )
-                else:
-                    logger.warning(
-                        "⚠ Workflow PNG generation still failed after fallback"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"✗ Workflow PNG generation failed: {str(e)}", exc_info=True
-                )
-
-            logger.info(f"=== WORKFLOW DIAGRAM GENERATION END ===")
-        except Exception as e:
-            logger.error(
-                f"✗ Workflow diagram generation failed: {str(e)}", exc_info=True
-            )
-            logger.info("Continuing without workflow diagrams...")
+        # The workflow diagram is drawn by generate_report, from this job's steps.
 
         # Determine effective Sample Identifier for reports
         effective_sample_identifier_reports = (

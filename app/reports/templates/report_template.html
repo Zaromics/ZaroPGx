@@ -1447,18 +1447,9 @@
               <!-- HTML fallback -->
               {{ workflow_html_fallback | safe }}
             {% else %}
-              <!-- Hard fail-safe directly in template -->
-              <div class="workflow-text">
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Upload</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Detect</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>VCF</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>PharmCAT</span>
-                <span style='color:#5b8def;font-size:14px'>&nbsp;→&nbsp;</span>
-                <span style='display:inline-block;padding:8px 12px;border:1px solid #b5bdc9;border-radius:6px;background:#f5f7fa;margin:2px 4px;font-size:12px'>Reports</span>
-              </div>
+              {# No diagram and no text: the steps were not recorded. Never a generic
+                 pipeline, which would describe some other run. #}
+              <p class="workflow-text">The steps of this run were not recorded.</p>
             {% endif %}
         </div>
     </div>

@@ -11,7 +11,6 @@ The system respects environment configuration for engine priority and fallback b
 """
 
 # Standard library imports
-import base64
 import logging
 import os
 import re
@@ -59,7 +58,6 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
 
 # Local imports
 from app.reports.generator import (
-    _sanitize_graphviz_svg,
     activity_score_num,
     build_citations,
     build_platform_info,
@@ -72,7 +70,6 @@ from app.reports.generator import (
     report_branding_context,
 )
 from app.reports.provenance import resolve_called_by
-from app.visualizations.workflow_diagram import read_workflow_mermaid, render_with_kroki
 
 logger = logging.getLogger(__name__)
 
@@ -764,96 +761,18 @@ class WeasyPrintGenerator(PDFGenerator):
                     ),
                     "pharmcat_data_version": template_data.get("pharmcat_data_version"),
                 }
-                # For PDF, prefer PNG over SVG to avoid WeasyPrint text rendering issues
-                # PNG ensures the diagram is reliably visible with proper scaling
-                try:
-                    patient_id = str(report_data.get("patient_id") or "").strip()
-                    report_dir = Path(output_path).parent
-                    png_path = report_dir / f"{patient_id}_workflow.png"
-                    kroki_svg_path = (
-                        report_dir / f"{patient_id}_workflow_kroki_mermaid.svg"
-                    )
-                    graphviz_svg_path = report_dir / f"{patient_id}_workflow.svg"
-
-                    if patient_id:
-                        # Prefer PNG for reliable PDF rendering
-                        if png_path.exists():
-                            try:
-                                report_data["workflow_png_file_url"] = ""
-                                report_data["workflow_png_data_uri"] = (
-                                    f"data:image/png;base64,{base64.b64encode(png_path.read_bytes()).decode()}"
-                                )
-                                logger.info(
-                                    f"✓ Loaded PNG into WeasyPrint PDF template: {png_path}"
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to embed PNG workflow: {e}")
-
-                        # Generate PNG if it doesn't exist
-                        if not report_data.get("workflow_png_data_uri"):
-                            try:
-                                logger.info(
-                                    "Generating PNG from Kroki Mermaid for WeasyPrint PDF..."
-                                )
-                                mermaid_src = read_workflow_mermaid()
-                                png_bytes = render_with_kroki(mermaid_src, fmt="png")
-                                if png_bytes:
-                                    report_data["workflow_png_data_uri"] = (
-                                        f"data:image/png;base64,{base64.b64encode(png_bytes).decode()}"
-                                    )
-                                    # Save for future use
-                                    png_path.write_bytes(png_bytes)
-                                    logger.info(
-                                        f"✓ Generated PNG from Kroki Mermaid for WeasyPrint PDF: {len(png_bytes)} bytes"
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    f"Kroki Mermaid → PNG generation failed: {e}"
-                                )
-
-                        # SVG fallback only if PNG completely failed
-                        if not report_data.get("workflow_png_data_uri"):
-                            logger.warning(
-                                "⚠ PNG generation failed, falling back to SVG (may have rendering issues)"
-                            )
-                            # Load Kroki Mermaid SVG
-                            if kroki_svg_path.exists():
-                                try:
-                                    svg_text = kroki_svg_path.read_text(
-                                        encoding="utf-8", errors="ignore"
-                                    )
-                                    report_data["workflow_kroki_svg"] = (
-                                        _sanitize_graphviz_svg(svg_text)
-                                    )
-                                    logger.info(
-                                        f"✓ Loaded Kroki Mermaid SVG as fallback: {kroki_svg_path}"
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to read Kroki Mermaid SVG: {e}"
-                                    )
-
-                            # Load Graphviz SVG as last resort
-                            if (
-                                not report_data.get("workflow_kroki_svg")
-                                and graphviz_svg_path.exists()
-                            ):
-                                try:
-                                    svg_text = graphviz_svg_path.read_text(
-                                        encoding="utf-8", errors="ignore"
-                                    )
-                                    report_data["workflow_svg"] = (
-                                        _sanitize_graphviz_svg(svg_text)
-                                    )
-                                    logger.info(
-                                        f"✓ Loaded Graphviz SVG as last resort fallback: {graphviz_svg_path}"
-                                    )
-                                except Exception as e:
-                                    logger.warning(f"Failed to read Graphviz SVG: {e}")
-                except Exception as e:
-                    logger.warning(
-                        f"Workflow asset embedding skipped due to error: {e}"
-                    )
+                # The run's diagram, drawn once by generate_report from its job steps
+                # (app/visualizations/job_workflow.py): the PNG, or the steps as text.
+                job_diagram = template_data.get("job_workflow_diagram") or {}
+                report_data["workflow_png_file_url"] = ""
+                report_data["workflow_png_data_uri"] = job_diagram.get(
+                    "png_data_uri", ""
+                )
+                report_data["workflow_html_fallback"] = (
+                    ""
+                    if report_data["workflow_png_data_uri"]
+                    else job_diagram.get("html", "")
+                )
 
                 # Ensure header_text is available in report_data
                 try:
