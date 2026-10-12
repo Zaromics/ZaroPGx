@@ -1,0 +1,78 @@
+cff-version: 1.2.0
+message: >-
+  If you use ZaroPGx, please cite it as below, and cite the tools and data it
+  is built on: docs/user/credits.md lists them, and each report lists the ones
+  its run used.
+title: ZaroPGx
+type: software
+authors:
+  - family-names: Yaroshevskiy
+    given-names: Iliya
+version: 0.4.0
+license: AGPL-3.0-only
+repository-code: "https://github.com/Zaromics/ZaroPGx"
+abstract: >-
+  A self-hosted pharmacogenomics pipeline: it runs PharmCAT, PyPGx, OptiType and
+  mtDNA-Server 2 on a person's sequencing data and writes PDF, HTML, interactive
+  and FHIR reports.
+keywords:
+  - pharmacogenomics
+  - PharmCAT
+  - PyPGx
+  - star alleles
+  - HLA typing
+  - mitochondrial DNA
+references:
+  - type: article
+    title: Pharmacogenomics Clinical Annotation Tool (PharmCAT)
+    authors:
+      - family-names: Sangkuhl
+        given-names: Katrin
+      - family-names: Whirl-Carrillo
+        given-names: Michelle
+      - name: et al.
+    journal: Clinical Pharmacology & Therapeutics
+    year: 2020
+    volume: 107
+    issue: 1
+    start: 203
+    end: 210
+    doi: 10.1002/cpt.1568
+  - type: article
+    title: "ClinPharmSeq: A targeted sequencing panel for clinical pharmacogenetics implementation"
+    authors:
+      - family-names: Lee
+        given-names: Seung-been
+      - name: et al.
+    journal: PLOS ONE
+    year: 2022
+    volume: 17
+    issue: 7
+    start: e0272129
+    doi: 10.1371/journal.pone.0272129
+  - type: article
+    title: "OptiType: precision HLA typing from next-generation sequencing data"
+    authors:
+      - family-names: Szolek
+        given-names: András
+      - name: et al.
+    journal: Bioinformatics
+    year: 2014
+    volume: 30
+    issue: 23
+    start: 3310
+    end: 3316
+    doi: 10.1093/bioinformatics/btu548
+  - type: article
+    title: "mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics"
+    authors:
+      - family-names: Weissensteiner
+        given-names: Hansi
+      - name: et al.
+    journal: Nucleic Acids Research
+    year: 2024
+    volume: 52
+    issue: W1
+    start: W102
+    end: W107
+    doi: 10.1093/nar/gkae296

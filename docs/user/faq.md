@@ -46,8 +46,10 @@ A VCF, minutes. A 30x whole-genome BAM took about 20 minutes on the test machine
 about 40; FASTQ adds alignment.
 
 **Which tool versions does it use?**
-PharmCAT 3.4.0, PyPGx 0.27.0, GATK 4.7.0.0, OptiType 1.5.0, mtDNA-Server 2 v2.1.16. Each
-report's Platform and Citations page lists those that ran for it.
+PharmCAT 3.4.0, PyPGx 0.27.0 (with Beagle 5.4), GATK 4.7.0.0, OptiType 1.5.0, mtDNA-Server 2
+v2.1.16, bcftools, samtools and HTSlib 1.24, Nextflow 25.10.8. Each report's Platform and
+Citations section lists what its run used, at the versions that ran; {doc}`credits` lists
+everything, with licences and the papers to cite.
 
 **What do "N/A", "Possibly Wild Type" and "or" mean in a report?**
 See the labels in {doc}`reports`.

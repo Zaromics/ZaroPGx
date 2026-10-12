@@ -1,5 +1,5 @@
 ZaroPGx
-Copyright (C) 2024-2025 Iliya Yaroshevskiy
+Copyright (C) 2024-2026 Iliya Yaroshevskiy
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as
@@ -13,98 +13,153 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see https://www.gnu.org/licenses/.
 
-Third-Party Notices
--------------------
 
-This project redistributes or uses the following third-party components.
-Their respective licenses apply as noted below. A copy of each license can be
-found at the provided links.
+Third-party notices
+===================
 
-- Bootstrap (CSS/JS)
-  License: MIT License
-  Source: https://getbootstrap.com/
-  License text: https://github.com/twbs/bootstrap/blob/main/LICENSE
+ZaroPGx is built on other people's software and data. docs/user/credits.md
+lists all of it with what it does here, its licence and the papers its authors
+ask to be cited by; each report lists the parts its own run used. This file
+records what the repository and the ZaroPGx images contain that is not
+ZaroPGx's, and the terms that come with it.
 
-- Bootstrap Icons
-  License: MIT License
-  Source: https://icons.getbootstrap.com/
-  License text: https://github.com/twbs/icons/blob/main/LICENSE
 
-- WeasyPrint
-  License: BSD-3-Clause
-  Source: https://weasyprint.org/
-  License text: https://github.com/Kozea/WeasyPrint/blob/main/LICENSE
+1. In this repository
+---------------------
 
-- Jinja2
-  License: BSD-3-Clause
-  Source: https://palletsprojects.com/p/jinja/
-  License text: https://github.com/pallets/jinja/blob/main/LICENSE.rst
+app/static/vendor/ holds copies of these libraries, each with its own licence
+file beside it. The interactive report carries Chart.js and D3 inside it, with
+their licence texts.
 
-- FastAPI
-  License: MIT License
-  Source: https://fastapi.tiangolo.com/
-  License text: https://github.com/tiangolo/fastapi/blob/master/LICENSE
+- Bootstrap 5.3.2 (MIT), https://getbootstrap.com
+  app/static/vendor/bootstrap/LICENSE
+- Bootstrap Icons 1.11.1 (MIT), https://icons.getbootstrap.com
+  app/static/vendor/bootstrap-icons/LICENSE
+- Chart.js 4.5.1 (MIT), https://www.chartjs.org
+  app/static/vendor/chartjs/LICENSE.md
+- D3 7.9.0 (ISC), https://d3js.org
+  app/static/vendor/d3/LICENSE
+- Swagger UI 5.33.1 (Apache-2.0), https://swagger.io/tools/swagger-ui/
+  app/static/vendor/swagger-ui/LICENSE and NOTICE
+  (Copyright 2020-2021 SmartBear Software Inc.)
+- ReDoc 2.5.4 (MIT), https://redocly.com/redoc
+  app/static/vendor/redoc/LICENSE; the packages bundled into it are listed in
+  app/static/vendor/redoc/redoc.standalone.js.LICENSE.txt
 
-- Starlette
-  License: BSD-3-Clause
-  Source: https://www.starlette.io/
-  License text: https://github.com/encode/starlette/blob/master/LICENSE.md
+docker/mtdna-server-2/report.Rmd and docker/mtdna-server-2/files/
+rcrs_mutserve.fasta are copied from mtDNA-Server 2 v2.1.16
+(https://github.com/genepi/mtdna-server-2), MIT License, Copyright (c)
+Institute of Genetic Epidemiology, Medical University of Innsbruck. The FASTA
+is the revised Cambridge Reference Sequence (NC_012920.1).
 
-- Requests
-  License: Apache-2.0
-  Source: https://requests.readthedocs.io/
-  License text: https://github.com/psf/requests/blob/main/LICENSE
+test_data/ and app/static/demo/ hold PharmCAT's example VCFs and the reports
+PharmCAT produced from them (https://github.com/PharmGKB/PharmCAT, MPL-2.0).
+The guidance text in those reports is ClinPGx content (CC BY-SA 4.0, below).
 
-- Aiohttp
-  License: Apache-2.0
-  Source: https://docs.aiohttp.org/
-  License text: https://github.com/aio-libs/aiohttp/blob/master/LICENSE.txt
+lexicon/allele-table.csv, gene-table.csv and phenotype-table.csv are copied
+from PyPGx (https://github.com/sbslee/pypgx, MIT). lexicon/phenotypes.tsv lists
+PharmCAT's alleles and phenotypes, which are CPIC and ClinPGx content (below).
 
-- Pydantic
-  License: MIT License
-  Source: https://docs.pydantic.dev/
-  License text: https://github.com/pydantic/pydantic/blob/main/LICENSE
 
-- NumPy
-  License: BSD-3-Clause
-  Source: https://numpy.org/
-  License text: https://github.com/numpy/numpy/blob/main/LICENSE.txt
+2. In the ZaroPGx images
+------------------------
 
-- Pandas
-  License: BSD-3-Clause
-  Source: https://pandas.pydata.org/
-  License text: https://github.com/pandas-dev/pandas/blob/main/LICENSE
+The images install these, unmodified, from their publishers; each keeps its
+licence, and each one's source is at the address given.
 
-- Biopython
-  License: Biopython License Agreement
-  Source: https://biopython.org/
-  License text: https://github.com/biopython/biopython/blob/master/LICENSE.rst
+pharmcat:      PharmCAT 3.4.0 (MPL-2.0), https://github.com/PharmGKB/PharmCAT;
+               bcftools, HTSlib and samtools 1.24 (MIT; HTSlib's CRAM code
+               BSD-3-Clause), https://www.htslib.org;
+               Eclipse Temurin 17 (GPL-2.0-only WITH Classpath-exception-2.0).
+pypgx:         PyPGx 0.27.0 and fuc 0.38.0 (MIT), https://github.com/sbslee;
+               the PyPGx resource bundle 0.27.0, https://github.com/sbslee/pypgx-bundle;
+               Beagle 5.4, inside PyPGx (GPL-3.0-or-later),
+               https://faculty.washington.edu/browning/beagle/beagle.html;
+               pysam (MIT), scikit-learn (BSD-3-Clause), NumPy, SciPy and
+               pandas (BSD-3-Clause); bcftools and HTSlib 1.24;
+               OpenJDK 21 (GPL-2.0-only WITH Classpath-exception-2.0).
+gatk-api:      GATK 4.7.0.0 (Apache-2.0), https://github.com/broadinstitute/gatk,
+               with Picard (MIT), HTSJDK (MIT) and BWA-MEM via gatk-bwamem-jni
+               (Apache-2.0 build of BWA; BSD-3-Clause bindings);
+               samtools, bcftools and HTSlib 1.24; OpenJDK 21.
+zarohla:       OptiType 1.5.0 (BSD-3-Clause), https://github.com/FRED-2/OptiType,
+               with its HLA reference built from IPD-IMGT/HLA 3.13.0 (CC BY-ND,
+               below); YARA and SeqAn 2.4.0 (BSD-3-Clause, Debian seqan-apps);
+               GLPK 5.0 (GPL-3.0-or-later, Debian glpk-utils); Pyomo (BSD-3-Clause);
+               samtools and HTSlib 1.24.
+mtdna:         built on quay.io/genepi/mtdna-server-2:v2.1.16 (MIT), which carries
+               mutserve, haplocheck, GATK 4.5.0.0, bcftools and samtools 1.19,
+               R and its packages; Haplogrep 3.3.2 (MIT) and the PhyloTree 17
+               Forensic Update tree, phylotree-fu-rcrs 1.3 (MIT).
+nextflow:      Nextflow 25.10.8 (Apache-2.0), https://github.com/nextflow-io/nextflow;
+               Eclipse Temurin 21.
+app:           the Python packages in uv.lock, each under its own licence, among
+               them WeasyPrint 70.0 (BSD-3-Clause), Jinja2 (BSD-3-Clause), pysam
+               (MIT), FastAPI (MIT), SQLAlchemy (MIT), psycopg (LGPL-3.0-only) and
+               ReportLab (BSD-3-Clause) (all of them: docs/user/credits.md, "The
+               platform"); bcftools and HTSlib 1.24; fonts from Debian: Liberation
+               (GPL-2.0 with font exception), DejaVu (Bitstream Vera), Noto
+               (OFL-1.1).
+Unmodified upstream images: PostgreSQL 18.6 (PostgreSQL License), HAPI FHIR JPA
+Server 8.12.0 (Apache-2.0), Kroki 0.32.1 with Mermaid 11.16.0 (MIT).
 
-- Graphviz (Python bindings)
-  License: MIT License
-  Source: https://graphviz.readthedocs.io/
-  License text: https://github.com/xflr6/graphviz/blob/master/LICENSE.txt
+Debian packages keep their copyright files under /usr/share/doc in each image.
 
-- Pillow
-  License: HPND License (PIL) / Historical Permission Notice and Disclaimer
-  Source: https://python-pillow.org/
-  License text: https://github.com/python-pillow/Pillow/blob/main/LICENSE
 
-- sse-starlette
-  License: MIT License
-  Source: https://github.com/sysid/sse-starlette
-  License text: https://github.com/sysid/sse-starlette/blob/master/LICENSE
+3. Data the stack downloads or carries, and its terms
+-----------------------------------------------------
 
-- Uvicorn
-  License: BSD-3-Clause
-  Source: https://www.uvicorn.org/
-  License text: https://github.com/encode/uvicorn/blob/master/LICENSE
+- ClinPGx (formerly PharmGKB), carried by PharmCAT: allele definitions, guideline
+  and drug-label annotations. Used under the Creative Commons Attribution-
+  ShareAlike 4.0 International License
+  (https://creativecommons.org/licenses/by-sa/4.0/); ClinPGx's terms ask that
+  the data be used for research purposes and not offered for sale.
+  https://www.clinpgx.org/page/dataUsagePolicy
+- CPIC guidelines, through ClinPGx: CC0 1.0. CPIC asks for attribution and notes
+  that its guidelines change; refer to https://www.clinpgx.org/cpic for the
+  current ones. CPIC® is a registered service mark of the U.S. Department of
+  Health & Human Services (HHS).
+- PharmVar star-allele definitions, through CPIC and ClinPGx: CC BY-SA 4.0, for
+  research use. https://www.pharmvar.org/terms-and-conditions
+- DPWG guidelines (KNMP), through ClinPGx. FDA tables: U.S. Government work.
+- PharmCAT's GRCh38 reference FASTA: Woon M, Zenodo,
+  doi:10.5281/zenodo.7288118, CC BY 4.0; derived from NCBI's GRCh38 analysis set.
+- UCSC hg38 and hg19 FASTAs: freely available; UCSC asks that data be credited.
+  The hg19ToHg38 liftover chain: "The UCSC Chain Files are property of The
+  Regents of the University of California, and made available free for
+  non-commercial use by Independent Researchers and Nonprofit Organizations.
+  Any other use of UCSC Chain Files requires a commercial license". The genome
+  downloader fetches it from UCSC; downloading it accepts UCSC's End User
+  License Agreement, https://genome.ucsc.edu/license/EULA.pdf.
+- 1000 Genomes Project reference genomes and phasing panels (inside PyPGx's
+  resource bundle): EMBL-EBI terms of use, Fort Lauderdale principles. The 30x
+  data were generated at the New York Genome Center with funds provided by
+  NHGRI Grants 3UM1HG008901-03S1 and 3UM1HG008901-04S2, from cell lines and DNA
+  samples obtained from the NIGMS Human Genetic Cell Repository at the Coriell
+  Institute for Medical Research.
+- IPD-IMGT/HLA sequences, in OptiType's reference: Creative Commons
+  Attribution-NoDerivs. https://www.ebi.ac.uk/ipd/imgt/hla/licence/
+- PhyloTree 17 (van Oven and Kayser) and its Forensic Update (Dür, Huber and
+  Parson), in Haplogrep 3's tree.
+- dbSNP and GRCh38: NCBI places no restrictions on their use.
 
-- SQLAlchemy
-  License: MIT License
-  Source: https://www.sqlalchemy.org/
-  License text: https://github.com/sqlalchemy/sqlalchemy/blob/main/LICENSE
 
-Additional third-party packages may be installed via the Python dependency
-lockfile (uv.lock/pyproject.toml). Refer to their respective repositories for
-license details.
+4. Terminologies in the FHIR export
+-----------------------------------
+
+This material contains content from LOINC (http://loinc.org). LOINC is
+copyright © Regenstrief Institute, Inc. and the Logical Observation Identifiers
+Names and Codes (LOINC) Committee and is available at no cost under the license
+at http://loinc.org/license. LOINC® is a registered United States trademark of
+Regenstrief Institute, Inc.
+
+This material includes SNOMED Clinical Terms® (SNOMED CT®) which is used by
+permission of the International Health Terminology Standards Development
+Organisation (IHTSDO). All rights reserved. SNOMED CT®, was originally created
+by The College of American Pathologists. "SNOMED" and "SNOMED CT" are
+registered trademarks of the IHTSDO. Use of SNOMED CT is subject to its
+licence (https://www.snomed.org/get-snomed).
+
+HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of Health
+Level Seven International and their use does not constitute endorsement by
+HL7. HGNC gene identifiers: CC0, https://www.genenames.org.

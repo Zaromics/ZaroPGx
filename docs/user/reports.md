@@ -25,8 +25,9 @@ The sections, in order. Each starts on a new page; sections that must fit a page
 fitted to it.
 
 **Cover.** Sample ID, report ID and date, and the reference build if the file was lifted
-over. **Methodology** names the tools, PharmCAT's allele-definition build and guideline data
-version, and how positions the file did not cover were treated. The disclaimer follows.
+over. **Methodology** says how the sample was analysed and whose guidelines PharmCAT applies
+(CPIC, DPWG, FDA), PharmCAT's allele-definition build and guideline data version, and how
+positions the file did not cover were treated. The disclaimer follows.
 
 **Alerts and Warnings.** What qualifies these results: limits of the input type (a VCF
 cannot give HLA calls, for instance), genes called from partial coverage, variants PharmCAT
@@ -65,8 +66,9 @@ that differs between them is marked "Applies if".
 
 **Workflow Diagram**: the steps this run took, in the order they ran, and what each
 passed to PharmCAT; a step that was skipped is drawn dashed, off the path. Then
-**Platform and Citations** (the tools that ran on this sample, with versions), and the
-**Genomic Datafile Header** as uploaded.
+**Platform and Citations**: every tool and data source this run used, at the versions that
+ran, with numbered references and the terms of use their sources require ({doc}`credits`
+lists all of them); and the **Genomic Datafile Header** as uploaded.
 
 ## Labels
 

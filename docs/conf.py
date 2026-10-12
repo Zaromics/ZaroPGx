@@ -147,4 +147,5 @@ html_js_files = [
 html_css_files = [
     'back-to-app.css',
     'ai-disclaimer.css',
+    'tables.css',
 ]

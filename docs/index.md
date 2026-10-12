@@ -37,6 +37,7 @@ user/configuration
 user/deployment
 user/troubleshooting
 user/faq
+user/credits
 ```
 
 ```{toctree}
