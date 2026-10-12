@@ -1268,8 +1268,13 @@ def _discard_input_copy(path: str) -> None:
             logger.warning(f"Could not remove input copy {candidate}: {exc}")
 
 
-@app.post("/cancel/{job_key}")
-async def cancel(job_key: str) -> Dict[str, Any]:
+class CancelRequest(BaseModel):
+    job_id: str
+    patient_id: Optional[str] = None
+    action: Optional[str] = None
+
+
+def _kill_job(job_key: str) -> Dict[str, Any]:
     """Kill this job's child processes.
 
     running_processes is module-level state, which is why the Dockerfile starts
@@ -1284,3 +1289,17 @@ async def cancel(job_key: str) -> Dict[str, Any]:
         except ProcessLookupError:
             pass
     return {"status": "cancelled", "job_key": job_key, "killed": len(procs)}
+
+
+@app.post("/cancel")
+async def cancel(request: CancelRequest) -> Dict[str, Any]:
+    """The app's cancel fan-out (app/api/routes/job_router.py) posts every sidecar
+    `POST /cancel` with the job id in the body. This service only had the path form
+    below, so the fan-out got a 404, logged it as "no running job", and mutserve ran
+    on after the job was cancelled. /call-mtdna keys its processes by job_id."""
+    return _kill_job(request.job_id)
+
+
+@app.post("/cancel/{job_key}")
+async def cancel_by_key(job_key: str) -> Dict[str, Any]:
+    return _kill_job(job_key)
