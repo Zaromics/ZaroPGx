@@ -965,3 +965,21 @@ def validate_report(report: Any) -> ValidationResult:
         gene_block_count=blocks,
         issues=tuple(issues),
     )
+
+
+# PharmCAT's code for each guideline source (a drug entry's "source"), as its
+# report.json names the section that holds it. The database lane stores the code;
+# the JSON lane reads the section name.
+GUIDELINE_SOURCE_NAMES = {
+    "CPIC_GUIDELINE": "CPIC Guideline Annotation",
+    "DPWG_GUIDELINE": "DPWG Guideline Annotation",
+    "FDA_LABEL": "FDA Label Annotation",
+    "FDA_ASSOC": "FDA PGx Association",
+}
+
+
+def guideline_source_name(value: Any) -> str:
+    """The section name for a PharmCAT guideline source code; a name passes through,
+    and anything unrecognised stays as given ("" for nothing)."""
+    text = str(value or "").strip()
+    return GUIDELINE_SOURCE_NAMES.get(text.upper(), text)

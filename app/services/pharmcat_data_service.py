@@ -20,7 +20,11 @@ from app.pharmcat.pharmcat_parser import (
     _as_float,
     get_pharmcat_summary,
 )
-from app.pharmcat.report_json import annotation_genes, recommendation_call_for_display
+from app.pharmcat.report_json import (
+    annotation_genes,
+    guideline_source_name,
+    recommendation_call_for_display,
+)
 from app.reports.evidence import (
     change_genes,
     classify_evidence,
@@ -469,9 +473,10 @@ class PharmCATDataService:
             recommendation_text = rec.get("drug_recommendation") or rec.get(
                 "recommendation_text", ""
             )
-            guideline_source = self._determine_guideline_source_letter(
-                rec.get("guideline_source")
-            )
+            # The section name, as the JSON lane has it. The stored value is
+            # PharmCAT's code (CPIC_GUIDELINE...), which the letter mapping that
+            # stood here never matched: every heading read "General".
+            guideline_source = guideline_source_name(rec.get("guideline_source"))
 
             # Format citations if available.
             #
@@ -550,35 +555,6 @@ class PharmCATDataService:
             report_recommendations.append(clean_drug_data)
 
         return report_recommendations
-
-    def _determine_guideline_source_letter(self, guideline_source: str) -> str:
-        """
-        Determine guideline source letter code.
-
-        Args:
-            guideline_source: The guideline source (CPIC, DPWG, FDA, etc.)
-
-        Returns:
-            Single letter code: F (FDA), D (DPWG), C (CPIC), P (PharmGKB)
-        """
-        if not guideline_source:
-            return ""
-
-        guideline_source = guideline_source.upper()
-
-        if guideline_source == "FDA":
-            return "F"
-        elif guideline_source == "DPWG":
-            return "D"
-        elif guideline_source == "CPIC":
-            return "C"
-        elif guideline_source == "PHARMGKB":
-            return "P"
-        else:
-            # Default mapping for PharmCAT sources
-            if guideline_source in ["CPIC", "DPWG"]:
-                return guideline_source[0]  # C for CPIC, D for DPWG
-            return ""
 
     def link_pharmcat_run_to_workflow(
         self, workflow_id: str, pharmcat_run_id: str
