@@ -256,9 +256,11 @@ chmod -R 755 reference/
 # every job fails at HLA typing or mtDNA with "Permission denied" (found upgrading a
 # server to v0.3.2; WSL's /mnt/c mounts hide it). data/temp becomes a shared scratch
 # like /tmp: world-writable and sticky. An operator-set ZAROPGX_SCRATCH is theirs to own.
-mkdir -p data/temp/mtdna
-chmod 1777 data/temp data/temp/mtdna
-for log in mtdna_progress.log hlatyping_progress.log; do
+# data/versions too: each publishes its tool's version there at startup, and without it
+# the report's Software Platform table has no row for mtDNA-Server 2 or OptiType.
+mkdir -p data/temp/mtdna data/versions
+chmod 1777 data/temp data/temp/mtdna data/versions
+for log in mtdna_progress.log zarohla_progress.log; do
     touch "data/$log" && chmod 666 "data/$log"
 done
 
