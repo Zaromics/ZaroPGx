@@ -412,8 +412,15 @@ def test_the_executive_summary_says_n_a_too(monkeypatch, tmp_path):
     blank while the gene table below said N/A."""
     monkeypatch.setattr(generator_module, "EXECSUM_USE_TSV", True)
     tsv = Path(__file__).resolve().parent.parent / "test_data"
+    # IFNL3 given a variant allele: the example's reference call is labelled
+    # wild type, as CYP4F2's and VKORC1's are.
     (tmp_path / "p1_pgx_pharmcat.tsv").write_text(
-        (tsv / "pharmcat.example.v340.report.tsv").read_text(encoding="utf-8")
+        (tsv / "pharmcat.example.v340.report.tsv")
+        .read_text(encoding="utf-8")
+        .replace(
+            "rs12979860 reference (C)/rs12979860 reference (C)",
+            "rs12979860 reference (C)/rs12979860 variant (T)",
+        )
     )
     _, page = _render(monkeypatch, tmp_path, [dict(VKORC1_PHARMCAT)], "write_html")
     summary = page[
@@ -429,8 +436,10 @@ def test_the_executive_summary_says_n_a_too(monkeypatch, tmp_path):
             re.S,
         )
     }
-    assert cells["VKORC1"].startswith("N/A") and cells["IFNL3"].startswith("N/A")
-    assert cells["CYP4F2"].startswith("Possibly Wild Type")  # *1/*1: a reference call
+    assert cells["IFNL3"].startswith("N/A")
+    # Reference calls: CYP4F2 *1/*1, and VKORC1's two named reference alleles.
+    assert cells["CYP4F2"].startswith("Possibly Wild Type")
+    assert cells["VKORC1"].startswith("Possibly Wild Type")
     assert cells["CYP2C19"].startswith("Normal Metabolizer")
     assert "defines no phenotype for it" in summary
 

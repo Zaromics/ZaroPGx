@@ -162,7 +162,9 @@ def test_an_unsupported_file_type_gets_no_label(file_type):
         None,
         "*1",
         "*1/*1/*1",
-        "rs2231142 reference (G)/rs2231142 reference (G)",
+        # A named reference allele with a variant one (IFNL3). Two reference
+        # alleles are a reference call: test_wild_type_named_reference.py.
+        "rs12979860 reference (C)/rs12979860 variant (T)",
     ],
 )
 @pytest.mark.parametrize("file_type", ["vcf", "bam"])

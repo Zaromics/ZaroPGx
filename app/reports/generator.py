@@ -656,7 +656,7 @@ def wild_type_phenotype(
     claim" -- callers must not substitute a default label for it.
     """
     diplotype_str = str(diplotype or "").strip()
-    if diplotype_str.upper() not in _REFERENCE_DIPLOTYPES:
+    if not _is_reference_diplotype(diplotype_str):
         return None
 
     phenotype_str = str(phenotype or "").strip()
@@ -669,6 +669,23 @@ def wild_type_phenotype(
     if normalized_file_type in _EXPLICIT_CALL_FILE_TYPES:
         return WILD_TYPE_ALIGNED_READS_LABEL
     return None
+
+
+# PharmCAT 3.4 names a one-position gene's reference allele by its position and
+# base: VKORC1 "rs9923231 reference (C)", F5 "rs6025 reference (C)". Two of them are
+# a reference call as much as CYP4F2's *1/*1 is. Reports before October 2026 printed
+# these as Reference/Reference and labelled them; with the names, VKORC1, F2 and F5
+# fell to "N/A" while CYP4F2 beside them kept its label.
+_NAMED_REFERENCE_ALLELE = re.compile(r"rs\d+ reference \([ACGT]+\)", re.IGNORECASE)
+
+
+def _is_reference_diplotype(diplotype: str) -> bool:
+    if diplotype.upper() in _REFERENCE_DIPLOTYPES:
+        return True
+    alleles = [allele.strip() for allele in diplotype.split("/")]
+    return len(alleles) == 2 and all(
+        _NAMED_REFERENCE_ALLELE.fullmatch(allele) for allele in alleles
+    )
 
 
 # The Phenotype for a call whose calling tool defines no phenotype for the gene, as
