@@ -76,7 +76,6 @@ class FHIRExportService:
     # Terminology is single-sourced in app.services.fhir.terminology; these
     # aliases keep the historical `self.LOINC_CODES[...]` call sites working.
     LOINC_CODES = terminology.LOINC_CODES
-    GENE_LOINC_CODES = terminology.GENE_LOINC_CODES
 
     def __init__(self, db: Session):
         """
@@ -584,8 +583,9 @@ class FHIRExportService:
         bundle = {
             "resourceType": "Bundle",
             "id": bundle_id,
+            # No meta.profile: the Genomics Reporting IG defines no Bundle profile
+            # ("genomics-bundle" was cited here and exists in no version of it).
             "meta": {
-                "profile": [terminology.PROFILE_GENOMICS_BUNDLE],
                 "lastUpdated": timestamp,
             },
             "type": "collection",
@@ -665,11 +665,6 @@ class FHIRExportService:
             except (ValueError, TypeError):
                 activity_value = None
 
-        # Get gene-specific LOINC code or use generic
-        gene_loinc = self.GENE_LOINC_CODES.get(
-            gene_symbol, self.LOINC_CODES["genotype"]
-        )
-
         observation = {
             "resourceType": "Observation",
             "id": obs_id,
@@ -692,8 +687,10 @@ class FHIRExportService:
                 "coding": [
                     {
                         "system": terminology.LOINC,
-                        "code": gene_loinc,
-                        "display": f"{gene_symbol} gene product metabolic activity interpretation",
+                        "code": self.LOINC_CODES["genotype"],
+                        "display": terminology.LOINC_DISPLAYS[
+                            self.LOINC_CODES["genotype"]
+                        ],
                     }
                 ],
                 "text": f"{gene_symbol} Genotype",
@@ -723,7 +720,9 @@ class FHIRExportService:
                         {
                             "system": terminology.LOINC,
                             "code": self.LOINC_CODES["gene_studied"],
-                            "display": "Gene studied [ID]",
+                            "display": terminology.LOINC_DISPLAYS[
+                                self.LOINC_CODES["gene_studied"]
+                            ],
                         }
                     ],
                 },
@@ -745,15 +744,10 @@ class FHIRExportService:
         if phenotype and phenotype not in ("Unknown", "N/A"):
             observation["component"].append(
                 {
-                    "code": {
-                        "coding": [
-                            {
-                                "system": terminology.LOINC,
-                                "code": self.LOINC_CODES["phenotype"],
-                                "display": "Phenotype display name",
-                            }
-                        ],
-                    },
+                    # Text, not a LOINC code: the code once sent here was
+                    # CYP2C9's metabolic-activity interpretation, for every
+                    # gene. The IG's coded form is the FHIR round's work.
+                    "code": {"text": "Phenotype"},
                     "valueCodeableConcept": {
                         "text": phenotype,
                     },
@@ -792,7 +786,9 @@ class FHIRExportService:
                             {
                                 "system": terminology.LOINC,
                                 "code": self.LOINC_CODES["haplotype"],
-                                "display": "Haplotype Name",
+                                "display": terminology.LOINC_DISPLAYS[
+                                    self.LOINC_CODES["haplotype"]
+                                ],
                             }
                         ],
                     },
@@ -809,7 +805,9 @@ class FHIRExportService:
                             {
                                 "system": terminology.LOINC,
                                 "code": self.LOINC_CODES["haplotype"],
-                                "display": "Haplotype Name",
+                                "display": terminology.LOINC_DISPLAYS[
+                                    self.LOINC_CODES["haplotype"]
+                                ],
                             }
                         ],
                     },
@@ -888,7 +886,9 @@ class FHIRExportService:
                         {
                             "system": terminology.LOINC,
                             "code": self.LOINC_CODES["medication_assessed"],
-                            "display": "Medication assessed [ID]",
+                            "display": terminology.LOINC_DISPLAYS[
+                                self.LOINC_CODES["medication_assessed"]
+                            ],
                         }
                     ],
                 },
@@ -1058,8 +1058,8 @@ class FHIRExportService:
                 "coding": [
                     {
                         "system": terminology.SNOMED_CT,
-                        "code": "405824009",
-                        "display": "Genetic analysis",
+                        "code": terminology.SNOMED_GENETIC_TEST[0],
+                        "display": terminology.SNOMED_GENETIC_TEST[1],
                     }
                 ],
             },
@@ -1068,7 +1068,9 @@ class FHIRExportService:
                     {
                         "system": terminology.LOINC,
                         "code": self.LOINC_CODES["pgx_report"],
-                        "display": "Pharmacogenomic analysis panel",
+                        "display": terminology.LOINC_DISPLAYS[
+                            self.LOINC_CODES["pgx_report"]
+                        ],
                     }
                 ],
                 "text": "Pharmacogenomic Analysis",
@@ -1133,7 +1135,9 @@ class FHIRExportService:
                     {
                         "system": terminology.LOINC,
                         "code": self.LOINC_CODES["pgx_report"],
-                        "display": "Pharmacogenomic analysis report",
+                        "display": terminology.LOINC_DISPLAYS[
+                            self.LOINC_CODES["pgx_report"]
+                        ],
                     }
                 ],
                 "text": "Pharmacogenomic Analysis Report",

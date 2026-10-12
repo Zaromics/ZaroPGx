@@ -104,12 +104,16 @@ PATIENT_FIXTURE: Dict[str, Any] = {
     "birthDate": "1980-01-01",
 }
 
-# sha256 of ``result["content"].encode("utf-8")`` produced by the pre-refactor
-# service for the fixture above.
-GOLDEN_JSON_SHA256 = "9e78058145ab06a5e6205bffd9bda78eb38ccd5685557dfcb183199ad9a0fec7"
-GOLDEN_JSON_BYTES = 22060
-GOLDEN_XML_SHA256 = "aeef0c133219167d65f60b994edb0c0d83ec4643e4c641cba1e6a520cb839c27"
-GOLDEN_XML_BYTES = 20141
+# sha256 of ``result["content"].encode("utf-8")`` for the fixture above. First
+# captured from the pre-refactor service (370 had to be byte-identical); re-taken
+# after fix/fhir-loinc-codes, which changed what is emitted on purpose: one
+# genotype code (84413-4) for every gene instead of per-gene codes that named other
+# genes, official LOINC display names, a phenotype component without CYP2C9's
+# code, no "genomics-bundle" profile, SNOMED 405824009 as "Genetic test".
+GOLDEN_JSON_SHA256 = "d024582d7738974d447e83f5965d4b66fc0669d5b31c065b125adb4319243096"
+GOLDEN_JSON_BYTES = 21469
+GOLDEN_XML_SHA256 = "d5850427ac177e2ce5ec6568e8c26116a799821add0129c936399c695c2cc157"
+GOLDEN_XML_BYTES = 19645
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
@@ -121,12 +125,11 @@ GOLDEN_URI_CENSUS = {
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study-reference": 1,
-    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomics-bundle": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype": 3,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication": 2,
-    "http://loinc.org": 15,
+    "http://loinc.org": 13,
     "http://snomed.info/sct": 1,
     "http://terminology.hl7.org/CodeSystem/observation-category": 5,
     "http://terminology.hl7.org/CodeSystem/v2-0074": 1,
@@ -225,7 +228,57 @@ def test_terminology_module_is_importable_and_single_sourced():
     assert terminology.LOINC == "http://loinc.org"
     # The class attributes must be the very objects the module owns, not copies.
     assert FHIRExportService.LOINC_CODES is terminology.LOINC_CODES
-    assert FHIRExportService.GENE_LOINC_CODES is terminology.GENE_LOINC_CODES
+    assert not hasattr(FHIRExportService, "GENE_LOINC_CODES")
+    assert not hasattr(terminology, "GENE_LOINC_CODES")
+
+
+# The official display of each LOINC code (tx.fhir.org, 2026-10-12). LOINC's licence
+# asks that a code travel with one of its official names.
+OFFICIAL_LOINC_DISPLAYS = {
+    "84413-4": "Genotype display name",
+    "51963-7": "Medication assessed [ID]",
+    "51969-4": "Genetic analysis report",
+    "84414-2": "Haplotype name",
+    "48018-6": "Gene studied [ID]",
+}
+
+
+def _loinc_codings(node, found):
+    if isinstance(node, dict):
+        if node.get("system") == "http://loinc.org":
+            found.append((node.get("code"), node.get("display")))
+        for value in node.values():
+            _loinc_codings(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            _loinc_codings(value, found)
+    return found
+
+
+def test_every_loinc_code_carries_its_official_display(frozen_export):
+    import json
+
+    bundle = json.loads(frozen_export("json")["content"])
+    codings = _loinc_codings(bundle, [])
+    assert codings
+    for code, display in codings:
+        assert OFFICIAL_LOINC_DISPLAYS.get(code) == display, (code, display)
+
+
+def test_every_genotype_is_coded_as_a_genotype(frozen_export):
+    """Not a gene-specific code: those named other genes (79714-2, sent for
+    CYP2D6, is CYP2C19's) or did not exist."""
+    import json
+
+    bundle = json.loads(frozen_export("json")["content"])
+    genotypes = [
+        entry["resource"]
+        for entry in bundle["entry"]
+        if "genotype" in str(entry["resource"].get("meta", {}).get("profile", ""))
+    ]
+    assert len(genotypes) == 3
+    for observation in genotypes:
+        assert [c["code"] for c in observation["code"]["coding"]] == ["84413-4"]
 
 
 def test_service_builders_hold_no_inline_terminology_literals():

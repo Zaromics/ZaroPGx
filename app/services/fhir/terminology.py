@@ -8,8 +8,11 @@ lands on its definition, and so that a bump to one of the HL7 Genomics Reporting
 IG URLs is a one-line change in one file.
 
 References:
-- HL7 Genomics Reporting IG: https://build.fhir.org/ig/HL7/genomics-reporting/
-- LOINC: https://loinc.org
+- HL7 Genomics Reporting IG, STU3 (3.0.0):
+  http://hl7.org/fhir/uv/genomics-reporting/STU3/
+- LOINC: https://loinc.org. Every LOINC code below is sent with its official
+  display name (LOINC_DISPLAYS), as LOINC's licence requires; checked against
+  tx.fhir.org on 2026-10-12.
 """
 
 # ---------------------------------------------------------------------------
@@ -41,9 +44,6 @@ ZAROPGX_CONCLUSION_CODES = "urn:zaropgx:conclusion-codes"
 # ---------------------------------------------------------------------------
 
 PROFILE_PATIENT = "http://hl7.org/fhir/StructureDefinition/Patient"
-PROFILE_GENOMICS_BUNDLE = (
-    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomics-bundle"
-)
 PROFILE_GENOMIC_REPORT = (
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report"
 )
@@ -72,32 +72,27 @@ EXT_WORKFLOW_RELATED_ARTIFACT = (
 # LOINC codes
 # ---------------------------------------------------------------------------
 
-# LOINC codes for PGx observations.
+# LOINC codes for PGx observations. A genotype is coded as a genotype, whatever the
+# gene: there are gene-specific LOINC codes, but they are interpretation panels
+# ("CYP2D6 gene product metabolic activity interpretation"), not genotypes, and the
+# map once here sent most genes another gene's code (CYP2D6 under CYP2C19's
+# 79714-2, CYP2C9 under an HLA-A*31:01 code, five codes that do not exist).
 LOINC_CODES = {
-    "genotype": "84413-4",  # Genotype display name
-    "therapeutic_implication": "83009-1",  # Genetic variation clinical significance
-    "medication_assessed": "51963-7",  # Medication assessed
-    "pgx_report": "51969-4",  # Genetic analysis report
-    "haplotype": "84414-2",  # Haplotype Name
-    "gene_studied": "48018-6",  # Gene studied
-    "phenotype": "79716-7",  # Molecular consequence
+    "genotype": "84413-4",
+    "medication_assessed": "51963-7",
+    "pgx_report": "51969-4",
+    "haplotype": "84414-2",
+    "gene_studied": "48018-6",
 }
 
-# Gene-specific LOINC codes (common PGx genes).
-GENE_LOINC_CODES = {
-    "CYP2D6": "79714-2",
-    "CYP2C19": "79713-4",
-    "CYP2C9": "79712-6",
-    "CYP3A4": "94040-2",
-    "CYP3A5": "94041-0",
-    "CYP1A2": "79711-8",
-    "SLCO1B1": "79717-5",
-    "VKORC1": "50720-0",
-    "DPYD": "98059-8",
-    "TPMT": "79715-9",
-    "NUDT15": "98060-6",
-    "UGT1A1": "79718-3",
-    "HLA-B": "81247-9",
-    "HLA-A": "81248-7",
-    "G6PD": "79719-1",
+# Their official display names (LOINC's, as tx.fhir.org returns them).
+LOINC_DISPLAYS = {
+    "84413-4": "Genotype display name",
+    "51963-7": "Medication assessed [ID]",
+    "51969-4": "Genetic analysis report",
+    "84414-2": "Haplotype name",
+    "48018-6": "Gene studied [ID]",
 }
+
+# SNOMED CT 405824009, as the International Edition names it.
+SNOMED_GENETIC_TEST = ("405824009", "Genetic test")
