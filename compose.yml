@@ -47,7 +47,8 @@ services:
       - ./data:/data
       - ./scripts:/scripts:ro
     ports:
-      - "${BIND_ADDRESS:-8765}:8000"
+      # Loopback unless .env says otherwise (BIND_ADDRESS in the .env templates).
+      - "${BIND_ADDRESS:-127.0.0.1:8765}:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
