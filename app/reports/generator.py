@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import struct
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -279,8 +280,10 @@ def job_workflow_diagram(steps, file_type: Optional[str]) -> Dict[str, Any]:
     """The run's workflow diagram in each form the reports use.
 
     ``steps`` is the job's (step_name, status) rows (job_workflow.load_job_steps).
-    Kroki draws the graph as SVG (HTML reports) and PNG (PDF, which renders Kroki's
-    SVG text badly); ``html`` is the same steps as text, for when Kroki cannot.
+    Kroki draws the graph as a PNG, which every report shows: WeasyPrint drops the
+    node labels of Kroki's SVG, and the HTML reports' CSS restyled its text. The SVG
+    is kept as a file beside the reports. ``pdf_style`` sizes the PNG on the PDF's
+    diagram page; ``html`` is the same steps as text, for when Kroki cannot draw it.
     """
     diagram = {
         "recorded": bool(steps),
@@ -288,6 +291,7 @@ def job_workflow_diagram(steps, file_type: Optional[str]) -> Dict[str, Any]:
         "svg_bytes": b"",
         "png": b"",
         "png_data_uri": "",
+        "pdf_style": "",
         "html": WORKFLOW_NOT_RECORDED_HTML,
     }
     if not steps:
@@ -309,9 +313,43 @@ def job_workflow_diagram(steps, file_type: Optional[str]) -> Dict[str, Any]:
         diagram["png_data_uri"] = "data:image/png;base64," + base64.b64encode(
             png
         ).decode("ascii")
+        diagram["pdf_style"] = workflow_pdf_style(png)
     except Exception as e:
         logger.warning(f"Kroki could not draw the workflow diagram as PNG: {e}")
     return diagram
+
+
+# The PDF's diagram page (report_template.html, @page workflow-page): A4 less its
+# 5mm margins, 200 x 287mm. The diagram keeps to the 178mm text width of the other
+# pages, starts under the page's title and stops above the page number.
+_DIAGRAM_WIDTH_MM = 178.0
+_DIAGRAM_TOP_MM = 26.0
+_DIAGRAM_BOTTOM_MM = 11.0
+_DIAGRAM_PAGE_HEIGHT_MM = 287.0
+
+
+def workflow_pdf_style(png: bytes) -> str:
+    """The diagram's size and place on its PDF page: as large as the page allows,
+    in its own proportions, centred across the page under its title.
+
+    Set on the image itself. Left to object-fit inside a fixed box, WeasyPrint
+    placed a diagram wider than the box's proportions 130px to the left of it: its
+    left side ran off the page and an empty strip was left on the right.
+    """
+    if len(png) < 24 or png[:8] != b"\x89PNG\r\n\x1a\n":
+        return ""
+    width_px, height_px = struct.unpack(">II", png[16:24])
+    if not width_px or not height_px:
+        return ""
+    area_w = _DIAGRAM_WIDTH_MM
+    area_h = _DIAGRAM_PAGE_HEIGHT_MM - _DIAGRAM_TOP_MM - _DIAGRAM_BOTTOM_MM
+    scale = min(area_w / width_px, area_h / height_px)
+    width, height = width_px * scale, height_px * scale
+    top = _DIAGRAM_TOP_MM
+    return (
+        f"width: {width:.1f}mm; height: {height:.1f}mm; "
+        f"margin: {top:.1f}mm auto 0 auto;"
+    )
 
 
 def report_branding_context() -> Dict[str, Any]:
@@ -1704,43 +1742,12 @@ def render_pdf_document(html_content: str):
             }
         }
         img, svg { max-width: 100%; height: auto; }
-        .workflow-figure { 
-            page-break-inside: avoid; 
-            break-inside: avoid; 
-            margin-bottom: 15px; 
-            text-align: center;
-            max-height: 300px;
-            overflow: visible;
-        }
-        .workflow-figure img { 
-            max-width: 100% !important; 
-            max-height: 280px !important;
-            height: auto !important; 
-            display: block !important;
-            margin: 0 auto !important;
-            border: 1px solid #dee2e6 !important;
-            border-radius: 5px !important;
-        }
-        .workflow-figure svg { 
-            max-width: 100% !important; 
-            max-height: 280px !important;
-            height: auto !important; 
-            display: block;
-            margin: 0 auto;
-        }
+        /* The workflow diagram's page and size are the template's print rules and
+           the image's own style (workflow_pdf_style). The rules here capped it at
+           280px with !important, which, in a user stylesheet, outranked both. */
         .section { 
             page-break-inside: avoid; 
             break-inside: avoid; 
-        }
-        /* Ensure PNG workflow images render properly in PDF */
-        .workflow-figure img[src*="data:image/png"] {
-            max-width: 100% !important;
-            max-height: 280px !important;
-            height: auto !important;
-            display: block !important;
-            margin: 0 auto !important;
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
         }
         /* Apply narrow margins to header section */
         .header-section {
@@ -2035,10 +2042,8 @@ def create_interactive_html_report(
         diagram = workflow_diagram or job_workflow_diagram([], None)
         workflow_png_url = ""
         workflow_svg_inline = ""
-        workflow_kroki_svg_inline = diagram["svg"]
-        workflow_png_data_uri = (
-            "" if workflow_kroki_svg_inline else diagram["png_data_uri"]
-        )
+        workflow_kroki_svg_inline = ""
+        workflow_png_data_uri = diagram["png_data_uri"]
         workflow_html_fallback = (
             ""
             if (workflow_kroki_svg_inline or workflow_png_data_uri)
@@ -3456,13 +3461,13 @@ def generate_report(
             template = env.get_template("report_template.html")
             logger.info("HTML template loaded successfully")
 
-            # The run's diagram (job_workflow_diagram above): its SVG, or the same
+            # The run's diagram (job_workflow_diagram above): its PNG, or the same
             # steps as text when Kroki could not draw it.
             workflow_svg_in_html = ""
-            workflow_kroki_svg_in_html = workflow_diagram["svg"]
-            workflow_png_data_uri_html = ""
+            workflow_kroki_svg_in_html = ""
+            workflow_png_data_uri_html = workflow_diagram["png_data_uri"]
             workflow_html_fallback_html = (
-                "" if workflow_kroki_svg_in_html else workflow_diagram["html"]
+                "" if workflow_png_data_uri_html else workflow_diagram["html"]
             )
 
             # Log what we have for the template
@@ -3650,6 +3655,7 @@ def generate_report(
             # For the ReportLab lane (pdf_generators), which renders from template_data.
             template_data["job_workflow_diagram"] = {
                 "png_data_uri": workflow_diagram["png_data_uri"],
+                "pdf_style": workflow_diagram["pdf_style"],
                 "html": workflow_diagram["html"],
             }
 
@@ -3661,6 +3667,7 @@ def generate_report(
                 workflow_kroki_svg=workflow_kroki_svg_for_pdf,
                 workflow_svg=workflow_graphviz_svg_for_pdf,
                 workflow_png_file_url="",
+                workflow_png_style=workflow_diagram["pdf_style"],
                 workflow_html_fallback=(
                     "" if pdf_png_data_uri else workflow_diagram["html"]
                 ),

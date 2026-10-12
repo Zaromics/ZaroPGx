@@ -938,42 +938,38 @@
                 background: #ffffff !important;
                 border: none !important;
                 border-radius: 0 !important;
+                box-shadow: none !important;
                 width: 200mm !important;
                 height: 287mm !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
+                display: block !important;
+                text-align: center !important;
             }
             /* Overlay the title on top-left of the workflow page */
+            /* The title where every other page has its heading, 16mm from the
+               paper's edges (this page's margin is 5mm), in the same style; the
+               diagram is placed under it (generator.workflow_pdf_style). */
             .workflow-section > h2 {
                 position: absolute !important;
-                top: 2mm !important;
-                left: 2mm !important;
+                top: 11mm !important;
+                left: 11mm !important;
+                width: 178mm !important;
                 margin: 0 !important;
-                padding: 2mm 4mm !important;
-                border: none !important;
+                text-align: left !important;
+                /* Above the figure, whose white box covers the page. */
                 z-index: 2 !important;
-                background: rgba(255, 255, 255, 0.9) !important;
-                border-radius: 3px !important;
-                font-size: 14px !important;
             }
+            /* The image's size and place come from its own style attribute
+               (generator.workflow_pdf_style): as large as the page allows, in its
+               own proportions. A fixed 200x287mm box with object-fit placed a wide
+               diagram 130px left of the box, off the page. */
             .workflow-figure img {
-                min-width: 200mm !important;
-                min-height: 287mm !important;
-                max-width: 200mm !important;
-                max-height: 287mm !important;
-                width: 200mm !important;
-                height: 287mm !important;
-                /* The box is the page; the diagram keeps its own shape inside it.
-                   Without this the image was stretched to the box: a run's
-                   diagram (about twice as tall as wide) came out 36% too wide,
-                   text and shapes with it. */
-                object-fit: contain !important;
-                object-position: center !important;
                 display: block !important;
-                margin: 0 !important;
+                max-width: none !important;
+                max-height: none !important;
                 padding: 0 !important;
+                border: none !important;
                 border-radius: 0 !important;
+                box-shadow: none !important;
             }
             .workflow-figure svg {
                 width: 178mm !important;
@@ -1461,7 +1457,7 @@
         <div class="workflow-figure">
             {% if workflow_png_data_uri %}
               <!-- Prefer PNG data URI for reliable PDF rendering -->
-              <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram" />
+              <img src="{{ workflow_png_data_uri }}" alt="Workflow Diagram"{% if workflow_png_style %} style="{{ workflow_png_style }}"{% endif %} />
             {% elif workflow_png_file_url %}
               <!-- PNG file URL -->
               <img src="{{ workflow_png_file_url }}" alt="Workflow Diagram" />

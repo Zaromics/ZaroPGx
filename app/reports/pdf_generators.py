@@ -768,6 +768,7 @@ class WeasyPrintGenerator(PDFGenerator):
                 report_data["workflow_png_data_uri"] = job_diagram.get(
                     "png_data_uri", ""
                 )
+                report_data["workflow_png_style"] = job_diagram.get("pdf_style", "")
                 report_data["workflow_html_fallback"] = (
                     ""
                     if report_data["workflow_png_data_uri"]

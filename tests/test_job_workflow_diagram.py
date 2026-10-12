@@ -250,9 +250,12 @@ def test_the_reports_draw_this_job(cram_job, tmp_path, monkeypatch):
 
     assert drawn and "Convert CRAM to BAM" in drawn[0]
     assert (tmp_path / f"{job_id}_workflow.png").read_bytes() == b"PNG"
+    # Every report shows the PNG (Kroki's SVG lost its node labels in WeasyPrint
+    # and was restyled by the HTML reports' CSS).
     for key in ("html_path", "interactive_html_path"):
         page = (tmp_path / result[key].split("/")[-1]).read_text(encoding="utf-8")
-        assert "this job</text>" in page
+        assert 'src="data:image/png;base64,UE5H"' in page
+        assert "this job</text>" not in page
 
 
 def test_the_templates_never_invent_a_pipeline():
@@ -262,3 +265,13 @@ def test_the_templates_never_invent_a_pipeline():
             template = fh.read()
         assert ">Detect</span>" not in template
         assert "The steps of this run were not recorded." in template
+
+
+def test_the_diagram_is_drawn_large_with_the_tool_beneath_the_step():
+    """At Mermaid's 16px default, Kroki's PNG of a run was about 650px wide and
+    soft printed across a page. It is laid out at 30px; each step is bold, its tool
+    in italics beneath it."""
+    source = to_mermaid(build_job_graph(CRAM_STEPS, "cram"))
+    assert source.startswith("%%{init:")
+    assert "'fontSize': '30px'" in source and "'htmlLabels': false" in source
+    assert 'hla_typing["`**HLA class I typing**\n_OptiType_`"]:::step' in source
