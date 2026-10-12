@@ -1,6 +1,6 @@
 ---
 title: Project To‑Do & Roadmap
-curation: full
+curated: true
 ---
 
 # Project To‑Do & Roadmap

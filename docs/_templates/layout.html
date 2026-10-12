@@ -1,11 +1,11 @@
 {% extends "!layout.html" %}
 
 {% block document %}
-  <div class="ai-disclaimer" role="note" aria-label="AI content disclaimer">
+  {% if ai_notice | default(true) %}
+  <div class="ai-disclaimer" role="note" aria-label="Generative AI notice">
     <span class="ai-disclaimer-icon" aria-hidden="true">ⓘ</span>
-    <span>This page was composed with the aid of generative artificial intelligence; it is {{ curation_display | default('partially') }} curated.</span>
+    <span>This page was composed, in part or in whole, with the use of generative artificial intelligence.</span>
   </div>
+  {% endif %}
   {{ super() }}
 {% endblock %}
-
-

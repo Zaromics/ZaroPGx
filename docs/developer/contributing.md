@@ -1,6 +1,5 @@
 ---
 title: Contributing
-curation: not
 ---
 
 # Contributing

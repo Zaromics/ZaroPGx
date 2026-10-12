@@ -1,6 +1,5 @@
 ---
 title: FAQ
-curation: not
 ---
 
 # FAQ

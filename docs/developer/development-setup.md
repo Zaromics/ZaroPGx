@@ -1,6 +1,5 @@
 ---
 title: Development setup
-curation: not
 ---
 
 # Development setup
@@ -96,5 +95,6 @@ live-reloading preview, `make -C docs live` (port 8000), or start the `docs` ser
 `docker compose --profile optional up -d docs` (127.0.0.1:5070). The app serves
 `docs/_build/html` at `/docs` and builds it at startup if it is missing.
 
-Each page's front matter carries `curation: full`, `partial` or `not`, shown in a banner on
-the page: how much of it a person has reviewed.
+Every page shows a notice that it was composed, in part or in whole, with generative AI
+(`docs/_ext/ai_disclaimer.py`). A page the maintainer has curated personally carries
+`curated: true` in its front matter, which drops the notice; nothing else shows it.

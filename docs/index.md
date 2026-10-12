@@ -1,6 +1,5 @@
 ---
 title: Home
-curation: not
 ---
 
 # {{ project_name }}

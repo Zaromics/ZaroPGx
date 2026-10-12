@@ -1,6 +1,5 @@
 ---
 title: Input formats
-curation: not
 ---
 
 # Input formats

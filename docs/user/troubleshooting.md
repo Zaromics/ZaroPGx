@@ -1,6 +1,5 @@
 ---
 title: Troubleshooting
-curation: not
 ---
 
 # Troubleshooting

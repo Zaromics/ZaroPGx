@@ -1,6 +1,5 @@
 ---
 title: Installation
-curation: not
 ---
 
 # Installation

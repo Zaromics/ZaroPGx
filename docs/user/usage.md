@@ -1,6 +1,5 @@
 ---
 title: Running an analysis
-curation: not
 ---
 
 # Running an analysis

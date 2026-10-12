@@ -1,6 +1,5 @@
 ---
 title: Configuration
-curation: not
 ---
 
 # Configuration

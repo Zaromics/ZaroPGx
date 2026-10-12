@@ -1,6 +1,5 @@
 ---
 title: Reports
-curation: not
 ---
 
 # Reports

@@ -1,6 +1,5 @@
 ---
 title: Testing
-curation: not
 ---
 
 # Testing

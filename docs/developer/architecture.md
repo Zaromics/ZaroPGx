@@ -1,6 +1,5 @@
 ---
 title: Architecture
-curation: not
 ---
 
 # Architecture
