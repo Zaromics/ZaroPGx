@@ -1465,6 +1465,10 @@
                         {% if group_data['rec'].literature_references %}
                         <p><strong>References:</strong> {{ group_data['rec'].literature_references|literature_references }}</p>
                         {% endif %}
+                        {# The guideline's page at ClinPGx: its full text and literature. #}
+                        {% if group_data['rec'].guideline_url %}
+                        <p class="guideline-source"><strong>Source:</strong> {{ group_data['rec'].guideline or 'Guideline annotation' }}, <a href="{{ group_data['rec'].guideline_url }}" target="_blank" rel="noopener">{{ group_data['rec'].guideline_url }}</a></p>
+                        {% endif %}
                     </div>
                 {% endfor %}
             </div>
