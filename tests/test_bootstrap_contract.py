@@ -158,25 +158,102 @@ def test_all_zaropgx_services_explicitly_request_the_published_platform():
         assert f"${{ZAROPGX_TAG:-{RELEASE}}}" in services[name]["image"], name
 
 
-def test_bash_known_stale_release_migration_preserves_custom_tags(tmp_path: Path):
+def _run_bash_migration(
+    tmp_path: Path, value: str, release: str, newline: str = "\n"
+) -> tuple[str, str]:
+    """Run start-docker.sh's _migrate_release_tag on a .env holding `value`.
+
+    Returns the ZAROPGX_TAG left in .env and what the function printed.
+    """
     migration = _bash_function("start-docker.sh", "_migrate_release_tag")
     env_file = tmp_path / ".env"
-
-    def migrate(value: str) -> str:
-        env_file.write_text(f"ZAROPGX_TAG={value}\n", encoding="utf-8")
-        command = f"""
+    env_file.write_bytes(
+        f"LOG_LEVEL=INFO{newline}ZAROPGX_TAG={value}{newline}KEEP=1{newline}".encode()
+    )
+    command = f"""
 set -euo pipefail
 {migration}
-cd {tmp_path!s}
-_migrate_release_tag "{RELEASE}"
+cd {shlex.quote(str(tmp_path))}
+_migrate_release_tag {shlex.quote(release)}
 """
-        subprocess.run(["bash", "-c", command], check=True, text=True)
-        return _env_values_from_path(env_file)["ZAROPGX_TAG"]
+    result = subprocess.run(
+        ["bash", "-c", command], check=True, text=True, capture_output=True
+    )
+    values = _env_values_from_path(env_file)
+    assert values["LOG_LEVEL"] == "INFO" and values["KEEP"] == "1", "other keys kept"
+    return values["ZAROPGX_TAG"], result.stdout
+
+
+def test_bash_known_stale_release_migration_preserves_custom_tags(tmp_path: Path):
+    def migrate(value: str) -> str:
+        return _run_bash_migration(tmp_path, value, RELEASE)[0]
 
     assert migrate("0.2.8") == RELEASE
     assert migrate("") == ""
     assert migrate("latest") == "latest"
     assert migrate("custom-build") == "custom-build"
+
+
+@pytest.mark.parametrize("old", ["0.2.8", "0.3.0", "0.3.1", "0.3.2", "0.3.9"])
+def test_bash_migration_moves_an_older_release_up(tmp_path: Path, old: str):
+    """An updated checkout must not keep running the old release's service images.
+
+    0.3.9 against 0.3.10 pins the numeric, field-by-field comparison: compared as
+    text, "0.3.9" sorts after "0.3.10" and would be left behind.
+    """
+    tag, printed = _run_bash_migration(tmp_path, old, "0.3.10")
+    assert tag == "0.3.10"
+    assert old in printed and "0.3.10" in printed
+
+
+def test_bash_migration_reads_a_crlf_env(tmp_path: Path):
+    tag, _ = _run_bash_migration(tmp_path, "0.3.2", "0.3.10", newline="\r\n")
+    assert tag == "0.3.10"
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [
+        "0.3.10",  # this release
+        "0.4.0",  # newer
+        "1.0.0",
+        "",
+        "latest",
+        "local-friday",
+        "custom-build",
+        "0.4.0-rc1",
+        "0.3.2-rc1",  # older, but not a plain release
+        "v0.3.2",
+        "0.3",
+    ],
+)
+def test_bash_migration_leaves_operator_tags_alone(tmp_path: Path, kept: str):
+    tag, printed = _run_bash_migration(tmp_path, kept, "0.3.10")
+    assert tag == kept
+    assert printed == ""
+
+
+def test_bash_migration_needs_a_plain_release_to_move_to(tmp_path: Path):
+    tag, _ = _run_bash_migration(tmp_path, "0.3.2", "0.4.0-rc1")
+    assert tag == "0.3.2"
+
+
+def test_powershell_migration_moves_older_plain_releases_only():
+    powershell = _text("start-docker.ps1")
+    start = powershell.index("function Update-KnownReleaseTag")
+    body = powershell[start : powershell.index("\nfunction ", start + 1)]
+    assert "$plainRelease = '^[0-9]+\\.[0-9]+\\.[0-9]+$'" in body
+    assert (
+        "if ($current -notmatch $plainRelease -or $ReleaseVersion -notmatch "
+        "$plainRelease) { return }"
+    ) in body
+    assert "$older = [version]$current -lt [version]$ReleaseVersion" in body
+    assert "if (-not $older) { return }" in body
+    assert '$current -ne "0.2.8"' not in body
+    # Write, then read back: the same verify-after-write as before.
+    assert body.index("Set-EnvVarInFile") < body.index(
+        '(Get-EnvVarFromFile -Key "ZAROPGX_TAG") -ne $ReleaseVersion'
+    )
 
 
 def _env_values_from_path(path: Path) -> dict[str, str]:

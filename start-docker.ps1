@@ -106,10 +106,22 @@ function Get-EnvVarFromFile {
 function Update-KnownReleaseTag {
     param([Parameter(Mandatory = $true)][string]$ReleaseVersion)
     $current = Get-EnvVarFromFile -Key "ZAROPGX_TAG"
-    # 0.2.8 predates the mtDNA image, so a complete 0.2.8 image set never
-    # existed. Migrate only that known-bad shipped default; preserve latest,
-    # blank values, and operator-managed/custom tags.
-    if ($current -ne "0.2.8") { return }
+    # Updating a checkout keeps .env, and with it the ZAROPGX_TAG it was installed
+    # with, so the new code would run on the old release's service images. A plain
+    # release older than this checkout's is therefore moved up to it; that includes
+    # 0.2.8, which never had a complete image set (it predates the mtDNA image).
+    # Blank, latest, this release or a newer one, and anything that is not a plain
+    # X.Y.Z (a local build, a release candidate) are an operator's choice and stay.
+    # [version] compares field by field as numbers, so 0.3.9 is older than 0.3.10.
+    $plainRelease = '^[0-9]+\.[0-9]+\.[0-9]+$'
+    if ($current -notmatch $plainRelease -or $ReleaseVersion -notmatch $plainRelease) { return }
+    try {
+        $older = [version]$current -lt [version]$ReleaseVersion
+    } catch {
+        # A field too large for [version] is not a release this script shipped.
+        return
+    }
+    if (-not $older) { return }
     try {
         Set-EnvVarInFile -Key "ZAROPGX_TAG" -Value $ReleaseVersion
     } catch {
@@ -118,7 +130,7 @@ function Update-KnownReleaseTag {
     if ((Get-EnvVarFromFile -Key "ZAROPGX_TAG") -ne $ReleaseVersion) {
         throw "ZAROPGX_TAG migration did not persist"
     }
-    Write-Host "  [OK] Updated the obsolete ZAROPGX_TAG=0.2.8 default to $ReleaseVersion" -ForegroundColor Green
+    Write-Host "  [OK] Updated ZAROPGX_TAG from $current to $ReleaseVersion, the release this checkout is" -ForegroundColor Green
 }
 
 function Test-SecretSentinel {
