@@ -6,7 +6,7 @@ set -euo pipefail
 # Clones (or optionally updates) the repository and launches the startup script
 
 REPO_URL="https://github.com/Zaromics/ZaroPGx.git"
-RELEASE_VERSION="0.3.2"
+RELEASE_VERSION="0.4.0"
 BRANCH="v${RELEASE_VERSION}"
 TARGET_DIR="ZaroPGx"
 UPDATE="false"

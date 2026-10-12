@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-RELEASE = "0.3.2"
+RELEASE = "0.4.0"
 ZAROPGX_SERVICES = {
     "app",
     "genome-downloader",
@@ -97,7 +97,7 @@ def test_update_force_fetches_the_selected_release_tag(tmp_path: Path):
         check=True,
         capture_output=True,
     )
-    subprocess.run(["git", "-C", str(publisher), "tag", "v0.3.2"], check=True)
+    subprocess.run(["git", "-C", str(publisher), "tag", f"v{RELEASE}"], check=True)
     subprocess.run(
         ["git", "-C", str(publisher), "remote", "add", "origin", str(origin)],
         check=True,
@@ -111,7 +111,7 @@ def test_update_force_fetches_the_selected_release_tag(tmp_path: Path):
         ["git", "clone", str(origin), str(clone)], check=True, capture_output=True
     )
     old_tag = subprocess.check_output(
-        ["git", "-C", str(clone), "rev-parse", "v0.3.2"],
+        ["git", "-C", str(clone), "rev-parse", f"v{RELEASE}"],
         text=True,
     ).strip()
 
@@ -122,12 +122,20 @@ def test_update_force_fetches_the_selected_release_tag(tmp_path: Path):
         capture_output=True,
     )
     subprocess.run(
-        ["git", "-C", str(publisher), "tag", "-f", "v0.3.2"],
+        ["git", "-C", str(publisher), "tag", "-f", f"v{RELEASE}"],
         check=True,
         capture_output=True,
     )
     subprocess.run(
-        ["git", "-C", str(publisher), "push", "--force", "origin", "refs/tags/v0.3.2"],
+        [
+            "git",
+            "-C",
+            str(publisher),
+            "push",
+            "--force",
+            "origin",
+            f"refs/tags/v{RELEASE}",
+        ],
         check=True,
         capture_output=True,
     )
@@ -137,7 +145,7 @@ def test_update_force_fetches_the_selected_release_tag(tmp_path: Path):
         capture_output=True,
     )
     new_tag = subprocess.check_output(
-        ["git", "-C", str(clone), "rev-parse", "v0.3.2"],
+        ["git", "-C", str(clone), "rev-parse", f"v{RELEASE}"],
         text=True,
     ).strip()
     assert new_tag != old_tag

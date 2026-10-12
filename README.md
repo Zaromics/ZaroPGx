@@ -103,7 +103,7 @@ What each format needs, and why some are refused: [input formats](docs/user/file
 - [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
 - [X] Priority 1 (*Supported*): **mtDNA-Server 2**: mitochondrial variants, haplogroup and the MT-RNR1 outside call; mtDNA-Server 2's own report for alignments.
 - [o] Priority 2 (*Development*): **FHIR R4 offline export** as JSON and XML, written with every report; custom PharmCAT definitions for outside calls.
-- [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.4-0.5*
+- [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.5*
 - [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
 - [...] Priority 5 (*Early research*): In-depth and targeted analytics, with specialty curation to reduce cognitive load
 - [...] Priority 6 (*Early research*): Complete transition to fully DB-based workflow; pulling and normalizing data directly from published databases

@@ -14,7 +14,7 @@ iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/boo
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
-## v0.3.2 → next release
+## v0.3.2 → v0.4.0
 
 ### The image tag moves with the release
 

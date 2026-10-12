@@ -23,7 +23,7 @@ param(
     [switch]$AutoLocal  # Automatically use .env.local without prompting
 )
 
-$ReleaseVersion = "0.3.2"
+$ReleaseVersion = "0.4.0"
 
 Write-Host "Starting ZaroPGx with Docker Compose" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Green
