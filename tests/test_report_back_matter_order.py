@@ -19,7 +19,9 @@ weasyprint = pytest.importorskip("weasyprint")
 LAST_CITATION = "Calling star alleles with Stargazer in 28 pharmacogenes"
 
 
-def _pages(monkeypatch, tmp_path):
+def _pages(monkeypatch, tmp_path, header=None):
+    if header is not None:
+        (tmp_path / "sample.header.txt").write_text(header, encoding="utf-8")
     for key in list(generator_module.REPORT_CONFIG):
         if key.startswith(("write_", "show_")):
             monkeypatch.setitem(
@@ -62,3 +64,22 @@ def test_the_licence_closes_the_citations_page(monkeypatch, tmp_path):
     # a page-filling diagram.
     licence = _page_of(pages, "ZaroPGx is distributed under the")
     assert licence == _page_of(pages, LAST_CITATION)
+
+
+def test_the_file_header_is_an_appendix_closed_by_the_licence(monkeypatch, tmp_path):
+    """With a genomic header: it used to sit between the software table and the
+    citations, leaving the table alone on a page (NA12878: 24% of it used)."""
+    header = "\n".join(
+        ["@HD\tVN:1.6\tSO:coordinate"]
+        + [f"@SQ\tSN:chr{n}\tLN:{248956422 - n}" for n in range(1, 23)]
+    )
+    pages = _pages(monkeypatch, tmp_path, header)
+    platform = _page_of(pages, "Platform and Citations")
+    # The software table and the citations share a page.
+    assert _page_of(pages, "Citations •") == platform
+    appendix = _page_of(pages, "Genomic Datafile Header")
+    assert appendix > _page_of(pages, LAST_CITATION)
+    # The licence closes the header's last page: no page of its own.
+    assert _page_of(pages, "ZaroPGx is distributed under the") == _page_of(
+        pages, "SN:chr22"
+    )
