@@ -964,6 +964,8 @@ class Credit:
     component: str = ""
     release: str = ""
     notice: str = ""
+    # When a run uses it, in words, for the docs' Credits page.
+    used_when: str = "Every run"
     # Papers that apply only when a step ran: GATK's joint-calling paper for
     # GenotypeGVCFs.
     papers_when: Tuple[Tuple[str, Paper], ...] = ()
@@ -982,7 +984,7 @@ CREDITS: Tuple[Credit, ...] = (
         "zaropgx",
         "ZaroPGx",
         "software",
-        "Runs the pipeline and writes this report",
+        "Runs the pipeline and writes the reports",
         "https://github.com/Zaromics/ZaroPGx",
         "AGPL-3.0-only",
         _always,
@@ -1034,6 +1036,7 @@ CREDITS: Tuple[Credit, ...] = (
         (GATK_BOOK_2020, MCKENNA_2010),
         service="gatk",
         papers_when=(("gvcf_to_vcf", POPLIN_2017),),
+        used_when="gVCF, GRCh37 VCF or BCF, FASTQ",
     ),
     Credit(
         "picard",
@@ -1046,6 +1049,7 @@ CREDITS: Tuple[Credit, ...] = (
         (PICARD_2019,),
         service="gatk",
         component="picard",
+        used_when="GRCh37 VCF or BCF, FASTQ",
     ),
     Credit(
         "bwa",
@@ -1058,6 +1062,7 @@ CREDITS: Tuple[Credit, ...] = (
         (BWA_MEM_2013,),
         service="gatk",
         component="bwa",
+        used_when="FASTQ",
     ),
     Credit(
         "pypgx",
@@ -1069,6 +1074,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.ran("pypgx_analysis", "pypgx_bam2vcf"),
         (CLINPHARMSEQ_2022, STARGAZER_2019_GIM, STARGAZER_2019_CPT),
         service="pypgx",
+        used_when="Every run, unless PyPGx is off",
     ),
     Credit(
         "fuc",
@@ -1081,6 +1087,7 @@ CREDITS: Tuple[Credit, ...] = (
         (CLINPHARMSEQ_2022,),
         service="pypgx",
         component="fuc",
+        used_when="BAM, CRAM, SAM, FASTQ",
     ),
     Credit(
         "beagle",
@@ -1093,6 +1100,7 @@ CREDITS: Tuple[Credit, ...] = (
         (BEAGLE_2021,),
         service="pypgx",
         component="beagle",
+        used_when="When PyPGx phases an input that is not already phased",
     ),
     Credit(
         "sklearn",
@@ -1105,6 +1113,7 @@ CREDITS: Tuple[Credit, ...] = (
         (SKLEARN_2011,),
         service="pypgx",
         component="scikit-learn",
+        used_when="Whole-genome alignments of 15x or more",
     ),
     Credit(
         "optitype",
@@ -1116,6 +1125,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.ran("hla_typing"),
         (OPTITYPE_2014,),
         service="optitype",
+        used_when="BAM, CRAM, SAM, FASTQ, with HLA typing on",
     ),
     Credit(
         "yara",
@@ -1128,6 +1138,7 @@ CREDITS: Tuple[Credit, ...] = (
         (YARA_2013, YARA_THESIS_2015),
         service="optitype",
         component="yara",
+        used_when="BAM, CRAM, SAM, FASTQ, with HLA typing on",
     ),
     Credit(
         "seqan",
@@ -1140,6 +1151,7 @@ CREDITS: Tuple[Credit, ...] = (
         (SEQAN_2017,),
         service="optitype",
         component="seqan",
+        used_when="BAM, CRAM, SAM, FASTQ, with HLA typing on",
     ),
     Credit(
         "glpk",
@@ -1151,6 +1163,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.ran("hla_typing"),
         service="optitype",
         component="glpk",
+        used_when="BAM, CRAM, SAM, FASTQ, with HLA typing on",
     ),
     Credit(
         "pyomo",
@@ -1163,6 +1176,7 @@ CREDITS: Tuple[Credit, ...] = (
         (PYOMO_BOOK_2021, PYOMO_2011),
         service="optitype",
         component="pyomo",
+        used_when="BAM, CRAM, SAM, FASTQ, with HLA typing on",
     ),
     Credit(
         "mtdna",
@@ -1174,6 +1188,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.ran("mtdna_analysis"),
         (MTDNA_SERVER_2_2024,),
         service="mtdna-server-2",
+        used_when="With mtDNA analysis on",
     ),
     Credit(
         "mutserve",
@@ -1186,6 +1201,7 @@ CREDITS: Tuple[Credit, ...] = (
         (MTDNA_SERVER_2016, HAPLOCHECK_2021),
         service="mtdna-server-2",
         component="mutserve",
+        used_when="BAM, CRAM, SAM, FASTQ, with mtDNA analysis on",
     ),
     Credit(
         "haplogrep",
@@ -1198,6 +1214,7 @@ CREDITS: Tuple[Credit, ...] = (
         (HAPLOGREP_3_2023,),
         service="mtdna-server-2",
         component="haplogrep3",
+        used_when="With mtDNA analysis on",
     ),
     Credit(
         "haplocheck",
@@ -1210,6 +1227,7 @@ CREDITS: Tuple[Credit, ...] = (
         (HAPLOCHECK_2021,),
         service="mtdna-server-2",
         component="haplocheck",
+        used_when="BAM, CRAM, SAM, FASTQ, with mtDNA analysis on",
     ),
     Credit(
         "pharmcat",
@@ -1232,6 +1250,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.pdf,
         service="app",
         component="weasyprint",
+        used_when="The PDF report",
     ),
     Credit(
         "kroki",
@@ -1243,6 +1262,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.kroki,
         service="kroki",
         component="kroki",
+        used_when="The workflow diagram, with Kroki on",
     ),
     Credit(
         "mermaid",
@@ -1255,6 +1275,7 @@ CREDITS: Tuple[Credit, ...] = (
         (MERMAID,),
         service="kroki",
         component="mermaid",
+        used_when="The workflow diagram, with Kroki on",
     ),
     Credit(
         "chartjs",
@@ -1266,6 +1287,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.interactive,
         service="vendor",
         component="chart.js",
+        used_when="The interactive report",
     ),
     Credit(
         "d3",
@@ -1278,6 +1300,7 @@ CREDITS: Tuple[Credit, ...] = (
         (D3_2011,),
         service="vendor",
         component="d3",
+        used_when="The interactive report",
     ),
     # Data and knowledge.
     Credit(
@@ -1318,6 +1341,7 @@ CREDITS: Tuple[Credit, ...] = (
         ),
         (UCSC_2026,),
         release="hg38",
+        used_when="BAM, CRAM, SAM, FASTQ, gVCF, GRCh37 VCF or BCF",
     ),
     Credit(
         "kgp_grch38",
@@ -1330,6 +1354,7 @@ CREDITS: Tuple[Credit, ...] = (
         and (run.file_type or "cram").lower() == "cram",
         (KGP_GRCH38_2017,),
         release="full analysis set, with decoys and HLA",
+        used_when="CRAM",
     ),
     Credit(
         "grch37",
@@ -1341,6 +1366,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.ran("liftover"),
         (GRCH37_2011,),
         release="GCA_000001405.1",
+        used_when="GRCh37 VCF or BCF",
     ),
     Credit(
         "ucsc_chain",
@@ -1359,6 +1385,7 @@ CREDITS: Tuple[Credit, ...] = (
             "UCSC Chain Files requires a commercial license "
             "(https://genome.ucsc.edu/license/)."
         ),
+        used_when="GRCh37 VCF or BCF",
     ),
     Credit(
         "kgp_panel",
@@ -1378,6 +1405,7 @@ CREDITS: Tuple[Credit, ...] = (
             "NIGMS Human Genetic Cell Repository at the Coriell Institute for "
             "Medical Research."
         ),
+        used_when="When Beagle phases",
     ),
     Credit(
         "imgt_hla",
@@ -1393,6 +1421,7 @@ CREDITS: Tuple[Credit, ...] = (
             "HLA allele sequences are from the IPD-IMGT/HLA Database, used under "
             "the Creative Commons Attribution-NoDerivs licence."
         ),
+        used_when="BAM, CRAM, SAM, FASTQ, with HLA typing on",
     ),
     Credit(
         "phylotree",
@@ -1405,6 +1434,7 @@ CREDITS: Tuple[Credit, ...] = (
         (PHYLOTREE_2009, PHYLOTREE_FU_2021),
         service="mtdna-server-2",
         component="phylotree",
+        used_when="With mtDNA analysis on",
     ),
     Credit(
         "rcrs",
@@ -1416,6 +1446,7 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.ran("mtdna_analysis"),
         (RCRS_1999,),
         release="NC_012920.1",
+        used_when="With mtDNA analysis on",
     ),
     Credit(
         "cpic",
@@ -1653,3 +1684,228 @@ def ref_numbers(refs: List[int]) -> str:
     if start is not None:
         spans.append(str(start) if start == prev else f"{start}–{prev}")
     return ", ".join(spans)
+
+
+# ---------------------------------------------------------------------------
+# The platform: what runs the application, not an analysis (docs and NOTICE)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Component:
+    name: str
+    used_for: str
+    url: str
+    licence: str
+
+
+PLATFORM: Tuple[Component, ...] = (
+    Component(
+        "FastAPI",
+        "The web application and its API",
+        "https://fastapi.tiangolo.com",
+        "MIT",
+    ),
+    Component(
+        "Starlette", "FastAPI's web toolkit", "https://www.starlette.io", "BSD-3-Clause"
+    ),
+    Component(
+        "Uvicorn", "Serves the application", "https://www.uvicorn.org", "BSD-3-Clause"
+    ),
+    Component(
+        "Gunicorn", "Serves the HLA and mtDNA services", "https://gunicorn.org", "MIT"
+    ),
+    Component(
+        "Pydantic", "Request and settings models", "https://docs.pydantic.dev", "MIT"
+    ),
+    Component("SQLAlchemy", "Database access", "https://www.sqlalchemy.org", "MIT"),
+    Component(
+        "psycopg", "PostgreSQL driver", "https://www.psycopg.org", "LGPL-3.0-only"
+    ),
+    Component(
+        "PostgreSQL",
+        "Jobs, results and FHIR storage",
+        "https://www.postgresql.org",
+        "PostgreSQL",
+    ),
+    Component(
+        "HAPI FHIR JPA Server",
+        "The bundled FHIR server",
+        "https://hapifhir.io",
+        "Apache-2.0",
+    ),
+    Component(
+        "Jinja2",
+        "Report templates",
+        "https://jinja.palletsprojects.com",
+        "BSD-3-Clause",
+    ),
+    Component(
+        "ReportLab",
+        "The fallback PDF engine",
+        "https://www.reportlab.com/opensource/",
+        "BSD-3-Clause",
+    ),
+    Component(
+        "Pillow",
+        "Images for WeasyPrint and ReportLab",
+        "https://python-pillow.github.io",
+        "MIT-CMU",
+    ),
+    Component(
+        "Biopython",
+        "Reads FASTQ and FASTA headers",
+        "https://biopython.org",
+        "Biopython License or BSD-3-Clause",
+    ),
+    Component(
+        "Requests",
+        "HTTP between the services",
+        "https://requests.readthedocs.io",
+        "Apache-2.0",
+    ),
+    Component(
+        "HTTPX",
+        "HTTP between the services",
+        "https://www.python-httpx.org",
+        "BSD-3-Clause",
+    ),
+    Component(
+        "AIOHTTP", "HTTP between the services", "https://docs.aiohttp.org", "Apache-2.0"
+    ),
+    Component(
+        "python-multipart",
+        "File uploads",
+        "https://github.com/Kludex/python-multipart",
+        "Apache-2.0",
+    ),
+    Component(
+        "python-jose",
+        "Sign-in tokens, when sign-in is on",
+        "https://github.com/mpdavis/python-jose",
+        "MIT",
+    ),
+    Component(
+        "python-dotenv",
+        "Reads .env",
+        "https://github.com/theskumar/python-dotenv",
+        "BSD-3-Clause",
+    ),
+    Component(
+        "Werkzeug",
+        "Upload file names",
+        "https://werkzeug.palletsprojects.com",
+        "BSD-3-Clause",
+    ),
+    Component(
+        "Bootstrap",
+        "The web pages' styles and scripts",
+        "https://getbootstrap.com",
+        "MIT",
+    ),
+    Component(
+        "Bootstrap Icons",
+        "The web pages' icons",
+        "https://icons.getbootstrap.com",
+        "MIT",
+    ),
+    Component(
+        "Swagger UI",
+        "The API explorer at /api/docs",
+        "https://swagger.io/tools/swagger-ui/",
+        "Apache-2.0",
+    ),
+    Component(
+        "ReDoc", "The API reference at /api/redoc", "https://redocly.com/redoc", "MIT"
+    ),
+    Component(
+        "Sphinx",
+        "Builds this documentation",
+        "https://www.sphinx-doc.org",
+        "BSD-2-Clause",
+    ),
+    Component(
+        "MyST-Parser",
+        "Markdown for Sphinx",
+        "https://myst-parser.readthedocs.io",
+        "MIT",
+    ),
+    Component(
+        "Read the Docs Sphinx theme",
+        "This documentation's theme",
+        "https://sphinx-rtd-theme.readthedocs.io",
+        "MIT",
+    ),
+    Component(
+        "Liberation fonts",
+        "The PDF's text",
+        "https://github.com/liberationfonts",
+        "GPL-2.0-only WITH Font-exception-2.0",
+    ),
+    Component(
+        "DejaVu fonts",
+        "Monospace and fallback text",
+        "https://dejavu-fonts.github.io",
+        "Bitstream-Vera",
+    ),
+    Component(
+        "Noto fonts", "Fallback text", "https://fonts.google.com/noto", "OFL-1.1"
+    ),
+    Component(
+        "Eclipse Temurin and OpenJDK",
+        "Run the Java tools",
+        "https://adoptium.net",
+        "GPL-2.0-only WITH Classpath-exception-2.0",
+    ),
+    Component(
+        "R, R Markdown and their packages",
+        "Draw mtDNA-Server 2's own report",
+        "https://www.r-project.org",
+        "R: GPL-2.0-only OR GPL-3.0-only; packages: their own",
+    ),
+    Component(
+        "Docker and Docker Compose",
+        "Run the services",
+        "https://www.docker.com",
+        "Apache-2.0",
+    ),
+    Component(
+        "uv",
+        "Installs the Python packages",
+        "https://docs.astral.sh/uv/",
+        "MIT OR Apache-2.0",
+    ),
+)
+
+# Notices for the terminologies the FHIR export codes with (docs and NOTICE).
+TERMINOLOGY_NOTICES: Tuple[Tuple[str, str], ...] = (
+    (
+        "LOINC",
+        "This material contains content from LOINC (http://loinc.org). LOINC is "
+        "copyright © Regenstrief Institute, Inc. and the Logical Observation "
+        "Identifiers Names and Codes (LOINC) Committee and is available at no cost "
+        "under the license at http://loinc.org/license. LOINC® is a registered "
+        "United States trademark of Regenstrief Institute, Inc.",
+    ),
+    (
+        "SNOMED CT",
+        "This material includes SNOMED Clinical Terms® (SNOMED CT®) which is used "
+        "by permission of the International Health Terminology Standards "
+        "Development Organisation (IHTSDO). All rights reserved. SNOMED CT®, was "
+        'originally created by The College of American Pathologists. "SNOMED" and '
+        '"SNOMED CT" are registered trademarks of the IHTSDO. Use of SNOMED CT is '
+        "subject to its licence (https://www.snomed.org/get-snomed).",
+    ),
+    (
+        "HGNC",
+        "Gene identifiers from the HUGO Gene Nomenclature Committee (HGNC, "
+        "https://www.genenames.org), released under CC0.",
+    ),
+    (
+        "HL7 FHIR",
+        "HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of "
+        "Health Level Seven International and their use does not constitute "
+        "endorsement by HL7. FHIR R4 and the Genomics Reporting Implementation "
+        "Guide are published under CC0.",
+    ),
+)
