@@ -44,6 +44,8 @@ class VersionManager:
         )
         self._hapi_version_cache: Optional[str] = None
         self._hapi_version_cache_time: float = 0.0
+        self._kroki_versions_cache: Optional[Dict[str, str]] = None
+        self._kroki_versions_cache_time: float = 0.0
         # When True, include all services from compose even if a manifest exists
         env_include_all = env_flag("VERSION_MANAGER_INCLUDE_ALL_COMPOSE", False)
         self.include_all_compose_services = (
@@ -116,13 +118,21 @@ class VersionManager:
                     name = data.get("name", manifest_file.stem)
                     version = data.get("version", "N/A")
                     if name and version:
-                        versions.append(
-                            {
-                                "name": str(name).strip(),
-                                "version": str(version).strip(),
-                                "source": "manifest",
+                        entry = {
+                            "name": str(name).strip(),
+                            "version": str(version).strip(),
+                            "source": "manifest",
+                        }
+                        # The tools inside the service, {name: version}
+                        # (data/versions/about.md).
+                        components = data.get("components")
+                        if isinstance(components, dict):
+                            entry["components"] = {
+                                str(k).strip().lower(): str(v).strip()
+                                for k, v in components.items()
+                                if k and v
                             }
-                        )
+                        versions.append(entry)
             except Exception as e:
                 logger.warning(f"Failed to load version manifest {manifest_file}: {e}")
 
@@ -549,6 +559,56 @@ class VersionManager:
 
         return None
 
+    def get_components(self) -> Dict[str, Dict[str, str]]:
+        """The tools inside each service, by its lowercased manifest name:
+        {"pypgx": {"beagle": "5.4 (22Jul22.46e)", ...}, ...}.
+
+        Per service, not merged: the same tool can be in two services at two
+        versions (the mtDNA image's bcftools 1.19 beside everyone else's 1.24).
+        Kroki's diagram libraries come from Kroki itself, live.
+        """
+        components = {
+            v["name"].lower(): dict(v["components"])
+            for v in self._load_version_manifests()
+            if v.get("components")
+        }
+        kroki = self._get_kroki_versions()
+        if kroki:
+            components["kroki"] = kroki
+        return components
+
+    def _get_kroki_versions(self) -> Dict[str, str]:
+        """Kroki's version and its Mermaid's, from Kroki's /health, cached like
+        HAPI's. Empty when Kroki is off or unreachable."""
+        now = time.monotonic()
+        if (
+            self._kroki_versions_cache is not None
+            and (now - self._kroki_versions_cache_time) < self._HAPI_VERSION_CACHE_TTL
+        ):
+            return self._kroki_versions_cache
+
+        versions: Dict[str, str] = {}
+        if env_flag("KROKI_ENABLED", True):
+            # The same default as the diagram's (workflow_diagram.render_with_kroki).
+            url = (
+                os.environ.get("KROKI_URL", "").strip() or "http://localhost:8001"
+            ).rstrip("/")
+            try:
+                resp = requests.get(f"{url}/health", timeout=3)
+                if resp.status_code == 200:
+                    reported = (resp.json() or {}).get("version") or {}
+                    kroki = reported.get("kroki")
+                    number = kroki.get("number") if isinstance(kroki, dict) else kroki
+                    if number:
+                        versions["kroki"] = str(number)
+                    if reported.get("mermaid"):
+                        versions["mermaid"] = str(reported["mermaid"])
+            except Exception as e:
+                logger.debug(f"Failed to fetch Kroki versions: {e}")
+        self._kroki_versions_cache = versions
+        self._kroki_versions_cache_time = now
+        return versions
+
     def get_versions_dict(self) -> Dict[str, str]:
         """Get versions as a dict mapping lowercased service names to versions.
 
@@ -579,3 +639,8 @@ def get_version_by_name(service_name: str) -> Optional[str]:
 def get_versions_dict() -> Dict[str, str]:
     """Get versions as a dictionary."""
     return version_manager.get_versions_dict()
+
+
+def get_components() -> Dict[str, Dict[str, str]]:
+    """The tools inside each service, by service."""
+    return version_manager.get_components()

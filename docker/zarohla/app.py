@@ -181,7 +181,10 @@ def _publish_version_manifest() -> None:
     drift from the pin in this service's Dockerfile.
 
     data/versions/about.md asks for exactly this: a container's manifest naming
-    the versions of its constituent packages.
+    the versions of its constituent packages. The components are what OptiType
+    runs here: the YARA mapper (built on SeqAn), the GLPK solver through Pyomo,
+    and samtools, which extracts the HLA reads. The report credits each at the
+    version found here.
     """
     try:
         from importlib.metadata import version as _distribution_version
@@ -191,11 +194,35 @@ def _publish_version_manifest() -> None:
         logger.warning(f"Could not read the OptiType version: {exc}")
         return
 
+    def _from_output(cmd, pattern):
+        import subprocess
+
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except Exception:
+            return "unknown"
+        found = re.search(pattern, out.stdout + out.stderr, re.M)
+        return found.group(1) if found else "unknown"
+
+    try:
+        pyomo_version = _distribution_version("pyomo")
+    except Exception:
+        pyomo_version = "unknown"
+    components = {
+        "yara": _from_output(["yara_mapper", "--version"], r"^yara_mapper version: (\S+)"),
+        "seqan": _from_output(["yara_mapper", "--version"], r"^SeqAn version: (\S+)"),
+        "glpk": _from_output(["glpsol", "--version"], r"GLPK LP/MIP Solver (\S+)"),
+        "pyomo": pyomo_version,
+        "samtools": _from_output(["samtools", "--version"], r"^samtools (\S+)"),
+    }
+
     try:
         versions_dir = DATA_DIR / "versions"
         versions_dir.mkdir(parents=True, exist_ok=True)
         (versions_dir / "optitype.json").write_text(
-            json.dumps({"name": "OptiType", "version": optitype_version}),
+            json.dumps(
+                {"name": "OptiType", "version": optitype_version, "components": components}
+            ),
             encoding="utf-8",
         )
         logger.info(f"Published OptiType version manifest: {optitype_version}")

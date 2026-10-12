@@ -1,9 +1,11 @@
 import asyncio
 import csv
+import functools
 import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -172,14 +174,33 @@ PIPELINE_VERSION = "v2.1.16"
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 
+def _version_from(cmd: List[str], pattern: str) -> str:
+    """The first group of ``pattern`` in ``cmd``'s output, or "unknown"."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except Exception:
+        return "unknown"
+    found = re.search(pattern, out.stdout + out.stderr, re.M)
+    return found.group(1) if found else "unknown"
+
+
+# Once per process: the health check calls this on every probe, and `gatk
+# --version` starts a JVM.
+@functools.lru_cache(maxsize=None)
 def _tool_versions() -> Dict[str, str]:
     """Versions baked in as env vars: mutserve and haplocheck by the base image,
-    haplogrep3 by this repo's Dockerfile, which installs 3.3.2 over the base's 3.2.2."""
+    haplogrep3 by this repo's Dockerfile, which installs 3.3.2 over the base's 3.2.2.
+    The rest come from the tools themselves: the base image's own htslib tools
+    (not the 1.24 the other services build) and the GATK that lifts hg19 chrM."""
     return {
         "mtdna-server-2": PIPELINE_VERSION,
         "mutserve": os.getenv("MUTSERVE_VERSION", "unknown"),
         "haplogrep3": os.getenv("HAPLOGREP_VERSION", "unknown"),
         "haplocheck": os.getenv("HAPLOCHECK_VERSION", "unknown"),
+        "phylotree": PHYLOTREE,
+        "bcftools": _version_from(["bcftools", "--version"], r"^bcftools (\S+)"),
+        "samtools": _version_from(["samtools", "--version"], r"^samtools (\S+)"),
+        "gatk": _version_from(["gatk", "--version"], r"\(GATK\) v(\S+)"),
     }
 
 
