@@ -238,7 +238,12 @@ def test_a_no_call_row_leaves_the_summary_for_the_not_called_list(
     summary = page[
         page.index('id="exec-summary"') : page.index("<h2>Genetic Results</h2>")
     ]
-    assert not re.search(r'exec-summary-gene">\s*NAT2', summary)
+    # Its row stays, every summary lists the same genes, but as not called.
+    assert re.search(
+        r'<tr class="exec-summary-uncalled">\s*<td class="exec-summary-number">'
+        r'\d+\.</td>\s*<td class="exec-summary-gene">NAT2</td>',
+        summary,
+    )
     assert "no call" not in summary
 
 
