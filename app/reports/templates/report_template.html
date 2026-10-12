@@ -37,6 +37,33 @@
         }
         
         /* Ensure workflow section has proper spacing */
+        /* Platform and Citations (credits_section.html): fixed columns so a long
+           name or version wraps in its own cell; references small, and long URLs
+           and DOIs break rather than overflow the page. */
+        .credits-table {
+            table-layout: fixed;
+            font-size: 0.9em;
+        }
+        .credits-table td {
+            overflow-wrap: anywhere;
+            vertical-align: top;
+        }
+        .credits-table tr {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+        .credits-references {
+            font-size: 0.85em;
+            line-height: 1.35;
+            padding-left: 2.2em;
+        }
+        .credits-references li {
+            margin-bottom: 3px;
+            overflow-wrap: anywhere;
+        }
+        .credits-note {
+            font-size: 0.85em;
+        }
         .workflow-section {
             margin-bottom: 40px;
         }
@@ -1228,7 +1255,7 @@
         <div class="tool-key">
             <h4>Source Legend:</h4>
             <p><strong>Call:</strong> Tool that made this call, as recorded by the run - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call made, <strong>?</strong> = not recorded by this run</p>
-            <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB, blank = not recorded</p>
+            <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB (now ClinPGx), blank = not recorded</p>
         </div>
         
         <div style="margin-bottom: 15px;"></div>
@@ -1477,83 +1504,7 @@
 
     <div class="section">
         <h2>Platform and Citations</h2>
-        <h3>Software Platform</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Component</th>
-                    <th>Version</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% if platform_info and platform_info|length > 0 %}
-                    {% for item in platform_info %}
-                    <tr>
-                        <td>{{ item.name }}</td>
-                        <td>{{ item.version }}</td>
-                    </tr>
-                    {% endfor %}
-                {% else %}
-                    <tr>
-                        <td colspan="2">Not available</td>
-                    </tr>
-                {% endif %}
-            </tbody>
-        </table>
-
-        <h3>Citations</h3>
-        <ul>
-            {% if citations and citations|length > 0 %}
-                {% for c in citations %}
-                <li>{{ c.text }}</li>
-                {% endfor %}
-            {% else %}
-                <li>Not available</li>
-            {% endif %}
-        </ul>
-        <h3>PharmCAT</h3>
-        <p>We thank PharmCAT (Pharmacogenomics Clinical Annotation Tool) for gene-level interpretations and recommendations.</p>
-        <ul>
-            <li>Sangkuhl K, Whirl-Carrillo M, et al. Pharmacogenomics Clinical Annotation Tool (PharmCAT). <em>Clinical Pharmacology &amp; Therapeutics</em>. 2020;107(1):203–210. See also the <a href="https://pharmcat.clinpgx.org/faqs/#create-ones-own-pdf-report-based-on-the-pharmcat-json-file" target="_blank" rel="noopener">PharmCAT FAQ</a>.</li>
-        </ul>
-        {# GATK, PyPGx, OptiType, mtDNA-Server 2: thanked only on a report whose job ran them (tools_run is
-           None when that cannot be read: then both, as before). #}
-        {% if tools_run is none or 'GATK' in tools_run %}
-        <h3>GATK</h3>
-        <p>We thank Genome Analysis Toolkit (GATK) for providing various tools and functions.</p>
-        <ul>
-            <li>McKenna A, et al. The Genome Analysis Toolkit: a MapReduce framework for analyzing next-generation DNA sequencing data. <em>Genome Research</em>. 2010;20(9):1297–1303.</li>
-            <li>DePristo MA, et al. A framework for variation discovery and genotyping using next-generation DNA sequencing data. <em>Nature Genetics</em>. 2011;43(5):491–498.</li>
-        </ul>
-        <p class="small">Additional guidance: <a href="https://gatk.broadinstitute.org/hc/en-us/articles/360035530852-How-should-I-cite-GATK-in-my-own-publications" target="_blank" rel="noopener">How to cite GATK</a>.</p>
-        {% endif %}
-        {% if tools_run is none or 'PyPGx' in tools_run %}
-        <h3>PyPGx</h3>
-        <p>We thank PyPGx for star‑allele calling, and additional functions.</p>
-        <ul>
-            <li>Lee S‑B, et&nbsp;al. ClinPharmSeq: A targeted sequencing panel for clinical pharmacogenetics implementation. <em>PLOS ONE</em>. 2022;17(7):e0272129.</li>
-            <li>Lee S‑B, et&nbsp;al. Stargazer: a software tool for calling star alleles from next‑generation sequencing data using CYP2D6 as a model. <em>Genetics in Medicine</em>. 2019;21(2):361–372.</li>
-            <li>Lee S‑B, et&nbsp;al. Calling star alleles with Stargazer in 28 pharmacogenes with whole‑genome sequences. <em>Clinical Pharmacology &amp; Therapeutics</em>. 2019;106(6):1328–1337.</li>
-        </ul>
-        {% endif %}
-        {% if tools_run is none or 'OptiType' in tools_run %}
-        <h3>OptiType</h3>
-        <p>We thank OptiType, on which ZaroHLA's HLA typing is built.</p>
-        <ul>
-        <li>Szolek A, Schubert B, et&nbsp;al. OptiType: precision HLA typing from next‑generation sequencing data. <em>Bioinformatics</em>. 2014;30(23):3310–3316.</li>
-        </ul>
-        {% endif %}
-        {% if tools_run is none or 'mtDNA-Server 2' in tools_run %}
-        <h3>mtDNA-Server 2</h3>
-        <p>We thank mtDNA-Server 2 for mitochondrial variant calling and haplogroup assignment, and the tools it is built on.</p>
-        <ul>
-        <li>Weissensteiner H, Forer L, Kronenberg F, Schönherr S. mtDNA-Server 2: advancing mitochondrial DNA analysis through highly parallelized data processing and interactive analytics. <em>Nucleic Acids Research</em>. 2024;52(W1):W102–W107.</li>
-        <li>Weissensteiner H, et&nbsp;al. mtDNA-Server: next-generation sequencing data analysis of human mitochondrial DNA in the cloud. <em>Nucleic Acids Research</em>. 2016;44(W1):W64–W69. (mutserve)</li>
-        <li>Schönherr S, et&nbsp;al. Haplogrep 3 – an interactive haplogroup classification and analysis platform. <em>Nucleic Acids Research</em>. 2023;51(W1):W263–W268.</li>
-        <li>Weissensteiner H, et&nbsp;al. Contamination detection in sequencing studies using the mitochondrial phylogeny. <em>Genome Research</em>. 2021;31(2):309–316. (haplocheck)</li>
-        </ul>
-        {% endif %}
-        <!-- Removed duplicated instructional PyPGx block -->
+        {% include "credits_section.html" %}
     </div>
 
     

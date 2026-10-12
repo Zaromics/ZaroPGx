@@ -1,0 +1,43 @@
+{# What this run used, at the versions that ran, and how each part asks to be cited
+   (app/reports/credits.py). Shared by report_template.html (HTML and PDF) and
+   interactive_report.html, so the three cannot drift apart. #}
+{% if credits %}
+<p class="credits-intro">ZaroPGx is built on the software and data below. We thank their authors and maintainers. Each row is something this run used; the numbers point to the references beneath.</p>
+<h3>Software</h3>
+<table class="credits-table table table-sm">
+    <colgroup><col style="width: 24%"><col style="width: 19%"><col style="width: 47%"><col style="width: 10%"></colgroup>
+    <thead><tr><th>Software</th><th>Version</th><th>Used for</th><th>Ref.</th></tr></thead>
+    <tbody>
+        {% for row in credits.software %}
+        <tr><td>{{ row.name }}</td><td>{{ row.version }}</td><td>{{ row.used_for }}</td><td>{{ row.refs|ref_numbers }}</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+<h3>Data and knowledge</h3>
+<table class="credits-table table table-sm">
+    <colgroup><col style="width: 25%"><col style="width: 25%"><col style="width: 40%"><col style="width: 10%"></colgroup>
+    <thead><tr><th>Source</th><th>Release</th><th>Used for</th><th>Ref.</th></tr></thead>
+    <tbody>
+        {% for row in credits.data %}
+        <tr><td>{{ row.name }}</td><td>{{ row.version }}</td><td>{{ row.used_for }}</td><td>{{ row.refs|ref_numbers }}</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if credits.pharmcat_ref %}
+<p class="credits-note">This report is built from PharmCAT's output. As PharmCAT asks of such reports, see the PharmCAT website, <a href="https://pharmcat.org/" target="_blank" rel="noopener">https://pharmcat.org/</a>, and its methods paper [{{ credits.pharmcat_ref }}].</p>
+{% endif %}
+<h3>References</h3>
+<ol class="credits-references">
+    {% for ref in credits.references %}
+    <li value="{{ ref.n }}">{{ ref.html }}</li>
+    {% endfor %}
+</ol>
+{% if credits.notices %}
+<h3>Terms of use</h3>
+{% for notice in credits.notices %}
+<p class="credits-note">{{ notice }}</p>
+{% endfor %}
+{% endif %}
+{% else %}
+<p>Not available.</p>
+{% endif %}

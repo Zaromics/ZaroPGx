@@ -1,9 +1,8 @@
-"""The mtDNA citation and the sidecar's tree must name what the image installs.
+"""The mtDNA credits and the sidecar's tree must name what the image installs.
 
-generator.py's mtDNA citation hardcodes the component versions rather than
-reading the components the sidecar publishes to /data/versions/mtdna-server-2.json,
-so this ties that literal, and app.py's PHYLOTREE, to the Dockerfile pins. The
-citation can't then silently claim a haplogrep3 the image no longer ships.
+The report credits Haplogrep 3 at the version the sidecar records
+(HAPLOGREP_VERSION, set from the Dockerfile's HAPLOGREP_RELEASE) and classifies
+with app.py's PHYLOTREE; both are tied to the Dockerfile pins here.
 """
 
 from __future__ import annotations
@@ -21,11 +20,10 @@ def _arg(name: str) -> str:
     return m.group(1)
 
 
-def test_citation_names_the_installed_haplogrep3():
-    from app.reports.generator import build_citations
-
-    text = next(c["text"] for c in build_citations() if c["name"] == "mtDNA-server-2")
-    assert f"haplogrep3 {_arg('HAPLOGREP_RELEASE')}" in text, text
+def test_the_recorded_haplogrep3_is_the_installed_one():
+    assert "ENV HAPLOGREP_VERSION=${HAPLOGREP_RELEASE}" in DOCKERFILE
+    app_py = (ROOT / "docker/mtdna-server-2/app.py").read_text(encoding="utf-8")
+    assert '"haplogrep3": os.getenv("HAPLOGREP_VERSION"' in app_py
 
 
 def test_sidecar_classifies_with_the_installed_tree():

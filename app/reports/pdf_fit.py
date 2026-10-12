@@ -181,15 +181,22 @@ PLATFORM = FitSection(
 {_PLATFORM} h3 {{ margin: 12px 0 6px 0 !important; }}
 {_PLATFORM} p {{ margin: 4px 0 !important; font-size: 0.9em !important; }}
 {_PLATFORM} td, {_PLATFORM} th {{ padding: 3px 5px !important; font-size: 0.9em !important; }}
-{_PLATFORM} ul {{ margin: 4px 0 !important; }}
+{_PLATFORM} ul, {_PLATFORM} ol {{ margin: 4px 0 !important; }}
 {_PLATFORM} li {{ font-size: 0.85em !important; line-height: 1.3 !important; }}
 """,
         f"""
 {_PLATFORM} h3 {{ margin: 8px 0 4px 0 !important; font-size: 1.05em !important; }}
 {_PLATFORM} p {{ margin: 3px 0 !important; font-size: 0.82em !important; }}
 {_PLATFORM} td, {_PLATFORM} th {{ padding: 2px 5px !important; font-size: 0.85em !important; }}
-{_PLATFORM} ul {{ margin: 3px 0 !important; }}
+{_PLATFORM} ul, {_PLATFORM} ol {{ margin: 3px 0 !important; }}
 {_PLATFORM} li {{ font-size: 0.78em !important; line-height: 1.25 !important; }}
+""",
+        f"""
+{_PLATFORM} h3 {{ margin: 6px 0 3px 0 !important; font-size: 1em !important; }}
+{_PLATFORM} p {{ margin: 2px 0 !important; font-size: 0.78em !important; }}
+{_PLATFORM} td, {_PLATFORM} th {{ padding: 1px 4px !important; font-size: 0.8em !important; }}
+{_PLATFORM} ul, {_PLATFORM} ol {{ margin: 2px 0 !important; }}
+{_PLATFORM} li {{ font-size: 0.75em !important; line-height: 1.2 !important; margin-bottom: 1px !important; }}
 """,
     ),
 )
@@ -307,50 +314,73 @@ def fit_sections(
     document = render("")
     targets = {section.anchor: _target(document, section) for section in sections}
     # Per section that runs over: the tightest step known not to fit (lo) and the
-    # loosest one not known to fail (hi), which is a fit once tried.
+    # loosest one not known to fit (hi), which is a fit once tried; and the step to
+    # keep if none fits (the design; or, aiming lower, the step that fitted before).
     search = {
         section.anchor: [0, len(section.steps), False]
         for section in sections
         if section.steps and not fits(document, section)
     }
-    while True:
-        trying = {}
-        for anchor, (lo, hi, hi_fits) in search.items():
-            if hi - lo > 1:
-                trying[anchor] = (lo + hi) // 2
-            elif not hi_fits and lo < hi:
-                trying[anchor] = hi
-        if not trying:
-            break
+    keep = {anchor: None for anchor in search}
+    while search:
+        while True:
+            trying = {}
+            for anchor, (lo, hi, hi_fits) in search.items():
+                if hi - lo > 1:
+                    trying[anchor] = (lo + hi) // 2
+                elif not hi_fits and lo < hi:
+                    trying[anchor] = hi
+            if not trying:
+                break
+            for section in sections:
+                if section.anchor in search:
+                    lo, hi, hi_fits = search[section.anchor]
+                    levels[section.anchor] = trying.get(section.anchor, hi)
+            document = render(css(levels))
+            for section in sections:
+                step = trying.get(section.anchor)
+                if step is None:
+                    continue
+                if fits(document, section):
+                    search[section.anchor][1:] = [step, True]
+                else:
+                    search[section.anchor][0] = step
+        # The loosest step that fits; none fitting, the step kept from before,
+        # else the tightest for a one-page section and the design itself for one
+        # that only needed to end sooner.
+        chosen = dict(levels)
         for section in sections:
-            if section.anchor in search:
-                lo, hi, hi_fits = search[section.anchor]
-                levels[section.anchor] = trying.get(section.anchor, hi)
-        document = render(css(levels))
-        for section in sections:
-            step = trying.get(section.anchor)
-            if step is None:
+            if section.anchor not in search:
                 continue
-            if fits(document, section):
-                search[section.anchor][1:] = [step, True]
+            lo, hi, hi_fits = search[section.anchor]
+            if hi_fits:
+                chosen[section.anchor] = hi
+            elif keep[section.anchor] is not None:
+                chosen[section.anchor] = keep[section.anchor]
             else:
-                search[section.anchor][0] = step
-    # The loosest step that fits; none fitting, the tightest for a one-page
-    # section, and the design itself for one that only needed to end sooner.
-    chosen = dict(levels)
-    for section in sections:
-        if section.anchor not in search:
-            continue
-        lo, hi, hi_fits = search[section.anchor]
-        if hi_fits:
-            chosen[section.anchor] = hi
-        else:
-            chosen[section.anchor] = (
-                len(section.steps) if section.max_tail is None else 0
-            )
-    if chosen != levels:
-        levels = chosen
-        document = render(css(levels))
+                chosen[section.anchor] = (
+                    len(section.steps) if section.max_tail is None else 0
+                )
+        if chosen != levels:
+            levels = chosen
+            document = render(css(levels))
+        # Pulled back a page, a section can still end on a sparse one (a long
+        # Platform and Citations: a sliver of its terms of use). Aim a page lower
+        # with the tighter steps left; if none gets there, keep this.
+        again = {}
+        for section in sections:
+            anchor = section.anchor
+            if anchor not in search or section.max_tail is None:
+                continue
+            level = levels[anchor]
+            if not level or level >= len(section.steps):
+                continue
+            fragments = section_fragments(document, anchor)
+            if len(fragments) > 1 and fragments[-1][1] <= section.max_tail:
+                targets[anchor] = len(fragments) - 1
+                again[anchor] = [level, len(section.steps), False]
+                keep[anchor] = level
+        search = again
     for section in sections:
         pages = len(section_pages(document, section.anchor))
         if levels[section.anchor]:

@@ -11,6 +11,7 @@ The system respects environment configuration for engine priority and fallback b
 """
 
 # Standard library imports
+import html
 import logging
 import os
 import re
@@ -57,10 +58,10 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
     )
 
 # Local imports
+from app.reports.credits import ref_numbers
 from app.reports.generator import (
     activity_score_num,
-    build_citations,
-    build_platform_info,
+    build_report_credits,
     get_author_name,
     get_disclaimer,
     get_license_name,
@@ -597,6 +598,49 @@ class ReportLabGenerator(PDFGenerator):
             except Exception as _hdr_e:
                 logger.debug(f"Header text section skipped: {_hdr_e}")
 
+            # Platform and Citations: the same credits as the WeasyPrint report
+            # (app/reports/credits.py), as plain paragraphs. This lane had none:
+            # no versions, no references, no licence.
+            try:
+                credits = template_data.get("credits") or build_report_credits()
+                story.append(Paragraph("Platform and Citations", heading_style))
+                for kind, title in (
+                    ("software", "Software"),
+                    ("data", "Data and knowledge"),
+                ):
+                    story.append(Paragraph(f"<b>{title}</b>", normal_style))
+                    for row in credits.get(kind, []):
+                        refs = ref_numbers(row["refs"])
+                        story.append(
+                            Paragraph(
+                                html.escape(
+                                    f"{row['name']} {row['version']}: {row['used_for']}"
+                                    + (f" [{refs}]" if refs else "")
+                                ),
+                                normal_style,
+                            )
+                        )
+                story.append(Paragraph("<b>References</b>", normal_style))
+                for ref in credits.get("references", []):
+                    story.append(
+                        Paragraph(
+                            html.escape(f"{ref['n']}. {ref['text']}"), normal_style
+                        )
+                    )
+                for notice in credits.get("notices", []):
+                    story.append(Paragraph(html.escape(notice), normal_style))
+                story.append(
+                    Paragraph(
+                        html.escape(
+                            f"ZaroPGx is distributed under the {get_license_name()} "
+                            f"({get_license_url()}). Source code: {get_source_url()}."
+                        ),
+                        normal_style,
+                    )
+                )
+            except Exception as _credits_e:
+                logger.warning(f"Credits section skipped: {_credits_e}")
+
             # Footer
             story.append(Spacer(1, 20))
             footer_style = ParagraphStyle(
@@ -731,8 +775,9 @@ class WeasyPrintGenerator(PDFGenerator):
                     # Pass TSV-driven Executive Summary rows when provided
                     "execsum_from_tsv": template_data.get("execsum_from_tsv"),
                     "disclaimer": get_disclaimer(),
-                    "platform_info": build_platform_info(),
-                    "citations": build_citations(),
+                    # The job's credits when the caller has them; otherwise
+                    # everything that could have run.
+                    "credits": template_data.get("credits") or build_report_credits(),
                     **report_branding_context(),
                     "workflow": template_data.get("workflow", {}),
                     "workflow_diagram": template_data.get("workflow_diagram", {}),

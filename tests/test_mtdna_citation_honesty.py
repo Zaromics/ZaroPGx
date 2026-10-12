@@ -52,74 +52,46 @@ MAIN_NF = REPO_ROOT / "pipelines" / "pgx" / "main.nf"
 GENES_JSON = REPO_ROOT / "config" / "genes.json"
 
 
-def _mtdna_citation() -> dict:
-    from app.reports.generator import build_citations
+def _mtdna_credit(versions=None, components=None, steps=None) -> dict:
+    from app.reports.credits import CreditRun, report_credits
 
-    matches = [c for c in build_citations() if c["name"] == "mtDNA-server-2"]
-    assert len(matches) == 1, f"expected exactly one mtDNA citation, got {matches}"
-    return matches[0]
-
-
-def test_the_citation_is_still_present():
-    """Kept deliberately, assertion unchanged: dropping it would lose the
-    citation's identity -- now the only place in the report a reader learns
-    which pipeline release, and which three component tools inside it,
-    produced the haplogroup and MT-RNR1 calls on their page.
-    """
-    assert _mtdna_citation()["repo"] == "https://github.com/genepi/mtdna-server-2"
+    run = CreditRun(steps=steps, file_type="bam")
+    rows = report_credits(run, versions or {}, components or {})["software"]
+    matches = [row for row in rows if row["key"] == "mtdna"]
+    assert len(matches) <= 1, f"expected at most one mtDNA credit, got {matches}"
+    return matches[0] if matches else None
 
 
-def test_the_citation_no_longer_says_the_feature_is_off():
-    """The inverse of test_the_citation_says_the_feature_is_not_enabled,
-    which asserted the opposite: that "not yet enabled" *was* present. That
-    was true through Task 9 (the process existed but stayed default-off); it
-    stopped being true the day a user could flip the toggle and get a real
-    result, which is this task.
-    """
-    text = _mtdna_citation()["text"].lower()
-    assert "not yet enabled" not in text
+def test_the_credit_is_still_present():
+    """Kept deliberately: the only place in the report a reader learns which
+    pipeline release produced the haplogroup and MT-RNR1 calls on their page."""
+    assert _mtdna_credit()["url"] == "https://github.com/genepi/mtdna-server-2"
 
 
-def test_the_citation_still_names_what_it_supplies_for_mt_rnr1():
-    """The inverse-in-spirit of test_the_citation_names_the_consequence_for_
-    mt_rnr1, which required the literal words "no call"/"no-call" in the
-    citation. Asserting that now would be actively wrong on a run where mtDNA
-    did resolve an MT-RNR1 allele -- printing "no call" on a report that shows
-    a real call is a worse lie than the one this file exists to catch. What
-    survives is the fact underneath: the citation still has to say which gene
-    this service supplies the outside call for. Which row is empty, and why,
-    is now the report section's job (see generate_report's ``mtdna`` template
-    context, built from mtdna_result.json), not the citation's.
-    """
-    text = _mtdna_citation()["text"].lower()
-    assert "mt-rnr1" in text
+def test_only_a_run_that_used_it_credits_it():
+    """Credited by what ran (app/reports/credits.py): a job whose mtDNA step did
+    not complete does not thank mtDNA-Server 2."""
+    assert _mtdna_credit(steps=frozenset({"pypgx_analysis"})) is None
+    assert _mtdna_credit(steps=frozenset({"mtdna_analysis"})) is not None
 
 
-def test_the_citation_publishes_a_real_version():
-    """The inverse of test_the_citation_publishes_no_version_for_absent_
-    software, which asserted no "version N" pattern was present at all --
-    correct while nothing installed could resolve one. BACKLOG 375, closed
-    properly this time: a resolved value, not a hardcoded literal quietly
-    unused (that was the original bug the old test's docstring diagnosed).
-    """
-    assert re.search(r"\bversion\s+v?2\.1\.\d+", _mtdna_citation()["text"])
+def test_the_credit_does_not_say_the_feature_is_off():
+    assert "not yet enabled" not in _mtdna_credit()["used_for"].lower()
 
 
-def test_the_version_is_a_real_lookup_not_a_coincidence(tmp_path, monkeypatch):
-    """The test above only checks the *shape* of the version string, and
-    generator.py's fallback -- ``_ver("mtdna-server-2", "v2.1.16")`` --
-    happens to equal the exact literal the sidecar publishes today
-    (docker/mtdna-server-2/app.py's ``PIPELINE_VERSION``). So a citation that
-    merely matches ``version v2.1.x`` cannot tell a real manifest lookup from
-    a lookup that silently missed and fell back -- which is precisely the
-    defect BACKLOG 375 named: a version string printed for software that was
-    never actually resolved. Point VersionManager at a manifest publishing a
-    version the fallback could not produce by accident, and confirm the
-    citation follows it rather than the hardcoded literal.
-    """
+def test_the_credit_names_what_it_supplies_for_mt_rnr1():
+    """Which gene this service supplies the outside call for. Whether a given
+    run's MT-RNR1 row is empty, and why, is the report section's job."""
+    assert "mt-rnr1" in _mtdna_credit()["used_for"].lower()
+
+
+def test_the_version_is_a_real_lookup(tmp_path, monkeypatch):
+    """The version printed is the one the sidecar recorded, and so are its tools':
+    no hardcoded literal that happens to match today's release (BACKLOG 375)."""
     import app.reports.generator as generator
     from app.core.version_manager import VersionManager
 
+    monkeypatch.setenv("KROKI_ENABLED", "false")
     versions_dir = tmp_path / "versions"
     versions_dir.mkdir()
     (versions_dir / "mtdna-server-2.json").write_text(
@@ -128,43 +100,32 @@ def test_the_version_is_a_real_lookup_not_a_coincidence(tmp_path, monkeypatch):
                 "name": "mtDNA-server-2",
                 "version": "v9.9.9",
                 "components": {
-                    "mutserve": "2.0.3",
-                    "haplogrep3": "3.2.2",
-                    "haplocheck": "1.3.3",
+                    "mutserve": "8.8.8",
+                    "haplogrep3": "7.7.7",
+                    "haplocheck": "6.6.6",
+                    "phylotree": "phylotree-fu-rcrs@5.5",
                 },
             }
         ),
         encoding="utf-8",
     )
-    # Same key resolution VersionManager.get_versions_dict documents: the
-    # manifest's own "name" field, lowercased -- "mtDNA-server-2" -> the
-    # "mtdna-server-2" key generator.py's _ver() looks up.
-    monkeypatch.setattr(
-        generator,
-        "get_versions_dict",
-        VersionManager(str(versions_dir)).get_versions_dict,
-    )
-    matches = [c for c in generator.build_citations() if c["name"] == "mtDNA-server-2"]
-    text = matches[0]["text"]
-    assert "9.9.9" in text, f"citation did not follow the manifest lookup: {text!r}"
-    assert "2.1.16" not in text, (
-        f"citation printed the hardcoded fallback instead of the resolved "
-        f"manifest version: {text!r}"
-    )
+    manager = VersionManager(str(versions_dir))
+    monkeypatch.setattr(generator, "get_versions_dict", manager.get_versions_dict)
+    monkeypatch.setattr(generator, "get_components", manager.get_components)
+    credits = generator.build_report_credits()
+    versions = {
+        row["name"]: row["version"] for row in credits["software"] + credits["data"]
+    }
+    assert versions["mtDNA-Server 2"] == "9.9.9"
+    assert versions["mutserve"] == "8.8.8"
+    assert versions["Haplogrep 3"] == "7.7.7"
+    assert versions["haplocheck"] == "6.6.6"
+    assert versions["PhyloTree"] == "17, Forensic Update 5.5"
 
 
-def test_every_cited_tool_that_claims_a_version_actually_ships_one():
-    """The inverse of test_every_other_cited_tool_that_claims_a_version_
-    actually_ships_one, which carved mtDNA-server-2 out of this guard because
-    nothing installed could resolve a version for it yet. Now that it does
-    (test_the_citation_publishes_a_real_version, above), it is checked like
-    every other tool instead of skipped -- no more exception to guard.
-    """
-    from app.reports.generator import build_citations
-
-    for citation in build_citations():
-        if re.search(r"\bversion\s+", citation["text"]):
-            assert re.search(r"\bversion\s+[\w.]+", citation["text"]), citation
+def test_without_a_manifest_no_version_is_claimed():
+    """A missing manifest prints "not recorded", never a guess."""
+    assert _mtdna_credit()["version"] == "not recorded"
 
 
 # --------------------------------------------------------------------------

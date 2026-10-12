@@ -16,7 +16,8 @@ import app.reports.generator as generator_module
 
 weasyprint = pytest.importorskip("weasyprint")
 
-LAST_CITATION = "Calling star alleles with Stargazer in 28 pharmacogenes"
+# The section ends with its terms of use; PharmVar's notice is the last of them.
+LAST_CITATION = "Star-allele definitions from the Pharmacogene Variation Consortium"
 
 
 def _pages(monkeypatch, tmp_path, header=None):
@@ -75,9 +76,8 @@ def test_the_file_header_is_an_appendix_closed_by_the_licence(monkeypatch, tmp_p
     )
     pages = _pages(monkeypatch, tmp_path, header)
     platform = _page_of(pages, "Platform and Citations")
-    # The software table and the citations share a page.
-    assert _page_of(pages, "Citations •") == platform
     appendix = _page_of(pages, "Genomic Datafile Header")
+    assert appendix > platform
     assert appendix > _page_of(pages, LAST_CITATION)
     # The licence closes the header's last page: no page of its own.
     assert _page_of(pages, "ZaroPGx is distributed under the") == _page_of(

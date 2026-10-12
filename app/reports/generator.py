@@ -1,6 +1,8 @@
 import base64
+import dataclasses
 import glob
 import html
+import importlib.metadata
 import json
 import logging
 import os
@@ -36,7 +38,7 @@ except Exception as _weasyprint_import_error:  # optional dependency at runtime
         _weasyprint_import_error,
     )
 
-from app.core.version_manager import get_all_versions, get_versions_dict
+from app.core.version_manager import get_components, get_versions_dict
 from app.mtdna.mt_rnr1 import (
     BASIS_INFERRED,
     BASIS_MEASURED,
@@ -54,6 +56,7 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
+from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
 from app.reports.pharmcat_tsv_parser import (
@@ -225,49 +228,6 @@ def _responsive_svg(svg_str: str) -> str:
         return svg_str
     except Exception:
         return svg_str
-
-
-# The components a reader of a *pharmacogenomic report* has any use for: the
-# ones that called, converted or interpreted this sample's data. Keyed by the
-# version manager's own name, lower-cased, mapped to the display name.
-#
-# This table used to be every service in compose, which meant a clinical report
-# ended with PostgreSQL, a HAPI FHIR server that had not run, Kroki and Kroki
-# Mermaid (a diagram renderer, twice, both at version "latest"), plus a second
-# copy of every tool as its ZaroPGx container wrapper -- "PharmCAT 3.4.0" and
-# "Zaropgx Pharmcat 0.3.0" are the same software listed at two different
-# versions. None of it affected a single call on any preceding page.
-#
-# Exact-match, not substring, precisely so the wrappers do not shadow the tools:
-# "zaropgx pharmcat" != "pharmcat".
-_REPORT_COMPONENTS: Dict[str, str] = {
-    "pharmcat": "PharmCAT",
-    "pypgx": "PyPGx",
-    "gatk": "GATK",
-    # OptiType, not "ZaroHLA": zarohla is ZaroPGx's wrapper around it and carries
-    # the ZaroPGx release number, which is the wrapper-shadows-tool problem this
-    # allowlist exists to avoid. docker/zarohla/app.py publishes the real
-    # OptiType version to /data/versions at startup, the way every other sidecar
-    # publishes its own.
-    "optitype": "OptiType",
-    # Graduated out of _PROVISIONAL_COMPONENTS below in Task 12: the mtdna
-    # sidecar now publishes its own manifest (docker/mtdna-server-2/app.py's
-    # _publish_version_manifest) the same way every other row here does, so it
-    # belongs in the resolved allowlist rather than the placeholder one.
-    "mtdna-server-2": "mtDNA-Server 2",
-}
-
-# Components that are part of the platform's design but are not running yet. They
-# are listed so the report does not imply a capability it has, and does not
-# silently omit one a reader may be expecting. Kept deliberately separate from
-# the allowlist above: nothing resolves a version for them, because there is
-# nothing installed to resolve one from.
-#
-# mtDNA-server-2 lived here until the mtdna sidecar actually started resolving
-# a version and producing calls (Task 12) -- see build_citations below, which
-# now resolves a real one instead of publishing a status string for software
-# that never ran.
-_PROVISIONAL_COMPONENTS: Dict[str, str] = {}
 
 
 # A run whose steps were not recorded gets no diagram rather than a generic one, which
@@ -499,216 +459,68 @@ def report_branding_context() -> Dict[str, Any]:
     }
 
 
-# The tools a job runs only for some inputs, by the job step that runs them. The
-# report names one of these only if its step completed: a VCF is never aligned or
-# HLA-typed, so its report has no business thanking GATK or citing OptiType.
-# PharmCAT and the guideline sources serve every job. CRAM/SAM to BAM (samtools)
-# and BCF to VCF (bcftools) run tools the report does not cite.
-_STEP_TOOLS: Dict[str, str] = {
-    "gatk_alignment": "GATK",  # FastqToSam, BwaSpark, MarkDuplicatesSpark
-    "gvcf_to_vcf": "GATK",  # GenotypeGVCFs
-    "liftover": "GATK",  # Picard LiftoverVcf, bundled in GATK
-    "pypgx_bam2vcf": "PyPGx",
-    "pypgx_analysis": "PyPGx",
-    "hla_typing": "OptiType",
-    "mtdna_analysis": "mtDNA-Server 2",
-}
-_CONDITIONAL_TOOLS = frozenset(_STEP_TOOLS.values())
-# Citation names (build_citations) of those tools.
-_CITATION_TOOLS = {
-    "PyPGx": "PyPGx",
-    "GATK": "GATK",
-    "mtDNA-server-2": "mtDNA-Server 2",
-    "ZaroHLA": "OptiType",
-}
-
-
-def tools_run_for_job(db_session: Any, job_id: Any) -> Optional[frozenset[str]]:
-    """The tools of ``_STEP_TOOLS`` this job ran: those of its completed steps.
-
-    The step rows are what happened, not what was planned. ``None`` when they
-    cannot be read (no job or session, a job with no step rows, a failed query):
-    the report then names every tool, as it did before it could tell.
-    """
-    if not (db_session and job_id):
-        return None
-    try:
-        from app.api.db import JobStep
-        from app.api.models import StepStatus
-
-        steps = (
-            db_session.query(JobStep.step_name, JobStep.status)
-            .filter(JobStep.job_id == uuid.UUID(str(job_id)))
-            .all()
-        )
-    except Exception as exc:
-        logger.warning(f"Could not read the job's steps for its citations: {exc}")
-        return None
-    if not steps:
-        return None
-    return frozenset(
-        _STEP_TOOLS[name]
-        for name, status in steps
-        if status == StepStatus.COMPLETED and name in _STEP_TOOLS
-    )
-
-
-def tool_was_run(tool: str, tools_run: Optional[frozenset[str]]) -> bool:
-    """Whether the report should name ``tool``: always for one every job runs, or
-    when what ran is unknown; otherwise only if it ran."""
-    return tools_run is None or tool not in _CONDITIONAL_TOOLS or tool in tools_run
-
-
-def build_platform_info(
-    tools_run: Optional[frozenset[str]] = None,
-) -> List[Dict[str, str]]:
-    """The analytic components behind this report, with their versions."""
-    items = [{"name": "ZaroPGx", "version": get_zaropgx_version()}]
-
-    resolved = {}
-    for version_info in get_all_versions():
-        key = (version_info.get("name") or "").strip().lower()
-        display = _REPORT_COMPONENTS.get(key)
-        if not display or display in resolved or not tool_was_run(display, tools_run):
+def app_components() -> Dict[str, str]:
+    """Versions of the libraries this app itself runs for a report."""
+    found = {}
+    for name in ("weasyprint", "pysam"):
+        try:
+            found[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
             continue
-        raw = (version_info.get("version") or "").strip()
-        # A floating tag is not a version. Saying so beats printing "latest",
-        # which tells a reader nothing they could reproduce a run from.
-        version = (
-            "not recorded"
-            if raw.lower() in {"", "latest", "n/a", "none", "unknown"}
-            else _normalize_version_text(raw)
-        )
-        resolved[display] = True
-        items.append(
-            {
-                "name": display,
-                "version": version,
-                "source": version_info.get("source", "unknown"),
-            }
-        )
-
-    for name, status in _PROVISIONAL_COMPONENTS.items():
-        items.append({"name": name, "version": status, "source": "provisional"})
-
-    # Ensure all version strings are normalized
-    for item in items:
-        item["version"] = _normalize_version_text(item.get("version", "N/A"))
-
-    return items
+    return found
 
 
-def _versions_index() -> Dict[str, str]:
-    """Get versions index using centralized version management."""
-    return get_versions_dict()
+def credit_run_for_job(
+    records: Optional[List[Dict[str, Any]]],
+    file_type: Optional[str],
+    pharmcat_data_version: Optional[str] = None,
+    kroki: bool = True,
+) -> CreditRun:
+    """The facts about this job that decide what its report credits.
 
-
-# TODO: integrate zotero bridge
-def build_citations(
-    tools_run: Optional[frozenset[str]] = None,
-) -> List[Dict[str, str]]:
-    """Build academically styled citations with versions (when available)."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    vmap = _versions_index()
-
-    # _normalize_version_text, or the citation prints the tool's raw --version
-    # blob: GATK reports "The Genome Analysis Toolkit () v4.7.0.0", which
-    # rendered as "version The Genome Analysis Toolkit () v4.7.0.0" mid-sentence.
-    # The helper's own docstring uses that exact string as its example; it was
-    # simply never called on this path, only on the platform table's.
-    def _ver(key: str, fallback: str) -> str:
-        return _normalize_version_text(vmap.get(key) or fallback)
-
-    pypgx_ver = _ver("pypgx", "0.27.0")
-    pharmcat_ver = _ver("pharmcat", "3.4.0")
-    gatk_ver = _ver("gatk", "4.7.0.0")
-    zarohla_ver = _ver("zarohla", "1.5.0")
-    # BACKLOG 375, closed properly: resolved from the manifest the mtdna
-    # sidecar publishes at /data/versions/mtdna-server-2.json
-    # (docker/mtdna-server-2/app.py:_publish_version_manifest), not a
-    # hardcoded literal masquerading as one. get_versions_dict() lowercases
-    # the manifest's own "name" field ("mtDNA-server-2") to build its key, so
-    # the lookup key here is "mtdna-server-2" -- see
-    # VersionManager.get_versions_dict's docstring. The fallback below is what
-    # prints if that lookup ever misses (service not yet run this session, or
-    # /data/versions unmounted), same as every other _ver() call on this page.
-    mtdna_ver = _ver("mtdna-server-2", "v2.1.16")
-
-    citations: List[Dict[str, str]] = []
-    citations.append(
-        {
-            "name": "PyPGx",
-            "text": f"PyPGx, version {pypgx_ver}. Available at: https://pypgx.readthedocs.io/en/latest/index.html (accessed {today}).",
-            "repo": "https://github.com/sbslee/pypgx",
-        }
+    ``records`` are its step rows (job_workflow.load_job_step_records); none means
+    they could not be read, and the report then credits everything that could
+    have run, rather than leave out something that did.
+    """
+    completed = (
+        frozenset(r["name"] for r in records if r.get("status") == "completed")
+        if records
+        else None
     )
-    citations.append(
-        {
-            "name": "PharmCAT",
-            "text": f"Pharmacogenomics Clinical Annotation Tool (PharmCAT), version {pharmcat_ver}. Available at: https://pharmcat.clinpgx.org/ (accessed {today}).",
-            "repo": "https://github.com/PharmGKB/PharmCAT",
-        }
+    pypgx = next(
+        (r.get("output") for r in records or () if r["name"] == "pypgx_analysis"),
+        None,
     )
-    citations.append(
-        {
-            "name": "GATK",
-            "text": f"Genome Analysis Toolkit (GATK), version {gatk_ver}. Broad Institute. Available at: https://gatk.broadinstitute.org/ (accessed {today}).",
-            "repo": "https://github.com/broadinstitute/gatk",
-        }
+    return CreditRun(
+        steps=completed,
+        file_type=file_type,
+        pypgx=pypgx if isinstance(pypgx, dict) else None,
+        pdf=bool(REPORT_CONFIG.get("write_pdf", True)),
+        interactive=bool(REPORT_CONFIG.get("write_interactive_html", True)),
+        kroki=kroki,
+        pharmcat_data_version=pharmcat_data_version,
     )
-    citations.append(
-        {
-            "name": "CPIC",
-            "text": f"Clinical Pharmacogenetics Implementation Consortium (CPIC). Available at: https://www.clinpgx.org/ (accessed {today}).",
-            "repo": "https://github.com/cpicpgx",
-        }
+
+
+def build_report_credits(run: Optional[CreditRun] = None) -> Dict[str, Any]:
+    """What this run's report credits (app/reports/credits.py), at the versions
+    each service recorded (data/versions/about.md)."""
+    components = dict(get_components())
+    components["app"] = app_components()
+    return report_credits(
+        run or CreditRun(),
+        get_versions_dict(),
+        components,
+        get_zaropgx_version(),
     )
-    citations.append(
-        {
-            "name": "DWPG",
-            "text": f"Dutch Pharmacogenomics Working Group. Royal Dutch Pharmacist's Association (KNMP). Available at: https://www.knmp.nl/dossiers/farmacogenetica/pharmacogenetics (accessed {today}).",
-        }
-    )
-    citations.append(
-        {
-            "name": "FDA",
-            "text": f"U.S. Food and Drug Administration (FDA) Pharmacogenetic Associations. Available at: https://www.fda.gov/medical-devices/precision-medicine/table-pharmacogenetic-associations (accessed {today}).",
-        }
-    )
-    citations.append(
-        {
-            "name": "mtDNA-server-2",
-            # Names the pipeline release and its three component tools, the
-            # same shape as the ZaroHLA citation below names OptiType --
-            # mutserve/haplogrep3/haplocheck versions are pinned to this
-            # image build (docker/mtdna-server-2/app.py:_tool_versions) rather
-            # than resolved individually, since none of the three publishes
-            # its own manifest. "Supplying the MT-RNR1 outside call" is the
-            # same fact the old wording explained from the other direction
-            # (an empty row); PharmCAT still cannot call MT-RNR1 itself
-            # (config/genes.json, categories.pharmcat_outside_callers).
-            "text": f"mtDNA-Server 2, version {mtdna_ver} (mutserve 2.0.3, haplogrep3 3.3.2, haplocheck 1.3.3). Mitochondrial variant calling and haplogroup assignment, supplying the MT-RNR1 outside call. Available at: https://mitoverse.readthedocs.io/mtdna-server/mtdna-server/ (accessed {today}).",
-            "repo": "https://github.com/genepi/mtdna-server-2",
-        }
-    )
-    citations.append(
-        {
-            "name": "PharmGKB",
-            "text": f"Pharmacogenomics Knowledgebase (PharmGKB). Available at: https://www.pharmgkb.org/ (accessed {today}).",
-            "repo": "https://github.com/PharmGKB",
-        }
-    )
-    citations.append(
-        {
-            "name": "ZaroHLA",
-            "text": f"OptiType-based HLA typing with ZaroHLA, version {zarohla_ver}. Available at: https://github.com/FRED-2/OptiType (accessed {today}).",
-            "repo": "https://github.com/ZaroHLA",
-        }
-    )
+
+
+def platform_from_credits(credits: Dict[str, Any]) -> List[Dict[str, str]]:
+    """The software a run used and its versions, as the workflow diagram labels
+    its steps with them."""
     return [
-        citation
-        for citation in citations
-        if tool_was_run(_CITATION_TOOLS.get(citation["name"], ""), tools_run)
+        {"name": row["name"], "version": row["version"]}
+        for row in credits.get("software", [])
     ]
 
 
@@ -1431,6 +1243,7 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["activity_score_num"] = activity_score_num
     environment.filters["phenotype_badge_class"] = phenotype_badge_class
     environment.filters["literature_references"] = format_literature_references
+    environment.filters["ref_numbers"] = ref_numbers
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel
     environment.globals["summary_rows"] = summary_rows
@@ -2049,7 +1862,7 @@ def get_disclaimer() -> str:
     DISCLAIMER: This pharmacogenomic report is for informational purposes only. ZaroPGx is an independently 
     developed hobby software. It is not intended for use as a substitute for professional medical advice, 
     diagnosis, or treatment. The content herein is based on guidelines from the Clinical Pharmacogenetics 
-    Implementation Consortium (CPIC), the Pharmacogenomics Knowledgebase (PharmGKB), the U.S. Food and Drug 
+    Implementation Consortium (CPIC), ClinPGx (formerly the Pharmacogenomics Knowledgebase, PharmGKB), the U.S. Food and Drug 
     Administration (FDA), and the Dutch Pharmacogenetics Working Group (DPWG). The content may change as new 
     research becomes available. The content may vary depending on the sequencing or genotyping method used, 
     the quality and composition of the genomic data submitted, and the versions of the constituent software.
@@ -2138,7 +1951,7 @@ def create_interactive_html_report(
     recommendations: List[Dict[str, Any]],
     output_path: str,
     workflow: Dict[str, Any] | None = None,
-    tools_run: Optional[frozenset[str]] = None,
+    credits: Optional[Dict[str, Any]] = None,
     sample_identifier: str | None = None,
     workflow_warnings: List[str] | None = None,
     pharmcat_assume_ref_methodology: str | None = None,
@@ -2251,9 +2064,8 @@ def create_interactive_html_report(
             "workflow_png_data_uri": workflow_png_data_uri,
             "workflow_html_fallback": workflow_html_fallback,
             "workflow_kroki_svg": workflow_kroki_svg_inline,  # Added for interactive report
-            "platform_info": build_platform_info(tools_run),
-            "citations": build_citations(tools_run),
-            "tools_run": tools_run,
+            # Without the job's credits, everything that could have run.
+            "credits": credits or build_report_credits(),
             **report_branding_context(),
             "header_text": header_text,
             # Add workflow warnings/alerts for report display
@@ -3224,13 +3036,6 @@ def generate_report(
     except Exception as _e_exec:
         logger.warning(f"Executive Summary TSV parse skipped: {_e_exec}")
 
-    # Prepare the template data
-    # Build platform info once and include in both outputs, naming only the
-    # tools this job ran.
-    tools_run = tools_run_for_job(db_session, job_id)
-    platform = build_platform_info(tools_run)
-    logger.info(f"Built platform info with {len(platform)} items")
-
     # 159: run-derived provenance. `output_dir` IS the report directory -- both
     # call sites pass an already-nested /data/reports/{patient_id}/{job_id} path
     # (upload_router.py:589, main.py:1579) and `report_dir = output_dir` below.
@@ -3242,6 +3047,18 @@ def generate_report(
         else (patient_info.get("id", "unknown") if patient_info else "unknown")
     )
     matcher_meta = probe_matcher_metadata(output_dir, _report_id_for_meta)
+
+    # What this report credits: the tools and data this job used, at the versions
+    # that ran (app/reports/credits.py). Built once for every output; `platform`
+    # is its software, which the workflow diagram labels its steps with.
+    workflow_records = load_job_step_records(db_session, job_id)
+    credit_run = credit_run_for_job(
+        workflow_records,
+        load_job_file_type(db_session, job_id) or file_type,
+        matcher_meta["data_version"],
+    )
+    credits = build_report_credits(credit_run)
+    platform = platform_from_credits(credits)
 
     # 265: put an unverified PharmCAT version in front of the reader, not just in
     # the log. A new list rather than an append: `workflow_warnings` above may be
@@ -3270,9 +3087,7 @@ def generate_report(
             "drugRecommendations", []
         ),  # Keep original for reference
         "version": get_zaropgx_version(),
-        "platform_info": platform,
-        "citations": build_citations(tools_run),
-        "tools_run": tools_run,
+        "credits": credits,
         **report_branding_context(),
         "disclaimer": get_disclaimer(),  # Add missing disclaimer variable
         # Add missing fields that PDF generators expect
@@ -3556,7 +3371,6 @@ def generate_report(
     # every output below: the PDF's PNG, the HTML reports' SVG, the files beside them.
     workflow_svg_filename = f"{report_id}_workflow.svg"
     workflow_png_filename = f"{report_id}_workflow.png"
-    workflow_records = load_job_step_records(db_session, job_id)
     try:
         with open(
             os.path.join(report_dir, "mtdna_result.json"), "r", encoding="utf-8"
@@ -3608,6 +3422,11 @@ def generate_report(
             ),
         ),
     )
+    if not (workflow_diagram["png"] or workflow_diagram["svg_bytes"]):
+        # Kroki did not draw it (off, or failed): the report shows the steps as
+        # text and does not credit Kroki or Mermaid.
+        credits = build_report_credits(dataclasses.replace(credit_run, kroki=False))
+        template_data["credits"] = credits
     for filename, content, enabled in (
         (
             workflow_svg_filename,
@@ -3682,9 +3501,7 @@ def generate_report(
                 # never reaches the page).
                 "mtdna": mtdna_report_context(report_dir, data.get("genes", [])),
                 "disclaimer": get_disclaimer(),
-                "platform_info": platform,
-                "citations": build_citations(tools_run),
-                "tools_run": tools_run,
+                "credits": credits,
                 **report_branding_context(),
                 "workflow": per_sample_workflow,
                 "workflow_diagrams": True,
@@ -4196,7 +4013,7 @@ def generate_report(
                 recommendations=template_recommendations,
                 output_path=interactive_html_path,
                 workflow=per_sample_workflow,
-                tools_run=tools_run,
+                credits=credits,
                 workflow_warnings=workflow_warnings,
                 pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
                 liftover_provenance=liftover_provenance,
