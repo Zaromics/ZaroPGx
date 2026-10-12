@@ -129,6 +129,9 @@ def pharmcat_cli_ref_flags(absent: bool, unspecified: bool) -> list[str]:
 
 
 def methodology_assume_ref_paragraph(absent: bool, unspecified: bool) -> Optional[str]:
+    """What the run did, for Methodology. What it means for the results is an alert
+    (assume_ref_alert): it was only in this paragraph, on the cover page, while
+    Alerts and Warnings said nothing about it."""
     if not absent and not unspecified:
         return None
     if absent and unspecified:
@@ -148,7 +151,28 @@ def methodology_assume_ref_paragraph(absent: bool, unspecified: bool) -> Optiona
         )
     return (
         f"<p><strong>Assume reference when missing:</strong> This research run used {mode}. "
-        "Fabricating reference calls can over-call *1/Reference and normal phenotypes; "
-        "PharmCAT documents these flags as dangerous / research-oriented. "
-        "Confirm assayed coverage before interpreting results.</p>"
+        "What this means for the results is set out under Alerts and Warnings.</p>"
+    )
+
+
+def assume_ref_alert(absent: bool, unspecified: bool) -> Optional[str]:
+    """The Alerts and Warnings entry for a run that assumed the reference allele."""
+    if not absent and not unspecified:
+        return None
+    if absent and unspecified:
+        assumed = (
+            "Positions absent from the file, and positions it lists without a "
+            "genotype (<code>./.</code>),"
+        )
+    elif absent:
+        assumed = "Positions absent from the file"
+    else:
+        assumed = "Positions the file lists without a genotype (<code>./.</code>)"
+    (flag,) = pharmcat_cli_ref_flags(absent, unspecified)
+    return (
+        f"<p>⚠️ {assumed} were assumed to be the reference allele (PharmCAT "
+        f"<code>{flag}</code>). Fabricating reference calls can over-call "
+        "*1/Reference and normal phenotypes: a position the data never covered "
+        "reads as reference. PharmCAT documents these flags as dangerous / "
+        "research-oriented. Confirm assayed coverage before interpreting results.</p>"
     )
