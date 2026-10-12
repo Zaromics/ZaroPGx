@@ -1450,6 +1450,13 @@ _INLINE_SCRIPTS = {
     "d3": "vendor/d3/d3.min.js",
     "pgx-report.js": "js/pgx-report.js",
 }
+# Their licences, which ask for the copyright and permission notice in every copy:
+# the downloaded report is one, and the minified files carry only a one-line
+# banner.
+_INLINE_SCRIPT_LICENCES = {
+    "chart.js": "vendor/chartjs/LICENSE.md",
+    "d3": "vendor/d3/LICENSE",
+}
 _SCRIPT_END_TAG = re.compile(r"</(script)", re.IGNORECASE)
 _inline_script_cache: Dict[str, str] = {}
 
@@ -1464,7 +1471,14 @@ def inline_script(name: str) -> str:
     if name not in _inline_script_cache:
         path = os.path.join(_STATIC_DIR, _INLINE_SCRIPTS[name])
         with open(path, encoding="utf-8") as fh:
-            _inline_script_cache[name] = _SCRIPT_END_TAG.sub(r"<\\/\1", fh.read())
+            source = fh.read()
+        licence = _INLINE_SCRIPT_LICENCES.get(name)
+        if licence:
+            with open(os.path.join(_STATIC_DIR, licence), encoding="utf-8") as fh:
+                # "*/" would close the comment early.
+                text = fh.read().strip().replace("*/", "* /")
+            source = f"/*! {_INLINE_SCRIPTS[name]}\n{text}\n*/\n{source}"
+        _inline_script_cache[name] = _SCRIPT_END_TAG.sub(r"<\\/\1", source)
     return _inline_script_cache[name]
 
 

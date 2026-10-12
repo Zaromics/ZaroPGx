@@ -147,6 +147,32 @@ def test_interactive_report_carries_its_scripts():
     assert html.lower().count("<script") == html.lower().count("</script>")
 
 
+@pytest.mark.parametrize(
+    "licence", ["chartjs/LICENSE.md", "d3/LICENSE"], ids=["chart.js", "d3"]
+)
+def test_interactive_report_carries_each_library_s_licence(licence):
+    """MIT and ISC ask for the copyright and permission notice in all copies, and
+    the downloaded report is one: the full text, not just the minified banner."""
+    html = _render_interactive()
+    text = (VENDOR / licence).read_text(encoding="utf-8").strip().replace("*/", "* /")
+    assert text in html
+
+
+def test_a_licence_cannot_end_its_comment_early(tmp_path, monkeypatch):
+    import app.reports.generator as generator
+
+    (tmp_path / "lib.js").write_text("var a = 1;", encoding="utf-8")
+    (tmp_path / "LICENSE").write_text("Copyright 2020 A */ B", encoding="utf-8")
+    monkeypatch.setattr(generator, "_STATIC_DIR", str(tmp_path))
+    monkeypatch.setitem(generator._INLINE_SCRIPTS, "lib", "lib.js")
+    monkeypatch.setitem(generator._INLINE_SCRIPT_LICENCES, "lib", "LICENSE")
+    monkeypatch.setattr(generator, "_inline_script_cache", {})
+
+    source = generator.inline_script("lib")
+
+    assert source == "/*! lib.js\nCopyright 2020 A * / B\n*/\nvar a = 1;"
+
+
 def test_inline_script_cannot_close_its_element(tmp_path, monkeypatch):
     import app.reports.generator as generator
 
