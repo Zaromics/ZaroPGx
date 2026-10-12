@@ -170,40 +170,60 @@ def _job(monkeypatch, file_type, steps, pypgx):
         generator_module, "load_job_file_type", lambda db, job: file_type
     )
 
+    # The same layout wherever the suite runs: with a Kroki to reach (a developer's
+    # stack) the diagram is drawn, and Kroki and Mermaid are credited, two rows and
+    # two references more than without one (CI).
+    def no_kroki(*args, **kwargs):
+        raise RuntimeError("no Kroki in this test")
+
+    monkeypatch.setattr(generator_module, "render_with_kroki", no_kroki)
+
 
 def test_platform_and_citations_a_little_over_end_a_page_sooner(monkeypatch, tmp_path):
     """Its content is what the job used, the references and their terms. A VCF
-    with mtDNA: a third of a page over, pulled back."""
+    whose phasing was skipped: half a page over, pulled back."""
     _job(
-        monkeypatch,
-        "vcf",
-        ["pypgx_analysis", "mtdna_analysis", "pharmcat_analysis"],
-        {"beagle_genes": 3},
+        monkeypatch, "vcf", ["pypgx_analysis", "pharmcat_analysis"], {"beagle_genes": 0}
     )
     html = _html(monkeypatch, tmp_path)
     before = _untightened(monkeypatch, html)["platform-heading"]
-    assert len(before) == 4 and before[-1][1] <= 0.5, before
+    assert len(before) == 3 and before[-1][1] <= 0.5, before
+    after, levels = _layout(monkeypatch, html)
+    assert len(after["platform-heading"]) == 2
+    assert levels["platform-heading"] >= 1
+
+
+def test_a_section_still_ending_on_a_sliver_is_pulled_back_again(monkeypatch, tmp_path):
+    """A BAM with HLA typing and mtDNA: a tenth of a fifth page. One page fewer
+    still ended on a tenth of a page (its terms of use); a tighter step takes off
+    another, and the section ends on a well-used page."""
+    _job(
+        monkeypatch,
+        "bam",
+        ["pypgx_bam2vcf", "hla_typing", "pypgx_analysis", "mtdna_analysis"],
+        {"beagle_genes": 3, "cnv_model_genes": 1},
+    )
+    html = _html(monkeypatch, tmp_path)
+    before = _untightened(monkeypatch, html)["platform-heading"]
+    assert len(before) == 5 and before[-1][1] <= 0.2, before
     after, levels = _layout(monkeypatch, html)
     assert len(after["platform-heading"]) == 3
-    assert levels["platform-heading"] >= 1
+    assert after["platform-heading"][-1][1] > 0.5
+    assert levels["platform-heading"] >= 2
 
 
 def test_platform_and_citations_with_a_well_used_last_page_print_as_designed(
     monkeypatch, tmp_path
 ):
-    """A BAM with HLA typing: more tools, more papers, and over half of a last
-    page, which is no sparse page."""
+    """A VCF that PyPGx phased: two thirds of a last page, which is no sparse page."""
     _job(
-        monkeypatch,
-        "bam",
-        ["pypgx_bam2vcf", "hla_typing", "pypgx_analysis", "pharmcat_analysis"],
-        {"beagle_genes": 3, "cnv_model_genes": 1},
+        monkeypatch, "vcf", ["pypgx_analysis", "pharmcat_analysis"], {"beagle_genes": 3}
     )
     html = _html(monkeypatch, tmp_path)
     before = _untightened(monkeypatch, html)["platform-heading"]
-    assert len(before) == 4 and before[-1][1] > 0.5, before
+    assert len(before) == 3 and before[-1][1] > 0.5, before
     after, levels = _layout(monkeypatch, html)
-    assert len(after["platform-heading"]) == 4
+    assert len(after["platform-heading"]) == 3
     assert levels["platform-heading"] == 0
 
 
