@@ -445,12 +445,16 @@
         .as-badge .as-gauge path:first-child { fill: currentColor; opacity: 0.18; }
         .as-tier-0 { background-color: #000000; color: #ffffff; } /* 0 - black with white text */
         .as-tier-1 { background-color: #dc3545; }          /* 0.25 - red */
-        .as-tier-2 { background-color: #fd7e14; }          /* 0.5 - orange */
+        /* Dark text where white is unreadable: on orange, light green and
+           turquoise white was 2.6, 1.4 and 2.1 to 1 (a 1.5 score was a pale
+           smudge), under the 3:1 WCAG asks even of bold text. */
+        .as-tier-2 { background-color: #fd7e14; color: #333; } /* 0.5 - orange */
         .as-tier-3 { background-color: #ffc107; color: #333; } /* 0.75 - yellow */
-        .as-tier-4 { background-color: #90EE90; }          /* 1.0-1.5 - light green */
+        .as-tier-4 { background-color: #90EE90; color: #333; } /* 1.0-1.5 - light green */
         .as-tier-5 { background-color: #28a745; }          /* 1.75-2.25 - green */
         .as-tier-6 { 
             background-color: #20c997; 
+            color: #333;
             background-image: repeating-linear-gradient(
                 45deg,
                 transparent,
@@ -480,6 +484,10 @@
             padding: 3px 10px;
             border-radius: 15px;
             color: white;
+            /* Seen when no class below matches: N/A, Unknown, Indeterminate,
+               Uncertain Susceptibility, an HLA result. White on no background
+               printed nothing. */
+            background-color: #6c757d;
             font-weight: bold;
             white-space: nowrap;
             max-width: max-content;
