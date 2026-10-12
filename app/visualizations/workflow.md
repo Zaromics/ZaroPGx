@@ -1,6 +1,6 @@
 ### ZaroPGx end-to-end processing workflow
 
-This diagram summarizes how a genomic sample flows through ZaroPGx from upload to reporting and optional FHIR export.
+This diagram summarizes how a genomic sample flows through ZaroPGx from upload to reporting.
 
 ```mermaid
 flowchart TD
@@ -31,8 +31,7 @@ flowchart TD
     Normalize --> Generate["Generate reports<br/>(app/reports/generator.py)"]
     Generate --> ReportsDir[/Write to /data/reports/<patient_id>/<job_id>/]
     ReportsDir --> Serve["Serve at /reports/<patient_id>/<job_id>/* (StaticFiles)"]
-    Serve --> ExportDec{Export to FHIR?}
-    ExportDec -->|No| Done((Complete))
+    Serve --> Done((Complete))
   end
 
   subgraph Services["External services (docker-compose)"]
@@ -41,21 +40,11 @@ flowchart TD
     PCAT["PharmCAT API/JAR<br/>(docker/pharmcat or JAR)"]
   end
 
-  subgraph FHIR["FHIR Export (optional)"]
-    ExportDec -->|Yes| FhirRoute["POST /reports/<report_id>/export-to-fhir"]
-    FhirRoute --> FhirClient["FhirClient<br/>(app/reports/fhir_client.py)"]
-    FhirClient --> Patient[(Patient)]
-    FhirClient --> Observations[(Observation per gene)]
-    FhirClient --> DiagnosticReport[(DiagnosticReport with links)]
-    DiagnosticReport --> EHR[External FHIR server]
-  end
-
   %% Progress tracking
   UploadEndpoints -. updates .-> JobStatus["/status/<data_id><br/>/api/v1/jobs/<job_id>"]
 
   classDef app fill:#e7f0ff,stroke:#5b8def,stroke-width:1px;
   classDef svc fill:#f8f1ff,stroke:#9b59b6,stroke-width:1px;
-  classDef fhir fill:#eaffea,stroke:#27ae60,stroke-width:1px;
   classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:1px;
 
   class ReportsDir,Serve,SaveTmp io;
@@ -67,4 +56,4 @@ Notes
 - PharmCAT can be invoked via the API container or directly via the JAR; results are normalized and rendered to HTML/PDF (including an interactive HTML report).
 - Report artifacts are nested at `/data/reports/{patient_id}/{job_id}/`; display `report_id` equals `job_id`.
 - Status by genetic data uses `GET /status/{data_id}`; job WS envelope type is `job_update`.
-- FHIR export creates `Patient`, `Observation`(s), and a `DiagnosticReport` referencing the rendered reports.
+- Each report run also writes the results as a FHIR R4 bundle file beside the reports (`app/services/fhir_export_service.py`); nothing is posted to a FHIR server.

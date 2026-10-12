@@ -53,8 +53,7 @@ flowchart TD
     WorkflowDiagram --> Generate["Generate Reports<br/>(app/reports/generator.py)"]
     Generate --> ReportsDir[/Write to /data/reports/<report_id>/]
     ReportsDir --> Serve["Serve at /reports/* (StaticFiles)"]
-    Serve --> ExportDec{Export to FHIR?}
-    ExportDec -->|No| Done((Complete))
+    Serve --> Done((Complete))
   end
 
   subgraph Services["External services (docker-compose)"]
@@ -65,22 +64,12 @@ flowchart TD
     MTDNA["mtDNA Server<br/>(docker/mtdna-server-2)"]
   end
 
-  subgraph FHIR["FHIR Export (optional)"]
-    ExportDec -->|Yes| FhirRoute["POST /reports/<report_id>/export-to-fhir"]
-    FhirRoute --> FhirClient["FhirClient<br/>(app/reports/fhir_client.py)"]
-    FhirClient --> Patient[(Patient)]
-    FhirClient --> Observations[(Observation per gene)]
-    FhirClient --> DiagnosticReport[(DiagnosticReport with links)]
-    DiagnosticReport --> EHR[External FHIR server]
-  end
-
   %% Progress tracking
   UploadEndpoints -. updates .-> JobStatus["/progress/<job_id><br/>/job-status/<job_id>"]
 
   %% Styling
   classDef app fill:#e7f0ff,stroke:#5b8def,stroke-width:1px;
   classDef svc fill:#f8f1ff,stroke:#9b59b6,stroke-width:1px;
-  classDef fhir fill:#eaffea,stroke:#27ae60,stroke-width:1px;
   classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:1px;
   classDef conversion fill:#ffe6e6,stroke:#e74c3c,stroke-width:1px;
   classDef analysis fill:#e6ffe6,stroke:#27ae60,stroke-width:1px;
