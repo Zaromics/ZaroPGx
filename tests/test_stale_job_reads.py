@@ -250,10 +250,12 @@ def test_get_job_progress_sees_step_updates_from_another_session(sessions):
     assert [step.status for step in held_steps] == ["pending"] * len(held_steps)
     before = reader_service.get_job_progress(job_id)
 
-    # A container completes its step through its own request-scoped session.
+    # A container completes its step through its own request-scoped session. PharmCAT's,
+    # not the header's: the bar weighs steps by what they take, and the header's
+    # 2 seconds of a whole run round to 0%.
     worker = sessions()
     JobService(worker).update_job_step(
-        job_id, "header_analysis", JobStepUpdate(status=StepStatus.COMPLETED)
+        job_id, "pharmcat_analysis", JobStepUpdate(status=StepStatus.COMPLETED)
     )
 
     after = reader_service.get_job_progress(job_id)
@@ -261,7 +263,7 @@ def test_get_job_progress_sees_step_updates_from_another_session(sessions):
         "get_job_progress computed progress from the step statuses this session "
         "loaded the first time"
     )
-    assert [s.status for s in held_steps if s.step_name == "header_analysis"] == [
+    assert [s.status for s in held_steps if s.step_name == "pharmcat_analysis"] == [
         "completed"
     ], "the held JobStep instances were not refreshed in place"
 
@@ -418,9 +420,10 @@ def test_get_job_progress_survives_a_running_job_with_started_at(sessions):
     service = JobService(worker)
 
     service.update_job(job_id, JobUpdate(status=JobStatus.RUNNING))
-    # This is the call that used to raise, via _update_job_progress.
+    # This is the call that used to raise, via _update_job_progress. (PharmCAT's step:
+    # the header's 2 seconds round to 0%, and the estimate needs progress above 0.)
     service.update_job_step(
-        job_id, "header_analysis", JobStepUpdate(status=StepStatus.COMPLETED)
+        job_id, "pharmcat_analysis", JobStepUpdate(status=StepStatus.COMPLETED)
     )
 
     progress = service.get_job_progress(job_id)

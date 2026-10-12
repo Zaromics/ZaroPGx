@@ -1991,7 +1991,10 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
                 "step_order": step.step_order,
                 "container_name": step.container_name,
                 "output_data": step.output_data,  # Include output_data for container progress
-                "metadata": step.metadata,  # Include metadata for container progress
+                # Paces a running step that reports no progress of its own. (A
+                # "metadata": step.metadata entry here handed over SQLAlchemy's
+                # MetaData object: JobStep has no such column.)
+                "started_at": step.started_at,
             }
             for step in steps
         ]

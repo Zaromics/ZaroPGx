@@ -4,13 +4,13 @@ Two separate defects, one cause: ``liftover`` was wired into the *stage*
 vocabulary (``workflow_stages.STEP_TO_STAGE`` maps it to ``WorkflowStage.GATK``)
 but never into the progress calculator's *step* tables.
 
-**The frozen bar.** ``_active_ordered_steps`` keeps only names present in
-``STEP_BASE_BANDS``, and ``liftover`` was absent, so it never reached
-``_renormalized_ranges``. In
-``_calculate_stage_progress_with_container_mapping`` the running-step loop then
-hit ``current_step_name not in ranges`` and ``continue``d, falling through to
-``return max_achieved_progress`` -- the end of ``header_analysis``. The bar sat
-still for the entire lift, which on a real VCF is the longest early step.
+**The frozen bar.** The calculator gave a progress band only to names in its step
+table, and ``liftover`` was absent, so a running lift moved nothing: the bar sat
+at the end of ``header_analysis`` for the entire lift, which on a real VCF is the
+longest early step. The bar is now a weighted sum over the job's steps, in which a
+step the table does not name still counts and a running step that reports nothing
+is paced by its elapsed time (tests/test_progress_parallel_steps.py); the tests
+below hold the lift to that.
 
 **"Skipping GATK processing - not required".** ``_get_stage_message`` and
 ``_should_skip_stage`` keyed the GATK stage on ``needs_gatk`` alone. A GRCh37 VCF
@@ -20,12 +20,13 @@ while Picard LiftoverVcf was running inside the gatk-api container -- the very
 reason the stage is GATK.
 
 The bar assertions are written as monotonic-and-distinct rather than against
-fixed numbers: ``_renormalized_ranges`` redistributes every band whenever the
-active step set changes, so hardcoding percentages would break on any unrelated
-step being added.
+fixed numbers: every step's share depends on which steps the job has, so
+hardcoding percentages would break on any unrelated step being added.
 """
 
 from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -57,18 +58,26 @@ LIFTOVER_STEP_ORDER = [
 ]
 
 
-def _steps_with_running(order, running):
-    """Step rows with everything before `running` completed."""
+NOW = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
+EXPECTED = WorkflowProgressCalculator.STEP_EXPECTED_SECONDS
+
+
+def _steps_with_running(order, running, elapsed=None):
+    """Step rows with everything before `running` completed; `running` started
+    `elapsed` seconds before NOW (default: half of what it is expected to take)."""
     idx = order.index(running)
-    return [
-        {
+    if elapsed is None:
+        elapsed = EXPECTED.get(running, 60) / 2
+    rows = []
+    for i, name in enumerate(order):
+        row = {
             "step_name": name,
-            "status": (
-                "completed" if i < idx else "running" if i == idx else "pending"
-            ),
+            "status": "completed" if i < idx else "running" if i == idx else "pending",
         }
-        for i, name in enumerate(order)
-    ]
+        if i == idx:
+            row["started_at"] = NOW - timedelta(seconds=elapsed)
+        rows.append(row)
+    return rows
 
 
 @pytest.fixture()
@@ -117,44 +126,20 @@ def test_the_gatk_stage_is_not_skippable_when_a_lift_is_planned(calc):
 # --------------------------------------------------------------------------
 
 
-def test_liftover_is_a_planned_step(calc):
-    assert "liftover" in calc._planned_steps_from_config(LIFTOVER_CFG)
-    assert "liftover" not in calc._planned_steps_from_config(PLAIN_VCF_CFG)
-
-
-def test_liftover_gets_a_progress_band(calc):
-    """Absent from STEP_BASE_BANDS it was filtered out and never got a range."""
-    active = calc._active_ordered_steps([], LIFTOVER_CFG)
-    assert "liftover" in active
-    assert "liftover" in calc._renormalized_ranges(active)
-
-
-def test_starting_the_lift_moves_the_bar_at_all(calc):
-    """The frozen-bar regression itself, stated precisely.
-
-    The symptom was not that the number was low -- it was that entering the
-    liftover step changed *nothing*. With no band, the running-step loop skipped
-    the unknown name and fell through to `max_achieved_progress`, which is
-    header_analysis's ceiling: exactly the value already showing before the lift
-    began. So the two states below were identical and the bar sat still for the
-    whole step. Comparing against header_analysis *running* would not catch it,
-    because that value is lower and the bar does appear to advance once.
-    """
-    idle = calc.calculate_progress_from_steps(
-        [
-            {"step_name": "header_analysis", "status": "completed"},
-            *({"step_name": n, "status": "pending"} for n in LIFTOVER_STEP_ORDER[1:]),
-        ],
-        LIFTOVER_CFG,
-    ).progress_percentage
-
-    lifting = calc.calculate_progress_from_steps(
-        _steps_with_running(LIFTOVER_STEP_ORDER, "liftover"), LIFTOVER_CFG
-    ).progress_percentage
-
-    assert lifting > idle, (
-        f"the bar reads {idle}% both before and during the lift -- entering the "
-        "step moved nothing. 'liftover' is missing from STEP_BASE_BANDS again."
+def test_a_lift_under_way_moves_the_bar(calc):
+    """The frozen-bar regression itself: a lift that has been running a while must
+    read more than one just begun, which reads what the finished header left."""
+    readings = [
+        calc.calculate_progress_from_steps(
+            _steps_with_running(LIFTOVER_STEP_ORDER, "liftover", elapsed=s),
+            LIFTOVER_CFG,
+            now=NOW,
+        ).progress_percentage
+        for s in (0, 20, 40)
+    ]
+    assert readings[0] < readings[1] < readings[2], (
+        f"the bar reads {readings} across a 40-second lift: a running lift is not "
+        "moving it."
     )
 
 
@@ -162,7 +147,7 @@ def test_progress_is_strictly_increasing_across_the_whole_lifted_run(calc):
     seen = []
     for name in LIFTOVER_STEP_ORDER:
         info = calc.calculate_progress_from_steps(
-            _steps_with_running(LIFTOVER_STEP_ORDER, name), LIFTOVER_CFG
+            _steps_with_running(LIFTOVER_STEP_ORDER, name), LIFTOVER_CFG, now=NOW
         )
         seen.append((name, info.progress_percentage))
 
@@ -184,7 +169,7 @@ def test_the_unlifted_vcf_run_is_unaffected(calc):
     order = [s for s in LIFTOVER_STEP_ORDER if s != "liftover"]
     values = [
         calc.calculate_progress_from_steps(
-            _steps_with_running(order, name), PLAIN_VCF_CFG
+            _steps_with_running(order, name), PLAIN_VCF_CFG, now=NOW
         ).progress_percentage
         for name in order
     ]

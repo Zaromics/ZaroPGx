@@ -1391,8 +1391,11 @@
                         console.log(`Stage changed to: ${stage}`);
                     }
 
-                    // Update target progress
-                    this.targetProgress = Math.max(0, Math.min(100, targetProgress));
+                    // Update target progress. Never below what is on screen: the bar
+                    // only goes forward until reset() for the next run.
+                    this.targetProgress = Math.max(
+                        this.currentProgress, Math.max(0, Math.min(100, targetProgress))
+                    );
                     
                     // Update status message immediately
                     if (this.progressStatus && message) {
@@ -1403,10 +1406,15 @@
                     if (this.shouldSimulateStage(stage, targetProgress)) {
                         this.startStageSimulation(stage, targetProgress, message);
                     } else {
-                        // Start smooth animation if not already animating
-                        if (!this.isAnimating) {
-                            this.animateProgress();
+                        // Ease from where the bar is to the new target. An animation
+                        // already under way used to run on to its old target and then
+                        // snap to the new one.
+                        if (this.isAnimating) {
+                            cancelAnimationFrame(this.animationId);
+                            this.animationId = null;
+                            this.isAnimating = false;
                         }
+                        this.animateProgress();
                     }
                 }
 

@@ -8,24 +8,18 @@ Stage / step vocabulary (enum, step→stage map, display names) lives in
 ``app.services.workflow_stages`` — import ``WorkflowStage`` from there (re-exported
 here for existing call sites).
 
-The progress calculation follows the workflow stages defined in updated workflow_logic.md:
-- 1-9% - ANALYSIS: File info and Header inspection
-- 10-19% - GATK: Conversion to BAM from SAM/CRAM (skip if n/a)
-- 20-34% - HLA / OptiType: ZaroHLA step (skip if n/a)
-- 35-49% - GATK: Conversion to BAM from FASTQ (skip if n/a)
-- 50-64% - PYPGX: PyPGx main step (skip if n/a)
-- 65-74% - PYPGX: PyPGx bam2vcf conversion step (skip if n/a)
-- 75-79% - MTDNA: mtDNA-Server 2 calling (skip if n/a)
-- 80-89% - PHARMCAT: PharmCAT step
-- 90-94% - REPORT: Generating workflow diagram
-- 95-99% - REPORT: Generating PDF and HTML reports
-- 100% - COMPLETE: Processing complete!
+The bar is a weighted sum over the job's own steps, not a sequence of bands: each
+step weighs what it takes on a 30x whole genome (STEP_EXPECTED_SECONDS), counts in
+full once it has finished, and while it runs counts by the progress it reports, or
+else by its elapsed time against that expectation. The pipeline runs steps side by
+side (mtDNA and ZaroHLA beside PyPGx's), so no order can be assumed.
 
 Note: File uploading has its own progress bar; ``WorkflowStage.UPLOAD`` is soft only.
 """
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Union
 
 from app.services.workflow_stages import (
@@ -111,70 +105,56 @@ class WorkflowProgressCalculator:
         },
     }
 
-    STEP_BASE_BANDS: Dict[str, Tuple[int, int]] = {
-        "header_analysis": (1, 9),
-        # bcftools in the gatk-api container, before anything else on a BCF. Same
-        # weight as the liftover it may be followed by, and needing a band here for
-        # the same reason -- see that entry below.
-        "bcf_to_vcf": (10, 19),
-        # Two GATK GenotypeGVCFs passes in the gatk-api container, before anything else
-        # on a gVCF. Same weight as the other VCF-lane conversion; it can never
-        # co-occur with it (a job has one input type).
-        "gvcf_to_vcf": (10, 19),
-        # Picard LiftoverVcf in the gatk-api container, before anything else on a
-        # GRCh37 VCF. Without a band here _active_ordered_steps() dropped it (it
-        # filters on membership of this dict), so `ranges` had no entry, the
-        # running-step loop in _calculate_stage_progress_with_container_mapping()
-        # hit `continue`, and the bar froze at the end of header_analysis for the
-        # entire lift. Same weight as the other GATK conversion; it never co-occurs
-        # with them (VCF vs aligned input), so the relative order is free.
-        "liftover": (10, 19),
-        # Both CRAM->BAM and SAM->BAM report under this one name (main.nf's CramToBAM
-        # and SamToBAM post it; only one can run in a job, since a job has one input
-        # type). It had a band and a registry with no template to match, which is how
-        # the CRAM/SAM lanes ended up reporting a step the Job had never minted.
-        "gatk_cram_sam_to_bam": (10, 19),
-        "hla_typing": (20, 34),
-        # Unreachable while FASTQ is refused at ingest -- kept so the band, the stage
-        # map and the registry agree on the name rather than disagreeing silently.
-        "gatk_alignment": (35, 49),
-        # bam2vcf before analysis, in this order and with these numbers, because
-        # PyPGxBam2Vcf PRODUCES the VCF that PyPGxGenotypeAll consumes. Only the
-        # widths of these bands reach the bar (_base_weight returns hi - lo, and
-        # _renormalized_ranges lays the active steps out end to end), so the
-        # absolute values are documentation -- but documentation a reader compares
-        # against CANONICAL_STEP_ORDER below, and they used to disagree. Widths are
-        # unchanged from when they were the other way round: 9 for the conversion,
-        # 14 for the genotyping it feeds.
-        "pypgx_bam2vcf": (50, 59),
-        "pypgx_analysis": (60, 74),
-        # Same weight as liftover/gatk_cram_sam_to_bam above: mtDNA calling
-        # (mutserve + haplogrep3 + haplocheck, or the lighter VCF-only path)
-        # runs after PyPGx and immediately before PharmCAT, matching
-        # workflow_registry.py's step order.
-        "mtdna_analysis": (75, 84),
-        "pharmcat_analysis": (75, 89),
-        "diagram_generation": (90, 94),
-        "report_generation": (90, 100),
+    # Seconds a step takes on a 30x whole genome: its weight in the bar, and the pace
+    # of a running step that reports no progress of its own. From the step rows'
+    # started_at/completed_at, 2026-10-07: NA12878's BAM and CRAM and a 237 MB WGS
+    # VCF. (*) marks an estimate, no whole-genome run measured yet.
+    #
+    # The bar used to lay these steps end to end in a fixed order, each in a band,
+    # and show the end of the furthest finished one. The pipeline runs them side by
+    # side, so a step that finished early pulled the bar to its band's end and held
+    # it there: on the BAM, mtDNA (beside ZaroHLA) took it to 65% at 4 minutes, where
+    # it sat for the 15 minutes of bam2vcf and PyPGx; on the WGS VCF, 51% at 27
+    # seconds, held through PyPGx's 5 minutes; on the CRAM, the 33-minute conversion
+    # reports nothing and sat at its band's start.
+    STEP_EXPECTED_SECONDS: Dict[str, int] = {
+        "header_analysis": 2,
+        "bcf_to_vcf": 60,  # (*) bcftools view, a few minutes at most
+        "gvcf_to_vcf": 120,  # (*) GenotypeGVCFs at PharmCAT's positions only
+        "liftover": 60,  # (*) Picard LiftoverVcf
+        "gatk_cram_sam_to_bam": 1970,
+        "hla_typing": 245,
+        "gatk_alignment": 3600,  # (*) bwa-mem; FASTQ uploads are capped at 20 GB
+        "pypgx_bam2vcf": 590,
+        "pypgx_analysis": 320,
+        "mtdna_analysis": 240,
+        "pharmcat_analysis": 15,
+        "diagram_generation": 5,  # (*)
+        "report_generation": 15,
     }
+    # mtDNA from a variant file reads only its chrM records: 27 s on the WGS VCF.
+    VARIANT_INPUT_MTDNA_SECONDS = 30
+    _ALIGNMENT_FILE_TYPES = frozenset(
+        {"bam", "cram", "sam", "fastq", "fq", "fastq.gz", "fq.gz"}
+    )
+    # A step the table does not name still counts rather than vanishing from the bar
+    # (unlisted, liftover once froze it for a whole lift).
+    DEFAULT_STEP_SECONDS = 60
+    # A running step paced by its elapsed time stops short of its full share: an
+    # estimate must not claim the step is done, however long it overruns.
+    PACED_CEILING = 0.9
 
+    # The order the pipeline's steps come in, for anything listing them.
     CANONICAL_STEP_ORDER: List[str] = [
         "header_analysis",
-        # Before "liftover": a GRCh37 BCF is converted first and lifted second, and
-        # this list is what _renormalized_ranges() lays the bar out in.
+        # A GRCh37 BCF is converted first and lifted second.
         "bcf_to_vcf",
         "gvcf_to_vcf",
         "liftover",
         "gatk_cram_sam_to_bam",
         "hla_typing",
         "gatk_alignment",
-        # Before "pypgx_analysis": PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll
-        # reads, so it runs first on every alignment lane. This list was the other
-        # way round, and _renormalized_ranges lays the bar out in exactly this
-        # order -- so on every BAM, CRAM and SAM job the bar jumped forward to
-        # bam2vcf's range and then fell BACK ~17 points when the genotyping it had
-        # already fed started reporting. Measured on a BAM job before the swap:
-        # bam2vcf 44-54, then pypgx_analysis 27-43.
+        # PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll reads.
         "pypgx_bam2vcf",
         "pypgx_analysis",
         "mtdna_analysis",
@@ -183,112 +163,47 @@ class WorkflowProgressCalculator:
         "report_generation",
     ]
 
-    @staticmethod
-    def _base_weight(step_name: str) -> int:
-        band = WorkflowProgressCalculator.STEP_BASE_BANDS.get(step_name)
-        if not band:
-            return 0
-        lo, hi = band
-        return max(0, hi - lo)
+    def _expected_seconds(
+        self, step_name: str, workflow_config: Optional[Dict] = None
+    ) -> int:
+        if step_name == "mtdna_analysis":
+            cfg = workflow_config or {}
+            file_type = str(
+                (cfg.get("file_analysis") or {}).get("file_type")
+                or cfg.get("file_type")
+                or ""
+            ).lower()
+            if file_type and file_type not in self._ALIGNMENT_FILE_TYPES:
+                return self.VARIANT_INPUT_MTDNA_SECONDS
+        return self.STEP_EXPECTED_SECONDS.get(step_name, self.DEFAULT_STEP_SECONDS)
 
-    def _planned_steps_from_config(
-        self, workflow_config: Optional[Dict] = None
-    ) -> List[str]:
-        cfg = workflow_config or {}
-        fa = cfg.get("file_analysis") or {}
-        file_type = str(fa.get("file_type") or cfg.get("file_type") or "").lower()
-        # "the analysed file is already a variant call set", which decides whether PyPGx
-        # needs its BAM->VCF step. A gVCF belongs here for the same reason a BCF does:
-        # what PyPGx is handed is the converted VCF, not the upload.
-        is_vcf = file_type in {"vcf", "vcf.gz", "bcf", "bcf.gz", "gvcf"}
-        needs_gatk = bool(cfg.get("needs_gatk", False))
-        needs_hla = bool(cfg.get("needs_hla", False))
-        needs_pypgx = bool(cfg.get("needs_pypgx", True))
-        default_bam2vcf = bool(needs_pypgx and not is_vcf)
-        needs_bam2vcf = bool(cfg.get("needs_pypgx_bam2vcf", default_bam2vcf))
-        needs_mtdna = bool(cfg.get("needs_mtdna", False))
-
-        planned: List[str] = ["header_analysis"]
-        # The VCF-lane conversion first, then the liftover that may follow it: a GRCh37
-        # BCF runs both, in this order. needs_conversion says a conversion is planned;
-        # needs_gvcf_genotyping says which of the two it is. (A gVCF is never lifted --
-        # a GRCh37 one is refused at upload -- but the ordering is written once for
-        # both rather than special-cased.)
-        if bool(cfg.get("needs_conversion", False)):
-            if bool(cfg.get("needs_gvcf_genotyping", False)):
-                planned.append("gvcf_to_vcf")
-            else:
-                planned.append("bcf_to_vcf")
-        if bool(cfg.get("needs_liftover", False)):
-            planned.append("liftover")
-        if needs_gatk:
-            if file_type in {"cram", "sam"}:
-                planned.append("gatk_cram_sam_to_bam")
-            if file_type in {"fastq", "fq", "fastq.gz", "fq.gz"}:
-                planned.append("gatk_alignment")
-        if needs_hla:
-            planned.append("hla_typing")
-        # bam2vcf before analysis, matching CANONICAL_STEP_ORDER and the registry:
-        # PyPGxBam2Vcf produces the VCF PyPGxGenotypeAll reads. The order here is
-        # membership-only -- the single production caller (_active_ordered_steps)
-        # re-sorts this list through CANONICAL_STEP_ORDER before it reaches the bar --
-        # but the two were written in opposite orders, and one of them WAS the bar.
-        # Keeping all three lists in one order is what stops the next reader having to
-        # work out which one is load-bearing.
-        if needs_bam2vcf:
-            planned.append("pypgx_bam2vcf")
-        if needs_pypgx:
-            planned.append("pypgx_analysis")
-        if needs_mtdna:
-            planned.append("mtdna_analysis")
-        planned.extend(["pharmcat_analysis", "diagram_generation", "report_generation"])
-        return planned
-
-    def _active_ordered_steps(
-        self, steps: List[Dict], workflow_config: Optional[Dict] = None
-    ) -> List[str]:
-        from_job = []
-        for step in steps or []:
-            name = normalize_step_name(step.get("step_name") or "")
-            if name and name not in from_job and name in self.STEP_BASE_BANDS:
-                from_job.append(name)
-        planned = self._planned_steps_from_config(workflow_config)
-        union = set(from_job) | set(planned)
-        return [s for s in self.CANONICAL_STEP_ORDER if s in union]
-
-    def _renormalized_ranges(
-        self, active_steps: List[str]
-    ) -> Dict[str, Tuple[int, int]]:
-        if not active_steps:
-            return {}
-        weights = [self._base_weight(s) for s in active_steps]
-        total = sum(weights)
-        if total <= 0:
-            return {}
-        raw = [w * 100.0 / total for w in weights]
-        floors = [int(x) for x in raw]
-        remainders = sorted(
-            ((raw[i] - floors[i], i) for i in range(len(active_steps))),
-            key=lambda t: (-t[0], t[1]),
-        )
-        need = 100 - sum(floors)
-        widths = floors[:]
-        for k in range(need):
-            widths[remainders[k][1]] += 1
-        ranges: Dict[str, Tuple[int, int]] = {}
-        start = 0
-        for step, width in zip(active_steps, widths):
-            if width <= 0:
-                continue
-            end = start + width - 1
-            ranges[step] = (start, end)
-            start = end + 1
-        if ranges and active_steps:
-            last = active_steps[-1]
-            if last in ranges:
-                rmin, _ = ranges[last]
-                ranges[last] = (rmin, 100)
-        return ranges
+    def _step_fraction(self, step: Dict, expected: int, now: datetime) -> float:
+        """How much of a step is done: all of it once it has ended (a failed step
+        is over too), its own reported progress while it runs, else its elapsed
+        time against what it is expected to take, up to PACED_CEILING."""
+        # A StepStatus member until the row is read back; str() of it is
+        # "StepStatus.COMPLETED", not its value.
+        status = step.get("status")
+        status = str(getattr(status, "value", status) or "").lower()
+        if status in ("completed", "skipped", "failed"):
+            return 1.0
+        if status != "running":
+            return 0.0
+        reported = self._extract_container_progress(step, None)
+        if reported is not None:
+            return reported / 100.0
+        started = step.get("started_at")
+        if isinstance(started, str):
+            try:
+                started = datetime.fromisoformat(started.replace("Z", "+00:00"))
+            except ValueError:
+                started = None
+        if not isinstance(started, datetime):
+            return 0.0
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        elapsed = (now - started).total_seconds()
+        return max(0.0, min(self.PACED_CEILING, elapsed / max(1, expected)))
 
     # Highest progress already reported per job, so the bar can never run
     # backwards. CLASS level, not instance: both call sites
@@ -312,13 +227,16 @@ class WorkflowProgressCalculator:
         steps: List[Dict],
         workflow_config: Optional[Dict] = None,
         workflow_id: Optional[str] = None,
+        now: Optional[datetime] = None,
     ) -> ProgressInfo:
         """
         Calculate progress based on workflow steps and configuration.
         Args:
-            steps: List of workflow steps with status information
+            steps: List of workflow steps with status information (and started_at,
+                which paces a running step that reports no progress)
             workflow_config: Optional workflow configuration dict
             workflow_id: Optional workflow ID for progress caching to prevent decreases
+            now: The time to pace running steps against (default: the clock)
         Returns:
             ProgressInfo with current stage, progress, and message
         """
@@ -335,7 +253,7 @@ class WorkflowProgressCalculator:
         # Calculate progress based on the current stage and completed steps
         # This now includes container progress mapping
         calculated_progress = self._calculate_stage_progress_with_container_mapping(
-            current_stage, steps, workflow_config
+            current_stage, steps, workflow_config, now
         )
 
         # STRICT NO-DECREASE RULE: Progress can never go backward
@@ -444,59 +362,34 @@ class WorkflowProgressCalculator:
         current_stage: WorkflowStage,
         steps: List[Dict],
         workflow_config: Optional[Dict] = None,
+        now: Optional[datetime] = None,
     ) -> int:
-        """
-        Calculate progress percentage using actual container progress data.
-
-        This method uses the progress_percent data that containers send via
-        workflow_client.update_step_status() in their output_data.
-        """
-        # Special case: if workflow is completed, return 100%
+        """The share of the job's expected work done, 0-99 until the report is
+        generated, then 100. Each step counts once, whatever order the pipeline
+        runs it in (see STEP_EXPECTED_SECONDS)."""
         if current_stage == WorkflowStage.COMPLETED:
             return 100
-
-        # Check if report generation is completed - this means 100% regardless of stage
-        report_completed = any(
-            step.get("step_name") == "report_generation"
+        if any(
+            normalize_step_name(step.get("step_name") or "") == "report_generation"
             and step.get("status") == "completed"
             for step in steps
-        )
-        if report_completed:
+        ):
             return 100
 
-        active = self._active_ordered_steps(steps, workflow_config)
-        ranges = self._renormalized_ranges(active)
-        if not ranges:
+        now = now or datetime.now(timezone.utc)
+        seen = set()
+        total = done = 0.0
+        for step in steps:
+            name = normalize_step_name(step.get("step_name") or "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            expected = self._expected_seconds(name, workflow_config)
+            total += expected
+            done += expected * self._step_fraction(step, expected, now)
+        if total <= 0:
             return 0
-
-        max_achieved_progress = 0
-        for step in steps:
-            if step.get("status") == "completed":
-                step_name = normalize_step_name(step.get("step_name") or "")
-                if step_name in ranges:
-                    _, rmax = ranges[step_name]
-                    max_achieved_progress = max(max_achieved_progress, rmax)
-
-        for step in steps:
-            if step.get("status") == "running":
-                current_step_name = normalize_step_name(step.get("step_name") or "")
-                if current_step_name not in ranges:
-                    continue
-
-                rmin, rmax = ranges[current_step_name]
-                container_progress = self._extract_container_progress(
-                    step, current_stage
-                )
-
-                if container_progress is not None:
-                    width = rmax - rmin + 1
-                    mapped = rmin + int((container_progress / 100.0) * width)
-                    if mapped > rmax:
-                        mapped = rmax
-                    return max(max_achieved_progress, mapped)
-                return max(max_achieved_progress, rmin)
-
-        return max_achieved_progress
+        return min(99, int(done * 100 / total))
 
     def _extract_container_progress(
         self, step: Dict, current_stage: WorkflowStage
