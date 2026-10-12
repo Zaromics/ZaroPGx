@@ -180,8 +180,8 @@ def _normalize_version_text(version_text: str) -> str:
     return match.group(0) if match else text
 
 
-def _sanitize_graphviz_svg(svg_str: str) -> str:
-    """Make Graphviz SVG responsive-friendly for HTML/PDF rendering.
+def _responsive_svg(svg_str: str) -> str:
+    """Make Kroki's SVG responsive-friendly for HTML/PDF rendering.
 
     - Remove absolute width/height attributes
     - Ensure preserveAspectRatio is set to keep centering
@@ -306,9 +306,7 @@ def job_workflow_diagram(
     try:
         svg_bytes = render_with_kroki(source, fmt="svg")
         diagram["svg_bytes"] = svg_bytes
-        diagram["svg"] = _sanitize_graphviz_svg(
-            svg_bytes.decode("utf-8", errors="ignore")
-        )
+        diagram["svg"] = _responsive_svg(svg_bytes.decode("utf-8", errors="ignore"))
     except Exception as e:
         logger.warning(f"Kroki could not draw the workflow diagram as SVG: {e}")
     try:
@@ -2169,7 +2167,6 @@ def create_interactive_html_report(
         # the report needs neither the app nor a network to show it.
         diagram = workflow_diagram or job_workflow_diagram([], None)
         workflow_png_url = ""
-        workflow_svg_inline = ""
         workflow_kroki_svg_inline = ""
         workflow_png_data_uri = diagram["png_data_uri"]
         workflow_html_fallback = (
@@ -2238,7 +2235,6 @@ def create_interactive_html_report(
             "disclaimer": get_disclaimer(),
             "workflow_png_url": workflow_png_url,
             "workflow_png_data_uri": workflow_png_data_uri,
-            "workflow_svg": workflow_svg_inline,
             "workflow_html_fallback": workflow_html_fallback,
             "workflow_kroki_svg": workflow_kroki_svg_inline,  # Added for interactive report
             "platform_info": build_platform_info(tools_run),
@@ -3643,7 +3639,6 @@ def generate_report(
 
             # The run's diagram (job_workflow_diagram above): its PNG, or the same
             # steps as text when Kroki could not draw it.
-            workflow_svg_in_html = ""
             workflow_kroki_svg_in_html = ""
             workflow_png_data_uri_html = workflow_diagram["png_data_uri"]
             workflow_html_fallback_html = (
@@ -3652,7 +3647,6 @@ def generate_report(
 
             # Log what we have for the template
             logger.info(f"Workflow content prepared for HTML template:")
-            logger.info(f"  Graphviz SVG: {len(workflow_svg_in_html)} chars")
             logger.info(f"  Kroki Mermaid SVG: {len(workflow_kroki_svg_in_html)} chars")
             logger.info(f"  PNG data URI: {len(workflow_png_data_uri_html)} chars")
             logger.info(f"  HTML fallback: {len(workflow_html_fallback_html)} chars")
@@ -3759,7 +3753,6 @@ def generate_report(
                 logger.info("Rendering HTML template...")
                 html_content = template.render(
                     **template_data,
-                    workflow_svg=workflow_svg_in_html,
                     workflow_kroki_svg=workflow_kroki_svg_in_html,
                     workflow_png_data_uri=workflow_png_data_uri_html,
                     workflow_html_fallback=workflow_html_fallback_html,
@@ -3772,7 +3765,7 @@ def generate_report(
                 # Try to provide more context about what might be missing
                 logger.error(f"Template data keys: {list(template_data.keys())}")
                 logger.error(
-                    f"Workflow content lengths - Graphviz SVG: {len(workflow_svg_in_html)}, Kroki SVG: {len(workflow_kroki_svg_in_html)}, PNG: {len(workflow_png_data_uri_html)}, HTML: {len(workflow_html_fallback_html)}"
+                    f"Workflow content lengths - Kroki SVG: {len(workflow_kroki_svg_in_html)}, PNG: {len(workflow_png_data_uri_html)}, HTML: {len(workflow_html_fallback_html)}"
                 )
                 raise
 
@@ -3831,7 +3824,6 @@ def generate_report(
             # one, the same steps as text.
             pdf_png_data_uri = workflow_diagram["png_data_uri"]
             workflow_kroki_svg_for_pdf = ""
-            workflow_graphviz_svg_for_pdf = ""
             # For the ReportLab lane (pdf_generators), which renders from template_data.
             template_data["job_workflow_diagram"] = {
                 "png_data_uri": workflow_diagram["png_data_uri"],
@@ -3845,7 +3837,6 @@ def generate_report(
                 **template_data,
                 workflow_png_data_uri=pdf_png_data_uri,
                 workflow_kroki_svg=workflow_kroki_svg_for_pdf,
-                workflow_svg=workflow_graphviz_svg_for_pdf,
                 workflow_png_file_url="",
                 workflow_png_style=workflow_diagram["pdf_style"],
                 workflow_html_fallback=(

@@ -1464,9 +1464,6 @@
             {% elif workflow_kroki_svg %}
               <!-- Kroki Mermaid SVG (good for screen, may have issues in PDF) -->
               {{ workflow_kroki_svg | safe }}
-            {% elif workflow_svg %}
-              <!-- Graphviz SVG (fallback) -->
-              {{ workflow_svg | safe }}
             {% elif workflow_html_fallback %}
               <!-- HTML fallback -->
               {{ workflow_html_fallback | safe }}
