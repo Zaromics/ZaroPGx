@@ -83,3 +83,27 @@ def test_the_file_header_is_an_appendix_closed_by_the_licence(monkeypatch, tmp_p
     assert _page_of(pages, "ZaroPGx is distributed under the") == _page_of(
         pages, "SN:chr22"
     )
+
+
+def test_the_licence_does_not_open_a_page_alone(monkeypatch, tmp_path):
+    """The rule reaches the PDF render: the footer avoids a break before it."""
+    for key in list(generator_module.REPORT_CONFIG):
+        if key.startswith(("write_", "show_")):
+            monkeypatch.setitem(
+                generator_module.REPORT_CONFIG, key, key == "write_html"
+            )
+    result = generator_module.generate_report(
+        {"data": {"genes": [], "drugRecommendations": []}},
+        str(tmp_path),
+        {"id": "p1"},
+    )
+    html = (tmp_path / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
+    document = weasyprint.HTML(string=html, base_url=str(tmp_path)).render()
+    footers = [
+        box
+        for page in document.pages
+        for box in page._page_box.descendants()
+        if getattr(box, "element", None) is not None
+        and "footer" in (box.element.get("class") or "").split()
+    ]
+    assert footers and all(box.style["break_before"] == "avoid" for box in footers)
