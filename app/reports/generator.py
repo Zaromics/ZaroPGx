@@ -292,7 +292,69 @@ def report_branding_context() -> Dict[str, Any]:
     }
 
 
-def build_platform_info() -> List[Dict[str, str]]:
+# The tools a job runs only for some inputs, by the job step that runs them. The
+# report names one of these only if its step completed: a VCF is never aligned or
+# HLA-typed, so its report has no business thanking GATK or citing OptiType.
+# PharmCAT and the guideline sources serve every job. CRAM/SAM to BAM (samtools)
+# and BCF to VCF (bcftools) run tools the report does not cite.
+_STEP_TOOLS: Dict[str, str] = {
+    "gatk_alignment": "GATK",  # FastqToSam, BwaSpark, MarkDuplicatesSpark
+    "gvcf_to_vcf": "GATK",  # GenotypeGVCFs
+    "liftover": "GATK",  # Picard LiftoverVcf, bundled in GATK
+    "pypgx_bam2vcf": "PyPGx",
+    "pypgx_analysis": "PyPGx",
+    "hla_typing": "OptiType",
+    "mtdna_analysis": "mtDNA-Server 2",
+}
+_CONDITIONAL_TOOLS = frozenset(_STEP_TOOLS.values())
+# Citation names (build_citations) of those tools.
+_CITATION_TOOLS = {
+    "PyPGx": "PyPGx",
+    "GATK": "GATK",
+    "mtDNA-server-2": "mtDNA-Server 2",
+    "ZaroHLA": "OptiType",
+}
+
+
+def tools_run_for_job(db_session: Any, job_id: Any) -> Optional[frozenset[str]]:
+    """The tools of ``_STEP_TOOLS`` this job ran: those of its completed steps.
+
+    The step rows are what happened, not what was planned. ``None`` when they
+    cannot be read (no job or session, a job with no step rows, a failed query):
+    the report then names every tool, as it did before it could tell.
+    """
+    if not (db_session and job_id):
+        return None
+    try:
+        from app.api.db import JobStep
+        from app.api.models import StepStatus
+
+        steps = (
+            db_session.query(JobStep.step_name, JobStep.status)
+            .filter(JobStep.job_id == uuid.UUID(str(job_id)))
+            .all()
+        )
+    except Exception as exc:
+        logger.warning(f"Could not read the job's steps for its citations: {exc}")
+        return None
+    if not steps:
+        return None
+    return frozenset(
+        _STEP_TOOLS[name]
+        for name, status in steps
+        if status == StepStatus.COMPLETED and name in _STEP_TOOLS
+    )
+
+
+def tool_was_run(tool: str, tools_run: Optional[frozenset[str]]) -> bool:
+    """Whether the report should name ``tool``: always for one every job runs, or
+    when what ran is unknown; otherwise only if it ran."""
+    return tools_run is None or tool not in _CONDITIONAL_TOOLS or tool in tools_run
+
+
+def build_platform_info(
+    tools_run: Optional[frozenset[str]] = None,
+) -> List[Dict[str, str]]:
     """The analytic components behind this report, with their versions."""
     items = [{"name": "ZaroPGx", "version": get_zaropgx_version()}]
 
@@ -300,7 +362,7 @@ def build_platform_info() -> List[Dict[str, str]]:
     for version_info in get_all_versions():
         key = (version_info.get("name") or "").strip().lower()
         display = _REPORT_COMPONENTS.get(key)
-        if not display or display in resolved:
+        if not display or display in resolved or not tool_was_run(display, tools_run):
             continue
         raw = (version_info.get("version") or "").strip()
         # A floating tag is not a version. Saying so beats printing "latest",
@@ -335,7 +397,9 @@ def _versions_index() -> Dict[str, str]:
 
 
 # TODO: integrate zotero bridge
-def build_citations() -> List[Dict[str, str]]:
+def build_citations(
+    tools_run: Optional[frozenset[str]] = None,
+) -> List[Dict[str, str]]:
     """Build academically styled citations with versions (when available)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     vmap = _versions_index()
@@ -434,7 +498,11 @@ def build_citations() -> List[Dict[str, str]]:
             "repo": "https://github.com/ZaroHLA",
         }
     )
-    return citations
+    return [
+        citation
+        for citation in citations
+        if tool_was_run(_CITATION_TOOLS.get(citation["name"], ""), tools_run)
+    ]
 
 
 # Report display configuration
@@ -1663,6 +1731,7 @@ def create_interactive_html_report(
     recommendations: List[Dict[str, Any]],
     output_path: str,
     workflow: Dict[str, Any] | None = None,
+    tools_run: Optional[frozenset[str]] = None,
     sample_identifier: str | None = None,
     workflow_warnings: List[str] | None = None,
     pharmcat_assume_ref_methodology: str | None = None,
@@ -1844,8 +1913,9 @@ def create_interactive_html_report(
             "workflow_svg": workflow_svg_inline,
             "workflow_html_fallback": workflow_html_fallback,
             "workflow_kroki_svg": workflow_kroki_svg_inline,  # Added for interactive report
-            "platform_info": build_platform_info(),
-            "citations": build_citations(),
+            "platform_info": build_platform_info(tools_run),
+            "citations": build_citations(tools_run),
+            "tools_run": tools_run,
             **report_branding_context(),
             "header_text": header_text,
             # Add workflow warnings/alerts for report display
@@ -2807,8 +2877,10 @@ def generate_report(
         logger.warning(f"Executive Summary TSV parse skipped: {_e_exec}")
 
     # Prepare the template data
-    # Build platform info once and include in both outputs
-    platform = build_platform_info()
+    # Build platform info once and include in both outputs, naming only the
+    # tools this job ran.
+    tools_run = tools_run_for_job(db_session, job_id)
+    platform = build_platform_info(tools_run)
     logger.info(f"Built platform info with {len(platform)} items")
 
     # 159: run-derived provenance. `output_dir` IS the report directory -- both
@@ -2851,7 +2923,8 @@ def generate_report(
         ),  # Keep original for reference
         "version": get_zaropgx_version(),
         "platform_info": platform,
-        "citations": build_citations(),
+        "citations": build_citations(tools_run),
+        "tools_run": tools_run,
         **report_branding_context(),
         "disclaimer": get_disclaimer(),  # Add missing disclaimer variable
         # Add missing fields that PDF generators expect
@@ -3397,7 +3470,8 @@ def generate_report(
                 "mtdna": mtdna_report_context(report_dir, data.get("genes", [])),
                 "disclaimer": get_disclaimer(),
                 "platform_info": platform,
-                "citations": build_citations(),
+                "citations": build_citations(tools_run),
+                "tools_run": tools_run,
                 **report_branding_context(),
                 "workflow": per_sample_workflow,
                 "workflow_diagrams": True,
@@ -3564,6 +3638,7 @@ def generate_report(
                 recommendations=template_recommendations,
                 output_path=interactive_html_path,
                 workflow=per_sample_workflow,
+                tools_run=tools_run,
                 workflow_warnings=workflow_warnings,
                 pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
                 liftover_provenance=liftover_provenance,
