@@ -937,43 +937,17 @@ async def api_status():
         except Exception as e:
             gatk_status = {"available": False, "message": f"Error connecting: {str(e)}"}
 
-        # Try to connect directly to the test-job endpoint
-        test_job_status = {"available": False, "message": "Not checked"}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{gatk_api_url}/test-job", timeout=5
-                ) as response:
-                    if response.status in (200, 202):
-                        test_data = await response.json()
-                        test_job_status = {
-                            "available": True,
-                            "message": "Test endpoint working",
-                            "job_id": test_data.get("job_id"),
-                        }
-                    else:
-                        test_job_status = {
-                            "available": False,
-                            "message": f"Test endpoint failed (Status: {response.status})",
-                            "response": await response.text(),
-                        }
-        except Exception as e:
-            test_job_status = {
-                "available": False,
-                "message": f"Error connecting to test-job: {str(e)}",
-            }
-
         return {
             "timestamp": time.time(),
             "gatk_api": gatk_status,
-            "test_job_endpoint": test_job_status,
             "routes": routes,
             "app_name": "ZaroPGx API",
-            "version": "0.3.2",
+            "version": app.version,
         }
     except Exception as e:
+        # The traceback goes to the log, not to the caller.
         logger.exception(f"Error in api-status endpoint: {str(e)}")
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.get("/services-config", response_class=JSONResponse)
