@@ -702,6 +702,22 @@
                 page-break-after: always !important; 
                 break-after: page !important; 
             }
+            /* ...and fits on it. Its last two lines used to spill onto an
+               otherwise empty page 2 (the break above sends Alerts to page 3).
+               Fine print and tighter spacing above leave room for a liftover
+               line too; if page 1 still cannot hold it (a long research-flag
+               paragraph), it moves whole rather than splitting the box. */
+            .header { margin-bottom: 16px; }
+            .report-info { margin-bottom: 16px; padding: 10px 15px; }
+            .report-info p { margin: 4px 0; }
+            .disclaimer {
+                margin-top: 14px;
+                padding: 8px 12px;
+                font-size: 0.75em;
+                line-height: 1.35;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
             
             /* PDF-specific body padding reduction */
             body {
