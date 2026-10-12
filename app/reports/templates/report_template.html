@@ -1139,6 +1139,9 @@
         {% if called|selectattr('phenotype', 'equalto', 'Likely Wild Type')|list %}
         <p class="header-note"><strong>Likely Wild Type</strong>: a reference call, with no phenotype given, from data genotyped at every position PharmCAT checks (reads, or a gVCF's reference blocks), so the absence of a variant is itself evidence.</p>
         {% endif %}
+        {% for r in called if r.reference_name %}
+        <p class="header-note"><strong>{{ r.gene }} {{ r.diplotype }}</strong>: PharmCAT's label for this call, a diplotype of its reference allele, which it names &ldquo;{{ r.reference_name }}&rdquo;.</p>
+        {% endfor %}
         {{ unresolved.summary_legend(called) }}
         {{ unresolved.summary_uncalled(rows|rejectattr('called')|list, missing_positions_not_assumed) }}
         {% if summary_beyond %}
