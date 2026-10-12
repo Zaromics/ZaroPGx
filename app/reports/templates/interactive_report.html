@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interactive Pharmacogenomic Report - {{ report_id }}</title>
-    <!-- Include Chart.js for visualizations -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Include D3.js for advanced visualizations -->
-    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Chart.js 4.5.1 and D3 7.9.0, inlined so the report works offline
+         (app/static/vendor; generator.inline_script) -->
+    <script>{{ inline_script("chart.js") | safe }}</script>
+    <script>{{ inline_script("d3") | safe }}</script>
     <style>
         :root {
             --primary-color: #2c3e50;
@@ -1401,7 +1401,7 @@
         }
     </script>
     
-    <!-- External report visualization scripts -->
-    <script src="/static/js/pgx-report.js"></script>
+    <!-- Report visualization scripts (app/static/js/pgx-report.js), inlined -->
+    <script>{{ inline_script("pgx-report.js") | safe }}</script>
 </body>
 </html> 
