@@ -51,38 +51,71 @@ class FitSection:
     heading: Optional[str] = None
 
 
-_EXEC_SUMMARY_TIGHT = """
-#exec-summary h2 { margin-bottom: 12px !important; }
-#exec-summary p { margin: 6px 0 !important; }
-#exec-summary .exec-summary-table { margin-top: 4px !important; }
-#exec-summary .exec-summary-table td { padding: 3px 6px !important; }
-#exec-summary .header-note { font-size: 0.85em !important; }
+def _summary_step(
+    *,
+    h2_margin: float,
+    p_margin: float,
+    table_margin: float,
+    cell_y: float,
+    cell_x: float = 6,
+    note: float = 0.85,
+    font: Optional[float] = None,
+) -> str:
+    """One Executive Summary step: its spacing, and with ``font`` its type, the
+    padding of its pills and the size of its score gauges scaled to it."""
+    css = f"""
+#exec-summary h2 {{ margin-bottom: {h2_margin:g}px !important; }}
+#exec-summary p {{ margin: {p_margin:g}px 0 !important; }}
+#exec-summary .exec-summary-table {{ margin-top: {table_margin:g}px !important; }}
+#exec-summary .exec-summary-table td {{ padding: {cell_y:g}px {cell_x:g}px !important; }}
+#exec-summary .header-note {{ font-size: {note:g}em !important; }}
 """
+    if font is None:
+        return css
+    # 0 at the template's 16px, 1 at the smallest step, 12.5px.
+    t = (16 - font) / 3.5
+    return css + f"""
+#exec-summary h2 {{ font-size: {1.5 - 0.2 * t:.3g}em !important; }}
+#exec-summary > p, #exec-summary .summary-highlights > p {{ font-size: {1 - 0.18 * t:.3g}em !important; }}
+#exec-summary .exec-summary-table {{ font-size: {font:g}px !important; }}
+#exec-summary .exec-summary-diplotype.long-diplotype {{ font-size: {14 - 3 * t:.3g}px !important; }}
+#exec-summary .gene-phenotype {{ padding: {3 - 3 * t:.2g}px {10 - 3 * t:.3g}px !important; }}
+#exec-summary .as-badge svg {{ width: {16 - 4 * t:.3g}px !important; height: {16 - 4 * t:.3g}px !important; }}
+"""
+
+
+def _exec_summary_steps() -> Tuple[str, ...]:
+    """Each tighter than the last: two of spacing, then the type half a pixel at a
+    time from 15.5px to 12.5px, the spacing closing with it.
+
+    Fine, because the table is one page and should fill it. With three coarse
+    steps, a summary one step over its page dropped to type that left a fifth of
+    the page blank under it.
+    """
+    steps = [
+        _summary_step(h2_margin=16, p_margin=10, table_margin=6, cell_y=4.5, note=0.9),
+        _summary_step(h2_margin=12, p_margin=6, table_margin=4, cell_y=3),
+    ]
+    for font in (15.5, 15, 14.5, 14, 13.5, 13, 12.5):
+        t = (16 - font) / 3.5
+        steps.append(
+            _summary_step(
+                h2_margin=round(12 - 4 * t, 1),
+                p_margin=round(6 - 2 * t, 1),
+                table_margin=4,
+                cell_y=round(3 - 2 * t, 2),
+                cell_x=round(6 - 2 * t, 2),
+                note=round(0.85 - 0.1 * t, 3),
+                font=font,
+            )
+        )
+    return tuple(steps)
+
 
 EXEC_SUMMARY = FitSection(
     anchor="exec-summary",
     label="Executive Summary",
-    steps=(
-        _EXEC_SUMMARY_TIGHT,
-        _EXEC_SUMMARY_TIGHT + """
-#exec-summary > p, #exec-summary .summary-highlights > p { font-size: 0.9em !important; }
-#exec-summary .exec-summary-table { font-size: 14px !important; }
-#exec-summary .exec-summary-table td { padding: 2px 5px !important; }
-#exec-summary .exec-summary-diplotype.long-diplotype { font-size: 12px !important; }
-#exec-summary .gene-phenotype { padding: 1px 8px !important; }
-#exec-summary .header-note { font-size: 0.8em !important; margin: 0 0 4px 0 !important; }
-""",
-        _EXEC_SUMMARY_TIGHT + """
-#exec-summary h2 { font-size: 1.3em !important; margin-bottom: 8px !important; }
-#exec-summary > p, #exec-summary .summary-highlights > p { font-size: 0.82em !important; margin: 4px 0 !important; }
-#exec-summary .exec-summary-table { font-size: 12.5px !important; line-height: 1.2 !important; }
-#exec-summary .exec-summary-table td { padding: 1px 4px !important; }
-#exec-summary .exec-summary-diplotype.long-diplotype { font-size: 11px !important; }
-#exec-summary .gene-phenotype { padding: 0 7px !important; }
-#exec-summary .as-badge svg { width: 12px !important; height: 12px !important; }
-#exec-summary .header-note { font-size: 0.75em !important; margin: 0 0 3px 0 !important; }
-""",
-    ),
+    steps=_exec_summary_steps(),
 )
 
 # The sections below are found by their <h2>'s text, which mark_headings gives
@@ -251,8 +284,10 @@ def fit_sections(
 
     ``render(css)`` lays the document out with ``css`` added and returns the
     WeasyPrint Document. Returns the Document and, per section, the step used
-    (0: none). A one-page section still over its page after the last step keeps
-    the last step, and says so in the log.
+    (0: none): the loosest step that fits, found by halving the range of steps
+    left: nine steps take at most five layouts after the first. Sections are found
+    together, one layout per round. A one-page section still over its page at the
+    last step keeps the last step, and says so in the log.
     """
 
     def css(levels):
@@ -262,32 +297,56 @@ def fit_sections(
             if levels[section.anchor]
         )
 
+    def fits(document, section):
+        return len(section_pages(document, section.anchor)) <= targets[section.anchor]
+
     levels = {section.anchor: 0 for section in sections}
     document = render("")
     targets = {section.anchor: _target(document, section) for section in sections}
-    while True:
-        over = [
-            section
-            for section in sections
-            if len(section_pages(document, section.anchor)) > targets[section.anchor]
-            and levels[section.anchor] < len(section.steps)
-        ]
-        if not over:
-            break
-        for section in over:
-            levels[section.anchor] += 1
-        document = render(css(levels))
-    # A section that only needed to end sooner, and could not, prints as designed.
-    missed = [
-        section
+    # Per section that runs over: the tightest step known not to fit (lo) and the
+    # loosest one not known to fail (hi), which is a fit once tried.
+    search = {
+        section.anchor: [0, len(section.steps), False]
         for section in sections
-        if section.max_tail is not None
-        and levels[section.anchor]
-        and len(section_pages(document, section.anchor)) > targets[section.anchor]
-    ]
-    if missed:
-        for section in missed:
-            levels[section.anchor] = 0
+        if section.steps and not fits(document, section)
+    }
+    while True:
+        trying = {}
+        for anchor, (lo, hi, hi_fits) in search.items():
+            if hi - lo > 1:
+                trying[anchor] = (lo + hi) // 2
+            elif not hi_fits and lo < hi:
+                trying[anchor] = hi
+        if not trying:
+            break
+        for section in sections:
+            if section.anchor in search:
+                lo, hi, hi_fits = search[section.anchor]
+                levels[section.anchor] = trying.get(section.anchor, hi)
+        document = render(css(levels))
+        for section in sections:
+            step = trying.get(section.anchor)
+            if step is None:
+                continue
+            if fits(document, section):
+                search[section.anchor][1:] = [step, True]
+            else:
+                search[section.anchor][0] = step
+    # The loosest step that fits; none fitting, the tightest for a one-page
+    # section, and the design itself for one that only needed to end sooner.
+    chosen = dict(levels)
+    for section in sections:
+        if section.anchor not in search:
+            continue
+        lo, hi, hi_fits = search[section.anchor]
+        if hi_fits:
+            chosen[section.anchor] = hi
+        else:
+            chosen[section.anchor] = (
+                len(section.steps) if section.max_tail is None else 0
+            )
+    if chosen != levels:
+        levels = chosen
         document = render(css(levels))
     for section in sections:
         pages = len(section_pages(document, section.anchor))
