@@ -531,7 +531,6 @@
         .file-header {
             font-family: 'Courier New', monospace;
             font-size: 12px;
-            white-space: pre;
             background-color: transparent;
             border: none;
             padding: 0;
@@ -540,6 +539,17 @@
             tab-size: 4;
             overflow: visible;
             word-break: normal;
+        }
+        /* One block per header line. Lines wrap at the page edge, continuation
+           indented under the line's start: printed with white-space: pre, a
+           BAM's @SQ, @RG and @PG lines ran off the page (52 of NA12878's 53
+           lines), losing checksums, read groups and command lines. */
+        .file-header-line {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            padding-left: 4ch;
+            text-indent: -4ch;
+            min-height: 1.35em;
         }
         .header-note {
             font-size: 0.95em;
@@ -730,7 +740,6 @@
             }
             /* Genomic header: new page, normal document flow */
             .header-section { page-break-before: always !important; }
-            .header-section .file-header { white-space: pre !important; }
             /* Ensure Executive Summary ends with a page break so Genetic Results starts on next page */
             #exec-summary { 
                 page-break-after: always !important; 
@@ -903,10 +912,6 @@
             opacity: 1 !important;
             position: relative !important;
             z-index: 1 !important;
-            /* For PDFs ensure header preserves exact spacing; WeasyPrint prints with this */
-            .file-header {
-                white-space: pre;
-            }
         }
         .workflow-figure svg tspan {
             font-family: Arial, sans-serif !important;
@@ -1469,7 +1474,7 @@
     <div class="header-section">
         <h3>Genomic Datafile Header</h3>
         <p class="header-note">The sample genomic datafile's header is reproduced below. Please note that the information below is derived from the original submission, before any preprocessing (conversion, re-alignment, etc.) took place.</p>
-        <pre class="file-header">{{ header_text|e }}</pre>
+        <div class="file-header">{% for line in header_text.splitlines() %}<div class="file-header-line">{{ line|e }}</div>{% endfor %}</div>
     </div>
     {% endif %}
 
