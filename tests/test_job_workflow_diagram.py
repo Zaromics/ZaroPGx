@@ -8,6 +8,9 @@ templates fell back to a fixed "Upload -> Detect -> VCF -> PharmCAT -> Reports".
 
 from __future__ import annotations
 
+import re
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 import app.reports.generator as generator_module
@@ -16,9 +19,13 @@ from app.api.models import JobCreate, StepStatus
 from app.services.job_service import JobService
 from app.visualizations.job_workflow import (
     INPUT,
+    STAGE_OF,
+    RunFacts,
     build_job_graph,
+    format_duration,
     input_format,
     load_job_file_type,
+    load_job_step_records,
     load_job_steps,
     to_html,
     to_mermaid,
@@ -201,10 +208,18 @@ def cram_job(session_factory):
     db_job.job_metadata = {"workflow": {"file_type": "cram"}}
     # create_job adds the recipe's default steps; this job has the CRAM lane's.
     session.query(JobStep).filter(JobStep.job_id == job.id).delete()
+    started = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
     for order, (name, status) in enumerate(CRAM_STEPS, start=1):
-        session.add(
-            JobStep(job_id=job.id, step_name=name, step_order=order, status=status)
-        )
+        step = JobStep(job_id=job.id, step_name=name, step_order=order, status=status)
+        if name == "pypgx_analysis":
+            step.started_at = started
+            step.completed_at = started + timedelta(seconds=309.4)
+            step.output_data = {"successful_genes": 66, "total_genes": 66}
+        if name == "hla_typing":
+            # Timestamps only: the seconds come from them.
+            step.started_at = started
+            step.completed_at = started + timedelta(seconds=410)
+        session.add(step)
     session.commit()
     yield session, str(job.id)
     session.rollback()
@@ -217,6 +232,14 @@ def test_the_steps_and_file_type_come_from_the_job(cram_job):
     assert load_job_file_type(session, job_id) == "cram"
     assert load_job_steps(None, job_id) == []
     assert load_job_steps(session, "not-a-uuid") == []
+    records = {r["name"]: r for r in load_job_step_records(session, job_id)}
+    assert list(records) == [name for name, _ in CRAM_STEPS]
+    assert records["hla_typing"]["seconds"] == 410
+    assert records["pypgx_analysis"]["output"] == {
+        "successful_genes": 66,
+        "total_genes": 66,
+    }
+    assert records["mtdna_analysis"]["seconds"] is None
 
 
 def test_the_reports_draw_this_job(cram_job, tmp_path, monkeypatch):
@@ -249,6 +272,9 @@ def test_the_reports_draw_this_job(cram_job, tmp_path, monkeypatch):
     )
 
     assert drawn and "Convert CRAM to BAM" in drawn[0]
+    # What the run recorded: how long a step ran, what it produced.
+    assert "6 min 50 s" in drawn[0]
+    assert "66 of 66 genes genotyped" in drawn[0]
     assert (tmp_path / f"{job_id}_workflow.png").read_bytes() == b"PNG"
     # Every report shows the PNG (Kroki's SVG lost its node labels in WeasyPrint
     # and was restyled by the HTML reports' CSS).
@@ -274,4 +300,122 @@ def test_the_diagram_is_drawn_large_with_the_tool_beneath_the_step():
     source = to_mermaid(build_job_graph(CRAM_STEPS, "cram"))
     assert source.startswith("%%{init:")
     assert "'fontSize': '30px'" in source and "'htmlLabels': false" in source
-    assert 'hla_typing["`**HLA class I typing**\n_OptiType_`"]:::step' in source
+    assert 'hla_typing["`**HLA class I typing**\n_OptiType_`"]:::calling' in source
+
+
+VCF_STEPS = [
+    ("header_analysis", C),
+    ("pypgx_analysis", C),
+    ("mtdna_analysis", C),
+    ("pharmcat_analysis", C),
+    ("report_generation", "running"),
+]
+
+
+def _node_line(source, node_id):
+    """A node's whole definition: its label runs over several lines."""
+    match = re.search(
+        rf"^  {node_id}(?:\[|\(\[)\"`.*?`\"(?:\]|\]\)):::\w+$",
+        source,
+        flags=re.M | re.S,
+    )
+    assert match, node_id
+    return match.group(0)
+
+
+def test_each_step_shows_its_tools_version_its_time_and_what_it_produced():
+    facts = RunFacts(
+        versions={"OptiType": "1.5.0", "PyPGx": "0.27.0"},
+        seconds={"hla_typing": 410, "pypgx_analysis": 309.4},
+        details={"pypgx_analysis": ["66 of 66 genes genotyped"]},
+        input_detail="GRCh38",
+    )
+    source = to_mermaid(build_job_graph(CRAM_STEPS, "cram", facts))
+    assert "_OptiType 1.5.0 · 6 min 50 s_" in _node_line(source, "hla_typing")
+    assert "_PyPGx 0.27.0 · 5 min 9 s_\n66 of 66 genes genotyped`" in _node_line(
+        source, "pypgx_analysis"
+    )
+    # A tool whose version the run did not record is named without one.
+    assert "_PyPGx 0.27.0, bcftools_" in _node_line(source, "pypgx_bam2vcf")
+    assert "_mtDNA-Server 2_" in _node_line(source, "mtdna_analysis")
+    assert "**Uploaded CRAM file**\nGRCh38`" in _node_line(source, INPUT)
+
+
+def test_a_step_that_produced_nothing_is_grey_and_its_calls_dashed():
+    """mtDNA on a VCF without chrM calls ran and produced no MT-RNR1 call and no
+    haplogroup. The diagram drew both flowing on regardless."""
+    facts = RunFacts(
+        produced={"mt_rnr1": False, "haplogroup": False},
+        details={"mtdna_analysis": ["no calls on chrM: no haplogroup, no MT-RNR1"]},
+    )
+    graph = build_job_graph(VCF_STEPS, "vcf", facts)
+    mtdna = graph.node("mtdna_analysis")
+    assert mtdna.empty and not mtdna.off_path
+    assert ("header_analysis", "mtdna_analysis") in _edges(graph)
+    assert not any(s == "mtdna_analysis" for s, _ in _edges(graph))
+    assert ("mtdna_analysis", "pharmcat_analysis", "MT-RNR1") in graph.empty_edges
+    assert ("mtdna_analysis", "report_generation", "haplogroup") in graph.empty_edges
+    source = to_mermaid(graph)
+    assert _node_line(source, "mtdna_analysis").endswith(":::off")
+    assert "mtdna_analysis -.->|MT-RNR1: none| pharmcat_analysis" in source
+    assert "mtdna_analysis -.->|haplogroup: none| report_generation" in source
+    assert 'key_off["Produced nothing"]:::off' in source
+
+
+def test_only_what_is_missing_is_dashed():
+    graph = build_job_graph(
+        VCF_STEPS, "vcf", RunFacts(produced={"mt_rnr1": True, "haplogroup": False})
+    )
+    assert not graph.node("mtdna_analysis").empty
+    assert _labelled(graph)[("mtdna_analysis", "pharmcat_analysis")] == "MT-RNR1"
+    assert graph.empty_edges == [("mtdna_analysis", "report_generation", "haplogroup")]
+
+
+def test_hla_c_goes_to_the_reports_and_no_hla_call_is_dashed():
+    graph = build_job_graph(CRAM_STEPS, "cram")
+    assert _labelled(graph)[("hla_typing", "report_generation")] == "HLA-C"
+    assert _labelled(graph)[("hla_typing", "pharmcat_analysis")] == "HLA-A, HLA-B"
+    untyped = build_job_graph(
+        CRAM_STEPS, "cram", RunFacts(produced={"hla": False, "hla_c": False})
+    )
+    assert untyped.node("hla_typing").empty
+    assert ("hla_typing", "pharmcat_analysis", "HLA-A, HLA-B") in untyped.empty_edges
+    # HLA typing still hands the reads on: read genotyping waits for it.
+    assert ("hla_typing", "pypgx_bam2vcf") in _edges(untyped)
+
+
+def test_each_step_is_coloured_by_its_stage_and_the_key_names_the_stages_run():
+    source = to_mermaid(build_job_graph(CRAM_STEPS, "cram"))
+    for node_id, stage in STAGE_OF.items():
+        if node_id in dict(CRAM_STEPS) or node_id == INPUT:
+            assert _node_line(source, node_id).endswith(f":::{stage}"), node_id
+    key = re.findall(r'key_(\w+)\["([^"]+)"\]', source)
+    assert key == [
+        ("input", "Input"),
+        ("preparation", "Preparation"),
+        ("calling", "Calling"),
+        ("interpretation", "Interpretation"),
+        ("reports", "Reports"),
+    ]
+    # A VCF has no preparation; with nothing grey, the key has no grey entry.
+    vcf = to_mermaid(build_job_graph(VCF_STEPS, "vcf"))
+    assert "key_preparation" not in vcf and "key_off" not in vcf
+    # Mermaid reads a subgraph sharing a node's id ("input") as a cycle.
+    assert not re.search(r"subgraph (input|header_analysis)\b", source)
+
+
+@pytest.mark.parametrize(
+    "seconds, text",
+    [
+        (None, ""),
+        (0, "under 1 s"),
+        (0.4, "under 1 s"),
+        (27, "27 s"),
+        (309.4, "5 min 9 s"),
+        (600, "10 min"),
+        (3600, "1 h"),
+        (5430, "1 h 30 min"),
+    ],
+)
+def test_durations_read_as_time(seconds, text):
+    assert format_duration(seconds) == text
