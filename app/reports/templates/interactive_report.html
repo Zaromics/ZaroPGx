@@ -1081,6 +1081,9 @@
             <div id="recs" class="tab-content">
                 <h3>Drug Recommendations</h3>
                 <p>Detailed pharmacogenomic recommendations based on CPIC, DPWG, and FDA guidelines:</p>
+                {% if recommendations|selectattr('applies_if')|list %}
+                <p class="header-note"><strong>Applies if</strong>: for some genes PharmCAT found more than one possible diplotype (most often because the input is unphased), and the guidance differs between them. A recommendation marked this way holds only if the true call is among those it names.</p>
+                {% endif %}
                 
                 {% set grouped_recommendations = {} %}
                 {% for rec in recommendations %}
@@ -1114,6 +1117,7 @@
                             {% for rec_key, group_data in recommendation_groups.items() %}
                                 <div class="gene-recommendation {{ group_data['rec'].evidence_class }}" style="margin-bottom: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
                                     <h4 style="margin: 0 0 8px 0; color: #495057;">{{ group_data['genes']|join(', ') }} - {{ group_data['rec'].guideline_source if group_data['rec'].guideline_source else 'General' }}</h4>
+                                    {% if group_data['rec'].applies_if %}<p class="applies-if" style="margin: 0 0 6px 0;"><strong>Applies if:</strong> {{ group_data['rec'].applies_if }}</p>{% endif %}
                                     {# |safe: PharmCAT ships guideline prose as an HTML
                                         fragment (<ul>/<li> dosing lists,
                                         <h4 id="other-considerations"> sections, &quot;

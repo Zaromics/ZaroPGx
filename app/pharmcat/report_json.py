@@ -327,6 +327,41 @@ def annotation_genes(annotation: Any) -> List[str]:
     return genes
 
 
+def annotation_conditions(annotation: Any) -> List[Tuple[str, str, List[str]]]:
+    """(gene, phenotype, diplotypes) for each gene a PharmCAT annotation was looked
+    up by, in annotation_genes order: the candidates it covers and their phenotype.
+
+    For a call PharmCAT could not narrow to one diplotype it writes one annotation
+    per phenotype the candidates could have, listing the candidates that share it:
+    CPIC simvastatin for an unphased SLCO1B1 is one recommendation for "Decreased
+    Function" (*1/*15, *1/*45, *1/*47) and another for "Poor Function".
+    """
+    if not isinstance(annotation, Mapping):
+        return []
+    found: Dict[str, Tuple[List[str], List[str]]] = {}
+    for genotype in annotation.get("genotypes") or []:
+        if not isinstance(genotype, Mapping):
+            continue
+        for diplotype in genotype.get("diplotypes") or []:
+            if not isinstance(diplotype, Mapping):
+                continue
+            gene = str(diplotype.get("gene") or "").strip()
+            if not gene:
+                continue
+            labels, phenotypes = found.setdefault(gene, ([], []))
+            label = str(diplotype.get("label") or "").strip()
+            if label and label not in labels:
+                labels.append(label)
+            for phenotype in diplotype.get("phenotypes") or []:
+                if str(phenotype).strip() and str(phenotype).strip() not in phenotypes:
+                    phenotypes.append(str(phenotype).strip())
+    return [
+        (gene, " or ".join(found[gene][1]), found[gene][0])
+        for gene in annotation_genes(annotation)
+        if gene in found
+    ]
+
+
 def _clean(value: Any) -> Optional[str]:
     """Return a stripped string, or ``None`` for absent/blank values."""
     if value is None:

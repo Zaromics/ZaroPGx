@@ -531,6 +531,8 @@ class PharmCATDataService:
                 "literature_references": literature_references,
                 "prescribing_changes": changes,
                 "change_genes": change_genes(annotation) if changes else [],
+                # What PharmCAT matched this one on.
+                "conditions": report_json.annotation_conditions(annotation),
             }
 
             if guideline_source:
