@@ -377,6 +377,11 @@
         .exec-summary-diplotype.long-diplotype {
             font-size: 14px; /* 2px smaller than default 16px */
         }
+        /* A long allele name may wrap too: CFTR's "ivacaftor non-responsive
+           CFTR sequence", unbroken, left too little room beside it. */
+        .exec-summary-diplotype.long-diplotype .diplotype-allele {
+            white-space: normal;
+        }
         /* Prevent breaking within each allele part */
         .diplotype-allele {
             white-space: nowrap; /* prevent breaking within allele names */
@@ -391,10 +396,22 @@
         .diplotype-break::after {
             content: '\200B'; /* zero-width space after slash - preferred break point */
         }
+        /* A fixed share, so the pill and its activity score fit side by side;
+           a long diplotype wraps at its "/" instead. Sized by content, the
+           column came out narrower than "Intermediate Metabolizer" and a
+           score, and the score ran past the page margin. */
         .exec-summary-phenotype {
             text-align: left;
             white-space: nowrap;
             overflow: visible;
+            width: 42%;
+        }
+        /* A long phenotype wraps inside its pill, leaving room for a score.
+           Kept on one line, CFTR's "ivacaftor non-responsive in CF patients"
+           ran to the paper's edge. */
+        .exec-summary-phenotype .gene-phenotype {
+            white-space: normal;
+            max-width: calc(100% - 56px);
         }
         .exec-summary-phenotype .gene-phenotype,
         .exec-summary-phenotype .as-badge {
@@ -1048,13 +1065,20 @@
         <h2>Executive Summary</h2>
         <p>This page provides pharmacogenomic information derived from in silico analysis of the sample's genetic data. The information to follow can inform interpretation of actionable gene-drug interactions when considered in context.</p>
         
+        {# One page, by design. It covers PharmCAT's panel, the genes its
+           guidelines use (in_summary_panel), and only genes that were called:
+           the rest are named below it or listed under Genetic Results. The PDF
+           tightens its proportions when it would run over (app/reports/pdf_fit.py). #}
+        {% set summary_tsv = (execsum_from_tsv or [])|selectattr('gene', 'in_summary_panel')|list %}
+        {% set summary_called = diplotypes|selectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
+        {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
         <div class="summary-highlights">
             <p>This sample's genetic profile indicates:</p>
             <table class="exec-summary-table">
                 <tbody>
                     {# Prefer TSV-driven Executive Summary rows when provided #}
                     {% if execsum_from_tsv %}
-                        {% for r in execsum_from_tsv|sort(attribute='gene') %}
+                        {% for r in summary_tsv|sort(attribute='gene') %}
                         <tr>
                             <td class="exec-summary-number">{{ loop.index }}.</td>
                             <td class="exec-summary-gene">{{ r.gene }}</td>
@@ -1092,7 +1116,7 @@
                         </tr>
                         {% endfor %}
                     {% else %}
-                        {% for d in diplotypes|sort(attribute='gene') %}
+                        {% for d in summary_called|sort(attribute='gene') %}
                         <tr>
                             <td class="exec-summary-number">{{ loop.index }}.</td>
                             <td class="exec-summary-gene">{{ d.gene }}</td>
@@ -1131,9 +1155,14 @@
                     {% endif %}
                 </tbody>
             </table>
-            {% if execsum_from_tsv %}{{ pypgx.na_legend(execsum_from_tsv, 'rec_lookup_phenotype') }}{% else %}{{ pypgx.na_legend(diplotypes) }}{% endif %}
-            {{ unresolved.summary_legend(execsum_from_tsv or diplotypes) }}
-            {{ unresolved.summary_uncalled(diplotypes, missing_positions_not_assumed) }}
+            {% if execsum_from_tsv %}{{ pypgx.na_legend(summary_tsv, 'rec_lookup_phenotype') }}{% else %}{{ pypgx.na_legend(summary_called) }}{% endif %}
+            {{ unresolved.summary_legend(summary_tsv if execsum_from_tsv else summary_called) }}
+            {# Never a gene the table shows: the TSV and the gene list are two sources. #}
+            {% set summary_shown = (summary_tsv if execsum_from_tsv else summary_called)|map(attribute='gene')|list %}
+            {{ unresolved.summary_uncalled(diplotypes|selectattr('gene', 'in_summary_panel')|rejectattr('gene', 'in', summary_shown)|list, missing_positions_not_assumed) }}
+            {% if summary_beyond %}
+            <p class="header-note">The {{ summary_beyond|length }} other gene{{ 's' if summary_beyond|length != 1 }} this run called, outside the genes PharmCAT's guidelines use, {{ 'are' if summary_beyond|length != 1 else 'is' }} listed under Genetic Results.</p>
+            {% endif %}
         </div>
         {# The run-provenance paragraph that stood here has moved.
 

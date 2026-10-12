@@ -54,6 +54,7 @@ from app.pharmcat.report_json import (
     parse_pharmcat_version,
 )
 from app.reports.evidence import classify_evidence
+from app.reports.pdf_fit import fit_sections
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
     parse_pharmcat_tsv,
@@ -1084,6 +1085,34 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["activity_score_num"] = activity_score_num
     environment.filters["literature_references"] = format_literature_references
     environment.tests["a_call"] = gene_was_called
+    environment.tests["in_summary_panel"] = in_summary_panel
+
+
+_SUMMARY_PANEL: Optional[frozenset] = None
+
+
+def in_summary_panel(gene) -> bool:
+    """Whether the Executive Summary covers this gene: PharmCAT's panel, the genes
+    its guidelines use (config/genes.json ``sets.pharmcat_all``).
+
+    The summary is one page. From PharmCAT's TSV it only ever held these genes;
+    without the TSV it took every gene the run reported, so a BAM with PyPGx's
+    whole record ran to 91 rows over four pages. The others are in Genetic
+    Results. Without the config, every gene is covered, as before.
+    """
+    global _SUMMARY_PANEL
+    if _SUMMARY_PANEL is None:
+        try:
+            root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            with open(
+                os.path.join(root, "config", "genes.json"), encoding="utf-8"
+            ) as fh:
+                panel = (json.load(fh).get("sets") or {}).get("pharmcat_all") or []
+            _SUMMARY_PANEL = frozenset(str(g).strip().upper() for g in panel)
+        except Exception as e:
+            logger.warning(f"Executive Summary panel unavailable: {e}")
+            _SUMMARY_PANEL = frozenset()
+    return not _SUMMARY_PANEL or str(gene or "").strip().upper() in _SUMMARY_PANEL
 
 
 def gene_was_called(diplotype) -> bool:
@@ -1303,97 +1332,8 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
             "set PDF_ENGINE=reportlab or run inside the app container."
         )
     try:
-        # Load CSS if it exists and configure fonts
-        stylesheets = []
-        # Add project stylesheet if present
-        if os.path.exists(CSS_FILE):
-            if FontConfiguration:
-                stylesheets.append(
-                    CSS(filename=CSS_FILE, font_config=FontConfiguration())
-                )
-            else:
-                stylesheets.append(CSS(filename=CSS_FILE))
-        # Enhanced print-safe defaults via inline CSS for better workflow diagram handling
-        # Focus on PNG image rendering which works reliably in WeasyPrint
-        pdf_css = """
-            @page {
-                size: A4;
-                margin: 16mm;
-                @bottom-right {
-                    content: "Page " counter(page) " of " counter(pages);
-                    font-size: 10px;
-                    color: #888;
-                }
-            }
-            @page header-page {
-                size: A4;
-                margin: 8mm;
-                @bottom-right {
-                    content: "Page " counter(page) " of " counter(pages);
-                    font-size: 10px;
-                    color: #888;
-                }
-            }
-            img, svg { max-width: 100%; height: auto; }
-            .workflow-figure { 
-                page-break-inside: avoid; 
-                break-inside: avoid; 
-                margin-bottom: 15px; 
-                text-align: center;
-                max-height: 300px;
-                overflow: visible;
-            }
-            .workflow-figure img { 
-                max-width: 100% !important; 
-                max-height: 280px !important;
-                height: auto !important; 
-                display: block !important;
-                margin: 0 auto !important;
-                border: 1px solid #dee2e6 !important;
-                border-radius: 5px !important;
-            }
-            .workflow-figure svg { 
-                max-width: 100% !important; 
-                max-height: 280px !important;
-                height: auto !important; 
-                display: block;
-                margin: 0 auto;
-            }
-            .section { 
-                page-break-inside: avoid; 
-                break-inside: avoid; 
-            }
-            /* Ensure PNG workflow images render properly in PDF */
-            .workflow-figure img[src*="data:image/png"] {
-                max-width: 100% !important;
-                max-height: 280px !important;
-                height: auto !important;
-                display: block !important;
-                margin: 0 auto !important;
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
-            }
-            /* Apply narrow margins to header section */
-            .header-section {
-                page: header-page;
-            }
-        """
-        if FontConfiguration:
-            stylesheets.append(CSS(string=pdf_css, font_config=FontConfiguration()))
-        else:
-            stylesheets.append(CSS(string=pdf_css))
-
-        # Generate PDF
-        html = HTML(string=html_content)
-        if FontConfiguration:
-            html.write_pdf(
-                target=output_path,
-                stylesheets=stylesheets,
-                font_config=FontConfiguration(),
-                zoom=1.0,
-            )
-        else:
-            html.write_pdf(target=output_path, stylesheets=stylesheets, zoom=1.0)
+        document, _ = render_pdf_document(html_content)
+        document.write_pdf(target=output_path, zoom=1.0)
     except Exception as e:
         logger.error(f"Error converting HTML to PDF: {str(e)}")
         # Create simple text file as fallback if PDF generation fails
@@ -1413,6 +1353,108 @@ def generate_pdf_from_html(html_content: str, output_path: str) -> None:
                 exc_info=True,
             )
         raise
+
+
+def render_pdf_document(html_content: str):
+    """Lay the report out as its PDF prints, with each section that must hold to
+    a page fitted to it (app/reports/pdf_fit.py).
+
+    Returns the WeasyPrint Document and the tightening step used per section.
+    """
+    # Load CSS if it exists and configure fonts
+    stylesheets = []
+    # Add project stylesheet if present
+    if os.path.exists(CSS_FILE):
+        if FontConfiguration:
+            stylesheets.append(CSS(filename=CSS_FILE, font_config=FontConfiguration()))
+        else:
+            stylesheets.append(CSS(filename=CSS_FILE))
+    # Enhanced print-safe defaults via inline CSS for better workflow diagram handling
+    # Focus on PNG image rendering which works reliably in WeasyPrint
+    pdf_css = """
+        @page {
+            size: A4;
+            margin: 16mm;
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 10px;
+                color: #888;
+            }
+        }
+        @page header-page {
+            size: A4;
+            margin: 8mm;
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 10px;
+                color: #888;
+            }
+        }
+        img, svg { max-width: 100%; height: auto; }
+        .workflow-figure { 
+            page-break-inside: avoid; 
+            break-inside: avoid; 
+            margin-bottom: 15px; 
+            text-align: center;
+            max-height: 300px;
+            overflow: visible;
+        }
+        .workflow-figure img { 
+            max-width: 100% !important; 
+            max-height: 280px !important;
+            height: auto !important; 
+            display: block !important;
+            margin: 0 auto !important;
+            border: 1px solid #dee2e6 !important;
+            border-radius: 5px !important;
+        }
+        .workflow-figure svg { 
+            max-width: 100% !important; 
+            max-height: 280px !important;
+            height: auto !important; 
+            display: block;
+            margin: 0 auto;
+        }
+        .section { 
+            page-break-inside: avoid; 
+            break-inside: avoid; 
+        }
+        /* Ensure PNG workflow images render properly in PDF */
+        .workflow-figure img[src*="data:image/png"] {
+            max-width: 100% !important;
+            max-height: 280px !important;
+            height: auto !important;
+            display: block !important;
+            margin: 0 auto !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+        }
+        /* Apply narrow margins to header section */
+        .header-section {
+            page: header-page;
+        }
+    """
+    if FontConfiguration:
+        stylesheets.append(CSS(string=pdf_css, font_config=FontConfiguration()))
+    else:
+        stylesheets.append(CSS(string=pdf_css))
+
+    html = HTML(string=html_content)
+    font_config = FontConfiguration() if FontConfiguration else None
+
+    def render(fit_css: str):
+        sheets = list(stylesheets)
+        if fit_css:
+            sheets.append(
+                CSS(string=fit_css, font_config=font_config)
+                if font_config
+                else CSS(string=fit_css)
+            )
+        if font_config:
+            return html.render(stylesheets=sheets, font_config=font_config)
+        return html.render(stylesheets=sheets)
+
+    return fit_sections(render)
 
 
 def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
