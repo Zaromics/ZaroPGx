@@ -1132,11 +1132,14 @@ def mtdna_report_context(
         reason_code = raw.get("mt_rnr1_no_call_reason")
         coverage = raw.get("mean_coverage")
         if reason_code == NO_CALL_NO_CHRM_DATA:
+            # The sidecar's test is whether the file has any chrM record; its
+            # header may still declare chrM (a provider's export can keep the
+            # contig line and drop the calls).
             no_call_reason = (
-                "No MT-RNR1 variant was detected, and this VCF contained no "
-                "mitochondrial (chrM) data at all -- no chrM contig header "
-                "and no chrM record anywhere in the file -- so the absence "
-                "could not be confirmed as Reference."
+                "No MT-RNR1 variant was detected, and this VCF has no calls on "
+                "the mitochondrial chromosome (chrM), so the absence could not "
+                "be confirmed as Reference, and no haplogroup was assigned. A "
+                "VCF that keeps its chrM calls, or the BAM or CRAM, gives both."
             )
         elif reason_code == NO_CALL_NOT_CONSENTED:
             no_call_reason = (

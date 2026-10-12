@@ -106,3 +106,16 @@ def test_an_unrecognized_reason_code_hits_the_generic_fallback(tmp_path):
     assert "could not be confirmed as reference" in text
     assert "mitochondrial data is present" not in text
     assert "chrm" not in text
+
+
+def test_no_chrm_data_claims_no_more_than_the_sidecar_measured(tmp_path):
+    """The sidecar reports no_chrm_data when the file has no chrM record. It does
+    not look at the header, which a provider's export may keep while dropping the
+    calls: the report said "no chrM contig header" of a VCF that declared chrM."""
+    ctx = _context(
+        tmp_path, {"mt_rnr1": None, "mt_rnr1_no_call_reason": "no_chrm_data"}
+    )
+    text = ctx["no_call_reason"]
+    assert "header" not in text
+    assert "no calls on the mitochondrial chromosome (chrM)" in text
+    assert "BAM or CRAM" in text
