@@ -115,8 +115,9 @@ reads or writes them.
   files. It inlines `app/static/js/pgx-report.js` and the vendored Chart.js and D3
   (`app/static/vendor/`), so it needs neither the app nor a network to open.
 - The run's workflow diagram (`app/visualizations/job_workflow.py`): the job's own steps
-  from `job_steps`, wired as `main.nf` runs them, drawn by Kroki as SVG (HTML) and PNG
-  (PDF). Without Kroki, the same steps as a list; with no steps recorded, no diagram.
+  from `job_steps`, wired as `main.nf` runs them, drawn by Kroki as one PNG that every
+  report shows (sized to its PDF page by `workflow_pdf_style`; the SVG is kept as a file).
+  Without Kroki, the same steps as a list; with no steps recorded, no diagram.
 
 PharmCAT writes its own `<job_id>_pgx_pharmcat.{html,json,tsv}` into the same directory;
 the mtDNA step adds `mtdna_result.json`, `mtdna_variants.vcf.gz` and, for alignments,

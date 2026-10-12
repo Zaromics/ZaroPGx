@@ -201,25 +201,41 @@ def build_job_graph(
 
 
 def _mermaid_text(text: str) -> str:
-    # Inside a quoted Mermaid label, a double quote ends the label.
-    return text.replace('"', "#quot;")
+    # Inside a quoted Mermaid label, a double quote ends the label; in a markdown
+    # label, * _ and ` would format.
+    for char, entity in (('"', "#quot;"), ("*", "#42;"), ("_", "#95;"), ("`", "#96;")):
+        text = text.replace(char, entity)
+    return text
+
+
+# Drawn large (30px type) because Kroki's PNG is exactly the size Mermaid lays the
+# diagram out at: at its 16px default, a run's diagram was about 650px wide and
+# soft printed across an A4 page. Labels are SVG text, not HTML (WeasyPrint cannot
+# draw HTML inside SVG), wrapping at 460px.
+MERMAID_INIT = (
+    "%%{init: {'themeVariables': {'fontFamily': 'Arial, sans-serif', "
+    "'fontSize': '30px'}, 'flowchart': {'htmlLabels': false, 'nodeSpacing': 70, "
+    "'rankSpacing': 90, 'padding': 20, 'wrappingWidth': 460}}}%%"
+)
 
 
 def to_mermaid(graph: JobGraph) -> str:
     lines = [
+        MERMAID_INIT,
         "flowchart TD",
-        "  classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:1px;",
-        "  classDef step fill:#e7f0ff,stroke:#5b8def,stroke-width:1px;",
-        "  classDef off fill:#f5f5f5,stroke:#999999,stroke-width:1px,"
-        "stroke-dasharray:4 3,color:#666666;",
+        "  classDef io fill:#fff7e6,stroke:#f39c12,stroke-width:2px;",
+        "  classDef step fill:#e7f0ff,stroke:#5b8def,stroke-width:2px;",
+        "  classDef off fill:#f5f5f5,stroke:#999999,stroke-width:2px,"
+        "stroke-dasharray:6 4,color:#666666;",
     ]
     for n in graph.nodes:
-        text = _mermaid_text(n.title)
+        # Markdown labels: the step in bold, the tool in italics beneath it.
+        text = f"**{_mermaid_text(n.title)}**"
         if n.tool:
-            text += "<br/>" + _mermaid_text(n.tool)
+            text += f"\n_{_mermaid_text(n.tool)}_"
         if n.off_path:
-            text += f"<br/>({n.status})"
-        shape = ('(["', '"])') if n.id == INPUT else ('["', '"]')
+            text += f"\n({n.status})"
+        shape = ('(["`', '`"])') if n.id == INPUT else ('["`', '`"]')
         css = "io" if n.id == INPUT else ("off" if n.off_path else "step")
         lines.append(f"  {n.id}{shape[0]}{text}{shape[1]}:::{css}")
     for source, target, label in graph.edges:
@@ -227,6 +243,7 @@ def to_mermaid(graph: JobGraph) -> str:
         lines.append(f"  {source} {arrow} {target}")
     for source, target in graph.dotted:
         lines.append(f"  {source} -.-> {target}")
+    lines.append("  linkStyle default stroke-width:2px;")
     return "\n".join(lines) + "\n"
 
 

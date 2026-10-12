@@ -1,24 +1,30 @@
-"""The PDF's workflow diagram keeps its proportions.
+"""The PDF's workflow diagram is whole on its page, in its own proportions.
 
-Print CSS gives the diagram a whole page: the image box is 200 x 287 mm. The image
-was drawn to fill that box, whatever its shape; a real run's diagram is about twice
-as tall as it is wide, so the PDF showed it 36% too wide, its text and shapes with
-it. It is now scaled to fit, the same in both directions.
+Print CSS gives the diagram a page of its own. It used to size the image to a fixed
+200 x 287mm box and leave object-fit to keep its shape. That held for the old,
+generic diagram, twice as tall as wide, but a run's own diagram is about as wide as
+tall, and WeasyPrint placed it 130px left of the box: its left side ran off the page
+and an empty strip was left on the right. The test laid the page out with plain
+WeasyPrint, not through the app's PDF pipeline, whose stylesheet capped the image
+at 280px with !important, so neither showed. The image now carries its own size
+(generator.workflow_pdf_style), and this lays the page out as the app does.
 """
 
 from __future__ import annotations
 
-import base64
 import io
+import tempfile
+from pathlib import Path
 
 import pytest
 
 import app.reports.generator as generator_module
+from app.reports.generator import workflow_pdf_style
 
 weasyprint = pytest.importorskip("weasyprint")
 from weasyprint.layout.replaced import replacedbox_layout  # noqa: E402
 
-FIGURE = '<div class="workflow-figure">'
+MM = 96 / 25.4
 
 
 def _png(width, height):
@@ -26,46 +32,98 @@ def _png(width, height):
 
     buffer = io.BytesIO()
     Image.new("RGB", (width, height), (250, 250, 210)).save(buffer, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+    return buffer.getvalue()
 
 
-def _report_html(monkeypatch, tmp_path):
+def _pdf(monkeypatch, png):
+    def diagram(steps, file_type):
+        return {
+            "recorded": True,
+            "svg": "",
+            "svg_bytes": b"",
+            "png": png,
+            "png_data_uri": "data:image/png;base64,"
+            + __import__("base64").b64encode(png).decode(),
+            "pdf_style": workflow_pdf_style(png),
+            "html": "",
+        }
+
+    monkeypatch.setattr(generator_module, "job_workflow_diagram", diagram)
+    monkeypatch.setattr(generator_module, "load_job_steps", lambda db, job: [])
     for key in list(generator_module.REPORT_CONFIG):
         if key.startswith(("write_", "show_")):
             monkeypatch.setitem(
-                generator_module.REPORT_CONFIG, key, key == "write_html"
+                generator_module.REPORT_CONFIG, key, key in ("write_html", "write_pdf")
             )
-    result = generator_module.generate_report(
-        {"data": {"genes": [], "drugRecommendations": []}},
-        str(tmp_path),
-        {"id": "p1"},
+    rendered = []
+    original = generator_module.render_pdf_document
+
+    def capture(html):
+        document, levels = original(html)
+        rendered.append(document)
+        return document, levels
+
+    monkeypatch.setattr(generator_module, "render_pdf_document", capture)
+    out = Path(tempfile.mkdtemp())
+    generator_module.generate_report(
+        {"data": {"genes": [], "drugRecommendations": []}}, str(out), {"id": "p1"}
     )
-    return (tmp_path / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
+    return rendered[-1]
 
 
-@pytest.mark.parametrize("width, height", [(2095, 4100), (4000, 1500)])
-def test_the_diagram_is_scaled_alike_both_ways(monkeypatch, tmp_path, width, height):
-    """A tall diagram (a real run's: 2095 x 4100) and a wide one."""
-    html = _report_html(monkeypatch, tmp_path)
-    start = html.index(FIGURE)
-    end = html.index("</div>", start)
-    html = (
-        html[:start]
-        + FIGURE
-        + f'<img id="diagram" src="{_png(width, height)}" alt="Workflow Diagram" />'
-        + html[end:]
+def _diagram_page(document):
+    for page in document.pages:
+        boxes = list(page._page_box.descendants())
+        image = [
+            b
+            for b in boxes
+            if getattr(b, "element", None) is not None
+            and b.element.get("alt") == "Workflow Diagram"
+            and b.__class__.__name__.endswith("ReplacedBox")
+        ]
+        if image:
+            title = [
+                b
+                for b in boxes
+                if getattr(b, "element", None) is not None
+                and b.element.tag.rsplit("}", 1)[-1] == "h2"
+                and "Workflow Diagram"
+                in "".join(t.text for t in b.descendants() if getattr(t, "text", None))
+            ]
+            return page._page_box, image[0], title[0]
+    raise AssertionError("no diagram page")
+
+
+@pytest.mark.parametrize(
+    "width, height",
+    [(1233, 1091), (1508, 1881), (2095, 4100), (4000, 1500)],
+    ids=["a-vcf-run", "a-cram-run", "tall", "wide"],
+)
+def test_the_diagram_is_whole_and_in_proportion(monkeypatch, width, height):
+    page, image, title = _diagram_page(_pdf(monkeypatch, _png(width, height)))
+    draw_width, draw_height, draw_x, draw_y = replacedbox_layout(image)
+    # Drawn where its box is, at the box's size: nothing shifted or cropped. (The
+    # broken page drew a run's diagram at x = -130, off the paper.)
+    assert (draw_x, draw_y) == pytest.approx(
+        (image.content_box_x(), image.content_box_y()), abs=0.5
     )
-    document = weasyprint.HTML(string=html, base_url=str(tmp_path)).render()
-    (image,) = [
-        box
-        for page in document.pages
-        for box in page._page_box.descendants()
-        if getattr(box, "element", None) is not None
-        and box.element.get("id") == "diagram"
-    ]
-    draw_width, draw_height, _, _ = replacedbox_layout(image)
+    assert (draw_width, draw_height) == pytest.approx(
+        (image.width, image.height), abs=0.5
+    )
     assert draw_height / draw_width == pytest.approx(height / width, rel=0.01)
-    # It still uses the page: it fills one dimension of the box.
-    assert max(draw_width / image.width, draw_height / image.height) == pytest.approx(
-        1, rel=0.01
+    # On the page, inside its margins, under its title.
+    left = image.content_box_x()
+    top = image.content_box_y()
+    assert left >= page.content_box_x() - 0.5
+    assert left + image.width <= page.content_box_x() + page.width + 0.5
+    assert top + image.height <= page.content_box_y() + page.height + 0.5
+    assert title.position_y + title.margin_height() <= top
+    # As large as the page allows: the 178mm text width or the height under the title.
+    assert image.width == pytest.approx(178 * MM, rel=0.01) or image.height == (
+        pytest.approx(250 * MM, rel=0.01)
     )
+
+
+def test_the_style_is_none_without_a_png():
+    assert workflow_pdf_style(b"") == ""
+    assert workflow_pdf_style(b"<svg></svg>" * 4) == ""
