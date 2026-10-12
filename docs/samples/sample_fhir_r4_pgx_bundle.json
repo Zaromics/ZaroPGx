@@ -1,20 +1,17 @@
 {
   "resourceType": "Bundle",
-  "id": "zaropgx-sample-fhir-r4-bundle",
+  "id": "621110ef-d82d-45e9-bb7f-42a0f0bb0ba2",
   "meta": {
-    "profile": [
-      "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomics-bundle"
-    ],
-    "lastUpdated": "2026-03-04T19:00:00.000000+00:00"
+    "lastUpdated": "2026-10-12T20:55:34.984580+00:00"
   },
   "type": "collection",
-  "timestamp": "2026-03-04T19:00:00.000000+00:00",
+  "timestamp": "2026-10-12T20:55:34.984580+00:00",
   "entry": [
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000001",
+      "fullUrl": "urn:uuid:f5de39c6-f674-458b-abf6-f3b14f8907d8",
       "resource": {
         "resourceType": "DiagnosticReport",
-        "id": "00000000-0000-4000-a000-000000000001",
+        "id": "f5de39c6-f674-458b-abf6-f3b14f8907d8",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report"
@@ -23,7 +20,7 @@
         "identifier": [
           {
             "system": "urn:zaropgx:report-id",
-            "value": "sample-run-001"
+            "value": "sample-run"
           }
         ],
         "status": "final",
@@ -43,39 +40,39 @@
             {
               "system": "http://loinc.org",
               "code": "51969-4",
-              "display": "Pharmacogenomic analysis report"
+              "display": "Genetic analysis report"
             }
           ],
           "text": "Pharmacogenomic Analysis Report"
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "effectiveDateTime": "2026-03-04T19:00:00.000000+00:00",
-        "issued": "2026-03-04T19:00:00.000000+00:00",
+        "effectiveDateTime": "2026-10-12T20:55:34.984731+00:00",
+        "issued": "2026-10-12T20:55:34.984732+00:00",
         "result": [
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000100",
+            "reference": "urn:uuid:1e5f3287-27c6-4b5f-9001-8c0c889d2259",
             "display": "CYP2D6 *1/*4"
           },
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000101",
+            "reference": "urn:uuid:1e4af1d6-1a18-4396-8149-9784875c8248",
             "display": "CYP2C19 *1/*2"
           },
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000102",
+            "reference": "urn:uuid:b64af0a6-8db3-42ec-ab53-0211b38baa11",
             "display": "CYP2C9 *1/*3"
           },
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000200",
+            "reference": "urn:uuid:dd08d6a9-99ff-4bfd-b7fc-7a86d197bdcf",
             "display": "Therapeutic implication for clopidogrel"
           },
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000201",
+            "reference": "urn:uuid:74d7d48d-724c-4988-b687-8d5fb19a3d04",
             "display": "Therapeutic implication for codeine"
           },
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000202",
+            "reference": "urn:uuid:de6e3115-4a15-414e-88f0-ed4886a4a63b",
             "display": "Therapeutic implication for warfarin"
           }
         ],
@@ -95,36 +92,35 @@
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study-reference",
             "valueReference": {
-              "reference": "urn:uuid:00000000-0000-4000-a000-000000000900"
+              "reference": "urn:uuid:2b248ba2-3e9f-41ae-b0bf-edf1930a8e44"
             }
           },
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action",
             "valueReference": {
-              "reference": "urn:uuid:00000000-0000-4000-a000-000000000300"
+              "reference": "urn:uuid:fa033e67-968e-411a-ae97-1f08582f036a"
             }
           },
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action",
             "valueReference": {
-              "reference": "urn:uuid:00000000-0000-4000-a000-000000000301"
+              "reference": "urn:uuid:21fb56c2-16b2-4ccf-88e4-d09e46942277"
             }
           },
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action",
             "valueReference": {
-              "reference": "urn:uuid:00000000-0000-4000-a000-000000000302"
+              "reference": "urn:uuid:5ce28c2f-7624-4d59-aa9b-3f0ce1e111aa"
             }
           }
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000010",
+      "fullUrl": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410",
       "resource": {
         "resourceType": "Patient",
-        "id": "00000000-0000-4000-a000-000000000010",
+        "id": "1bcf90d1-28da-44bd-a6e3-157fa6cf5410",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/StructureDefinition/Patient"
@@ -139,19 +135,20 @@
         "name": [
           {
             "family": "Doe",
-            "given": ["Jane"]
+            "given": [
+              "Jane"
+            ]
           }
         ],
         "gender": "female",
         "birthDate": "1985-07-15"
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000100",
+      "fullUrl": "urn:uuid:1e5f3287-27c6-4b5f-9001-8c0c889d2259",
       "resource": {
         "resourceType": "Observation",
-        "id": "00000000-0000-4000-a000-000000000100",
+        "id": "1e5f3287-27c6-4b5f-9001-8c0c889d2259",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
@@ -173,16 +170,16 @@
           "coding": [
             {
               "system": "http://loinc.org",
-              "code": "79714-2",
-              "display": "CYP2D6 gene product metabolic activity interpretation"
+              "code": "84413-4",
+              "display": "Genotype display name"
             }
           ],
           "text": "CYP2D6 Genotype"
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "effectiveDateTime": "2026-03-04T19:00:00.000000+00:00",
+        "effectiveDateTime": "2026-10-12T20:55:34.984620+00:00",
         "valueCodeableConcept": {
           "coding": [
             {
@@ -217,13 +214,7 @@
           },
           {
             "code": {
-              "coding": [
-                {
-                  "system": "http://loinc.org",
-                  "code": "79716-7",
-                  "display": "Phenotype display name"
-                }
-              ]
+              "text": "Phenotype"
             },
             "valueCodeableConcept": {
               "text": "Intermediate Metabolizer"
@@ -251,7 +242,7 @@
                 {
                   "system": "http://loinc.org",
                   "code": "84414-2",
-                  "display": "Haplotype Name"
+                  "display": "Haplotype name"
                 }
               ]
             },
@@ -265,7 +256,7 @@
                 {
                   "system": "http://loinc.org",
                   "code": "84414-2",
-                  "display": "Haplotype Name"
+                  "display": "Haplotype name"
                 }
               ]
             },
@@ -276,12 +267,11 @@
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000101",
+      "fullUrl": "urn:uuid:1e4af1d6-1a18-4396-8149-9784875c8248",
       "resource": {
         "resourceType": "Observation",
-        "id": "00000000-0000-4000-a000-000000000101",
+        "id": "1e4af1d6-1a18-4396-8149-9784875c8248",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
@@ -303,16 +293,16 @@
           "coding": [
             {
               "system": "http://loinc.org",
-              "code": "79713-4",
-              "display": "CYP2C19 gene product metabolic activity interpretation"
+              "code": "84413-4",
+              "display": "Genotype display name"
             }
           ],
           "text": "CYP2C19 Genotype"
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "effectiveDateTime": "2026-03-04T19:00:00.000000+00:00",
+        "effectiveDateTime": "2026-10-12T20:55:34.984638+00:00",
         "valueCodeableConcept": {
           "coding": [
             {
@@ -347,13 +337,7 @@
           },
           {
             "code": {
-              "coding": [
-                {
-                  "system": "http://loinc.org",
-                  "code": "79716-7",
-                  "display": "Phenotype display name"
-                }
-              ]
+              "text": "Phenotype"
             },
             "valueCodeableConcept": {
               "text": "Intermediate Metabolizer"
@@ -381,7 +365,7 @@
                 {
                   "system": "http://loinc.org",
                   "code": "84414-2",
-                  "display": "Haplotype Name"
+                  "display": "Haplotype name"
                 }
               ]
             },
@@ -395,7 +379,7 @@
                 {
                   "system": "http://loinc.org",
                   "code": "84414-2",
-                  "display": "Haplotype Name"
+                  "display": "Haplotype name"
                 }
               ]
             },
@@ -406,12 +390,11 @@
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000102",
+      "fullUrl": "urn:uuid:b64af0a6-8db3-42ec-ab53-0211b38baa11",
       "resource": {
         "resourceType": "Observation",
-        "id": "00000000-0000-4000-a000-000000000102",
+        "id": "b64af0a6-8db3-42ec-ab53-0211b38baa11",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
@@ -433,16 +416,16 @@
           "coding": [
             {
               "system": "http://loinc.org",
-              "code": "79712-6",
-              "display": "CYP2C9 gene product metabolic activity interpretation"
+              "code": "84413-4",
+              "display": "Genotype display name"
             }
           ],
           "text": "CYP2C9 Genotype"
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "effectiveDateTime": "2026-03-04T19:00:00.000000+00:00",
+        "effectiveDateTime": "2026-10-12T20:55:34.984650+00:00",
         "valueCodeableConcept": {
           "coding": [
             {
@@ -477,13 +460,7 @@
           },
           {
             "code": {
-              "coding": [
-                {
-                  "system": "http://loinc.org",
-                  "code": "79716-7",
-                  "display": "Phenotype display name"
-                }
-              ]
+              "text": "Phenotype"
             },
             "valueCodeableConcept": {
               "text": "Intermediate Metabolizer"
@@ -511,7 +488,7 @@
                 {
                   "system": "http://loinc.org",
                   "code": "84414-2",
-                  "display": "Haplotype Name"
+                  "display": "Haplotype name"
                 }
               ]
             },
@@ -525,7 +502,7 @@
                 {
                   "system": "http://loinc.org",
                   "code": "84414-2",
-                  "display": "Haplotype Name"
+                  "display": "Haplotype name"
                 }
               ]
             },
@@ -536,12 +513,11 @@
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000200",
+      "fullUrl": "urn:uuid:dd08d6a9-99ff-4bfd-b7fc-7a86d197bdcf",
       "resource": {
         "resourceType": "Observation",
-        "id": "00000000-0000-4000-a000-000000000200",
+        "id": "dd08d6a9-99ff-4bfd-b7fc-7a86d197bdcf",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
@@ -569,9 +545,9 @@
           ]
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "effectiveDateTime": "2026-03-04T19:00:00.000000+00:00",
+        "effectiveDateTime": "2026-10-12T20:55:34.984662+00:00",
         "component": [
           {
             "code": {
@@ -608,7 +584,7 @@
         ],
         "derivedFrom": [
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000101",
+            "reference": "urn:uuid:1e4af1d6-1a18-4396-8149-9784875c8248",
             "display": "CYP2C19 *1/*2"
           }
         ],
@@ -624,12 +600,72 @@
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000201",
+      "fullUrl": "urn:uuid:fa033e67-968e-411a-ae97-1f08582f036a",
+      "resource": {
+        "resourceType": "Task",
+        "id": "fa033e67-968e-411a-ae97-1f08582f036a",
+        "meta": {
+          "profile": [
+            "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
+          ]
+        },
+        "status": "requested",
+        "intent": "proposal",
+        "code": {
+          "coding": [
+            {
+              "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+              "code": "medication-recommendation",
+              "display": "Medication Recommendation"
+            }
+          ],
+          "text": "Recommendation for clopidogrel"
+        },
+        "description": "Consider alternative antiplatelet therapy (e.g., prasugrel, ticagrelor) if no contraindication. CYP2C19 intermediate metabolizer status results in reduced formation of active metabolite and diminished antiplatelet effect.",
+        "for": {
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
+        },
+        "reasonReference": {
+          "reference": "urn:uuid:dd08d6a9-99ff-4bfd-b7fc-7a86d197bdcf"
+        },
+        "input": [
+          {
+            "type": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                  "code": "medication-assessed",
+                  "display": "Medication Assessed"
+                }
+              ]
+            },
+            "valueCodeableConcept": {
+              "text": "clopidogrel"
+            }
+          },
+          {
+            "type": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                  "code": "evidence-level",
+                  "display": "Evidence Level"
+                }
+              ]
+            },
+            "valueCodeableConcept": {
+              "text": "Strong"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:74d7d48d-724c-4988-b687-8d5fb19a3d04",
       "resource": {
         "resourceType": "Observation",
-        "id": "00000000-0000-4000-a000-000000000201",
+        "id": "74d7d48d-724c-4988-b687-8d5fb19a3d04",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
@@ -657,9 +693,9 @@
           ]
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "effectiveDateTime": "2026-03-04T19:00:00.000000+00:00",
+        "effectiveDateTime": "2026-10-12T20:55:34.984686+00:00",
         "component": [
           {
             "code": {
@@ -696,7 +732,7 @@
         ],
         "derivedFrom": [
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000100",
+            "reference": "urn:uuid:1e5f3287-27c6-4b5f-9001-8c0c889d2259",
             "display": "CYP2D6 *1/*4"
           }
         ],
@@ -712,12 +748,72 @@
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000202",
+      "fullUrl": "urn:uuid:21fb56c2-16b2-4ccf-88e4-d09e46942277",
+      "resource": {
+        "resourceType": "Task",
+        "id": "21fb56c2-16b2-4ccf-88e4-d09e46942277",
+        "meta": {
+          "profile": [
+            "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
+          ]
+        },
+        "status": "requested",
+        "intent": "proposal",
+        "code": {
+          "coding": [
+            {
+              "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+              "code": "medication-recommendation",
+              "display": "Medication Recommendation"
+            }
+          ],
+          "text": "Recommendation for codeine"
+        },
+        "description": "Use label-recommended age- or weight-specific dosing. CYP2D6 intermediate metabolizer status may result in reduced morphine formation; monitor for adequate pain relief and consider alternative analgesics if needed.",
+        "for": {
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
+        },
+        "reasonReference": {
+          "reference": "urn:uuid:74d7d48d-724c-4988-b687-8d5fb19a3d04"
+        },
+        "input": [
+          {
+            "type": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                  "code": "medication-assessed",
+                  "display": "Medication Assessed"
+                }
+              ]
+            },
+            "valueCodeableConcept": {
+              "text": "codeine"
+            }
+          },
+          {
+            "type": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
+                  "code": "evidence-level",
+                  "display": "Evidence Level"
+                }
+              ]
+            },
+            "valueCodeableConcept": {
+              "text": "Strong"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:de6e3115-4a15-414e-88f0-ed4886a4a63b",
       "resource": {
         "resourceType": "Observation",
-        "id": "00000000-0000-4000-a000-000000000202",
+        "id": "de6e3115-4a15-414e-88f0-ed4886a4a63b",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
@@ -745,9 +841,9 @@
           ]
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "effectiveDateTime": "2026-03-04T19:00:00.000000+00:00",
+        "effectiveDateTime": "2026-10-12T20:55:34.984704+00:00",
         "component": [
           {
             "code": {
@@ -784,7 +880,7 @@
         ],
         "derivedFrom": [
           {
-            "reference": "urn:uuid:00000000-0000-4000-a000-000000000102",
+            "reference": "urn:uuid:b64af0a6-8db3-42ec-ab53-0211b38baa11",
             "display": "CYP2C9 *1/*3"
           }
         ],
@@ -800,136 +896,11 @@
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000300",
+      "fullUrl": "urn:uuid:5ce28c2f-7624-4d59-aa9b-3f0ce1e111aa",
       "resource": {
         "resourceType": "Task",
-        "id": "00000000-0000-4000-a000-000000000300",
-        "meta": {
-          "profile": [
-            "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
-          ]
-        },
-        "status": "requested",
-        "intent": "proposal",
-        "code": {
-          "coding": [
-            {
-              "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
-              "code": "medication-recommendation",
-              "display": "Medication Recommendation"
-            }
-          ],
-          "text": "Recommendation for clopidogrel"
-        },
-        "description": "Consider alternative antiplatelet therapy (e.g., prasugrel, ticagrelor) if no contraindication. CYP2C19 intermediate metabolizer status results in reduced formation of active metabolite and diminished antiplatelet effect.",
-        "for": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
-        },
-        "reasonReference": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000200"
-        },
-        "input": [
-          {
-            "type": {
-              "coding": [
-                {
-                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
-                  "code": "medication-assessed",
-                  "display": "Medication Assessed"
-                }
-              ]
-            },
-            "valueCodeableConcept": {
-              "text": "clopidogrel"
-            }
-          },
-          {
-            "type": {
-              "coding": [
-                {
-                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
-                  "code": "evidence-level",
-                  "display": "Evidence Level"
-                }
-              ]
-            },
-            "valueCodeableConcept": {
-              "text": "Strong"
-            }
-          }
-        ]
-      }
-    },
-
-    {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000301",
-      "resource": {
-        "resourceType": "Task",
-        "id": "00000000-0000-4000-a000-000000000301",
-        "meta": {
-          "profile": [
-            "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
-          ]
-        },
-        "status": "requested",
-        "intent": "proposal",
-        "code": {
-          "coding": [
-            {
-              "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
-              "code": "medication-recommendation",
-              "display": "Medication Recommendation"
-            }
-          ],
-          "text": "Recommendation for codeine"
-        },
-        "description": "Use label-recommended age- or weight-specific dosing. CYP2D6 intermediate metabolizer status may result in reduced morphine formation; monitor for adequate pain relief and consider alternative analgesics if needed.",
-        "for": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
-        },
-        "reasonReference": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000201"
-        },
-        "input": [
-          {
-            "type": {
-              "coding": [
-                {
-                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
-                  "code": "medication-assessed",
-                  "display": "Medication Assessed"
-                }
-              ]
-            },
-            "valueCodeableConcept": {
-              "text": "codeine"
-            }
-          },
-          {
-            "type": {
-              "coding": [
-                {
-                  "system": "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs",
-                  "code": "evidence-level",
-                  "display": "Evidence Level"
-                }
-              ]
-            },
-            "valueCodeableConcept": {
-              "text": "Strong"
-            }
-          }
-        ]
-      }
-    },
-
-    {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000302",
-      "resource": {
-        "resourceType": "Task",
-        "id": "00000000-0000-4000-a000-000000000302",
+        "id": "5ce28c2f-7624-4d59-aa9b-3f0ce1e111aa",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
@@ -949,10 +920,10 @@
         },
         "description": "Calculate initial dose using a validated pharmacogenomic dosing algorithm (e.g., warfarindosing.org). CYP2C9 *1/*3 intermediate metabolizer status requires a reduced dose compared to *1/*1 wild-type patients.",
         "for": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
         "reasonReference": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000202"
+          "reference": "urn:uuid:de6e3115-4a15-414e-88f0-ed4886a4a63b"
         },
         "input": [
           {
@@ -986,12 +957,11 @@
         ]
       }
     },
-
     {
-      "fullUrl": "urn:uuid:00000000-0000-4000-a000-000000000900",
+      "fullUrl": "urn:uuid:2b248ba2-3e9f-41ae-b0bf-edf1930a8e44",
       "resource": {
         "resourceType": "Procedure",
-        "id": "00000000-0000-4000-a000-000000000900",
+        "id": "2b248ba2-3e9f-41ae-b0bf-edf1930a8e44",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study"
@@ -1003,7 +973,7 @@
             {
               "system": "http://snomed.info/sct",
               "code": "405824009",
-              "display": "Genetic analysis"
+              "display": "Genetic test"
             }
           ]
         },
@@ -1012,18 +982,18 @@
             {
               "system": "http://loinc.org",
               "code": "51969-4",
-              "display": "Pharmacogenomic analysis panel"
+              "display": "Genetic analysis report"
             }
           ],
           "text": "Pharmacogenomic Analysis"
         },
         "subject": {
-          "reference": "urn:uuid:00000000-0000-4000-a000-000000000010"
+          "reference": "urn:uuid:1bcf90d1-28da-44bd-a6e3-157fa6cf5410"
         },
-        "performedDateTime": "2026-03-04T19:00:00.000000+00:00",
+        "performedDateTime": "2026-10-12T20:55:34.984722+00:00",
         "note": [
           {
-            "text": "PharmCAT Version: 2.15.5"
+            "text": "PharmCAT Version: 3.4.0"
           }
         ]
       }
