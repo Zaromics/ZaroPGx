@@ -578,6 +578,10 @@ class PharmCATDataService:
                 ),  # Keep original for reference
                 "implications": rec.get("implications"),
                 "literature_references": literature_references,
+                # The guideline's page at ClinPGx: its source and literature,
+                # which PharmCAT 3.4.0 no longer carries.
+                "guideline": rec.get("guideline_name") or "",
+                "guideline_url": rec.get("guideline_url") or "",
                 "prescribing_changes": changes,
                 "change_genes": change_genes(annotation) if changes else [],
                 # What PharmCAT matched this one on.

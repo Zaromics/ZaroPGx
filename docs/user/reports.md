@@ -60,8 +60,8 @@ or FDA guidance without a CPIC strength); No recommendation (a guideline that gi
 genotype-based action); Unclassified.
 
 **Drug Recommendations.** For each drug, each source's recommendation: CPIC and DPWG
-guidelines, FDA labels and FDA's pharmacogenetic associations, with the strength and the
-literature. When the input is unphased and a gene has several possible diplotypes, guidance
+guidelines, FDA labels and FDA's pharmacogenetic associations, with the strength and a link
+to the guideline's page at ClinPGx, where its full text and literature are. When the input is unphased and a gene has several possible diplotypes, guidance
 that differs between them is marked "Applies if".
 
 **Workflow Diagram**: the steps this run took, in the order they ran, and what each

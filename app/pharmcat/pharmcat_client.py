@@ -417,6 +417,10 @@ def normalize_pharmcat_results(response):
                                                 genes_for_drug
                                             ),
                                             "guideline": guideline_name,
+                                            # The guideline's page at ClinPGx:
+                                            # its source and literature, which
+                                            # PharmCAT 3.4.0 no longer carries.
+                                            "guideline_url": guideline.get("url") or "",
                                             "guideline_source": guideline_source,
                                             "recommendation": recommendation_text,
                                             "classification": classification,
