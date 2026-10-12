@@ -181,14 +181,14 @@ PLATFORM = FitSection(
 {_PLATFORM} h3 {{ margin: 12px 0 6px 0 !important; }}
 {_PLATFORM} p {{ margin: 4px 0 !important; font-size: 0.9em !important; }}
 {_PLATFORM} td, {_PLATFORM} th {{ padding: 3px 5px !important; font-size: 0.9em !important; }}
-{_PLATFORM} ul {{ margin: 4px 0 !important; }}
+{_PLATFORM} ul, {_PLATFORM} ol {{ margin: 4px 0 !important; }}
 {_PLATFORM} li {{ font-size: 0.85em !important; line-height: 1.3 !important; }}
 """,
         f"""
 {_PLATFORM} h3 {{ margin: 8px 0 4px 0 !important; font-size: 1.05em !important; }}
 {_PLATFORM} p {{ margin: 3px 0 !important; font-size: 0.82em !important; }}
 {_PLATFORM} td, {_PLATFORM} th {{ padding: 2px 5px !important; font-size: 0.85em !important; }}
-{_PLATFORM} ul {{ margin: 3px 0 !important; }}
+{_PLATFORM} ul, {_PLATFORM} ol {{ margin: 3px 0 !important; }}
 {_PLATFORM} li {{ font-size: 0.78em !important; line-height: 1.25 !important; }}
 """,
     ),

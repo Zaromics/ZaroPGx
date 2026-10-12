@@ -1,141 +1,106 @@
-"""The report's Software Platform table lists tools, not the compose file.
+"""The report's software list names the tools that did the work, not the compose file.
 
-``build_platform_info`` walked everything ``get_all_versions()`` returned, which
-is every service in ``compose.yml``. A pharmacogenomic report therefore ended
-with PostgreSQL, a HAPI FHIR server that had not run, Kroki and Kroki Mermaid --
-a diagram renderer, listed twice, both at version "latest" -- and a second copy
-of every analytic tool as its ZaroPGx container wrapper. "PharmCAT 3.4.0" and
-"Zaropgx Pharmcat 0.3.0" are the same software at two different versions, side by
-side, and none of the infrastructure rows affected a single call on any preceding
-page.
+The Software Platform table once walked every service in ``compose.yml``: a
+pharmacogenomic report ended with PostgreSQL, a HAPI FHIR server that had not run,
+"Kroki Mermaid" at version "latest", and a second copy of every analytic tool as its
+ZaroPGx container wrapper ("PharmCAT 3.4.0" beside "Zaropgx Pharmcat 0.3.0").
 
-Matching is exact rather than substring for that last reason specifically:
-``"zaropgx pharmcat" != "pharmcat"``, so the wrapper cannot shadow the tool.
+The credits (app/reports/credits.py) now name each tool and data source a run
+used, at the version its service recorded. Kroki, Mermaid and Nextflow are among
+them on purpose: Nextflow ran every step, Kroki and Mermaid drew the report's
+diagram. The database, the FHIR server and the container wrappers still are not.
 
-Separately, ``build_citations`` read the same version map raw. GATK reports its
-version as ``"The Genome Analysis Toolkit () v4.7.0.0"``, so the citation read
-"version The Genome Analysis Toolkit () v4.7.0.0" mid-sentence.
-``_normalize_version_text`` already existed for exactly this -- its docstring uses
-that string as its worked example -- but was only ever called on the platform
-table's path.
+GATK records its version as ``"The Genome Analysis Toolkit () v4.7.0.0"``; the
+report prints 4.7.0.0.
 """
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
-from app.reports.generator import (
-    _REPORT_COMPONENTS,
-    _normalize_version_text,
-    build_citations,
-    build_platform_info,
-)
+from app.reports.credits import CREDITS, CreditRun, report_credits
 
-# Everything that used to appear and must not: infrastructure, plus the
-# container wrappers that duplicated each tool at the ZaroPGx version.
+# Infrastructure and the container wrappers that duplicated each tool at the
+# ZaroPGx version.
 BANNED_SUBSTRINGS = [
     "postgres",
     "hapi",
     "fhir",
-    "kroki",
-    "mermaid",
-    "nextflow",
     "genome downloader",
     "zaropgx app",
     "zaropgx pharmcat",
     "zaropgx gatk",
     "zaropgx pypgx",
     "zaropgx zarohla",
+    "zarohla",
 ]
+
+VERSIONS = {
+    "pharmcat": "3.4.0",
+    "pypgx": "0.27.0",
+    "gatk": "The Genome Analysis Toolkit () v4.7.0.0",
+    "optitype": "1.5.0",
+    "mtdna-server-2": "v2.1.16",
+    "nextflow": "25.10.8",
+    # What get_versions_dict() also returns: none of it may reach the report.
+    "postgresql": "18.6",
+    "hapi fhir server": "8.12.0",
+    "kroki mermaid": "latest",
+    "zaropgx pharmcat": "0.3.0",
+}
+
+
+def _software(run=None):
+    return report_credits(run or CreditRun(), VERSIONS, {}, "0.4.0")["software"]
 
 
 def _names() -> list[str]:
-    return [i["name"] for i in build_platform_info()]
+    return [row["name"] for row in _software()]
 
 
-def test_zaropgx_itself_is_always_listed():
-    assert "ZaroPGx" in _names()
+def test_zaropgx_itself_is_always_listed_first():
+    assert _names()[0] == "ZaroPGx"
+    assert _software()[0]["version"] == "0.4.0"
 
 
 @pytest.mark.parametrize("banned", BANNED_SUBSTRINGS)
 def test_infrastructure_and_wrappers_are_not_listed(banned):
     offenders = [n for n in _names() if banned in n.lower()]
     assert not offenders, (
-        f"{offenders} reached the report's Software Platform table. That table "
-        "is for components that shaped the result, not the compose file."
+        f"{offenders} reached the report's software list. It is for what shaped "
+        "the result or drew the report, not the compose file."
     )
 
 
-def test_no_component_is_listed_twice():
-    names = _names()
+def test_no_credit_is_listed_twice():
+    names = [credit.name for credit in CREDITS]
     assert len(names) == len(set(names)), names
+    keys = [credit.key for credit in CREDITS]
+    assert len(keys) == len(set(keys)), keys
 
 
 def test_a_floating_tag_is_never_printed_as_a_version():
     """ "latest" tells a reader nothing they could reproduce a run from."""
-    for item in build_platform_info():
-        assert item["version"].lower() not in {"latest", "n/a", "none", ""}, item
+    for row in _software():
+        assert row["version"].lower() not in {"latest", "n/a", "none", ""}, row
 
 
-def test_the_allowlist_is_keyed_lowercase_so_matching_works():
-    """Keys are compared against name.strip().lower(); a capital breaks silently."""
-    for key in _REPORT_COMPONENTS:
-        assert key == key.lower().strip(), key
+def test_gatk_prints_a_bare_version():
+    """The banner GATK records must not reach the page."""
+    (gatk,) = [row for row in _software() if row["name"] == "GATK"]
+    assert gatk["version"] == "4.7.0.0"
 
 
-def test_the_allowlist_holds_only_analytic_tools():
-    """Guard the intent, so infrastructure cannot be quietly re-added."""
-    for banned in BANNED_SUBSTRINGS:
-        assert not any(banned in k for k in _REPORT_COMPONENTS), banned
+def test_mtdna_server_2_prints_its_release_without_the_v():
+    (mtdna,) = [row for row in _software() if row["name"] == "mtDNA-Server 2"]
+    assert mtdna["version"] == "2.1.16"
 
 
-# --------------------------------------------------------------------------
-# Citations
-# --------------------------------------------------------------------------
-
-
-def test_gatk_citation_states_a_bare_version():
-    """The exact regression: GATK's raw --version blob reached the page."""
-    (gatk,) = [c for c in build_citations() if c["name"] == "GATK"]
-
-    assert "Genome Analysis Toolkit (GATK), version" in gatk["text"]
-    assert "()" not in gatk["text"], gatk["text"]
-    assert re.search(r"version \d+(\.\d+)+\.", gatk["text"]), gatk["text"]
-
-
-def test_no_citation_carries_an_unparsed_version_blob():
-    for citation in build_citations():
-        match = re.search(r"version ([^.]*?)[.,]", citation["text"])
-        if match:
-            assert re.fullmatch(
-                r"[\w.\-]+", match.group(1).strip()
-            ), f"{citation['name']}: {match.group(1)!r}"
-
-
-def test_the_normaliser_still_handles_the_gatk_shape():
-    """The helper the citation path was failing to call."""
-    assert _normalize_version_text("The Genome Analysis Toolkit () v4.7.0.0") == (
-        "4.7.0.0"
-    )
-
-
-# --------------------------------------------------------------------------
-# OptiType and mtDNA-Server 2 -- both manifest-resolved rows, not the compose
-# fallback. mtDNA-server-2 was the provisional row until Task 12; it is not
-# anymore (see below).
-# --------------------------------------------------------------------------
-
-
-def test_optitype_is_allowlisted_under_its_own_name():
-    """Not "ZaroHLA": that is ZaroPGx's wrapper and carries the ZaroPGx release
-    number, which is the wrapper-shadows-tool problem this list exists to stop.
-    Resolution needs the container's manifest, so the presence of the *key* is
-    what is asserted here; the manifest itself is pinned below.
-    """
-    assert _REPORT_COMPONENTS.get("optitype") == "OptiType"
-    assert not any("zarohla" in k for k in _REPORT_COMPONENTS)
+def test_a_tool_without_a_recorded_version_says_so():
+    rows = report_credits(CreditRun(), {}, {}, None)["software"]
+    for row in rows:
+        if row["name"] not in ("Chart.js", "D3", "BWA-MEM"):
+            assert row["version"] == "not recorded", row
 
 
 def test_zarohla_publishes_the_optitype_version_it_actually_installed():
@@ -170,25 +135,6 @@ def test_the_pinned_version_matches_the_dockerfile():
     )
 
 
-def test_mtdna_server_2_is_now_allowlisted_under_its_own_name():
-    """The inverse of what this test used to assert. mtDNA-server-2 was wired
-    in provisionally -- named so the report neither claimed a capability it
-    lacked nor silently omitted one, while MT-RNR1 came back as a no-call
-    precisely because this component was absent from the running stack.
-
-    Task 12 gave the mtdna sidecar a real manifest
-    (docker/mtdna-server-2/app.py's _publish_version_manifest), the same way
-    every other row in this table already has one, so it graduated out of
-    _PROVISIONAL_COMPONENTS into _REPORT_COMPONENTS instead of staying a
-    placeholder forever. See tests/test_mtdna_citation_honesty.py for the
-    citation-side half of the same change, including proof the version is a
-    real lookup and not a hardcoded fallback -- resolution needs the
-    container's manifest, which is not present on a bare dev host, so (like
-    the OptiType test above) only the *key* is asserted here.
-    """
-    assert _REPORT_COMPONENTS.get("mtdna-server-2") == "mtDNA-Server 2"
-
-
 def test_mtdna_server_2_publishes_its_own_manifest():
     """The manifest the row above depends on actually exists in the sidecar,
     the same way test_zarohla_publishes_the_optitype_version_it_actually_
@@ -203,11 +149,3 @@ def test_mtdna_server_2_publishes_its_own_manifest():
     assert (
         "mtdna-server-2.json" in app_py
     ), "docker/mtdna-server-2/app.py no longer publishes a version manifest"
-
-
-def test_a_provisional_component_never_claims_a_version_number():
-    import re as _re
-
-    for item in build_platform_info():
-        if item.get("source") == "provisional":
-            assert not _re.search(r"\d+\.\d+", item["version"]), item

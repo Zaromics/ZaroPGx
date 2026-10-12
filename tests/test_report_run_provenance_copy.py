@@ -225,6 +225,9 @@ def test_interactive_generator_renders_nothing_when_the_run_left_no_json(tmp_pat
     )
 
     html = output_path.read_text(encoding="utf-8")
+    # Not the references: the GRCh38 paper's title ends "...of the reference
+    # assembly".
+    html = re.sub(r'<ol class="credits-references">.*?</ol>', "", html, flags=re.S)
     assert _provenance_text(html) is None
     # The paragraph itself, not the always-present .run-provenance CSS rule.
     assert '<p class="run-provenance">' not in html
