@@ -114,6 +114,22 @@ def iter_gene_blocks(
             yield GeneBlock(gene_symbol, gene_data, source, gene_data.get("callSource"))
 
 
+def iter_unannotated_gene_blocks(calls: Any) -> Iterator[GeneBlock]:
+    """Yield a ``GeneBlock`` for each of PharmCAT's ``unannotatedGeneCalls``.
+
+    Genes PharmCAT calls but holds no guideline annotation for (3.4: F2 and F5),
+    in the same shape as a ``genes`` entry. Read nowhere before, so a report named
+    them among the genes examined without a call -- while the Executive Summary,
+    from PharmCAT's TSV, listed the same genes as called. ``source`` is ``None``:
+    no guideline covers them.
+    """
+    if not isinstance(calls, list):
+        return
+    for call in calls:
+        if isinstance(call, dict) and call.get("geneSymbol"):
+            yield GeneBlock(call["geneSymbol"], call, None, call.get("callSource"))
+
+
 def recommendation_call_for_display(
     source_count: int, recommendation: Any
 ) -> Optional[Mapping[str, Any]]:

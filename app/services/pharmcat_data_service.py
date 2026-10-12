@@ -217,9 +217,15 @@ class PharmCATDataService:
                 f"Raw data counts - genes: {len(genes)}, diplotypes: {len(diplotypes)}, drug_recs: {len(drug_recommendations)}, messages: {len(messages)}"
             )
 
+            report_genes = self._transform_genes_for_reports(genes, diplotypes)
+            report_genes += self._transform_unannotated_calls_for_reports(
+                parser.get_unannotated_gene_calls(run_id),
+                {gene["gene"] for gene in report_genes},
+            )
+
             # Transform data to match report generation expectations
             normalized_data = {
-                "genes": self._transform_genes_for_reports(genes, diplotypes),
+                "genes": report_genes,
                 "drugRecommendations": self._transform_drug_recommendations_for_reports(
                     drug_recommendations
                 ),
@@ -379,6 +385,49 @@ class PharmCATDataService:
 
             report_genes.append(report_gene)
 
+        return report_genes
+
+    def _transform_unannotated_calls_for_reports(
+        self, calls: List[Dict[str, Any]], known: set
+    ) -> List[Dict[str, Any]]:
+        """Report rows for PharmCAT's unannotatedGeneCalls (3.4: F2 and F5), genes
+        it calls without a guideline annotation. They have no gene_summary or
+        diplotypes rows, so reports listed them among the genes examined without
+        a call: Factor V Leiden and Prothrombin 20210A status, called, never shown.
+        """
+        report_genes = []
+        for block in report_json.iter_unannotated_gene_blocks(calls):
+            if block.gene_symbol in known:
+                continue
+            call = report_json.extract_display_call(block.gene_data)
+            sources = block.gene_data.get("sourceDiplotypes") or []
+            row = (
+                _diplotype_row(sources[0])
+                if len(sources) == 1 and isinstance(sources[0], dict)
+                else {}
+            )
+            report_gene = {
+                "gene": block.gene_symbol,
+                "diplotype": call["diplotype"],
+                "phenotype": call["phenotype"],
+                "activity_score": call["activity_score"],
+                "call_source": block.call_source,
+                "confidence": row.get("match_score"),
+                "allele1": row.get("allele1_name"),
+                "allele2": row.get("allele2_name"),
+                "function1": row.get("allele1_function"),
+                "function2": row.get("allele2_function"),
+                "uncalled_haplotypes": list(
+                    block.gene_data.get("uncalledHaplotypes") or []
+                ),
+            }
+            for key in ("diplotype_display", "diplotype_candidates"):
+                if call.get(key):
+                    report_gene[key] = call[key]
+            provenance = resolve_called_by(report_gene)
+            report_gene["called_by"] = provenance.letter
+            report_gene["called_by_label"] = provenance.label
+            report_genes.append(report_gene)
         return report_genes
 
     def _is_better_gene_entry(
