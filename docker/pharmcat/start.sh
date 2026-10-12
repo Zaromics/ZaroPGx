@@ -149,7 +149,11 @@ if [ -z "$PC_VER" ]; then
   # Try to parse from pharmcat_pipeline --version output
   PC_VER=$(pharmcat_pipeline --version 2>/dev/null | head -n1 | sed 's/[^0-9.]*\([0-9][0-9.]*\).*/\1/')
 fi
-echo "{\"name\":\"PharmCAT\",\"version\":\"${PC_VER:-unknown}\"}" > /data/versions/pharmcat.json
+# The components are the tools PharmCAT's VCF preprocessor runs on every job; the
+# report credits them at these versions.
+BCFTOOLS_VER=$(bcftools --version 2>/dev/null | sed -n 's/^bcftools \([0-9][0-9.]*\).*/\1/p' | head -n1)
+HTSLIB_VER=$(bcftools --version 2>/dev/null | sed -n 's/^Using htslib \([0-9][0-9.]*\).*/\1/p' | head -n1)
+echo "{\"name\":\"PharmCAT\",\"version\":\"${PC_VER:-unknown}\",\"components\":{\"bcftools\":\"${BCFTOOLS_VER:-unknown}\",\"htslib\":\"${HTSLIB_VER:-unknown}\"}}" > /data/versions/pharmcat.json
 
 echo "Starting FastAPI app..."
 python3 /app/pharmcat.py

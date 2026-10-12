@@ -105,6 +105,32 @@ app.add_middleware(
 # Global dictionary to track running Nextflow processes
 running_jobs: Dict[str, Dict] = {}
 
+
+def _publish_version_manifest() -> None:
+    """Record Nextflow's version in /data/versions, as every sidecar records its
+    tool's (data/versions/about.md): Nextflow runs every job, and the report credits
+    it at this version. Never fatal: a missing manifest costs a version string."""
+    try:
+        out = subprocess.run(
+            ["nextflow", "-version"], capture_output=True, text=True, timeout=120
+        )
+        found = re.search(r"version (\S+) build", out.stdout + out.stderr)
+        versions_dir = Path(os.getenv("VERSIONS_DIR", "/data/versions"))
+        versions_dir.mkdir(parents=True, exist_ok=True)
+        (versions_dir / "nextflow.json").write_text(
+            json.dumps(
+                {"name": "Nextflow", "version": found.group(1) if found else "unknown"}
+            ),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.warning(f"Could not publish the Nextflow version manifest: {exc}")
+
+
+# In the background: `nextflow -version` starts a JVM, and the health check should
+# not wait for it.
+threading.Thread(target=_publish_version_manifest, daemon=True).start()
+
 def check_external_service_health(service_name: str) -> bool:
     """Check if an external service is healthy."""
     try:

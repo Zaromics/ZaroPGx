@@ -1864,6 +1864,11 @@ async def genotype(
                     "total_genes": len(requested_genes),
                     "successful_genes": len([r for r in aggregated["results"].values() if r.get("success", False)]),
                     "failed_genes": len([r for r in aggregated["results"].values() if not r.get("success", False)]),
+                    # Genes Beagle phased and genes PyPGx's copy-number models
+                    # called (pipeline_methods): the report credits those tools
+                    # only when these are non-zero.
+                    "beagle_genes": sum(1 for r in aggregated["results"].values() if (r.get("methods") or {}).get("beagle")),
+                    "cnv_model_genes": sum(1 for r in aggregated["results"].values() if (r.get("methods") or {}).get("cnv_model")),
                 })
             else:
                 await job_client.fail_step(f"PyPGx analysis failed: {aggregated.get('error', 'Unknown error')}", {
@@ -1894,6 +1899,21 @@ async def genotype(
         # The response carries everything this request produced; its working
         # directory (the VCF copy and the per-gene pipelines) is not read again.
         shutil.rmtree(job_dir, ignore_errors=True)
+
+def pipeline_methods(pipeline_dir: Path) -> Dict[str, bool]:
+    """What PyPGx's run-ngs-pipeline ran for one gene, from the files it wrote.
+
+    It phases with Beagle only when the input is not already fully phased
+    (phased-variants.zip), and calls copy number with its scikit-learn models only
+    when given depth of coverage for a gene with SV models (cnv-calls.zip). The
+    report credits Beagle, the 1000 Genomes panel and scikit-learn only when a gene
+    used them.
+    """
+    return {
+        "beagle": (pipeline_dir / "phased-variants.zip").exists(),
+        "cnv_model": (pipeline_dir / "cnv-calls.zip").exists(),
+    }
+
 
 def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str = 'hg19', job_id: str = None, sv_inputs: Optional[Tuple[str, str]] = None) -> Dict[str, Any]:
     """Run PyPGx for star allele calling on the input VCF"""
@@ -2027,7 +2047,8 @@ def run_pypgx(vcf_path: str, output_dir: str, gene: str, reference_genome: str =
             'gene': gene,
             'diplotype': diplotype,
             'details': details,
-            'job_id': os.path.basename(output_dir)
+            'job_id': os.path.basename(output_dir),
+            'methods': pipeline_methods(pipeline_dir),
         }
         
     except Exception as e:

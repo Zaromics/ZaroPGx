@@ -174,19 +174,52 @@ app.add_middleware(
 # Store startup time
 app_start_time = time.time()
 
-# Write version manifest at startup
+def _version_from(cmd: list, pattern: str) -> str:
+    """The first group of ``pattern`` in ``cmd``'s output, or "unknown"."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except Exception:
+        return "unknown"
+    found = re.search(pattern, (result.stdout or "") + (result.stderr or ""), re.M)
+    return found.group(1) if found else "unknown"
+
+
+# Write version manifest at startup. The components are the libraries inside GATK
+# that do some of its work here (Picard's LiftoverVcf, FastqToSam and
+# CreateSequenceDictionary; HTSJDK reads and writes the files) and the htslib tools
+# this service runs beside it; the report credits each at the version found here.
 try:
     versions_dir = os.path.join(DATA_DIR, "versions")
     os.makedirs(versions_dir, exist_ok=True)
     try:
         result = subprocess.run(["gatk", "--version"], capture_output=True, text=True, timeout=10)
-        gatk_version = (result.stdout or result.stderr or "").strip().splitlines()[0]
+        banner = (result.stdout or result.stderr or "").strip()
     except Exception:
-        gatk_version = "unknown"
+        banner = ""
+    gatk_version = banner.splitlines()[0] if banner else "unknown"
+
+    def _banner_version(label: str) -> str:
+        found = re.search(rf"^{label} Version: (\S+)", banner, re.M)
+        return found.group(1) if found else "unknown"
+
     with open(os.path.join(versions_dir, "gatk.json"), "w") as vf:
         # Keep only the first token if it's a long banner
         ver_token = gatk_version.replace("GATK", "").strip()
-        vf.write(json.dumps({"name": "GATK", "version": ver_token}))
+        vf.write(
+            json.dumps(
+                {
+                    "name": "GATK",
+                    "version": ver_token,
+                    "components": {
+                        "picard": _banner_version("Picard"),
+                        "htsjdk": _banner_version("HTSJDK"),
+                        "samtools": _version_from(["samtools", "--version"], r"^samtools (\S+)"),
+                        "bcftools": _version_from(["bcftools", "--version"], r"^bcftools (\S+)"),
+                        "htslib": _version_from(["bcftools", "--version"], r"^Using htslib (\S+)"),
+                    },
+                }
+            )
+        )
 except Exception:
     pass
 
