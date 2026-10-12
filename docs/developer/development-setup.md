@@ -1,537 +1,100 @@
 ---
-title: Development Setup
-curation: partial
+title: Development setup
+curation: not
 ---
 
-# Development Setup
+# Development setup
 
-Complete guide for setting up a ZaroPGx development environment.
+## Requirements
 
-## Prerequisites
-
-### System Requirements
-
-**Minimum:**
-- 8 GB DDR3 RAM
-- 4 CPU cores
-- 50 GB free SSD space
-- Docker
-- Docker Compose
-
-**Recommended:**
-- 64+ GB DDR4+ RAM
-- 8+ CPU cores
-- 1TB+ free SSD storage
-- Docker Desktop with WSL2 (if on Windows)
-    - Hint: git clone to your ~/ on the WSL virtual drive, instead of the windows filesystem.
-    - Use WSL bash for work and check that your WSL is connected in Docker Desktop settings.  
-
-### Development Tools
-
-**Required:**
-- Git
-- Docker and Docker Compose
-- Python 3.12+ recommended
-- Node.js 18+ (for frontend)
-
-
-## Environment Setup
-
-### 1. Clone Repository
+- Python 3.12 (exactly: `pyproject.toml` requires `>=3.12,<3.13`) and
+  [uv](https://docs.astral.sh/uv/).
+- Docker with Compose v2.24 or later. The test suite starts a PostgreSQL container, and the
+  stack runs in Docker.
+- Git.
+- Optional: Node 22, for two tests that run the interactive report's JavaScript; Pango and
+  the Liberation fonts, for the tests that render PDFs with WeasyPrint. Without them those
+  tests are skipped.
 
 ```bash
 git clone https://github.com/Zaromics/ZaroPGx.git
 cd ZaroPGx
+uv python install 3.12
+uv sync --extra dev
 ```
 
-### 2. Environment Configuration
+## Running the stack
 
-**Development Environment:**
 ```bash
 cp .env.local .env
+./start-docker.sh
 ```
 
-**Custom Development:**
+`start-docker.sh` generates `SECRET_KEY` and `DB_PASSWORD` (the templates ship them blank,
+and Compose will not start without a password), prepares `data/` and its permissions, pulls
+the images and starts the stack. The app is at `http://localhost:8765`.
+
+The `app` and `nextflow` containers mount the working tree (`./` at `/app` and
+`/workspace`), so they run your checked-out code:
+
+- App code: `docker compose restart app`.
+- `pipelines/pgx/main.nf`: picked up by the next job.
+- Anything under `docker/<service>/`: that code is built into the image, so rebuild it,
+  e.g. `docker compose up -d --build pharmcat`.
+
+Put local changes to `compose.yml` in `compose.override.yml` (gitignored), which Compose
+merges in. Running the app outside Docker does not give a working pipeline: Nextflow is
+not published to the host and reports back to `http://app:8000`.
+
+The FASTQ lane needs an alignment index on the host. Build it once with
+`scripts/build-align-index.sh` (about an hour, 8-9 GB; it needs the hg38 reference the
+genome downloader stages).
+
+## Lint, as CI runs it
+
 ```bash
-cp .env.example .env
-# Edit .env with your development settings
+uv tool run black==26.10.0 --check app tests
+uv tool run isort==9.0.2 --check-only --profile black app tests
+uv tool run flake8==7.4.1 --select=E9,F63,F7,F82 app tests
 ```
 
-### 3. Development Environment Variables
+The versions are pinned to `uv.lock`; `tests/test_ci_lint_pins.py` fails if they drift.
+CI also runs a full `flake8 app tests` for information; it does not fail the build.
 
-Create `.env.dev` for development-specific settings:
-
-```bash
-# Development mode
-ZAROPGX_DEV_MODE=true
-LOG_LEVEL=DEBUG
-
-# Database
-DB_HOST=localhost
-DB_PORT=5444
-DB_NAME=zaropgx_db
-DB_USER=zaropgx_user
-DB_PASSWORD=  # set to the password in your running volume / generated .env
-
-# Services
-PHARMCAT_API_URL=http://localhost:5001
-PYPGX_API_URL=http://localhost:5053
-GATK_API_URL=http://localhost:5002
-FHIR_SERVER_URL=http://localhost:8090/fhir
-
-# Development features
-GATK_ENABLED=true
-PYPGX_ENABLED=true
-OPTITYPE_ENABLED=true
-KROKI_ENABLED=true
-
-# Debug settings
-DEBUG=true
-VERBOSE_LOGGING=true
-```
-
-## Local Development
-
-### Option 1: Full Docker Development
-
-**Start services and view logs:**
-```bash
-docker compose up -d && docker compose logs -f
-```
-
-**Stop services:**
-```bash
-docker compose down
-```
-
-### Option 2: Hybrid Development
-
-**Start supporting services:**
-```bash
-docker compose up -d db pharmcat pypgx gatk-api fhir-server
-```
-
-**Run FastAPI app locally:**
-```bash
-# Install dependencies
-uv pip install -e .
-
-# Run development server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Option 3: Minimal Development (NEEDS REVIEW)
-
-**Start only database:**
-```bash
-docker compose up -d db
-```
-
-**Run everything locally:**
-```bash
-# Install all dependencies (there is no requirements.txt; deps live in
-# pyproject.toml and are locked in uv.lock)
-uv sync --extra dev
-
-# Run services
-python -m app.services.pharmcat_service &
-python -m app.services.pypgx_service &
-python -m app.services.gatk_service &
-uvicorn app.main:app --reload
-```
-
-## Development Workflow
-
-### 1. Code Changes
-
-**Make changes to Python code:**
-- Changes are automatically reloaded with `--reload` flag
-- Restart services if needed: `docker compose restart app`
-
-**Make changes to Docker services:**
-- Rebuild specific service: `docker compose up -d --build pharmcat`
-- Rebuild all services: `docker compose up -d --build`
-
-### 2. Database Schema Changes
-
-Fresh schemas are defined in `db/init/00_complete_database_schema.sql`. PostgreSQL executes
-the mounted initialization SQL only for an empty data directory; restarting a container with
-an existing volume does not apply edits to that file.
-
-For an existing volume that must retain data:
-1. Back up the database.
-2. Put the reviewed, purpose-specific SQL under `db/init/migrations/`.
-3. Stop services that write to the database.
-4. Hand-run that SQL through the mounted `/docker-entrypoint-initdb.d` path.
-
-For example:
-```bash
-docker compose exec -T db psql \
-  -v ON_ERROR_STOP=1 \
-  -U zaropgx_user \
-  -d zaropgx_db \
-  -f /docker-entrypoint-initdb.d/migrations/02_fix_variant_column_lengths.sql
-```
-
-No automatic migration runner exists. Use the role and database configured for the target
-volume, and record release-specific operator steps in `UPGRADING.md`.
-
-### 3. Testing
-
-**Fast suite** (unit/API tests; no Docker required):
+## Tests
 
 ```bash
-# Prefer the project venv on Windows (avoids uv rebuilding pysam):
-#   .venv\Scripts\python.exe -m pytest -q -m "not e2e"
-# Unix:
-#   .venv/bin/python -m pytest -q -m "not e2e"
 uv run pytest -q -m "not e2e"
 ```
 
-**Full-stack e2e** (compose project `zaropgx_e2e`, host port `18765`):
+The suite runs against PostgreSQL, never SQLite: `tests/postgres.py` starts a throwaway
+`postgres:18.6` container built from `db/init`, or uses the database at
+`ZAROPGX_TEST_POSTGRES_URL`. See {doc}`testing` for the end-to-end suite.
+
+## Database changes
+
+Fresh databases are built from `db/init/00_complete_database_schema.sql`; existing ones are
+brought up to date at app startup by `app/api/db_migrations.py`, which applies each file in
+`db/init/migrations/` once and records it in `schema_migrations`. For a schema change:
+
+1. Change `00_complete_database_schema.sql`, so fresh databases get it.
+2. Add the next numbered file, e.g. `db/init/migrations/07_<what>.sql`. It must be
+   idempotent: it also runs on fresh databases, which already have the change. Keep to
+   plain statements; the applier splits the file on `;`.
+
+## Documentation
+
+The docs are Sphinx with MyST Markdown, in `docs/`.
 
 ```bash
-./scripts/e2e.sh                          # build/up → pytest -m e2e → down on success
+uv run --no-project --with-requirements docs/requirements.txt \
+  sphinx-build -W -b html docs docs/_build/html
 ```
 
-On Windows use Git Bash or WSL for `./scripts/e2e.sh`. Give Docker Desktop enough RAM
-(16 GB+ recommended). First run may take a long time (cold image builds + PharmCAT
-reference download); health wait allows up to ~25 minutes. On failure the stack stays
-up and logs are written to `e2e-logs/compose.log`.
-
-Only the app is published on the host (`127.0.0.1:18765`); `compose.e2e.yml` clears
-other service host ports so e2e does not collide with a developer stack.
-
-### 4. Code Quality
-
-**Format code:**
-```bash
-black app/
-isort app/
-```
-
-**Lint code:**
-```bash
-flake8 app/
-mypy app/
-```
-
-**Type checking:**
-```bash
-mypy app/
-```
-
-## Service Development
-
-### FastAPI App Development
-
-**Project structure:**
-```
-app/
-├── api/                 # API routes and models
-│   ├── routes/         # Route handlers
-│   ├── utils/ 
-│   ├── models.py       # Pydantic models
-│   └── db.py          # Database utilities
-├── pharmcat/          # PharmCAT integration
-├── reports/            # Report generation
-├── services/           # Background services
-└── templates/
-└── utils/
-└── visualizations/     # Kroki + mermaid diagrams
-```
-
-**Adding new endpoints:**
-1. Create route in `app/api/routes/`
-2. Add Pydantic models in `app/api/models.py`
-3. Register route in `app/main.py`
-4. Add tests in `tests/api/`
-
-**Example new route:**
-```python
-# app/api/routes/new_feature.py
-from fastapi import APIRouter, Depends
-from app.api.models import NewFeatureResponse
-from app.api.db import get_db
-
-router = APIRouter(prefix="/new-feature", tags=["new-feature"])
-
-@router.get("/", response_model=NewFeatureResponse)
-async def get_new_feature(db: Session = Depends(get_db)):
-    return NewFeatureResponse(message="Hello World")
-```
-
-### Service Integration
-
-**Adding new service:**
-1. Create service directory in `docker/`
-2. Add Dockerfile and configuration
-3. Update `compose.yml` (the tracked Compose file; there is no `docker-compose.yml`)
-4. Add service client in `app/services/`
-5. Update environment variables — add the keys to `.env.example`, `.env.local` and
-   `.env.production`, and document them in {doc}`../advanced-configuration`
-
-**Example service client:**
-```python
-# app/services/new_service_client.py
-import httpx
-from app.core.config import settings
-
-class NewServiceClient:
-    def __init__(self):
-        self.base_url = settings.NEW_SERVICE_URL
-        self.client = httpx.AsyncClient()
-    
-    async def call_service(self, data: dict):
-        response = await self.client.post(
-            f"{self.base_url}/analyze",
-            json=data
-        )
-        return response.json()
-```
-
-## Database Development
-
-### Database Schema
-
-**Schema organization:**
-- `public`: Core application tables
-- `cpic`: CPIC guidelines and data
-- `fhir`: FHIR resources
-- `user_data`: User and patient data
-- `reports`: Generated reports metadata
-
-**Adding new tables:**
-1. Create the SQLAlchemy model in `app/api/models.py`.
-2. Add matching SQL DDL to `db/init/00_complete_database_schema.sql` so fresh databases have
-   the complete current schema.
-3. If existing volumes must retain data, prepare and review a separate manual upgrade under
-   `db/init/migrations/`, back up the database, and hand-run it with `psql`.
-
-**Example model:**
-```python
-# app/api/models.py
-from sqlalchemy import Column, Integer, String, DateTime
-from app.api.db import Base
-
-class NewTable(Base):
-    __tablename__ = "new_table"
-    
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-```
-
-### Existing-Volume Schema Upgrades
-
-Manual upgrade SQL is never discovered or run at application startup. Apply only the reviewed
-file named by the relevant release instructions:
-```bash
-docker compose exec -T db psql \
-  -v ON_ERROR_STOP=1 \
-  -U zaropgx_user \
-  -d zaropgx_db \
-  -f /docker-entrypoint-initdb.d/migrations/02_fix_variant_column_lengths.sql
-```
-
-Verify the changed schema after the command completes. There is no generated rollback; restore
-the pre-upgrade backup if the reviewed upgrade cannot be corrected safely.
-
-## Frontend Development
-
-### Web UI Development
-
-**Frontend structure:**
-```
-app/templates/
-├── index.html          # Main page
-├── static/             # Static assets
-│   ├── css/           # Stylesheets
-│   ├── js/            # JavaScript
-│   └── images/        # Images
-└── components/         # Reusable components
-```
-
-**Adding new features:**
-1. Create HTML template
-2. Add JavaScript functionality
-3. Add CSS styling
-4. Update navigation
-5. Test in browser
-
-### API Integration
-
-**Frontend API calls:**
-```javascript
-// Upload file
-async function uploadFile(file, sampleId) {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('sample_identifier', sampleId);
-    
-    const response = await fetch('/upload/genomic-data', {
-        method: 'POST',
-        body: formData
-    });
-    
-    return await response.json();
-}
-
-// Check status
-async function checkStatus(jobId) {
-    const response = await fetch(`/upload/status/${jobId}`);
-    return await response.json();
-}
-```
-
-## Testing Development
-
-### Test Structure
-
-- Fast suite: `tests/` excluding `@pytest.mark.e2e` — unit and `TestClient` API tests on a throwaway PostgreSQL (`tests/postgres.py`; needs Docker or `ZAROPGX_TEST_POSTGRES_URL`).
-- Full-stack e2e: `tests/e2e/` — HTTP against a live compose stack (`ZAROPGX_E2E=1`).
-- CI runs the fast suite on every PR and a separate required `e2e` job with Buildx cache.
-
-### Test Data
-
-Sample VCFs for local and e2e runs live under `test_data/` (e.g. `pharmcat.example.vcf`,
-`sample_cpic.vcf`). The full-stack e2e harness uploads `test_data/pharmcat.example.vcf`.
-
-## Debugging
-
-### Debugging Tools
-
-**Docker debugging:**
-```bash
-# Debug specific container
-docker compose exec app python -m pdb app/main.py
-
-# View container logs
-docker compose logs -f app
-
-# Access container shell
-docker compose exec app bash
-```
-
-### Logging
-
-**Development logging:**
-```python
-import logging
-
-logger = logging.getLogger(__name__)
-
-logger.debug("Debug message")
-logger.info("Info message")
-logger.warning("Warning message")
-logger.error("Error message")
-```
-
-**Log configuration:**
-```python
-# app/core/logging.py
-import logging
-import sys
-
-def setup_logging():
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler('app.log')
-        ]
-    )
-```
-
-## Performance Development
-
-### Profiling
-
-**Python profiling:**
-```python
-import cProfile
-import pstats
-
-# Profile specific function
-cProfile.run('my_function()', 'profile_output.prof')
-
-# Analyze results
-p = pstats.Stats('profile_output.prof')
-p.sort_stats('cumulative').print_stats(10)
-```
-
-**Memory profiling:**
-```python
-from memory_profiler import profile
-
-@profile
-def my_function():
-    # Function code here
-    pass
-```
-
-### Optimization
-
-**Database optimization:**
-- Use database indexes
-- Optimize queries
-- Use connection pooling
-- Monitor query performance
-
-**API optimization:**
-- Use async/await
-- Implement caching
-- Optimize serialization
-- Use background tasks
-
-## Deployment Development
-
-### Local Production Testing
-
-**Test production configuration:**
-```bash
-# Use production environment
-cp .env.production .env
-
-# Start with production settings
-docker compose up -d --build
-
-# Test production features
-curl http://localhost:8765/health
-```
-
-### Container Development
-
-**Build specific container:**
-```bash
-# Build app container
-docker build -t zaro-pgx-app:dev ./docker/app
-
-# Run with custom image
-docker compose up -d --build app
-```
-
-**Multi-stage builds:**
-
-Dependencies are declared in `pyproject.toml` and pinned in `uv.lock` — copy those two
-files, not a `requirements.txt` (the project has none):
-
-```dockerfile
-# Development stage
-FROM python:3.12-slim as development
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --extra dev
-
-# Production stage
-FROM python:3.12-slim as production
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
-```
-
-## Next Steps
-
-- **Architecture Overview**: {doc}`architecture`
-- **API Reference**: {doc}`api-reference`
-- **Contributing**: {doc}`contributing`
-- **Deployment**: {doc}`deployment`
+`-W` turns warnings into errors, as Read the Docs does (`.readthedocs.yaml`). For a
+live-reloading preview, `make -C docs live` (port 8000), or start the `docs` service:
+`docker compose --profile optional up -d docs` (127.0.0.1:5070). The app serves
+`docs/_build/html` at `/docs` and builds it at startup if it is missing.
+
+Each page's front matter carries `curation: full`, `partial` or `not`, shown in a banner on
+the page: how much of it a person has reviewed.

@@ -1,18 +1,33 @@
 ---
-title: Supported File Formats
+title: Input formats
 curation: not
 ---
 
-# Supported File Formats
+# Input formats
 
-ZaroPGx supports multiple genomic data formats with automatic conversion and processing.
+| Input | Accepted | Before the common pipeline |
+|---|---|---|
+| VCF (`.vcf`, `.vcf.gz`) | GRCh38; GRCh37/hg19 is lifted over | nothing, or liftover |
+| BCF | as VCF | converted to VCF (bcftools) |
+| gVCF | GRCh38, GATK reference blocks | genotyped (GATK GenotypeGVCFs) |
+| BAM, SAM | GRCh38 | SAM converted to BAM (samtools) |
+| CRAM | GRCh38, written against one of three references (below) | converted to BAM (samtools) |
+| FASTQ | short reads, up to 20 GB | aligned to GRCh38 (bwa-mem) |
+| 23andMe, AncestryDNA, BED, FASTA, T2T-CHM13 | refused, with the reason | |
+
+One data file per analysis; a FASTQ's two mates count as one. A VCF, BCF or gVCF must hold
+one sample. Index files (`.bai`, `.crai`, `.csi`, `.tbi`, `.idx`) may be added; the
+pipeline makes its own. Only FASTQ has a size limit.
+
+Every input then runs the same steps: PyPGx, mitochondrial calling (unless switched off),
+PharmCAT with PyPGx's and the other tools' calls as outside calls, and the reports.
+Alignments also get HLA typing, and a VCF made from their reads at every PharmCAT position.
 
 ## Variant Call Format (VCF)
-VCF is the standard format for storing genetic variant information. ZaroPGx can process VCF 4.x files directly without preprocessing.
 
-### Processing Path — VCF
+### Processing path: VCF
 ```
-VCF → Header Analysis → PyPGx → PharmCAT → Reports
+VCF → [liftover, if GRCh37] → PyPGx and [mtDNA] → PharmCAT → reports
 ```
 
 ## Binary Call Format (BCF)
@@ -22,9 +37,9 @@ Because the file that gets analysed is a VCF, every VCF caveat applies to a BCF 
 
 A gVCF that has been written as a BCF is routed to the gVCF lane below rather than this one — the `##GVCFBlock` records are read out of the binary header to catch it.
 
-### Processing Path — BCF
+### Processing path: BCF
 ```
-BCF → bcftools (VCF conversion) → Header Analysis → PyPGx → PharmCAT → Reports
+BCF → bcftools (VCF conversion) → [liftover, if GRCh37] → PyPGx and [mtDNA] → PharmCAT → reports
 ```
 
 ## Genomic VCF (gVCF)
@@ -45,25 +60,23 @@ Refused, with the reason:
 
 Every VCF caveat applies: no HLA typing, and degraded accuracy for *CYP2D6* and for structural and copy-number variants. One sample only.
 
-### Processing Path — gVCF
+### Processing path: gVCF
 ```
-gVCF → GATK GenotypeGVCFs ×2 (VCF conversion) → Header Analysis → PyPGx → PharmCAT → Reports
+gVCF → GATK GenotypeGVCFs ×2 (VCF conversion) → PyPGx and [mtDNA] → PharmCAT → reports
 ```
 
 ## Binary Alignment Map (BAM)
-BAM files contain aligned sequencing reads and are commonly used for variant calling and analysis.
 
 For aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT gets a call at each of its positions, made from your reads. Reference needs at least 7 good reads for the reference and next to none for anything else; a variant needs a confident call (genotype quality 20). Anything else is a no-call, so a gene your data did not cover is reported as not called, not as normal. PharmCAT's assume-reference checkboxes are not applied. The report states how many positions were called, had no reads, or were uncertain.
 
 Structural variants (gene deletions, duplications and hybrids, such as *CYP2D6* \*5, \*36 and \*68, or *GSTM1*, *GSTT1* and *UGT2B17* deletions) are called by PyPGx from read depth, normalised against the *VDR* gene, for GRCh38 whole-genome data only: the alignment needs a median depth of at least 15x at a set of loci no pharmacogene panel targets. A targeted panel does not qualify, because depth across capture targets is too uneven to count gene copies from one sample, and its genes get calls from small variants alone.
 
-### Processing Path — BAM
+### Processing path: BAM
 ```
-BAM → HLA Typing → PyPGx → PharmCAT → Reports
+BAM → [HLA typing] → PyPGx (VCF at PharmCAT's positions, then star alleles) and [mtDNA] → PharmCAT → reports
 ```
 
-## Compressed BAM (CRAM)
-CRAM is a compressed version of BAM that uses reference-based compression for smaller file sizes.
+## CRAM
 
 A CRAM stores reads as differences from the exact reference sequences it was written against, so it can only be decoded with those sequences. ZaroPGx decodes CRAMs written against:
 
@@ -73,22 +86,24 @@ A CRAM stores reads as differences from the exact reference sequences it was wri
 
 The genome downloader keeps their sequences in a local reference cache (about 5.3 GB) once its other downloads finish, and a CRAM is decoded with whichever sequences it names. A CRAM written against any other reference is refused before conversion, with a message naming the contigs that cannot be decoded. Convert such a file to BAM with its own reference (`samtools view -b -T <that FASTA>`) and upload the BAM, which needs no reference.
 
-### Processing Path — CRAM
+### Processing path: CRAM
 ```
-CRAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
-```
-
-## Sequence Alignment Map (SAM)
-SAM is the text-based format for aligned sequences, often used as an intermediate format.
-
-### Processing Path — SAM
-```
-SAM → GATK (BAM conversion) → HLA Typing → PyPGx → PharmCAT → Reports
+CRAM → samtools (BAM conversion) → then as BAM
 ```
 
-## FASTQ Format — accepted up to 20 GB
+## SAM
 
-Short-read FASTQ, single-end or an R1/R2 pair uploaded together. ZaroPGx aligns it to GRCh38 with BWA, then runs the usual pipeline. The two files of a pair must be mates of one run.
+### Processing path: SAM
+```
+SAM → samtools (BAM conversion) → then as BAM
+```
+
+## FASTQ: accepted up to 20 GB
+
+Short-read FASTQ, single-end or an R1/R2 pair uploaded together. ZaroPGx aligns it to GRCh38
+with bwa-mem (bundled in GATK), marks duplicates, then runs the BAM path. The two files of a
+pair must be mates of one run. The alignment index must have been built first
+(`scripts/build-align-index.sh`; see {doc}`installation`).
 
 Upload both files of a paired-end run. R1 alone can miss heterozygous variants in *CYP2B6* and *CYP2D6*.
 
@@ -100,7 +115,7 @@ Refused, with the reason:
 
 Alignment is slow. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.
 
-## Consumer genotyping arrays (23andMe, AncestryDNA) — in development
+## Consumer genotyping arrays (23andMe, AncestryDNA): refused for now
 
 ZaroPGx recognises a 23andMe or AncestryDNA raw-data export and refuses it for now; support is in development. The coordinates in those files are perfectly good — build 37, plus strand, real positions — and turning one into a VCF is a one-line `bcftools convert --tsv2vcf`. What is wrong is what happens next.
 
@@ -126,24 +141,7 @@ Upload sequencing data instead: a GRCh38/hg38 VCF, or a BAM, CRAM or SAM.
 
 ## Reference Genome Support
 - **GRCh38/hg38** — analysed directly; the build every result is reported on.
-- **GRCh37/hg19 VCF or BCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. A real coordinate conversion, not a contig relabelling. Variants that cannot be mapped are dropped and the step reports how many; the run fails if too much of the file cannot be lifted. A BCF is converted to a VCF first, then lifted. A native GRCh38 VCF remains the most reliable input.
+- **GRCh37/hg19 VCF or BCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. A real coordinate conversion, not a contig relabelling. Variants that cannot be mapped are dropped and the step reports how many; the run fails if more than half of them cannot be lifted. A BCF is converted to a VCF first, then lifted. A native GRCh38 VCF remains the most reliable input.
 - **GRCh37/hg19 gVCF** — **not accepted.** The gVCF lane's value is the reference pass it emits over PharmCAT's own position list, and that list exists in GRCh38 coordinates only. Run `gatk GenotypeGVCFs` on it yourself and upload the resulting GRCh37 VCF, which *is* lifted. See the gVCF section above.
 - **GRCh37/hg19 BAM, CRAM or SAM** — **not accepted.** Liftover converts variants that have already been called. Aligned reads are analysed by calling variants out of them first, and that call reads each gene from its GRCh38 position — on GRCh37 reads those positions are wrong (GRCh38's *CYP2D6* window sits roughly 400 kb from GRCh37's), so you would get star alleles that are not yours rather than an error. Call variants against GRCh37/hg19 yourself and upload the VCF, or realign the reads to GRCh38/hg38.
 - **T2T-CHM13 (any format)** — **detected and refused for now; support is in development.** ZaroPGx reads the assembly out of the file's own contig lengths, or out of its `##reference=` line, and declines the upload. Nothing downstream would catch a CHM13 file: PharmCAT's preprocessor normalises against GRCh38.p13 without checking which assembly the input is on, and `bcftools norm -c ws` *swaps* a mismatched reference allele rather than failing — so the report would carry confidently wrong star alleles. There is no automatic liftover for it, and doing one yourself is not a workaround either: the published T2T chains exclude GRCh38's alternate haplotype contigs, so *GSTT1* (on `chr22_KI270879v1_alt`) cannot come across at all, only about 60% of T2T's segmental duplications have a clear GRCh38 orthologue — the *CYP2D6*/*CYP2D7*/*CYP2D8* cluster is one such region — and no published work characterises *CYP2D6* or *CYP2C19* in CHM13. Call your variants against GRCh38/hg38, or realign to it, and upload that.
-
-## File Size Considerations
-
-### Typical File Sizes
-| Format | Whole Genome | Exome | Targeted Panel |
-|--------|--------------|-------|----------------|
-| **VCF** | 1-5 GB | 50-200 MB | 1-10 MB |
-| **BAM** | 50-100 GB | 2-5 GB | 50-500 MB |
-| **CRAM** | 15-30 GB | 500 MB-1 GB | 10-100 MB |
-
-
-## Next Steps
-
-- **Learn about usage**: {doc}`usage`
-- **Understand reports**: {doc}`reports`
-- **Configure processing**: {doc}`../advanced-configuration`
-- **Troubleshoot issues**: {doc}`troubleshooting`

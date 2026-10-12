@@ -14,6 +14,65 @@ iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/boo
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
+## v0.3.2 → next release
+
+### The image tag moves with the release
+
+`start-docker.sh` and `start-docker.ps1` now replace an older release's `ZAROPGX_TAG` in
+`.env` (such as `0.3.2`) with the new release, and say so; `latest`, newer and custom tags
+are left alone. If you start the stack with `docker compose` directly, set it yourself, then
+pull:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Left at `0.3.2`, the services run the old images under the new code.
+
+### The app binds to loopback in new installs
+
+The templates now set `BIND_ADDRESS=127.0.0.1:8765` (they had `8765`, and `.env.production`
+`0.0.0.0:8765`, which listen on every interface with no password by default). Your `.env`
+keeps its value. With a bare port or `0.0.0.0`, anyone on your network can open the app.
+If you use it from other devices, that is what you want: consider turning on
+`ZAROPGX_AUTH_MODE=password`. If you do not, change it to `127.0.0.1:8765`.
+
+### Uploads are deleted when their job ends
+
+An upload is now removed once its job completes, fails or is cancelled; the reports keep the
+results. To keep uploads, add `KEEP_UPLOADS=true` to `.env`.
+
+### HAPI FHIR v8.12.0-2
+
+The templates now pin `HAPI_FHIR_TAG=v8.12.0-2` (was `v8.10.0-2`). An existing `.env` keeps
+its value. If you change it, HAPI migrates its schema on first start and cannot go back:
+back up the database first (see the docs, *Running a server*).
+
+### CRAM reference cache
+
+The genome downloader now builds a local cache of the reference sequences CRAMs are written
+against, so CRAMs made with the 1000 Genomes GRCh38 analysis set decode as well as UCSC hg38
+ones. On the first start after updating, it downloads 3.2 GB and keeps 5.3 GB under
+`reference/ref_cache`. `REF_CACHE_ENABLED=false` skips it; CRAMs then decode only if they were
+written against UCSC hg38. No service fetches reference sequences from the internet any more.
+
+### Nextflow no longer mounts the Docker socket
+
+`compose.yml` no longer gives the `nextflow` service `/var/run/docker.sock`; it never started
+containers. If your `compose.override.yml` adds the socket (or removes it for rootless
+Docker), delete those lines.
+
+### `data/versions` must be writable
+
+`start-docker.sh` now also creates `data/versions`, world-writable and sticky like
+`data/temp`. ZaroHLA and mtDNA-Server 2 record their versions there; without it the report's
+Platform table has no rows for OptiType and mtDNA-Server 2. If you start the stack with
+`docker compose up` directly:
+
+```bash
+mkdir -p data/versions && chmod 1777 data/versions
+```
+
 ## v0.3.1 → v0.3.2
 
 ### Image tag correction

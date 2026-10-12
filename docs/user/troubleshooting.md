@@ -1,468 +1,82 @@
 ---
-title: Troubleshooting Guide
-curation: partial
+title: Troubleshooting
+curation: not
 ---
 
-# Troubleshooting Guide
+# Troubleshooting
 
-Common issues and solutions for ZaroPGx.
+Start with the state of the services and the logs:
 
-## Installation Issues
-
-### Docker Not Starting
-
-**Symptoms:**
-- `docker compose up` fails
-- Services show "Exited" status
-- Port binding errors
-
-**Solutions:**
 ```bash
-# Check Docker status
-docker --version
-docker compose version
-
-# Restart Docker service
-sudo systemctl restart docker  # Linux
-# Or restart Docker Desktop (macOS/Windows)
-
-# Check port availability
-netstat -tulpn | grep :8765
-netstat -tulpn | grep :5444
-
-# Change ports in .env file if needed
-BIND_ADDRESS=8766  # Use different port
+docker compose ps                      # every service should be "healthy"
+docker compose logs -f app             # or pharmcat, nextflow, pypgx, gatk-api, ...
+curl http://localhost:8765/services-status
 ```
 
-### Out of Memory Errors
+A failed job's own record is in its directory, `data/reports/<patient_id>/<job_id>/`:
+Nextflow's `trace.txt` and `report.html`, and the PharmCAT pipeline log.
 
-**Symptoms:**
-- Containers killed with "OOMKilled" status
-- Processing fails with memory errors
-- System becomes unresponsive
+## The stack does not start
 
-**Solutions:**
+**`required variable DB_PASSWORD is missing a value`.** The `.env` templates ship
+`DB_PASSWORD` and `SECRET_KEY` blank. Run `./start-docker.sh`, which generates both, or set
+them yourself.
+
+**The app exits with "SECRET_KEY is missing or still a tracked placeholder".** Same cause:
+set `SECRET_KEY` in `.env` to a long random value.
+
+**The app waits, and `pharmcat` is "starting" or "unhealthy".** On first start PharmCAT
+downloads its reference data, usually in 8-15 minutes; the app waits until it is healthy.
+`docker compose logs pharmcat` shows the download. On a slow connection it can take longer
+than the health check allows. Leave it to finish, then `docker compose up -d`.
+
+**A port is already in use.** The app's port is `BIND_ADDRESS` in `.env`. The other
+services' ports are fixed in `compose.yml`; change one in `compose.override.yml`.
+
+**On Apple Silicon or another ARM machine, the images will not run.** They are
+`linux/amd64` only. Turn on Rosetta emulation in Docker Desktop.
+
+## A job fails
+
+**"Permission denied" from HLA typing or mtDNA, on Linux.** Those services run as uid 999
+and need to write to `data/temp` and `data/versions`. `start-docker.sh` sets this up; if you
+started the stack another way, run it once, or:
+
 ```bash
-# Check available memory
-free -h
-docker stats
-
-# Increase Docker memory limit
-# Docker Desktop: Settings → Resources → Memory → 8GB+
-
-# Reduce memory usage
-# Disable optional services in .env
-GATK_ENABLED=false
-PYPGX_ENABLED=false
+mkdir -p data/temp/mtdna data/versions
+chmod 1777 data/temp data/temp/mtdna data/versions
 ```
 
-### Permission Errors
+**FASTQ: "The bwa-mem index image is not present".** Build the alignment index once:
+`./scripts/build-align-index.sh`.
 
-**Symptoms:**
-- "Permission denied" errors
-- Cannot write to data directories
-- Container startup failures
+**A CRAM is refused, naming contigs that cannot be decoded.** It was written against a
+reference ZaroPGx does not hold ({doc}`file-formats`). Convert it to BAM with its own
+reference (`samtools view -b -T <that FASTA> -o out.bam in.cram`) and upload the BAM.
 
-**Solutions:**
-```bash
-# Fix directory permissions
-sudo chown -R $USER:$USER .
-chmod -R 755 data/
-chmod -R 755 reference/
+**A GRCh37 VCF fails at liftover.** More than half of its variants could not be mapped to
+GRCh38. Check that the file really is GRCh37/hg19.
 
-# Add user to docker group
-sudo usermod -aG docker $USER
-newgrp docker
-```
+**With GATK switched off, a CRAM, SAM, BCF, gVCF or FASTQ fails.** Those need GATK's
+service for conversion or alignment. Switch it back on.
 
-## File Upload Issues
+**The app was restarted while a job ran, and the job never finished.** The app follows each
+pipeline run from inside its own process; a restart loses track of it. The pipeline may
+finish, but no report is made. Cancel the job and run it again, and avoid restarting the app
+while jobs run.
 
-### Upload Failures
+## The results look wrong
 
-**Symptoms:**
-- Files fail to upload
-- "Invalid file format" errors
-- Upload timeout errors
+**Many genes are "Not called" from a VCF.** A variant-only VCF has no records where the
+sample matches the reference, so PharmCAT cannot tell reference from not-sequenced. The
+report's notes say so. Either run it again with **Assume absent sites = reference**
+({doc}`usage`), accepting that uncovered positions will read as reference, or upload the
+gVCF or the alignment instead.
 
-**Solutions:**
-```bash
-# Check file format
-file sample.vcf
-head -20 sample.vcf
+**A gene shows several diplotypes joined by "or".** The input is unphased and more than one
+diplotype fits. Phased data, or reads, can resolve it.
 
-# Validate VCF file
-bcftools view sample.vcf > /dev/null
+**No HLA calls.** HLA typing needs reads: a VCF cannot provide them.
 
-# Check file size
-ls -lh sample.vcf
-
-# Increase upload timeout in .env
-MAX_UPLOAD_TIMEOUT_SEC=600
-```
-
-### File Processing Errors
-
-**Symptoms:**
-- Processing stops at specific stage
-- "Invalid reference genome" errors
-- "Missing index file" warnings
-
-**Solutions:**
-```bash
-# Check file headers
-bcftools view -h sample.vcf
-
-# Verify reference genome
-grep "reference" sample.vcf
-
-# Include index files
-# Upload both .vcf.gz and .vcf.gz.tbi
-
-# Check file integrity
-md5sum sample.vcf
-```
-
-## Analysis Issues
-
-### Processing Hangs
-
-**Symptoms:**
-- Progress stops at specific percentage
-- No updates for extended time
-- Container logs show no activity
-
-**Solutions:**
-```bash
-# Check container status
-docker compose ps
-docker compose logs app
-
-# Check resource usage
-docker stats
-
-# Restart specific service
-docker compose restart app
-
-# Check disk space
-df -h
-```
-
-### Low Quality Results
-
-**Symptoms:**
-- Many "No Call" results
-- Low confidence scores
-- Missing genes in results
-
-**Solutions:**
-```bash
-# Check coverage depth
-samtools depth input.bam | awk '{sum+=$3} END {print sum/NR}'
-
-# Verify file quality
-fastqc sample.fastq
-
-# Check reference genome
-ls -la reference/
-
-# Review analysis parameters
-# Enable additional tools in .env
-```
-
-### Memory Issues During Processing
-
-**Symptoms:**
-- Containers killed during analysis
-- "Out of memory" errors in logs
-- Processing fails on large files
-
-**Solutions:**
-```bash
-# Increase container memory.
-# compose.yml is tracked; put overrides in compose.override.yml, which
-# Compose merges automatically.
-services:
-  app:
-    deploy:
-      resources:
-        limits:
-          memory: 8G
-
-# Use smaller reference genome
-# Download targeted reference subset
-
-# Process files in smaller batches
-# Split large VCF files
-```
-
-## Report Generation Issues
-
-### PDF Generation Fails
-
-**Symptoms:**
-- No PDF report generated
-- "PDF generation failed" errors
-- HTML report works but PDF doesn't
-
-**Solutions:**
-```bash
-# Check PDF engine
-docker compose logs app | grep -i pdf
-
-# Switch PDF engine
-PDF_ENGINE=reportlab  # or weasyprint
-
-# Check disk space
-df -h
-
-# Review report template
-ls -la app/reports/templates/
-```
-
-### Missing Report Sections
-
-**Symptoms:**
-- Empty report sections
-- "No data available" messages
-- Incomplete analysis results
-
-**Solutions:**
-```bash
-# Check analysis logs
-docker compose logs pharmcat
-docker compose logs pypgx
-
-# Verify data files
-ls -la data/reports/{job_id}/
-
-# Check report configuration
-grep -r "INCLUDE_" .env
-```
-
-## Database Issues
-
-### Connection Errors
-
-**Symptoms:**
-- "Database connection failed" errors
-- Services can't connect to database
-- Authentication failures
-
-**Solutions:**
-```bash
-# Check database status
-docker compose ps db
-docker compose logs db
-
-# Test database connection
-docker exec -it zaro-pgx-db psql -U zaropgx_user -d zaropgx_db
-
-# Reset database
-docker compose down
-docker volume rm zaropgx_pgdata
-docker compose up -d --build
-```
-
-### Data Corruption
-
-**Symptoms:**
-- Inconsistent results
-- Missing data in reports
-- Database errors in logs
-
-**Solutions:**
-```bash
-# Check database integrity
-docker exec -it zaro-pgx-db psql -U zaropgx_user -d zaropgx_db -c "VACUUM ANALYZE;"
-
-# Backup and restore
-./scripts/db-backup.sh
-./scripts/db-restore.sh
-
-# Reinitialize database
-docker compose down
-docker volume rm zaropgx_pgdata
-docker compose up -d --build
-```
-
-## Network Issues
-
-### Service Communication Errors
-
-**Symptoms:**
-- "Service unavailable" errors
-- Timeout errors between services
-- API calls fail
-
-**Solutions:**
-```bash
-# Check network connectivity
-docker network ls
-docker network inspect zaro-pgx_pgx-network
-
-# Test service endpoints
-curl http://localhost:5001/health  # PharmCAT
-curl http://localhost:5002/health  # GATK
-curl http://localhost:5053/health  # PyPGx
-
-# Restart services
-docker compose restart
-```
-
-### Port Conflicts
-
-**Symptoms:**
-- "Port already in use" errors
-- Services fail to start
-- Cannot access web interface
-
-**Solutions:**
-```bash
-# Check port usage
-netstat -tulpn | grep :8765
-lsof -i :8765
-
-# Kill conflicting processes
-sudo kill -9 $(lsof -t -i:8765)
-
-# Change ports in .env
-BIND_ADDRESS=8766
-```
-
-## Performance Issues
-
-### Slow Processing
-
-**Symptoms:**
-- Analysis takes much longer than expected
-- High CPU usage but slow progress
-- System becomes unresponsive
-
-**Solutions:**
-```bash
-# Check resource usage
-docker stats
-htop
-
-# Optimize Docker settings
-# Increase memory and CPU limits
-# Use SSD storage for better I/O
-
-# Disable optional services
-GATK_ENABLED=false
-OPTITYPE_ENABLED=false
-
-# Use smaller reference genome
-# Process smaller file subsets
-```
-
-### High Memory Usage
-
-**Symptoms:**
-- System runs out of memory
-- Swap usage increases
-- Containers killed frequently
-
-**Solutions:**
-```bash
-# Monitor memory usage
-free -h
-docker stats
-
-# Increase system memory
-# Add swap space
-sudo fallocate -l 8G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-
-# Optimize container memory
-# Set memory limits in compose.override.yml (compose.yml itself is tracked)
-```
-
-## Log Analysis
-
-### Viewing Logs
-
-**All Services:**
-```bash
-docker compose logs
-```
-
-**Specific Service:**
-```bash
-docker compose logs app
-docker compose logs db
-docker compose logs pharmcat
-```
-
-**Follow Logs:**
-```bash
-docker compose logs -f app
-```
-
-**Filter Logs:**
-```bash
-docker compose logs app | grep ERROR
-docker compose logs pharmcat | grep -i "failed"
-```
-
-### Common Log Messages
-
-**ERROR: Database connection failed**
-- Check database service status
-- Verify connection parameters
-- Check network connectivity
-
-**WARNING: Low coverage detected**
-- Check input file quality
-- Verify reference genome
-- Consider increasing coverage
-
-**INFO: Processing completed successfully**
-- Analysis finished normally
-- Check for report files
-- Review results
-
-## Getting Help
-
-### Self-Diagnosis
-
-1. **Check Service Status**: `docker compose ps`
-2. **Review Logs**: `docker compose logs`
-3. **Check Resources**: `docker stats`
-4. **Verify Configuration**: Review `.env` file
-5. **Test Connectivity**: Use curl commands
-
-### Community Support
-
-**GitHub Issues:**
-- Search existing issues
-- Create new issue with logs
-- Include system information
-- Provide reproducible steps
-
-**Documentation:**
-- Review this troubleshooting guide
-- Check API documentation
-- Consult tool-specific docs
-
-**Community Forums:**
-- Join discussions on GitHub
-- Ask questions in discussions
-- Share solutions and tips
-
-### Professional Support
-
-**For Production Deployments:**
-- Contact support team
-- Request professional services
-- Schedule consultation
-- Get custom configuration help
-
-## Next Steps
-
-- **Learn about usage**: {doc}`usage`
-- **Understand file formats**: {doc}`file-formats`
-- **Configure advanced settings**: {doc}`../advanced-configuration`
-- **Review FAQ**: {doc}`faq`
+**The PDF failed.** `docker compose logs app` names the error. With `PDF_FALLBACK=true`, a
+WeasyPrint failure falls back to ReportLab, which produces a plainer PDF.

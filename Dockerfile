@@ -92,7 +92,7 @@ RUN mkdir -p /data/reports /data/uploads
 # They are mounted as volumes at runtime
 COPY . /app/
 
-# Build Sphinx documentation to be served by the app at /documentation
+# Build Sphinx documentation to be served by the app at /docs
 # Do not fail the image build if docs have warnings
 RUN [ -d docs ] && python -m sphinx -b html -E -a docs docs/_build/html || true
 

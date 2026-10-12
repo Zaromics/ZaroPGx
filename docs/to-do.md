@@ -221,7 +221,7 @@ curation: full
 
 - Achieve complete docs curation
 - [DONE] Example `.env` guidance and local Docker build/run: `.env.example`,
-  `docs/user/installation.md` (setup and options), `docs/advanced-configuration.md`
+  `docs/user/installation.md` (setup and options), `docs/user/configuration.md`
   (every key).
 
 ## Engineering

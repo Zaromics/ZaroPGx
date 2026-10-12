@@ -1,279 +1,141 @@
 ---
-title: Installation Guide
-curation: partial
+title: Installation
+curation: not
 ---
 
-# Installation Guide
+# Installation
 
-Detailed installation instructions for different deployment scenarios.
+## Requirements
 
-## System Requirements (minimum for VCF inputs; recommended for others)
-- **CPU**: 4 cores (8+ recommended)
-- **RAM**: 16 GB (64+ GB recommended)
-- **Storage**: 50 GB free space (1000+ GB recommended)
-- **OS**: Linux, macOS, or Windows with WSL2. Published images are `linux/amd64`. Apple Silicon and ARM Linux run them only when Docker can emulate amd64.
-- **Network**: Stable internet needed for the first run only — see [Network and offline use](#network-and-offline-use)
-- **Docker and docker compose**
+- **Linux**, with Docker Engine; or **Windows 10 22H2 / 11** with WSL 2 (2.1.5 or later) and
+  either Docker Desktop or Docker Engine inside WSL; or **macOS** with Docker Desktop.
+- Docker Compose v2.24 or later, and Git.
+- An x86-64 machine, or one that can emulate it: the published images are `linux/amd64`
+  only. On Apple Silicon, turn on Rosetta emulation in Docker Desktop.
+- Memory: no minimum is enforced. A VCF needs little; alignments need much more, and the
+  stack allows the GATK service up to 28 GB and PyPGx up to 20 GB.
+- Disk: about 2.5 GB of reference genomes, 5.3 GB for the CRAM reference cache, the images,
+  and room for your inputs and reports. The FASTQ lane needs another 8-9 GB for its index.
+- A network connection for the first start, which pulls the images and downloads the
+  reference data.
 
-### Network and offline use
+## One-command setup
 
-The first start needs the internet, and needs a fair amount of it: it pulls (or builds) the
-container images, fetches reference genomes through the `genome-downloader` service, and lets
-PharmCAT download its GRCh38 reference data. Avoid a metered connection for that run.
-
-After that, an analysis is a local affair:
-
-- Nextflow itself is baked into the image at a pinned version — it is not downloaded at run time.
-- The pipeline's processes declare no per-task containers (`pipelines/pgx/main.nf`); each step
-  calls a service already in the stack over the private Compose network, so nothing is pulled
-  mid-run.
-- `NXF_HOME` is `/opt/nextflow`, bind-mounted to `./data/nextflow`, so whatever Nextflow caches
-  survives restarts.
-
-**Caveat:** a genuinely air-gapped install has not been tested. Nextflow can attempt to fetch
-plugins on startup, and neither that nor a fully offline first run has been verified here. If
-you need an air-gapped deployment, do the first run on a connected machine and confirm before
-you commit to it.
-
-## Docker Installation
-- If you do not have docker and docker composed installed, the easiest way to get up and running is: 
-- https://www.docker.com/products/docker-desktop/
-- This is particularly handy if you are on Windows w/ WSL2 or macOS.
-- On Windows, ensure WSL2 backend is enabled in Docker Desktop.
-- Otherwise, here's an example for Debian/Ubuntu-based systems:
-
-### One-command release setup
-
-Linux, macOS, and WSL systems that already have Bash and curl can install the current release:
+Linux, macOS or WSL:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
-Stock Alpine needs Bash and curl installed before it can interpret the bootstrap:
+Windows (PowerShell):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 | iex
+```
+
+Alpine, as root (installs Bash and curl first):
 
 ```sh
 apk add --no-cache bash curl && curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
-The bootstrap checks out `v0.3.2`, pulls matching `linux/amd64` images, and requires Docker
-Compose 2.24.0 or newer. On ARM, Docker must provide amd64 emulation. A Docker group change or
-first-time WSL installation can require logging out or rebooting; run the same command again.
+The script checks for Git, Docker and Compose and offers to install what is missing (apt,
+dnf, yum, zypper, pacman, apk, winget or Chocolatey; on macOS it installs Git only). It
+clones the repository into `./ZaroPGx`, checks out the release tag it names, and runs
+`start-docker.sh --auto-local`, which:
 
-**Ubuntu/Debian:**
-```bash
-sudo apt update
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-sudo usermod -aG docker $USER
-newgrp docker
-```
+1. copies `.env.local` to `.env`;
+2. generates `SECRET_KEY` and `DB_PASSWORD`;
+3. creates `data/` and gives the services that need it write access;
+4. pulls the images and starts the stack.
 
-### Verify Installation
+Installing Docker may need you to log out and in again, and installing WSL a reboot. Run
+the same command again afterwards. You can read the scripts first:
+[bootstrap.sh](https://github.com/Zaromics/ZaroPGx/blob/main/bootstrap.sh),
+[bootstrap.ps1](https://github.com/Zaromics/ZaroPGx/blob/main/bootstrap.ps1).
 
-```bash
-docker --version
-docker compose version
-```
-
-## Deploy ZaroPGx via docker compose
-
-### 1. Grab Repository
+## Manual setup
 
 ```bash
 git clone https://github.com/Zaromics/ZaroPGx.git
 cd ZaroPGx
-```
-
-### 2. Review environment configuration options
-
-Choose an appropriate starting .env file: local|production|custom
-
-All three are tracked templates with the same set of keys; they differ only in values. All
-three ship `SECRET_KEY=` and `DB_PASSWORD=` blank on purpose — `start-docker.sh` /
-`start-docker.ps1` generate per-install values on first run.
-
-**Local:** (`BIND_ADDRESS=8765`, `NETWORK_SUBNET=172.20.0.0/16`, `LOG_LEVEL=DEBUG`)
-- App published on the host port only, no explicit interface
-- Front-door gate open (`ZAROPGX_AUTH_MODE=open`)
-- Debug logging enabled
-
-```bash
 cp .env.local .env
+./start-docker.sh          # Windows without WSL: .\start-docker.ps1
 ```
 
-**Production:** (`BIND_ADDRESS=0.0.0.0:8765`, `NETWORK_SUBNET=172.28.0.0/16`, `LOG_LEVEL=INFO`)
-- App bound to all interfaces
-- Optimized logging
+The three templates differ in a few values (all bind the app to `127.0.0.1:8765`):
 
-```bash
-cp .env.production .env
-```
+| | `.env.local` | `.env.production` | `.env.example` |
+|---|---|---|---|
+| `LOG_LEVEL` | `DEBUG` | `INFO` | `DEBUG` |
+| `NETWORK_SUBNET` | `172.20.0.0/16` | `172.28.0.0/16` | `172.20.0.0/16` |
 
-```{warning}
-`.env.production` does **not** enable authentication. It ships `ZAROPGX_AUTH_MODE=open`
-exactly like `.env.local`, and `ZAROPGX_DEV_MODE=false` does not enable auth either. If you
-expose the app, set `ZAROPGX_AUTH_MODE=password` and `ZAROPGX_AUTH_PASSWORD=...` yourself, and
-put it behind a reverse proxy with TLS.
-```
+`.env.example` explains each setting inline and has a few that the other two leave at
+their defaults. See {doc}`configuration`.
 
-**Custom** — the fullest template, with every key commented inline:
-```bash
-cp .env.example .env
-```
-
-### 3. Configure options via environment variables
-
-Edit `.env` with your settings. The keys most installs touch:
-
-```bash
-# Leave blank to have start-docker generate one; never commit a real value
-SECRET_KEY=
-# Database password. Leave blank on a fresh install (start-docker generates it).
-# Do NOT rotate this once the zaropgx_pgdata volume exists unless you also ALTER ROLE.
-DB_PASSWORD=
-# Host binding for the app: "8765" (host port) or "0.0.0.0:8765" (all interfaces)
-BIND_ADDRESS=8765
-# Host interface for the internal services; loopback by default, and it should stay there
-INTERNAL_BIND_ADDRESS=127.0.0.1
-# Which pre-built image tag to pull (or "latest"). Same value as compose.yml's default.
-ZAROPGX_TAG=0.3.2
-# Feature toggles
-GATK_ENABLED=true
-PYPGX_ENABLED=true
-OPTITYPE_ENABLED=true
-```
-
-The variable is `DB_PASSWORD`, not `POSTGRES_PASSWORD` — compose derives the container's
-`POSTGRES_PASSWORD` from it, and hard-fails at parse time if it is unset.
-
-See {doc}`../advanced-configuration` for the complete list.
-
-### 4. Start Services
-
-The stack runs **pre-built images from Docker Hub** (`zaromicsresearch/zaropgx-*`) by default,
-so no build wait:
+To run Compose yourself instead of `start-docker.sh`, set `DB_PASSWORD` and `SECRET_KEY` in
+`.env` first: the templates ship them blank, and Compose and the app refuse to start without
+them. Do not change `DB_PASSWORD` once the database volume exists.
 
 ```bash
 docker compose pull
-docker compose up -d && docker compose logs app -f
+docker compose up -d
 ```
 
-To build from your checkout instead — you changed the source, or you want a platform Docker Hub
-does not publish — add `--build`; the `build:` sections in `compose.yml` are the fallback:
+To build the images from source, `docker compose up -d --build`. They are still built for
+`linux/amd64`.
+
+## First start
+
+PharmCAT downloads its GRCh38 reference data (about 8-15 minutes), and the genome
+downloader stages the reference genomes and builds the CRAM reference cache (a 3.2 GB
+download). The app waits for PharmCAT to be healthy before it starts.
+
+Then:
+
+- the app: `http://localhost:8765`
+- this documentation: `http://localhost:8765/docs`
+- the API reference: `http://localhost:8765/api/docs`
+
+To analyse FASTQ files, build the alignment index once, after the reference genomes are
+staged: `./scripts/build-align-index.sh` (about an hour).
+
+## Who can reach it
+
+The app listens on `127.0.0.1:8765`: this machine only.
+
+To run it on one machine and use it from others on your network (a desktop or home server
+reached from a laptop, say), set `BIND_ADDRESS=0.0.0.0:8765` and run `docker compose up -d`;
+then open `http://<that machine's address>:8765`. This is a supported way to run it. With
+the default `ZAROPGX_AUTH_MODE=open` there is no password, so anyone who can reach the port
+can upload data and read every report: on a network you do not fully trust, turn on the
+shared password ({doc}`configuration`). To serve it beyond your network, see
+{doc}`deployment`.
+
+An install made before this default keeps the `BIND_ADDRESS` in its `.env`; check it.
+
+The other services publish on `127.0.0.1` only (`INTERNAL_BIND_ADDRESS`) and do not
+authenticate. Leave them there.
+
+## Updating
+
+Run the one-command setup again with `--update` (PowerShell: `-Update`), from the folder
+that contains `ZaroPGx/`:
 
 ```bash
-docker compose up -d --build && docker compose logs app -f
+curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash -s -- --update
 ```
 
-Expect a long first start either way: PharmCAT downloads its GRCh38 reference (~8-15 min) before
-it reports healthy, and the app waits on that. A local build adds substantially more.
+It refuses to update a checkout with local changes. On the next start, `start-docker.sh`
+moves an older release's `ZAROPGX_TAG` in `.env` to the new release; `latest` and custom
+tags are left alone. Read `UPGRADING.md` in the repository for what each release changes.
 
-### 5. Verify Installation
-
-Check service status:
-```bash
-docker compose ps
-```
-
-## Service Ports
-
-Only the app is meant to be reachable from other machines. Every other published port binds
-`${INTERNAL_BIND_ADDRESS:-127.0.0.1}` — loopback on the Docker host — because none of those
-services authenticate. `curl http://localhost:5001/health` from the host still works; reaching
-them from elsewhere is deliberately an SSH tunnel away
-(`ssh -L 5444:127.0.0.1:5444 <host>`), not an `INTERNAL_BIND_ADDRESS` change.
-
-| Service | Host binding | Container Port | Description |
-|---------|--------------|----------------|-------------|
-| **App/UI** | `${BIND_ADDRESS:-8765}` | 8000 | Main web interface and API |
-| **Database** | 127.0.0.1:5444 | 5432 | PostgreSQL 18 |
-| **Genome downloader** | 127.0.0.1:5050 | 5050 | Reference genome/annotation fetcher |
-| **PharmCAT** | 127.0.0.1:5001 | 5000 | PharmCAT analysis service |
-| **GATK API** | 127.0.0.1:5002 | 5000 | GATK preprocessing service |
-| **PyPGx** | 127.0.0.1:5053 | 5000 | PyPGx allele calling service |
-| **ZaroHLA** | 127.0.0.1:5060 | 5000 | OptiType HLA class I typing |
-| **mtDNA-Server 2** | 127.0.0.1:5062 | 5000 | Mitochondrial variant/haplogroup calling, MT-RNR1 outside call |
-| **FHIR Server** | 127.0.0.1:8090 | 8080 | HAPI FHIR R4 server |
-| **Kroki** | 127.0.0.1:8001 | 8000 | Diagram rendering service |
-| **Docs** | 127.0.0.1:5070 | 8000 | Sphinx preview; `--profile optional` only |
-| **Mermaid** | not published | 8002 | Kroki's Mermaid renderer, internal only |
-| **Nextflow** | **not published** | 5055 | Pipeline executor; see note below |
-
-`nextflow` has no host mapping by design — its `POST /run` is unauthenticated, so publishing it
-would let anything that can reach the port start pipelines. The app calls it as
-`http://nextflow:5055` inside the Compose network.
-
-## Initial Setup
-
-### 1. Download Reference Data
-
-The system will automatically download reference genomes on first run:
+## Removing
 
 ```bash
-docker compose logs genome-downloader
-ls -la reference/
+docker compose down          # stop; keeps the database and downloaded data
+docker compose down -v       # also deletes the database and PharmCAT's reference volume
 ```
 
-### 2. Initialize Postgres Database
-
-The database initializes automatically with:
-- CPIC guidelines and data
-- User management tables
-- Workflow tracking tables
-
-### 3. Test Installation
-
-Upload a test file:
-```bash
-curl -X POST \
-  -F "file=@test_data/sample_cpic.vcf" \
-  -F "sample_identifier=test_sample" \
-  http://localhost:8765/upload/genomic-data
-```
-
-
-## Troubleshooting
-
-### Common Issues
-
-**Port conflicts:**
-- Check what's using ports
-```bash
-netstat -tulpn | grep :8765
-```
-- Change ports accordingly in .env
-
-
-**Permission errors:**
-```bash
-sudo chown -R $USER:$USER .
-```
-
-**Out of storage space:**
-- Check drive space
-```bash
-df -h
-```
-- Clean up docker files (make sure you back up anything important!)
-```bash
-docker system prune -a
-```
-
-**Out of memory issues:**
-- Increase Docker memory limit
-- In Docker Desktop: Settings → Resources → Memory
-
-### Logs and Debugging
-
-View service logs:
-```bash
-docker compose logs -f
-```
-
-## Next Steps
-
-- **Advanced Configuration**: {doc}`../advanced-configuration`
-- **Usage Guide**: {doc}`usage`
-- **File Formats**: {doc}`file-formats`
-- **Deployment Guide**: {doc}`../developer/deployment`
+Uploads and reports are under `data/`, reference genomes under `reference/`; delete their
+contents to remove them.
