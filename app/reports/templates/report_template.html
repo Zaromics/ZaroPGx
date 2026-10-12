@@ -868,6 +868,12 @@
                 max-height: 287mm !important;
                 width: 200mm !important;
                 height: 287mm !important;
+                /* The box is the page; the diagram keeps its own shape inside it.
+                   Without this the image was stretched to the box: a run's
+                   diagram (about twice as tall as wide) came out 36% too wide,
+                   text and shapes with it. */
+                object-fit: contain !important;
+                object-position: center !important;
                 display: block !important;
                 margin: 0 !important;
                 padding: 0 !important;
