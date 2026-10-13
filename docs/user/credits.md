@@ -14,8 +14,8 @@ ZaroPGx is built on the software and data below, and we thank their authors and 
 | [Nextflow](https://www.nextflow.io) | Runs the pipeline's steps in order | Every run | Apache-2.0 | 1 |
 | [SAMtools, BCFtools and HTSlib](https://www.htslib.org) | PharmCAT's VCF preprocessing; file conversion and variant calling where the input needs them | Every run | MIT; BSD-3-Clause (HTSlib's CRAM code) | 2–3 |
 | [pysam](https://github.com/pysam-developers/pysam) | Reads the input files for ZaroPGx and PyPGx | Every run | MIT |  |
-| [GATK](https://gatk.broadinstitute.org) | gVCF genotyping, liftover, read alignment | gVCF, GRCh37 VCF or BCF, FASTQ | Apache-2.0 | 4–6 |
-| [Picard](https://broadinstitute.github.io/picard/) | LiftoverVcf (GRCh37 to GRCh38); FastqToSam | GRCh37 VCF or BCF, FASTQ | MIT | 7 |
+| [GATK](https://gatk.broadinstitute.org) | gVCF genotyping, liftover and read alignment | gVCF, GRCh37 VCF or BCF, FASTQ | Apache-2.0 | 4–6 |
+| [Picard](https://broadinstitute.github.io/picard/) | LiftoverVcf (GRCh37 to GRCh38) and FastqToSam | GRCh37 VCF or BCF, FASTQ | MIT | 7 |
 | [BWA-MEM](https://github.com/lh3/bwa) | Aligns the reads to GRCh38 (GATK BwaSpark) | FASTQ | Apache-2.0 (as built into GATK) | 8 |
 | [PyPGx](https://pypgx.readthedocs.io) | Star alleles beyond PharmCAT's genes, CYP2D6 and structural variants | Every run, unless PyPGx is off | MIT | 9–11 |
 | [fuc](https://github.com/sbslee/fuc) | Calls variants from the reads for PyPGx | BAM, CRAM, SAM, FASTQ | MIT | 9 |
