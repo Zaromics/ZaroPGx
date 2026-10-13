@@ -1,5 +1,9 @@
 # Use a small base image with Python
-FROM python:3.12-bookworm
+# Debian 13 (trixie), not 12 (bookworm): WeasyPrint 70 with bookworm's Pango 1.50
+# measures a line with its trailing space, so a line that just fits is split after
+# its first word (Kozea/WeasyPrint#2946). The check after the Python install keeps
+# it that way.
+FROM python:3.12-trixie
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -27,7 +31,7 @@ RUN apt-get update && \
          libcairo2 \
          libpango-1.0-0 \
          libpangocairo-1.0-0 \
-         libgdk-pixbuf2.0-0 \
+         libgdk-pixbuf-2.0-0 \
          libffi-dev \
          shared-mime-info \
          libglib2.0-0 \
@@ -79,6 +83,10 @@ COPY pyproject.toml uv.lock ./
 RUN uv export --frozen --no-dev --format requirements-txt > requirements.lock \
     && uv pip sync --system requirements.lock \
     && rm -f requirements.lock
+
+# WeasyPrint 70 needs Pango 1.52 or later to break lines where they fit (see FROM).
+RUN python -c "from weasyprint.text.ffi import pango; v = pango.pango_version(); \
+assert v >= 15200, f'Pango {v}: WeasyPrint 70 needs 1.52 or later (Kozea/WeasyPrint#2946)'"
 
 # Install Sphinx docs requirements separately (kept lightweight)
 COPY docs/requirements.txt ./docs/requirements.txt
