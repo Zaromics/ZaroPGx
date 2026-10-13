@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from markupsafe import Markup
 
@@ -969,9 +969,32 @@ class Credit:
     # Papers that apply only when a step ran: GATK's joint-calling paper for
     # GenotypeGVCFs.
     papers_when: Tuple[Tuple[str, Paper], ...] = ()
+    # A tool with several jobs: (steps, what it did when one of them ran), after
+    # ``uses_lead``. A run that did some of them is told only those; ``used_for``
+    # says all of them.
+    uses: Tuple[Tuple[Tuple[str, ...], str], ...] = ()
+    uses_lead: str = ""
 
     def papers_for(self, run: "CreditRun") -> Tuple[Paper, ...]:
         return self.papers + tuple(p for step, p in self.papers_when if run.ran(step))
+
+    def used_for_in(self, run: "CreditRun") -> str:
+        """What it did in this run: a FASTQ run's GATK aligned the reads, and its
+        row should not also say liftover."""
+        done = [phrase for steps, phrase in self.uses if run.ran(*steps)]
+        if not done or len(done) == len(self.uses):
+            return self.used_for
+        text = self.uses_lead + _and_list(done)
+        if text[1:2].isupper():  # gVCF
+            return text
+        return text[:1].upper() + text[1:]
+
+
+def _and_list(items: Sequence[str]) -> str:
+    """["a", "b", "c"] -> "a, b and c"."""
+    if len(items) < 2:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
 
 
 def _always(run: CreditRun) -> bool:
@@ -1029,7 +1052,7 @@ CREDITS: Tuple[Credit, ...] = (
         "gatk",
         "GATK",
         "software",
-        "gVCF genotyping, liftover, read alignment",
+        "gVCF genotyping, liftover and read alignment",
         "https://gatk.broadinstitute.org",
         "Apache-2.0",
         lambda run: run.ran("gvcf_to_vcf", "liftover", "gatk_alignment"),
@@ -1037,12 +1060,17 @@ CREDITS: Tuple[Credit, ...] = (
         service="gatk",
         papers_when=(("gvcf_to_vcf", POPLIN_2017),),
         used_when="gVCF, GRCh37 VCF or BCF, FASTQ",
+        uses=(
+            (("gvcf_to_vcf",), "gVCF genotyping"),
+            (("liftover",), "liftover"),
+            (("gatk_alignment",), "read alignment"),
+        ),
     ),
     Credit(
         "picard",
         "Picard",
         "software",
-        "LiftoverVcf (GRCh37 to GRCh38); FastqToSam",
+        "LiftoverVcf (GRCh37 to GRCh38) and FastqToSam",
         "https://broadinstitute.github.io/picard/",
         "MIT",
         lambda run: run.ran("liftover", "gatk_alignment"),
@@ -1050,6 +1078,10 @@ CREDITS: Tuple[Credit, ...] = (
         service="gatk",
         component="picard",
         used_when="GRCh37 VCF or BCF, FASTQ",
+        uses=(
+            (("liftover",), "LiftoverVcf (GRCh37 to GRCh38)"),
+            (("gatk_alignment",), "FastqToSam"),
+        ),
     ),
     Credit(
         "bwa",
@@ -1342,6 +1374,15 @@ CREDITS: Tuple[Credit, ...] = (
         (UCSC_2026,),
         release="hg38",
         used_when="BAM, CRAM, SAM, FASTQ, gVCF, GRCh37 VCF or BCF",
+        uses=(
+            (
+                ("gatk_cram_sam_to_bam", "gatk_alignment", "pypgx_bam2vcf"),
+                "reads",
+            ),
+            (("gvcf_to_vcf",), "gVCFs"),
+            (("liftover",), "liftover"),
+        ),
+        uses_lead="The reference for ",
     ),
     Credit(
         "kgp_grch38",
@@ -1649,7 +1690,7 @@ def report_credits(
                 "key": credit.key,
                 "name": credit.name,
                 "version": version,
-                "used_for": credit.used_for,
+                "used_for": credit.used_for_in(run),
                 "url": credit.url,
                 "refs": refs,
             }

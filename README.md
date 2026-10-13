@@ -134,11 +134,11 @@ If your work is a part of ZaroPGx and you wish to add or amend text recognizing 
   - Danecek P, Bonfield JK, Liddle J, et al. Twelve years of SAMtools and BCFtools. *GigaScience*. 2021;10(2):giab008. doi:[10.1093/gigascience/giab008](https://doi.org/10.1093/gigascience/giab008)
   - Bonfield JK, Marshall J, Danecek P, et al. HTSlib: C library for reading/writing high-throughput sequencing data. *GigaScience*. 2021;10(2):giab007. doi:[10.1093/gigascience/giab007](https://doi.org/10.1093/gigascience/giab007)
 - [pysam](https://github.com/pysam-developers/pysam): Reads the input files for ZaroPGx and PyPGx.
-- [GATK](https://gatk.broadinstitute.org): gVCF genotyping, liftover, read alignment.
+- [GATK](https://gatk.broadinstitute.org): gVCF genotyping, liftover and read alignment.
   - Van der Auwera GA, O'Connor BD. Genomics in the Cloud: Using Docker, GATK, and WDL in Terra. 1st ed. O'Reilly Media; 2020.
   - McKenna A, Hanna M, Banks E, et al. The Genome Analysis Toolkit: A MapReduce framework for analyzing next-generation DNA sequencing data. *Genome Research*. 2010;20(9):1297–1303. doi:[10.1101/gr.107524.110](https://doi.org/10.1101/gr.107524.110)
   - Poplin R, Ruano-Rubio V, DePristo MA, et al. Scaling accurate genetic variant discovery to tens of thousands of samples [Preprint]. *bioRxiv*. 2017:201178. doi:[10.1101/201178](https://doi.org/10.1101/201178)
-- [Picard](https://broadinstitute.github.io/picard/): LiftoverVcf (GRCh37 to GRCh38); FastqToSam.
+- [Picard](https://broadinstitute.github.io/picard/): LiftoverVcf (GRCh37 to GRCh38) and FastqToSam.
   - Broad Institute. Picard Toolkit [Software]. GitHub repository; 2019. <https://broadinstitute.github.io/picard/>
 - [BWA-MEM](https://github.com/lh3/bwa): Aligns the reads to GRCh38 (GATK BwaSpark).
   - Li H. Aligning sequence reads, clone sequences and assembly contigs with BWA-MEM [Preprint]. *arXiv*. 2013:1303.3997v2. doi:[10.48550/arXiv.1303.3997](https://doi.org/10.48550/arXiv.1303.3997)

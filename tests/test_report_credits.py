@@ -235,6 +235,58 @@ def test_a_grch37_vcf_credits_the_liftover_and_its_terms():
     assert any("UCSC Chain Files" in notice for notice in out["notices"])
 
 
+def _used_for(run):
+    out = report_credits(run, {}, {})
+    return {row["key"]: row["used_for"] for row in out["software"] + out["data"]}
+
+
+@pytest.mark.parametrize(
+    "steps, gatk, picard, hg38",
+    [
+        (
+            {"gatk_alignment", "pypgx_bam2vcf"},
+            "Read alignment",
+            "FastqToSam",
+            "The reference for reads",
+        ),
+        (
+            {"liftover"},
+            "Liftover",
+            "LiftoverVcf (GRCh37 to GRCh38)",
+            "The reference for liftover",
+        ),
+        ({"gvcf_to_vcf"}, "gVCF genotyping", None, "The reference for gVCFs"),
+    ],
+    ids=["fastq", "grch37-vcf", "gvcf"],
+)
+def test_a_tool_with_several_jobs_says_the_ones_this_run_did(steps, gatk, picard, hg38):
+    """A FASTQ run's GATK aligned the reads; its row does not also claim liftover
+    and gVCF genotyping."""
+    used_for = _used_for(CreditRun(steps=frozenset(steps)))
+    assert used_for["gatk"] == gatk
+    assert used_for.get("picard") == picard
+    assert used_for["ucsc_hg38"] == hg38
+
+
+def test_a_run_whose_steps_are_unknown_says_every_job():
+    used_for = _used_for(CreditRun())
+    for key in ("gatk", "picard", "ucsc_hg38"):
+        credit = next(credit for credit in CREDITS if credit.key == key)
+        assert used_for[key] == credit.used_for
+
+
+@pytest.mark.parametrize(
+    "credit", [credit for credit in CREDITS if credit.uses], ids=lambda c: c.key
+)
+def test_every_job_together_is_the_general_wording(credit):
+    """The docs print ``used_for``; a run that did every job prints the same."""
+    every = CreditRun(steps=frozenset(s for steps, _ in credit.uses for s in steps))
+    assert credit.used_for_in(every) == credit.used_for
+    assert credit.used_for == credit.uses_lead + c._and_list(
+        [phrase for _, phrase in credit.uses]
+    )
+
+
 def test_gatk_joint_calling_is_cited_only_for_a_gvcf():
     def gatk_refs(steps):
         out = report_credits(CreditRun(steps=frozenset(steps)), {}, {})
