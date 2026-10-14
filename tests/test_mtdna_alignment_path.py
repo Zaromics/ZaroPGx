@@ -1,6 +1,7 @@
 """The alignment path produces upstream's own report, or fails loudly."""
 
 import ast
+import asyncio
 from pathlib import Path
 
 from app.mtdna.builds import (
@@ -9,6 +10,8 @@ from app.mtdna.builds import (
     classify_from_mito_contig,
     plan_for,
 )
+from tests.test_mtdna_report_context import _context
+from tests.test_sidecar_input_copies import sidecars  # noqa: F401  (fixture)
 
 APP_PY = Path(__file__).resolve().parent.parent / "docker/mtdna-server-2/app.py"
 
@@ -374,3 +377,50 @@ def test_the_resolver_withholds_reference_when_nothing_was_sequenced():
     )
     assert resolved.call is None
     assert resolved.no_call_reason == NO_CALL_COVERAGE_BELOW_FLOOR
+
+
+# --------------------------------------------------------------------------
+# No mitochondrial contig in the header is not "no mitochondrial reads"
+# --------------------------------------------------------------------------
+#
+# Found 2026-10-13 on a whole-genome BAM whose chromosomes were named by RefSeq
+# accession, the mitochondrion as NC_012920.1. _read_mito_sq_header found no chrM, MT
+# or M; the label said GRCh38, so "chrM" was extracted from a file that has no contig
+# of that name, the extraction was empty, and the report said "No mitochondrial reads
+# in the alignment ... Normal for a targeted panel" of a whole genome.
+
+
+def test_an_alignment_without_a_mito_contig_says_so(sidecars, monkeypatch, tmp_path):
+    mtdna = sidecars.mtdna
+    ran = []
+
+    async def no_mito_contig(bam_path, work, job_key):
+        return None, None
+
+    async def record(argv, cwd, job_key):
+        ran.append(argv)
+
+    monkeypatch.setattr(mtdna, "_read_mito_sq_header", no_mito_contig)
+    monkeypatch.setattr(mtdna, "_run", record)
+
+    result = asyncio.run(
+        mtdna._call_from_alignment("sample.bam", str(tmp_path), "hg38", "job-1")
+    )
+
+    assert ran == [], "nothing to extract: not even the whole-file index"
+    assert result["mt_rnr1"] is None
+    assert result["mt_rnr1_no_call_reason"] == "no_mito_contig"
+    assert result["mean_coverage"] is None, "nothing was measured"
+    reason = result["report_unavailable_reason"]
+    assert "names no mitochondrial chromosome" in reason
+    assert "no mitochondrial reads" not in reason.lower()
+    assert "panel" not in reason
+
+
+def test_the_report_says_the_header_had_no_chrm(tmp_path):
+    ctx = _context(
+        tmp_path, {"mt_rnr1": None, "mt_rnr1_no_call_reason": "no_mito_contig"}
+    )
+    text = ctx["no_call_reason"]
+    assert "names no mitochondrial chromosome" in text
+    assert "coverage" not in text
