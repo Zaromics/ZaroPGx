@@ -569,3 +569,127 @@ def test_an_unprobeable_input_is_not_subset(client, fake_tools):
     _post_bam(client)
 
     assert not [c for c in fake_tools.calls if c[:3] == ["samtools", "view", "-b"]]
+
+
+# --------------------------------------------------------------------------
+# HLA reads not located: a large input is left untyped, not converted whole
+# --------------------------------------------------------------------------
+#
+# Found 2026-10-13 on a whole-genome BAM whose chromosomes were named by RefSeq
+# accession (NC_000006.12). The probe found no chr6 or 6, answered "cannot tell", and
+# the fallback converted the whole alignment: an hour of collate and fastq, a 151 GB
+# read1.fq, then OptiType's mapper filled the host's disk and took the Nextflow head,
+# the FHIR server and the desktop session down with it. The whole conversion is now
+# only for inputs small enough to afford it; anything larger is skipped and says why.
+
+
+class _RecordingJobClient:
+    updates: list = []
+
+    def __init__(self, **kwargs):
+        pass
+
+    async def is_job_cancelled(self):
+        return False
+
+    async def start_step(self, message=None):
+        return True
+
+    async def log_progress(self, message, metadata=None):
+        return True
+
+    async def update_step_status(self, status, message=None, output_data=None, **kw):
+        self.updates.append((status, message, output_data))
+        return True
+
+    async def complete_step(self, message=None, output_data=None):
+        self.updates.append(("completed", message, output_data))
+        return True
+
+    async def fail_step(self, message, error_details=None):
+        self.updates.append(("failed", message, error_details))
+        return True
+
+
+@pytest.fixture()
+def job_steps(zarohla, monkeypatch):
+    _RecordingJobClient.updates = []
+    monkeypatch.setattr(zarohla, "JobClient", _RecordingJobClient)
+    return _RecordingJobClient.updates
+
+
+def _post_bam_for_job(client):
+    return client.post(
+        "/call-hla",
+        files={"file": ("sample.bam", BAM_BYTES, "application/octet-stream")},
+        data={"job_id": "job-1"},
+    )
+
+
+def test_a_large_unprobeable_input_is_not_converted_whole(
+    client, fake_tools, zarohla, monkeypatch, job_steps
+):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = None  # no chr6 under a known name, say
+    monkeypatch.setattr(zarohla, "WHOLE_CONVERSION_MAX_BYTES", len(BAM_BYTES) - 1)
+
+    response = _post_bam_for_job(client)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["results"] == {}
+    ran = {tuple(c[:2]) for c in fake_tools.calls}
+    assert ("samtools", "collate") not in ran and ("samtools", "fastq") not in ran
+    assert "optitype" not in _tools_run(fake_tools)
+    # Said as a gap in the run, never as a sample without HLA reads.
+    assert "not typed" in body["warning"] and "could not be found" in body["warning"]
+    assert "no hla reads" not in body["warning"].lower()
+    status, _, output = job_steps[-1]
+    assert status == "skipped"
+    assert output["reason"] == zarohla.NOT_TYPED_REASON
+
+
+def test_a_failed_extraction_of_a_large_input_is_not_converted_whole(
+    client, fake_tools, zarohla, monkeypatch, job_steps
+):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["subset_ok"] = False
+    monkeypatch.setattr(zarohla, "WHOLE_CONVERSION_MAX_BYTES", len(BAM_BYTES) - 1)
+
+    body = _post_bam_for_job(client).json()
+
+    assert "optitype" not in _tools_run(fake_tools)
+    assert "were found but could not be extracted" in body["warning"]
+    assert job_steps[-1][0] == "skipped"
+
+
+def test_no_whole_conversion_without_the_scratch_for_it(
+    client, fake_tools, zarohla, monkeypatch, job_steps
+):
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = None
+    real_usage = zarohla.shutil.disk_usage
+    monkeypatch.setattr(
+        zarohla.shutil,
+        "disk_usage",
+        lambda path: real_usage(path)._replace(free=len(BAM_BYTES)),
+    )
+
+    body = _post_bam_for_job(client).json()
+
+    assert "optitype" not in _tools_run(fake_tools)
+    assert "GB is free" in body["warning"]
+    assert job_steps[-1][0] == "skipped"
+
+
+def test_a_small_unprobeable_input_is_still_converted_whole(
+    client, fake_tools, job_steps
+):
+    """The fallback stays for what it was for: inputs small enough to afford it."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    fake_tools.state["mhc_reads"] = None
+
+    body = _post_bam_for_job(client).json()
+
+    assert body["results"]["HLA-A"] == "A*01:01,A*02:01"
+    assert job_steps[-1][0] == "completed"

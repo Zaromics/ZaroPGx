@@ -139,6 +139,27 @@ def test_hla_typing_names_the_genes_typed():
     assert "hla_typing" not in failed.details
 
 
+def test_hla_typing_skipped_for_unlocated_reads_says_nothing_was_typed():
+    """zarohla's skip when it cannot find the HLA reads (docker/zarohla/app.py
+    _not_typed_result): "no HLA allele called" would read as a typing that found
+    nothing."""
+    skipped = _facts(
+        [
+            _record(
+                "hla_typing",
+                status="skipped",
+                output={"results": {}, "reason": "hla_reads_not_located"},
+            )
+        ]
+    )
+    assert skipped.details["hla_typing"] == [
+        "HLA reads not located: HLA-A, -B, -C not typed"
+    ]
+    assert not skipped.made("hla")
+    # Skipped with no reason recorded: no line.
+    assert "hla_typing" not in _facts([_record("hla_typing", status="skipped")]).details
+
+
 def test_the_input_build_is_said_only_when_recorded():
     lifted = _facts(
         [
