@@ -45,6 +45,7 @@ from app.mtdna.mt_rnr1 import (
     NO_CALL_COVERAGE_BELOW_FLOOR,
     NO_CALL_COVERAGE_UNKNOWN,
     NO_CALL_NO_CHRM_DATA,
+    NO_CALL_NO_MITO_CONTIG,
     NO_CALL_NOT_CONSENTED,
     NO_CALL_REGION_NOT_COVERED,
     NO_CALL_UNRESOLVED_961_DELINS,
@@ -418,6 +419,8 @@ def workflow_run_facts(
         facts.produced["mt_rnr1"] = bool(mt_rnr1)
         if mtdna_result.get("mt_rnr1_no_call_reason") == NO_CALL_NO_CHRM_DATA:
             line = "no calls on chrM: no haplogroup, no MT-RNR1"
+        elif mtdna_result.get("mt_rnr1_no_call_reason") == NO_CALL_NO_MITO_CONTIG:
+            line = "no chrM in the alignment: no haplogroup, no MT-RNR1"
         else:
             line = f"haplogroup {haplogroup}" if haplogroup else "no haplogroup"
             line += f" · MT-RNR1 {mt_rnr1}" if mt_rnr1 else " · MT-RNR1 not called"
@@ -1080,6 +1083,13 @@ def mtdna_report_context(
                 "the mitochondrial chromosome (chrM), so the absence could not "
                 "be confirmed as Reference, and no haplogroup was assigned. A "
                 "VCF that keeps its chrM calls, or the BAM or CRAM, gives both."
+            )
+        elif reason_code == NO_CALL_NO_MITO_CONTIG:
+            no_call_reason = (
+                "MT-RNR1 was not called: this alignment's header names no "
+                "mitochondrial chromosome (chrM, MT or M), so its mitochondrial "
+                "reads, if it has any, could not be read, and no haplogroup was "
+                "assigned."
             )
         elif reason_code == NO_CALL_NOT_CONSENTED:
             no_call_reason = (

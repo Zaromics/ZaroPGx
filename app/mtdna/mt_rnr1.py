@@ -230,6 +230,11 @@ BASIS_INFERRED = "inferred"
 # because they suggest different remedies to the reader.
 NO_CALL_REGION_NOT_COVERED = "region_not_covered"
 
+# An alignment whose header has no mitochondrial contig the sidecar recognises: its
+# mitochondrial reads, if any, could not be read. Not NO_CALL_COVERAGE_BELOW_FLOOR,
+# which is measured coverage; nothing was measured here.
+NO_CALL_NO_MITO_CONTIG = "no_mito_contig"
+
 
 class MtRnr1Call(NamedTuple):
     """The resolved call, why it was withheld, and how it was established.

@@ -153,6 +153,7 @@ from mtdna.mt_rnr1 import (  # noqa: E402
     MT_RNR1_SPAN,
     NO_CALL_COVERAGE_BELOW_FLOOR,
     NO_CALL_COVERAGE_UNKNOWN,
+    NO_CALL_NO_MITO_CONTIG,
     VcfRecord,
     match_alleles,
     resolve_mt_rnr1_call,
@@ -716,6 +717,36 @@ async def _call_from_alignment(
         )
     if not plan_for(build).supported:
         raise HTTPException(status_code=422, detail=plan_for(build).reason)
+
+    # No @SQ line names the mitochondrion, so no region query can reach its reads
+    # whatever the file holds. Extracting "chrM" anyway gave an empty BAM, and the
+    # zero-reads answer below then told a whole genome whose chromosomes were named by
+    # RefSeq accession (the mitochondrion as NC_012920.1) that it had "No mitochondrial
+    # reads ... Normal for a targeted panel" (2026-10-13). That is a fact about the
+    # header, so it is said as one, and before the whole-file index.
+    if contig_name is None:
+        logger.info(f"mtDNA {job_key}: no mitochondrial @SQ line; MT-RNR1 not called")
+        resolved = resolve_mt_rnr1_call(
+            [], [], evidence_reason=NO_CALL_NO_MITO_CONTIG, basis=None
+        )
+        return {
+            "haplogroup": None,
+            "haplogroup_quality": None,
+            "haplogroup_range": None,
+            "mt_rnr1": resolved.call,
+            "mt_rnr1_no_call_reason": resolved.no_call_reason,
+            "evidence_basis": resolved.basis,
+            "mt_rnr1_all_matches": [],
+            "mean_coverage": None,
+            "variants": [],
+            "chrm_vcf": None,
+            "report_html": None,
+            "report_unavailable_reason": (
+                "The alignment's header names no mitochondrial chromosome (chrM, "
+                "MT or M), so its mitochondrial reads, if it has any, could not be "
+                "read, and nothing was called."
+            ),
+        }
 
     reference_arg: List[str] = []
     if input_type.lower() == "cram":
