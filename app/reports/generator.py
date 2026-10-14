@@ -322,6 +322,25 @@ def _count(value) -> Optional[int]:
         return None
 
 
+def pypgx_gene_counts(output: Dict[str, Any]) -> Optional[Tuple[int, int, int, int]]:
+    """(genotyped, panel, with no reads, failed) from the PyPGx step's output.
+
+    The wrapper's step_gene_counts records these directly, with
+    ``not_sequenced_genes``. Steps recorded before it counted genes with no reads
+    as successful and dropped them from ``total_genes`` (a sliced BAM read "66 of 1
+    genes genotyped"); the true counts follow from the same record: the genes it
+    ran were ``total_genes`` and those that failed are ``failed_genes``.
+    """
+    done, of = _count(output.get("successful_genes")), _count(output.get("total_genes"))
+    if done is None or not of:
+        return None
+    failed = _count(output.get("failed_genes")) or 0
+    if "not_sequenced_genes" in output:
+        return done, of, _count(output.get("not_sequenced_genes")) or 0, failed
+    panel = done + failed
+    return of - failed, panel, max(panel - of, 0), failed
+
+
 def workflow_run_facts(
     records: List[Dict[str, Any]],
     platform: List[Dict[str, str]],
@@ -396,9 +415,15 @@ def workflow_run_facts(
         facts.details["pypgx_bam2vcf"] = [line]
 
     pypgx = (by_name.get("pypgx_analysis") or {}).get("output") or {}
-    done, of = _count(pypgx.get("successful_genes")), _count(pypgx.get("total_genes"))
-    if done is not None and of:
-        facts.details["pypgx_analysis"] = [f"{done} of {of} genes genotyped"]
+    counts = pypgx_gene_counts(pypgx)
+    if counts:
+        done, of, no_reads, failed = counts
+        line = f"{done} of {of} genes genotyped"
+        if no_reads:
+            line += f", {no_reads} with no reads"
+        if failed:
+            line += f", {failed} failed"
+        facts.details["pypgx_analysis"] = [line]
     facts.produced["cyp2d6"] = "CYP2D6" in called
     facts.produced["other_genes"] = any(
         name not in panel and g.get("called_by") == "P" for name, g in called.items()

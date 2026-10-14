@@ -920,6 +920,28 @@ def no_reads_note(gene: str) -> str:
     return note
 
 
+def step_gene_counts(
+    panel: List[str], results: Dict[str, Any], not_sequenced: Dict[str, Any]
+) -> Dict[str, int]:
+    """The PyPGx step's gene counts, which the report's workflow diagram prints.
+
+    A gene with no reads is recorded as a successful result, so the report can say
+    why it has no call, but PyPGx never genotyped it. Counted with the genotyped
+    genes and out of the genes left after removing them, a sliced or targeted BAM
+    read "66 of 1 genes genotyped". ``not_sequenced_genes`` also marks the record
+    as carrying these meanings (generator.workflow_run_facts reads older ones).
+    """
+    genotyped = [
+        g for g, r in results.items() if r.get("success") and g not in not_sequenced
+    ]
+    return {
+        "total_genes": len(panel),
+        "successful_genes": len(genotyped),
+        "not_sequenced_genes": len(not_sequenced),
+        "failed_genes": sum(1 for r in results.values() if not r.get("success")),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Structural variants: CYP2D6 *5/*36/*68 and gene duplications, GSTM1/GSTT1/UGT2B17
 # deletions, and the rest of PyPGx's SV-defined alleles
@@ -1728,14 +1750,15 @@ async def genotype(
                 f"Not calling {len(not_sequenced)} gene(s) with no reads in the "
                 f"alignment: {', '.join(sorted(not_sequenced))}"
             )
-            requested_genes = [g for g in requested_genes if g not in not_sequenced]
+        # requested_genes stays the whole panel: the step's counts are out of it.
+        genes_to_call = [g for g in requested_genes if g not in not_sequenced]
 
         # Calculate optimal batch size based on file size and available memory
         optimal_batch_size = calculate_optimal_batch_size(file_size_gb, memory_info['available_gb'])
         logger.info(f"Using batch size: {optimal_batch_size} genes per batch")
         
         # Split genes into batches for parallel processing
-        gene_batches = chunk_list(requested_genes, optimal_batch_size)
+        gene_batches = chunk_list(genes_to_call, optimal_batch_size)
         
         aggregated: Dict[str, Any] = {"success": True, "results": dict(not_sequenced), "job_id": local_job_id}
         if patient_id:
@@ -1749,7 +1772,7 @@ async def genotype(
             
             # Log batch start for progress tracking
             batch_start_time = time.time()
-            total_genes = len(requested_genes)
+            total_genes = len(genes_to_call)
             logger.info(f"BATCH_START: batch={batch_idx + 1}, total_batches={len(gene_batches)}, genes_in_batch={len(gene_batch)}, total_genes={total_genes}")
             
             # Log batch start for progress tracking
@@ -1860,10 +1883,11 @@ async def genotype(
         # Complete workflow step
         if job_client:
             if aggregated["success"]:
-                await job_client.complete_step(f"PyPGx analysis completed successfully for {len(requested_genes)} genes", {
-                    "total_genes": len(requested_genes),
-                    "successful_genes": len([r for r in aggregated["results"].values() if r.get("success", False)]),
-                    "failed_genes": len([r for r in aggregated["results"].values() if not r.get("success", False)]),
+                counts = step_gene_counts(requested_genes, aggregated["results"], not_sequenced)
+                await job_client.complete_step(
+                    f"PyPGx analysis completed: {counts['successful_genes']} of "
+                    f"{counts['total_genes']} genes genotyped", {
+                    **counts,
                     # Genes Beagle phased and genes PyPGx's copy-number models
                     # called (pipeline_methods): the report credits those tools
                     # only when these are non-zero.

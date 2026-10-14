@@ -234,3 +234,32 @@ def test_no_reads_on_a_commonly_deleted_gene_is_not_called_a_gap():
         assert note.startswith("No reads over this gene in the alignment")
         assert "deleted" in note
     assert ns["no_reads_note"]("CYP2C19") == "No reads over this gene in the alignment"
+
+
+def test_the_step_counts_genes_with_no_reads_apart():
+    """The step recorded genes with no reads as successful and counted them out of
+    the genes left once they were removed: "66 of 1 genes genotyped" for a BAM over
+    one gene. The panel is the whole request; the no-read genes are their own count."""
+    ns = _load(["step_gene_counts"])
+    panel = ["CYP2D6", "CYP2C19", "GSTM1", "NAT2"]
+    not_sequenced = {g: {"success": True, "diplotype": None} for g in ("GSTM1", "NAT2")}
+    results = dict(not_sequenced)
+    results["CYP2D6"] = {"success": True, "diplotype": "*3/*4"}
+    results["CYP2C19"] = {"success": False, "error": "boom"}
+    assert ns["step_gene_counts"](panel, results, not_sequenced) == {
+        "total_genes": 4,
+        "successful_genes": 1,
+        "not_sequenced_genes": 2,
+        "failed_genes": 1,
+    }
+
+
+def test_the_genotyper_keeps_the_whole_panel_for_its_counts():
+    src = _src()
+    body = src[src.index("async def genotype(") :]
+    assert "requested_genes = [g for g in requested_genes" not in body
+    assert "chunk_list(genes_to_call," in body
+    assert (
+        'step_gene_counts(requested_genes, aggregated["results"], not_sequenced)'
+        in body
+    )
