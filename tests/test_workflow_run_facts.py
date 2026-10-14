@@ -124,6 +124,42 @@ def test_star_alleles_and_the_genes_pharmcat_does_not_call():
     assert not uncalled.made("cyp2d6") and not uncalled.made("other_genes")
 
 
+def test_genes_with_no_reads_are_counted_out_of_the_whole_panel():
+    """A sliced BAM over CYP2D6 alone: PyPGx genotyped one gene of its 66 and found
+    no reads over the other 65. The diagram read "66 of 1 genes genotyped"."""
+    facts = _facts(
+        [
+            _record(
+                "pypgx_analysis",
+                output={
+                    "total_genes": 66,
+                    "successful_genes": 1,
+                    "not_sequenced_genes": 65,
+                    "failed_genes": 0,
+                },
+            )
+        ]
+    )
+    assert facts.details["pypgx_analysis"] == [
+        "1 of 66 genes genotyped, 65 with no reads"
+    ]
+
+
+def test_a_step_recorded_before_the_fix_reads_the_same():
+    """Jobs already run keep their old step record: genes with no reads counted as
+    successful, and dropped from total_genes. Re-rendering one gives the true counts."""
+    old = {"total_genes": 1, "successful_genes": 66, "failed_genes": 0}
+    facts = _facts([_record("pypgx_analysis", output=old)])
+    assert facts.details["pypgx_analysis"] == [
+        "1 of 66 genes genotyped, 65 with no reads"
+    ]
+    old_failed = {"total_genes": 3, "successful_genes": 64, "failed_genes": 1}
+    facts = _facts([_record("pypgx_analysis", output=old_failed)])
+    assert facts.details["pypgx_analysis"] == [
+        "2 of 65 genes genotyped, 62 with no reads, 1 failed"
+    ]
+
+
 def test_hla_typing_names_the_genes_typed():
     typed = _facts(
         [_record("hla_typing")],
