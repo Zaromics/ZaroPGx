@@ -400,10 +400,15 @@ def workflow_run_facts(
     hla = [name for name in ("HLA-A", "HLA-B", "HLA-C") if name in called]
     facts.produced["hla"] = bool({"HLA-A", "HLA-B"} & set(hla))
     facts.produced["hla_c"] = "HLA-C" in hla
-    if (by_name.get("hla_typing") or {}).get("status") == "completed":
+    hla_step = by_name.get("hla_typing") or {}
+    if hla_step.get("status") == "completed":
         facts.details["hla_typing"] = [
             ", ".join(hla) + " typed" if hla else "no HLA allele called"
         ]
+    elif (hla_step.get("output") or {}).get("reason") == "hla_reads_not_located":
+        # zarohla could not find the HLA reads and would not convert the whole file
+        # to look: nothing was typed, which "no HLA allele called" would hide.
+        facts.details["hla_typing"] = ["HLA reads not located: HLA-A, -B, -C not typed"]
 
     mtdna_ran = (by_name.get("mtdna_analysis") or {}).get("status") == "completed"
     if mtdna_result is not None and mtdna_ran:

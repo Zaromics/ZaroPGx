@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import time
 import uuid
 import csv
@@ -286,6 +287,19 @@ PROBE_MIN_MAPQ = 1
 # _extract_hla_reads.
 MHC_REGION = {"GRCh38": (28510120, 33480577)}
 
+# Converting a whole alignment is the fallback for one whose HLA reads cannot be
+# located or extracted. It takes several times the input in scratch -- `collate -u`
+# writes the alignment uncompressed, and the FASTQ is about as large again -- and
+# OptiType then maps every read. A whole-genome BAM whose chromosomes were named by
+# RefSeq accession (NC_000006.12, not chr6) took that path on 2026-10-13: after an hour
+# of conversion and with a 151 GB read1.fq in hand, OptiType's mapper filled the host's
+# disk, which crashed the Nextflow head, the FHIR server and the desktop session. So
+# only an input this small is converted whole; a larger one is left untyped, and the
+# step says why.
+WHOLE_CONVERSION_MAX_BYTES = 2 * 1024**3
+# Free scratch the whole conversion needs, as a multiple of the input's size.
+WHOLE_CONVERSION_SCRATCH_FACTOR = 10
+
 _BUILD_ALIASES = {
     "hg38": "GRCh38",
     "grch38": "GRCh38",
@@ -384,6 +398,46 @@ async def _no_hla_reads_result(job_client) -> Dict[str, Any]:
             output_data={"results": {}, "reason": "no_hla_reads"},
         )
     return {"status": "success", "results": {}, "warning": NO_HLA_READS_MESSAGE}
+
+
+# The step output's reason when HLA typing was not attempted; the report says so
+# rather than "no HLA allele called", which would read as typed and found nothing.
+NOT_TYPED_REASON = "hla_reads_not_located"
+
+
+def _whole_conversion_refusal(input_path: Path, job_dir: Path) -> Optional[str]:
+    """Why converting all of `input_path` is not safe on this host, or None if it is."""
+    size = os.path.getsize(input_path)
+    gb = 1024**3
+    if size > WHOLE_CONVERSION_MAX_BYTES:
+        return (
+            f"at {size / gb:.1f} GB it is too large to convert whole to look for them "
+            f"(the limit is {WHOLE_CONVERSION_MAX_BYTES / gb:.0f} GB)"
+        )
+    needed = size * WHOLE_CONVERSION_SCRATCH_FACTOR
+    free = shutil.disk_usage(job_dir).free
+    if free < needed:
+        return (
+            f"converting it whole to look for them needs about {needed / gb:.1f} GB "
+            f"of scratch, and {free / gb:.1f} GB is free"
+        )
+    return None
+
+
+async def _not_typed_result(job_client, message: str) -> Dict[str, Any]:
+    """HLA typing skipped: a stated gap in the run, not a sample without HLA reads.
+
+    Skipped rather than completed, so the report neither credits OptiType nor reads
+    the empty result as a typing that found no alleles; the run goes on without HLA
+    calls exactly as it does for `_no_hla_reads_result`.
+    """
+    if job_client:
+        await job_client.update_step_status(
+            "skipped",
+            message,
+            output_data={"results": {}, "reason": NOT_TYPED_REASON, "detail": message},
+        )
+    return {"status": "success", "results": {}, "warning": message}
 
 
 async def _samtools(*args: str) -> tuple[int, bytes]:
@@ -672,6 +726,23 @@ async def call_hla(
                             "converting the whole alignment"
                         )
 
+                if fastq_source == input_path:
+                    refusal = _whole_conversion_refusal(input_path, job_dir)
+                    if refusal:
+                        located = (
+                            "could not be found"
+                            if hla_reads is None
+                            else "were found but could not be extracted"
+                        )
+                        message = (
+                            f"HLA-A, -B and -C not typed. The HLA reads {located} "
+                            "in this alignment (that needs a coordinate-sorted BAM or "
+                            "CRAM aligned to GRCh38, with chromosome 6 named chr6 or "
+                            f"6), and {refusal}."
+                        )
+                        logger.warning(f"Job {local_job_id}: {message}")
+                        return await _not_typed_result(job_client, message)
+
                 if job_client:
                     await job_client.log_progress(
                         f"Converting BAM to FASTQ using samtools"
@@ -873,8 +944,6 @@ async def call_hla(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         try:
-            import shutil
-
             shutil.rmtree(job_dir, ignore_errors=True)
         except Exception:
             pass
