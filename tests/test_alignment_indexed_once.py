@@ -1,0 +1,92 @@
+"""An alignment is indexed once, not once per step.
+
+The copy of an NCBI-named alignment under UCSC names (app/genome/contig_names.py)
+had no index: the upload's own does not fit it, because the new header's length
+moves every offset. The HLA, mtDNA and PyPGx steps each indexed it, and zarohla and
+the mtDNA service indexed every alignment they were given even when a current index
+came with it (app/utils/shared_input.py copies one beside the input). PyPGx took 8
+minutes to index NA12878's 41 GB BAM; a 107 GB genome took about twenty minutes per
+step. The copy is now indexed when it is made, and each step uses a current index.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+
+import pytest
+
+from app.utils.shared_input import current_index
+from tests.test_sidecar_input_copies import sidecars  # noqa: F401  (fixture)
+from tests.test_zarohla_no_hla_reads import (  # noqa: F401  (fixtures)
+    fake_tools,
+    zarohla,
+)
+
+pysam = pytest.importorskip("pysam")
+
+
+@pytest.mark.parametrize("kind", ["bam", "cram"])
+def test_the_renamed_copy_comes_with_its_own_index(tmp_path, kind):
+    from app.genome.contig_names import write_renamed_copy
+    from tests.test_grch38_contig_names import PLAN, _alignment
+
+    files = _alignment(tmp_path)
+    copy = write_renamed_copy(str(getattr(files, kind)), kind, PLAN)
+
+    found = current_index(Path(copy))
+    assert found is not None, "an index at least as new as the copy, beside it"
+    assert found[1] == (".bai" if kind == "bam" else ".crai")
+    with pysam.AlignmentFile(copy, reference_filename=str(files.ucsc_fa)) as aln:
+        assert [r.query_name for r in aln.fetch("chrM")] == ["read2"]
+        assert [r.reference_start for r in aln.fetch("chr6", 0, 600)] == [10, 300]
+
+
+def _bam_with_index(tmp_path, index_age):
+    bam = tmp_path / "in.bam"
+    bam.write_bytes(b"BAM")
+    if index_age is not None:
+        bai = tmp_path / "in.bam.bai"
+        bai.write_bytes(b"BAI")
+        os.utime(bai, (bam.stat().st_mtime + index_age,) * 2)
+    return bam
+
+
+@pytest.mark.parametrize("index_age, indexes", [(None, True), (5, False), (-60, True)])
+def test_zarohla_indexes_only_an_input_without_a_current_index(
+    zarohla, fake_tools, tmp_path, index_age, indexes  # noqa: F811
+):
+    bam = _bam_with_index(tmp_path, index_age)
+    count = asyncio.run(zarohla._probe_hla_read_count(bam, "hg38"))
+    assert count == 1
+    ran_index = any(c[1] == "index" for c in fake_tools.calls)
+    assert ran_index is indexes
+
+
+@pytest.mark.parametrize("index_age, indexes", [(None, True), (5, False), (-60, True)])
+def test_mtdna_indexes_only_an_input_without_a_current_index(
+    sidecars, monkeypatch, tmp_path, index_age, indexes  # noqa: F811
+):
+    mtdna = sidecars.mtdna
+    bam = _bam_with_index(tmp_path, index_age)
+    ran = []
+
+    async def grch38_chrm(bam_path, work, job_key):
+        return "chrM", 16569
+
+    class Stop(Exception):
+        pass
+
+    async def record(argv, cwd, job_key):
+        ran.append(argv)
+        if argv[:2] == ["samtools", "view"]:
+            raise Stop  # past the index decision
+
+    monkeypatch.setattr(mtdna, "_read_mito_sq_header", grch38_chrm)
+    monkeypatch.setattr(mtdna, "_run", record)
+    with pytest.raises(Stop):
+        asyncio.run(
+            mtdna._call_from_alignment(str(bam), str(tmp_path), "hg38", "job-1")
+        )
+    assert (["samtools", "index", str(bam)] in ran) is indexes

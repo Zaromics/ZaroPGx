@@ -23,12 +23,14 @@ from job_client import JobClient
 try:
     from shared_input import (  # pyright: ignore[reportMissingImports]
         SharedInputRefused,
+        current_index,
         link_shared_input,
         resolve_shared_input,
     )
 except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
     from app.utils.shared_input import (
         SharedInputRefused,
+        current_index,
         link_shared_input,
         resolve_shared_input,
     )
@@ -768,7 +770,10 @@ async def _call_from_alignment(
             )
         reference_arg = ["--reference", reference_fasta]
 
-    await _run(["samtools", "index", bam_path], work, job_key)
+    # A shared input arrives with its current index beside it
+    # (app/utils/shared_input.py): only an input without one is indexed here.
+    if current_index(Path(bam_path)) is None:
+        await _run(["samtools", "index", bam_path], work, job_key)
     region = "chrM" if build == MitoBuild.GRCH38 else "MT"
     chrm_bam = os.path.join(work, "chrM.bam")
     # --reference only matters for decoding a CRAM's actual sequence; empty

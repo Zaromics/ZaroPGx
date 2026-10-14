@@ -22,12 +22,14 @@ from job_client import JobClient
 try:
     from shared_input import (  # pyright: ignore[reportMissingImports]
         SharedInputRefused,
+        current_index,
         link_shared_input,
         resolve_shared_input,
     )
 except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
     from app.utils.shared_input import (
         SharedInputRefused,
+        current_index,
         link_shared_input,
         resolve_shared_input,
     )
@@ -491,9 +493,12 @@ async def _probe_hla_read_count(
     if not loci:
         return None
 
-    # A region query needs an index, and main.nf posts the alignment without one.
-    if (await _samtools("index", str(input_path)))[0] != 0:
-        return None
+    # A region query needs an index. A shared input arrives with its current index
+    # beside it (app/utils/shared_input.py); indexing a whole genome again took
+    # minutes per step, so only an input without one is indexed here.
+    if current_index(input_path) is None:
+        if (await _samtools("index", str(input_path)))[0] != 0:
+            return None
 
     # Contig naming is not knowable in advance: `chr6` and `6` are both in the wild
     # and this sidecar sees whatever the caller aligned against.

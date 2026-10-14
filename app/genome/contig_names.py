@@ -143,7 +143,10 @@ def write_renamed_copy(path: str, file_type: str, plan: Mapping[str, str]) -> st
 
     Only names change. A BAM or CRAM keeps its records byte for byte (`samtools
     reheader`), so a 100 GB genome takes minutes; a CRAM still decodes from the
-    reference by each contig's M5. A SAM is rewritten record by record, a VCF, gVCF
+    reference by each contig's M5. The copy is indexed here, once: the upload's own
+    index does not fit it (the header's new length moves every offset), and without
+    one the HLA, mtDNA and PyPGx steps each indexed the whole genome themselves,
+    about twenty minutes apiece for a 107 GB BAM. A SAM is rewritten record by record, a VCF, gVCF
     or BCF by `bcftools annotate --rename-chrs`. Text that names contigs inside a
     record -- an alignment's SA and XA tags -- keeps the accessions; nothing in the
     pipeline reads them.
@@ -190,6 +193,19 @@ def write_renamed_copy(path: str, file_type: str, plan: Mapping[str, str]) -> st
         finally:
             Path(handle.name).unlink(missing_ok=True)
         _check_renamed_alignment(path, out, header)
+        # <copy>.bai or <copy>.crai, newer than the copy, so app/utils/shared_input.py
+        # hands it to each step with the file. Also in a child process.
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import pysam, sys; pysam.index('-@', '4', sys.argv[1])",
+                out,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
     elif kind == "sam":
         with pysam.AlignmentFile(path, "r") as source:
             header = source.header.to_dict()
