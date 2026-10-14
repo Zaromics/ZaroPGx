@@ -63,6 +63,11 @@ from app.api.utils.header_inspector import (
     filter_header_to_canonical_contigs,
     inspect_header,
 )
+from app.genome.contig_names import (
+    rename_plan,
+    renamed_path,
+    write_renamed_copy,
+)
 from app.pharmcat.report_json import PharmCATSchemaError, iter_gene_blocks
 from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
@@ -1291,6 +1296,77 @@ async def process_file_nextflow_background_with_db(
         db.close()
 
 
+# Free space beyond the copy itself that renaming a file's contigs must leave.
+CONTIG_RENAME_HEADROOM_BYTES = 1024**3
+
+
+async def use_ucsc_contig_names(
+    job_service: JobService,
+    job_id: str,
+    file_path: str,
+    input_type: str,
+    header_json: Any,
+) -> Optional[str]:
+    """Rename a GRCh38 file's accession-named contigs; return the renamed copy's path.
+
+    A file aligned or called against NCBI's own GRCh38 FASTA names its chromosomes
+    by accession (NC_000006.12, CM000668.2), and every step after this one asks for
+    chr6: zarohla found no chromosome 6 in such a BAM, the mtDNA step no
+    mitochondrion (2026-10-13). The copy carries UCSC names and replaces the upload
+    as the pipeline's input; see app/genome/contig_names.py. None when the file has
+    no accession-named chromosome. Raises when the copy cannot be made, which fails
+    the job before anything reads the file under names it does not know.
+    """
+    sequences = header_json.get("sequences") if isinstance(header_json, dict) else None
+    plan = rename_plan(sequences)
+    if not plan:
+        return None
+    size = os.path.getsize(file_path)
+    free = shutil.disk_usage(Path(file_path).parent).free
+    if free < size + CONTIG_RENAME_HEADROOM_BYTES:
+        raise RuntimeError(
+            "This file names its chromosomes by NCBI accession (NC_000001.11, ...), "
+            f"and renaming them needs a {size / 1024**3:.1f} GB copy; "
+            f"{free / 1024**3:.1f} GB is free."
+        )
+    job_service.log_job_event(
+        job_id,
+        JobLogCreate(
+            step_name="header_analysis",
+            log_level=LogLevel.INFO,
+            message=(
+                f"Renaming {len(plan)} contigs from NCBI accessions to UCSC names "
+                "(NC_000006.12 to chr6, ...)"
+            ),
+        ),
+    )
+    try:
+        renamed = await asyncio.to_thread(
+            write_renamed_copy, file_path, input_type, plan
+        )
+    except Exception as exc:
+        Path(renamed_path(file_path)).unlink(missing_ok=True)
+        detail = getattr(exc, "stderr", None)
+        if isinstance(detail, bytes):
+            detail = detail.decode(errors="replace")
+        raise RuntimeError(
+            "Could not rename the file's chromosomes from NCBI accessions: "
+            f"{(detail or str(exc)).strip()[-500:]}"
+        ) from exc
+
+    # Registered with the job so it is released with the upload when the job ends.
+    job = job_service.get_job(job_id)
+    metadata = dict(getattr(job, "job_metadata", None) or {})
+    metadata["file_paths"] = [*(metadata.get("file_paths") or []), renamed]
+    metadata["contigs_renamed"] = len(plan)
+    job_service.update_job(job_id, JobUpdate(metadata=metadata))
+    if not env_flag("KEEP_UPLOADS"):
+        # The app's own copy of the upload, replaced by the renamed one; a genome
+        # is too large to hold twice for the length of the run.
+        Path(file_path).unlink(missing_ok=True)
+    return renamed
+
+
 async def process_file_nextflow_background(
     file_path: str,
     patient_id: str,
@@ -1391,10 +1467,22 @@ async def process_file_nextflow_background(
             except Exception:
                 header_sample_identifier = None
 
+            output_data = {"header_record_id": header_record_id}
+            renamed = await use_ucsc_contig_names(
+                job_service,
+                job_id,
+                file_path,
+                workflow.get("file_type", "vcf"),
+                header_json,
+            )
+            if renamed:
+                file_path = renamed
+                output_data["contigs_renamed"] = "NCBI accessions to UCSC names"
+
             # Complete header analysis step
             step_update = JobStepUpdate(
                 status=StepStatus.COMPLETED,
-                output_data={"header_record_id": header_record_id},
+                output_data=output_data,
             )
             job_service.update_job_step(job_id, "header_analysis", step_update)
 

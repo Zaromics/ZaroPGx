@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Union
 
 # Local imports
 from app.api.utils.file_utils import has_index_file, is_compressed_file
+from app.genome.contig_names import accession_chromosome
 
 # Third-party imports (optional dependencies)
 # pysam is optional here the same way it is in file_processor.py: importing this module
@@ -176,8 +177,16 @@ ASSEMBLY_NAME_TOKENS: Dict[str, tuple] = {
 
 
 def _normalise_contig_name(name: Optional[str]) -> str:
-    """`chr1` / `1` / `CHR1` -> `1`, so both naming conventions hit one table."""
+    """`chr1` / `1` / `CHR1` -> `1`, so both naming conventions hit one table.
+
+    A chromosome named by accession, as NCBI's own FASTA names them (`NC_000001.11`,
+    `CM000663.2`), is read as its chromosome too: its length still says which build
+    it is, and without this a whole genome aligned to NCBI's GRCh38 had no build.
+    """
     cid = (name or "").strip()
+    chromosome = accession_chromosome(cid)
+    if chromosome:
+        return chromosome
     if cid.lower().startswith("chr"):
         cid = cid[3:]
     return cid.upper()
