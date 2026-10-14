@@ -17,7 +17,7 @@
 
 {% macro na_legend(rows, attribute='phenotype') -%}
 {%- if rows|selectattr(attribute, 'equalto', 'N/A')|list %}
-<p class="header-note"><strong>N/A</strong> phenotype: the tool that called the gene (PharmCAT, applying CPIC, or PyPGx) defines no phenotype for it, so the genotype is reported as called. A guideline that uses such a gene works from the genotype directly, as CPIC's warfarin guideline does with VKORC1.</p>
+<p class="header-note"><strong>N/A</strong> phenotype: the tool that called the gene (PharmCAT, applying CPIC; PyPGx; or OptiType, which types HLA alleles only) defines no phenotype for it, so the genotype is reported as called. A guideline that uses such a gene works from the genotype directly, as CPIC's warfarin guideline does with VKORC1.</p>
 {%- endif %}
 {%- endmacro %}
 

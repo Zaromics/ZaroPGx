@@ -87,7 +87,7 @@ The label is always printed beside the colour.
 | Label | Meaning |
 |---|---|
 | Normal / Intermediate / Poor / Rapid / Ultrarapid Metabolizer, Normal / Decreased / Poor Function, etc. | The phenotype PharmCAT assigns from the alleles' functions in its guideline data |
-| N/A | The tool that called the gene defines no phenotype for it (CYP4F2, VKORC1, IFNL3 and most PyPGx-only genes); guidance that uses the gene works from the genotype |
+| N/A | The tool that called the gene defines no phenotype for it (CYP4F2, VKORC1, IFNL3, most PyPGx-only genes, and HLA-C, which OptiType types and PharmCAT does not cover); guidance that uses the gene works from the genotype |
 | Possibly Wild Type | A reference call, with no phenotype, from a file that lists only variants and may not cover every position PharmCAT checks (VCF, BCF) |
 | Likely Wild Type | A reference call, with no phenotype, from data genotyped at every position (reads, or a gVCF's reference blocks) |
 | A or B | The input is unphased and PharmCAT found more than one diplotype that fits; each is listed, with its phenotype |

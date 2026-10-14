@@ -832,7 +832,8 @@ PHARMCAT_GENES_WITHOUT_PHENOTYPE = frozenset({"CYP4F2", "F2", "F5", "IFNL3", "VK
 
 def defines_no_phenotype(row: Dict[str, Any]) -> bool:
     """Whether the tool that called this row's gene defines no phenotype for it:
-    PyPGx, for a gene its gene table gives no PhenotypeMethod; PharmCAT, for
+    PyPGx, for a gene its gene table gives no PhenotypeMethod; OptiType, for the HLA
+    genes PharmCAT has no row for (HLA-C); PharmCAT, for
     PHARMCAT_GENES_WITHOUT_PHENOTYPE. A blank phenotype anywhere else is missing
     data, not "N/A". PyPGx's "Indeterminate" genotype is no call at all."""
     if not gene_was_called(row.get("diplotype")):
@@ -841,6 +842,8 @@ def defines_no_phenotype(row: Dict[str, Any]) -> bool:
         return False
     if row.get("pyPgxOnly"):
         return not row.get("pypgx_phenotype_method")
+    if row.get("optitypeOnly"):
+        return True
     return (
         str(row.get("gene") or "").strip().upper() in PHARMCAT_GENES_WITHOUT_PHENOTYPE
     )
@@ -910,6 +913,94 @@ def _same_diplotype(a: Any, b: Any) -> bool:
     ("*68 + *4" against "*68+*4")."""
     left, right = "".join(str(a or "").split()), "".join(str(b or "").split())
     return bool(left) and left == right
+
+
+def optitype_diplotype(call: Any) -> str:
+    """OptiType's pair as the report writes HLA calls. zarohla returns
+    "C*01:02,C*07:01"; main.nf (OptiTypeHLAFromBAM) hands PharmCAT "*01:02/*07:01",
+    which is how PharmCAT's HLA-A and HLA-B rows read."""
+    alleles = [a.strip() for a in str(call or "").split(",") if a.strip()]
+    return "/".join("*" + a.split("*", 1)[1] if "*" in a else a for a in alleles)
+
+
+def merge_optitype_calls(genes: List[Dict[str, Any]], report_dir: str) -> int:
+    """Put the run's OptiType calls (hla_result.json, zarohla's /call-hla response)
+    into the report's gene rows; returns how many rows it added.
+
+    OptiType's calls reached the report only through PharmCAT, as outside calls.
+    PharmCAT has no HLA-C, so HLA-C was typed and then dropped: every report listed
+    it as no call. And PharmCAT's HLA-A and HLA-B rows record only that the call came
+    from outside, so they read "producing tool not recorded" though this run's
+    OptiType made them. As for PyPGx's CYP2D6, a PharmCAT outside call that matches
+    OptiType's is OptiType's; one that does not (a manual outside call) is left alone.
+    """
+    try:
+        with open(
+            os.path.join(report_dir, "hla_result.json"), "r", encoding="utf-8"
+        ) as fh:
+            results = (json.load(fh) or {}).get("results") or {}
+    except (OSError, ValueError, AttributeError):
+        return 0
+    if not isinstance(results, dict):
+        return 0
+    rows = {
+        str(g.get("gene") or g.get("name") or "").strip().upper(): g
+        for g in genes
+        if isinstance(g, dict)
+    }
+    added = 0
+    for gene, call in results.items():
+        gene = str(gene).strip()
+        diplotype = optitype_diplotype(call)
+        if not gene.upper().startswith("HLA-") or not diplotype:
+            continue
+        row = rows.get(gene.upper())
+        if row is None:
+            row = {
+                "gene": gene,
+                "diplotype": diplotype,
+                "phenotype": None,
+                "activity_score": None,
+                "tool_source": "OptiType",
+                # OptiType types alleles; it assigns no phenotype.
+                "optitypeOnly": True,
+            }
+            genes.append(row)
+            rows[gene.upper()] = row
+            added += 1
+        elif str(row.get("call_source") or "").upper() == "OUTSIDE" and _same_diplotype(
+            row.get("diplotype"), diplotype
+        ):
+            row["tool_source"] = "OptiType"
+    return added
+
+
+def credit_mtdna_call(genes: List[Dict[str, Any]], report_dir: str) -> bool:
+    """Credit PharmCAT's MT-RNR1 row to mtDNA-Server 2 when it is the run's own call.
+
+    MtdnaCall (main.nf) hands PharmCAT mtdna_result.json's ``mt_rnr1`` as an outside
+    call, and PharmCAT records only that the call came from outside: the gene table
+    read "producing tool not recorded" for a call this run made. A row that does not
+    match (a manual outside call) is left alone, as for OptiType's and PyPGx's.
+    """
+    try:
+        with open(
+            os.path.join(report_dir, "mtdna_result.json"), "r", encoding="utf-8"
+        ) as fh:
+            call = (json.load(fh) or {}).get("mt_rnr1")
+    except (OSError, ValueError, AttributeError):
+        return False
+    for row in genes:
+        if (
+            isinstance(row, dict)
+            and str(row.get("gene") or row.get("name") or "").strip().upper()
+            == "MT-RNR1"
+            and str(row.get("call_source") or "").upper() == "OUTSIDE"
+            and _same_diplotype(row.get("diplotype"), call)
+        ):
+            row["tool_source"] = "mtDNA-Server-2"
+            return True
+    return False
 
 
 def pypgx_record(details: Dict[str, Any]) -> Dict[str, Any]:
@@ -3368,6 +3459,11 @@ def generate_report(
 
     except Exception as e:
         logger.warning(f"PyPGx enrichment step failed: {e}", exc_info=True)
+
+    optitype_added = merge_optitype_calls(data.setdefault("genes", []), report_dir)
+    if optitype_added:
+        logger.info(f"Added {optitype_added} OptiType-only HLA gene entries")
+    credit_mtdna_call(data["genes"], report_dir)
 
     # After all enrichment steps, build the canonical, alphabetical full gene list
     try:
