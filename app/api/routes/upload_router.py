@@ -1039,6 +1039,34 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
         db.close()
 
 
+async def stop_job_work(job_service: JobService, job_id: str) -> None:
+    """Stop whatever Nextflow and the sidecars are still running for a failing job.
+
+    Call it before the job is marked failed. update_job releases an ended job's files
+    (JobService._release_job_files: the upload and the sidecars' scratch), and nothing
+    else stopped the work: on 2026-10-13 the Nextflow head died with the host's disk
+    full, the job was marked failed, its upload and zarohla's FASTQs were deleted, and
+    OptiType went on mapping a deleted 151 GB FASTQ, holding its space, for hours.
+    A user's cancel stops the work the same way (job_router.cancel_job). Never raises.
+    """
+    from app.api.routes.job_router import cancel_container_jobs, cancel_nextflow_job
+
+    try:
+        job = await asyncio.to_thread(job_service.get_job, job_id)
+        metadata = dict(getattr(job, "job_metadata", None) or {})
+    except Exception as exc:
+        logger.warning(f"Could not read job {job_id} to stop its work: {exc}")
+        metadata = {}
+    try:
+        await cancel_nextflow_job(job_id, metadata)
+    except Exception as exc:
+        logger.warning(f"Could not stop Nextflow for failed job {job_id}: {exc}")
+    try:
+        await cancel_container_jobs(job_id, metadata)
+    except Exception as exc:
+        logger.warning(f"Could not stop the sidecars for failed job {job_id}: {exc}")
+
+
 async def wait_for_nextflow_completion(
     job_service: JobService,
     job_id: str,
@@ -1109,6 +1137,7 @@ async def wait_for_nextflow_completion(
                         f"Nextflow job {job_key} for job {job_id} exceeded the "
                         f"{max_wait_seconds:g}s wait deadline; marking it failed"
                     )
+                    await stop_job_work(job_service, job_id)
                     job_service.update_job(job_id, JobUpdate(status=JobStatus.FAILED))
                     log_data = JobLogCreate(
                         step_name="nextflow_executor",
@@ -1167,7 +1196,7 @@ async def wait_for_nextflow_completion(
                         error_msg = status_data.get("error", "Nextflow job failed")
                         logger.error(f"Nextflow job {job_key} failed: {error_msg}")
 
-                        # Update workflow status to failed
+                        await stop_job_work(job_service, job_id)
                         workflow_update = JobUpdate(status=JobStatus.FAILED)
                         job_service.update_job(job_id, workflow_update)
 
@@ -1219,6 +1248,7 @@ async def wait_for_nextflow_completion(
 
     except Exception as e:
         logger.error(f"Error waiting for Nextflow completion: {e}")
+        await stop_job_work(job_service, job_id)
         workflow_update = JobUpdate(status=JobStatus.FAILED)
         job_service.update_job(job_id, workflow_update)
 
