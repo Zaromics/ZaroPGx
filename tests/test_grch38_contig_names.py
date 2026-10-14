@@ -290,7 +290,8 @@ def test_a_grch38_accession_named_bam_is_renamed_before_the_pipeline_reads_it(
     assert renamed == str(tmp_path / "ucsc_sample.bam")
     assert _contigs_and_reads(renamed)[0] == ["chr6", "chrM"]
     assert not upload.exists(), "the upload it replaces is not kept twice"
-    assert job.job_metadata["file_paths"] == [str(upload), renamed]
+    # The copy's index is released with it when the job ends.
+    assert job.job_metadata["file_paths"] == [str(upload), renamed, renamed + ".bai"]
     assert job.job_metadata["contigs_renamed"] == 2
     completed = [u for name, u in service.steps if name == "header_analysis"][-1]
     assert completed.output_data["contigs_renamed"]
