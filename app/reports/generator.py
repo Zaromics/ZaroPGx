@@ -357,6 +357,12 @@ def workflow_run_facts(
     }
     panel = _summary_panel()
 
+    header = (by_name.get("header_analysis") or {}).get("output") or {}
+    if header.get("contigs_renamed"):
+        # upload_router.use_ucsc_contig_names: the file named its chromosomes by
+        # NCBI accession, and the pipeline read a copy under UCSC names.
+        facts.details["header_analysis"] = ["chromosomes renamed from NCBI accessions"]
+
     lift = by_name.get("liftover")
     if lift and lift.get("status") == "completed":
         out = lift.get("output") or {}

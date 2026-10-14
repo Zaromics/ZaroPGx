@@ -49,6 +49,7 @@ from app.api.utils.file_utils import (
     matching_index,
 )
 from app.api.utils.header_inspector import inspect_header
+from app.genome.contig_names import names_a_chromosome
 from app.utils.env import env_flag
 
 # Configure logging
@@ -560,6 +561,9 @@ class FileAnalysis:
     # reads from the wrong locus and produces star alleles nobody has checked.
     # None means the header carried no usable evidence -- not GRCh38.
     reference_genome: Optional[str] = None
+    # The alignment header's @SQ names, for the same reason: determine_workflow refuses
+    # a BAM/CRAM/SAM none of whose contigs is a chromosome the pipeline can read.
+    alignment_contigs: List[str] = field(default_factory=list)
     # ONLY for FileType.GVCF: which symbolic reference-confidence allele the file uses
     # ("NON_REF", "*", or None for "the evidence does not say"). It decides whether the
     # file can be converted at all -- GATK GenotypeGVCFs, the whole gVCF lane, hard-
@@ -836,6 +840,7 @@ class FileProcessor:
             reference_genome_ambiguous = False
             reference_genome_candidates: List[str] = []
             alignment_reference_genome: Optional[str] = None
+            alignment_contigs: List[str] = []
             try:
                 # Hand the inspector the type we just decided, so a stored name
                 # with no usable suffix still gets its header read. See
@@ -915,6 +920,11 @@ class FileProcessor:
                     # cannot tell a GRCh37-aligned BAM from a GRCh38 one, and
                     # analyse both as GRCh38 -- see FileAnalysis.reference_genome.
                     alignment_reference_genome = metadata.get("reference_genome")
+                    alignment_contigs = [
+                        c.get("name")
+                        for c in (normalized.get("sequences") or [])
+                        if isinstance(c, dict) and c.get("name")
+                    ]
             except Exception as e:
                 logger.warning(
                     f"Independent header inspector failed, falling back for type {file_type}: {e}"
@@ -948,6 +958,7 @@ class FileProcessor:
                 reference_genome_ambiguous=reference_genome_ambiguous,
                 reference_genome_candidates=reference_genome_candidates,
                 reference_genome=alignment_reference_genome,
+                alignment_contigs=alignment_contigs,
                 gvcf_symbolic_allele=gvcf_symbolic_allele,
                 fastq_platform=fastq_platform,
             )
@@ -2255,6 +2266,33 @@ class FileProcessor:
                         "chains exclude) and leaves CYP2D6 on a representation "
                         "nobody has characterised in CHM13.</p>"
                     )
+            elif analysis.alignment_contigs and not any(
+                names_a_chromosome(name) for name in analysis.alignment_contigs
+            ):
+                # No contig the pipeline can read as a chromosome. Every step asks
+                # for chr6, chrM or chr22 by name, and a header with none of them --
+                # or of 6, MT, or GRCh38's NC_/CM accessions, which are renamed at
+                # launch -- gave zarohla no chromosome 6 and the mtDNA step no reads,
+                # each reported as a fact about the sample (2026-10-13).
+                file_label = analysis.file_type.value.upper()
+                workflow["unsupported"] = True
+                workflow["is_provisional"] = False
+                _clear_needs_flags(workflow)
+                shown = ", ".join(analysis.alignment_contigs[:3])
+                if len(analysis.alignment_contigs) > 3:
+                    shown += ", ..."
+                workflow["unsupported_reason"] = (
+                    f"This {file_label} file names its contigs {shown}, and none of "
+                    "them is a chromosome name ZaroPGx can read: chr1 to chr22, chrX, "
+                    "chrY and chrM, the same without 'chr', or NCBI's GRCh38 "
+                    "accessions (NC_000001.11, CM000663.2, ...). Nothing in it could "
+                    "be analysed."
+                )
+                workflow["recommendations"].append(
+                    f"<p>Rename the contigs to UCSC names (samtools reheader), or "
+                    f"realign the reads to GRCh38/hg38, and upload that {file_label} "
+                    "file.</p>"
+                )
 
         return workflow
 
