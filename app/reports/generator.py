@@ -57,6 +57,12 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
+from app.reports.alt_locus import (
+    alt_locus_alert,
+    alt_locus_diagram_line,
+    alt_locus_flags,
+    annotate_alt_locus,
+)
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
@@ -468,6 +474,13 @@ def workflow_run_facts(
             facts.details["pharmcat_analysis"].append(
                 "positions absent from the file read as reference"
             )
+
+    # Kept apart from the positions line above: a fact about the reads, not a count.
+    alt_line = alt_locus_diagram_line(
+        alt_locus_flags((by_name.get("pypgx_bam2vcf") or {}).get("output"))
+    )
+    if alt_line:
+        facts.details.setdefault("pypgx_bam2vcf", []).append(alt_line)
 
     if outputs:
         facts.details["report_generation"] = list(outputs)
@@ -3210,6 +3223,16 @@ def generate_report(
         )
         workflow_warnings = list(workflow_warnings) + [_version_alert]
 
+    # Genes whose reads mostly have mapping quality 0 (app/reports/alt_locus.py),
+    # from the counts the alignment's pypgx_bam2vcf step recorded. Same new-list rule.
+    bam2vcf_output = next(
+        (r["output"] for r in workflow_records if r["name"] == "pypgx_bam2vcf"), None
+    )
+    alt_locus = alt_locus_flags(bam2vcf_output)
+    _alt_locus_alert = alt_locus_alert(bam2vcf_output)
+    if _alt_locus_alert:
+        workflow_warnings = list(workflow_warnings) + [_alt_locus_alert]
+
     template_data = {
         "patient": patient_info or {},
         "patient_id": patient_info.get("id", "unknown") if patient_info else "unknown",
@@ -3478,6 +3501,8 @@ def generate_report(
         )
     except Exception as canon_e:
         logger.warning(f"Failed to build canonical diplotypes: {canon_e}")
+    # The note beside each flagged gene's call; the alert above says why.
+    annotate_alt_locus(data.get("genes", []), alt_locus)
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference
     file_type = str(data.get("file_type", "vcf")).lower()

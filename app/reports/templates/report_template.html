@@ -321,6 +321,9 @@
             color: #555;
             margin-top: 2px;
         }
+        .alt-locus-note {
+            color: #8a4b00;
+        }
 
         .evidence-legend {
             margin-bottom: 15px;
@@ -1154,6 +1157,7 @@
     {% set rows = summary_rows(execsum_from_tsv or [], diplotypes) %}
     {% set called = rows|selectattr('called')|list %}
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
+    {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
         {{ pypgx.na_legend(called) }}
         {% if called|selectattr('phenotype', 'equalto', 'Possibly Wild Type')|list %}
@@ -1164,6 +1168,9 @@
         {% endif %}
         {% for r in called if r.reference_name %}
         <p class="header-note"><strong>{{ r.gene }} {{ r.diplotype }}</strong>: PharmCAT's label for this call, a diplotype of its reference allele, which it names &ldquo;{{ r.reference_name }}&rdquo;.</p>
+        {% endfor %}
+        {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
         {% endfor %}
         {{ unresolved.summary_legend(called) }}
         {{ unresolved.summary_uncalled(rows|rejectattr('called')|list, missing_positions_not_assumed) }}
@@ -1184,7 +1191,7 @@
                     {% for r in rows %}
                     <tr id="summary-{{ r.gene }}"{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
                         <td class="exec-summary-number">{{ loop.index }}.</td>
-                        <td class="exec-summary-gene">{{ r.gene }}</td>
+                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="Mostly mapping quality 0: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
                         <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
