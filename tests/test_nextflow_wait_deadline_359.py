@@ -46,6 +46,18 @@ def _clear_wait_env(monkeypatch):
     monkeypatch.delenv("NEXTFLOW_MAX_WAIT_SECONDS", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _record_stop_job_work(monkeypatch):
+    """A job failed at the deadline has its work stopped first, which posts to Nextflow
+    and every sidecar; tests/test_failed_job_stops_its_work.py covers that. Here it is
+    only recorded, so these timings measure the loop and not DNS lookups."""
+
+    async def record(job_service, job_id):
+        job_service.updates.append("stopped")
+
+    monkeypatch.setattr(ur, "stop_job_work", record)
+
+
 class _FakeJobService:
     """Minimal stand-in for JobService that records what the loop wrote."""
 

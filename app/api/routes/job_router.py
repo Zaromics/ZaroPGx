@@ -699,7 +699,11 @@ async def cancel_container_job(container: dict, patient_id: str, job_id: str):
             "action": "cancel",
         }
 
-        response = requests.post(cancel_url, json=payload, timeout=30)
+        # Off the event loop: a failing job's monitor calls this too (upload_router's
+        # stop_job_work), once per sidecar.
+        response = await asyncio.to_thread(
+            requests.post, cancel_url, json=payload, timeout=30
+        )
 
         if response.status_code == 200:
             logger.info(f"Successfully cancelled job in {container['name']}")
