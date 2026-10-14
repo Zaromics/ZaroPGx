@@ -5,8 +5,14 @@
    notes and the evidence panel). #}
 
 {% macro call_notes(d) -%}
-{#- "Normal" stays in the evidence panel: a note on every gene PyPGx
+{#- A call on a gene whose reads mostly had mapping quality 0
+    (app/reports/alt_locus.py), whichever tool made it: first, as the one that
+    questions the call. An uncalled gene has no call to question; the alert names it.
+    "Normal" stays in the evidence panel: a note on every gene PyPGx
     checks for copy-number changes would bury the ones that have one. #}
+{%- if d.alt_locus and d.diplotype is a_call %}
+<div class="call-note alt-locus-note">⚠ {{ d.alt_locus.call_note }}</div>
+{%- endif %}
 {%- if d.pypgx and d.pypgx.copy_number and d.pypgx.copy_number != 'Normal' %}
 <div class="call-note">Copy number: {{ d.pypgx.copy_number_summary }} ({{ d.pypgx.copy_number }})</div>
 {%- endif %}

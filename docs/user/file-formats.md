@@ -70,6 +70,8 @@ For aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT gets a call
 
 Structural variants (gene deletions, duplications and hybrids, such as *CYP2D6* \*5, \*36 and \*68, or *GSTM1*, *GSTT1* and *UGT2B17* deletions) are called by PyPGx from read depth, normalised against the *VDR* gene, for GRCh38 whole-genome data only: the alignment needs a median depth of at least 15x at a set of loci no pharmacogene panel targets. A targeted panel does not qualify, because depth across capture targets is too uneven to count gene copies from one sample, and its genes get calls from small variants alone.
 
+GRCh38 also carries alternate copies of some loci as ALT contigs, among them *CYP2D6*, *UGT2B15* and *HLA-A*, *-B* and *-C*. Align to a GRCh38 without ALT contigs (an analysis set such as NCBI's no-ALT set), or with BWA in ALT-aware mode (the reference's `.alt` file beside its index). An alignment to a GRCh38 with ALT contigs that was not ALT-aware gives most reads from those genes mapping quality 0, and PyPGx calls *CYP2D6* and *UGT2B15* from reads with mapping quality 1 or more and their copy number from the depth on the primary copy. The report flags *CYP2D6* or *UGT2B15* where more than half the reads had mapping quality 0, beside its call and under Alerts and Warnings: its call may be wrong. Measured on NA12878's reads, realigned: at most 16% of a gene's reads had mapping quality 0 when ALT-aware, and 73% (*CYP2D6*) and 82% (*UGT2B15*) when not. HLA typing is not flagged: OptiType is given every read in the MHC and on its ALT contigs, whatever its mapping quality.
+
 ### Processing path: BAM
 ```
 BAM → [HLA typing] → PyPGx (VCF at PharmCAT's positions, then star alleles) and [mtDNA] → PharmCAT → reports

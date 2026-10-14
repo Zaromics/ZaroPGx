@@ -803,10 +803,14 @@ async def create_input_vcf(
                 "assembly": pypgx_assembly
             })
             # The PharmCAT-position counts go on the step row: the report states them
-            # from what happened here, the way it states a gVCF's coverage.
+            # from what happened here, the way it states a gVCF's coverage. So do the
+            # MAPQ 0 counts over the ALT-covered genes (ALT_LOCUS_GENES_GRCH38).
             await job_client.complete_step(
                 "BAM to VCF conversion completed successfully",
-                {"pharmcat_positions": res.get("pharmcat_positions")},
+                {
+                    "pharmcat_positions": res.get("pharmcat_positions"),
+                    "alt_locus_mapq0": res.get("alt_locus_mapq0"),
+                },
             )
 
         payload: Dict[str, Any] = {
@@ -816,6 +820,7 @@ async def create_input_vcf(
             "tbi_path": str(output_vcf_gz) + ".tbi",
             "pharmcat_vcf_path": res.get("pharmcat_vcf"),
             "pharmcat_positions": res.get("pharmcat_positions"),
+            "alt_locus_mapq0": res.get("alt_locus_mapq0"),
             "sv_inputs": res.get("sv_inputs"),
             "assembly": pypgx_assembly,
         }
@@ -1180,6 +1185,81 @@ def annotate_header_line(vcf_gz: str, line: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Genes GRCh38 also carries on ALT contigs: how many of their reads have MAPQ 0
+# ---------------------------------------------------------------------------
+#
+# GRCh38 holds alternate copies of some loci as ALT contigs. Two of them cover the
+# whole of CYP2D6 (chr22_KI270928v1_alt, chr22_KB663609v1_alt), one UGT2B15
+# (chr4_GL000257v2_alt), and the seven MHC haplotypes (chr6_GL000250v2_alt to
+# _GL000256v2_alt) HLA-A, -B and -C (NCBI's alt_scaffold_placement, aligned over each
+# gene body). An aligner that is not ALT-aware sees two equally good places for a read
+# from those genes: it gives the read mapping quality 0 and puts it on either copy.
+# PyPGx calls variants from reads at MAPQ >= 1 (bcftools, through fuc's min_mq=1) and
+# copy number from the depth on the primary copy, so CYP2D6 and UGT2B15 are read from a
+# fraction of their reads, and their depth falls with the reads moved to the ALT copy.
+# HLA is counted as evidence only: zarohla gives OptiType every read in the MHC and on
+# the HLA and chr6 ALT contigs, whatever its MAPQ (its MAPQ >= 1 probe only gates
+# typing), and the report does not flag it.
+#
+# Measured 2026-10-14 on NA12878 (1000 Genomes 30x) reads from these genes, realigned
+# with BWA-MEM 0.7.18 to GRCh38 windows around them, with and without their ALT
+# contigs; share of primary reads over the gene body with MAPQ 0:
+#
+#                     CYP2D6  UGT2B15  HLA-A  HLA-B  HLA-C
+#   no ALT contigs      5.3%     0.2%   0.1%   0.0%   0.0%
+#   ALT, ALT-aware     16.4%     2.1%   1.0%   0.4%   1.9%
+#   ALT, not aware     73.3%    82.4%  79.3%  82.0%  98.9%
+#   1000 Genomes BAM    5.8%     0.6%   0.0%   0.0%   0.0%   (ALT-aware, as published)
+#
+# The report flags CYP2D6 and UGT2B15 above half (app/reports/alt_locus.py); this
+# only counts.
+# Gene bodies are PyPGx's GRCh38 exon spans (lexicon/gene-table.csv) and Ensembl's
+# HLA genes, the loci zarohla's probe uses. 0-based, half-open.
+ALT_LOCUS_GENES_GRCH38 = (
+    ("CYP2D6", "chr22", 42126498, 42130810),
+    ("UGT2B15", "chr4", 68646596, 68670652),
+    ("HLA-A", "chr6", 29941259, 29949572),
+    ("HLA-B", "chr6", 31353871, 31367067),
+    ("HLA-C", "chr6", 31268748, 31272130),
+)
+
+
+def alt_locus_mapq0(alignment_path: str, assembly: str) -> Optional[Dict[str, Dict[str, int]]]:
+    """{gene: {"reads": n, "mapq0": m}} for each ALT_LOCUS_GENES_GRCH38 gene, or None
+    for a non-GRCh38 alignment.
+
+    Counts primary, mapped, non-duplicate reads overlapping the gene body, and those of
+    them at mapping quality 0. A gene on a contig the alignment lacks is left out.
+    """
+    if assembly != "GRCh38":
+        return None
+    import pysam
+
+    counts: Dict[str, Dict[str, int]] = {}
+    with pysam.AlignmentFile(alignment_path) as bam:
+        contigs = set(bam.references)
+        prefixed = any(c.startswith("chr") for c in contigs)
+        for gene, chrom, start, end in ALT_LOCUS_GENES_GRCH38:
+            name = chrom if prefixed else chrom[len("chr"):]
+            if name not in contigs:
+                continue
+            reads = mapq0 = 0
+            for read in bam.fetch(name, start, end):
+                if (
+                    read.is_unmapped
+                    or read.is_secondary
+                    or read.is_supplementary
+                    or read.is_duplicate
+                ):
+                    continue
+                reads += 1
+                if read.mapping_quality == 0:
+                    mapq0 += 1
+            counts[gene] = {"reads": reads, "mapq0": mapq0}
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # PharmCAT's input for an alignment: a call at every PharmCAT position, or none
 # ---------------------------------------------------------------------------
 #
@@ -1532,6 +1612,14 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             f"Coverage: {len(uncovered)} PyPGx gene(s) with no reads in the alignment"
             + (f": {', '.join(uncovered)}" if uncovered else "")
         )
+        # Reads over the genes GRCh38 also carries on ALT contigs, for the report.
+        # See ALT_LOCUS_GENES_GRCH38. A failure here costs that check, not the step.
+        try:
+            alt_locus = alt_locus_mapq0(str(alignment_path), str(assembly))
+            logger.info(f"MAPQ 0 over ALT-covered genes: {alt_locus}")
+        except Exception as exc:
+            logger.warning(f"Could not count MAPQ 0 reads over ALT-covered genes: {exc}")
+            alt_locus = None
 
         # SV inputs for /genotype, carried the same way: in the VCF's own header.
         sv_inputs = prepare_sv_inputs(
@@ -1556,6 +1644,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             "vcf": output_vcf_gz,
             "tbi": tbi_path,
             "uncovered_genes": uncovered,
+            "alt_locus_mapq0": alt_locus,
             "sv_inputs": list(sv_inputs) if sv_inputs else None,
             "pharmcat_vcf": pharmcat_vcf,
             "pharmcat_positions": pharmcat_positions,
