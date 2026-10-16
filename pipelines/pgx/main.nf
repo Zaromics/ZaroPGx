@@ -31,7 +31,8 @@ nextflow.enable.dsl=2
   a file too large, a malformed VCF), and the same input is refused again. Those calls
   exit 65, which nextflow.config's errorStrategy terminates on instead of retrying:
   the retry re-sent the whole input, so NA12878's 15 GB CRAM took 7 minutes to be
-  refused rather than 3. A 5xx, or no response (000), still exits 1 and is retried.
+  refused rather than 3. A 5xx, or no response (000), still exits 1 and is retried,
+  except /align-fastq's 507 (too little free disk), which is a refusal too.
 */
 
 params.input          = params.input ?: ''
@@ -155,7 +156,9 @@ process FastqToBAM {
     if ! HTTP_CODE=$(curl -sS --fail-with-body -o align_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq); then
       echo "gatk-api /align-fastq returned an error (HTTP $HTTP_CODE):" >&2
       cat align_response.json >&2 || true
-      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
+      # 507 too: too little free disk for the alignment, which a retry a moment
+      # later finds the same.
+      case "$HTTP_CODE" in 4??|507) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     BAM_PATH=$(python3 - <<'PY'
