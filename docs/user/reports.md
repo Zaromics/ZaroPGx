@@ -32,7 +32,8 @@ positions the file did not cover were treated. The disclaimer follows.
 **Alerts and Warnings.** What qualifies these results: limits of the input type (a VCF
 cannot give HLA calls, for instance), genes called from partial coverage, variants PharmCAT
 could not read, positions assumed to be reference, genes whose reads mostly had mapping
-quality 0 (an alignment that was not ALT-aware), a PharmCAT version nobody has verified.
+quality 0 (an alignment that was not ALT-aware), the CYP2D6 and UGT2B loci when their reads
+were aligned again (or could not be), a PharmCAT version nobody has verified.
 Read these first.
 
 **Executive Summary.** The 25 genes PharmCAT reports on, on one page, the same genes in the
