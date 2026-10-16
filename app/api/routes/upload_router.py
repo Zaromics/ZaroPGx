@@ -1716,7 +1716,8 @@ async def upload_genomic_data(
       cannot be lifted are dropped, and the run fails rather than continuing if an
       implausibly large share of the file fails to lift.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
-    - FASTQ: short-read, single-end or an R1/R2 pair uploaded together, up to 20 GB, is
+    - FASTQ: short-read, single-end or an R1/R2 pair uploaded together, up to the size
+      cap (FASTQ_MAX_UPLOAD_BYTES, 20 GB unless set), is
       aligned to GRCh38 (gatk-api's /align-fastq: FastqToSam, BwaSpark, MarkDuplicatesSpark)
       and then processed as a BAM. Rejected with 400: over the cap, long reads (ONT, PacBio),
       a platform that cannot be read from the read names, or two files that are not mates.

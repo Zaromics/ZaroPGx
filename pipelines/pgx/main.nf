@@ -107,14 +107,14 @@ params.source_build   = params.source_build ?: ''
 // upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
-// FASTQ alignment. Short-read FASTQ under the 20 GB cap, single-end or an R1/R2 pair,
-// whose platform is detectable from its read names, is accepted at ingest and sets
-// needs_alignment, which mints the gatk_alignment StepTemplate in
-// app/services/workflow_registry.py. GATK has bundled bwa-mem as a JNI native since
-// GATK 4, so no extra aligner is installed anywhere -- the endpoint runs FastqToSam,
-// BwaSpark and MarkDuplicatesSpark (the combined BwaAndMarkDuplicatesPipelineSpark
-// cannot do single-end). A mate arrives as `fastq2`; with none it is the 0-byte
-// placeholder, and the `[ -s ]` test below tells the two apart.
+// FASTQ alignment. Short-read FASTQ under the size cap (FASTQ_MAX_UPLOAD_BYTES, 20 GB
+// unless set), single-end or an R1/R2 pair, whose platform is detectable from its read
+// names, is accepted at ingest and sets needs_alignment, which mints the gatk_alignment
+// StepTemplate in app/services/workflow_registry.py. GATK has bundled bwa-mem as a JNI
+// native since GATK 4, so no extra aligner is installed anywhere -- the endpoint runs
+// FastqToSam, BwaSpark and MarkDuplicatesSpark (the combined
+// BwaAndMarkDuplicatesPipelineSpark cannot do single-end). A mate arrives as `fastq2`;
+// with none it is the 0-byte placeholder, and the `[ -s ]` test below tells the two apart.
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir { outdir }, mode: 'copy'

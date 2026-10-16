@@ -25,8 +25,9 @@ missing feature:
   length. An SRA re-export strips that naming. ``PL:ILLUMINA`` is the likeliest answer and
   must still never be the automatic one — a guessed platform writes an unverified claim
   about the sample into everything downstream.
-* **above the 20 GB cap.** Alignment writes the reads out three times on one machine, so a
-  whole-genome set needs several times its size in scratch disk and many hours.
+* **above the size cap** (``FASTQ_MAX_UPLOAD_BYTES``, 20 GB by default). Alignment keeps
+  several BAM-sized intermediates on one machine, so a whole-genome set needs several times
+  its size in scratch disk and many hours.
 * **two files that are not one pair.** A mate pair is accepted and travels as ``input2``;
   two unrelated read sets, or one file twice, are refused rather than aligned as mates.
 

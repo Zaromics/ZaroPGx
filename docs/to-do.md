@@ -20,8 +20,13 @@ curated: true
   (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
   gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
 - **FASTQ** (in testing): short-read, single- or paired-end, up to 20 GB. Aligned to GRCh38
-  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over 20 GB, long
-  reads (ONT, PacBio), or a platform that cannot be read from the read names.
+  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over the cap
+  (`FASTQ_MAX_UPLOAD_BYTES`, 20 GB by default), more than the free disk can hold (about 9x
+  the FASTQ, checked before alignment starts), long reads (ONT, PacBio), or a platform that
+  cannot be read from the read names. The cap is about scratch disk and run time; the 9x is
+  estimated from the files the lane writes, not measured, and MarkDuplicatesSpark's memory
+  at whole-genome scale within gatk-api's limit is untested. Open: measure both on one
+  whole-genome FASTQ (NA12878).
 - **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
   pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
   that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or

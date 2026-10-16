@@ -22,6 +22,7 @@ import logging
 import logging.handlers
 import os
 import re
+import shutil
 import subprocess
 import sys
 import types
@@ -2202,3 +2203,102 @@ def test_align_fastq_accepts_a_contaminated_but_human_sample(
         data={"reference_genome": "hg38"},
     )
     assert resp.status_code == 200, resp.text
+
+
+# --------------------------------------------------------------------------
+# /align-fastq: refuse up front what the disk cannot hold
+# --------------------------------------------------------------------------
+#
+# Nothing the lane writes is deleted until the request ends, so a FASTQ too large for
+# the free disk used to find out an hour in, by filling it. A full host disk takes the
+# rest of the machine with it (2026-10-13: the desktop session crashed).
+
+
+def _free_disk(monkeypatch, free_for):
+    """Report `free_for(path)` bytes free wherever the endpoint asks."""
+    real = shutil.disk_usage
+    monkeypatch.setattr(
+        shutil, "disk_usage", lambda path: real(path)._replace(free=free_for(path))
+    )
+
+
+def test_align_fastq_refuses_before_any_gatk_work_when_the_disk_is_short(
+    client, fake_alignment, monkeypatch
+):
+    _free_disk(monkeypatch, lambda path: 1)
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("r1.fastq", _illumina_fastq(), "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 507, resp.text
+    assert "GB is free" in resp.json()["detail"]
+    assert not fake_alignment, "no GATK step may start once the disk is known short"
+
+
+def test_the_disk_check_counts_both_mates_at_the_factor(
+    client, gatk_api, fake_alignment, monkeypatch
+):
+    """Exactly enough is enough; one byte less is not. Both mates are counted."""
+    r1, r2 = _illumina_fastq(mate=1), _illumina_fastq(mate=2)
+    needed = (len(r1) + len(r2)) * gatk_api.FASTQ_ALIGN_DISK_FACTOR
+    files = {
+        "file": ("reads_1.fastq", r1, "text/plain"),
+        "file2": ("reads_2.fastq", r2, "text/plain"),
+    }
+
+    _free_disk(monkeypatch, lambda path: needed - 1)
+    resp = client.post("/align-fastq", files=files, data={"reference_genome": "hg38"})
+    assert resp.status_code == 507, resp.text
+
+    _free_disk(monkeypatch, lambda path: needed)
+    resp = client.post("/align-fastq", files=files, data={"reference_genome": "hg38"})
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.parametrize("short", ["work_dir", "output_dir"])
+def test_the_disk_check_asks_each_filesystem_for_all_of_it(
+    client, gatk_api, fake_alignment, monkeypatch, short
+):
+    """The intermediates go to TMPDIR and the result to /data. In the container
+    those are different mounts that usually share one host disk, and nothing in
+    here can tell, so a shortfall on either refuses."""
+
+    def free_for(path):
+        on_data = str(path).startswith(gatk_api.DATA_DIR)
+        return 1 if on_data == (short == "output_dir") else 10**15
+
+    _free_disk(monkeypatch, free_for)
+    resp = client.post(
+        "/align-fastq",
+        files={"file": ("r1.fastq", _illumina_fastq(), "text/plain")},
+        data={"reference_genome": "hg38"},
+    )
+    assert resp.status_code == 507, resp.text
+
+
+def test_the_disk_refusal_says_what_is_needed_and_what_is_free(
+    gatk_api, monkeypatch, tmp_path
+):
+    """Sized from the file a shared input links to, not the link itself."""
+    reads = tmp_path / "reads.fastq.gz"
+    with open(reads, "wb") as handle:
+        handle.truncate(2 * 1024**3)  # sparse: 2 GB by size, nothing on disk
+    link = tmp_path / "linked.fastq.gz"
+    link.symlink_to(reads)
+    _free_disk(monkeypatch, lambda path: 5 * 1024**3)
+    monkeypatch.setattr(gatk_api, "FASTQ_ALIGN_DISK_FACTOR", 9)
+
+    refusal = gatk_api._alignment_disk_refusal([str(link)], tmp_path, tmp_path)
+
+    assert refusal.status_code == 507
+    assert "2.0 GB of reads needs about 18.0 GB of free disk" in refusal.detail
+    assert "5.0 GB is free" in refusal.detail
+    assert "nf-core/sarek" in refusal.detail, "the refusal must name the way out"
+
+
+def test_enough_disk_is_no_refusal(gatk_api, monkeypatch, tmp_path):
+    reads = tmp_path / "reads.fastq"
+    reads.write_bytes(b"x" * 100)
+    _free_disk(monkeypatch, lambda path: 100 * gatk_api.FASTQ_ALIGN_DISK_FACTOR)
+    assert gatk_api._alignment_disk_refusal([str(reads)], tmp_path, tmp_path) is None
