@@ -1391,8 +1391,20 @@ def name_vcf_sample(vcf_gz: str, name: str) -> bool:
     names = f"{vcf_gz}.sample-name.txt"
     renamed = f"{vcf_gz}.renamed.vcf.gz"
     try:
-        Path(names).write_text(name + "\n", encoding="utf-8")
+        # As an "old new" pair, each with its spaces and backslashes escaped: a bare
+        # new name holding a space was read as a pair, and an escaped one was written
+        # with its backslashes (bcftools 1.21, measured).
+        def escaped(text):
+            return text.replace("\\", "\\\\").replace(" ", "\\ ")
+
+        Path(names).write_text(
+            f"{escaped(samples[0])} {escaped(name)}\n", encoding="utf-8"
+        )
         bcftools.reheader("-s", names, "-o", renamed, str(vcf_gz), catch_stdout=False)
+        with pysam.VariantFile(renamed) as vf:
+            written = list(vf.header.samples)
+        if written != [name]:
+            raise RuntimeError(f"bcftools reheader wrote sample {written}, not {name!r}")
         os.replace(renamed, str(vcf_gz))
     finally:
         for leftover in (names, renamed):

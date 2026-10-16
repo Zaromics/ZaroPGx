@@ -103,6 +103,15 @@ def test_the_vcf_sample_is_renamed_and_its_index_dropped(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["in.vcf", "in.vcf.gz"]
 
 
+def test_a_name_with_spaces_is_written_whole(tmp_path):
+    """bcftools reads an unescaped space as an "old new" pair and renamed nothing,
+    while the old index was dropped and the rename logged."""
+    vcf = _vcf(tmp_path, "/data/temp/pypgx/job/dir/d0bacf.bam")
+    assert NS["name_vcf_sample"](vcf, "NA 12878\\x") is True
+    with pysam.VariantFile(vcf) as vf:
+        assert list(vf.header.samples) == ["NA 12878\\x"]
+
+
 def test_a_vcf_already_named_so_is_left_alone(tmp_path):
     vcf = _vcf(tmp_path, "NA12878")
     before = Path(vcf).read_bytes()
