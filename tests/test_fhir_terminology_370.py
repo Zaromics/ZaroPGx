@@ -116,10 +116,12 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # genomic study's fixed category, no conclusionCode. The XML digest once more when
 # the XML became FHIR XML (resources wrapped in their type, children in the
 # specification's order) instead of a mirror of the JSON no FHIR parser could read.
-GOLDEN_JSON_SHA256 = "f9c4c8f60fda6eb2513ad6edada7384548e47f84cd3abd6863d912e7d39e0494"
-GOLDEN_JSON_BYTES = 20497
-GOLDEN_XML_SHA256 = "8bd1f3e70050c8355e4f5a977801dec8e3e3e918d620e1b0f94c435c54551421"
-GOLDEN_XML_BYTES = 20429
+# And when each resource got a name-based id and an identifier to match a re-push
+# on (feat/fhir-push-hapi).
+GOLDEN_JSON_SHA256 = "7a08fcaa43d00b1d90de112ffad971fe36cdce92a9810f09c88d7dcaf62a96d8"
+GOLDEN_JSON_BYTES = 21865
+GOLDEN_XML_SHA256 = "2c75bf6295f99725219a1ab012c3413b230a26141dd88e43b0b1a5ff3e7b448d"
+GOLDEN_XML_BYTES = 21741
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
@@ -142,19 +144,25 @@ GOLDEN_URI_CENSUS = {
     "http://unitsofmeasure.org": 1,
     "http://www.genenames.org": 3,
     "https://www.clinpgx.org/guidelineAnnotations": 1,
+    "urn:ietf:rfc:3986": 8,
     "urn:zaropgx:patient-id": 1,
     "urn:zaropgx:report-id": 1,
 }
 
 
 class _SequentialUuid:
-    """Stand-in for the ``uuid`` module handing out 00...01, 00...02, ..."""
+    """Stand-in for the ``uuid`` module handing out 00...01, 00...02, ...
+
+    Only uuid4 is random; the resources' name-based ids (uuid5) are the real ones.
+    """
 
     def __init__(self) -> None:
         self._counter = itertools.count(1)
 
     def uuid4(self) -> uuid_module.UUID:
         return uuid_module.UUID(int=next(self._counter))
+
+    uuid5 = staticmethod(uuid_module.uuid5)
 
 
 class _FrozenDatetime:

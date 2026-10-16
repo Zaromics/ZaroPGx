@@ -59,6 +59,12 @@ def fhir_export_enabled() -> bool:
 # Reports directory - same as other report outputs
 REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
 
+# Namespace of the resources' ids. Each id is a name-based (v5) UUID of what the
+# resource is -- the report's genotype for CYP2D6, its recommendation n for
+# codeine -- so the bundle of one report names its resources the same way every
+# time it is written, and pushing it again (app.services.fhir.push) updates them.
+RESOURCE_ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:zaropgx:fhir-resource")
+
 
 class FHIRExportService:
     """
@@ -451,6 +457,15 @@ class FHIRExportService:
         observation_references = []
         implication_references = []
         task_references = []
+        # How often each name has come up, so a gene or drug listed twice still
+        # gets an id of its own.
+        seen: Dict[tuple, int] = {}
+
+        def stable_id(kind: str, name: Any = "") -> str:
+            key = (kind, str(name))
+            seen[key] = seen.get(key, 0) + 1
+            suffix = f"/{seen[key]}" if seen[key] > 1 else ""
+            return self._stable_id(kind, reference_id, f"{name}{suffix}")
 
         # Create Patient resource
         patient_resource, patient_ref = self._create_patient_resource(
@@ -471,6 +486,7 @@ class FHIRExportService:
                 gene_data=gene_data,
                 patient_ref=patient_ref,
                 run_id=run_id,
+                resource_id=stable_id("genotype", gene_data.get("gene")),
             )
             entries.append(
                 {
@@ -490,11 +506,15 @@ class FHIRExportService:
             drug_recommendations = pharmcat_data.get("drugRecommendations", [])
             for drug_rec in drug_recommendations:
                 # Therapeutic Implication observation
+                implication_id = stable_id(
+                    "therapeutic-implication", drug_rec.get("drug")
+                )
                 implication_obs = self._create_therapeutic_implication(
                     drug_data=drug_rec,
                     patient_ref=patient_ref,
                     observation_refs=observation_references,
                     run_id=run_id,
+                    resource_id=implication_id,
                 )
                 entries.append(
                     {
@@ -511,13 +531,16 @@ class FHIRExportService:
 
                 # Medication Recommendation Task
                 recommendations = drug_rec.get("recommendations", [])
-                for rec in recommendations:
+                for index, rec in enumerate(recommendations, start=1):
                     med_task = self._create_medication_recommendation_task(
                         drug_name=drug_rec.get("drug", "Unknown"),
                         recommendation=rec,
                         patient_ref=patient_ref,
                         implication_ref=f"urn:uuid:{implication_obs['id']}",
                         run_id=run_id,
+                        resource_id=self._stable_id(
+                            "medication-recommendation", implication_id, index
+                        ),
                     )
                     entries.append(
                         {
@@ -536,6 +559,7 @@ class FHIRExportService:
             pharmcat_data=pharmcat_data,
             patient_ref=patient_ref,
             run_id=run_id,
+            resource_id=stable_id("genomic-study"),
         )
         entries.append(
             {
@@ -596,7 +620,8 @@ class FHIRExportService:
         run_id: str,
     ) -> tuple:
         """Create a FHIR Patient resource."""
-        patient_id = str(uuid.uuid4())
+        patient_identifier = patient_info.get("id", run_id)
+        patient_id = self._stable_id("Patient", patient_identifier)
 
         resource = {
             "resourceType": "Patient",
@@ -607,7 +632,7 @@ class FHIRExportService:
             "identifier": [
                 {
                     "system": terminology.ZAROPGX_PATIENT_ID,
-                    "value": patient_info.get("id", run_id),
+                    "value": patient_identifier,
                 }
             ],
         }
@@ -642,13 +667,14 @@ class FHIRExportService:
         gene_data: Dict[str, Any],
         patient_ref: str,
         run_id: str,
+        resource_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Observation for genotype/diplotype.
 
         Following the Genotype profile from HL7 Genomics Reporting IG.
         """
-        obs_id = str(uuid.uuid4())
+        obs_id = resource_id or str(uuid.uuid4())
         gene_symbol = gene_data.get("gene", "Unknown")
         diplotype = gene_data.get("diplotype", "Unknown")
         phenotype = gene_data.get("phenotype", "Unknown")
@@ -666,6 +692,7 @@ class FHIRExportService:
             "meta": {
                 "profile": [terminology.PROFILE_GENOTYPE],
             },
+            "identifier": [self._resource_identifier(obs_id)],
             "status": "final",
             "category": self._genomic_observation_category(),
             "code": {
@@ -790,13 +817,14 @@ class FHIRExportService:
         patient_ref: str,
         observation_refs: List[Dict[str, str]],
         run_id: str,
+        resource_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Observation for therapeutic implication.
 
         Following the Therapeutic Implication profile from HL7 Genomics Reporting IG.
         """
-        obs_id = str(uuid.uuid4())
+        obs_id = resource_id or str(uuid.uuid4())
         drug_name = drug_data.get("drug", "Unknown")
         genes = drug_data.get("genes", [])
         recommendations = drug_data.get("recommendations", [])
@@ -814,6 +842,7 @@ class FHIRExportService:
             "meta": {
                 "profile": [terminology.PROFILE_THERAPEUTIC_IMPLICATION],
             },
+            "identifier": [self._resource_identifier(obs_id)],
             "status": "final",
             "category": self._genomic_observation_category(),
             "code": {
@@ -903,13 +932,14 @@ class FHIRExportService:
         patient_ref: str,
         implication_ref: str,
         run_id: str,
+        resource_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Task for medication recommendation.
 
         Following the Medication Recommendation profile from HL7 Genomics Reporting IG.
         """
-        task_id = str(uuid.uuid4())
+        task_id = resource_id or str(uuid.uuid4())
         rec_text = recommendation.get("recommendation", "See report for details")
         classification = recommendation.get("classification", "")
 
@@ -924,6 +954,7 @@ class FHIRExportService:
             "meta": {
                 "profile": [terminology.PROFILE_MEDICATION_RECOMMENDATION],
             },
+            "identifier": [self._resource_identifier(task_id)],
             "status": "requested",
             "intent": "proposal",
             "description": rec_text,
@@ -965,9 +996,10 @@ class FHIRExportService:
         pharmcat_data: Dict[str, Any],
         patient_ref: str,
         run_id: str,
+        resource_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a FHIR Procedure resource for the genomic study."""
-        study_id = str(uuid.uuid4())
+        study_id = resource_id or str(uuid.uuid4())
         pharmcat_version = pharmcat_data.get("pharmcat_version", "Unknown")
 
         study = {
@@ -976,6 +1008,7 @@ class FHIRExportService:
             "meta": {
                 "profile": [terminology.PROFILE_GENOMIC_STUDY],
             },
+            "identifier": [self._resource_identifier(study_id)],
             "status": "completed",
             # The genomic-study profile fixes the category to "laboratory".
             "category": {
@@ -1026,7 +1059,7 @@ class FHIRExportService:
 
         Following the Genomic Report profile from HL7 Genomics Reporting IG.
         """
-        report_id = str(uuid.uuid4())
+        report_id = self._stable_id("DiagnosticReport", run_id)
         total_genes = pharmcat_data.get("total_genes", 0)
         actionable_count = len(pharmcat_data.get("actionable_findings", []))
 
@@ -1089,6 +1122,21 @@ class FHIRExportService:
         )
 
         return report
+
+    @staticmethod
+    def _stable_id(*parts: Any) -> str:
+        """The v5 UUID of what a resource is (see RESOURCE_ID_NAMESPACE)."""
+        name = "/".join(str(part) for part in parts)
+        return str(uuid.uuid5(RESOURCE_ID_NAMESPACE, name))
+
+    @staticmethod
+    def _resource_identifier(resource_id: str) -> Dict[str, str]:
+        """The resource's id as its business identifier: what a FHIR server
+        matches a re-pushed resource on (``Observation?identifier=...``)."""
+        return {
+            "system": terminology.URI_IDENTIFIER,
+            "value": f"urn:uuid:{resource_id}",
+        }
 
     @staticmethod
     def _genomic_observation_category() -> List[Dict[str, Any]]:

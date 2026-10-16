@@ -6,9 +6,15 @@ Follows the HL7 Genomics Reporting Implementation Guide for PGx reporting.
 
 This module extends the existing report functionality without breaking changes.
 Export is enabled by the FHIR_EXPORT_ENABLED environment variable (default: true).
+
+POST /fhir/push/workflow/{job_id} sends a job's bundle to the FHIR server at
+FHIR_SERVER_URL (the bundled HAPI server) as a transaction. Nothing is pushed
+unless asked: the export has always been files, and a server is a destination
+the user picks (app.services.fhir.push).
 """
 
 import asyncio
+import json
 import logging
 import os
 from typing import Optional
@@ -20,10 +26,13 @@ from sqlalchemy.orm import Session
 
 from app.api.db import get_db
 from app.api.utils.security import get_optional_user
+from app.services import fhir_export_service
+from app.services.fhir import push as fhir_push
 from app.services.fhir_export_service import (
     FHIRExportService,
     fhir_export_enabled,
 )
+from app.services.job_service import JobService
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +96,8 @@ async def fhir_export_status(
             else "FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable."
         ),
         "supported_formats": ["json", "xml"] if enabled else [],
+        # Where POST /fhir/push/workflow/{job_id} sends a job's bundle.
+        "server_url": fhir_push.fhir_server_url(),
         "implementation_guide": "HL7 Genomics Reporting Implementation Guide (FHIR R4)",
         "reference_url": "https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.html",
     }
@@ -626,6 +637,96 @@ async def quick_save_fhir_export(
             status_code=500,
             detail=f"Error saving FHIR export: {str(e)}",
         )
+
+
+# ============================================================================
+# Push - send a job's bundle to the FHIR server
+# ============================================================================
+
+
+class FHIRPushResponse(BaseModel):
+    """What the FHIR server did with a job's bundle."""
+
+    success: bool
+    job_id: str
+    server_url: str
+    entries: int = Field(description="Resources in the transaction")
+    resources: dict = Field(
+        description="Per resource type: how many the server created, and how many "
+        "it already held (updated in place; the Patient reused)"
+    )
+    diagnostic_report: Optional[str] = Field(
+        None, description="The report's location on the server"
+    )
+    patient: Optional[str] = Field(
+        None, description="The Patient's location on the server"
+    )
+
+
+def _read_bundle(path) -> dict:
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+@router.post("/push/workflow/{workflow_id}", response_model=FHIRPushResponse)
+async def push_workflow_to_fhir_server(
+    workflow_id: str,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_optional_user),
+):
+    """
+    Send a job's FHIR bundle to the FHIR server (FHIR_SERVER_URL) as a transaction.
+
+    The bundle is the one the job's report wrote (<job_id>_pgx_fhir_report.json).
+    Pushing a job again updates its resources on the server instead of adding
+    copies. A server that is down or refuses the bundle gives 502 with its reason;
+    the job is not affected.
+    """
+    if not fhir_export_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable.",
+        )
+
+    try:
+        job = JobService(db).get_job(workflow_id)
+    except ValueError:
+        job = None
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No job {workflow_id}.")
+
+    job_id = str(job.id)
+    patient_id = (job.job_metadata or {}).get("patient_id")
+    bundle_path = fhir_push.job_bundle_path(
+        fhir_export_service.REPORT_DIR, job_id, patient_id
+    )
+    if bundle_path is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Job {job_id} has no FHIR bundle. One is written with the job's "
+                "reports while FHIR_EXPORT_ENABLED=true."
+            ),
+        )
+
+    try:
+        bundle = await asyncio.to_thread(_read_bundle, bundle_path)
+        summary = await asyncio.to_thread(fhir_push.push_bundle, bundle)
+    except fhir_push.FHIRPushError as e:
+        logger.warning(f"FHIR push of job {job_id} failed: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+    except ValueError as e:
+        # Unreadable JSON, or not a Bundle.
+        raise HTTPException(
+            status_code=500,
+            detail=f"The FHIR bundle of job {job_id} could not be read: {e}",
+        )
+
+    logger.info(
+        f"Pushed job {job_id}'s FHIR bundle to {summary['server_url']}: "
+        f"{summary['resources']}"
+    )
+    return FHIRPushResponse(success=True, job_id=job_id, **summary)
 
 
 def _count_resources(bundle: dict) -> dict:

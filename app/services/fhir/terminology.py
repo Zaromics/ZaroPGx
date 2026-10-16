@@ -50,6 +50,9 @@ GENOMICS_TBD_DISPLAYS = {
 ZAROPGX_PATIENT_ID = "urn:zaropgx:patient-id"
 ZAROPGX_REPORT_ID = "urn:zaropgx:report-id"
 
+# An identifier whose value is a URI (here the resource's urn:uuid), RFC 3986.
+URI_IDENTIFIER = "urn:ietf:rfc:3986"
+
 # ---------------------------------------------------------------------------
 # Profiles (the "meta.profile" of a resource)
 # ---------------------------------------------------------------------------

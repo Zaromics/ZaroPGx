@@ -1,17 +1,17 @@
 {
   "resourceType": "Bundle",
-  "id": "c1e1e42b-8bc3-4836-b05b-e577c4205ec1",
+  "id": "da893282-190a-488a-a0c6-651457ea05a3",
   "meta": {
-    "lastUpdated": "2026-10-16T22:42:46.693557+00:00"
+    "lastUpdated": "2026-10-16T22:53:32.220988+00:00"
   },
   "type": "collection",
-  "timestamp": "2026-10-16T22:42:46.693557+00:00",
+  "timestamp": "2026-10-16T22:53:32.220988+00:00",
   "entry": [
     {
-      "fullUrl": "urn:uuid:4ccfa589-bd3e-4978-9017-64fba6abd476",
+      "fullUrl": "urn:uuid:0c6ad1e9-248b-59dd-bfc7-0f42b8c7ac89",
       "resource": {
         "resourceType": "DiagnosticReport",
-        "id": "4ccfa589-bd3e-4978-9017-64fba6abd476",
+        "id": "0c6ad1e9-248b-59dd-bfc7-0f42b8c7ac89",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report"
@@ -46,33 +46,33 @@
           "text": "Pharmacogenomic Analysis Report"
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:42:46.693722+00:00",
-        "issued": "2026-10-16T22:42:46.693723+00:00",
+        "effectiveDateTime": "2026-10-16T22:53:32.221213+00:00",
+        "issued": "2026-10-16T22:53:32.221215+00:00",
         "result": [
           {
-            "reference": "urn:uuid:95a73d4f-f2d7-4d49-8ba7-fa2cb1fe78df",
+            "reference": "urn:uuid:91d55149-1e70-52c7-bd57-048d55be0490",
             "display": "CYP2D6 *1/*4"
           },
           {
-            "reference": "urn:uuid:d00dc691-4220-4016-818c-15ad331cfc87",
+            "reference": "urn:uuid:6d4af5f9-b1b2-5fd8-ad73-9819239f26ad",
             "display": "CYP2C19 *1/*2"
           },
           {
-            "reference": "urn:uuid:71dd3c0d-6254-4140-bfa2-ff0d216d6acb",
+            "reference": "urn:uuid:00996929-b5da-5d1c-994d-507fb492120a",
             "display": "CYP2C9 *1/*3"
           },
           {
-            "reference": "urn:uuid:778521ef-1eff-4b2e-8981-c79abf0768e3",
+            "reference": "urn:uuid:9aa30848-8e68-5bc5-9f65-e828fd7eeccd",
             "display": "Therapeutic implication for clopidogrel"
           },
           {
-            "reference": "urn:uuid:ad2e4e3d-45ac-4fb3-a00c-3b0ddd40ee2f",
+            "reference": "urn:uuid:f5c6d758-98a7-5918-b469-2c7e63b4b48d",
             "display": "Therapeutic implication for codeine"
           },
           {
-            "reference": "urn:uuid:8608a6de-603d-415f-aefa-d89c2ca90771",
+            "reference": "urn:uuid:a1e67cf0-02b0-5b06-9fba-582f719ad450",
             "display": "Therapeutic implication for warfarin"
           }
         ],
@@ -81,35 +81,35 @@
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study-reference",
             "valueReference": {
-              "reference": "urn:uuid:789f1004-ccdc-4919-aa88-19ac332efb87"
+              "reference": "urn:uuid:9617530b-fbd8-56e3-b6ca-613fa4fdcc0e"
             }
           },
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action",
             "valueReference": {
-              "reference": "urn:uuid:12c59e1e-fa52-47a4-b039-0f7c003d2647"
+              "reference": "urn:uuid:3f29a2de-57ff-5bce-b330-525ce4e6aa23"
             }
           },
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action",
             "valueReference": {
-              "reference": "urn:uuid:ecf38a0f-94e3-4c65-b99e-f72cdbe2f063"
+              "reference": "urn:uuid:6af94a00-73dc-59ce-ad45-8c655a1e661f"
             }
           },
           {
             "url": "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action",
             "valueReference": {
-              "reference": "urn:uuid:24f0799c-d52f-4f8e-b357-ad4827e810d3"
+              "reference": "urn:uuid:413c73e2-3e7c-544a-8156-79505c0bf508"
             }
           }
         ]
       }
     },
     {
-      "fullUrl": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293",
+      "fullUrl": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600",
       "resource": {
         "resourceType": "Patient",
-        "id": "0d7b6fd1-842e-4e81-b567-295b52cf5293",
+        "id": "7ffe902d-657c-513f-93d4-530cd5da2600",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/StructureDefinition/Patient"
@@ -134,15 +134,21 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:95a73d4f-f2d7-4d49-8ba7-fa2cb1fe78df",
+      "fullUrl": "urn:uuid:91d55149-1e70-52c7-bd57-048d55be0490",
       "resource": {
         "resourceType": "Observation",
-        "id": "95a73d4f-f2d7-4d49-8ba7-fa2cb1fe78df",
+        "id": "91d55149-1e70-52c7-bd57-048d55be0490",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:91d55149-1e70-52c7-bd57-048d55be0490"
+          }
+        ],
         "status": "final",
         "category": [
           {
@@ -175,9 +181,9 @@
           "text": "CYP2D6 Genotype"
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:42:46.693598+00:00",
+        "effectiveDateTime": "2026-10-16T22:53:32.221047+00:00",
         "valueCodeableConcept": {
           "text": "*1/*4"
         },
@@ -259,15 +265,21 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:d00dc691-4220-4016-818c-15ad331cfc87",
+      "fullUrl": "urn:uuid:6d4af5f9-b1b2-5fd8-ad73-9819239f26ad",
       "resource": {
         "resourceType": "Observation",
-        "id": "d00dc691-4220-4016-818c-15ad331cfc87",
+        "id": "6d4af5f9-b1b2-5fd8-ad73-9819239f26ad",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:6d4af5f9-b1b2-5fd8-ad73-9819239f26ad"
+          }
+        ],
         "status": "final",
         "category": [
           {
@@ -300,9 +312,9 @@
           "text": "CYP2C19 Genotype"
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:42:46.693617+00:00",
+        "effectiveDateTime": "2026-10-16T22:53:32.221070+00:00",
         "valueCodeableConcept": {
           "text": "*1/*2"
         },
@@ -384,15 +396,21 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:71dd3c0d-6254-4140-bfa2-ff0d216d6acb",
+      "fullUrl": "urn:uuid:00996929-b5da-5d1c-994d-507fb492120a",
       "resource": {
         "resourceType": "Observation",
-        "id": "71dd3c0d-6254-4140-bfa2-ff0d216d6acb",
+        "id": "00996929-b5da-5d1c-994d-507fb492120a",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:00996929-b5da-5d1c-994d-507fb492120a"
+          }
+        ],
         "status": "final",
         "category": [
           {
@@ -425,9 +443,9 @@
           "text": "CYP2C9 Genotype"
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:42:46.693632+00:00",
+        "effectiveDateTime": "2026-10-16T22:53:32.221090+00:00",
         "valueCodeableConcept": {
           "text": "*1/*3"
         },
@@ -509,15 +527,21 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:778521ef-1eff-4b2e-8981-c79abf0768e3",
+      "fullUrl": "urn:uuid:9aa30848-8e68-5bc5-9f65-e828fd7eeccd",
       "resource": {
         "resourceType": "Observation",
-        "id": "778521ef-1eff-4b2e-8981-c79abf0768e3",
+        "id": "9aa30848-8e68-5bc5-9f65-e828fd7eeccd",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:9aa30848-8e68-5bc5-9f65-e828fd7eeccd"
+          }
+        ],
         "status": "final",
         "category": [
           {
@@ -549,9 +573,9 @@
           ]
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:42:46.693651+00:00",
+        "effectiveDateTime": "2026-10-16T22:53:32.221111+00:00",
         "component": [
           {
             "code": {
@@ -582,7 +606,7 @@
         ],
         "derivedFrom": [
           {
-            "reference": "urn:uuid:d00dc691-4220-4016-818c-15ad331cfc87",
+            "reference": "urn:uuid:6d4af5f9-b1b2-5fd8-ad73-9819239f26ad",
             "display": "CYP2C19 *1/*2"
           }
         ],
@@ -599,23 +623,29 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:12c59e1e-fa52-47a4-b039-0f7c003d2647",
+      "fullUrl": "urn:uuid:3f29a2de-57ff-5bce-b330-525ce4e6aa23",
       "resource": {
         "resourceType": "Task",
-        "id": "12c59e1e-fa52-47a4-b039-0f7c003d2647",
+        "id": "3f29a2de-57ff-5bce-b330-525ce4e6aa23",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:3f29a2de-57ff-5bce-b330-525ce4e6aa23"
+          }
+        ],
         "status": "requested",
         "intent": "proposal",
         "description": "Consider alternative antiplatelet therapy (e.g., prasugrel, ticagrelor) if no contraindication. CYP2C19 intermediate metabolizer status results in reduced formation of active metabolite and diminished antiplatelet effect.",
         "for": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
         "reasonReference": {
-          "reference": "urn:uuid:778521ef-1eff-4b2e-8981-c79abf0768e3"
+          "reference": "urn:uuid:9aa30848-8e68-5bc5-9f65-e828fd7eeccd"
         },
         "input": [
           {
@@ -650,15 +680,21 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:ad2e4e3d-45ac-4fb3-a00c-3b0ddd40ee2f",
+      "fullUrl": "urn:uuid:f5c6d758-98a7-5918-b469-2c7e63b4b48d",
       "resource": {
         "resourceType": "Observation",
-        "id": "ad2e4e3d-45ac-4fb3-a00c-3b0ddd40ee2f",
+        "id": "f5c6d758-98a7-5918-b469-2c7e63b4b48d",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:f5c6d758-98a7-5918-b469-2c7e63b4b48d"
+          }
+        ],
         "status": "final",
         "category": [
           {
@@ -690,9 +726,9 @@
           ]
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:42:46.693677+00:00",
+        "effectiveDateTime": "2026-10-16T22:53:32.221149+00:00",
         "component": [
           {
             "code": {
@@ -723,7 +759,7 @@
         ],
         "derivedFrom": [
           {
-            "reference": "urn:uuid:95a73d4f-f2d7-4d49-8ba7-fa2cb1fe78df",
+            "reference": "urn:uuid:91d55149-1e70-52c7-bd57-048d55be0490",
             "display": "CYP2D6 *1/*4"
           }
         ],
@@ -740,23 +776,29 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:ecf38a0f-94e3-4c65-b99e-f72cdbe2f063",
+      "fullUrl": "urn:uuid:6af94a00-73dc-59ce-ad45-8c655a1e661f",
       "resource": {
         "resourceType": "Task",
-        "id": "ecf38a0f-94e3-4c65-b99e-f72cdbe2f063",
+        "id": "6af94a00-73dc-59ce-ad45-8c655a1e661f",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:6af94a00-73dc-59ce-ad45-8c655a1e661f"
+          }
+        ],
         "status": "requested",
         "intent": "proposal",
         "description": "Use label-recommended age- or weight-specific dosing. CYP2D6 intermediate metabolizer status may result in reduced morphine formation; monitor for adequate pain relief and consider alternative analgesics if needed.",
         "for": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
         "reasonReference": {
-          "reference": "urn:uuid:ad2e4e3d-45ac-4fb3-a00c-3b0ddd40ee2f"
+          "reference": "urn:uuid:f5c6d758-98a7-5918-b469-2c7e63b4b48d"
         },
         "input": [
           {
@@ -791,15 +833,21 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:8608a6de-603d-415f-aefa-d89c2ca90771",
+      "fullUrl": "urn:uuid:a1e67cf0-02b0-5b06-9fba-582f719ad450",
       "resource": {
         "resourceType": "Observation",
-        "id": "8608a6de-603d-415f-aefa-d89c2ca90771",
+        "id": "a1e67cf0-02b0-5b06-9fba-582f719ad450",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:a1e67cf0-02b0-5b06-9fba-582f719ad450"
+          }
+        ],
         "status": "final",
         "category": [
           {
@@ -831,9 +879,9 @@
           ]
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:42:46.693697+00:00",
+        "effectiveDateTime": "2026-10-16T22:53:32.221176+00:00",
         "component": [
           {
             "code": {
@@ -864,7 +912,7 @@
         ],
         "derivedFrom": [
           {
-            "reference": "urn:uuid:71dd3c0d-6254-4140-bfa2-ff0d216d6acb",
+            "reference": "urn:uuid:00996929-b5da-5d1c-994d-507fb492120a",
             "display": "CYP2C9 *1/*3"
           }
         ],
@@ -881,23 +929,29 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:24f0799c-d52f-4f8e-b357-ad4827e810d3",
+      "fullUrl": "urn:uuid:413c73e2-3e7c-544a-8156-79505c0bf508",
       "resource": {
         "resourceType": "Task",
-        "id": "24f0799c-d52f-4f8e-b357-ad4827e810d3",
+        "id": "413c73e2-3e7c-544a-8156-79505c0bf508",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:413c73e2-3e7c-544a-8156-79505c0bf508"
+          }
+        ],
         "status": "requested",
         "intent": "proposal",
         "description": "Calculate initial dose using a validated pharmacogenomic dosing algorithm (e.g., warfarindosing.org). CYP2C9 *1/*3 intermediate metabolizer status requires a reduced dose compared to *1/*1 wild-type patients.",
         "for": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
         "reasonReference": {
-          "reference": "urn:uuid:8608a6de-603d-415f-aefa-d89c2ca90771"
+          "reference": "urn:uuid:a1e67cf0-02b0-5b06-9fba-582f719ad450"
         },
         "input": [
           {
@@ -932,15 +986,21 @@
       }
     },
     {
-      "fullUrl": "urn:uuid:789f1004-ccdc-4919-aa88-19ac332efb87",
+      "fullUrl": "urn:uuid:9617530b-fbd8-56e3-b6ca-613fa4fdcc0e",
       "resource": {
         "resourceType": "Procedure",
-        "id": "789f1004-ccdc-4919-aa88-19ac332efb87",
+        "id": "9617530b-fbd8-56e3-b6ca-613fa4fdcc0e",
         "meta": {
           "profile": [
             "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study"
           ]
         },
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:uuid:9617530b-fbd8-56e3-b6ca-613fa4fdcc0e"
+          }
+        ],
         "status": "completed",
         "category": {
           "coding": [
@@ -962,9 +1022,9 @@
           "text": "Pharmacogenomic Analysis"
         },
         "subject": {
-          "reference": "urn:uuid:0d7b6fd1-842e-4e81-b567-295b52cf5293"
+          "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "performedDateTime": "2026-10-16T22:42:46.693714+00:00",
+        "performedDateTime": "2026-10-16T22:53:32.221202+00:00",
         "note": [
           {
             "text": "PharmCAT Version: 3.4.0"
