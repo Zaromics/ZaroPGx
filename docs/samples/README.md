@@ -8,7 +8,7 @@ title: FHIR R4 Sample Exports
 
 An example of the FHIR R4 bundle ZaroPGx writes with each report, for three genes. Its resources are modelled on the profiles of the **HL7 Genomics Reporting Implementation Guide**.
 
-**Reference:** [HL7 Genomics Reporting IG, STU3 (3.0.0)](http://hl7.org/fhir/uv/genomics-reporting/STU3/). The bundle is not yet validated against it; see the to-do list.
+**Reference:** [HL7 Genomics Reporting IG, STU3 (3.0.0)](http://hl7.org/fhir/uv/genomics-reporting/STU3/). The bundle validates against the IG's profiles with no errors: HAPI FHIR 8.12's `$validate` with the IG loaded and tx.fhir.org checking the LOINC and SNOMED CT codes (October 2026). The warnings it still gives are listed under [Validation](#validation).
 
 ## Files
 
@@ -23,7 +23,7 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 ### 1. DiagnosticReport (Genomic Report)
 - **Profile:** `genomic-report`
 - Top-level report that references all observations, links to the genomic study, and lists recommended actions via extensions
-- Includes `conclusion` text and `conclusionCode` for overall report status
+- Includes a `conclusion` text: how many genes were analysed and how many findings are actionable
 
 ### 2. Patient
 - **Profile:** `Patient`
@@ -32,19 +32,21 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 
 ### 3. Observation — Genotype (one per gene)
 - **Profile:** `genotype`
+- Categories "laboratory" and Genetics (`GE`), as the IG requires
 - Coded as "Genotype display name" (`84413-4`) for every gene
+- `valueCodeableConcept` carries the diplotype as text (`*1/*4`), as the IG's PharmVar example does
 - Components include:
-  - **Gene studied** (`48018-6`) — HGNC gene symbol
-  - **Phenotype** (text only for now) — e.g., "Intermediate Metabolizer"
-  - **Activity Score** (`activity-score`) — numeric score from PharmCAT
+  - **Gene studied** (`48018-6`) — the gene's HGNC id (`HGNC:2625`), its symbol as the display
+  - **Phenotype** (text) — e.g., "Intermediate Metabolizer"
+  - **Activity score** — LOINC's activity-score code for CYP2B6, CYP2C19, CYP2C9, CYP2D6 and DPYD (`104669-7` for CYP2D6), a text code for any other gene
   - **Haplotype name** (`84414-2`) — one per allele (allele1, allele2)
-- `valueCodeableConcept` carries the diplotype from PharmVar
 
 ### 4. Observation — Therapeutic Implication (one per drug)
 - **Profile:** `therapeutic-implication`
+- Categories "laboratory" and Genetics (`GE`)
 - Components include:
-  - **Medication assessed** (`51963-7`) — RxNorm-coded drug name
-  - **Conclusion string** — clinical recommendation text
+  - **Medication assessed** (`51963-7`) — the drug's name, as text: PharmCAT names drugs by ClinPGx id, not RxNorm code
+  - **Conclusion text** (`conclusion-string`) — the first recommendation's text
 - `derivedFrom` links back to the genotype observation(s) that informed the implication
 - Optional `extension` for related artifacts (CPIC/DPWG guideline citations)
 
@@ -54,12 +56,13 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 - `description` contains the actionable recommendation text
 - `for` → Patient reference
 - `reasonReference` → links to the corresponding Therapeutic Implication
-- `input` items for medication-assessed and evidence-level (Strong, Moderate, Optional)
+- `input` items for the medication assessed (`51963-7`) and the level of evidence (`93044-6`: Strong, Moderate, Optional)
+- No `code`: the profile requires one of LOINC's medication usage suggestions (consider an alternative, decrease the dose, ...), and picking one would mean interpreting the guideline's text
 
 ### 6. Procedure — Genomic Study
 - **Profile:** `genomic-study`
-- SNOMED CT coded as "Genetic test" (`405824009`)
-- LOINC coded as "Genetic analysis report" (`51969-4`)
+- Category "laboratory", which the profile fixes
+- Coded as SNOMED CT "Genetic test" (`405824009`)
 - `note` records the PharmCAT version used
 
 ## HAPI FHIR Compatibility
@@ -115,13 +118,21 @@ The recommendation texts in the sample are illustrative, not PharmCAT's.
 
 | System | URI | Usage |
 |--------|-----|-------|
-| LOINC | `http://loinc.org` | Observation and component codes, each with its official display name |
-| SNOMED CT | `http://snomed.info/sct` | Procedure category |
-| PharmVar | `http://www.pharmvar.org` | Diplotype/haplotype codes |
-| HGNC | `http://www.genenames.org/geneId` | Gene identifiers |
-| RxNorm | `http://www.nlm.nih.gov/research/umls/rxnorm` | Medication codes |
-| HL7 Genomics IG | `http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs` | IG-specific codes |
+| LOINC | `http://loinc.org` | Report, observation, component and Task input codes, each with its official display name |
+| SNOMED CT | `http://snomed.info/sct` | The genomic study's procedure code |
+| HGNC | `http://www.genenames.org` | Gene ids (`HGNC:2625`) |
+| HL7 Genomics IG | `http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs` | `therapeutic-implication`, `conclusion-string` |
+| HL7 terminology | `http://terminology.hl7.org/CodeSystem/observation-category`, `.../v2-0074` | Categories ("laboratory", Genetics) |
 | ZaroPGx | `urn:zaropgx:*` | Internal identifiers |
+
+## Validation
+
+Errors: none. The validator's remaining warnings, and why they stay:
+
+- **No narrative** (`dom-6`, every resource): a best-practice rule. The PDF and HTML reports are the human-readable form; a generated `text` for each resource would repeat them.
+- **No performer** (every observation): ZaroPGx does not know the laboratory or clinician, and does not invent one.
+- **Recommendation matches two profiles**: the IG's `recommended-action` extension allows a medication or a follow-up recommendation, and a Task without a code fits both.
+- **HGNC codes cannot be checked**: no terminology server the validator can reach carries HGNC. The ids are HGNC's own (rest.genenames.org).
 
 ## Generation
 

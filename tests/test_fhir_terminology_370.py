@@ -109,11 +109,15 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # after fix/fhir-loinc-codes, which changed what is emitted on purpose: one
 # genotype code (84413-4) for every gene instead of per-gene codes that named other
 # genes, official LOINC display names, a phenotype component without CYP2C9's
-# code, no "genomics-bundle" profile, SNOMED 405824009 as "Genetic test".
-GOLDEN_JSON_SHA256 = "d024582d7738974d447e83f5965d4b66fc0669d5b31c065b125adb4319243096"
-GOLDEN_JSON_BYTES = 21469
-GOLDEN_XML_SHA256 = "d5850427ac177e2ce5ec6568e8c26116a799821add0129c936399c695c2cc157"
-GOLDEN_XML_BYTES = 19645
+# code, no "genomics-bundle" profile, SNOMED 405824009 as "Genetic test". Re-taken
+# after fix/fhir-ig-conformance, which made the bundle validate against the Genomics
+# Reporting IG's profiles: both observation categories, HGNC ids, no PharmVar or
+# empty RxNorm codings, no tbd codes the IG does not define, no Task.code, the
+# genomic study's fixed category, no conclusionCode.
+GOLDEN_JSON_SHA256 = "f9c4c8f60fda6eb2513ad6edada7384548e47f84cd3abd6863d912e7d39e0494"
+GOLDEN_JSON_BYTES = 20497
+GOLDEN_XML_SHA256 = "5dc723c089c4718b64c9d4ef29cc898ded5f4a9778aaa71248dc9cafd585a0ec"
+GOLDEN_XML_BYTES = 18789
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
@@ -121,7 +125,7 @@ GOLDEN_XML_BYTES = 19645
 GOLDEN_URI_CENSUS = {
     "http://hl7.org/fhir/StructureDefinition/Patient": 1,
     "http://hl7.org/fhir/StructureDefinition/workflow-relatedArtifact": 1,
-    "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs": 10,
+    "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs": 4,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study-reference": 1,
@@ -129,16 +133,13 @@ GOLDEN_URI_CENSUS = {
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication": 2,
-    "http://loinc.org": 13,
+    "http://loinc.org": 16,
     "http://snomed.info/sct": 1,
-    "http://terminology.hl7.org/CodeSystem/observation-category": 5,
-    "http://terminology.hl7.org/CodeSystem/v2-0074": 1,
+    "http://terminology.hl7.org/CodeSystem/observation-category": 6,
+    "http://terminology.hl7.org/CodeSystem/v2-0074": 6,
     "http://unitsofmeasure.org": 1,
-    "http://www.genenames.org/geneId": 3,
-    "http://www.nlm.nih.gov/research/umls/rxnorm": 2,
-    "http://www.pharmvar.org": 3,
+    "http://www.genenames.org": 3,
     "https://www.clinpgx.org/guidelineAnnotations": 1,
-    "urn:zaropgx:conclusion-codes": 1,
     "urn:zaropgx:patient-id": 1,
     "urn:zaropgx:report-id": 1,
 }
@@ -232,14 +233,20 @@ def test_terminology_module_is_importable_and_single_sourced():
     assert not hasattr(terminology, "GENE_LOINC_CODES")
 
 
-# The official display of each LOINC code (tx.fhir.org, 2026-10-12). LOINC's licence
-# asks that a code travel with one of its official names.
+# The official display of each LOINC code (tx.fhir.org, 2026-10-12 and -16). LOINC's
+# licence asks that a code travel with one of its official names.
 OFFICIAL_LOINC_DISPLAYS = {
     "84413-4": "Genotype display name",
     "51963-7": "Medication assessed [ID]",
     "51969-4": "Genetic analysis report",
     "84414-2": "Haplotype name",
     "48018-6": "Gene studied [ID]",
+    "93044-6": "Level of evidence",
+    "104666-3": "CYP2B6 Activity Score in Blood or Tissue",
+    "104667-1": "CYP2C19 Activity Score in Blood or Tissue",
+    "104668-9": "CYP2C9 Activity Score in Blood or Tissue",
+    "104669-7": "CYP2D6 Activity Score in Blood or Tissue",
+    "104665-5": "DPYD Activity Score in Blood or Tissue",
 }
 
 

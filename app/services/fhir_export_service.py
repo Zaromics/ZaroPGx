@@ -672,17 +672,7 @@ class FHIRExportService:
                 "profile": [terminology.PROFILE_GENOTYPE],
             },
             "status": "final",
-            "category": [
-                {
-                    "coding": [
-                        {
-                            "system": terminology.OBSERVATION_CATEGORY,
-                            "code": "laboratory",
-                            "display": "Laboratory",
-                        }
-                    ]
-                }
-            ],
+            "category": self._genomic_observation_category(),
             "code": {
                 "coding": [
                     {
@@ -699,14 +689,11 @@ class FHIRExportService:
                 "reference": patient_ref,
             },
             "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
+            # Text, as the IG's PharmVar genotype example has it. The diplotype
+            # was sent as a code of http://www.pharmvar.org, whose codes are
+            # PharmVar's allele ids (PV00155), never a diplotype -- and genes
+            # PharmVar does not cover (ABCG2's rs2231142) went under it too.
             "valueCodeableConcept": {
-                "coding": [
-                    {
-                        "system": terminology.PHARMVAR,
-                        "code": diplotype,
-                        "display": diplotype,
-                    }
-                ],
                 "text": diplotype,
             },
             "component": [],
@@ -726,16 +713,7 @@ class FHIRExportService:
                         }
                     ],
                 },
-                "valueCodeableConcept": {
-                    "coding": [
-                        {
-                            "system": terminology.HGNC_GENE_ID,
-                            "code": gene_symbol,
-                            "display": gene_symbol,
-                        }
-                    ],
-                    "text": gene_symbol,
-                },
+                "valueCodeableConcept": self._gene_concept(gene_symbol),
             }
         )
 
@@ -758,15 +736,7 @@ class FHIRExportService:
         if activity_value is not None:
             observation["component"].append(
                 {
-                    "code": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "activity-score",
-                                "display": "Activity Score",
-                            }
-                        ],
-                    },
+                    "code": self._activity_score_code(gene_symbol),
                     "valueQuantity": {
                         "value": activity_value,
                         "system": terminology.UCUM,
@@ -850,25 +820,9 @@ class FHIRExportService:
                 "profile": [terminology.PROFILE_THERAPEUTIC_IMPLICATION],
             },
             "status": "final",
-            "category": [
-                {
-                    "coding": [
-                        {
-                            "system": terminology.OBSERVATION_CATEGORY,
-                            "code": "laboratory",
-                            "display": "Laboratory",
-                        }
-                    ]
-                }
-            ],
+            "category": self._genomic_observation_category(),
             "code": {
-                "coding": [
-                    {
-                        "system": terminology.GENOMICS_TBD_CODES,
-                        "code": "therapeutic-implication",
-                        "display": "Therapeutic Implication",
-                    }
-                ],
+                "coding": [self._tbd_coding("therapeutic-implication")],
             },
             "subject": {
                 "reference": patient_ref,
@@ -892,13 +846,10 @@ class FHIRExportService:
                         }
                     ],
                 },
+                # The drug's name. An RxNorm coding with no code stood here:
+                # PharmCAT names drugs by ClinPGx id, not RxNorm, so there is
+                # no code to send.
                 "valueCodeableConcept": {
-                    "coding": [
-                        {
-                            "system": terminology.RXNORM,
-                            "display": drug_name,
-                        }
-                    ],
                     "text": drug_name,
                 },
             }
@@ -909,13 +860,7 @@ class FHIRExportService:
             observation["component"].append(
                 {
                     "code": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "conclusion-string",
-                                "display": "Conclusion String",
-                            }
-                        ],
+                        "coding": [self._tbd_coding("conclusion-string")],
                     },
                     "valueString": recommendation_text,
                 }
@@ -973,6 +918,11 @@ class FHIRExportService:
         rec_text = recommendation.get("recommendation", "See report for details")
         classification = recommendation.get("classification", "")
 
+        # No Task.code: the profile binds it (required) to LOINC's medication
+        # usage suggestions (LL4049-4: consider alternative, decrease dose, ...).
+        # Choosing one would be reading the guideline's text; it said
+        # "Recommendation for <drug>" in a code system with no such code. The
+        # drug is the medication-assessed input, the guidance the description.
         task = {
             "resourceType": "Task",
             "id": task_id,
@@ -981,16 +931,6 @@ class FHIRExportService:
             },
             "status": "requested",
             "intent": "proposal",
-            "code": {
-                "coding": [
-                    {
-                        "system": terminology.GENOMICS_TBD_CODES,
-                        "code": "medication-recommendation",
-                        "display": "Medication Recommendation",
-                    }
-                ],
-                "text": f"Recommendation for {drug_name}",
-            },
             "description": rec_text,
             "for": {
                 "reference": patient_ref,
@@ -1001,13 +941,7 @@ class FHIRExportService:
             "input": [
                 {
                     "type": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "medication-assessed",
-                                "display": "Medication Assessed",
-                            }
-                        ],
+                        "coding": [self._loinc_coding("medication_assessed")],
                     },
                     "valueCodeableConcept": {
                         "text": drug_name,
@@ -1021,13 +955,7 @@ class FHIRExportService:
             task["input"].append(
                 {
                     "type": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "evidence-level",
-                                "display": "Evidence Level",
-                            }
-                        ],
+                        "coding": [self._loinc_coding("evidence_level")],
                     },
                     "valueCodeableConcept": {
                         "text": classification,
@@ -1054,23 +982,24 @@ class FHIRExportService:
                 "profile": [terminology.PROFILE_GENOMIC_STUDY],
             },
             "status": "completed",
+            # The genomic-study profile fixes the category to "laboratory".
             "category": {
+                "coding": [
+                    {
+                        "system": terminology.OBSERVATION_CATEGORY,
+                        "code": "laboratory",
+                        "display": "Laboratory",
+                    }
+                ],
+            },
+            # What was done: a genetic test (a SNOMED CT procedure). It was coded
+            # as LOINC's "Genetic analysis report", the DiagnosticReport's code.
+            "code": {
                 "coding": [
                     {
                         "system": terminology.SNOMED_CT,
                         "code": terminology.SNOMED_GENETIC_TEST[0],
                         "display": terminology.SNOMED_GENETIC_TEST[1],
-                    }
-                ],
-            },
-            "code": {
-                "coding": [
-                    {
-                        "system": terminology.LOINC,
-                        "code": self.LOINC_CODES["pgx_report"],
-                        "display": terminology.LOINC_DISPLAYS[
-                            self.LOINC_CODES["pgx_report"]
-                        ],
                     }
                 ],
                 "text": "Pharmacogenomic Analysis",
@@ -1148,18 +1077,9 @@ class FHIRExportService:
             "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
             "issued": datetime.now(timezone.utc).isoformat(),
             "result": result_refs,
+            # No conclusionCode: "PGX-COMPLETE" in urn:zaropgx:conclusion-codes, a
+            # code system defined nowhere, said what status "final" says.
             "conclusion": f"Pharmacogenomic analysis completed. {total_genes} genes analyzed, {actionable_count} actionable findings identified.",
-            "conclusionCode": [
-                {
-                    "coding": [
-                        {
-                            "system": terminology.ZAROPGX_CONCLUSION_CODES,
-                            "code": "PGX-COMPLETE",
-                            "display": "Pharmacogenomic Analysis Complete",
-                        }
-                    ],
-                }
-            ],
         }
 
         # Add reference to genomic study
@@ -1174,6 +1094,86 @@ class FHIRExportService:
         )
 
         return report
+
+    @staticmethod
+    def _genomic_observation_category() -> List[Dict[str, Any]]:
+        """Both categories the IG's genomic observations require: laboratory and
+        Genetics (v2-0074 GE). The genotype and therapeutic-implication
+        profiles reject an observation that has only one."""
+        return [
+            {
+                "coding": [
+                    {
+                        "system": terminology.OBSERVATION_CATEGORY,
+                        "code": "laboratory",
+                        "display": "Laboratory",
+                    }
+                ]
+            },
+            {
+                "coding": [
+                    {
+                        "system": terminology.DIAGNOSTIC_SERVICE_SECTION,
+                        "code": "GE",
+                        "display": "Genetics",
+                    }
+                ]
+            },
+        ]
+
+    @staticmethod
+    def _loinc_coding(key: str) -> Dict[str, str]:
+        """The LOINC coding for one of LOINC_CODES, with its official display."""
+        code = terminology.LOINC_CODES[key]
+        return {
+            "system": terminology.LOINC,
+            "code": code,
+            "display": terminology.LOINC_DISPLAYS[code],
+        }
+
+    @staticmethod
+    def _tbd_coding(code: str) -> Dict[str, str]:
+        """A code of the IG's tbd-codes-cs, with the IG's display."""
+        return {
+            "system": terminology.GENOMICS_TBD_CODES,
+            "code": code,
+            "display": terminology.GENOMICS_TBD_DISPLAYS[code],
+        }
+
+    @staticmethod
+    def _gene_concept(gene_symbol: str) -> Dict[str, Any]:
+        """A gene as the IG's hgnc-vs codes it: its HGNC id, the symbol as the
+        display. A gene missing from HGNC_IDS is sent by its symbol alone."""
+        hgnc_id = terminology.HGNC_IDS.get(gene_symbol)
+        if not hgnc_id:
+            return {"text": gene_symbol}
+        return {
+            "coding": [
+                {
+                    "system": terminology.HGNC,
+                    "code": hgnc_id,
+                    "display": gene_symbol,
+                }
+            ],
+            "text": gene_symbol,
+        }
+
+    @staticmethod
+    def _activity_score_code(gene_symbol: str) -> Dict[str, Any]:
+        """LOINC's activity-score code for the gene, or a text code for a gene
+        LOINC has none for."""
+        code = terminology.ACTIVITY_SCORE_LOINC.get(gene_symbol)
+        if not code:
+            return {"text": "Activity score"}
+        return {
+            "coding": [
+                {
+                    "system": terminology.LOINC,
+                    "code": code,
+                    "display": terminology.LOINC_DISPLAYS[code],
+                }
+            ],
+        }
 
     def _get_guideline_url(self, source: str, drug_name: str) -> str:
         """Get the guideline URL based on source."""
