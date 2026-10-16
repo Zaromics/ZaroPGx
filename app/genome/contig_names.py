@@ -138,6 +138,11 @@ def _check_renamed_alignment(source: str, copy: str, header: str) -> None:
         )
 
 
+class RenamedCopyNotIndexed(RuntimeError):
+    """The renamed copy was written but samtools could not index it: an alignment
+    that is not sorted by coordinate, most often. The renaming itself worked."""
+
+
 def write_renamed_copy(path: str, file_type: str, plan: Mapping[str, str]) -> str:
     """Write `path` with its contigs renamed per `plan`; return the copy's path.
 
@@ -195,17 +200,21 @@ def write_renamed_copy(path: str, file_type: str, plan: Mapping[str, str]) -> st
         _check_renamed_alignment(path, out, header)
         # <copy>.bai or <copy>.crai, newer than the copy, so app/utils/shared_input.py
         # hands it to each step with the file. Also in a child process.
-        subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import pysam, sys; pysam.index('-@', '4', sys.argv[1])",
-                out,
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            check=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import pysam, sys; pysam.index('-@', '4', sys.argv[1])",
+                    out,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or b"").decode(errors="replace").strip()
+            raise RenamedCopyNotIndexed(detail[-500:]) from exc
     elif kind == "sam":
         with pysam.AlignmentFile(path, "r") as source:
             header = source.header.to_dict()

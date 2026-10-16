@@ -1266,9 +1266,10 @@ async def call_mtdna(
     upload_path = os.path.join(work, os.path.basename(name or "input"))
     if source is not None:
         # The work dir is per job, not per request: a request killed before its
-        # cleanup leaves its input here, which an upload would have overwritten.
-        if os.path.lexists(upload_path):
-            os.remove(upload_path)
+        # cleanup leaves its input here, which an upload would have overwritten --
+        # and its index, which would pass for current beside the new link (an
+        # index is judged by its mtime against the shared file's, which is older).
+        _discard_input_copy(upload_path)
         try:
             link_shared_input(str(source), upload_path)
         except SharedInputRefused as exc:  # moved or replaced since the check

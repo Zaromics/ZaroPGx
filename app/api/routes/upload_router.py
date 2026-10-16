@@ -64,6 +64,7 @@ from app.api.utils.header_inspector import (
     inspect_header,
 )
 from app.genome.contig_names import (
+    RenamedCopyNotIndexed,
     rename_plan,
     renamed_path,
     write_renamed_copy,
@@ -1345,6 +1346,14 @@ async def use_ucsc_contig_names(
         renamed = await asyncio.to_thread(
             write_renamed_copy, file_path, input_type, plan
         )
+    except RenamedCopyNotIndexed as exc:
+        Path(renamed_path(file_path)).unlink(missing_ok=True)
+        raise RuntimeError(
+            "The file's chromosomes were renamed from NCBI accessions, but the renamed "
+            f"copy could not be indexed ({str(exc) or 'samtools index failed'}). An "
+            "alignment must be sorted by coordinate to be indexed: sort it "
+            "(samtools sort) and upload it again."
+        ) from exc
     except Exception as exc:
         Path(renamed_path(file_path)).unlink(missing_ok=True)
         detail = getattr(exc, "stderr", None)
