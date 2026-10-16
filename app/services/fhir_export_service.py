@@ -11,15 +11,13 @@ import json
 import logging
 import os
 import uuid
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from xml.dom import minidom
 
 from sqlalchemy.orm import Session
 
-from app.services.fhir import terminology
+from app.services.fhir import terminology, xml_format
 from app.services.pharmcat_data_service import PharmCATDataService
 
 logger = logging.getLogger(__name__)
@@ -60,9 +58,6 @@ def fhir_export_enabled() -> bool:
 
 # Reports directory - same as other report outputs
 REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
-
-# FHIR namespace for XML export
-FHIR_NAMESPACE = "http://hl7.org/fhir"
 
 
 class FHIRExportService:
@@ -1194,71 +1189,8 @@ class FHIRExportService:
             return f"https://www.pharmgkb.org/drug/{drug_lower}"
 
     def _bundle_to_xml(self, bundle: Dict[str, Any]) -> str:
-        """
-        Convert a FHIR Bundle dict to XML string.
-
-        Args:
-            bundle: FHIR Bundle as dictionary
-
-        Returns:
-            XML string representation
-        """
-        root = ET.Element("Bundle")
-        root.set("xmlns", FHIR_NAMESPACE)
-
-        self._dict_to_xml(bundle, root)
-
-        # Pretty print
-        xml_str = ET.tostring(root, encoding="unicode")
-        parsed = minidom.parseString(xml_str)
-        return parsed.toprettyxml(indent="  ")
-
-    def _dict_to_xml(self, data: Any, parent: ET.Element) -> None:
-        """Recursively convert dict to XML elements."""
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if key == "resourceType":
-                    # resourceType is the element name in FHIR XML
-                    continue
-                elif key == "extension":
-                    # Handle extensions specially
-                    if isinstance(value, list):
-                        for ext in value:
-                            ext_elem = ET.SubElement(parent, "extension")
-                            if isinstance(ext, dict) and "url" in ext:
-                                ext_elem.set("url", ext["url"])
-                                for k, v in ext.items():
-                                    if k != "url":
-                                        self._add_element(ext_elem, k, v)
-                elif isinstance(value, list):
-                    for item in value:
-                        elem = ET.SubElement(parent, key)
-                        if isinstance(item, dict):
-                            self._dict_to_xml(item, elem)
-                        else:
-                            elem.set("value", str(item))
-                elif isinstance(value, dict):
-                    elem = ET.SubElement(parent, key)
-                    self._dict_to_xml(value, elem)
-                elif value is not None:
-                    elem = ET.SubElement(parent, key)
-                    elem.set("value", str(value))
-
-    def _add_element(self, parent: ET.Element, key: str, value: Any) -> None:
-        """Add an element to parent."""
-        if isinstance(value, dict):
-            elem = ET.SubElement(parent, key)
-            self._dict_to_xml(value, elem)
-        elif isinstance(value, list):
-            for item in value:
-                elem = ET.SubElement(parent, key)
-                if isinstance(item, dict):
-                    self._dict_to_xml(item, elem)
-                else:
-                    elem.set("value", str(item))
-        elif value is not None:
-            elem = ET.SubElement(parent, key)
-            elem.set("value", str(value))
+        """The bundle as FHIR XML (app.services.fhir.xml_format)."""
+        return xml_format.bundle_to_xml(bundle)
 
 
 def get_fhir_export_service(db: Session) -> FHIRExportService:

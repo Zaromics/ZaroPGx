@@ -113,11 +113,13 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # after fix/fhir-ig-conformance, which made the bundle validate against the Genomics
 # Reporting IG's profiles: both observation categories, HGNC ids, no PharmVar or
 # empty RxNorm codings, no tbd codes the IG does not define, no Task.code, the
-# genomic study's fixed category, no conclusionCode.
+# genomic study's fixed category, no conclusionCode. The XML digest once more when
+# the XML became FHIR XML (resources wrapped in their type, children in the
+# specification's order) instead of a mirror of the JSON no FHIR parser could read.
 GOLDEN_JSON_SHA256 = "f9c4c8f60fda6eb2513ad6edada7384548e47f84cd3abd6863d912e7d39e0494"
 GOLDEN_JSON_BYTES = 20497
-GOLDEN_XML_SHA256 = "5dc723c089c4718b64c9d4ef29cc898ded5f4a9778aaa71248dc9cafd585a0ec"
-GOLDEN_XML_BYTES = 18789
+GOLDEN_XML_SHA256 = "8bd1f3e70050c8355e4f5a977801dec8e3e3e918d620e1b0f94c435c54551421"
+GOLDEN_XML_BYTES = 20429
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
