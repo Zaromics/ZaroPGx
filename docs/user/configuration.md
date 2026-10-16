@@ -65,7 +65,7 @@ Where a template ships a different value from the code's default, both are given
 | `PDF_ENGINE` | `weasyprint` | `weasyprint` or `reportlab` |
 | `PDF_FALLBACK` | `true` | Try the other engine if the first fails |
 | `AUTHOR_NAME`, `SOURCE_URL`, `ZAROPGX_VERSION` | from `pyproject.toml`, the GitHub URL | Shown in the reports' footer and Platform table |
-| `FHIR_EXPORT_ENABLED` | `true` | The `/fhir` endpoints and the FHIR bundles written with each report |
+| `FHIR_EXPORT_ENABLED` | `true` | The `/fhir` endpoints and the FHIR bundles written with each report. A job's bundle is sent to `FHIR_SERVER_URL` only when asked (`POST /fhir/push/workflow/{job_id}`) |
 | `KEEP_UPLOADS` | `false` | Keep an upload after its job ends. By default it is deleted when the job completes, fails or is cancelled |
 
 ## Storage

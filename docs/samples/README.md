@@ -65,44 +65,43 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 - Coded as SNOMED CT "Genetic test" (`405824009`)
 - `note` records the PharmCAT version used
 
-## HAPI FHIR Compatibility
+## Sending a bundle to a FHIR server
 
-The Bundle is a `collection`, a standalone export. A FHIR server's base endpoint accepts
-only `transaction` and `batch` Bundles, so convert it first (below), then post it to the
-bundled HAPI server, which listens on `127.0.0.1:8090`:
+The Bundle is a `collection`, a standalone export. A FHIR server's base endpoint takes
+`transaction` Bundles, so the app converts it when asked to send a job's bundle:
 
 ```bash
-curl -X POST http://localhost:8090/fhir \
-  -H "Content-Type: application/fhir+json" \
-  -d @transaction_bundle.json
+curl -X POST http://127.0.0.1:8765/fhir/push/workflow/<job_id>
 ```
 
-### Key compatibility notes:
-- All resource IDs use valid UUID format
-- All `fullUrl` entries use `urn:uuid:` scheme for Bundle-internal references
-- Resources reference the HL7 Genomics Reporting IG's profiles; the Bundle itself claims none (the IG defines no Bundle profile)
-- The Bundle `type` is `collection` (standalone export, not a transaction)
-- To use as a transaction Bundle for HAPI FHIR, change `type` to `"transaction"` and add `request` objects to each entry
-
-### Converting to a Transaction Bundle
-
-To POST as a transaction (creating all resources on the server):
+posts the job's `<job_id>_pgx_fhir_report.json` to `FHIR_SERVER_URL` (the bundled HAPI
+server) as one transaction, every entry conditional on the resource's identifier (the
+entries' `request`s):
 
 ```json
-{
-  "type": "transaction",
-  "entry": [
-    {
-      "fullUrl": "urn:uuid:...",
-      "resource": { ... },
-      "request": {
-        "method": "POST",
-        "url": "DiagnosticReport"
-      }
-    }
-  ]
-}
+[
+  {"method": "POST", "url": "Patient",
+   "ifNoneExist": "identifier=urn:zaropgx:patient-id|<patient id>"},
+  {"method": "PUT",
+   "url": "DiagnosticReport?identifier=urn:zaropgx:report-id|<report id>"},
+  {"method": "PUT",
+   "url": "Observation?identifier=urn:ietf:rfc:3986|urn:uuid:<id>"}
+]
 ```
+
+so the Patient is created once and reused, and pushing a job again updates its report and
+resources instead of adding copies.
+
+Notes:
+- Each resource's id is a name-based UUID of what it is (this report's CYP2D6 genotype),
+  so a job's bundle names its resources the same way each time it is written. The
+  observations, recommendations and study carry it as their identifier
+  (`urn:ietf:rfc:3986`, `urn:uuid:<id>`); the Patient and the report carry ZaroPGx's
+  patient and report ids
+- `fullUrl`s are `urn:uuid:` and Bundle-internal references use them; the server
+  replaces them with its own ids
+- Resources reference the HL7 Genomics Reporting IG's profiles; the Bundle itself claims
+  none (the IG defines no Bundle profile)
 
 ## Genes Included in Sample
 
