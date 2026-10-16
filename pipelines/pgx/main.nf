@@ -600,6 +600,11 @@ process PyPGxBam2Vcf {
     // Not optional: without it PharmCAT would be handed PyPGx's variants-only VCF,
     // which reads every reference position as a no-call.
     path "pharmcat/pharmcat_positions.vcf.gz", emit: pharmcat_vcf
+    // Each PharmCAT position's status -- reference, variant, no_reads, uncertain --
+    // with its gene and reads: which positions PharmCAT will read as missing, and why.
+    // The report reads it from the published directory. Optional: it explains the
+    // VCF above and is not needed to use it.
+    path "pharmcat/pharmcat_position_status.tsv", optional: true
 
     shell:
     '''
@@ -616,10 +621,11 @@ process PyPGxBam2Vcf {
       case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
-    read -r VCF_PATH PHARMCAT_VCF_PATH < <(python3 - <<'PY'
+    read -r VCF_PATH PHARMCAT_VCF_PATH STATUS_PATH < <(python3 - <<'PY'
 import json
 data = json.load(open('response.json'))
-print(data.get('vcf_path') or data.get('vcf') or '-', data.get('pharmcat_vcf_path') or '-')
+print(data.get('vcf_path') or data.get('vcf') or '-', data.get('pharmcat_vcf_path') or '-',
+      data.get('pharmcat_status_path') or '-')
 PY
 )
     if [ "$VCF_PATH" = "-" ] || [ "$PHARMCAT_VCF_PATH" = "-" ]; then
@@ -633,6 +639,9 @@ PY
     mkdir -p pharmcat
     cp "$PHARMCAT_VCF_PATH" pharmcat/pharmcat_positions.vcf.gz
     [ -f "${PHARMCAT_VCF_PATH}.tbi" ] && cp "${PHARMCAT_VCF_PATH}.tbi" pharmcat/pharmcat_positions.vcf.gz.tbi || true
+    if [ "$STATUS_PATH" != "-" ] && [ -f "$STATUS_PATH" ]; then
+      cp "$STATUS_PATH" pharmcat/pharmcat_position_status.tsv
+    fi
     '''
 }
 
