@@ -3288,6 +3288,10 @@ FASTQ_MAX_UPLOAD_BYTES = int(
 # scale. An uncompressed FASTQ is several times its gzipped size, so it is asked for
 # more than it needs.
 FASTQ_ALIGN_DISK_FACTOR = 9
+# A plain FASTQ is several times its gzipped size (NA12878's binned qualities about
+# 5x; older, finer qualities compress less), and the factor above is per gzipped
+# byte. 3 errs toward asking too much, not too little.
+FASTQ_PLAIN_TO_GZIP = 3
 
 # Below this share of reads aligned, /align-fastq refuses. Human short-read data aligns
 # at well over 90% (this stack's panel runs: over 99%); half leaves room for a
@@ -3336,7 +3340,7 @@ def _fastq_over_budget():
         status_code=413,
         detail=(
             f"FASTQ upload exceeds the "
-            f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit (both mates "
+            f"{FASTQ_MAX_UPLOAD_BYTES / 1024 ** 3:g} GB limit (both mates "
             "count together). Align whole-genome reads yourself "
             "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM "
             "or CRAM."
@@ -3354,7 +3358,11 @@ def _alignment_disk_refusal(fastq_paths, work_dir, output_dir):
     the space up.
     """
     size = sum(os.path.getsize(path) for path in fastq_paths)
-    needed = size * FASTQ_ALIGN_DISK_FACTOR
+    gzipped = sum(
+        os.path.getsize(path) / (1 if _looks_gzipped(path) else FASTQ_PLAIN_TO_GZIP)
+        for path in fastq_paths
+    )
+    needed = gzipped * FASTQ_ALIGN_DISK_FACTOR
     free = min(shutil.disk_usage(work_dir).free, shutil.disk_usage(output_dir).free)
     if free >= needed:
         return None

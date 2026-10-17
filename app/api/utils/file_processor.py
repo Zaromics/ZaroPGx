@@ -697,7 +697,7 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
     however it was produced.
     """
     size = analysis.file_size or 0
-    cap_gb = FASTQ_MAX_UPLOAD_BYTES // 1024**3
+    cap_gb = f"{FASTQ_MAX_UPLOAD_BYTES / 1024**3:g}"
     if size > FASTQ_MAX_UPLOAD_BYTES:
         workflow["unsupported"] = True
         workflow["unsupported_reason"] = (
@@ -2161,7 +2161,7 @@ class FileProcessor:
             )
             workflow["recommendations"].append(
                 "<p>Priority 2 (Development): FASTQ, short-read, single- or "
-                f"paired-end, up to {FASTQ_MAX_UPLOAD_BYTES // 1024**3} GB, aligned "
+                f"paired-end, up to {FASTQ_MAX_UPLOAD_BYTES / 1024**3:g} GB, aligned "
                 "to GRCh38 first.</p>"
             )
             workflow["recommendations"].append(
@@ -2360,7 +2360,7 @@ class FileProcessor:
         if combined > FASTQ_MAX_UPLOAD_BYTES:
             return refuse(
                 f"These two FASTQs total {combined / 1024 ** 3:.1f} GB, above the "
-                f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit. Align them yourself "
+                f"{FASTQ_MAX_UPLOAD_BYTES / 1024 ** 3:g} GB limit. Align them yourself "
                 "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM or CRAM."
             )
 

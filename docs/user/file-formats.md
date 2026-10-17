@@ -112,7 +112,7 @@ Refused, with the reason:
 
 - **Long reads** (Oxford Nanopore, PacBio). Align them with minimap2 against GRCh38 and upload the BAM or CRAM.
 - **Over 20 GB in total**, unless `FASTQ_MAX_UPLOAD_BYTES` sets another limit ({doc}`configuration`). This covers targeted panels and exomes, not whole genomes. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
-- **More than the free disk can hold.** Alignment keeps several BAM-sized files at once until it finishes, up to about 9 times the FASTQ's size in all (measured: 6 times, on 1 GB of reads), so the GATK service checks the free disk before it starts and refuses with how much is needed and how much is free.
+- **More than the free disk can hold.** Alignment keeps several BAM-sized files at once until it finishes, up to about 9 times the gzipped FASTQ's size in all (measured: 6 times, on 1 GB of reads; an uncompressed FASTQ counts as a third of its size), so the GATK service checks the free disk before it starts and refuses with how much is needed and how much is free.
 - **No detectable sequencing platform.** The platform is read from the read names, which SRA re-exports lose. Upload the original run files, or align the reads yourself.
 
 The limit is about disk and time: alignment is slow, and a whole genome would take hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.

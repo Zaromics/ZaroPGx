@@ -20,6 +20,7 @@ import gzip
 import importlib.util
 import logging
 import logging.handlers
+import math
 import os
 import re
 import shutil
@@ -2239,9 +2240,14 @@ def test_align_fastq_refuses_before_any_gatk_work_when_the_disk_is_short(
 def test_the_disk_check_counts_both_mates_at_the_factor(
     client, gatk_api, fake_alignment, monkeypatch
 ):
-    """Exactly enough is enough; one byte less is not. Both mates are counted."""
+    """Exactly enough is enough; one byte less is not. Both mates are counted,
+    plain FASTQ as its gzipped size (FASTQ_PLAIN_TO_GZIP)."""
     r1, r2 = _illumina_fastq(mate=1), _illumina_fastq(mate=2)
-    needed = (len(r1) + len(r2)) * gatk_api.FASTQ_ALIGN_DISK_FACTOR
+    needed = math.ceil(
+        (len(r1) + len(r2))
+        / gatk_api.FASTQ_PLAIN_TO_GZIP
+        * gatk_api.FASTQ_ALIGN_DISK_FACTOR
+    )
     files = {
         "file": ("reads_1.fastq", r1, "text/plain"),
         "file2": ("reads_2.fastq", r2, "text/plain"),
@@ -2283,6 +2289,7 @@ def test_the_disk_refusal_says_what_is_needed_and_what_is_free(
     """Sized from the file a shared input links to, not the link itself."""
     reads = tmp_path / "reads.fastq.gz"
     with open(reads, "wb") as handle:
+        handle.write(b"\x1f\x8b")  # gzip magic
         handle.truncate(2 * 1024**3)  # sparse: 2 GB by size, nothing on disk
     link = tmp_path / "linked.fastq.gz"
     link.symlink_to(reads)
@@ -2295,6 +2302,21 @@ def test_the_disk_refusal_says_what_is_needed_and_what_is_free(
     assert "2.0 GB of reads needs about 18.0 GB of free disk" in refusal.detail
     assert "5.0 GB is free" in refusal.detail
     assert "nf-core/sarek" in refusal.detail, "the refusal must name the way out"
+
+
+def test_a_plain_fastq_is_asked_for_its_gzipped_size(gatk_api, monkeypatch, tmp_path):
+    """The factor is per gzipped byte; a plain FASTQ is several times larger."""
+    reads = tmp_path / "reads.fastq"
+    with open(reads, "wb") as handle:
+        handle.write(b"@r1")
+        handle.truncate(3 * 1024**3)
+    monkeypatch.setattr(gatk_api, "FASTQ_ALIGN_DISK_FACTOR", 9)
+    monkeypatch.setattr(gatk_api, "FASTQ_PLAIN_TO_GZIP", 3)
+    _free_disk(monkeypatch, lambda path: 9 * 1024**3)
+    assert gatk_api._alignment_disk_refusal([str(reads)], tmp_path, tmp_path) is None
+    _free_disk(monkeypatch, lambda path: 9 * 1024**3 - 1)
+    refusal = gatk_api._alignment_disk_refusal([str(reads)], tmp_path, tmp_path)
+    assert "3.0 GB of reads needs about 9.0 GB" in refusal.detail
 
 
 def test_enough_disk_is_no_refusal(gatk_api, monkeypatch, tmp_path):
