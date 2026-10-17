@@ -1523,7 +1523,8 @@ def patched_alignment_regions(alignment_path: str, assembly: str) -> Dict[str, L
     spans = []
     genes = pypgx_utils.create_regions_bed(assembly=assembly, add_chr_prefix=prefixed).gr.df
     for chrom, start, end in genes[["Chromosome", "Start", "End"]].itertuples(index=False):
-        spans.append((str(chrom), int(start), int(end)))
+        # 1-based starts (fuc hands them to samtools as regions); fetch is 0-based.
+        spans.append((str(chrom), max(0, int(start) - 1), int(end)))
     for chrom, start, end in WGS_PROBE_WINDOWS_GRCH38:
         spans.append((name(chrom), start, end))
     for _, chrom, start, end in ALT_LOCUS_GENES_GRCH38:
@@ -1558,12 +1559,20 @@ def write_patched_alignment(
     regions: Dict[str, List[List[int]]],
     out_path: str,
     drop_read_group: bool,
+    keep_duplicates: bool = True,
+    qc_failed: frozenset = frozenset(),
 ) -> Dict[str, int]:
     """The uploaded reads over `regions` less those named in `replaced`, plus the
     re-aligned BAMs' reads, sorted and indexed at `out_path`; counts of each.
 
     The uploaded header is kept, so every name and read group means what it meant; a
     re-aligned read on a contig the upload's header lacks is dropped and counted.
+    The re-aligned reads are made to say what the upload's would: MarkDuplicatesSpark's
+    duplicate flags only when the upload marked duplicates too (`keep_duplicates`) --
+    else the loci's depth would lose its duplicates while the control gene's kept
+    them, and copy number would fall with the duplicate rate -- and the QC-fail flag,
+    which BwaSpark does not carry over, on the reads in `qc_failed`
+    ((name, is_read1) pairs).
     """
     import pysam
 
@@ -1609,7 +1618,12 @@ def write_patched_alignment(
                             record["tags"] = [
                                 t for t in record.get("tags", []) if not t.startswith("RG:")
                             ]
-                        out.write(pysam.AlignedSegment.from_dict(record, out.header))
+                        new = pysam.AlignedSegment.from_dict(record, out.header)
+                        if not keep_duplicates:
+                            new.is_duplicate = False
+                        if (new.query_name, new.is_read1) in qc_failed:
+                            new.is_qcfail = True
+                        out.write(new)
                         counts["realigned"] += 1
     pysam.sort("-o", out_path, unsorted)
     os.remove(unsorted)
@@ -1658,6 +1672,22 @@ def realign_alt_loci(
             f"Re-aligning {', '.join(l['locus'] for l in loci)}: {info['reads']} "
             f"({sum(l['alt_reads'] for l in loci)} reads on their ALT contigs)"
         )
+        if not reads:
+            # Every read on the ALT contigs lacked its mate (a sliced or filtered
+            # BAM): nothing to align, and the reads stay where PyPGx does not look.
+            raise RuntimeError(
+                "none of the reads on these loci's ALT contigs had its mate in the "
+                "alignment, so none could be aligned again"
+            )
+        # Whether the upload marked duplicates, judged on the loci's own reads.
+        keep_duplicates = any(r.is_duplicate for pair in reads.values() for r in pair)
+        qc_failed = frozenset(
+            (r.query_name, r.is_read1)
+            for pair in reads.values()
+            for r in pair
+            if r.is_qcfail
+        )
+        info["duplicates_marked"] = keep_duplicates
         unaligned = write_unaligned_reads(
             reads, read_groups, os.path.join(work_dir, "unaligned")
         )
@@ -1676,6 +1706,8 @@ def realign_alt_loci(
             patched_alignment_regions(alignment_path, assembly),
             patched,
             drop_read_group=not read_groups,
+            keep_duplicates=keep_duplicates,
+            qc_failed=qc_failed,
         )
         info["patched"] = counts
         info["status"] = "realigned"

@@ -50,6 +50,9 @@ NAMES = [
     "write_unaligned_reads",
     "RealignmentUnavailable",
     "write_patched_alignment",
+    "patched_alignment_regions",
+    "WGS_PROBE_WINDOWS_GRCH38",
+    "PHARMCAT_PILEUP_PAD",
     "realign_alt_loci",
     "alt_locus_mapq0",
 ]
@@ -377,6 +380,109 @@ def test_a_read_group_made_up_for_markduplicates_is_removed_again(tmp_path):
     assert not read.has_tag("RG")
 
 
+def _realigned_flags_bam(tmp_path, flags):
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": n, "LN": ln} for n, ln in CONTIGS]}
+    path = str(tmp_path / "realigned_flags.bam")
+    with pysam.AlignmentFile(path, "wb", header=header) as out:
+        for name, flag in flags:
+            out.write(_read(out.header, name, "chr22", SPAN_AT, flag, mapq=60))
+    return path
+
+
+@pytest.mark.parametrize("keep", [True, False])
+def test_duplicate_flags_follow_the_upload(tmp_path, keep):
+    """MarkDuplicatesSpark marks the loci; an upload that never marked duplicates
+    keeps them in its control gene's depth, so the loci must keep theirs too."""
+    aln = _alignment(tmp_path, [("x", "chr22", OUTSIDE, 0, None, None, 60)])
+    realigned = _realigned_flags_bam(tmp_path, [("d", 0x400), ("q", 0)])
+    out = str(tmp_path / "patched.bam")
+    NS["write_patched_alignment"](
+        aln, [realigned], {"d", "q"}, {}, out, False, keep_duplicates=keep
+    )
+    with pysam.AlignmentFile(out) as patched:
+        flags = {r.query_name: r.is_duplicate for r in patched.fetch()}
+    assert flags == {"d": keep, "q": False}
+
+
+def test_the_qc_fail_flag_comes_back(tmp_path):
+    """BwaSpark builds each record from name, bases, qualities and read group."""
+    aln = _alignment(tmp_path, [("x", "chr22", OUTSIDE, 0, None, None, 60)])
+    realigned = _realigned_flags_bam(tmp_path, [("q", P1), ("q", P2), ("ok", 0)])
+    out = str(tmp_path / "patched.bam")
+    NS["write_patched_alignment"](
+        aln,
+        [realigned],
+        {"q", "ok"},
+        {},
+        out,
+        False,
+        qc_failed=frozenset({("q", False)}),
+    )
+    with pysam.AlignmentFile(out) as patched:
+        got = sorted((r.query_name, r.is_read1, r.is_qcfail) for r in patched.fetch())
+    assert got == [("ok", False, False), ("q", False, True), ("q", True, False)]
+
+
+class _Frame:
+    """Just enough of a DataFrame for patched_alignment_regions."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __getitem__(self, columns):
+        return self
+
+    def itertuples(self, index=False):
+        return iter(self.rows)
+
+
+def test_the_regions_cover_what_the_step_reads(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    rows = [("chr22", 42116499, 42155810), ("chr12", 47838537, 47907994)]
+    bed = types.SimpleNamespace(gr=types.SimpleNamespace(df=_Frame(rows)))
+    utils = types.SimpleNamespace(create_regions_bed=lambda **kw: bed)
+    api = types.ModuleType("pypgx.api")
+    api.utils = utils
+    monkeypatch.setitem(sys.modules, "pypgx", types.ModuleType("pypgx"))
+    monkeypatch.setitem(sys.modules, "pypgx.api", api)
+    vcf = tmp_path / "positions.vcf"
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr22,length=50818468>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "chr22\t43000100\trs1\tAC\tA\t.\t.\t.\n"
+    )
+    monkeypatch.setitem(NS, "PHARMCAT_POSITIONS_VCF", vcf)
+    monkeypatch.setitem(NS, "WGS_PROBE_WINDOWS_GRCH38", (("chr4", 1000, 2000),))
+    aln = _alignment(tmp_path, [("x", "chr22", OUTSIDE, 0, None, None, 60)])
+    regions = NS["patched_alignment_regions"](aln, "GRCh38")
+    pad = NS["PHARMCAT_PILEUP_PAD"]
+    # chr12 is not in this alignment's header: left out, not fetched.
+    assert set(regions) == {"chr22", "chr4"}
+    # PyPGx's 1-based start is fetched from the base before it; the CYP2D6 gene
+    # region falls inside its locus span, which merges it.
+    assert [42077655, 42253758] in regions["chr22"]
+    assert [43000099 - pad, 43000099 + 2 + pad] in regions["chr22"]
+    assert regions["chr4"][0] == [1000, 2000]
+    assert [68306358, 69010457] in regions["chr4"]
+
+
+def test_orphans_alone_are_not_reported_as_realigned(tmp_path):
+    """Every ALT read without its mate (a sliced BAM): nothing to align, so the
+    genes must be flagged, not reported as re-aligned."""
+    alt = "chr22_KI270928v1_alt"
+    records = [
+        (f"o{i}", alt, 1000 + i, P1, ("chr22", OUTSIDE + 10000 + i), "L1")
+        for i in range(25)
+    ]
+    aln = _alignment(tmp_path, records)
+    calls_from, info = NS["realign_alt_loci"](aln, "GRCh38", str(tmp_path / "w"))
+    assert calls_from == aln
+    assert info["status"] == "failed"
+    assert "mate" in info["reason"]
+
+
 # --------------------------------------------------------------------------
 # The whole of it, gatk-api faked
 # --------------------------------------------------------------------------
@@ -513,6 +619,12 @@ def test_realigned_loci_are_reported_not_flagged():
     )
     assert "32,700 for CYP2D6, 67,754 for UGT2B17 and UGT2B15" in alert
     assert "95,594 read pairs" in alert
+    assert "and marked duplicates." in alert
+    output["alt_realignment"]["duplicates_marked"] = False
+    assert "leaving duplicates unmarked, as the upload left them." in (
+        alt_locus_alert(output)
+    )
+    output["alt_realignment"]["duplicates_marked"] = True
     assert "CYP2D6 526 before (48% at mapping quality 0), 1,512 after (6%)" in alert
     assert "UGT2B15 2,428 before (68% at mapping quality 0)" in alert
     assert "⚠️" not in alert

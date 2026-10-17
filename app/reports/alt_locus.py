@@ -230,8 +230,14 @@ def _realignment_entry(
         + "), where PyPGx does not read. ZaroPGx aligned the reads of these loci"
         + (f", {' and '.join(counted)}," if counted else "")
         + " again to GRCh38's main chromosomes with BWA-MEM (GATK BwaSpark), as PyPGx "
-        "requires, and marked duplicates. These genes are called from those reads; "
-        "every other gene from the reads as uploaded."
+        "requires, "
+        + (
+            "leaving duplicates unmarked, as the upload left them. "
+            if info.get("duplicates_marked") is False
+            else "and marked duplicates. "
+        )
+        + "These genes are called from those reads; every other gene from the "
+        "reads as uploaded."
     )
     if changes:
         text += " Reads over the gene: " + "; ".join(changes) + "."
