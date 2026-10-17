@@ -50,8 +50,8 @@ actually running in the image.
 
 import ast
 import re
-import subprocess
 import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
