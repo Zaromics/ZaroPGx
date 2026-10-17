@@ -100,6 +100,7 @@ class FHIRExportService:
         include_recommendations: bool = True,
         pharmcat_data: Optional[Dict[str, Any]] = None,
         workflow_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Export a PharmCAT run as a FHIR Bundle.
@@ -109,6 +110,9 @@ class FHIRExportService:
             patient_info: Optional patient information dict
             output_format: "json" or "xml"
             include_recommendations: Whether to include therapeutic implications
+            patient_id: The ZaroPGx patient the run belongs to, the Patient's
+                identifier when patient_info names none (else the job's
+                patient, else the run id)
 
         Returns:
             Dict containing:
@@ -150,6 +154,7 @@ class FHIRExportService:
                 patient_info=patient_info,
                 include_recommendations=include_recommendations,
                 workflow_id=workflow_id,
+                patient_id=patient_id or self._job_patient_id(workflow_id),
             )
 
             # Convert to requested format
@@ -220,6 +225,7 @@ class FHIRExportService:
                 run_id=run_id,
                 patient_info=patient_info,
                 workflow_id=workflow_id,
+                patient_id=self._job_patient_id(workflow_id),
             )
 
             file_stub = workflow_id or run_id or "workflow"
@@ -305,6 +311,14 @@ class FHIRExportService:
                 else [output_format.lower()]
             )
 
+            # The patient directory is the patient's id, unless it is the job's
+            # own directory (no patient given; save_fhir_export_for_workflow).
+            bundle_patient_id = (
+                patient_id
+                if patient_id and str(patient_id) != str(workflow_id)
+                else None
+            )
+
             for fmt in formats_to_export:
                 # Generate the export
                 result = self.export_pgx_report(
@@ -314,6 +328,7 @@ class FHIRExportService:
                     include_recommendations=include_recommendations,
                     pharmcat_data=pharmcat_data,
                     workflow_id=workflow_id,
+                    patient_id=bundle_patient_id,
                 )
 
                 if not result.get("success"):
@@ -423,6 +438,7 @@ class FHIRExportService:
         patient_info: Optional[Dict[str, Any]] = None,
         include_recommendations: bool = True,
         workflow_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Build a FHIR Bundle containing all PGx report resources.
@@ -471,6 +487,7 @@ class FHIRExportService:
         patient_resource, patient_ref = self._create_patient_resource(
             patient_info or {},
             reference_id,
+            patient_id=patient_id,
         )
         entries.append(
             {
@@ -618,9 +635,17 @@ class FHIRExportService:
         self,
         patient_info: Dict[str, Any],
         run_id: str,
+        patient_id: Optional[str] = None,
     ) -> tuple:
-        """Create a FHIR Patient resource."""
-        patient_identifier = patient_info.get("id", run_id)
+        """Create a FHIR Patient resource.
+
+        Its identifier is the id patient_info gives, else the ZaroPGx patient's
+        (patient_id), and only failing both the run's. It used to fall straight
+        to the run: a bundle saved without patient details (POST
+        /fhir/save/workflow/{job}) named a Patient after the job, and pushing it
+        then made a second Patient and moved the report onto it.
+        """
+        patient_identifier = patient_info.get("id") or patient_id or run_id
         patient_id = self._stable_id("Patient", patient_identifier)
 
         resource = {
@@ -1122,6 +1147,23 @@ class FHIRExportService:
         )
 
         return report
+
+    def _job_patient_id(self, workflow_id: Optional[str]) -> Optional[str]:
+        """The patient a job belongs to (its metadata's patient_id, the name of
+        its report directory's parent), or None."""
+        if not workflow_id:
+            return None
+        try:
+            # Lazy for the same circular-import reason as generator's imports.
+            from app.services.job_service import JobService
+
+            job = JobService(self.db).get_job(str(workflow_id))
+        except Exception as e:
+            logger.debug(f"No job metadata for {workflow_id}: {e}")
+            return None
+        metadata = getattr(job, "job_metadata", None)
+        value = metadata.get("patient_id") if isinstance(metadata, dict) else None
+        return str(value) if isinstance(value, (str, uuid.UUID)) and value else None
 
     @staticmethod
     def _stable_id(*parts: Any) -> str:
