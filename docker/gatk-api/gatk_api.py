@@ -3281,9 +3281,12 @@ FASTQ_MAX_UPLOAD_BYTES = int(
 #   /data/results  aligned_<id>.bam.parts/ and the BAM merged from them
 #                  (MarkDuplicatesSpark; both exist while it merges)      ~1.5x each
 # About 8.5x, rounded up. The input itself is linked from /data, or already on disk
-# when this is checked. Each share is an estimate from the formats, the shuffle's the
-# roughest; none has been measured at exome or genome scale. An uncompressed FASTQ is
-# several times its gzipped size, so it is asked for more than it needs.
+# when this is checked. Measured 2026-10-16 on 2% of NA12878's 30x reads (1.08 GB
+# gzipped, 7.6 M pairs; disk sampled every 5 s): the peak came as MarkDuplicatesSpark
+# finished, 5.5 GB in work_dir and 1.1 GB of output, about 6.1x, so 9 leaves room for
+# the samples it missed and for larger inputs, not yet measured at exome or genome
+# scale. An uncompressed FASTQ is several times its gzipped size, so it is asked for
+# more than it needs.
 FASTQ_ALIGN_DISK_FACTOR = 9
 
 # Below this share of reads aligned, /align-fastq refuses. Human short-read data aligns

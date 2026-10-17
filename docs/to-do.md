@@ -23,10 +23,10 @@ curated: true
   with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over the cap
   (`FASTQ_MAX_UPLOAD_BYTES`, 20 GB by default), more than the free disk can hold (about 9x
   the FASTQ, checked before alignment starts), long reads (ONT, PacBio), or a platform that
-  cannot be read from the read names. The cap is about scratch disk and run time; the 9x is
-  estimated from the files the lane writes, not measured, and MarkDuplicatesSpark's memory
-  at whole-genome scale within gatk-api's limit is untested. Open: measure both on one
-  whole-genome FASTQ (NA12878).
+  cannot be read from the read names. The cap is about scratch disk and run time. On 2% of
+  NA12878's 30x reads (1.08 GB, 7.6 M pairs) alignment took 11 minutes and peaked at 6.1x
+  the FASTQ's size in disk (Oct 2026), so a whole genome would take hours. Open: measure
+  disk and MarkDuplicatesSpark's memory on one whole-genome FASTQ.
 - **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
   pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
   that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
