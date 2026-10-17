@@ -124,6 +124,49 @@ LOINC_DISPLAYS = {
     "104668-9": "CYP2C9 Activity Score in Blood or Tissue",
     "104669-7": "CYP2D6 Activity Score in Blood or Tissue",
     "104665-5": "DPYD Activity Score in Blood or Tissue",
+    "LA10315-2": "Ultrarapid metabolizer",
+    "LA25390-8": "Rapid metabolizer",
+    "LA25391-6": "Normal metabolizer",
+    "LA10317-8": "Intermediate metabolizer",
+    "LA9657-3": "Poor metabolizer",
+    "LA25392-4": "Increased function",
+    "LA25393-2": "Normal function",
+    "LA25395-7": "Decreased function",
+    "LA25394-0": "Poor function",
+    "LA6677-4": "Responsive",
+    "LA19541-4": "High risk",
+    "LA19542-2": "Low risk",
+}
+
+# The phenotypes ZaroPGx reports, by the answer of the IG's
+# genetic-therapeutic-implications-vs (3.0.0, LOINC) that says the same thing. The
+# key is the phenotype in lower case, spaces collapsed. Only exact equivalents:
+# a hedged phenotype ("Likely Poor Metabolizer", "Possible Decreased Function"),
+# G6PD's activity terms (Normal, Deficient, Variable), an uncertain result, the
+# wild-type labels and "A or B" have no code that says the same, and stay text.
+# The risk statements take High/Low risk, as CPIC's own EHR priority for them
+# reads ("Abnormal/Priority/High Risk", "Normal/Routine/Low Risk").
+PHENOTYPE_ANSWERS = {
+    "ultrarapid metabolizer": "LA10315-2",
+    "rapid metabolizer": "LA25390-8",
+    "normal metabolizer": "LA25391-6",
+    "intermediate metabolizer": "LA10317-8",
+    "poor metabolizer": "LA9657-3",
+    "increased function": "LA25392-4",
+    "normal function": "LA25393-2",
+    "decreased function": "LA25395-7",
+    "poor function": "LA25394-0",
+    "ivacaftor responsive in cf patients": "LA6677-4",
+    "malignant hyperthermia susceptible": "LA19541-4",
+    "increased risk of aminoglycoside-induced hearing loss": "LA19541-4",
+    "normal risk of aminoglycoside-induced hearing loss": "LA19542-2",
+}
+
+# PharmCAT's HLA phenotypes name a risk allele and whether it was found
+# ("*15:02 positive", "*58:01 negative").
+HLA_ALLELE_RESULT_ANSWERS = {
+    "positive": "LA19541-4",
+    "negative": "LA19542-2",
 }
 
 # SNOMED CT 405824009, as the International Edition names it: the genomic study's

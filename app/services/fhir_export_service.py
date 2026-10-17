@@ -10,6 +10,7 @@ Reference: https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.htm
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -446,6 +447,7 @@ class FHIRExportService:
         Following the HL7 Genomics Reporting IG structure:
         - DiagnosticReport (Genomic Report)
         - Observation (Genotype) for each gene
+        - Observation (Therapeutic Implication) for each gene's phenotype
         - Observation (Therapeutic Implication) for each drug
         - Task (Medication Recommendation) for each recommendation
         - Patient
@@ -471,6 +473,7 @@ class FHIRExportService:
 
         entries = []
         observation_references = []
+        phenotype_references = []
         implication_references = []
         task_references = []
         # How often each name has come up, so a gene or drug listed twice still
@@ -511,12 +514,34 @@ class FHIRExportService:
                     "resource": genotype_obs,
                 }
             )
-            observation_references.append(
-                {
-                    "reference": f"urn:uuid:{genotype_obs['id']}",
-                    "display": f"{gene_data.get('gene', 'Unknown')} {gene_data.get('diplotype', '')}",
-                }
-            )
+            genotype_ref = {
+                "reference": f"urn:uuid:{genotype_obs['id']}",
+                "display": f"{gene_data.get('gene', 'Unknown')} {gene_data.get('diplotype', '')}",
+            }
+            observation_references.append(genotype_ref)
+
+            # The phenotype, as the IG states one: a therapeutic implication of
+            # the genotype (see _create_phenotype_implication).
+            phenotype = gene_data.get("phenotype")
+            if self._states_a_phenotype(phenotype):
+                phenotype_obs = self._create_phenotype_implication(
+                    gene_data=gene_data,
+                    patient_ref=patient_ref,
+                    genotype_ref=genotype_ref,
+                    resource_id=stable_id("phenotype", gene_data.get("gene")),
+                )
+                entries.append(
+                    {
+                        "fullUrl": f"urn:uuid:{phenotype_obs['id']}",
+                        "resource": phenotype_obs,
+                    }
+                )
+                phenotype_references.append(
+                    {
+                        "reference": f"urn:uuid:{phenotype_obs['id']}",
+                        "display": f"{gene_data.get('gene', 'Unknown')} {phenotype}",
+                    }
+                )
 
         # Create Therapeutic Implications and Medication Recommendations
         if include_recommendations:
@@ -586,7 +611,9 @@ class FHIRExportService:
         )
 
         # Create DiagnosticReport (main Genomic Report)
-        all_result_refs = observation_references + implication_references
+        all_result_refs = (
+            observation_references + phenotype_references + implication_references
+        )
         diagnostic_report = self._create_diagnostic_report(
             pharmcat_data=pharmcat_data,
             patient_ref=patient_ref,
@@ -702,7 +729,6 @@ class FHIRExportService:
         obs_id = resource_id or str(uuid.uuid4())
         gene_symbol = gene_data.get("gene", "Unknown")
         diplotype = gene_data.get("diplotype", "Unknown")
-        phenotype = gene_data.get("phenotype", "Unknown")
         activity_score = gene_data.get("activity_score")
         activity_value = None
         if activity_score not in (None, "", "n/a"):
@@ -764,20 +790,9 @@ class FHIRExportService:
             }
         )
 
-        # Add phenotype component. "N/A" (app/reports/generator.py) says the
-        # calling tool defines none for the gene: there is no phenotype to state.
-        if phenotype and phenotype not in ("Unknown", "N/A"):
-            observation["component"].append(
-                {
-                    # Text, not a LOINC code: the code once sent here was
-                    # CYP2C9's metabolic-activity interpretation, for every
-                    # gene. The IG's coded form is the FHIR round's work.
-                    "code": {"text": "Phenotype"},
-                    "valueCodeableConcept": {
-                        "text": phenotype,
-                    },
-                }
-            )
+        # No phenotype here: the genotype profile has no place for one, and the
+        # IG states it as a therapeutic implication of the genotype
+        # (_create_phenotype_implication). It was a text component.
 
         # Add activity score if present
         if activity_value is not None:
@@ -835,6 +850,86 @@ class FHIRExportService:
             )
 
         return observation
+
+    @staticmethod
+    def _states_a_phenotype(phenotype: Any) -> bool:
+        """Whether the row has a phenotype to state. "N/A" (app/reports/
+        generator.py) says the calling tool defines none for the gene; "Unknown"
+        that none was reported."""
+        return bool(phenotype) and phenotype not in ("Unknown", "N/A")
+
+    def _create_phenotype_implication(
+        self,
+        gene_data: Dict[str, Any],
+        patient_ref: str,
+        genotype_ref: Dict[str, str],
+        resource_id: str,
+    ) -> Dict[str, Any]:
+        """The gene's phenotype as a therapeutic implication of its genotype.
+
+        The Genomics Reporting IG (3.0.0) states a pharmacogenomic phenotype --
+        metabolizer status, function, a risk -- in the "therapeutic-implication"
+        component of a therapeutic-implication observation derived from the
+        genotype, coded from its genetic-therapeutic-implications value set
+        (LOINC answers such as LA9657-3 "Poor metabolizer"). This one names no
+        medication: the phenotype is the genotype's, whatever the drug, and every
+        gene with one gets it, drugs or not. A phenotype the value set has no code
+        for travels as text (_phenotype_concept).
+        """
+        gene_symbol = gene_data.get("gene", "Unknown")
+        phenotype = gene_data.get("phenotype")
+        return {
+            "resourceType": "Observation",
+            "id": resource_id,
+            "meta": {
+                "profile": [terminology.PROFILE_THERAPEUTIC_IMPLICATION],
+            },
+            "identifier": [self._resource_identifier(resource_id)],
+            "status": "final",
+            "category": self._genomic_observation_category(),
+            "code": {
+                "coding": [self._tbd_coding("therapeutic-implication")],
+                "text": f"{gene_symbol} phenotype",
+            },
+            "subject": {
+                "reference": patient_ref,
+            },
+            "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
+            "derivedFrom": [dict(genotype_ref)],
+            "component": [
+                {
+                    "code": {
+                        "coding": [self._tbd_coding("therapeutic-implication")],
+                    },
+                    "valueCodeableConcept": self._phenotype_concept(phenotype),
+                }
+            ],
+        }
+
+    @staticmethod
+    def _phenotype_concept(phenotype: str) -> Dict[str, Any]:
+        """The phenotype as the IG codes it, with ZaroPGx's words as the text, or
+        the words alone when the value set has no code that says the same thing
+        (terminology.PHENOTYPE_ANSWERS)."""
+        text = str(phenotype).strip()
+        key = " ".join(text.lower().split())
+        code = terminology.PHENOTYPE_ANSWERS.get(key)
+        if code is None:
+            allele_result = re.fullmatch(r"\*\d+:\d+ (positive|negative)", key)
+            if allele_result:
+                code = terminology.HLA_ALLELE_RESULT_ANSWERS[allele_result.group(1)]
+        if code is None:
+            return {"text": text}
+        return {
+            "coding": [
+                {
+                    "system": terminology.LOINC,
+                    "code": code,
+                    "display": terminology.LOINC_DISPLAYS[code],
+                }
+            ],
+            "text": text,
+        }
 
     def _create_therapeutic_implication(
         self,

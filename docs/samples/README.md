@@ -37,11 +37,47 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 - `valueCodeableConcept` carries the diplotype as text (`*1/*4`), as the IG's PharmVar example does
 - Components include:
   - **Gene studied** (`48018-6`) — the gene's HGNC id (`HGNC:2625`), its symbol as the display
-  - **Phenotype** (text) — e.g., "Intermediate Metabolizer"
   - **Activity score** — LOINC's activity-score code for CYP2B6, CYP2C19, CYP2C9, CYP2D6 and DPYD (`104669-7` for CYP2D6), a text code for any other gene
   - **Haplotype name** (`84414-2`) — one per allele (allele1, allele2)
+- No phenotype: the genotype profile has no place for one (next section)
 
-### 4. Observation — Therapeutic Implication (one per drug)
+### 4. Observation — Therapeutic Implication of the genotype (one per gene with a phenotype)
+- **Profile:** `therapeutic-implication`, code `therapeutic-implication`, text "CYP2D6 phenotype"
+- `derivedFrom` its genotype; no medication: the phenotype is the genotype's, for every drug
+- One component, `therapeutic-implication`, whose value is the phenotype: coded from the
+  IG's `genetic-therapeutic-implications-vs` (LOINC answers) where the value set has a code
+  that says the same thing, with ZaroPGx's words as its text; text alone where it has none
+  (table below)
+- None for a gene whose phenotype is "N/A" (the calling tool defines none) or not reported
+
+This is where the IG states a pharmacogenomic phenotype: "a predicted ramification based
+on the presence of associated molecular finding(s)", such as "alterations in drug
+metabolism", in a therapeutic implication derived from the genotype. The IG's own examples
+put it in each drug's implication (TxImp01-06); ZaroPGx states it once per gene, so genes
+with no drug keep theirs and a drug that depends on several genes does not have to say
+which phenotype is whose.
+
+| Phenotype | Sent as |
+|---|---|
+| Ultrarapid / Rapid / Normal / Intermediate / Poor Metabolizer | LOINC `LA10315-2` / `LA25390-8` / `LA25391-6` / `LA10317-8` / `LA9657-3` |
+| Increased / Normal / Decreased / Poor Function | `LA25392-4` / `LA25393-2` / `LA25395-7` / `LA25394-0` |
+| HLA `*15:02 positive` (any allele) | `LA19541-4` High risk |
+| HLA `*58:01 negative` (any allele) | `LA19542-2` Low risk |
+| increased / normal risk of aminoglycoside-induced hearing loss (MT-RNR1) | `LA19541-4` High risk / `LA19542-2` Low risk |
+| Malignant Hyperthermia Susceptible (RYR1, CACNA1S) | `LA19541-4` High risk |
+| ivacaftor responsive in CF patients (CFTR) | `LA6677-4` Responsive |
+| Likely / Possible Intermediate Metabolizer, Likely Poor Metabolizer, Possible Decreased Function | text: the value set has only the definite terms |
+| G6PD Normal, Deficient, Deficient with CNSHA, Variable | text: enzyme activity terms with no equivalent in the value set |
+| Uncertain Susceptibility, uncertain risk of aminoglycoside-induced hearing loss, Indeterminate, No Result | text: no result to code |
+| ivacaftor non-responsive in CF patients | text: the value set has "Presumed non-responsive", not the same statement |
+| Likely Wild Type, Possibly Wild Type, "A or B" (unphased, more than one fit) | text: ZaroPGx's labels |
+| anything else | text |
+
+The risk statements take High or Low risk as CPIC's own EHR priority for them reads
+("Abnormal/Priority/High Risk", "Normal/Routine/Low Risk"). The match is on the whole
+phenotype, ignoring case and spacing.
+
+### 5. Observation — Therapeutic Implication (one per drug)
 - **Profile:** `therapeutic-implication`
 - Categories "laboratory" and Genetics (`GE`)
 - Components include:
@@ -50,7 +86,7 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 - `derivedFrom` links back to the genotype observation(s) that informed the implication
 - Optional `extension` for related artifacts (CPIC/DPWG guideline citations)
 
-### 5. Task — Medication Recommendation (one per recommendation)
+### 6. Task — Medication Recommendation (one per recommendation)
 - **Profile:** `medication-recommendation`
 - `status: requested`, `intent: proposal`
 - `description` contains the actionable recommendation text
@@ -59,7 +95,7 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 - `input` items for the medication assessed (`51963-7`) and CPIC's strength of recommendation (Strong, Moderate, Optional, No recommendation, or Unspecified for a guideline without one), as text under a text type: LOINC has no code for it, and its "Level of evidence" is another thing. None is sent when PharmCAT gave none
 - No `code`: the profile requires one of LOINC's medication usage suggestions (consider an alternative, decrease the dose, ...), and picking one would mean interpreting the guideline's text
 
-### 6. Procedure — Genomic Study
+### 7. Procedure — Genomic Study
 - **Profile:** `genomic-study`
 - Category "laboratory", which the profile fixes
 - Coded as SNOMED CT "Genetic test" (`405824009`)
@@ -135,6 +171,7 @@ Errors: none. The validator's remaining warnings, and why they stay:
 - **No performer** (every observation): ZaroPGx does not know the laboratory or clinician, and does not invent one.
 - **Recommendation matches two profiles**: the IG's `recommended-action` extension allows a medication or a follow-up recommendation, and a Task without a code fits both.
 - **HGNC codes cannot be checked**: no terminology server the validator can reach carries HGNC. The ids are HGNC's own (rest.genenames.org).
+- **A phenotype without a code** ("No code provided, and a code should be provided from the value set 'Genetic Therapeutic Implications'"): the value set is extensible, so text is allowed where it has no equivalent; the table above says which phenotypes those are.
 
 ## Generation
 

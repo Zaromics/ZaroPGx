@@ -133,7 +133,8 @@ def test_pushing_twice_keeps_one_copy(server):
     report = httpx.get(f"{server}/{report_url}", timeout=60).json()
     patient_url = first["patient"].split("/_history")[0]
     assert report["subject"]["reference"] == patient_url
-    assert len(report["result"]) == 3
+    # 2 genotypes, their 2 phenotypes, 1 drug.
+    assert len(report["result"]) == 5
     for result in report["result"]:
         observation = httpx.get(f"{server}/{result['reference']}", timeout=60).json()
         assert observation["subject"]["reference"] == patient_url
@@ -142,7 +143,21 @@ def test_pushing_twice_keeps_one_copy(server):
     regenerated = _bundle(patient_id, report_id)
     third = push.push_bundle(regenerated, job_id, server_url=server)
     assert all(c["created"] == 0 for c in third["resources"].values())
-    assert _count(server, f"Observation?subject={patient_url}") == 3
+    assert _count(server, f"Observation?subject={patient_url}") == 5
+    # The phenotype, coded the IG's way, read back from the server.
+    poor = httpx.get(
+        f"{server}/Observation",
+        params={
+            "subject": patient_url,
+            "component-value-concept": "http://loinc.org|LA10317-8",
+        },
+        headers={"Cache-Control": "no-cache"},
+        timeout=60,
+    ).json()
+    assert sorted(e["resource"]["code"]["text"] for e in poor["entry"]) == [
+        "CYP2C19 phenotype",
+        "CYP2D6 phenotype",
+    ]
 
     # Regenerated without the drug: its implication and recommendation go.
     smaller = copy.deepcopy(DATA)
@@ -152,12 +167,12 @@ def test_pushing_twice_keeps_one_copy(server):
     )
     assert fourth["resources"]["Observation"]["deleted"] == 1
     assert fourth["resources"]["Task"]["deleted"] == 1
-    assert _count(server, f"Observation?subject={patient_url}") == 2
+    assert _count(server, f"Observation?subject={patient_url}") == 4
     assert _count(server, f"Task?subject={patient_url}") == 0
     tag = f"urn:zaropgx:job-id|{job_id}"
-    assert _count(server, f"Observation?_tag={tag}") == 2
+    assert _count(server, f"Observation?_tag={tag}") == 4
     report = httpx.get(f"{server}/{report_url}", timeout=60).json()
-    assert len(report["result"]) == 2
+    assert len(report["result"]) == 4
     assert "extension" not in report or all(
         not x["url"].endswith("recommended-action") for x in report["extension"]
     )

@@ -212,11 +212,12 @@ def test_push_posts_one_transaction_and_counts_what_was_created():
     assert handler.request.headers["content-type"] == "application/fhir+json"
     assert handler.sent["type"] == "transaction"
     assert summary["server_url"] == "http://hapi.test/fhir"
-    assert summary["entries"] == 8
+    assert summary["entries"] == 10
     assert summary["resources"] == {
         "DiagnosticReport": {"created": 1, "existing": 0, "deleted": 0},
         "Patient": {"created": 1, "existing": 0, "deleted": 0},
-        "Observation": {"created": 3, "existing": 0, "deleted": 0},
+        # 2 genotypes, their 2 phenotypes, 1 drug.
+        "Observation": {"created": 5, "existing": 0, "deleted": 0},
         "Task": {"created": 2, "existing": 0, "deleted": 0},
         "Procedure": {"created": 1, "existing": 0, "deleted": 0},
     }
@@ -231,7 +232,7 @@ def test_a_second_push_reports_the_resources_as_existing():
         client=_client(_respond_all("200 OK")),
     )
     assert all(c["created"] == 0 for c in summary["resources"].values())
-    assert sum(c["existing"] for c in summary["resources"].values()) == 8
+    assert sum(c["existing"] for c in summary["resources"].values()) == 10
 
 
 def test_a_server_that_is_down_is_a_clear_error():
@@ -459,7 +460,7 @@ def _ok_entries(sent):
                 "type": "transaction-response",
                 "entry": _ok_entries(sent)[:-1],
             },
-            "7 entries for the 8 sent",
+            "9 entries for the 10 sent",
         ),
         (
             lambda sent: {
@@ -468,7 +469,7 @@ def _ok_entries(sent):
                 "entry": _ok_entries(sent)[:-1]
                 + [{"response": {"status": "400 Bad Request"}}],
             },
-            "1 of the 8 entries were not stored (entry 7: 400 Bad Request)",
+            "1 of the 10 entries were not stored (entry 9: 400 Bad Request)",
         ),
         (lambda sent: [], "list"),
     ],
