@@ -1348,23 +1348,40 @@ def _locus_regions(bam, loci):
                 yield alt, 0, bam.get_reference_length(alt)
 
 
-def _fetch_mate(bam, read):
-    """The primary record of `read`'s mate, found at the mate's position, or None."""
-    if read.next_reference_id < 0:
-        return None
-    for other in bam.fetch(
-        bam.get_reference_name(read.next_reference_id),
-        read.next_reference_start,
-        read.next_reference_start + 1,
-    ):
-        if (
-            other.query_name == read.query_name
-            and other.is_read1 != read.is_read1
-            and not other.is_secondary
-            and not other.is_supplementary
-        ):
-            return other
-    return None
+def _fetch_mates(bam, missing: Dict[str, Any]) -> Dict[str, Any]:
+    """The primary records of the mates of `missing` ({name: the read we have}).
+
+    Fetched contig by contig in merged windows around the mates' positions, each
+    window read once. One fetch per mate, in no order, took 360 s for 1,580 mates
+    of NA12878's loci (228 ms each); the windows took 6 s.
+    """
+    positions: Dict[int, List[int]] = {}
+    for read in missing.values():
+        if read.next_reference_id >= 0:
+            positions.setdefault(read.next_reference_id, []).append(
+                read.next_reference_start
+            )
+    found: Dict[str, Any] = {}
+    for tid, starts in positions.items():
+        windows: List[List[int]] = []
+        for start in sorted(starts):
+            if windows and start - windows[-1][1] <= 1000:
+                windows[-1][1] = start + 1
+            else:
+                windows.append([start, start + 1])
+        contig = bam.get_reference_name(tid)
+        for start, end in windows:
+            for other in bam.fetch(contig, start, end):
+                have = missing.get(other.query_name)
+                if (
+                    have is not None
+                    and other.is_read1 != have.is_read1
+                    and not other.is_secondary
+                    and not other.is_supplementary
+                    and other.reference_start == have.next_reference_start
+                ):
+                    found[other.query_name] = other
+    return found
 
 
 def collect_locus_reads(bam, loci) -> Tuple[Dict[str, list], int]:
@@ -1386,18 +1403,20 @@ def collect_locus_reads(bam, loci) -> Tuple[Dict[str, list], int]:
                     pair[slot] = read
             else:
                 reads[read.query_name] = [read]
+    missing = {
+        name: pair[0] if pair[0] is not None else pair[1]
+        for name, pair in reads.items()
+        if len(pair) == 2 and (pair[0] is None or pair[1] is None)
+    }
+    mates = _fetch_mates(bam, missing)
     orphans = 0
-    for name in list(reads):
-        pair = reads[name]
-        if len(pair) == 1 or (pair[0] is not None and pair[1] is not None):
-            continue
-        have = pair[0] if pair[0] is not None else pair[1]
-        mate = _fetch_mate(bam, have)
+    for name in missing:
+        mate = mates.get(name)
         if mate is None:
             del reads[name]
             orphans += 1
             continue
-        pair[0 if mate.is_read1 else 1] = mate
+        reads[name][0 if mate.is_read1 else 1] = mate
     return reads, orphans
 
 

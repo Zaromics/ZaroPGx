@@ -45,7 +45,7 @@ NAMES = [
     "ALT_LOCUS_GENES_GRCH38",
     "alt_loci_to_realign",
     "_locus_regions",
-    "_fetch_mate",
+    "_fetch_mates",
     "collect_locus_reads",
     "write_unaligned_reads",
     "RealignmentUnavailable",
@@ -233,6 +233,33 @@ def test_the_locus_reads_come_with_their_mates(tmp_path):
     assert got["single"] == [("chr22", SPAN_AT + 30, 0)]
     assert "elsewhere" not in got
     assert sum(1 for name in got if name.startswith("alt")) == 25
+
+
+def test_mates_far_away_are_fetched_a_window_at_a_time(tmp_path):
+    """Two mates in one window, one on another contig; a secondary record of a mate
+    at its position is not the mate."""
+    records = [
+        ("a", "chr22", SPAN_AT, P1, ("chr22", OUTSIDE), "L1"),
+        ("a", "chr22", OUTSIDE, P2 | REV, ("chr22", SPAN_AT), "L1"),
+        ("a", "chr22", OUTSIDE, P2 | 0x100, ("chr22", SPAN_AT), "L1"),
+        ("b", "chr22", SPAN_AT + 5, P2, ("chr22", OUTSIDE + 400), "L1"),
+        ("b", "chr22", OUTSIDE + 400, P1 | REV, ("chr22", SPAN_AT + 5), "L1"),
+        ("c", "chr22", SPAN_AT + 9, P1, ("chr4", 1000), "L1"),
+        ("c", "chr4", 1000, P2 | REV, ("chr22", SPAN_AT + 9), "L1"),
+    ]
+    aln = _alignment(tmp_path, records)
+    with pysam.AlignmentFile(aln) as bam:
+        reads, orphans = NS["collect_locus_reads"](bam, [LOCI["CYP2D6"]])
+        got = {
+            name: [(r.reference_name, r.reference_start, r.flag) for r in pair]
+            for name, pair in reads.items()
+        }
+    assert orphans == 0
+    assert got == {
+        "a": [("chr22", SPAN_AT, P1), ("chr22", OUTSIDE, P2 | REV)],
+        "b": [("chr22", OUTSIDE + 400, P1 | REV), ("chr22", SPAN_AT + 5, P2)],
+        "c": [("chr22", SPAN_AT + 9, P1), ("chr4", 1000, P2 | REV)],
+    }
 
 
 def test_the_reads_go_unaligned_in_their_own_orientation(tmp_path):
