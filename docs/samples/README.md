@@ -90,7 +90,10 @@ entries' `request`s):
 ```
 
 so the Patient is created once and reused, and pushing a job again updates its report and
-resources instead of adding copies.
+resources instead of adding copies. Each resource but the Patient is tagged with the job
+(`meta.tag` `urn:zaropgx:job-id|<job_id>`); before posting, the push lists the job's tagged
+resources on the server and adds a `DELETE` for each one the bundle no longer has, so a
+regenerated report with fewer recommendations leaves none of the old ones behind.
 
 Notes:
 - Each resource's id is a name-based UUID of what it is (this report's CYP2D6 genotype),

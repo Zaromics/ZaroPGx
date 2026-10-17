@@ -119,10 +119,15 @@ it: `POST /fhir/push/workflow/{job_id}` sends the job's bundle to `FHIR_SERVER_U
 Compose the bundled HAPI FHIR server (`127.0.0.1:8090/fhir` on the host). It goes as one
 transaction. The Patient is created once per ZaroPGx patient and reused by later pushes;
 the report and its resources are created the first time and updated in place when the job
-is pushed again, not copied. The answer says how many resources the server created and how
-many it already had, and where the report is (`DiagnosticReport/<id>`). If the server is
-down or refuses the bundle, the request fails with the reason (HTTP 502) and the job is not
-affected. Nothing is pushed when a job ends, and the web page has no button for it yet.
+is pushed again, not copied. Every resource pushed for a job, the Patient aside, is tagged
+`urn:zaropgx:job-id|<job_id>`, and a push deletes, in the same transaction, the job's
+resources its bundle no longer has: the recommendations a regenerated report dropped, or a
+whole older bundle written before October 2026. The answer says how many resources the
+server created, how many it already had and how many it deleted, and where the report is
+(`DiagnosticReport/<id>`). If the server is down or refuses the bundle, the request fails
+with the reason (HTTP 502), nothing is changed on the server, and the job is not affected.
+Credentials in `FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never
+shown. Nothing is pushed when a job ends, and the web page has no button for it yet.
 Sending to an outside health record system is not supported.
 
 ## Using the results

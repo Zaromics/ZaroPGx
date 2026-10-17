@@ -53,6 +53,10 @@ ZAROPGX_REPORT_ID = "urn:zaropgx:report-id"
 # An identifier whose value is a URI (here the resource's urn:uuid), RFC 3986.
 URI_IDENTIFIER = "urn:ietf:rfc:3986"
 
+# The tag a push puts on every resource of a job but the Patient (meta.tag), so a
+# later push of the job can find and delete what its bundle no longer holds.
+ZAROPGX_JOB_TAG = "urn:zaropgx:job-id"
+
 # ---------------------------------------------------------------------------
 # Profiles (the "meta.profile" of a resource)
 # ---------------------------------------------------------------------------

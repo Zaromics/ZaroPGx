@@ -653,8 +653,9 @@ class FHIRPushResponse(BaseModel):
     server_url: str
     entries: int = Field(description="Resources in the transaction")
     resources: dict = Field(
-        description="Per resource type: how many the server created, and how many "
-        "it already held (updated in place; the Patient reused)"
+        description="Per resource type: how many the server created, how many it "
+        "already held (updated in place; the Patient reused), and how many of the "
+        "job's resources it deleted because the bundle no longer has them"
     )
     diagnostic_report: Optional[str] = Field(
         None, description="The report's location on the server"
@@ -680,8 +681,9 @@ async def push_workflow_to_fhir_server(
 
     The bundle is the one the job's report wrote (<job_id>_pgx_fhir_report.json).
     Pushing a job again updates its resources on the server instead of adding
-    copies. A server that is down or refuses the bundle gives 502 with its reason;
-    the job is not affected.
+    copies, and deletes those of the job's resources (tagged with it on push) the
+    bundle no longer has. A server that is down or refuses the bundle gives 502
+    with its reason; the job is not affected.
     """
     if not fhir_export_enabled():
         raise HTTPException(
@@ -712,7 +714,7 @@ async def push_workflow_to_fhir_server(
 
     try:
         bundle = await asyncio.to_thread(_read_bundle, bundle_path)
-        summary = await asyncio.to_thread(fhir_push.push_bundle, bundle)
+        summary = await asyncio.to_thread(fhir_push.push_bundle, bundle, job_id)
     except fhir_push.FHIRPushError as e:
         logger.warning(f"FHIR push of job {job_id} failed: {e}")
         raise HTTPException(status_code=502, detail=str(e))

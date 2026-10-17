@@ -177,6 +177,11 @@ def _client(handler):
 
 def _respond_all(status):
     def handler(request):
+        if request.method == "GET":
+            # The listing of the job's resources: none on this server.
+            return httpx.Response(
+                200, json={"resourceType": "Bundle", "type": "searchset"}
+            )
         sent = json.loads(request.content)
         handler.request = request
         handler.sent = sent
@@ -209,11 +214,11 @@ def test_push_posts_one_transaction_and_counts_what_was_created():
     assert summary["server_url"] == "http://hapi.test/fhir"
     assert summary["entries"] == 8
     assert summary["resources"] == {
-        "DiagnosticReport": {"created": 1, "existing": 0},
-        "Patient": {"created": 1, "existing": 0},
-        "Observation": {"created": 3, "existing": 0},
-        "Task": {"created": 2, "existing": 0},
-        "Procedure": {"created": 1, "existing": 0},
+        "DiagnosticReport": {"created": 1, "existing": 0, "deleted": 0},
+        "Patient": {"created": 1, "existing": 0, "deleted": 0},
+        "Observation": {"created": 3, "existing": 0, "deleted": 0},
+        "Task": {"created": 2, "existing": 0, "deleted": 0},
+        "Procedure": {"created": 1, "existing": 0, "deleted": 0},
     }
     assert summary["diagnostic_report"] == "DiagnosticReport/1/_history/1"
     assert summary["patient"] == "Patient/2/_history/1"
@@ -262,6 +267,156 @@ def test_a_server_that_refuses_says_why():
     assert "HTTP 400" in str(caught.value) and "HAPI-0450: bad bundle" in str(
         caught.value
     )
+
+
+# ---------------------------------------------------------------------------
+# A re-push removes what the job's bundle no longer has
+# ---------------------------------------------------------------------------
+
+JOB_TAG = {"system": "urn:zaropgx:job-id", "code": "job-1"}
+
+
+def test_every_resource_but_the_patient_is_tagged_with_the_job():
+    bundle = _bundle()
+    bundle["entry"][2]["resource"]["meta"]["tag"] = [
+        {"system": "http://example.org/other", "code": "kept"},
+        {"system": "urn:zaropgx:job-id", "code": "an-older-job"},
+    ]
+    transaction = push.to_transaction(bundle, "job-1")
+    for entry in transaction["entry"]:
+        tags = entry["resource"].get("meta", {}).get("tag", [])
+        if entry["resource"]["resourceType"] == "Patient":
+            assert tags == []
+        else:
+            assert tags[-1] == JOB_TAG
+            assert [t for t in tags if t["system"] == "urn:zaropgx:job-id"] == [JOB_TAG]
+    assert transaction["entry"][2]["resource"]["meta"]["tag"][0]["code"] == "kept"
+    untagged = push.to_transaction(_bundle())
+    assert all("tag" not in e["resource"].get("meta", {}) for e in untagged["entry"])
+
+
+def _server(holding, answer_status="200 OK"):
+    """A FHIR server holding some of job-1's resources: a two-page listing per
+    type, and a transaction-response to whatever is posted."""
+
+    def handler(request):
+        handler.requests.append(request)
+        if request.method == "GET":
+            handler.listing_headers = request.headers
+            rtype = request.url.path.rsplit("/", 1)[-1]
+            if rtype == "fhir":  # a next-page link
+                rtype = request.url.params["type"]
+                page = 2
+            else:
+                assert request.url.params["_tag"] == "urn:zaropgx:job-id|job-1"
+                page = 1
+            mine = [r for r in holding if r[0] == rtype]
+            half = mine[: len(mine) // 2] if page == 1 else mine[len(mine) // 2 :]
+            body = {
+                "resourceType": "Bundle",
+                "type": "searchset",
+                "entry": [
+                    {
+                        "resource": {
+                            "resourceType": t,
+                            "id": i,
+                            "identifier": [{"system": sys, "value": val}],
+                        }
+                    }
+                    for t, i, sys, val in half
+                ],
+            }
+            if page == 1:
+                body["link"] = [
+                    {
+                        "relation": "next",
+                        "url": f"http://hapi.test/fhir?_getpages=x&type={rtype}",
+                    }
+                ]
+            return httpx.Response(200, json=body)
+        sent = json.loads(request.content)
+        handler.sent = sent
+        return httpx.Response(
+            200,
+            json={
+                "resourceType": "Bundle",
+                "type": "transaction-response",
+                "entry": [
+                    {"response": {"status": answer_status}} for _ in sent["entry"]
+                ],
+            },
+        )
+
+    handler.requests = []
+    return handler
+
+
+def test_a_smaller_bundle_deletes_what_it_no_longer_has():
+    bundle = _bundle()
+    by_type = {}
+    for entry in bundle["entry"]:
+        by_type.setdefault(entry["resource"]["resourceType"], []).append(entry)
+    kept_task = by_type["Task"][0]["resource"]["identifier"][0]
+    holding = [
+        # Still in the bundle: updated, not deleted.
+        ("Task", "11", kept_task["system"], kept_task["value"]),
+        # Gone from the bundle: a recommendation and an observation.
+        ("Task", "12", "urn:ietf:rfc:3986", "urn:uuid:gone-task"),
+        ("Observation", "13", "urn:ietf:rfc:3986", "urn:uuid:gone-obs"),
+        ("Observation", "14", "urn:ietf:rfc:3986", "urn:uuid:gone-obs-2"),
+        # The same identifier as a kept Task, but another type: deleted.
+        ("Procedure", "15", kept_task["system"], kept_task["value"]),
+    ]
+    handler = _server(holding)
+    summary = push.push_bundle(
+        bundle, "job-1", server_url="http://hapi.test/fhir", client=_client(handler)
+    )
+
+    deletes = [
+        e["request"]["url"]
+        for e in handler.sent["entry"]
+        if e["request"]["method"] == "DELETE"
+    ]
+    assert sorted(deletes) == [
+        "Observation/13",
+        "Observation/14",
+        "Procedure/15",
+        "Task/12",
+    ]
+    assert len(handler.sent["entry"]) == len(bundle["entry"]) + 4
+    assert summary["resources"]["Task"]["deleted"] == 1
+    assert summary["resources"]["Observation"]["deleted"] == 2
+    assert summary["resources"]["Procedure"]["deleted"] == 1
+    assert summary["resources"]["Patient"]["deleted"] == 0
+    listed = [r.url.path.rsplit("/", 1)[-1] for r in handler.requests[:-1]]
+    assert set(listed) >= set(push.JOB_RESOURCE_TYPES)
+    # HAPI would otherwise answer from a search it cached a minute ago.
+    assert handler.listing_headers["cache-control"] == "no-cache"
+
+
+def test_without_a_job_nothing_is_listed_or_deleted():
+    handler = _server([("Task", "12", "urn:ietf:rfc:3986", "urn:uuid:gone")])
+    push.push_bundle(
+        _bundle(), server_url="http://hapi.test/fhir", client=_client(handler)
+    )
+    assert [r.method for r in handler.requests] == ["POST"]
+    assert all(e["request"]["method"] != "DELETE" for e in handler.sent["entry"])
+
+
+def test_a_server_that_will_not_list_the_job_stops_the_push():
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(400, json={"resourceType": "OperationOutcome"})
+        raise AssertionError("nothing may be posted")
+
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(),
+            "job-1",
+            server_url="http://hapi.test/fhir",
+            client=_client(handler),
+        )
+    assert "would not list the job's DiagnosticReport resources" in str(caught.value)
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +555,9 @@ def test_status_and_logs_do_not_show_the_credentials(
     monkeypatch.setattr(
         endpoint.module.fhir_push,
         "push_bundle",
-        lambda bundle: real_push(bundle, client=_client(next(handlers))),
+        lambda bundle, job_id: real_push(
+            bundle, job_id, client=_client(next(handlers))
+        ),
     )
     caplog.set_level("DEBUG")
     response = endpoint()
@@ -490,8 +647,9 @@ def test_endpoint_pushes_the_jobs_bundle(endpoint, tmp_path, monkeypatch):
     _write_bundle(tmp_path)
     pushed = {}
 
-    def fake_push(bundle, server_url=None, client=None):
+    def fake_push(bundle, job_id=None, server_url=None, client=None):
         pushed["bundle"] = bundle
+        pushed["job_id"] = job_id
         return {
             "resources": {"Patient": {"created": 1, "existing": 0}},
             "diagnostic_report": "DiagnosticReport/1/_history/1",
@@ -506,6 +664,7 @@ def test_endpoint_pushes_the_jobs_bundle(endpoint, tmp_path, monkeypatch):
     assert response.job_id == JOB_ID
     assert response.diagnostic_report == "DiagnosticReport/1/_history/1"
     assert pushed["bundle"]["entry"][0]["resource"]["identifier"][0]["value"] == JOB_ID
+    assert pushed["job_id"] == JOB_ID
 
 
 def test_endpoint_unknown_job_is_404(endpoint):
@@ -527,7 +686,7 @@ def test_endpoint_server_down_is_502_and_leaves_the_bundle_alone(
     bundle_path = _write_bundle(tmp_path)
     saved = bundle_path.read_text()
 
-    def down(bundle, server_url=None, client=None):
+    def down(bundle, job_id=None, server_url=None, client=None):
         raise push.FHIRPushError("The FHIR server at X could not be reached", False)
 
     monkeypatch.setattr(endpoint.module.fhir_push, "push_bundle", down)

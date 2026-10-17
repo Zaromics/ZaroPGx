@@ -18,6 +18,7 @@ that does not have the Genomics Reporting IG.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import uuid
@@ -82,11 +83,11 @@ def server():
     return url
 
 
-def _bundle(patient_id, report_id):
+def _bundle(patient_id, report_id, data=DATA):
     result = FHIRExportService(MagicMock()).export_pgx_report(
         run_id=report_id,
         patient_info={"id": patient_id},
-        pharmcat_data=DATA,
+        pharmcat_data=data,
         output_format="json",
     )
     assert result["success"], result
@@ -94,7 +95,12 @@ def _bundle(patient_id, report_id):
 
 
 def _count(server, query):
-    response = httpx.get(f"{server}/{query}&_summary=count", timeout=60)
+    # no-cache: HAPI reuses a search's results for a minute by default.
+    response = httpx.get(
+        f"{server}/{query}&_summary=count",
+        headers={"Cache-Control": "no-cache"},
+        timeout=60,
+    )
     response.raise_for_status()
     return response.json()["total"]
 
@@ -104,8 +110,9 @@ def test_pushing_twice_keeps_one_copy(server):
     report_id = f"pytest-report-{uuid.uuid4()}"
     bundle = _bundle(patient_id, report_id)
 
-    first = push.push_bundle(bundle, server_url=server)
-    second = push.push_bundle(bundle, server_url=server)
+    job_id = f"pytest-job-{uuid.uuid4()}"
+    first = push.push_bundle(bundle, job_id, server_url=server)
+    second = push.push_bundle(bundle, job_id, server_url=server)
 
     assert first["entries"] == second["entries"] == len(bundle["entry"])
     assert all(c["existing"] == 0 for c in first["resources"].values())
@@ -133,9 +140,27 @@ def test_pushing_twice_keeps_one_copy(server):
 
     # A regenerated bundle of the same report (new timestamps) updates in place.
     regenerated = _bundle(patient_id, report_id)
-    third = push.push_bundle(regenerated, server_url=server)
+    third = push.push_bundle(regenerated, job_id, server_url=server)
     assert all(c["created"] == 0 for c in third["resources"].values())
     assert _count(server, f"Observation?subject={patient_url}") == 3
+
+    # Regenerated without the drug: its implication and recommendation go.
+    smaller = copy.deepcopy(DATA)
+    smaller["drugRecommendations"] = []
+    fourth = push.push_bundle(
+        _bundle(patient_id, report_id, smaller), job_id, server_url=server
+    )
+    assert fourth["resources"]["Observation"]["deleted"] == 1
+    assert fourth["resources"]["Task"]["deleted"] == 1
+    assert _count(server, f"Observation?subject={patient_url}") == 2
+    assert _count(server, f"Task?subject={patient_url}") == 0
+    tag = f"urn:zaropgx:job-id|{job_id}"
+    assert _count(server, f"Observation?_tag={tag}") == 2
+    report = httpx.get(f"{server}/{report_url}", timeout=60).json()
+    assert len(report["result"]) == 2
+    assert "extension" not in report or all(
+        not x["url"].endswith("recommended-action") for x in report["extension"]
+    )
 
 
 def test_the_bundle_validates_against_the_genomics_reporting_ig(server):

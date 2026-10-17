@@ -19,6 +19,16 @@ conditional on the resource's business identifier:
   bundle matches the same resources. A bundle written before those identifiers
   existed gets one from its entry's ``fullUrl``, which is fixed in that file.
 
+A re-push must not leave behind what the job's bundle no longer holds either: a
+regenerated report with fewer recommendations would otherwise keep the old ones
+on the server (a Task still "requested"), and a bundle written before the
+identifiers, followed by a regenerated one, would leave two sets. So every
+resource pushed for a job, the Patient aside, carries the tag
+``urn:zaropgx:job-id|<job>``; before posting, the push lists the job's tagged
+resources on the server, and the same transaction deletes those whose
+identifier the new bundle does not have. One transaction: the server applies
+all of it or none.
+
 Nothing here runs on its own: a push happens when someone asks for it (POST
 /fhir/push/workflow/{job_id}). A server that is down or refuses the bundle is an
 error for that request only; the job and its files are untouched.
@@ -44,6 +54,12 @@ from app.services.fhir import terminology
 PUSH_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 
 FHIR_JSON = "application/fhir+json"
+
+# What the export writes for a job besides the Patient, which jobs share.
+JOB_RESOURCE_TYPES = ("DiagnosticReport", "Observation", "Task", "Procedure")
+
+# The bundled HAPI server caps a search page at 50 (compose.yml max_page_size).
+SEARCH_PAGE_SIZE = 50
 
 
 class FHIRPushError(Exception):
@@ -118,8 +134,15 @@ def _identifier_token(identifier: Dict[str, Any]) -> str:
     return f"{system}|{value}"
 
 
-def to_transaction(bundle: Dict[str, Any]) -> Dict[str, Any]:
-    """A transaction bundle that creates or updates the collection's resources."""
+def _identifier_key(identifier: Dict[str, Any]) -> Tuple[str, str]:
+    return (identifier.get("system", ""), identifier.get("value", ""))
+
+
+def to_transaction(
+    bundle: Dict[str, Any], job_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """A transaction bundle that creates or updates the collection's resources,
+    every one but the Patient tagged with the job when one is given."""
     if bundle.get("resourceType") != "Bundle":
         raise ValueError("not a FHIR Bundle")
     entries: List[Dict[str, Any]] = []
@@ -134,6 +157,15 @@ def to_transaction(bundle: Dict[str, Any]) -> Dict[str, Any]:
             identifiers = [{"system": terminology.URI_IDENTIFIER, "value": full_url}]
             resource["identifier"] = identifiers
         token = _identifier_token(identifiers[0])
+        if job_id and resource_type != "Patient":
+            meta = resource.setdefault("meta", {})
+            tags = [
+                tag
+                for tag in meta.get("tag", [])
+                if tag.get("system") != terminology.ZAROPGX_JOB_TAG
+            ]
+            tags.append({"system": terminology.ZAROPGX_JOB_TAG, "code": str(job_id)})
+            meta["tag"] = tags
         if resource_type == "Patient":
             request = {
                 "method": "POST",
@@ -163,6 +195,98 @@ def _outcome_text(response: httpx.Response) -> str:
         ]
         return "; ".join(t for t in texts if t)[:1000]
     return json.dumps(body)[:500]
+
+
+def job_resources_on_server(
+    http: httpx.Client, base: str, auth, job_id: str
+) -> List[Tuple[str, str, List[Tuple[str, str]]]]:
+    """(type, server id, identifiers) of every resource the server holds tagged
+    with the job."""
+    found = []
+    for resource_type in JOB_RESOURCE_TYPES:
+        url: Optional[str] = f"{base}/{resource_type}"
+        params: Optional[Dict[str, str]] = {
+            "_tag": f"{terminology.ZAROPGX_JOB_TAG}|{job_id}",
+            "_elements": "identifier",
+            "_count": str(SEARCH_PAGE_SIZE),
+        }
+        pages = 0
+        while url:
+            pages += 1
+            if pages > 1000:
+                raise FHIRPushError(
+                    f"The FHIR server at {base} kept paging the job's "
+                    f"{resource_type} resources; the push did not happen.",
+                    reachable=True,
+                )
+            response = _send(
+                http,
+                "GET",
+                url,
+                base,
+                auth,
+                params=params,
+                # HAPI reuses a search's results for a while (compose.yml:
+                # reuse_cached_search_results_millis); a push needs today's.
+                headers={"Accept": FHIR_JSON, "Cache-Control": "no-cache"},
+            )
+            if response.status_code >= 400:
+                raise FHIRPushError(
+                    f"The FHIR server at {base} would not list the job's "
+                    f"{resource_type} resources (HTTP {response.status_code}): "
+                    f"{_scrub(_outcome_text(response))}; the push did not happen.",
+                    reachable=True,
+                )
+            try:
+                page = response.json()
+            except ValueError as exc:
+                raise FHIRPushError(
+                    f"The FHIR server at {base} listed the job's {resource_type} "
+                    "resources in something that is not FHIR JSON.",
+                    reachable=True,
+                ) from exc
+            for entry in page.get("entry", []):
+                resource = entry.get("resource") or {}
+                if resource.get("resourceType") == resource_type and resource.get("id"):
+                    found.append(
+                        (
+                            resource_type,
+                            resource["id"],
+                            [
+                                _identifier_key(i)
+                                for i in resource.get("identifier", [])
+                            ],
+                        )
+                    )
+            url = next(
+                (
+                    link.get("url")
+                    for link in page.get("link", [])
+                    if link.get("relation") == "next"
+                ),
+                None,
+            )
+            params = None
+    return found
+
+
+def add_deletions(
+    transaction: Dict[str, Any],
+    on_server: List[Tuple[str, str, List[Tuple[str, str]]]],
+) -> None:
+    """Append a DELETE for each of the job's resources on the server that the
+    transaction does not carry (by identifier, within its type)."""
+    kept: Dict[str, set] = {}
+    for entry in transaction["entry"]:
+        resource = entry["resource"]
+        kept.setdefault(resource["resourceType"], set()).update(
+            _identifier_key(i) for i in resource.get("identifier", [])
+        )
+    for resource_type, server_id, identifiers in on_server:
+        if not kept.get(resource_type, set()) & set(identifiers):
+            transaction["entry"].append(
+                {"request": {"method": "DELETE", "url": f"{resource_type}/{server_id}"}}
+            )
 
 
 def check_response(
@@ -208,18 +332,29 @@ def check_response(
 def summarize_response(
     transaction: Dict[str, Any], response_bundle: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Per resource type: how many entries the server created and how many it
-    found already there (updated, or reused for the Patient). The response's
-    entries are in the transaction's order."""
+    """Per resource type: how many entries the server created, how many it
+    found already there (updated, or reused for the Patient), and how many of
+    the job's resources it deleted. The response's entries are in the
+    transaction's order."""
     resources: Dict[str, Dict[str, int]] = {}
     report_location = None
     patient_location = None
     for sent, got in zip(transaction["entry"], response_bundle.get("entry", [])):
-        resource_type = sent["resource"]["resourceType"]
+        request = sent["request"]
+        if request["method"] == "DELETE":
+            resource_type = request["url"].split("/", 1)[0]
+            outcome = "deleted"
+        else:
+            resource_type = sent["resource"]["resourceType"]
+            status = str((got.get("response") or {}).get("status", ""))
+            outcome = "created" if status.startswith("201") else "existing"
+        counts = resources.setdefault(
+            resource_type, {"created": 0, "existing": 0, "deleted": 0}
+        )
+        counts[outcome] += 1
+        if request["method"] == "DELETE":
+            continue
         response = got.get("response", {})
-        status = str(response.get("status", ""))
-        counts = resources.setdefault(resource_type, {"created": 0, "existing": 0})
-        counts["created" if status.startswith("201") else "existing"] += 1
         location = response.get("location")
         if resource_type == "DiagnosticReport":
             report_location = location
@@ -234,19 +369,28 @@ def summarize_response(
 
 def push_bundle(
     bundle: Dict[str, Any],
+    job_id: Optional[str] = None,
     server_url: Optional[str] = None,
     client: Optional[httpx.Client] = None,
 ) -> Dict[str, Any]:
     """POST the bundle to the FHIR server as a transaction; raise FHIRPushError
     if the server cannot be reached, rejects it, or answers anything but a
-    transaction-response for every entry."""
+    transaction-response for every entry.
+
+    With a job_id, the resources are tagged with the job and the transaction
+    also deletes the job's resources on the server that the bundle no longer
+    has (see the module docstring)."""
     base, auth = split_server_url((server_url or fhir_server_url()).rstrip("/"))
     if not base:
         raise FHIRPushError("FHIR_SERVER_URL is empty.", reachable=False)
-    transaction = to_transaction(bundle)
+    transaction = to_transaction(bundle, job_id)
     own_client = client is None
     http = client or httpx.Client(timeout=PUSH_TIMEOUT)
     try:
+        if job_id:
+            add_deletions(
+                transaction, job_resources_on_server(http, base, auth, str(job_id))
+            )
         response = _send(
             http,
             "POST",

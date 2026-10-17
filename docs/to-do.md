@@ -180,7 +180,8 @@ curated: true
   (docs/samples/README.md).
 - [DONE Oct 2026, feat/fhir-push-hapi] `POST /fhir/push/workflow/{job_id}` sends a job's
   bundle to the bundled HAPI server (`FHIR_SERVER_URL`) as a transaction, on request
-  only; pushing again updates in place. A server that is down gives 502; the job is
+  only; pushing again updates in place and deletes the job's resources the bundle no
+  longer has (tagged `urn:zaropgx:job-id`). A server that is down gives 502; the job is
   untouched. `tests/test_fhir_push_hapi.py` runs it against a throwaway HAPI
   (`ZAROPGX_FHIR_TEST_URL`).
 - No UI for the push yet: an action on a finished job in the web page.
