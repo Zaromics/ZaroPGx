@@ -16,7 +16,7 @@ diplotype sent as a PharmVar code, genes under a made-up HGNC system, RxNorm
 codings without a code, the IG's display for conclusion-string.
 
 The clinical content (genes, diplotypes, phenotypes, activity scores, alleles,
-drugs, recommendations, evidence levels, guideline citations) is unchanged; the
+drugs, recommendations, strengths of recommendation, guideline citations) is unchanged; the
 last test checks it survives.
 """
 
@@ -209,21 +209,61 @@ def test_activity_score_is_coded_where_loinc_has_a_code(bundle):
     assert by_gene["ABCG2"] == []
 
 
-def test_medication_recommendation_task_has_no_code_and_loinc_inputs(bundle):
+def test_medication_recommendation_task_has_no_code(bundle):
     tasks = _resources(bundle, "medication-recommendation")
     assert len(tasks) == 2
     for task in tasks:
         assert "code" not in task
         assert task["status"] == "requested" and task["intent"] == "proposal"
     first, second = tasks
-    assert [
-        (i["type"]["coding"][0]["code"], i["valueCodeableConcept"])
-        for i in first["input"]
-    ] == [
-        ("51963-7", {"text": "codeine"}),
-        ("93044-6", {"text": "Moderate"}),
+    assert first["input"] == [
+        {
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://loinc.org",
+                        "code": "51963-7",
+                        "display": "Medication assessed [ID]",
+                    }
+                ]
+            },
+            "valueCodeableConcept": {"text": "codeine"},
+        },
+        # CPIC's strength of recommendation is not LOINC's "Level of evidence"
+        # (93044-6): text, under a text type.
+        {
+            "type": {"text": "Strength of recommendation"},
+            "valueCodeableConcept": {"text": "Moderate"},
+        },
     ]
     assert [i["type"]["coding"][0]["code"] for i in second["input"]] == ["51963-7"]
+
+
+@pytest.mark.parametrize(
+    "classification, sent",
+    [
+        ("Unknown", None),
+        (" unknown ", None),
+        ("", None),
+        ("Unspecified", "Unspecified"),
+    ],
+)
+def test_an_unknown_strength_is_left_out(classification, sent):
+    """ "Unknown" is the readers' default for nothing; "Unspecified" is PharmCAT's
+    word for a guideline without a CPIC strength (app/reports/evidence.py)."""
+    task = FHIRExportService(MagicMock())._create_medication_recommendation_task(
+        drug_name="codeine",
+        recommendation={"recommendation": "x", "classification": classification},
+        patient_ref="urn:uuid:p",
+        implication_ref="urn:uuid:i",
+        run_id="run-1",
+    )
+    strengths = [
+        i["valueCodeableConcept"]["text"]
+        for i in task["input"]
+        if i["type"] == {"text": "Strength of recommendation"}
+    ]
+    assert strengths == ([sent] if sent else [])
 
 
 def test_genomic_study_category_is_laboratory_and_code_is_a_procedure(bundle):

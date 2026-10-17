@@ -97,8 +97,6 @@ LOINC_CODES = {
     "pgx_report": "51969-4",
     "haplotype": "84414-2",
     "gene_studied": "48018-6",
-    # The IG's evidence-level code (its implication profile's component).
-    "evidence_level": "93044-6",
 }
 
 # LOINC's activity-score codes, one per gene; a gene without one gets a text code.
@@ -117,7 +115,6 @@ LOINC_DISPLAYS = {
     "51969-4": "Genetic analysis report",
     "84414-2": "Haplotype name",
     "48018-6": "Gene studied [ID]",
-    "93044-6": "Level of evidence",
     "104666-3": "CYP2B6 Activity Score in Blood or Tissue",
     "104667-1": "CYP2C19 Activity Score in Blood or Tissue",
     "104668-9": "CYP2C9 Activity Score in Blood or Tissue",

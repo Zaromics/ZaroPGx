@@ -56,7 +56,7 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 - `description` contains the actionable recommendation text
 - `for` → Patient reference
 - `reasonReference` → links to the corresponding Therapeutic Implication
-- `input` items for the medication assessed (`51963-7`) and the level of evidence (`93044-6`: Strong, Moderate, Optional)
+- `input` items for the medication assessed (`51963-7`) and CPIC's strength of recommendation (Strong, Moderate, Optional, No recommendation, or Unspecified for a guideline without one), as text under a text type: LOINC has no code for it, and its "Level of evidence" is another thing. None is sent when PharmCAT gave none
 - No `code`: the profile requires one of LOINC's medication usage suggestions (consider an alternative, decrease the dose, ...), and picking one would mean interpreting the guideline's text
 
 ### 6. Procedure — Genomic Study

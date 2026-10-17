@@ -117,11 +117,12 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # the XML became FHIR XML (resources wrapped in their type, children in the
 # specification's order) instead of a mirror of the JSON no FHIR parser could read.
 # And when each resource got a name-based id and an identifier to match a re-push
-# on (feat/fhir-push-hapi).
-GOLDEN_JSON_SHA256 = "7a08fcaa43d00b1d90de112ffad971fe36cdce92a9810f09c88d7dcaf62a96d8"
-GOLDEN_JSON_BYTES = 21865
-GOLDEN_XML_SHA256 = "2c75bf6295f99725219a1ab012c3413b230a26141dd88e43b0b1a5ff3e7b448d"
-GOLDEN_XML_BYTES = 21741
+# on (feat/fhir-push-hapi), and when CPIC's strength of recommendation stopped
+# being sent as LOINC's "Level of evidence".
+GOLDEN_JSON_SHA256 = "8ae0e8f792c890fda81e1d087b5f113ef33fa3db4a4d666ca9b81144409c74e7"
+GOLDEN_JSON_BYTES = 21704
+GOLDEN_XML_SHA256 = "fefa35ac8a9f37097a093ff25614a9276461291432d5e765d39e6606331fca18"
+GOLDEN_XML_BYTES = 21613
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
@@ -137,7 +138,7 @@ GOLDEN_URI_CENSUS = {
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication": 2,
-    "http://loinc.org": 16,
+    "http://loinc.org": 15,
     "http://snomed.info/sct": 1,
     "http://terminology.hl7.org/CodeSystem/observation-category": 6,
     "http://terminology.hl7.org/CodeSystem/v2-0074": 6,
@@ -251,7 +252,6 @@ OFFICIAL_LOINC_DISPLAYS = {
     "51969-4": "Genetic analysis report",
     "84414-2": "Haplotype name",
     "48018-6": "Gene studied [ID]",
-    "93044-6": "Level of evidence",
     "104666-3": "CYP2B6 Activity Score in Blood or Tissue",
     "104667-1": "CYP2C19 Activity Score in Blood or Tissue",
     "104668-9": "CYP2C9 Activity Score in Blood or Tissue",

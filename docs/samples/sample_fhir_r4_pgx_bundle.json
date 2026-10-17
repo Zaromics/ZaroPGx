@@ -1,11 +1,11 @@
 {
   "resourceType": "Bundle",
-  "id": "da893282-190a-488a-a0c6-651457ea05a3",
+  "id": "e7376482-4ece-496a-a072-ac68395f3a50",
   "meta": {
-    "lastUpdated": "2026-10-16T22:53:32.220988+00:00"
+    "lastUpdated": "2026-10-17T00:52:42.931383+00:00"
   },
   "type": "collection",
-  "timestamp": "2026-10-16T22:53:32.220988+00:00",
+  "timestamp": "2026-10-17T00:52:42.931383+00:00",
   "entry": [
     {
       "fullUrl": "urn:uuid:0c6ad1e9-248b-59dd-bfc7-0f42b8c7ac89",
@@ -48,8 +48,8 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:53:32.221213+00:00",
-        "issued": "2026-10-16T22:53:32.221215+00:00",
+        "effectiveDateTime": "2026-10-17T00:52:42.931617+00:00",
+        "issued": "2026-10-17T00:52:42.931618+00:00",
         "result": [
           {
             "reference": "urn:uuid:91d55149-1e70-52c7-bd57-048d55be0490",
@@ -183,7 +183,7 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:53:32.221047+00:00",
+        "effectiveDateTime": "2026-10-17T00:52:42.931448+00:00",
         "valueCodeableConcept": {
           "text": "*1/*4"
         },
@@ -314,7 +314,7 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:53:32.221070+00:00",
+        "effectiveDateTime": "2026-10-17T00:52:42.931475+00:00",
         "valueCodeableConcept": {
           "text": "*1/*2"
         },
@@ -445,7 +445,7 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:53:32.221090+00:00",
+        "effectiveDateTime": "2026-10-17T00:52:42.931494+00:00",
         "valueCodeableConcept": {
           "text": "*1/*3"
         },
@@ -575,7 +575,7 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:53:32.221111+00:00",
+        "effectiveDateTime": "2026-10-17T00:52:42.931513+00:00",
         "component": [
           {
             "code": {
@@ -664,13 +664,7 @@
           },
           {
             "type": {
-              "coding": [
-                {
-                  "system": "http://loinc.org",
-                  "code": "93044-6",
-                  "display": "Level of evidence"
-                }
-              ]
+              "text": "Strength of recommendation"
             },
             "valueCodeableConcept": {
               "text": "Strong"
@@ -728,7 +722,7 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:53:32.221149+00:00",
+        "effectiveDateTime": "2026-10-17T00:52:42.931554+00:00",
         "component": [
           {
             "code": {
@@ -817,13 +811,7 @@
           },
           {
             "type": {
-              "coding": [
-                {
-                  "system": "http://loinc.org",
-                  "code": "93044-6",
-                  "display": "Level of evidence"
-                }
-              ]
+              "text": "Strength of recommendation"
             },
             "valueCodeableConcept": {
               "text": "Strong"
@@ -881,7 +869,7 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "effectiveDateTime": "2026-10-16T22:53:32.221176+00:00",
+        "effectiveDateTime": "2026-10-17T00:52:42.931582+00:00",
         "component": [
           {
             "code": {
@@ -970,13 +958,7 @@
           },
           {
             "type": {
-              "coding": [
-                {
-                  "system": "http://loinc.org",
-                  "code": "93044-6",
-                  "display": "Level of evidence"
-                }
-              ]
+              "text": "Strength of recommendation"
             },
             "valueCodeableConcept": {
               "text": "Strong"
@@ -1024,7 +1006,7 @@
         "subject": {
           "reference": "urn:uuid:7ffe902d-657c-513f-93d4-530cd5da2600"
         },
-        "performedDateTime": "2026-10-16T22:53:32.221202+00:00",
+        "performedDateTime": "2026-10-17T00:52:42.931606+00:00",
         "note": [
           {
             "text": "PharmCAT Version: 3.4.0"

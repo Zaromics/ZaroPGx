@@ -1001,13 +1001,16 @@ class FHIRExportService:
             ],
         }
 
-        # Add evidence level if available
-        if classification:
+        # PharmCAT's classification is CPIC's strength of recommendation (Strong,
+        # Moderate, Optional, No recommendation; "Unspecified" for a guideline
+        # without one, see app/reports/evidence.py), not a level of evidence:
+        # sent as text, under a text type, since no LOINC code names it. Sent as
+        # LOINC 93044-6 "Level of evidence" before. "Unknown" is the readers'
+        # default when PharmCAT gave nothing, so it is left out.
+        if classification and classification.strip().lower() != "unknown":
             task["input"].append(
                 {
-                    "type": {
-                        "coding": [self._loinc_coding("evidence_level")],
-                    },
+                    "type": {"text": "Strength of recommendation"},
                     "valueCodeableConcept": {
                         "text": classification,
                     },
