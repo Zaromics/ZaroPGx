@@ -935,11 +935,13 @@ class FHIRExportService:
                 }
             )
 
-        # Link to derived genotype observations
+        # Link to derived genotype observations. Each reference's display is
+        # "<gene> <diplotype>": match its gene exactly. A substring match tied
+        # CYP3A4's drugs to whichever of CYP3A4 and CYP3A43 came first, and F2's
+        # to CYP4F2.
         for gene in genes:
-            # Find matching observation reference
             for obs_ref in observation_refs:
-                if gene in obs_ref.get("display", ""):
+                if obs_ref.get("display", "").split(" ", 1)[0] == gene:
                     observation["derivedFrom"].append(
                         {
                             "reference": obs_ref["reference"],
@@ -947,6 +949,11 @@ class FHIRExportService:
                         }
                     )
                     break
+        # No genotype to point at: no derivedFrom, not an empty list (FHIR JSON
+        # has no empty arrays). The IG's profile wants one, so such a drug's
+        # implication will not validate; it is still sent.
+        if not observation["derivedFrom"]:
+            del observation["derivedFrom"]
 
         return observation
 
