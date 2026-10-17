@@ -96,8 +96,9 @@ async def fhir_export_status(
             else "FHIR export is disabled. Set FHIR_EXPORT_ENABLED=true to enable."
         ),
         "supported_formats": ["json", "xml"] if enabled else [],
-        # Where POST /fhir/push/workflow/{job_id} sends a job's bundle.
-        "server_url": fhir_push.fhir_server_url(),
+        # Where POST /fhir/push/workflow/{job_id} sends a job's bundle, without
+        # any credentials the URL holds.
+        "server_url": fhir_push.split_server_url(fhir_push.fhir_server_url())[0],
         "implementation_guide": "HL7 Genomics Reporting Implementation Guide (FHIR R4)",
         "reference_url": "https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.html",
     }

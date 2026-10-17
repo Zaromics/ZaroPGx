@@ -29,9 +29,10 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import httpx
 
@@ -56,10 +57,36 @@ class FHIRPushError(Exception):
 
 def fhir_server_url() -> str:
     """FHIR_SERVER_URL (by default the bundled HAPI server, as compose.yml names
-    it), without a trailing slash."""
+    it), without a trailing slash. It may hold credentials (user:password@):
+    show it only through :func:`split_server_url`."""
     return (
         os.getenv("FHIR_SERVER_URL", "http://fhir-server:8080/fhir").strip().rstrip("/")
     )
+
+
+def split_server_url(url: str) -> Tuple[str, Optional[Tuple[str, str]]]:
+    """The URL without its user:password@ part, and those credentials.
+
+    Everything shown or logged -- /fhir/status, the push's answer, its errors --
+    uses the first; requests send the second as HTTP Basic auth.
+    """
+    parts = urlsplit(url)
+    if parts.username is None and parts.password is None:
+        return url, None
+    host = parts.hostname or ""
+    if ":" in host:  # an IPv6 literal
+        host = f"[{host}]"
+    netloc = f"{host}:{parts.port}" if parts.port else host
+    plain = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return plain, (unquote(parts.username or ""), unquote(parts.password or ""))
+
+
+_USERINFO = re.compile(r"(//)[^/@\s]+@")
+
+
+def _scrub(text: str) -> str:
+    """Any user:password@ in a URL inside the text, removed."""
+    return _USERINFO.sub(r"\1", text)
 
 
 def job_bundle_path(
@@ -138,6 +165,46 @@ def _outcome_text(response: httpx.Response) -> str:
     return json.dumps(body)[:500]
 
 
+def check_response(
+    transaction: Dict[str, Any], body: Any, base: str, status_code: int
+) -> None:
+    """Raise FHIRPushError unless the server answered what a transaction gets:
+    a transaction-response Bundle with one 2xx entry per entry sent."""
+    sent = len(transaction["entry"])
+    where = f"The FHIR server at {base} answered HTTP {status_code}"
+    if not isinstance(body, dict) or body.get("resourceType") != "Bundle":
+        what = body.get("resourceType") if isinstance(body, dict) else type(body)
+        raise FHIRPushError(
+            f"{where} with {what}, not a transaction-response Bundle; "
+            "the push did not happen.",
+            reachable=True,
+        )
+    if body.get("type") != "transaction-response":
+        raise FHIRPushError(
+            f"{where} with a {body.get('type')!r} Bundle, not a "
+            "transaction-response; the push did not happen.",
+            reachable=True,
+        )
+    entries = body.get("entry") or []
+    if len(entries) != sent:
+        raise FHIRPushError(
+            f"{where} with {len(entries)} entries for the {sent} sent.",
+            reachable=True,
+        )
+    failed = [
+        (n, str((entry.get("response") or {}).get("status", "")))
+        for n, entry in enumerate(entries)
+        if not str((entry.get("response") or {}).get("status", "")).startswith("2")
+    ]
+    if failed:
+        n, status = failed[0]
+        raise FHIRPushError(
+            f"{where} but {len(failed)} of the {sent} entries were not stored "
+            f"(entry {n}: {status or 'no status'}).",
+            reachable=True,
+        )
+
+
 def summarize_response(
     transaction: Dict[str, Any], response_bundle: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -171,37 +238,31 @@ def push_bundle(
     client: Optional[httpx.Client] = None,
 ) -> Dict[str, Any]:
     """POST the bundle to the FHIR server as a transaction; raise FHIRPushError
-    if the server cannot be reached or rejects it."""
-    base = (server_url or fhir_server_url()).rstrip("/")
+    if the server cannot be reached, rejects it, or answers anything but a
+    transaction-response for every entry."""
+    base, auth = split_server_url((server_url or fhir_server_url()).rstrip("/"))
     if not base:
         raise FHIRPushError("FHIR_SERVER_URL is empty.", reachable=False)
     transaction = to_transaction(bundle)
     own_client = client is None
     http = client or httpx.Client(timeout=PUSH_TIMEOUT)
     try:
-        response = http.post(
+        response = _send(
+            http,
+            "POST",
             base,
+            base,
+            auth,
             content=json.dumps(transaction),
             headers={"Content-Type": FHIR_JSON, "Accept": FHIR_JSON},
         )
-    except httpx.TimeoutException as exc:
-        raise FHIRPushError(
-            f"The FHIR server at {base} did not answer in time ({exc!r}).",
-            reachable=False,
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise FHIRPushError(
-            f"The FHIR server at {base} could not be reached ({exc!r}). "
-            "Check that it is running and that FHIR_SERVER_URL points at it.",
-            reachable=False,
-        ) from exc
     finally:
         if own_client:
             http.close()
     if response.status_code >= 400:
         raise FHIRPushError(
             f"The FHIR server at {base} refused the bundle "
-            f"(HTTP {response.status_code}): {_outcome_text(response)}",
+            f"(HTTP {response.status_code}): {_scrub(_outcome_text(response))}",
             reachable=True,
         )
     try:
@@ -212,7 +273,28 @@ def push_bundle(
             "with something that is not FHIR JSON.",
             reachable=True,
         ) from exc
+    check_response(transaction, response_bundle, base, response.status_code)
     summary = summarize_response(transaction, response_bundle)
     summary["server_url"] = base
     summary["entries"] = len(transaction["entry"])
     return summary
+
+
+def _send(http: httpx.Client, method: str, url: str, base: str, auth, **kwargs):
+    """One request to the server; a transport failure becomes FHIRPushError
+    naming the server without its credentials."""
+    if auth:
+        kwargs["auth"] = auth
+    try:
+        return http.request(method, url, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise FHIRPushError(
+            f"The FHIR server at {base} did not answer in time ({_scrub(repr(exc))}).",
+            reachable=False,
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise FHIRPushError(
+            f"The FHIR server at {base} could not be reached ({_scrub(repr(exc))}). "
+            "Check that it is running and that FHIR_SERVER_URL points at it.",
+            reachable=False,
+        ) from exc

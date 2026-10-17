@@ -8,6 +8,7 @@ one is given.
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import json
 from types import SimpleNamespace
@@ -263,6 +264,155 @@ def test_a_server_that_refuses_says_why():
     )
 
 
+# ---------------------------------------------------------------------------
+# Only a transaction-response for every entry is a push
+# ---------------------------------------------------------------------------
+
+
+def _answer(body, status=200):
+    def handler(request):
+        return httpx.Response(status, json=body(json.loads(request.content)))
+
+    return handler
+
+
+def _ok_entries(sent):
+    return [{"response": {"status": "201 Created"}} for _ in sent["entry"]]
+
+
+@pytest.mark.parametrize(
+    "body, reason",
+    [
+        (
+            lambda sent: {
+                "resourceType": "OperationOutcome",
+                "issue": [{"severity": "information", "diagnostics": "ok?"}],
+            },
+            "OperationOutcome, not a transaction-response",
+        ),
+        (
+            lambda sent: {
+                "resourceType": "Bundle",
+                "type": "batch-response",
+                "entry": _ok_entries(sent),
+            },
+            "'batch-response' Bundle",
+        ),
+        (
+            lambda sent: {
+                "resourceType": "Bundle",
+                "type": "transaction-response",
+                "entry": _ok_entries(sent)[:-1],
+            },
+            "7 entries for the 8 sent",
+        ),
+        (
+            lambda sent: {
+                "resourceType": "Bundle",
+                "type": "transaction-response",
+                "entry": _ok_entries(sent)[:-1]
+                + [{"response": {"status": "400 Bad Request"}}],
+            },
+            "1 of the 8 entries were not stored (entry 7: 400 Bad Request)",
+        ),
+        (lambda sent: [], "list"),
+    ],
+)
+def test_anything_but_a_full_transaction_response_is_a_failure(body, reason):
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(), server_url="http://hapi.test/fhir", client=_client(_answer(body))
+        )
+    assert caught.value.reachable is True
+    assert reason in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# Credentials in FHIR_SERVER_URL are sent, never shown
+# ---------------------------------------------------------------------------
+
+SECRET_URL = "http://ann:s3cr%40t@hapi.test:8080/fhir"
+
+
+def test_split_server_url_keeps_credentials_apart():
+    assert push.split_server_url(SECRET_URL) == (
+        "http://hapi.test:8080/fhir",
+        ("ann", "s3cr@t"),
+    )
+    assert push.split_server_url("http://hapi.test/fhir") == (
+        "http://hapi.test/fhir",
+        None,
+    )
+
+
+def test_credentials_go_as_basic_auth_and_not_into_the_answer():
+    handler = _respond_all("201 Created")
+    summary = push.push_bundle(
+        _bundle(), server_url=SECRET_URL, client=_client(handler)
+    )
+    assert str(handler.request.url) == "http://hapi.test:8080/fhir"
+    assert (
+        handler.request.headers["authorization"]
+        == "Basic " + base64.b64encode(b"ann:s3cr@t").decode()
+    )
+    assert summary["server_url"] == "http://hapi.test:8080/fhir"
+    assert "s3cr" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        lambda request: (_ for _ in ()).throw(
+            httpx.ConnectError(f"refused {SECRET_URL}", request=request)
+        ),
+        lambda request: httpx.Response(
+            400,
+            json={
+                "resourceType": "OperationOutcome",
+                "issue": [{"severity": "error", "diagnostics": f"bad at {SECRET_URL}"}],
+            },
+        ),
+        lambda request: httpx.Response(200, json={"resourceType": "Bundle"}),
+    ],
+)
+def test_errors_do_not_show_the_credentials(handler):
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(_bundle(), server_url=SECRET_URL, client=_client(handler))
+    assert "hapi.test:8080/fhir" in str(caught.value)
+    assert "s3cr" not in str(caught.value) and "ann:" not in str(caught.value)
+
+
+def test_status_and_logs_do_not_show_the_credentials(
+    endpoint, tmp_path, monkeypatch, caplog
+):
+    monkeypatch.setenv("FHIR_SERVER_URL", SECRET_URL)
+    status = asyncio.run(endpoint.module.fhir_export_status(current_user="tester"))
+    assert status["server_url"] == "http://hapi.test:8080/fhir"
+
+    _write_bundle(tmp_path)
+    real_push = push.push_bundle
+    handlers = iter(
+        [
+            _respond_all("201 Created"),
+            lambda request: httpx.Response(503, text=f"down: {SECRET_URL}"),
+        ]
+    )
+    monkeypatch.setattr(
+        endpoint.module.fhir_push,
+        "push_bundle",
+        lambda bundle: real_push(bundle, client=_client(next(handlers))),
+    )
+    caplog.set_level("DEBUG")
+    response = endpoint()
+    assert response.server_url == "http://hapi.test:8080/fhir"
+    with pytest.raises(HTTPException) as caught:
+        endpoint()
+    assert caught.value.status_code == 502
+    assert "s3cr" not in caught.value.detail
+    assert "hapi.test:8080" in caplog.text
+    assert "s3cr" not in caplog.text and "ann:" not in caplog.text
+
+
 def test_the_server_url_defaults_to_the_bundled_hapi(monkeypatch):
     monkeypatch.delenv("FHIR_SERVER_URL", raising=False)
     assert push.fhir_server_url() == "http://fhir-server:8080/fhir"
@@ -371,7 +521,7 @@ def test_endpoint_job_without_bundle_is_404(endpoint):
     assert "FHIR_EXPORT_ENABLED" in caught.value.detail
 
 
-def test_endpoint_server_down_is_502_and_leaves_the_job_alone(
+def test_endpoint_server_down_is_502_and_leaves_the_bundle_alone(
     endpoint, tmp_path, monkeypatch
 ):
     bundle_path = _write_bundle(tmp_path)
@@ -385,7 +535,6 @@ def test_endpoint_server_down_is_502_and_leaves_the_job_alone(
         endpoint()
     assert caught.value.status_code == 502
     assert "could not be reached" in caught.value.detail
-    assert not endpoint.db.commit.called
     assert bundle_path.read_text() == saved
 
 
