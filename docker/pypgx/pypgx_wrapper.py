@@ -1342,6 +1342,62 @@ def allowed_other_reads(total: int) -> int:
     return int(total * PHARMCAT_MAX_OTHER_FRACTION)
 
 
+PHARMCAT_STATUS_KINDS = ("reference", "variant", "no_reads", "uncertain")
+
+
+def pharmcat_status_by_gene(status, genes_of) -> Dict[str, Dict[str, int]]:
+    """{gene: {positions, reference, variant, no_reads, uncertain}}, by PharmCAT's PX.
+
+    status:   {(chrom, pos): kind} for each PharmCAT record.
+    genes_of: {(chrom, pos): (gene, ...)}; a record whose PX names several genes
+              counts under each, and one with none (the POI record) under none.
+    """
+    by_gene: Dict[str, Dict[str, int]] = {}
+    for key, kind in status.items():
+        for gene in genes_of.get(key) or ():
+            tally = by_gene.setdefault(
+                gene, {"positions": 0, **{k: 0 for k in PHARMCAT_STATUS_KINDS}}
+            )
+            tally["positions"] += 1
+            tally[kind] += 1
+    return dict(sorted(by_gene.items()))
+
+
+def write_pharmcat_status(path, records, genes_of, status, base_reads) -> bool:
+    """Write the per-position status file (PHARMCAT_STATUS_COLUMNS); False if not.
+
+    records:    [(chrom, pos, id, ref, alleles)] in PharmCAT's order.
+    base_reads: {(chrom, pos): (reference reads, other reads)}, as for
+                classify_pharmcat_record.
+    Written beside and moved into place, so a failed write leaves no partial file
+    for the report to read: it only explains PharmCAT's VCF, and losing it must not
+    cost the step (main.nf publishes it as optional).
+    """
+    part = f"{path}.part"
+    try:
+        with open(part, "w", encoding="utf-8") as fh:
+            fh.write("\t".join(PHARMCAT_STATUS_COLUMNS) + "\n")
+            for c, p, rid, ref, _ in records:
+                span = [(c, q) for q in range(p, p + len(ref))]
+                seen = [base_reads[k] for k in span if k in base_reads]
+                ref_reads = str(min(e[0] for e in seen)) if seen else ""
+                other = str(max(e[1] for e in seen)) if seen else ""
+                genes = ",".join(genes_of.get((c, p)) or ())
+                fh.write(
+                    f"{c}\t{p}\t{rid or ''}\t{genes}\t{status[(c, p)]}\t"
+                    f"{ref_reads}\t{other}\n"
+                )
+        os.replace(part, path)
+        return True
+    except OSError as exc:
+        logger.warning(f"Could not write PharmCAT's position statuses to {path}: {exc}")
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        return False
+
+
 def classify_pharmcat_record(chrom, pos, ref, base_reads, indel_spans, calls) -> str:
     """'reference', 'variant', 'uncertain' or 'no_reads' for one PharmCAT record.
 
@@ -1395,16 +1451,16 @@ def genotype_pharmcat_positions(
             "pharmcat image at /pharmcat/pharmcat_positions.vcf and must be copied to "
             "reference/pharmcat/ on every PharmCAT upgrade."
         )
-    # PharmCAT's gene for each record is its INFO PX; the one position of interest
-    # outside every allele definition (POI, rs12777823) has none.
-    records, gene_of = [], {}
+    # PharmCAT's genes for each record are its INFO PX (one each in 3.4.0); the one
+    # position of interest outside every allele definition (POI, rs12777823) has none.
+    records, genes_of = [], {}
     with pysam.VariantFile(positions) as known:
         for r in known:
             records.append((r.chrom, r.pos, r.id, r.ref, r.alleles))
-            px = r.info.get("PX")
-            if isinstance(px, (tuple, list)):
-                px = ",".join(str(g) for g in px if g)
-            gene_of[(r.chrom, r.pos)] = str(px or "")
+            px = r.info.get("PX") or ()
+            if isinstance(px, str):
+                px = px.split(",")
+            genes_of[(r.chrom, r.pos)] = tuple(str(g) for g in px if g)
 
     work = tempfile.mkdtemp(prefix="pharmcat_positions_")
     try:
@@ -1550,33 +1606,11 @@ def genotype_pharmcat_positions(
         )
         tabix_index(str(output_vcf_gz), force=True)
 
-        kinds = ("reference", "variant", "no_reads", "uncertain")
-        counts = {k: 0 for k in kinds}
-        by_gene: Dict[str, Dict[str, int]] = {}
-        for key, kind in status.items():
+        counts = {k: 0 for k in PHARMCAT_STATUS_KINDS}
+        for kind in status.values():
             counts[kind] += 1
-            if gene_of.get(key):
-                tally = by_gene.setdefault(
-                    gene_of[key], {"positions": 0, **{k: 0 for k in kinds}}
-                )
-                tally["positions"] += 1
-                tally[kind] += 1
-
         if status_tsv:
-            with open(status_tsv, "w", encoding="utf-8") as fh:
-                fh.write("\t".join(PHARMCAT_STATUS_COLUMNS) + "\n")
-                for c, p, rid, ref, _ in records:
-                    seen = [
-                        base_reads[(c, q)]
-                        for q in range(p, p + len(ref))
-                        if (c, q) in base_reads
-                    ]
-                    ref_reads = str(min(e[0] for e in seen)) if seen else ""
-                    other = str(max(e[1] for e in seen)) if seen else ""
-                    fh.write(
-                        f"{c}\t{p}\t{rid or ''}\t{gene_of.get((c, p), '')}\t"
-                        f"{status[(c, p)]}\t{ref_reads}\t{other}\n"
-                    )
+            write_pharmcat_status(status_tsv, records, genes_of, status, base_reads)
 
         return {
             "n_pharmcat_positions": len(status),
@@ -1587,7 +1621,7 @@ def genotype_pharmcat_positions(
             "min_reference_reads": PHARMCAT_MIN_REF_READS,
             "max_other_fraction": PHARMCAT_MAX_OTHER_FRACTION,
             "min_variant_gq": PHARMCAT_MIN_VARIANT_GQ,
-            "by_gene": dict(sorted(by_gene.items())),
+            "by_gene": pharmcat_status_by_gene(status, genes_of),
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1694,6 +1728,8 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             pharmcat_positions = genotype_pharmcat_positions(
                 str(alignment_path), str(fasta), pharmcat_vcf, status_tsv=pharmcat_status
             )
+            if not os.path.exists(pharmcat_status):  # not written: see its warning
+                pharmcat_status = None
             logger.info(f"PharmCAT positions called from the alignment: {pharmcat_positions}")
 
         return {

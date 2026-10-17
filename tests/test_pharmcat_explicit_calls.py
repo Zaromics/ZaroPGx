@@ -20,6 +20,7 @@ to the old path; on the panel the five unsequenced genes became "not called".
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 import shutil
@@ -234,6 +235,7 @@ def _load_wrapper(names):
         "Dict": Dict,
         "Any": Any,
         "REFERENCE_DIR": Path("/reference"),
+        "logger": logging.getLogger("pypgx_wrapper"),
     }
     exec(compile(ast.Module(body=wanted, type_ignores=[]), str(WRAPPER), "exec"), ns)
     return ns
@@ -246,6 +248,9 @@ CLASSIFY = [
     "PHARMCAT_MIN_BASE_QUALITY",
     "PHARMCAT_PILEUP_PAD",
     "PHARMCAT_STATUS_COLUMNS",
+    "PHARMCAT_STATUS_KINDS",
+    "pharmcat_status_by_gene",
+    "write_pharmcat_status",
     "allowed_other_reads",
     "classify_pharmcat_record",
 ]
@@ -304,6 +309,75 @@ def test_every_base_of_a_multi_base_record_must_be_reference():
     assert _classify("TT", {100: (20, 0), 101: (0, 20)}) == "uncertain"
     assert _classify("TT", {100: (20, 0), 101: (20, 0)}) == "reference"
     assert _classify("CTT", {100: (12, 0), 101: (12, 0)}) == "uncertain"  # 102 unread
+
+
+def test_the_per_gene_counts_follow_pharmcats_px():
+    """Pure Python, so it runs where the htslib tests skip. A record whose PX names
+    two genes counts under each; the POI record, with none, under none."""
+    ns = _load_wrapper(CLASSIFY)
+    by_gene = ns["pharmcat_status_by_gene"](
+        {
+            ("chr1", 1): "reference",
+            ("chr1", 2): "uncertain",
+            ("chr1", 3): "no_reads",
+            ("chr10", 4): "reference",
+        },
+        {
+            ("chr1", 1): ("A",),
+            ("chr1", 2): ("A", "B"),
+            ("chr1", 3): ("B",),
+            ("chr10", 4): (),
+        },
+    )
+    zero = {"reference": 0, "variant": 0, "no_reads": 0, "uncertain": 0}
+    assert by_gene == {
+        "A": {**zero, "positions": 2, "reference": 1, "uncertain": 1},
+        "B": {**zero, "positions": 2, "uncertain": 1, "no_reads": 1},
+    }
+
+
+def test_the_status_file_lists_every_position_with_its_reads(tmp_path):
+    ns = _load_wrapper(CLASSIFY)
+    path = tmp_path / "status.tsv"
+    records = [
+        ("chr1", 100, "rs1", "A", ("A", "C")),
+        ("chr1", 200, "rs2", "CTT", ("CTT", "C")),  # three bases: fewest, most
+        ("chr1", 300, None, "G", ("G", "T")),
+    ]
+    ok = ns["write_pharmcat_status"](
+        str(path),
+        records,
+        {("chr1", 100): ("A",), ("chr1", 200): ("A", "B"), ("chr1", 300): ()},
+        {
+            ("chr1", 100): "reference",
+            ("chr1", 200): "uncertain",
+            ("chr1", 300): "no_reads",
+        },
+        {("chr1", 100): (12, 0), ("chr1", 200): (9, 0), ("chr1", 201): (4, 2)},
+    )
+    assert ok
+    assert path.read_text(encoding="utf-8").splitlines() == [
+        "chrom\tposition\trsid\tgene\tstatus\treference_reads\tother_reads",
+        "chr1\t100\trs1\tA\treference\t12\t0",
+        "chr1\t200\trs2\tA,B\tuncertain\t4\t2",
+        "chr1\t300\t\t\tno_reads\t\t",
+    ]
+
+
+def test_a_status_file_that_cannot_be_written_costs_only_the_file(tmp_path):
+    """main.nf publishes it as optional: a failed write is logged, leaves nothing
+    behind for the report to half-read, and the step goes on."""
+    ns = _load_wrapper(CLASSIFY)
+    path = tmp_path / "gone" / "status.tsv"  # its directory does not exist
+    ok = ns["write_pharmcat_status"](
+        str(path),
+        [("chr1", 100, "rs1", "A", ("A", "C"))],
+        {},
+        {("chr1", 100): "reference"},
+        {},
+    )
+    assert ok is False
+    assert not path.exists() and not path.parent.exists()
 
 
 def test_every_subprocess_in_the_force_call_is_an_argv_list():
@@ -676,12 +750,52 @@ def test_each_line_says_why_the_positions_were_missing():
         "<li><strong>VKORC1</strong>: 1 of 1 position not read (no reads 1); "
         "no call</li>"
     ) in text
-    # A record the run wrote that PharmCAT did not use is not "no reads".
+    # The reads showed something there: not "no reads", and not nothing.
     assert (
-        "<li><strong>TPMT</strong>: 1 of 45 positions not read (called, not used 1); "
+        "<li><strong>TPMT</strong>: 1 of 45 positions not read (variant 1); "
         "assessed on their other positions only: *3B</li>"
     ) in text
-    assert "<em>No reads</em>: no read of mapping quality 1 or more" in text
+    # Each reason used is explained once, and only those.
+    assert (
+        "In brackets, <em>no reads</em>: no read of mapping quality 1 or more" in text
+    )
+    assert "<em>uncertain</em>: reads did, but did not settle the genotype" in text
+    assert (
+        "<em>variant</em>: the reads showed a non-reference allele that PharmCAT"
+        in text
+    )
+    assert "<em>other</em>" not in text and "position list" not in text
+
+
+def test_the_reasons_always_add_up_to_the_count():
+    """A position the status file does not have (its copy of PharmCAT's positions
+    was stale: an upgrade without restaging reference/pharmcat/) and a status the
+    alert does not name each get a bucket, never a silent shortfall."""
+    from app.reports.generator import partial_coverage_alert
+
+    text = partial_coverage_alert(
+        [
+            {
+                "gene": "NUDT15",
+                "diplotype": "*1/*1",
+                "uncalled_haplotypes": ["*4"],
+                "n_positions": 20,
+                "missing_positions": _missing(
+                    *[(f"chr13:{i}", ["*4"]) for i in range(1, 6)]
+                ),
+            }
+        ],
+        "bam",
+        {"chr13:1": "no_reads", "chr13:2": "no_reads", "chr13:3": "reference"},
+    )
+    assert (
+        "<strong>NUDT15</strong>: 5 of 20 positions not read (no reads 2, other 1, "
+        "not in this run's position list 2)"
+    ) in text
+    assert "<em>other</em>: another status" in text
+    assert (
+        "<em>not in this run's position list</em>: the alignment was genotyped" in text
+    )
 
 
 def test_a_plain_vcf_says_not_in_the_vcf_and_leaves_uncalled_genes_alone():
@@ -847,6 +961,40 @@ def test_the_missing_positions_reach_the_report_genes():
     )
     assert genes[0]["n_positions"] == 20
     assert genes[0]["missing_positions"] == missing
+
+
+def test_an_unannotated_genes_missing_positions_reach_the_report_too():
+    """F2 and F5 come from PharmCAT's unannotatedGeneCalls, straight from its JSON.
+    Shaped as NA12878's F5 is in a real run's JSON, with the position missing."""
+    from app.services.pharmcat_data_service import PharmCATDataService
+
+    f5 = {
+        "geneSymbol": "F5",
+        "callSource": "MATCHER",
+        "sourceDiplotypes": [],
+        "uncalledHaplotypes": ["rs6025 Factor V Leiden (T)"],
+        "variants": [
+            {
+                "gene": "F5",
+                "chromosome": "chr1",
+                "position": 169549811,
+                "dbSnpId": "rs6025",
+                "call": None,
+                "alleles": ["rs6025 Factor V Leiden (T)"],
+            }
+        ],
+    }
+    service = PharmCATDataService.__new__(PharmCATDataService)
+    (gene,) = service._transform_unannotated_calls_for_reports([f5], set())
+    assert gene["gene"] == "F5"
+    assert gene["n_positions"] == 1
+    assert gene["missing_positions"] == [
+        {
+            "position": "chr1:169549811",
+            "rsid": "rs6025",
+            "alleles": ["rs6025 Factor V Leiden (T)"],
+        }
+    ]
 
 
 def test_the_parser_reads_them_back_from_the_stored_gene_json():

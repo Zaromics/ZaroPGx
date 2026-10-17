@@ -1595,10 +1595,37 @@ _VARIANT_ONLY_INPUT_TYPES = frozenset({"vcf", "bcf"})
 # them beside PharmCAT's VCF in the report directory.
 POSITION_STATUS_FILE = os.path.join("pharmcat", "pharmcat_position_status.tsv")
 
-# Why a position PharmCAT lists as missing was left out of its VCF, in the order the
-# alert gives them. Any other status means the run wrote a record there (a call at
-# an overlapping position, or one PharmCAT discarded), which PharmCAT did not use.
-_MISSING_REASONS = (("no_reads", "no reads"), ("uncertain", "uncertain"))
+# Why a position PharmCAT lists as missing was not genotyped for it, from the
+# alignment's per-position statuses: {bucket: (label, meaning)}, in the order the
+# alert gives them. A status the file holds but the alert does not name (a 0/0
+# record PharmCAT discarded would be "reference") is "other"; a position missing
+# from the file is "unlisted", so each line's reasons add up to its count.
+_MISSING_REASONS = {
+    "no_reads": (
+        "no reads",
+        "no read of mapping quality 1 or more reached the position",
+    ),
+    "uncertain": (
+        "uncertain",
+        "reads did, but did not settle the genotype (see Methodology)",
+    ),
+    "variant": (
+        "variant",
+        "the reads showed a non-reference allele that PharmCAT did not take at its "
+        "position (a call starting at another position, or a record it discarded)",
+    ),
+    "other": (
+        "other",
+        "another status, given per position in pharmcat_position_status.tsv",
+    ),
+    "unlisted": (
+        "not in this run's position list",
+        "the alignment was genotyped from a different copy of PharmCAT's positions "
+        "than PharmCAT used (restage reference/pharmcat/pharmcat_positions.vcf after "
+        "a PharmCAT upgrade)",
+    ),
+}
+_NAMED_STATUSES = frozenset({"no_reads", "uncertain", "variant"})
 
 
 def read_position_statuses(report_dir: str) -> Dict[str, str]:
@@ -1667,7 +1694,7 @@ def partial_coverage_alert(
             shown += f" and {len(items) - max_listed} more"
         return shown
 
-    lines, reasons_given = [], False
+    lines, used = [], set()
     for gene in sorted(genes or [], key=lambda g: str(g.get("gene") or "")):
         missing = [
             m for m in gene.get("missing_positions") or [] if isinstance(m, dict)
@@ -1687,20 +1714,22 @@ def partial_coverage_alert(
             )
             count = f"{len(missing)} of {total}" if known else str(len(missing))
             text = f"{count} {noun} {verb}"
-            found = [statuses.get(str(m.get("position"))) for m in missing]
-            tally: Dict[str, int] = {}
-            for status in filter(None, found):
-                tally[status] = tally.get(status, 0) + 1
-            if tally:
+            if statuses:
+                tally: Dict[str, int] = {}
+                for m in missing:
+                    status = statuses.get(str(m.get("position")))
+                    if status is None:
+                        bucket = "unlisted"
+                    else:
+                        bucket = status if status in _NAMED_STATUSES else "other"
+                    tally[bucket] = tally.get(bucket, 0) + 1
                 reasons = [
-                    f"{label} {tally.pop(key)}"
-                    for key, label in _MISSING_REASONS
+                    f"{label} {tally[key]}"
+                    for key, (label, _) in _MISSING_REASONS.items()
                     if key in tally
                 ]
-                if tally:
-                    reasons.append(f"called, not used {sum(tally.values())}")
                 text += f" ({', '.join(reasons)})"
-                reasons_given = True
+                used.update(tally)
             parts.append(text)
         if not called:
             parts.append("no call")
@@ -1732,12 +1761,14 @@ def partial_coverage_alert(
         "only there could not be assessed; one defined at other positions too was "
         "assessed on those alone."
     )
-    if reasons_given:
-        note += (
-            " <em>No reads</em>: no read of mapping quality 1 or more reached the "
-            "position; <em>uncertain</em>: reads did, but did not settle the genotype "
-            "(see Methodology)."
-        )
+    # The reasons this alert gives, explained once; constants, so nothing to escape.
+    legend = [
+        f"<em>{label}</em>: {meaning}"
+        for key, (label, meaning) in _MISSING_REASONS.items()
+        if key in used
+    ]
+    if legend:
+        note += " In brackets, " + "; ".join(legend) + "."
     return note + "</p><ul>" + "".join(lines) + "</ul>"
 
 
