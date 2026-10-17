@@ -508,7 +508,9 @@ def test_realigned_loci_are_reported_not_flagged():
     output = _realigned_output()
     assert alt_locus_flags(output) == {}
     alert = alt_locus_alert(output)
-    assert alert.startswith("<p>ℹ️ Re-aligned before genotyping: CYP2D6, UGT2B17 and ")
+    assert alert.startswith(
+        "<p><strong>Re-aligned before genotyping:</strong> CYP2D6, UGT2B17 and "
+    )
     assert "32,700 for CYP2D6, 67,754 for UGT2B17 and UGT2B15" in alert
     assert "95,594 read pairs" in alert
     assert "CYP2D6 526 before (48% at mapping quality 0), 1,512 after (6%)" in alert
@@ -546,7 +548,7 @@ def test_loci_left_on_their_alt_contigs_are_flagged_whatever_their_mapq0():
     )
     assert "UGT2B15 (68% of 2,428 reads at mapping quality 0; 67,754 reads" in alert
     assert "could not (the bwa-mem index image is not built)" in alert
-    assert "ℹ️" not in alert
+    assert "Re-aligned before genotyping" not in alert
     assert alt_locus_diagram_line(flags).startswith("reads on ALT contigs, not re-al")
     genes = [{"gene": "CYP2D6", "diplotype": "*1/*2"}]
     annotate_alt_locus(genes, flags)

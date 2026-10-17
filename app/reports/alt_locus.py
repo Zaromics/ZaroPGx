@@ -221,9 +221,11 @@ def _realignment_entry(
             )
     genes = _gene_list([g for locus in loci for g in (locus.get("genes") or [])])
     text = (
-        f"<p>ℹ️ Re-aligned before genotyping: {genes}. The uploaded alignment had "
-        "reads "
-        "from these loci on GRCh38's alternate copies of them (ALT contigs"
+        # No emoji: the PDF's fonts draw ℹ️ as a bare "i" (seen in the rendered
+        # report), and every entry here shares one amber box anyway.
+        f"<p><strong>Re-aligned before genotyping:</strong> {genes}. The uploaded "
+        "alignment had reads from these loci on GRCh38's alternate copies of them "
+        "(ALT contigs"
         + (f": {on_alts}" if on_alts else "")
         + "), where PyPGx does not read. ZaroPGx aligned the reads of these loci"
         + (f", {' and '.join(counted)}," if counted else "")
