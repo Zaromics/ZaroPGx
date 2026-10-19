@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.api.models import JobStatus
 from app.services import fhir_export_service
 from app.services.fhir import push as fhir_push
 
@@ -72,7 +73,11 @@ def push_answer(client, monkeypatch, tmp_path):
 
     reports = tmp_path / "reports"
     monkeypatch.setattr(fhir_export_service, "REPORT_DIR", reports)
-    job = SimpleNamespace(id=JOB_ID, job_metadata={"patient_id": "patient-1"})
+    job = SimpleNamespace(
+        id=JOB_ID,
+        status=JobStatus.COMPLETED,
+        job_metadata={"patient_id": "patient-1"},
+    )
     monkeypatch.setattr(
         router_module.JobService,
         "get_job",

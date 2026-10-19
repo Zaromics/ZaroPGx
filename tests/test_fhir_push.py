@@ -18,6 +18,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from app.api.models import JobStatus
 from app.services import fhir_export_service as fhir_module
 from app.services.fhir import push
 from app.services.fhir_export_service import FHIRExportService
@@ -266,6 +267,93 @@ def test_a_server_that_refuses_says_why():
     assert caught.value.reachable is True
     assert "HTTP 400" in str(caught.value) and "HAPI-0450: bad bundle" in str(
         caught.value
+    )
+
+
+def _transaction_fails(error):
+    """The job's listing answers; the transaction's request raises ``error``."""
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"resourceType": "Bundle", "type": "searchset"}
+            )
+        raise error(request)
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        lambda request: httpx.ReadTimeout("timed out", request=request),
+        lambda request: httpx.RemoteProtocolError(
+            "Server disconnected without sending a response.", request=request
+        ),
+        lambda request: httpx.ReadError("Connection reset by peer", request=request),
+    ],
+    ids=["read-timeout", "disconnected", "reset"],
+)
+def test_a_transaction_sent_without_an_answer_may_have_been_stored(error):
+    # The server got the transaction and the answer never came: HAPI commits it
+    # all the same (tests/test_fhir_push_hapi.py), so "nothing changed" would
+    # be wrong.
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(),
+            "job-1",
+            server_url="http://hapi.test/fhir",
+            client=_client(_transaction_fails(error)),
+        )
+    assert caught.value.reachable is True
+    assert caught.value.outcome_unknown is True
+    message = str(caught.value)
+    assert "http://hapi.test/fhir was sent the bundle but gave no answer" in message
+    assert "It may have stored it, or may still be storing it." in message
+    assert "could not be reached" not in message
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        lambda request: httpx.ConnectError("Connection refused", request=request),
+        lambda request: httpx.ConnectTimeout("timed out", request=request),
+    ],
+    ids=["refused", "connect-timeout"],
+)
+def test_a_transaction_that_could_not_connect_was_not_sent(error):
+    # The listing worked, then the server went away: the transaction never
+    # left, so nothing was stored.
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(),
+            "job-1",
+            server_url="http://hapi.test/fhir",
+            client=_client(_transaction_fails(error)),
+        )
+    assert caught.value.reachable is False
+    assert caught.value.outcome_unknown is False
+    assert "http://hapi.test/fhir could not be reached" in str(caught.value)
+
+
+def test_a_listing_that_times_out_pushes_nothing():
+    def handler(request):
+        if request.method == "GET":
+            raise httpx.ReadTimeout("timed out", request=request)
+        raise AssertionError("nothing may be posted")
+
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(),
+            "job-1",
+            server_url="http://hapi.test/fhir",
+            client=_client(handler),
+        )
+    assert caught.value.reachable is False
+    assert caught.value.outcome_unknown is False
+    assert str(caught.value) == (
+        "The FHIR server at http://hapi.test/fhir did not answer in time "
+        "(ReadTimeout('timed out')); nothing was pushed."
     )
 
 
@@ -528,6 +616,11 @@ def test_credentials_go_as_basic_auth_and_not_into_the_answer():
             },
         ),
         lambda request: httpx.Response(200, json={"resourceType": "Bundle"}),
+        _transaction_fails(
+            lambda request: httpx.ReadTimeout(
+                f"timed out on {SECRET_URL}", request=request
+            )
+        ),
     ],
 )
 def test_errors_do_not_show_the_credentials(handler):
@@ -615,7 +708,11 @@ def endpoint(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fhir_module, "REPORT_DIR", tmp_path)
     monkeypatch.setenv("FHIR_EXPORT_ENABLED", "true")
-    job = SimpleNamespace(id=JOB_ID, job_metadata={"patient_id": "patient-1"})
+    job = SimpleNamespace(
+        id=JOB_ID,
+        status=JobStatus.COMPLETED,
+        job_metadata={"patient_id": "patient-1"},
+    )
     monkeypatch.setattr(
         router_module.JobService,
         "get_job",
@@ -631,6 +728,7 @@ def endpoint(tmp_path, monkeypatch):
         )
 
     call.db = db
+    call.job = job
     call.module = router_module
     return call
 
@@ -673,11 +771,54 @@ def test_endpoint_unknown_job_is_404(endpoint):
     assert caught.value.status_code == 404
 
 
+@pytest.mark.parametrize(
+    "status",
+    [JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.RUNNING, JobStatus.PENDING],
+)
+def test_endpoint_pushes_only_a_completed_job(endpoint, tmp_path, monkeypatch, status):
+    # The bundle an earlier run of the job left in its directory.
+    _write_bundle(tmp_path)
+    endpoint.job.status = status
+
+    def never(bundle, job_id=None, server_url=None, client=None):
+        raise AssertionError("pushed the bundle of a job that is not completed")
+
+    monkeypatch.setattr(endpoint.module.fhir_push, "push_bundle", never)
+    with pytest.raises(HTTPException) as caught:
+        endpoint()
+    assert caught.value.status_code == 409
+    assert caught.value.detail == (
+        f"Job {JOB_ID} is {status.value}, not completed. Only a completed job's "
+        "FHIR bundle is pushed."
+    )
+
+
 def test_endpoint_job_without_bundle_is_404(endpoint):
     with pytest.raises(HTTPException) as caught:
         endpoint()
     assert caught.value.status_code == 404
-    assert "FHIR_EXPORT_ENABLED" in caught.value.detail
+    # The export is on: the endpoint answers 503 otherwise. The setting is not
+    # why there is no bundle.
+    assert "FHIR_EXPORT_ENABLED" not in caught.value.detail
+    assert caught.value.detail == (
+        f"Job {JOB_ID} has no FHIR bundle. The bundle is written with the job's "
+        "custom report, and this job's report did not write one: FHIR export was "
+        "off when it ran, or the export failed."
+    )
+
+
+def test_endpoint_job_with_its_report_turned_off_says_so(endpoint):
+    endpoint.job.job_metadata = {
+        "patient_id": "patient-1",
+        "workflow": {"needs_report": False},
+    }
+    with pytest.raises(HTTPException) as caught:
+        endpoint()
+    assert caught.value.status_code == 404
+    assert caught.value.detail == (
+        f"Job {JOB_ID} has no FHIR bundle. The bundle is written with the custom "
+        "report, which was turned off for this job."
+    )
 
 
 def test_endpoint_server_down_is_502_and_leaves_the_bundle_alone(
