@@ -88,5 +88,5 @@ def test_a_new_run_resets_the_bar_out_of_the_completed_state():
     source = _source()
     start = source.index("this.progressBar.style.width = '0%';")
     body = source[start : start + 600]
-    assert "classList.remove('progress-bar-complete')" in body
-    assert "classList.add('bg-info')" in body
+    assert re.search(r"classList\.remove\([^)]*'progress-bar-complete'", body)
+    assert re.search(r"classList\.add\([^)]*'bg-info'", body)

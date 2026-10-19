@@ -136,7 +136,9 @@ def test_a_failed_job_is_shown_failed():
     assert 100 not in ended["progress"]["updates"]
     assert ended["progress"]["stopped"]
     assert ended["status"] == "Analysis failed"
-    assert ["Error", "failed"] in ended["glyphs"]
+    # The stage row is onProgress's to mark, from the same message: a call here
+    # resets the whole row first, and with no step to match it erased the mark.
+    assert not ended["glyphs"], ended["glyphs"]
     assert not any("successfully" in message for message, _ in ended["log"])
 
 
@@ -148,7 +150,7 @@ def test_a_cancelled_job_is_shown_cancelled():
     assert "Analysis Cancelled" in ended["card"], ended["card"]
     assert "bg-secondary" in ended["barClasses"]
     assert ended["status"] == "Analysis cancelled"
-    assert not ended["glyphs"] or ["completed", "completed"] not in ended["glyphs"]
+    assert not ended["glyphs"], ended["glyphs"]
 
 
 @needs_node
@@ -159,3 +161,61 @@ def test_a_completed_job_still_shows_its_results():
     assert ended["shown"][0]["pdf_report_url"].endswith("_pgx_report.pdf")
     assert "progress-bar-complete" in ended["barClasses"]
     assert 100 in ended["progress"]["updates"]
+
+
+PROGRESS_HARNESS = r"""
+const classes = new Set(JSON.parse(process.argv[1]));
+const progressBar = {
+  style: {}, textContent: "", setAttribute() {},
+  classList: {
+    add: (...c) => c.forEach((x) => classes.add(x)),
+    remove: (...c) => c.forEach((x) => classes.delete(x)),
+    contains: (c) => classes.has(c),
+  },
+};
+const requestAnimationFrame = () => 1;
+const cancelAnimationFrame = () => {};
+const console = {log() {}, info() {}, warn() {}, debug() {}, error() {}};
+SMOOTH_PROGRESS_MANAGER
+const manager = new SmoothProgressManager(progressBar, {textContent: ""});
+manager.pendingStageUpdate = {targetProgress: 40, stage: "pypgx", message: "queued"};
+manager.stopAnimation();
+const dropped = manager.pendingStageUpdate === null;
+manager.reset();
+process.stdout.write(JSON.stringify({classes: [...classes], dropped}));
+"""
+
+
+def _progress_after(classes: list) -> dict:
+    """The bar's classes after stopAnimation() then reset(), and whether the
+    stop dropped a queued stage update."""
+    source = _function_source("class SmoothProgressManager {")[:-1]
+    script = PROGRESS_HARNESS.replace("SMOOTH_PROGRESS_MANAGER", source)
+    done = subprocess.run(
+        ["node", "-e", script, json.dumps(classes)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+@needs_node
+@pytest.mark.parametrize("ended_colour", ["bg-danger", "bg-secondary"])
+def test_the_next_run_starts_blue_and_striped_again(ended_colour):
+    """Bootstrap's bg-danger outranks bg-info: left on, the next job's whole run
+    was red."""
+    after = _progress_after(["progress-bar", ended_colour])
+
+    assert ended_colour not in after["classes"], after
+    assert {"bg-info", "progress-bar-striped", "progress-bar-animated"} <= set(
+        after["classes"]
+    ), after
+
+
+@needs_node
+def test_stopping_the_bar_drops_a_queued_stage_update():
+    """A stage update waiting out minStageDuration fired after the job ended,
+    moved the bar and replaced "Analysis failed" with the server's message."""
+    assert _progress_after(["progress-bar", "bg-info"])["dropped"]
