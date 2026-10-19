@@ -114,11 +114,12 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # code, no "genomics-bundle" profile, SNOMED 405824009 as "Genetic test". Re-taken
 # after fix/actionable-means-prescribing-change, whose only change to the bundle is
 # the conclusion's count: genes a prescribing change comes from (CYP2C19, 1), no
-# longer the length of the data's actionable_findings list (2).
-GOLDEN_JSON_SHA256 = "9134a538dd7634ce43ac67cc2862260c5d4b3930fb07134612c504150d4e9a8c"
-GOLDEN_JSON_BYTES = 21469
-GOLDEN_XML_SHA256 = "f9cbf2199a0e2e3fc0177dd8fae07be6c16c292615cca20f8c1f9e2a638fe2d6"
-GOLDEN_XML_BYTES = 19645
+# longer the length of the data's actionable_findings list (2); and again for
+# the singular, "1 actionable finding".
+GOLDEN_JSON_SHA256 = "90565668bf4d005e60090b1d3c409404405238e880cd6d10bbcf94a41cca2952"
+GOLDEN_JSON_BYTES = 21468
+GOLDEN_XML_SHA256 = "6482489bfcced36e43f7f63c0262321db8ae3356ead69c03e01bc1d0ddad7f85"
+GOLDEN_XML_BYTES = 19644
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows

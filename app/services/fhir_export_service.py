@@ -1104,7 +1104,10 @@ class FHIRExportService:
         Following the Genomic Report profile from HL7 Genomics Reporting IG.
         """
         report_id = str(uuid.uuid4())
-        total_genes = pharmcat_data.get("total_genes", 0)
+        # The JSON lane's data has genes but no total_genes, and read "0 genes".
+        total_genes = pharmcat_data.get("total_genes") or len(
+            pharmcat_data.get("genes") or []
+        )
         # Genes a guideline's prescribing change comes from (app.reports.actionable),
         # counted off the recommendations this bundle is built from, whichever lane
         # built them: the JSON lane's data has no actionable_findings and read 0.
@@ -1154,7 +1157,11 @@ class FHIRExportService:
             "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
             "issued": datetime.now(timezone.utc).isoformat(),
             "result": result_refs,
-            "conclusion": f"Pharmacogenomic analysis completed. {total_genes} genes analyzed, {actionable_count} actionable findings identified.",
+            "conclusion": (
+                f"Pharmacogenomic analysis completed. {total_genes} "
+                f"gene{'' if total_genes == 1 else 's'} analyzed, {actionable_count} "
+                f"actionable finding{'' if actionable_count == 1 else 's'} identified."
+            ),
             "conclusionCode": [
                 {
                     "coding": [
