@@ -303,6 +303,11 @@ services:
       - PYPGX_MAX_PARALLEL_GENES=${PYPGX_MAX_PARALLEL_GENES:-8}
       - PYPGX_BATCH_SIZE=${PYPGX_BATCH_SIZE:-4}
       - PYPGX_PHARMCAT_PREFERENCE=${PYPGX_PHARMCAT_PREFERENCE:-pharmcat}  # auto|pypgx|pharmcat
+      # Where the reads of CYP2D6 and UGT2B17/UGT2B15 are aligned again when an
+      # alignment put some on GRCh38's ALT contigs (realign_alt_loci). Not a
+      # dependency: without gatk-api, or its index image, the step goes on without
+      # it and the report says so.
+      - GATK_API_URL=http://gatk-api:5000
     ports:
       - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:5053:5000"
     healthcheck:
