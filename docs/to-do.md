@@ -192,9 +192,11 @@ curated: true
 - No UI for the push yet: an action on a finished job in the web page.
 - Push a finished job automatically when a deployment asks for it (a setting, off by
   default)?
-- Phenotypes: the IG puts a phenotype in the therapeutic implication, coded from LOINC
-  (Poor metabolizer, LA9657-3, ...); ZaroPGx sends it as text on the genotype. Coding it
-  the IG's way is a content change to decide on.
+- [DONE Oct 2026, feat/fhir-coded-implications] Phenotypes are therapeutic implications of
+  their genotypes, coded from the IG's LOINC answers where one says the same thing, text
+  elsewhere (table in docs/samples/README.md). Open: also repeat each gene's phenotype in
+  its drugs' implications, as the IG's examples do (needs labelling which gene each is
+  for); codes for G6PD's terms and the hedged calls, if LOINC or the IG adds them.
 - Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
   an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
 - Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.
