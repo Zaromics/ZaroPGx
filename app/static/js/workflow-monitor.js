@@ -151,6 +151,23 @@ class WorkflowMonitor {
         if (this.isCompleted || !this.hasEnded(data)) return;
         this.isCompleted = true;
         this.stopProgressPolling();
+        // A reconnect under way would fail after the end is shown, and its onError
+        // reset the stage row the end had just marked: call it off.
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+            this.connectionTimeout = null;
+        }
+        if (this.websocket && this.websocket.readyState === 0) {
+            this.websocket.onerror = null;
+            this.websocket.onclose = null;
+            this.websocket.close();
+            this.websocket = null;
+            this.isConnecting = false;
+        }
         this.callbacks.onComplete(data);
     }
 

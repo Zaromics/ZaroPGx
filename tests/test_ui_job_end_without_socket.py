@@ -366,6 +366,9 @@ def test_a_completed_message_without_links_then_the_one_with_them():
     completed_once(shown)
     assert shown["links"] == STORED_LINKS, shown["card"]
     assert shown["fetched"].count(f"/reports/job/{JOB}") == 1
+    # The fetched links were already on the card: the message's same links are
+    # not drawn again (the card and its "Analysis complete!" line came twice).
+    assert shown["showResults"] == 1, shown["showResults"]
 
 
 @needs_node
@@ -453,3 +456,48 @@ def test_a_second_failed_message_does_not_end_the_job_again():
         """)
 
     failed_once(shown)
+
+
+@needs_node
+def test_a_reconnect_that_fails_after_the_end_leaves_the_end_alone():
+    """The socket is reconnecting when the poll sees the job failed; the reconnect
+    then fails. Its onError reset the stage row the end had marked and logged
+    "Workflow error" under "Workflow ended: failed"."""
+    shown = run(
+        """
+        window.GlyphManager.updateStageIndicators = (s, st) => log.push(["glyph " + s, st]);
+        socket().drop();
+        fireTimeouts();
+        await pollTick();
+        await settle();
+        if (socket().onerror) socket().onerror({});
+        """,
+        progress=[status("failed", 70)],
+    )
+    failed_once(shown)
+    assert not any(m.startswith("Workflow error") for m, _ in shown["log"]), shown[
+        "log"
+    ]
+    assert ["glyph Error", "failed"] not in shown["log"], shown["log"]
+
+
+@needs_node
+def test_a_fetch_for_an_earlier_job_does_not_draw_over_the_next():
+    """A link fetch still out when the next job's monitoring starts drew the
+    earlier job's "Analysis Complete!" card over the new job's view."""
+    other = "11111111-0000-4000-8000-000000000000"
+    shown = run(
+        f"""
+        message({json.dumps(status("completed"))});
+        window.monitorProgress({json.dumps(other)});
+        socket().open();
+        socket().receive("initial_status", {json.dumps(status("running", 5))});
+        document.getElementById("analysisResults").classList.add("d-none");
+        elements.workflowAnalysisPanel = elements.workflowAnalysisPanel || {{classList: {{add() {{}}, remove() {{}}}}}};
+        if (releaseReports) releaseReports();
+        """,
+        reply="hold",
+        held={"status": 200, "body": {"reports": STORED_REPORTS}},
+    )
+    assert shown["showResults"] == 0, shown["showResults"]
+    assert shown["cardHidden"]
