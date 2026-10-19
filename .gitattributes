@@ -20,6 +20,7 @@
 *.pdf  binary
 *.zip  binary
 *.gz   binary
+*.tgz  binary
 *.bgz  binary
 *.bz2  binary
 *.bam  binary

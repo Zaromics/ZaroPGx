@@ -204,11 +204,37 @@ services:
       - hapi.fhir.subscription.websocket_enabled=false
       - JAVA_OPTS=-Djava.io.tmpdir=/tmp -Xmx2g
       - SPRING_DATASOURCE_INITIALIZATION_MODE=always
+      # The HL7 Genomics Reporting IG 3.0.0, whose profiles the FHIR export follows, so
+      # that $validate checks a bundle against them. Installed from the pinned files in
+      # docker/fhir-server/packages (mounted below), never fetched: fetchDependencies is
+      # off, and the two packages the IG depends on are listed after it, at the versions
+      # it names. The IG is installed as resources, so its profiles can be searched; its
+      # dependencies are only stored, where the validator looks them up. Each package
+      # installs on the first start whose database lacks it and is skipped after that.
+      - hapi.fhir.implementationguides.genomics.name=hl7.fhir.uv.genomics-reporting
+      - hapi.fhir.implementationguides.genomics.version=3.0.0
+      - hapi.fhir.implementationguides.genomics.packageUrl=file:///fhir-packages/hl7.fhir.uv.genomics-reporting-3.0.0.tgz
+      - hapi.fhir.implementationguides.genomics.installMode=STORE_AND_INSTALL
+      - hapi.fhir.implementationguides.genomics.fetchDependencies=false
+      - hapi.fhir.implementationguides.genomics.reloadExisting=false
+      - hapi.fhir.implementationguides.terminology.name=hl7.terminology.r4
+      - hapi.fhir.implementationguides.terminology.version=6.1.0
+      - hapi.fhir.implementationguides.terminology.packageUrl=file:///fhir-packages/hl7.terminology.r4-6.1.0.tgz
+      - hapi.fhir.implementationguides.terminology.installMode=STORE_ONLY
+      - hapi.fhir.implementationguides.extensions.name=hl7.fhir.uv.extensions.r4
+      - hapi.fhir.implementationguides.extensions.version=5.1.0
+      - hapi.fhir.implementationguides.extensions.packageUrl=file:///fhir-packages/hl7.fhir.uv.extensions.r4-5.1.0.tgz
+      - hapi.fhir.implementationguides.extensions.installMode=STORE_ONLY
+      # HAPI pre-expands stored value sets in the background, which needs a search index
+      # (Hibernate Search) this server does not keep: it failed on every value set of the
+      # IG, logging some 85 errors on the first start. Validation expands what it needs.
+      - hapi.fhir.enable_task_pre_expand_value_sets=false
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./data/fhir-data:/data/hapi
+      - ./docker/fhir-server/packages:/fhir-packages:ro
     # No healthcheck: the hapi image is distroless (no shell, curl or wget), so the
     # `curl` check this had could never run and the service always read "unhealthy".
     # Nothing waits on its health.

@@ -170,6 +170,12 @@ curated: true
 
 ## FHIR & Exporting
 
+- [DONE Oct 2026, feat/hapi-genomics-ig] The bundled HAPI server loads the Genomics
+  Reporting IG 3.0.0 and the two packages it depends on, so its `$validate` checks a bundle
+  against the IG's profiles. They are pinned files in `docker/fhir-server/packages/`, not
+  downloads: the IG changes every year or two, so it is updated with the code (decided
+  2026-10-19). Offline, `$validate` does not check LOINC, SNOMED CT or HGNC codes. How to
+  call it and how to update the packages: docs/developer/architecture.md.
 - HAPI FHIR server integration; adjust `ddl-auto` appropriately for prod vs dev
 - Implement export per HL7 Genomics Reporting IG v3 via FHIr r4
 - Explore Fasten as a bridge for import/export to HAPI FHIR
