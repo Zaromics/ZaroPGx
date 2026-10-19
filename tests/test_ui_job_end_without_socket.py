@@ -161,6 +161,9 @@ globalThis.window = {
     updateProgress: (value, stage, message) => bar.push(["update", value]),
     stopAnimation: () => bar.push(["stop"]),
   }),
+  // The FHIR push button (its own branch) makes showResults offer a push; its
+  // card section is tested in tests/test_ui_fhir_push_button.py, not here.
+  offerFhirPush() {},
 };
 const addLogMessage = window.addLogMessage;
 const WorkflowMonitor = require(MONITOR_PATH);
