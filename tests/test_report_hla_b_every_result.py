@@ -194,18 +194,27 @@ def test_the_fhir_export_states_every_result(db_session):
     PharmCATParser(db_session).parse_and_load(_report(), run_id="run-1")
     result = FHIRExportService(db_session).export_pgx_report(run_id="run-1")
     assert result["success"], result.get("error")
-    genotypes = [
-        entry["resource"]
-        for entry in result["bundle"]["entry"]
-        if entry["resource"].get("code", {}).get("text") == "HLA-B Genotype"
-    ]
-    (genotype,) = genotypes
-    phenotypes = [
+    # Main states the phenotype as a component of the genotype observation; the
+    # Genomics Reporting IG work (#124) moves it to its own therapeutic-implication
+    # observation, coded. Either way it must carry every result.
+    resources = [entry["resource"] for entry in result["bundle"]["entry"]]
+    in_genotype = [
         c["valueCodeableConcept"]["text"]
-        for c in genotype["component"]
+        for r in resources
+        if r.get("code", {}).get("text") == "HLA-B Genotype"
+        for c in r.get("component", [])
         if c["code"].get("text") == "Phenotype"
     ]
-    assert phenotypes == [CARRIER]
+    implications = [
+        c["valueCodeableConcept"]
+        for r in resources
+        if r.get("code", {}).get("text") == "HLA-B phenotype"
+        for c in r.get("component", [])
+    ]
+    assert in_genotype + [c["text"] for c in implications] == [CARRIER]
+    for concept in implications:
+        # A *57:01 carrier is High risk, not the Low risk of "*15:02 negative".
+        assert [c["code"] for c in concept.get("coding", [])] == ["LA19541-4"]
 
 
 # ---------------------------------------------------------------------------
