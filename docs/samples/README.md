@@ -49,6 +49,8 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
   that says the same thing, with ZaroPGx's words as its text; text alone where it has none
   (table below)
 - None for a gene whose phenotype is "N/A" (the calling tool defines none) or not reported
+- A `note` where the code is CPIC's priority for the result rather than the result (High or
+  Low risk, below)
 
 This is where the IG states a pharmacogenomic phenotype: "a predicted ramification based
 on the presence of associated molecular finding(s)", such as "alterations in drug
@@ -76,6 +78,18 @@ which phenotype is whose.
 The risk statements take High or Low risk as CPIC's own EHR priority for them reads
 ("Abnormal/Priority/High Risk", "Normal/Routine/Low Risk"). The match is on the whole
 phenotype, ignoring case and spacing.
+
+The value set has no answer for an HLA allele found or not, a risk of hearing loss or a
+susceptibility, so for these rows the code states CPIC's priority for the result, not the
+result itself; ZaroPGx's words stay the concept's text. Each such observation says so in a
+`note`, which the IG's profile allows:
+
+```json
+"note": [{"text": "ZaroPGx called this phenotype \"*15:02 positive\". It is coded LOINC LA19541-4 \"High risk\" after CPIC's EHR priority term for that result, \"Abnormal/Priority/High Risk\", as the IG's value set has no code for the call itself."}]
+```
+
+No other phenotype has a note. These codes are provisional: they stand until the IG, LOINC
+or CPIC gives these results terms of their own, or the risk rows go back to text.
 
 ### 5. Observation — Therapeutic Implication (one per drug)
 - **Profile:** `therapeutic-implication`

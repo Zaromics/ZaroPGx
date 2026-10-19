@@ -195,6 +195,9 @@ curated: true
 - Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
   an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
 - Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.
+- High/Low risk for the HLA, MT-RNR1 and malignant hyperthermia phenotypes is provisional:
+  CPIC's EHR priority for the result, said in a note on each (Oct 2026, kept coded for
+  now). Revisit if the IG, LOINC or CPIC gives these results terms of their own.
 - Load the Genomics Reporting IG into the bundled HAPI server so its `$validate` works
   there too (`hapi.fhir.implementationguides.*` in `compose.yml`; it installs on the
   server's next start).
