@@ -44,8 +44,13 @@ def _services_config(monkeypatch, hapi_fhir: bool, fhir_export: bool) -> dict:
     return asyncio.run(main.services_config())
 
 
-def _run(tmp_path: Path, services_config, push=None) -> dict:
-    scenario = {"services_config": services_config, "results": RESULTS, "push": push}
+def _run(tmp_path: Path, services_config, push=None, replaced_by=None) -> dict:
+    scenario = {
+        "services_config": services_config,
+        "results": RESULTS,
+        "push": push,
+        "replaced_by": replaced_by,
+    }
     path = tmp_path / "scenario.json"
     path.write_text(json.dumps(scenario), encoding="utf-8")
     proc = subprocess.run(
@@ -104,6 +109,7 @@ def push_answer(client, monkeypatch, tmp_path):
 
 def _offered(out: dict) -> bool:
     section = out["section"]
+    assert section is not None, "no #fhirPushSection in the page"
     return 'id="fhirPushBtn"' in section["html"] and "d-none" not in section[
         "classes"
     ].split(" ")
@@ -134,6 +140,35 @@ def test_the_button_is_offered_only_with_the_server_and_the_export_on(
 def test_no_button_when_the_configuration_cannot_be_read(tmp_path):
     out = _run(tmp_path, None)
     assert not _offered(out)
+
+
+def test_the_push_is_offered_inside_the_jobs_results_card(monkeypatch, tmp_path):
+    out = _run(tmp_path, _services_config(monkeypatch, True, True))
+    assert _offered(out)
+    # The page finds the section only where showResults put it: in the card,
+    # not in a stand-in the test harness made up.
+    assert out["section"]["inside"][0] == "analysisResults"
+
+
+def test_a_card_replaced_while_the_configuration_loads_offers_only_its_own_push(
+    monkeypatch, tmp_path
+):
+    # A second job finishes while the first job's card is still asking
+    # /services-config whether to offer the push: its card replaces the first.
+    other_job = "66666666-7777-8888-9999-000000000000"
+    out = _run(
+        tmp_path,
+        _services_config(monkeypatch, True, True),
+        push={"network_error": "Failed to fetch"},
+        replaced_by={"job_id": other_job, "patient_id": "patient-2"},
+    )
+    # The first card's section is out of the page and was left alone.
+    assert out["first_section"] == {"html": "", "connected": False}
+    assert _offered(out)
+    assert out["section"]["inside"][0] == "analysisResults"
+    # The one button there pushes the job whose card it is, once.
+    pushes = [f for f in out["fetches"] if f["url"].startswith("/fhir/push/")]
+    assert pushes == [{"url": f"/fhir/push/workflow/{other_job}", "method": "POST"}]
 
 
 def test_a_click_pushes_the_job_and_shows_what_the_server_did(

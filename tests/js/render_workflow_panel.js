@@ -17,12 +17,7 @@
 
 const fs = require("fs");
 const vm = require("vm");
-const {
-  extractInlineScript,
-  makeSandbox,
-  runPageScript,
-  seedClasses,
-} = require("./dom_shim");
+const { extractInlineScript, makeSandbox, runPageScript } = require("./dom_shim");
 
 const [templatePath, payloadPath] = process.argv.slice(2);
 if (!templatePath || !payloadPath) {
@@ -35,7 +30,7 @@ const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
 
 // ---------------------------------------------------------------- run
 const script = extractInlineScript(template, "window.updateFileAnalysis");
-const sandbox = makeSandbox(seedClasses(template));
+const sandbox = makeSandbox(template);
 const errors = runPageScript(vm, sandbox, script);
 
 if (typeof sandbox.window.updateFileAnalysis !== "function") {
@@ -56,7 +51,7 @@ try {
 }
 
 const elements = {};
-for (const [id, el] of sandbox._elements.entries()) {
+for (const [id, el] of sandbox._connectedElements()) {
   elements[id] = { html: el.innerHTML, classes: el.classList.value };
 }
 
