@@ -67,6 +67,10 @@ REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
 RESOURCE_ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:zaropgx:fhir-resource")
 
 
+# The HLA-B alleles PharmCAT screens, each reported as its own result.
+HLA_B_SCREENED_ALLELES = ("*15:02", "*57:01", "*58:01")
+
+
 class FHIRExportService:
     """
     Service for generating FHIR R4-compliant pharmacogenomics exports.
@@ -937,13 +941,22 @@ class FHIRExportService:
         Low risk only if every one is negative; None, so the phenotype stays
         text, if any part is not an allele result. The results hold at once: by
         the first alone, a *57:01 or *58:01 carrier would be Low risk."""
-        results = []
+        results = {}
         for part in key.split(","):
-            allele_result = re.fullmatch(r"\*\d+:\d+ (positive|negative)", part.strip())
+            allele_result = re.fullmatch(
+                r"(\*\d+:\d+) (positive|negative)", part.strip()
+            )
             if allele_result is None:
                 return None
-            results.append(allele_result.group(1))
-        result = "positive" if "positive" in results else "negative"
+            results[allele_result.group(1)] = allele_result.group(2)
+        # HLA-B is screened for three alleles. A phenotype naming only some of
+        # them is HLA-B cut short (main kept only the first, "*15:02 negative",
+        # before fix/hla-b-every-allele-result): coding it would call a *57:01 or
+        # *58:01 carrier Low risk, so it stays text.
+        screened = set(HLA_B_SCREENED_ALLELES)
+        if screened & set(results) and not screened <= set(results):
+            return None
+        result = "positive" if "positive" in results.values() else "negative"
         return terminology.HLA_ALLELE_RESULT_ANSWERS[result]
 
     def _create_therapeutic_implication(
