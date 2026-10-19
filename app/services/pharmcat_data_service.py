@@ -26,6 +26,7 @@ from app.pharmcat.report_json import (
     guideline_source_name,
     recommendation_call_for_display,
 )
+from app.reports.actionable import actionable_findings
 from app.reports.evidence import (
     change_genes,
     classify_evidence,
@@ -236,33 +237,30 @@ class PharmCATDataService:
                 f"Summary retrieved: total_genes={summary.get('total_genes')}, actionable={summary.get('actionable_findings_count')}"
             )
 
-            # Get detailed gene data
-            genes = parser.get_gene_summary(run_id)
-            diplotypes = parser.get_diplotypes(run_id)
             drug_recommendations = parser.get_drug_recommendations(run_id)
             messages = parser.get_messages(run_id)
 
             logger.info(
-                f"Raw data counts - genes: {len(genes)}, diplotypes: {len(diplotypes)}, drug_recs: {len(drug_recommendations)}, messages: {len(messages)}"
+                f"Raw data counts - drug_recs: {len(drug_recommendations)}, messages: {len(messages)}"
             )
 
-            report_genes = self._transform_genes_for_reports(genes, diplotypes)
-            report_genes += self._transform_unannotated_calls_for_reports(
-                parser.get_unannotated_gene_calls(run_id),
-                {gene["gene"] for gene in report_genes},
+            report_genes = self._report_genes(parser, run_id)
+            report_recommendations = self._transform_drug_recommendations_for_reports(
+                drug_recommendations
             )
 
             # Transform data to match report generation expectations
             normalized_data = {
                 "genes": report_genes,
-                "drugRecommendations": self._transform_drug_recommendations_for_reports(
-                    drug_recommendations
-                ),
+                "drugRecommendations": report_recommendations,
                 "file_type": "vcf",  # Default assumption
                 "workflow": {"used_pharmcat": True, "pharmcat_run_id": run_id},
                 "pharmcat_version": summary.get("pharmcat_version", "Unknown"),
                 "total_genes": summary.get("total_genes", 0),
-                "actionable_findings": summary.get("actionable_findings", []),
+                # Of the genes and recommendations this report is built from.
+                "actionable_findings": actionable_findings(
+                    report_genes, report_recommendations
+                ),
                 "warning_messages": summary.get("warning_messages", []),
                 "run_id": run_id,
                 "created_at": summary.get("created_at"),
@@ -281,6 +279,39 @@ class PharmCATDataService:
         except Exception as e:
             logger.error(f"Error normalizing PharmCAT data for run {run_id}: {e}")
             return None
+
+    def get_actionable_findings(self, run_id: str) -> List[Dict[str, Any]]:
+        """A run's actionable findings (app.reports.actionable), from the genes and
+        recommendations its report is built from: each gene's call as the report
+        states it, and the drugs and prescribing changes the report's drug network
+        draws for it.
+
+        Read from the stored annotations (drug_recommendations.recommendation_data,
+        kept verbatim for every run since the database lane began), judged when
+        read, so runs stored before this definition follow it without being parsed
+        again.
+        """
+        with PharmCATParser(self.db) as parser:
+            return actionable_findings(
+                self._report_genes(parser, run_id),
+                self._transform_drug_recommendations_for_reports(
+                    parser.get_drug_recommendations(run_id)
+                ),
+            )
+
+    def _report_genes(
+        self, parser: PharmCATParser, run_id: str
+    ) -> List[Dict[str, Any]]:
+        """The report's gene rows for a run: PharmCAT's annotated genes, then the
+        genes it calls without a guideline annotation."""
+        report_genes = self._transform_genes_for_reports(
+            parser.get_gene_summary(run_id), parser.get_diplotypes(run_id)
+        )
+        report_genes += self._transform_unannotated_calls_for_reports(
+            parser.get_unannotated_gene_calls(run_id),
+            {gene["gene"] for gene in report_genes},
+        )
+        return report_genes
 
     def _transform_genes_for_reports(
         self, genes: List[Dict[str, Any]], diplotypes: List[Dict[str, Any]]

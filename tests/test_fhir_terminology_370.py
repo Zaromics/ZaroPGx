@@ -43,12 +43,12 @@ from app.services.fhir_export_service import FHIRExportService
 # its own LOINC code plus activity score and both alleles, a gene that falls back
 # to the generic LOINC code with an unusable activity score and no alleles, a
 # gene with only one allele, a drug with two recommendations (one carrying a
-# classification, one not) and a drug with none at all.
+# classification and a prescribing change, one neither) and a drug with none at
+# all.
 PHARMCAT_FIXTURE: Dict[str, Any] = {
     "run_id": "run-370",
     "pharmcat_version": "3.4.0",
     "total_genes": 3,
-    "actionable_findings": [{"gene": "CYP2C19"}, {"gene": "DPYD"}],
     "genes": [
         {
             "gene": "CYP2D6",
@@ -81,6 +81,8 @@ PHARMCAT_FIXTURE: Dict[str, Any] = {
                     "recommendation": "Alternative antiplatelet therapy recommended.",
                     "classification": "Strong",
                     "guideline_source": "CPIC",
+                    "prescribing_changes": ["alternative drug"],
+                    "change_genes": ["CYP2C19"],
                 },
                 {
                     "recommendation": "Consider prasugrel or ticagrelor.",
@@ -123,10 +125,12 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # IG's way (feat/fhir-coded-implications), and when each drug's implication came
 # to cite those phenotype implications in derivedFrom (the only change: two
 # references; feat/fhir-implications-cite-phenotype).
-GOLDEN_JSON_SHA256 = "b49ea4ad2c2e43ae72018fd151b5c44b3658404238e0f3c1b33c63f0cef4b0d7"
-GOLDEN_JSON_BYTES = 26804
-GOLDEN_XML_SHA256 = "228778df06b3969927a23248545664afe3321e257237a455ed31d1cd415c3d1b"
-GOLDEN_XML_BYTES = 26547
+# And when the conclusion came to count the genes a prescribing change comes
+# from (fix/actionable-means-prescribing-change), in the singular for one.
+GOLDEN_JSON_SHA256 = "1cbe43057f8329072b431d3032433a3420b58dd64e29f47dfb574344c925a76a"
+GOLDEN_JSON_BYTES = 26803
+GOLDEN_XML_SHA256 = "dd5fbc4ab08d74559943329a770229f7bc62e2b93a653739058b3a86d5be0ae1"
+GOLDEN_XML_BYTES = 26546
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows

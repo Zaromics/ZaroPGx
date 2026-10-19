@@ -39,7 +39,11 @@ class PharmCATLoadResponse(BaseModel):
     message: str = Field(..., description="Status message")
     total_genes: int = Field(..., description="Total number of genes analyzed")
     total_diplotypes: int = Field(..., description="Total number of diplotypes found")
-    actionable_findings: int = Field(..., description="Number of actionable findings")
+    actionable_findings: int = Field(
+        ...,
+        description="Number of actionable findings: genes a guideline's prescribing "
+        "change for this sample comes from",
+    )
     warning_messages: int = Field(..., description="Number of warning messages")
 
 
@@ -92,7 +96,8 @@ class MessageInfo(BaseModel):
 
 
 class ActionableFinding(BaseModel):
-    """Model for actionable findings"""
+    """A gene a guideline's prescribing change for this sample comes from
+    (app.reports.actionable), with its call as the report states it."""
 
     gene_symbol: str
     diplotype_label: Optional[str] = None
@@ -100,6 +105,15 @@ class ActionableFinding(BaseModel):
     activity_score: Optional[float] = None
     allele1_name: Optional[str] = None
     allele2_name: Optional[str] = None
+    drugs: List[str] = Field(
+        default_factory=list,
+        description="The drugs whose guidance changes prescribing because of this gene",
+    )
+    prescribing_changes: List[str] = Field(
+        default_factory=list,
+        description='What that guidance changes, most decisive first: "alternative '
+        'drug", "dose change", "other guidance"',
+    )
 
 
 class PharmCATSummary(BaseModel):
@@ -110,7 +124,9 @@ class PharmCATSummary(BaseModel):
     total_genes: int
     total_diplotypes: int
     actionable_findings: int = Field(
-        ..., description="Number of actionable findings (see actionable_findings_list)"
+        ...,
+        description="Number of actionable findings: genes a guideline's prescribing "
+        "change for this sample comes from (see actionable_findings_list)",
     )
     total_messages: int
     genes: List[GeneSummary]
@@ -396,8 +412,12 @@ async def get_actionable_findings(run_id: str, db: Session = Depends(get_db)):
     """
     Get actionable findings for a PharmCAT run
 
-    Returns only the pharmacogenomic findings that require clinical attention
-    (excludes normal metabolizers and uncertain susceptibility).
+    One finding per gene that a guideline's prescribing change for this sample
+    comes from (a different drug, a dose change or other prescribing guidance), as
+    the interactive report's drug-gene network draws it: the gene's call, and the
+    drugs and changes that make it actionable. A phenotype alone does not make a
+    finding: a Normal Metabolizer can be one (CYP3A5, tacrolimus); a negative HLA
+    screen is not, nor is any result no guideline changes a prescription for.
     """
     try:
         with PharmCATParser(db) as parser:
