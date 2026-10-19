@@ -40,10 +40,10 @@ def _diplotype_row(diplotype: Dict[str, Any]) -> Dict[str, Any]:
     """A PharmCAT diplotype block in the shape of a stored diplotypes row."""
     allele1 = diplotype.get("allele1") or {}
     allele2 = diplotype.get("allele2") or {}
-    phenotypes = diplotype.get("phenotypes") or []
     return {
         "diplotype_label": diplotype.get("label"),
-        "phenotype": phenotypes[0] if phenotypes else None,
+        # Every result, not the first: HLA-B has one per risk allele.
+        "phenotype": report_json.diplotype_phenotype(diplotype) or None,
         "activity_score": _as_float(diplotype.get("activityScore")),
         "allele1_name": allele1.get("name"),
         "allele1_function": allele1.get("function"),
@@ -53,6 +53,34 @@ def _diplotype_row(diplotype: Dict[str, Any]) -> Dict[str, Any]:
         "inferred": diplotype.get("inferred", False),
         "combination": diplotype.get("combination", False),
     }
+
+
+def _with_every_phenotype(
+    rows: List[Dict[str, Any]], source_diplotypes: Any
+) -> List[Dict[str, Any]]:
+    """Stored diplotype rows with each phenotype as PharmCAT's own block for that
+    call states it (report_json.diplotype_phenotype).
+
+    Rows stored before every result was kept hold HLA-B's first alone: "*15:02
+    negative" for a *57:01 carrier. The gene summary's stored JSON has PharmCAT's
+    blocks, so reports and FHIR exports of those runs state every result without
+    the run being parsed again. A row whose call the JSON does not hold, or holds
+    with no phenotype, is left as stored.
+    """
+    stated: Dict[str, str] = {}
+    for source in source_diplotypes or []:
+        if isinstance(source, dict) and source.get("label"):
+            phenotype = report_json.diplotype_phenotype(source)
+            if phenotype:
+                stated.setdefault(str(source["label"]), phenotype)
+    return [
+        (
+            {**row, "phenotype": stated[row["diplotype_label"]]}
+            if row.get("diplotype_label") in stated
+            else row
+        )
+        for row in rows
+    ]
 
 
 class PharmCATDataService:
@@ -296,7 +324,9 @@ class PharmCATDataService:
         # Transform grouped genes to report format
         report_genes = []
         for gene_symbol, gene in gene_groups.items():
-            diplotype_data = diplotype_map.get(gene_symbol, [])
+            diplotype_data = _with_every_phenotype(
+                diplotype_map.get(gene_symbol, []), gene.get("source_diplotypes")
+            )
 
             # Find the primary diplotype (usually the first one)
             primary_diplotype = diplotype_data[0] if diplotype_data else {}

@@ -163,6 +163,30 @@ UNRESOLVED_SHOWN = 3
 _NO_PHENOTYPE = frozenset({"", "n/a", "na", "unknown", "none", "-", ".", "no result"})
 
 
+def diplotype_phenotype(diplotype: Any) -> str:
+    """A PharmCAT diplotype's phenotype as one statement: every entry of its
+    ``phenotypes``, in PharmCAT's order, joined with ", "; "" when it has none.
+
+    PharmCAT 3.4 gives a diplotype one phenotype for every gene but HLA-B, which
+    gets one result per risk allele it screens, always *15:02, *57:01, *58:01:
+    ["*15:02 negative", "*57:01 positive", "*58:01 negative"]. The stored
+    diplotype rows kept the first, so a *57:01 or *58:01 carrier's HLA-B read
+    "*15:02 negative" in the gene table, the Executive Summary and the FHIR
+    export: a clean result beside abacavir or allopurinol guidance that says
+    otherwise. The results hold at once, so they are joined with ", ", not
+    " or ", which is how the report names candidates PharmCAT could not choose
+    between (``unresolved_call``).
+    """
+    if not isinstance(diplotype, Mapping):
+        return ""
+    phenotypes = diplotype.get("phenotypes")
+    if not isinstance(phenotypes, (list, tuple)):
+        phenotypes = [phenotypes]
+    return ", ".join(
+        str(p).strip() for p in phenotypes if p is not None and str(p).strip()
+    )
+
+
 def _either(values: Sequence[str]) -> str:
     """One value if every candidate has it, else each distinct one, in order."""
     distinct: List[str] = []
@@ -206,11 +230,7 @@ def unresolved_call(diplotypes: Any) -> Optional[Dict[str, Any]]:
             continue
         if any(c["diplotype"] == label for c in candidates):
             continue
-        phenotypes = entry.get("phenotypes")
-        if isinstance(phenotypes, (list, tuple)):
-            phenotype = ", ".join(str(p) for p in phenotypes if p)
-        else:
-            phenotype = str(phenotypes or "")
+        phenotype = diplotype_phenotype(entry)
         candidates.append(
             {
                 "diplotype": label,
@@ -288,11 +308,7 @@ def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
         diplotype = src["label"]
 
     if "phenotypes" in src:
-        phenotypes = src["phenotypes"]
-        if isinstance(phenotypes, list):
-            phenotype = ", ".join(str(p) for p in phenotypes)
-        else:
-            phenotype = str(phenotypes)
+        phenotype = diplotype_phenotype(src)
 
     if "activityScore" in src:
         activity_score = src["activityScore"]
@@ -368,9 +384,11 @@ def annotation_conditions(annotation: Any) -> List[Tuple[str, str, List[str]]]:
             label = str(diplotype.get("label") or "").strip()
             if label and label not in labels:
                 labels.append(label)
-            for phenotype in diplotype.get("phenotypes") or []:
-                if str(phenotype).strip() and str(phenotype).strip() not in phenotypes:
-                    phenotypes.append(str(phenotype).strip())
+            # One diplotype's results hold together; only the candidates' are
+            # alternatives. HLA-B's three were joined with " or " here.
+            phenotype = diplotype_phenotype(diplotype)
+            if phenotype and phenotype not in phenotypes:
+                phenotypes.append(phenotype)
     return [
         (gene, " or ".join(found[gene][1]), found[gene][0])
         for gene in annotation_genes(annotation)

@@ -1378,6 +1378,20 @@ def phenotype_badge_class(phenotype) -> str:
     return ""
 
 
+# An HLA allele and what was screened for it: "*57:01 positive".
+_ALLELE_RESULT = re.compile(r"(\*\d+:\d+) (positive|negative)\b")
+
+
+def allele_results_unbroken(phenotype) -> str:
+    """The phenotype with each HLA allele kept on one line with its result.
+
+    HLA-B states a result for each of three alleles, more than one line of the
+    Executive Summary holds, and its pill broke between "*58:01" and "negative". A
+    no-break space between each allele and its result moves the break to a comma.
+    """
+    return _ALLELE_RESULT.sub("\\1\u00a0\\2", str(phenotype or ""))
+
+
 def register_report_template_helpers(environment) -> None:
     """Register everything report_template.html needs to compile.
 
@@ -1392,6 +1406,7 @@ def register_report_template_helpers(environment) -> None:
     """
     environment.filters["activity_score_num"] = activity_score_num
     environment.filters["phenotype_badge_class"] = phenotype_badge_class
+    environment.filters["allele_results_unbroken"] = allele_results_unbroken
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
     environment.tests["a_call"] = gene_was_called
