@@ -38,6 +38,7 @@ from app.api.db import SessionLocal
 from app.pharmcat.report_json import (
     PharmCATSchemaError,
     detect_format,
+    diplotype_phenotype,
     iter_gene_blocks,
     validate_report,
 )
@@ -669,11 +670,9 @@ class PharmCATParser:
                 allele2_name=allele2.get("name") if allele2 else None,
                 allele2_function=allele2.get("function") if allele2 else None,
                 activity_score=activity_score,
-                phenotype=(
-                    diplotype.get("phenotypes", [None])[0]
-                    if diplotype.get("phenotypes")
-                    else None
-                ),
+                # Every result PharmCAT gives, not the first: HLA-B has one per
+                # risk allele (report_json.diplotype_phenotype).
+                phenotype=diplotype_phenotype(diplotype) or None,
                 match_score=diplotype.get("matchScore"),
                 outside_phenotype=diplotype.get("outsidePhenotype"),
                 outside_activity_score=diplotype.get("outsideActivityScore"),

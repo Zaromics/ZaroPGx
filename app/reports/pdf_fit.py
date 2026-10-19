@@ -277,6 +277,26 @@ def section_pages(document, anchor: str) -> List[int]:
     return [index for index, _ in section_fragments(document, anchor)]
 
 
+def room_under(document, anchor: str) -> Optional[float]:
+    """The height between the foot of the section's box (its own bottom margin
+    left out, which may sit in the page's) and the foot of the first page it is
+    laid out on, in CSS pixels; negative where the box runs past the page. None
+    for a section not laid out.
+
+    It can be negative on the section's only page: WeasyPrint can keep a section
+    whose lines fit on its page with its own bottom padding run past the foot.
+    """
+    pages = section_pages(document, anchor)
+    if not pages:
+        return None
+    page_box = document.pages[pages[0]]._page_box
+    box = _outer_box(page_box, _section_element(page_box, anchor))
+    if box is None:
+        return None
+    bottom = box.border_box_y() + box.border_height()
+    return page_box.content_box_y() + page_box.height - bottom
+
+
 def _target(document, section: FitSection) -> int:
     """How many pages the section should take, from its untightened layout."""
     fragments = section_fragments(document, section.anchor)
@@ -308,7 +328,18 @@ def fit_sections(
         )
 
     def fits(document, section):
-        return len(section_pages(document, section.anchor)) <= targets[section.anchor]
+        pages = section_pages(document, section.anchor)
+        if len(pages) > targets[section.anchor]:
+            return False
+        if section.max_tail is not None or not pages:
+            return True
+        # A one-page section must also end on its page. Counted by pages alone, a
+        # summary whose bottom padding WeasyPrint had let run past the foot was a
+        # fit, fill_summary_page had no room to share out, and the table ended
+        # short of the foot: the worst case, once HLA-B's pill stated each of its
+        # three results.
+        room = room_under(document, section.anchor)
+        return room is None or room >= 0
 
     levels = {section.anchor: 0 for section in sections}
     document = render("")
@@ -471,21 +502,20 @@ def fill_summary_page(render, document, css: str):
 
     ``css`` is the stylesheet ``document`` was laid out with. Padding does not
     change where any line wraps, so the rows grow by exactly what is added and one
-    layout lands it; a layout that would push the summary onto a second page is
-    discarded. A summary that already runs over is returned as it is.
+    layout lands it; a layout that would push the summary onto a second page, or
+    past the foot of its own, is discarded. A summary that already runs over is
+    returned as it is.
     """
     pages = section_pages(document, EXEC_SUMMARY.anchor)
     if len(pages) != 1:
         return document
     page_box = document.pages[pages[0]]._page_box
-    section = _outer_box(page_box, _section_element(page_box, EXEC_SUMMARY.anchor))
     cells = _summary_cells(page_box)
     rows = len({row_id for row_id, _ in cells})
-    # To the section's last line: its own bottom margin may sit in the page's.
-    bottom = section.border_box_y() + section.border_height()
-    slack = page_box.content_box_y() + page_box.height - bottom - FILL_MARGIN
-    if not rows or slack < 1:
+    room = room_under(document, EXEC_SUMMARY.anchor)
+    if not rows or room is None or room - FILL_MARGIN < 1:
         return document
+    slack = room - FILL_MARGIN
     # Every cell has the same vertical padding, the template's or a fitting step's.
     # Read the specified value: WeasyPrint centres a cell's content by adding to its
     # laid-out top padding.
@@ -498,7 +528,10 @@ def fill_summary_page(render, document, css: str):
             f"padding-bottom: {cell_y + extra:.3f}px !important; }}"
         )
         filled = render(f"{css}\n{rule}")
-        if len(section_pages(filled, EXEC_SUMMARY.anchor)) == 1:
+        if (
+            len(section_pages(filled, EXEC_SUMMARY.anchor)) == 1
+            and (room_under(filled, EXEC_SUMMARY.anchor) or 0) >= 0
+        ):
             return filled
     logger.warning("PDF: Executive Summary could not be filled to its page")
     return document
