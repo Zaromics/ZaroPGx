@@ -41,6 +41,9 @@ TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "reports" / "templates
         ("Variable", "intermediate-metabolizer"),
         ("Deficient", "poor-metabolizer"),
         ("Deficient with CNSHA", "poor-metabolizer"),
+        # PharmCAT 3.4's word (lexicon/phenotype-table.csv); the rule matched only
+        # "Susceptible", so an MH-susceptible RYR1 or CACNA1S badge was grey.
+        ("Malignant Hyperthermia Susceptibility", "poor-metabolizer"),
         ("Malignant Hyperthermia Susceptible", "poor-metabolizer"),
         ("increased risk of aminoglycoside-induced hearing loss", "poor-metabolizer"),
         ("normal risk of aminoglycoside-induced hearing loss", "normal-metabolizer"),

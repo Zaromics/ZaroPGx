@@ -1337,8 +1337,9 @@ env = Environment(
 #   negative, normal risk of aminoglycoside-induced hearing loss;
 # - amber, Priority: intermediate metabolism, decreased function, G6PD Variable;
 # - red, Priority at its strongest: poor metabolism or function, G6PD Deficient, an
-#   HLA risk allele positive, Malignant Hyperthermia Susceptible, increased risk of
-#   aminoglycoside-induced hearing loss;
+#   HLA risk allele positive, Malignant Hyperthermia Susceptibility (PharmCAT's word;
+#   "Susceptible" matched only the spelling CPIC's tables do not use), increased risk
+#   of aminoglycoside-induced hearing loss;
 # - blue: rapid metabolism and increased function, which is not "better" (a CYP2D6
 #   ultrarapid metabolizer is at risk on codeine).
 #
@@ -1354,7 +1355,7 @@ _PHENOTYPE_BADGE_CLASSES = tuple(
         (r"\buncertain\b|\bindeterminate\b", ""),
         (r"\bpositive\b", "poor-metabolizer"),
         (r"\bnegative\b", "normal-metabolizer"),
-        (r"\bsusceptible\b", "poor-metabolizer"),
+        (r"\bsusceptib(?:le|ility)\b", "poor-metabolizer"),
         (r"\bincreased risk\b", "poor-metabolizer"),
         (r"\bnormal risk\b", "normal-metabolizer"),
         (r"\bdeficient\b", "poor-metabolizer"),

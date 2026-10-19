@@ -79,7 +79,7 @@ Badge colours follow CPIC's ranking of each phenotype (its EHR priority):
   risk of aminoglycoside-induced hearing loss;
 - amber: intermediate metabolism, decreased function, G6PD Variable;
 - red: poor metabolism or function, G6PD Deficient, an HLA risk allele positive, Malignant
-  Hyperthermia Susceptible, increased risk of aminoglycoside-induced hearing loss;
+  Hyperthermia Susceptibility, increased risk of aminoglycoside-induced hearing loss;
 - blue: rapid metabolism and increased function, which is not necessarily better;
 - grey: uncertain and indeterminate results, unresolved calls ("A or B"), and the rest.
 
