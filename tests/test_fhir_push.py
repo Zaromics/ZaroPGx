@@ -788,8 +788,8 @@ def test_endpoint_pushes_only_a_completed_job(endpoint, tmp_path, monkeypatch, s
         endpoint()
     assert caught.value.status_code == 409
     assert caught.value.detail == (
-        f"Job {JOB_ID} is {status.value}, not completed. Only a completed job's "
-        "FHIR bundle is pushed."
+        f"Job {JOB_ID} has not completed (its status is {status.value}). Only a "
+        "completed job's FHIR bundle is pushed."
     )
 
 
