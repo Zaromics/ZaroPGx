@@ -119,6 +119,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --extra dev
 
+      # tests/e2e/test_ui_smoke.py drives the page in Chromium. Its headless build is
+      # all it launches (--only-shell); --with-deps adds the system libraries.
+      - name: Install Playwright's Chromium
+        run: uv run playwright install --with-deps --only-shell chromium
+
       # PharmCAT's preprocessor needs its GRCh38 reference (reference.fna.bgz, 844 MB).
       # The pharmcat container downloaded it from Zenodo at startup into an empty
       # volume, every run: 31 PRs pushed at once ran some 60 of those downloads
