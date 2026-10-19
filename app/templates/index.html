@@ -2894,10 +2894,18 @@
                         
                         // Show results window with completion data (now includes report URLs)
                         if (data && (data.job_id || data.workflow_id)) {
-                            // Extract patient_id from report URLs
+                            // Extract patient_id from report URLs: any of them, not just
+                            // the PDF's. A job with the custom report off has PharmCAT's
+                            // links only, and lost its "Download All" button.
                             let patient_id = data.patient_id;
-                            if (!patient_id && data.pdf_report_url) {
-                                const match = data.pdf_report_url.match(/\/reports\/([^\/]+)\//);
+                            const reportUrl = [
+                                data.pdf_report_url, data.interactive_html_report_url,
+                                data.pharmcat_html_report_url, data.pharmcat_json_report_url,
+                                data.pharmcat_tsv_report_url, data.mtdna_haplogroups_url,
+                                data.mtdna_vcf_url, data.mtdna_report_url
+                            ].find((url) => typeof url === 'string' && url);
+                            if (!patient_id && reportUrl) {
+                                const match = reportUrl.match(/\/reports\/([^\/]+)\//);
                                 if (match) {
                                     patient_id = match[1];
                                 }
