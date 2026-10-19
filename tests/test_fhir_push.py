@@ -18,6 +18,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from app.api.models import JobStatus
 from app.services import fhir_export_service as fhir_module
 from app.services.fhir import push
 from app.services.fhir_export_service import FHIRExportService
@@ -615,7 +616,11 @@ def endpoint(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fhir_module, "REPORT_DIR", tmp_path)
     monkeypatch.setenv("FHIR_EXPORT_ENABLED", "true")
-    job = SimpleNamespace(id=JOB_ID, job_metadata={"patient_id": "patient-1"})
+    job = SimpleNamespace(
+        id=JOB_ID,
+        status=JobStatus.COMPLETED,
+        job_metadata={"patient_id": "patient-1"},
+    )
     monkeypatch.setattr(
         router_module.JobService,
         "get_job",
@@ -631,6 +636,7 @@ def endpoint(tmp_path, monkeypatch):
         )
 
     call.db = db
+    call.job = job
     call.module = router_module
     return call
 
@@ -673,11 +679,54 @@ def test_endpoint_unknown_job_is_404(endpoint):
     assert caught.value.status_code == 404
 
 
+@pytest.mark.parametrize(
+    "status",
+    [JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.RUNNING, JobStatus.PENDING],
+)
+def test_endpoint_pushes_only_a_completed_job(endpoint, tmp_path, monkeypatch, status):
+    # The bundle an earlier run of the job left in its directory.
+    _write_bundle(tmp_path)
+    endpoint.job.status = status
+
+    def never(bundle, job_id=None, server_url=None, client=None):
+        raise AssertionError("pushed the bundle of a job that is not completed")
+
+    monkeypatch.setattr(endpoint.module.fhir_push, "push_bundle", never)
+    with pytest.raises(HTTPException) as caught:
+        endpoint()
+    assert caught.value.status_code == 409
+    assert caught.value.detail == (
+        f"Job {JOB_ID} is {status.value}, not completed. Only a completed job's "
+        "FHIR bundle is pushed."
+    )
+
+
 def test_endpoint_job_without_bundle_is_404(endpoint):
     with pytest.raises(HTTPException) as caught:
         endpoint()
     assert caught.value.status_code == 404
-    assert "FHIR_EXPORT_ENABLED" in caught.value.detail
+    # The export is on: the endpoint answers 503 otherwise. The setting is not
+    # why there is no bundle.
+    assert "FHIR_EXPORT_ENABLED" not in caught.value.detail
+    assert caught.value.detail == (
+        f"Job {JOB_ID} has no FHIR bundle. The bundle is written with the job's "
+        "custom report, and this job's report did not write one: FHIR export was "
+        "off when it ran, or the export failed."
+    )
+
+
+def test_endpoint_job_with_its_report_turned_off_says_so(endpoint):
+    endpoint.job.job_metadata = {
+        "patient_id": "patient-1",
+        "workflow": {"needs_report": False},
+    }
+    with pytest.raises(HTTPException) as caught:
+        endpoint()
+    assert caught.value.status_code == 404
+    assert caught.value.detail == (
+        f"Job {JOB_ID} has no FHIR bundle. The bundle is written with the custom "
+        "report, which was turned off for this job."
+    )
 
 
 def test_endpoint_server_down_is_502_and_leaves_the_bundle_alone(

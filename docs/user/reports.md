@@ -116,10 +116,13 @@ bundle.
 
 Writing the files sends nothing anywhere. To put a job's results on a FHIR server, ask for
 it: `POST /fhir/push/workflow/{job_id}` sends the job's bundle to `FHIR_SERVER_URL`, in
-Compose the bundled HAPI FHIR server (`127.0.0.1:8090/fhir` on the host). It goes as one
-transaction. The Patient is created once per ZaroPGx patient and reused by later pushes;
-the report and its resources are created the first time and updated in place when the job
-is pushed again, not copied. Every resource pushed for a job, the Patient aside, is tagged
+Compose the bundled HAPI FHIR server (`127.0.0.1:8090/fhir` on the host). Only a completed
+job is pushed (HTTP 409 for one that failed, was cancelled or is still running), and only
+one with a bundle: the bundle is written with the custom report, so a job run with that
+report turned off has none (HTTP 404). It goes as one transaction. The Patient is created
+once per ZaroPGx patient and reused by later pushes; the report and its resources are
+created the first time and updated in place when the job is pushed again, not copied.
+Every resource pushed for a job, the Patient aside, is tagged
 `urn:zaropgx:job-id|<job_id>`, and a push deletes, in the same transaction, the job's
 resources its bundle no longer has: the recommendations a regenerated report dropped, or a
 whole older bundle written before October 2026. The answer says how many resources the

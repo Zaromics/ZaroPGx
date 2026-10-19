@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.db import get_db
+from app.api.models import JobStatus
 from app.api.utils.security import get_optional_user
 from app.services import fhir_export_service
 from app.services.fhir import push as fhir_push
@@ -679,11 +680,12 @@ async def push_workflow_to_fhir_server(
     """
     Send a job's FHIR bundle to the FHIR server (FHIR_SERVER_URL) as a transaction.
 
-    The bundle is the one the job's report wrote (<job_id>_pgx_fhir_report.json).
-    Pushing a job again updates its resources on the server instead of adding
-    copies, and deletes those of the job's resources (tagged with it on push) the
-    bundle no longer has. A server that is down or refuses the bundle gives 502
-    with its reason; the job is not affected.
+    The bundle is the one the job's report wrote (<job_id>_pgx_fhir_report.json),
+    and only a completed job's is sent (409 otherwise). Pushing a job again
+    updates its resources on the server instead of adding copies, and deletes
+    those of the job's resources (tagged with it on push) the bundle no longer
+    has. A server that is down or refuses the bundle gives 502 with its reason;
+    the job is not affected.
     """
     if not fhir_export_enabled():
         raise HTTPException(
@@ -699,17 +701,40 @@ async def push_workflow_to_fhir_server(
         raise HTTPException(status_code=404, detail=f"No job {workflow_id}.")
 
     job_id = str(job.id)
-    patient_id = (job.job_metadata or {}).get("patient_id")
+    # The bundle in the job's directory is its result only once the job has
+    # completed. A run that failed, was cancelled or is still going may have
+    # left an earlier run's bundle there, and that is not what the job found.
+    status = getattr(job.status, "value", job.status)
+    if status != JobStatus.COMPLETED.value:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Job {job_id} is {status}, not completed. Only a completed "
+                "job's FHIR bundle is pushed."
+            ),
+        )
+
+    metadata = job.job_metadata or {}
     bundle_path = fhir_push.job_bundle_path(
-        fhir_export_service.REPORT_DIR, job_id, patient_id
+        fhir_export_service.REPORT_DIR, job_id, metadata.get("patient_id")
     )
     if bundle_path is None:
+        # The export is on (checked above), so the setting is not the reason.
+        # generate_report writes the bundle with the custom report, and a job
+        # whose report was turned off never runs it.
+        if (metadata.get("workflow") or {}).get("needs_report") is False:
+            reason = (
+                "The bundle is written with the custom report, which was turned "
+                "off for this job."
+            )
+        else:
+            reason = (
+                "The bundle is written with the job's custom report, and this "
+                "job's report did not write one: FHIR export was off when it "
+                "ran, or the export failed."
+            )
         raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Job {job_id} has no FHIR bundle. One is written with the job's "
-                "reports while FHIR_EXPORT_ENABLED=true."
-            ),
+            status_code=404, detail=f"Job {job_id} has no FHIR bundle. {reason}"
         )
 
     try:
