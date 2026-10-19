@@ -7,7 +7,8 @@ style or clicked anything, so three bugs of 2026-08-29 passed 1700 tests:
     here by measuring every popup text's contrast in both themes (with the 08-29 CSS
     put back in the browser, the labels measure 1.22:1);
   - the progress bar frozen for a whole step -- here the bar must move while the job
-    runs and finish at 100;
+    runs and finish at 100 (a bar that never moves; the 08-29 freeze was in a
+    GRCh37 liftover, which this hg38 VCF does not go through);
   - completed jobs deleting their own reports -- here every link the finished page
     offers must answer 200 with a body.
 
@@ -194,7 +195,7 @@ def test_upload_progress_and_report_in_both_themes(e2e_client, e2e_base_url):
                     state="visible", timeout=120_000
                 )
                 seen = _wait_for_result(page, time.time() + JOB_TIMEOUT_S)
-                # A bar that sat still and jumped to 100 at the end is the 08-29 bug.
+                # A bar that sat still and jumped to 100 at the end.
                 moving = [v for v in seen if 0 < v < 100]
                 assert len(set(moving)) >= 2, f"the bar did not move: {seen}"
                 page.wait_for_function(
@@ -204,6 +205,18 @@ def test_upload_progress_and_report_in_both_themes(e2e_client, e2e_base_url):
                 )
 
                 results = page.locator("#analysisResults")
+                # The card is drawn from the first completion message, which carries
+                # no links, and redrawn from the one that does: measure and read it
+                # once the links are in.
+                try:
+                    page.wait_for_function(
+                        "document.querySelector('#analysisResults a[href]') !== null",
+                        timeout=30_000,
+                    )
+                except Exception:
+                    pytest.fail(
+                        f"the finished page offers no links: {results.inner_text()}"
+                    )
                 low = {"dark": _low_contrast(results.evaluate(TEXT_CONTRAST_JS))}
                 page.locator("#themeToggle").click()
                 assert _theme(page) == "light"

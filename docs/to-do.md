@@ -160,7 +160,8 @@ curated: true
   (`tests/e2e/report_links.py`); (2) [DONE Oct 2026] Playwright smoke over upload →
   progress → report in both themes, with a contrast assertion on the popups and the
   results card (`tests/e2e/test_ui_smoke.py`; with the 08-29 popup CSS put back, the
-  dark theme's labels measure 1.22:1 and it fails); (3) only then consider visual
+  dark theme's labels measure 1.22:1 and it fails; its VCF is hg38, so the liftover
+  freeze above still needs a GRCh37 run watched); (3) only then consider visual
   snapshots.
 
 ## Data & Database
