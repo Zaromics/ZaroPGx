@@ -2786,6 +2786,55 @@
         };
 
         // Enhanced progress monitoring that integrates with new workflow system
+        // A job that ended without completing (failed or cancelled), told as such:
+        // in the progress bar, the stage row, the log and the results card.
+        window.showJobEnded = function(status, smoothProgress) {
+            const failed = status !== 'cancelled';
+            if (smoothProgress) {
+                smoothProgress.stopAnimation();
+            }
+            const bar = document.getElementById('progressBar');
+            if (bar) {
+                bar.classList.remove('bg-info', 'progress-bar-animated', 'progress-bar-striped');
+                bar.classList.add(failed ? 'bg-danger' : 'bg-secondary');
+            }
+            const progressStatus = document.getElementById('progressStatus');
+            if (progressStatus) {
+                progressStatus.textContent = failed ? 'Analysis failed' : 'Analysis cancelled';
+            }
+            if (failed) {
+                window.GlyphManager.updateStageIndicators('Error', 'failed');
+            }
+            window.addLogMessage(
+                failed ? `Workflow ended: ${status}` : 'Workflow cancelled',
+                failed ? 'danger' : 'warning'
+            );
+            const cancelButton = document.getElementById('cancelButton');
+            if (cancelButton) {
+                cancelButton.classList.add('d-none');
+            }
+
+            const resultsDiv = document.getElementById('analysisResults');
+            if (!resultsDiv) {
+                return;
+            }
+            const alert = document.createElement('div');
+            alert.className = failed ? 'alert alert-danger' : 'alert alert-secondary';
+            const heading = document.createElement('h4');
+            heading.textContent = failed ? 'Analysis Failed' : 'Analysis Cancelled';
+            const text = document.createElement('p');
+            text.textContent = failed
+                ? 'The job stopped before it finished, so it has no reports. The processing log above says where it stopped and why.'
+                : 'The job was cancelled before it finished, so it has no reports.';
+            alert.append(heading, text);
+            resultsDiv.replaceChildren(alert);
+            resultsDiv.classList.remove('d-none');
+            const workflowPanel = document.getElementById('workflowAnalysisPanel');
+            if (workflowPanel) {
+                workflowPanel.classList.add('d-none');
+            }
+        };
+
         window.monitorProgress = function(jobId) {
             console.log('Starting workflow monitoring for job:', jobId);
             
@@ -2864,8 +2913,17 @@
                     },
                     onComplete: (data) => {
                         console.log('Workflow completed:', data);
-                        
-                        
+
+                        // The monitor calls this however the job ended: completed,
+                        // failed or cancelled. Only "completed" is a success; a
+                        // failed job showed a green bar at 100% and "Analysis
+                        // Complete! ... completed successfully".
+                        const endedAs = String((data && data.status) || 'completed').toLowerCase();
+                        if (endedAs !== 'completed') {
+                            window.showJobEnded(endedAs, smoothProgress);
+                            return;
+                        }
+
                         // Use completion data directly from the API
                         if (smoothProgress) {
                             smoothProgress.updateProgress(100, 'completed', 'Analysis complete!');
