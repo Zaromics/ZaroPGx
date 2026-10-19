@@ -270,6 +270,93 @@ def test_a_server_that_refuses_says_why():
     )
 
 
+def _transaction_fails(error):
+    """The job's listing answers; the transaction's request raises ``error``."""
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"resourceType": "Bundle", "type": "searchset"}
+            )
+        raise error(request)
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        lambda request: httpx.ReadTimeout("timed out", request=request),
+        lambda request: httpx.RemoteProtocolError(
+            "Server disconnected without sending a response.", request=request
+        ),
+        lambda request: httpx.ReadError("Connection reset by peer", request=request),
+    ],
+    ids=["read-timeout", "disconnected", "reset"],
+)
+def test_a_transaction_sent_without_an_answer_may_have_been_stored(error):
+    # The server got the transaction and the answer never came: HAPI commits it
+    # all the same (tests/test_fhir_push_hapi.py), so "nothing changed" would
+    # be wrong.
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(),
+            "job-1",
+            server_url="http://hapi.test/fhir",
+            client=_client(_transaction_fails(error)),
+        )
+    assert caught.value.reachable is True
+    assert caught.value.outcome_unknown is True
+    message = str(caught.value)
+    assert "http://hapi.test/fhir was sent the bundle but gave no answer" in message
+    assert "It may have stored it, or may still be storing it." in message
+    assert "could not be reached" not in message
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        lambda request: httpx.ConnectError("Connection refused", request=request),
+        lambda request: httpx.ConnectTimeout("timed out", request=request),
+    ],
+    ids=["refused", "connect-timeout"],
+)
+def test_a_transaction_that_could_not_connect_was_not_sent(error):
+    # The listing worked, then the server went away: the transaction never
+    # left, so nothing was stored.
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(),
+            "job-1",
+            server_url="http://hapi.test/fhir",
+            client=_client(_transaction_fails(error)),
+        )
+    assert caught.value.reachable is False
+    assert caught.value.outcome_unknown is False
+    assert "http://hapi.test/fhir could not be reached" in str(caught.value)
+
+
+def test_a_listing_that_times_out_pushes_nothing():
+    def handler(request):
+        if request.method == "GET":
+            raise httpx.ReadTimeout("timed out", request=request)
+        raise AssertionError("nothing may be posted")
+
+    with pytest.raises(push.FHIRPushError) as caught:
+        push.push_bundle(
+            _bundle(),
+            "job-1",
+            server_url="http://hapi.test/fhir",
+            client=_client(handler),
+        )
+    assert caught.value.reachable is False
+    assert caught.value.outcome_unknown is False
+    assert str(caught.value) == (
+        "The FHIR server at http://hapi.test/fhir did not answer in time "
+        "(ReadTimeout('timed out')); nothing was pushed."
+    )
+
+
 # ---------------------------------------------------------------------------
 # A re-push removes what the job's bundle no longer has
 # ---------------------------------------------------------------------------
@@ -529,6 +616,11 @@ def test_credentials_go_as_basic_auth_and_not_into_the_answer():
             },
         ),
         lambda request: httpx.Response(200, json={"resourceType": "Bundle"}),
+        _transaction_fails(
+            lambda request: httpx.ReadTimeout(
+                f"timed out on {SECRET_URL}", request=request
+            )
+        ),
     ],
 )
 def test_errors_do_not_show_the_credentials(handler):

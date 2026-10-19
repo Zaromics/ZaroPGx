@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import time
 import uuid
 from unittest.mock import MagicMock
 
@@ -160,6 +161,52 @@ def test_pushing_twice_keeps_one_copy(server):
     assert len(report["result"]) == 2
     assert "extension" not in report or all(
         not x["url"].endswith("recommended-action") for x in report["extension"]
+    )
+
+
+class _AnswerTimesOut(httpx.HTTPTransport):
+    """Gives up on the transaction's answer at once, as a push does when the
+    server takes longer than PUSH_TIMEOUT to answer."""
+
+    def handle_request(self, request):
+        if request.method == "POST":
+            request.extensions["timeout"] = {
+                **request.extensions["timeout"],
+                "read": 0.001,
+            }
+        return super().handle_request(request)
+
+
+def test_a_push_without_an_answer_was_stored_and_pushing_again_keeps_one_copy(
+    server,
+):
+    patient_id = f"pytest-{uuid.uuid4()}"
+    report_id = f"pytest-report-{uuid.uuid4()}"
+    bundle = _bundle(patient_id, report_id)
+    job_id = f"pytest-job-{uuid.uuid4()}"
+
+    with httpx.Client(transport=_AnswerTimesOut(), timeout=push.PUSH_TIMEOUT) as client:
+        with pytest.raises(push.FHIRPushError) as caught:
+            push.push_bundle(bundle, job_id, server_url=server, client=client)
+    assert caught.value.reachable is True
+    assert caught.value.outcome_unknown is True
+
+    # The answer never came, and the server stored the transaction all the
+    # same (one commit: the report shows up with everything else).
+    report_query = f"DiagnosticReport?identifier=urn:zaropgx:report-id|{report_id}"
+    deadline = time.monotonic() + 60
+    while _count(server, report_query) == 0 and time.monotonic() < deadline:
+        time.sleep(1)
+    assert _count(server, report_query) == 1
+
+    # Pushing again once it has finished updates in place, as the error says.
+    again = push.push_bundle(bundle, job_id, server_url=server)
+    assert all(c["created"] == 0 for c in again["resources"].values())
+    assert all(c["deleted"] == 0 for c in again["resources"].values())
+    assert _count(server, report_query) == 1
+    assert _count(server, f"Observation?_tag=urn:zaropgx:job-id|{job_id}") == 3
+    assert (
+        _count(server, f"Patient?identifier=urn:zaropgx:patient-id|{patient_id}") == 1
     )
 
 

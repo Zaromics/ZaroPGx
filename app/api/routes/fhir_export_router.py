@@ -684,8 +684,10 @@ async def push_workflow_to_fhir_server(
     and only a completed job's is sent (409 otherwise). Pushing a job again
     updates its resources on the server instead of adding copies, and deletes
     those of the job's resources (tagged with it on push) the bundle no longer
-    has. A server that is down or refuses the bundle gives 502 with its reason;
-    the job is not affected.
+    has. A server that is down or refuses the bundle gives 502 with its reason,
+    and nothing was stored. So does one that was sent the bundle and gave no
+    answer, but that one may have stored it (FHIRPushError.outcome_unknown).
+    The job is not affected either way.
     """
     if not fhir_export_enabled():
         raise HTTPException(

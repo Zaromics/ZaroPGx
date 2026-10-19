@@ -128,10 +128,14 @@ resources its bundle no longer has: the recommendations a regenerated report dro
 whole older bundle written before October 2026. The answer says how many resources the
 server created, how many it already had and how many it deleted, and where the report is
 (`DiagnosticReport/<id>`). If the server is down or refuses the bundle, the request fails
-with the reason (HTTP 502), nothing is changed on the server, and the job is not affected.
-Credentials in `FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never
-shown. Nothing is pushed when a job ends, and the web page has no button for it yet.
-Sending to an outside health record system is not supported.
+with the reason (HTTP 502) and nothing is changed on the server. If the bundle was sent
+and no answer came back (the server took more than five minutes, or the connection
+dropped), the request fails the same way, but the server may have stored the bundle, or
+may still be storing it; pushing again once it has finished is safe, since a push updates
+the job's resources in place. The job is not affected either way. Credentials in
+`FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never shown. Nothing
+is pushed when a job ends, and the web page has no button for it yet. Sending to an
+outside health record system is not supported.
 
 ## Using the results
 

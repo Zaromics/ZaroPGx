@@ -31,7 +31,10 @@ all of it or none.
 
 Nothing here runs on its own: a push happens when someone asks for it (POST
 /fhir/push/workflow/{job_id}). A server that is down or refuses the bundle is an
-error for that request only; the job and its files are untouched.
+error for that request only; the job and its files are untouched. One that was
+sent the transaction and gave no answer may have stored it all the same; because
+every entry is conditional, pushing the job again once the server has finished
+updates what it stored instead of adding a copy.
 """
 
 from __future__ import annotations
@@ -63,12 +66,19 @@ SEARCH_PAGE_SIZE = 50
 
 
 class FHIRPushError(Exception):
-    """The push did not happen. ``reachable`` is False when the server could not
-    be reached at all (down, wrong URL), True when it answered with an error."""
+    """The push failed.
 
-    def __init__(self, message: str, reachable: bool):
+    ``reachable`` is False when nothing was pushed because the server could not
+    be reached (down, wrong URL) or did not answer before the transaction was
+    sent; True when it answered with an error, or was sent the transaction and
+    gave no answer. In that last case ``outcome_unknown`` is True: the server
+    may have stored the bundle, or may still be storing it.
+    """
+
+    def __init__(self, message: str, reachable: bool, outcome_unknown: bool = False):
         super().__init__(message)
         self.reachable = reachable
+        self.outcome_unknown = outcome_unknown
 
 
 def fhir_server_url() -> str:
@@ -397,6 +407,7 @@ def push_bundle(
             base,
             base,
             auth,
+            transaction=True,
             content=json.dumps(transaction),
             headers={"Content-Type": FHIR_JSON, "Accept": FHIR_JSON},
         )
@@ -424,19 +435,59 @@ def push_bundle(
     return summary
 
 
-def _send(http: httpx.Client, method: str, url: str, base: str, auth, **kwargs):
+# Failures before a request leaves for the server: no connection to it was made.
+_NOT_SENT = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.ProxyError,
+    httpx.UnsupportedProtocol,
+)
+
+
+def _send(
+    http: httpx.Client,
+    method: str,
+    url: str,
+    base: str,
+    auth,
+    transaction: bool = False,
+    **kwargs,
+):
     """One request to the server; a transport failure becomes FHIRPushError
-    naming the server without its credentials."""
+    naming the server without its credentials.
+
+    ``transaction`` marks the POST that writes. Once it has left, a missing
+    answer does not mean nothing was stored: HAPI commits a transaction it has
+    received whether or not the answer reaches us (tests/test_fhir_push_hapi.py),
+    and a big one can take longer than the read timeout."""
     if auth:
         kwargs["auth"] = auth
     try:
         return http.request(method, url, **kwargs)
-    except httpx.TimeoutException as exc:
+    except _NOT_SENT as exc:
         raise FHIRPushError(
-            f"The FHIR server at {base} did not answer in time ({_scrub(repr(exc))}).",
+            f"The FHIR server at {base} could not be reached ({_scrub(repr(exc))}). "
+            "Check that it is running and that FHIR_SERVER_URL points at it.",
             reachable=False,
         ) from exc
     except httpx.HTTPError as exc:
+        if transaction:
+            raise FHIRPushError(
+                f"The FHIR server at {base} was sent the bundle but gave no answer "
+                f"({_scrub(repr(exc))}). It may have stored it, or may still be "
+                "storing it. Pushing the job again once the server has finished is "
+                "safe: a push updates the job's resources in place instead of "
+                "adding copies.",
+                reachable=True,
+                outcome_unknown=True,
+            ) from exc
+        if isinstance(exc, httpx.TimeoutException):
+            raise FHIRPushError(
+                f"The FHIR server at {base} did not answer in time "
+                f"({_scrub(repr(exc))}); nothing was pushed.",
+                reachable=False,
+            ) from exc
         raise FHIRPushError(
             f"The FHIR server at {base} could not be reached ({_scrub(repr(exc))}). "
             "Check that it is running and that FHIR_SERVER_URL points at it.",
