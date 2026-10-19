@@ -342,6 +342,24 @@ def test_a_hub_with_several_possible_phenotypes_takes_no_colour():
     assert poor != unresolved and normal != unresolved
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_malignant_hyperthermia_susceptibility_is_red_and_uncertain_is_not():
+    """PharmCAT writes "Malignant Hyperthermia Susceptibility"; the rule matched only
+    "Susceptible", so an MH-susceptible RYR1 or CACNA1S hub took the neutral grey."""
+    proc = subprocess.run(
+        [shutil.which("node"), "-e", GENE_COLOR, str(SCRIPT)],
+        input=json.dumps(
+            ["Malignant Hyperthermia Susceptibility", "Uncertain Susceptibility"]
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == ["#e74c3c", "#95a5a6"]
+
+
 def test_a_missing_phenotype_is_never_printed_as_none():
     """The data attribute the network reads printed Python's None as text."""
     template = (

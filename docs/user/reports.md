@@ -74,13 +74,17 @@ lists all of them); and the **Genomic Datafile Header** as uploaded.
 
 ## Labels
 
-Badge colours follow CPIC's ranking of each phenotype (its EHR priority):
+Badge colours show what the phenotype says about the gene's function, or the risk
+screened, against what is typical. They are not CPIC's EHR priority, which ranks the need
+to act and differs by gene: a CYP3A5 normal metabolizer needs more tacrolimus than the
+standard dose, set on the more common poor metabolizers, yet its badge is green. Whether
+to act is what the drug recommendations say.
 
 - green: normal metabolism or function, G6PD Normal, an HLA risk allele negative, normal
   risk of aminoglycoside-induced hearing loss;
 - amber: intermediate metabolism, decreased function, G6PD Variable;
 - red: poor metabolism or function, G6PD Deficient, an HLA risk allele positive, Malignant
-  Hyperthermia Susceptible, increased risk of aminoglycoside-induced hearing loss;
+  Hyperthermia Susceptibility, increased risk of aminoglycoside-induced hearing loss;
 - blue: rapid metabolism and increased function, which is not necessarily better;
 - grey: uncertain and indeterminate results, unresolved calls ("A or B"), and the rest.
 
