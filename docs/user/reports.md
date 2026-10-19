@@ -144,7 +144,11 @@ HAPI server), then shows what the server did, per resource type, or why the push
 the server could not be reached or did not accept the bundle, and nothing was pushed; or
 it was sent the bundle and gave no answer, and may have stored it. Pressing it again
 replaces what the job put on that server before: its resources are updated in place, and
-those the bundle no longer has are deleted. The page offers no other server.
+those the bundle no longer has are deleted. The page offers no other server. It names the
+server as this installation's FHIR server, and the report's and Patient's references
+(`DiagnosticReport/<id>`) are relative to its base: `FHIR_SERVER_URL` is the address
+ZaroPGx reaches it at, in Compose a container name the browser cannot open, while from the
+host the bundled server is at `127.0.0.1:8090/fhir`.
 
 ## Using the results
 

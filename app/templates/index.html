@@ -2437,7 +2437,7 @@
                 }
                 if (response.ok && body && body.success) {
                     result.innerHTML = fhirPushSuccessHtml(body);
-                    window.addLogMessage(`Pushed the job's FHIR bundle to ${body.server_url}`, 'success');
+                    window.addLogMessage("Pushed the job's FHIR bundle to this installation's FHIR server", 'success');
                     return;
                 }
                 // The endpoint answers 502 whatever went wrong at the FHIR
@@ -2469,6 +2469,12 @@
         // What the server did, per resource type: "existing" is a resource it
         // already held and updated in place, except the Patient, which a push
         // reuses as it is (app/services/fhir/push.py).
+        //
+        // The server is not named by body.server_url: that is FHIR_SERVER_URL,
+        // the address ZaroPGx reaches it at, in Compose a container name
+        // (http://fhir-server:8080/fhir) the browser cannot open. The report's
+        // and the Patient's references are relative to the server's base,
+        // wherever the user opens it from.
         function fhirPushSuccessHtml(body) {
             const rows = Object.entries(body.resources || {}).map(([type, counts]) => {
                 const parts = [];
@@ -2488,7 +2494,7 @@
                 <div class="fhir-push-outcome border border-success-subtle rounded p-2 bg-body text-body">
                     <div class="fw-semibold text-success-emphasis text-break">
                         <i class="bi bi-check-circle-fill" aria-hidden="true"></i>
-                        Pushed to ${escapeHtml(body.server_url)}
+                        Pushed to this installation's FHIR server
                     </div>
                     <ul class="list-unstyled small mb-0 mt-1">${rows}</ul>
                     ${locations.length ? `<div class="small mt-1 text-break">${locations.join(' &middot; ')}</div>` : ''}

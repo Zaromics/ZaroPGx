@@ -203,7 +203,10 @@ def test_a_click_pushes_the_job_and_shows_what_the_server_did(
     assert "Push to FHIR server" in click["after"]["label"]
 
     html = click["result_html"]
-    assert "Pushed to http://fhir-server:8080/fhir" in html
+    # FHIR_SERVER_URL is the address the app uses, a container name in
+    # Compose; the browser could not open it.
+    assert "Pushed to this installation's FHIR server" in html
+    assert "fhir-server:8080" not in html
     assert "<strong>DiagnosticReport</strong>: 1 updated" in html
     assert "<strong>Patient</strong>: 1 already there, reused" in html
     assert "<strong>Observation</strong>: 2 created; 28 updated" in html
