@@ -1812,6 +1812,12 @@ async def upload_genomic_data(
             report_enabled=report_enabled,
             mtdna_enabled=effective_mtdna_enabled,
         )
+        # Every part is saved under /data/uploads by now. Starlette keeps each part's
+        # spooled copy open until the response's background tasks end, and the whole
+        # pipeline runs in one: a 99 GB genome held its size again in temporary space
+        # (an unlinked file in /tmp) for the length of its job (2026-10-14).
+        for upload in files:
+            await upload.close()
 
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])
