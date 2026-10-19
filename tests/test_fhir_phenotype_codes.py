@@ -41,9 +41,10 @@ MAPPING = [
     ("Deficient", None),
     ("Deficient with CNSHA", None),
     ("Variable", None),
-    ("*15:02 positive", "LA19541-4"),
-    ("*57:01 negative", "LA19542-2"),
-    ("*58:01 negative", "LA19542-2"),
+    # One HLA-B result on its own is HLA-B cut short (see HLA_B_CUT_SHORT): text.
+    ("*15:02 positive", None),
+    ("*57:01 negative", None),
+    ("*58:01 negative", None),
     ("*31:01 positive", "LA19541-4"),
     ("increased risk of aminoglycoside-induced hearing loss", "LA19541-4"),
     ("normal risk of aminoglycoside-induced hearing loss", "LA19542-2"),
@@ -109,6 +110,22 @@ def test_an_hla_phenotype_is_high_risk_if_any_result_is_positive(phenotype, code
         ],
         "text": phenotype,
     }
+
+
+# HLA-B naming only some of its three screened alleles: what main stored before
+# fix/hla-b-every-allele-result ("*15:02 negative", the first result alone). Coded,
+# a *57:01 or *58:01 carrier would be Low risk, so it stays text, whichever of the
+# two branches merges first.
+HLA_B_CUT_SHORT = [
+    "*15:02 negative",
+    "*15:02 negative, *57:01 negative",
+    "*57:01 positive, *58:01 negative",
+]
+
+
+@pytest.mark.parametrize("phenotype", HLA_B_CUT_SHORT)
+def test_hla_b_short_of_its_three_results_stays_text(phenotype):
+    assert FHIRExportService._phenotype_concept(phenotype) == {"text": phenotype}
 
 
 # A part that is not an allele result: the phenotype is not what the rule reads,
