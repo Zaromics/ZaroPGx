@@ -842,6 +842,10 @@
           {
             "reference": "urn:uuid:6d4af5f9-b1b2-5fd8-ad73-9819239f26ad",
             "display": "CYP2C19 *1/*2"
+          },
+          {
+            "reference": "urn:uuid:f654692f-fcfb-540f-bece-5ff833c1027b",
+            "display": "CYP2C19 phenotype"
           }
         ],
         "extension": [
@@ -989,6 +993,10 @@
           {
             "reference": "urn:uuid:91d55149-1e70-52c7-bd57-048d55be0490",
             "display": "CYP2D6 *1/*4"
+          },
+          {
+            "reference": "urn:uuid:4d6e46c1-d8f8-5e0e-b5d6-6af54e7602b4",
+            "display": "CYP2D6 phenotype"
           }
         ],
         "extension": [
@@ -1136,6 +1144,10 @@
           {
             "reference": "urn:uuid:00996929-b5da-5d1c-994d-507fb492120a",
             "display": "CYP2C9 *1/*3"
+          },
+          {
+            "reference": "urn:uuid:809a3879-797b-5500-ba7b-86c08f124334",
+            "display": "CYP2C9 phenotype"
           }
         ],
         "extension": [

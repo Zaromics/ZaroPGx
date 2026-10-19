@@ -120,11 +120,13 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # on (feat/fhir-push-hapi), and when CPIC's strength of recommendation stopped
 # being sent as LOINC's "Level of evidence". And when each gene's phenotype moved
 # from a text component of its genotype to a therapeutic implication coded the
-# IG's way (feat/fhir-coded-implications).
-GOLDEN_JSON_SHA256 = "761b5a5dc87a5c882757bb59bbabed4c0253fd3fc102b903c5d1cd1690e3fa3a"
-GOLDEN_JSON_BYTES = 26521
-GOLDEN_XML_SHA256 = "107df5d961edaec269045deb0840c37f5939b840fdb82d6b7a5ef1132cf30de7"
-GOLDEN_XML_BYTES = 26206
+# IG's way (feat/fhir-coded-implications), and when each drug's implication came
+# to cite those phenotype implications in derivedFrom (the only change: two
+# references; feat/fhir-implications-cite-phenotype).
+GOLDEN_JSON_SHA256 = "b49ea4ad2c2e43ae72018fd151b5c44b3658404238e0f3c1b33c63f0cef4b0d7"
+GOLDEN_JSON_BYTES = 26804
+GOLDEN_XML_SHA256 = "228778df06b3969927a23248545664afe3321e257237a455ed31d1cd415c3d1b"
+GOLDEN_XML_BYTES = 26547
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows

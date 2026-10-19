@@ -55,7 +55,7 @@ on the presence of associated molecular finding(s)", such as "alterations in dru
 metabolism", in a therapeutic implication derived from the genotype. The IG's own examples
 put it in each drug's implication (TxImp01-06); ZaroPGx states it once per gene, so genes
 with no drug keep theirs and a drug that depends on several genes does not have to say
-which phenotype is whose.
+which phenotype is whose. Each drug's implication points at it instead (next section).
 
 | Phenotype | Sent as |
 |---|---|
@@ -83,7 +83,11 @@ phenotype, ignoring case and spacing.
 - Components include:
   - **Medication assessed** (`51963-7`) — the drug's name, as text: PharmCAT names drugs by ClinPGx id, not RxNorm code
   - **Conclusion text** (`conclusion-string`) — the first recommendation's text
-- `derivedFrom` links back to the genotype observation(s) that informed the implication
+- `derivedFrom` the genotype observation(s) of the drug's genes, then the same genes'
+  phenotype implications (section 4), matched by gene: the drug's implication cites each
+  phenotype and does not repeat it. A gene without a stated phenotype is cited by its
+  genotype alone. The profile slices `derivedFrom` openly (variant, genotype, haplotype,
+  biomarker, over any Observation), so a reference to another implication is allowed
 - Optional `extension` for related artifacts (CPIC/DPWG guideline citations)
 
 ### 6. Task — Medication Recommendation (one per recommendation)
@@ -172,6 +176,8 @@ Errors: none. The validator's remaining warnings, and why they stay:
 - **Recommendation matches two profiles**: the IG's `recommended-action` extension allows a medication or a follow-up recommendation, and a Task without a code fits both.
 - **HGNC codes cannot be checked**: no terminology server the validator can reach carries HGNC. The ids are HGNC's own (rest.genenames.org).
 - **A phenotype without a code** ("No code provided, and a code should be provided from the value set 'Genetic Therapeutic Implications'"): the value set is extensible, so text is allowed where it has no equivalent; the table above says which phenotypes those are.
+
+Below the warnings, as information: a drug's implication's reference to a phenotype implication "does not match any known slice" of `derivedFrom`. The profile names slices for a variant, genotype, haplotype or biomarker and leaves the list open, so the reference is allowed; the validator only points out that it is none of those.
 
 ## Generation
 

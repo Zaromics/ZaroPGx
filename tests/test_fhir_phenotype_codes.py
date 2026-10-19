@@ -190,7 +190,7 @@ def test_the_report_lists_the_phenotypes_between_genotypes_and_drugs():
     ]
 
 
-def test_the_drug_implication_is_unchanged():
+def test_the_drug_implication_cites_the_phenotype_without_restating_it():
     bundle = _bundle(GENES)
     (codeine,) = [
         e["resource"]
@@ -201,4 +201,7 @@ def test_the_drug_implication_is_unchanged():
         "51963-7",
         "conclusion-string",
     ]
-    assert [d["display"] for d in codeine["derivedFrom"]] == ["CYP2D6 *4/*4"]
+    assert [d["display"] for d in codeine["derivedFrom"]] == [
+        "CYP2D6 *4/*4",
+        "CYP2D6 phenotype",
+    ]

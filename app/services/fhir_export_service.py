@@ -474,6 +474,9 @@ class FHIRExportService:
         entries = []
         observation_references = []
         phenotype_references = []
+        # The same phenotype observations as a drug's implication cites them: by
+        # gene, without the phenotype (the observation states it).
+        phenotype_citations = []
         implication_references = []
         task_references = []
         # How often each name has come up, so a gene or drug listed twice still
@@ -542,6 +545,12 @@ class FHIRExportService:
                         "display": f"{gene_data.get('gene', 'Unknown')} {phenotype}",
                     }
                 )
+                phenotype_citations.append(
+                    {
+                        "reference": f"urn:uuid:{phenotype_obs['id']}",
+                        "display": f"{gene_data.get('gene', 'Unknown')} phenotype",
+                    }
+                )
 
         # Create Therapeutic Implications and Medication Recommendations
         if include_recommendations:
@@ -555,6 +564,7 @@ class FHIRExportService:
                     drug_data=drug_rec,
                     patient_ref=patient_ref,
                     observation_refs=observation_references,
+                    phenotype_refs=phenotype_citations,
                     run_id=run_id,
                     resource_id=implication_id,
                 )
@@ -938,11 +948,15 @@ class FHIRExportService:
         observation_refs: List[Dict[str, str]],
         run_id: str,
         resource_id: Optional[str] = None,
+        phenotype_refs: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Observation for therapeutic implication.
 
         Following the Therapeutic Implication profile from HL7 Genomics Reporting IG.
+        It derives from its genes' genotypes and cites their phenotypes, which
+        their own implications state (_create_phenotype_implication), instead of
+        saying them again.
         """
         obs_id = resource_id or str(uuid.uuid4())
         drug_name = drug_data.get("drug", "Unknown")
@@ -1043,6 +1057,15 @@ class FHIRExportService:
                             "display": obs_ref.get("display", ""),
                         }
                     )
+                    break
+        # Then to the phenotype implications of the same genes, matched the same
+        # way ("<gene> phenotype"). The IG's profile slices derivedFrom openly, so
+        # another therapeutic implication is allowed there; the phenotype stays in
+        # its own observation, not repeated here.
+        for gene in genes:
+            for phenotype_ref in phenotype_refs or []:
+                if phenotype_ref.get("display", "").split(" ", 1)[0] == gene:
+                    observation["derivedFrom"].append(dict(phenotype_ref))
                     break
         # No genotype to point at: no derivedFrom, not an empty list (FHIR JSON
         # has no empty arrays). The IG's profile wants one, so such a drug's
