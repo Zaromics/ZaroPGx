@@ -912,12 +912,22 @@ class FHIRExportService:
         coding = concept.get("coding", [{}])[0]
         priority = terminology.CPIC_PRIORITY_TERMS.get(coding.get("code"))
         if priority:
+            # One result, one term. HLA-B states a result per risk allele, joined
+            # with ", " (_hla_results_code; no other risk phenotype has a comma):
+            # High risk is CPIC's term for a positive one among them, Low risk its
+            # term for negative results, every one of them.
+            if "," not in concept["text"]:
+                basis = "that result"
+            elif coding["code"] == terminology.HLA_ALLELE_RESULT_ANSWERS["positive"]:
+                basis = "a positive result"
+            else:
+                basis = "negative results"
             observation["note"] = [
                 {
                     "text": (
                         f'ZaroPGx called this phenotype "{concept["text"]}". It is '
                         f'coded LOINC {coding["code"]} "{coding["display"]}" after '
-                        f'CPIC\'s EHR priority term for that result, "{priority}", as '
+                        f'CPIC\'s EHR priority term for {basis}, "{priority}", as '
                         "the IG's value set has no code for the call itself."
                     )
                 }

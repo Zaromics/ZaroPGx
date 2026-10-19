@@ -86,14 +86,16 @@ risk, and it is Low risk only when every result is negative.
 The value set has no answer for an HLA allele found or not, a risk of hearing loss or a
 susceptibility, so for these rows the code states CPIC's priority for the result, not the
 result itself; ZaroPGx's words stay the concept's text. Each such observation says so in a
-`note`, which the IG's profile allows:
+`note`, which the IG's profile allows. For a `*57:01` carrier's HLA-B:
 
 ```json
-"note": [{"text": "ZaroPGx called this phenotype \"*15:02 positive\". It is coded LOINC LA19541-4 \"High risk\" after CPIC's EHR priority term for that result, \"Abnormal/Priority/High Risk\", as the IG's value set has no code for the call itself."}]
+"note": [{"text": "ZaroPGx called this phenotype \"*15:02 negative, *57:01 positive, *58:01 negative\". It is coded LOINC LA19541-4 \"High risk\" after CPIC's EHR priority term for a positive result, \"Abnormal/Priority/High Risk\", as the IG's value set has no code for the call itself."}]
 ```
 
-No other phenotype has a note. These codes are provisional: they stand until the IG, LOINC
-or CPIC gives these results terms of their own, or the risk rows go back to text.
+A phenotype of one result (HLA-A, MT-RNR1, malignant hyperthermia) says "for that result"
+instead, and HLA-B with every result negative "for negative results". No other phenotype
+has a note. These codes are provisional: they stand until the IG, LOINC or CPIC gives
+these results terms of their own, or the risk rows go back to text.
 
 ### 5. Observation — Therapeutic Implication (one per drug)
 - **Profile:** `therapeutic-implication`

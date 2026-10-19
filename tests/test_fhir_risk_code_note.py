@@ -45,6 +45,7 @@ NOT_RISK_CODED = [
     "Uncertain Susceptibility",
     "Likely Wild Type",
     "Deficient",
+    "*15:02 negative, *57:01 positive, *58:01 unknown",  # not read: text
 ]
 
 
@@ -70,6 +71,39 @@ def test_a_risk_coded_after_cpic_priority_says_so(phenotype, risk):
                 f'{code} "{display}" after CPIC\'s EHR priority term for that '
                 f'result, "{priority}", as the IG\'s value set has no code for the '
                 "call itself."
+            )
+        }
+    ]
+
+
+# HLA-B states one result per risk allele it screens, joined with ", " (#124 codes
+# it High risk if any is positive, Low risk only if all are negative). "That
+# result" would be wrong for three: High risk follows CPIC's term for a positive
+# one among them, Low risk its term for negative results.
+SEVERAL_RESULTS = [
+    ("*15:02 negative, *57:01 positive, *58:01 negative", HIGH, "a positive result"),
+    ("*15:02 positive, *57:01 positive, *58:01 negative", HIGH, "a positive result"),
+    ("*15:02 negative, *57:01 negative, *58:01 positive", HIGH, "a positive result"),
+    ("*15:02 negative, *57:01 negative, *58:01 negative", LOW, "negative results"),
+]
+
+
+@pytest.mark.parametrize("phenotype, risk, basis", SEVERAL_RESULTS)
+def test_a_note_on_several_results_names_the_result_its_code_follows(
+    phenotype, risk, basis
+):
+    code, display, priority = risk
+    observation = _phenotype(phenotype)
+    value = observation["component"][0]["valueCodeableConcept"]
+    assert value["coding"][0]["code"] == code
+    assert value["text"] == phenotype
+    assert observation["note"] == [
+        {
+            "text": (
+                f'ZaroPGx called this phenotype "{phenotype}". It is coded LOINC '
+                f'{code} "{display}" after CPIC\'s EHR priority term for {basis}, '
+                f'"{priority}", as the IG\'s value set has no code for the call '
+                "itself."
             )
         }
     ]
@@ -128,6 +162,39 @@ def test_in_the_bundle_only_the_risk_coded_phenotype_has_the_note():
     # The drug's implication and the genotypes have none either.
     assert [text for text, obs in observations.items() if "note" in obs] == [
         "HLA-B phenotype"
+    ]
+
+
+def test_an_hla_b_carrier_in_the_bundle_is_high_risk_for_its_positive_result():
+    data = {
+        **DATA,
+        "genes": [
+            {
+                "gene": "HLA-B",
+                "diplotype": "*08:01/*57:01",
+                "phenotype": "*15:02 negative, *57:01 positive, *58:01 negative",
+            }
+        ],
+    }
+    result = FHIRExportService(MagicMock()).export_pgx_report(
+        run_id="run-1", patient_info={"id": "p"}, pharmcat_data=data
+    )
+    assert result["success"], result
+    (observation,) = [
+        e["resource"]
+        for e in result["bundle"]["entry"]
+        if e["resource"].get("code", {}).get("text") == "HLA-B phenotype"
+    ]
+    assert observation["note"] == [
+        {
+            "text": (
+                'ZaroPGx called this phenotype "*15:02 negative, *57:01 positive, '
+                '*58:01 negative". It is coded LOINC LA19541-4 "High risk" after '
+                "CPIC's EHR priority term for a positive result, "
+                '"Abnormal/Priority/High Risk", as the IG\'s value set has no code '
+                "for the call itself."
+            )
+        }
     ]
 
 
