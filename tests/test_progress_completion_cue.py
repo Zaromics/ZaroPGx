@@ -78,7 +78,9 @@ def test_reduced_motion_still_gets_a_single_ping():
 def test_completion_applies_the_class_and_clears_bg_info():
     source = _source()
     start = source.index("onComplete: (data) => {")
-    body = source[start : start + 2000]
+    # The callback, up to the next one: a fixed-size window broke whenever the
+    # callback grew.
+    body = source[start : source.index("onError: (error) => {", start)]
     assert "classList.add('progress-bar-complete')" in body
     assert "classList.remove('bg-info')" in body
 

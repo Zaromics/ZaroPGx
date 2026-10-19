@@ -147,7 +147,9 @@ def test_oncomplete_still_calls_both_methods_in_that_order():
     """If the call sites move, the scenarios above stop mirroring production."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     start = html.index("onComplete: (data) => {")
-    body = html[start : start + 1200]
+    # The callback, up to the next one: a fixed-size window broke whenever the
+    # callback grew.
+    body = html[start : html.index("onError: (error) => {", start)]
 
     update = body.index("updateProgress(100")
     stop = body.index("stopAnimation()")
