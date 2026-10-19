@@ -836,23 +836,42 @@ def test_endpoint_server_down_is_502_and_leaves_the_bundle_alone(
     assert caught.value.status_code == 502
     assert "could not be reached" in caught.value.detail
     # The web page tells "down" from "refused" by this, not by the wording.
-    assert caught.value.headers == {"X-FHIR-Server-Reachable": "false"}
+    assert caught.value.headers == {"X-FHIR-Push-Outcome": "unreachable"}
     assert bundle_path.read_text() == saved
 
 
-def test_endpoint_refused_bundle_is_502_marked_reachable(
-    endpoint, tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "error, outcome",
+    [
+        (
+            push.FHIRPushError("The FHIR server at X refused the bundle", True),
+            "refused",
+        ),
+        (
+            push.FHIRPushError(
+                "The FHIR server at X was sent the bundle but gave no answer",
+                reachable=True,
+                outcome_unknown=True,
+            ),
+            "unknown",
+        ),
+    ],
+)
+def test_endpoint_failed_push_is_502_marked_with_its_outcome(
+    endpoint, tmp_path, monkeypatch, error, outcome
 ):
     _write_bundle(tmp_path)
 
-    def refused(bundle, job_id=None, server_url=None, client=None):
-        raise push.FHIRPushError("The FHIR server at X refused the bundle", True)
+    def fails(bundle, job_id=None, server_url=None, client=None):
+        raise error
 
-    monkeypatch.setattr(endpoint.module.fhir_push, "push_bundle", refused)
+    monkeypatch.setattr(endpoint.module.fhir_push, "push_bundle", fails)
     with pytest.raises(HTTPException) as caught:
         endpoint()
     assert caught.value.status_code == 502
-    assert caught.value.headers == {"X-FHIR-Server-Reachable": "true"}
+    # "unknown": the server got the bundle and did not answer, so it may have
+    # stored it; the page must not say it was refused.
+    assert caught.value.headers == {"X-FHIR-Push-Outcome": outcome}
 
 
 def test_endpoint_is_off_with_the_export(endpoint, monkeypatch):

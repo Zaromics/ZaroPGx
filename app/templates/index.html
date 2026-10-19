@@ -2423,7 +2423,10 @@
                 try {
                     response = await fetch(`/fhir/push/workflow/${encodeURIComponent(jobId)}`, { method: 'POST' });
                 } catch (error) {
-                    result.innerHTML = fhirPushFailureHtml('Not pushed', `ZaroPGx did not answer: ${error.message}`);
+                    // The browser cannot tell a request that never reached
+                    // ZaroPGx from one whose answer was lost mid-push, so this
+                    // does not claim nothing was pushed.
+                    result.innerHTML = fhirPushFailureHtml('No answer from ZaroPGx', error.message, 'warning');
                     return;
                 }
                 let body = null;
@@ -2437,19 +2440,26 @@
                     window.addLogMessage(`Pushed the job's FHIR bundle to ${body.server_url}`, 'success');
                     return;
                 }
-                // The endpoint answers 502 both when the server is down and when
-                // it refuses the bundle; X-FHIR-Server-Reachable says which.
+                // The endpoint answers 502 whatever went wrong at the FHIR
+                // server; X-FHIR-Push-Outcome says what it means for the server.
                 let title = 'Not pushed';
+                let tone = 'danger';
                 if (response.status === 502) {
-                    const reachable = response.headers.get('X-FHIR-Server-Reachable');
-                    if (reachable === 'false') title = 'Could not reach the FHIR server';
-                    if (reachable === 'true') title = 'The FHIR server did not accept the bundle';
+                    const outcome = response.headers.get('X-FHIR-Push-Outcome');
+                    if (outcome === 'unreachable') title = 'Could not reach the FHIR server';
+                    if (outcome === 'refused') title = 'The FHIR server did not accept the bundle';
+                    if (outcome === 'unknown') {
+                        // The bundle was sent and no answer came back: the
+                        // server may have stored it, which "Not pushed" denies.
+                        title = 'No answer from the FHIR server: it may have stored the bundle';
+                        tone = 'warning';
+                    }
                 }
                 const detail = (body && typeof body.detail === 'string')
                     ? body.detail
                     : `HTTP ${response.status} ${response.statusText || ''}`.trim();
-                result.innerHTML = fhirPushFailureHtml(title, detail);
-                window.addLogMessage(`FHIR push failed: ${title}`, 'danger');
+                result.innerHTML = fhirPushFailureHtml(title, detail, tone);
+                window.addLogMessage(`FHIR push: ${title}`, tone);
             } finally {
                 button.disabled = false;
                 button.innerHTML = FHIR_PUSH_LABEL;
@@ -2486,11 +2496,14 @@
             `;
         }
 
-        function fhirPushFailureHtml(title, detail) {
+        // tone: "danger" when nothing was pushed, "warning" when it is not
+        // known whether the bundle reached the server.
+        function fhirPushFailureHtml(title, detail, tone = 'danger') {
+            const icon = tone === 'warning' ? 'bi-exclamation-triangle-fill' : 'bi-x-circle-fill';
             return `
-                <div class="fhir-push-outcome border border-danger-subtle rounded p-2 bg-body text-body">
-                    <div class="fw-semibold text-danger-emphasis">
-                        <i class="bi bi-x-circle-fill" aria-hidden="true"></i>
+                <div class="fhir-push-outcome border border-${tone}-subtle rounded p-2 bg-body text-body">
+                    <div class="fw-semibold text-${tone}-emphasis">
+                        <i class="bi ${icon}" aria-hidden="true"></i>
                         ${escapeHtml(title)}
                     </div>
                     <div class="small mt-1 text-break">${escapeHtml(detail)}</div>

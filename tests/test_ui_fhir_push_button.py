@@ -214,37 +214,63 @@ def test_a_click_pushes_the_job_and_shows_what_the_server_did(
 
 
 @pytest.mark.parametrize(
-    "reachable, message, heading",
+    "error, outcome, heading, tone",
     [
         (
-            False,
-            "The FHIR server at http://fhir-server:8080/fhir could not be reached "
-            "(ConnectError('Connection refused')). Check that it is running and "
-            "that FHIR_SERVER_URL points at it.",
+            dict(
+                message="The FHIR server at http://fhir-server:8080/fhir could not "
+                "be reached (ConnectError('Connection refused')). Check that it is "
+                "running and that FHIR_SERVER_URL points at it.",
+                reachable=False,
+            ),
+            "unreachable",
             "Could not reach the FHIR server",
+            "danger",
         ),
         (
-            True,
-            "The FHIR server at http://fhir-server:8080/fhir refused the bundle "
-            "(HTTP 400): HAPI-0450: <b>bad</b> bundle",
+            dict(
+                message="The FHIR server at http://fhir-server:8080/fhir refused the "
+                "bundle (HTTP 400): HAPI-0450: <b>bad</b> bundle",
+                reachable=True,
+            ),
+            "refused",
             "The FHIR server did not accept the bundle",
+            "danger",
+        ),
+        (
+            # The bundle went out and the answer did not come back: the server
+            # may have stored it, and the page must not say it was not pushed.
+            dict(
+                message="The FHIR server at http://fhir-server:8080/fhir was sent "
+                "the bundle but gave no answer (ReadTimeout('timed out')). It may "
+                "have stored it, or may still be storing it.",
+                reachable=True,
+                outcome_unknown=True,
+            ),
+            "unknown",
+            "No answer from the FHIR server: it may have stored the bundle",
+            "warning",
         ),
     ],
+    ids=["unreachable", "refused", "unknown"],
 )
-def test_an_unreachable_or_refusing_server_is_named_with_its_reason(
-    monkeypatch, tmp_path, push_answer, reachable, message, heading
+def test_a_failed_push_says_what_it_means_for_the_server(
+    monkeypatch, tmp_path, push_answer, error, outcome, heading, tone
 ):
+    message = error["message"]
+
     def fails(bundle, job_id):
-        raise fhir_push.FHIRPushError(message, reachable=reachable)
+        raise fhir_push.FHIRPushError(**error)
 
     answer = push_answer(fails)
     assert answer["status"] == 502
-    assert answer["headers"]["x-fhir-server-reachable"] == str(reachable).lower()
+    assert answer["headers"]["x-fhir-push-outcome"] == outcome
     out = _run(tmp_path, _services_config(monkeypatch, True, True), answer)
 
     html = out["click"]["result_html"]
     assert heading in html
-    assert "text-danger-emphasis" in html
+    assert f"text-{tone}-emphasis" in html
+    assert "Not pushed" not in html
     # The server's own words, as text: markup in them is shown, not run.
     escaped = message.replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;")
     assert escaped in html
@@ -264,13 +290,18 @@ def test_a_job_without_a_bundle_says_so(monkeypatch, tmp_path, push_answer):
     assert f"Job {JOB_ID} has no FHIR bundle" in html
 
 
-def test_an_app_that_does_not_answer_is_not_a_push(monkeypatch, tmp_path):
+def test_no_answer_from_the_app_does_not_claim_nothing_was_pushed(
+    monkeypatch, tmp_path
+):
     out = _run(
         tmp_path,
         _services_config(monkeypatch, True, True),
         {"network_error": "Failed to fetch"},
     )
     html = out["click"]["result_html"]
-    assert "Not pushed" in html
-    assert "ZaroPGx did not answer: Failed to fetch" in html
+    # The request may have reached ZaroPGx and the push gone ahead: the page
+    # cannot know, so it does not say "Not pushed".
+    assert "No answer from ZaroPGx" in html
+    assert "Failed to fetch" in html
+    assert "Not pushed" not in html
     assert out["click"]["after"]["disabled"] is False
