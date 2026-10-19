@@ -660,13 +660,15 @@ def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
     )
 
 
-# The FASTQ lane's byte cap, matched to gatk-api's FASTQ_MAX_UPLOAD_BYTES. Two
-# copies is one more than ideal, but they guard different things: this one keeps
-# the pre-upload plan honest about what will be accepted, and the endpoint's
-# enforces it while streaming, where the bytes actually arrive. A mismatch shows
-# up as a plan that promises an alignment /align-fastq then refuses, which
-# tests/test_fastq_lane_planning.py pins against.
-FASTQ_MAX_UPLOAD_BYTES = 20 * 1024**3
+# The FASTQ lane's byte cap, both mates together. ONE setting: gatk-api reads the
+# same variable with the same default, and compose.yml passes both services the
+# same value. This copy keeps the pre-upload plan honest about what will be
+# accepted; the endpoint's enforces it while streaming, where the bytes actually
+# arrive. A mismatch shows up as a plan that promises an alignment /align-fastq
+# then refuses, which tests/test_fastq_lane_planning.py pins against.
+FASTQ_MAX_UPLOAD_BYTES = int(
+    os.environ.get("FASTQ_MAX_UPLOAD_BYTES", str(20 * 1024**3))
+)
 
 
 def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
@@ -680,10 +682,12 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
     the refusal NARROWS rather than disappearing. Two things can still make a FASTQ
     unanalysable, and both are properties of the file rather than of ZaroPGx:
 
-    * **Size.** The cap bounds run time and scratch disk: alignment writes the
-      reads out three times (unaligned, aligned and duplicate-marked BAM) on one
-      machine. Not memory -- BwaSpark's footprint is the index image, which a panel
-      run already loads whole. Above the cap the honest answer is still no.
+    * **Size.** The cap bounds scratch disk and run time: alignment keeps several
+      BAM-sized intermediates at once on one machine (gatk-api's
+      FASTQ_ALIGN_DISK_FACTOR has the list), and a whole genome takes hours. It was
+      once put down to memory; that was never measured, and whether
+      MarkDuplicatesSpark fits gatk-api's memory limit at whole-genome scale has not
+      been tested. Above the cap the honest answer is still no.
     * **Platform.** GATK and PyPGx both read ``@RG PL:``, and a bare FASTQ does not
       state it. It is detected from the read names and corroborated against read
       lengths; when that fails -- an SRA round-trip strips instrument naming -- the
@@ -693,14 +697,15 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
     however it was produced.
     """
     size = analysis.file_size or 0
-    cap_gb = FASTQ_MAX_UPLOAD_BYTES // 1024**3
+    cap_gb = f"{FASTQ_MAX_UPLOAD_BYTES / 1024**3:g}"
     if size > FASTQ_MAX_UPLOAD_BYTES:
         workflow["unsupported"] = True
         workflow["unsupported_reason"] = (
             f"This FASTQ is {size / 1024**3:.1f} GB, above the {cap_gb} GB limit. "
-            "Only targeted-panel and exome-sized read sets are aligned here. Align "
-            "whole-genome reads yourself (nf-core/sarek, or bwa-mem against GRCh38) "
-            "and upload the BAM or CRAM."
+            "Alignment here is meant for targeted-panel and exome-sized read sets: it "
+            "needs several times the reads' size in free disk, and hours for a whole "
+            "genome. Align whole-genome reads yourself (nf-core/sarek, or bwa-mem "
+            "against GRCh38) and upload the BAM or CRAM."
         )
         workflow["recommendations"].append(
             "<p>BAM, CRAM and SAM are accepted directly. A GRCh38 VCF is fastest.</p>"
@@ -2155,7 +2160,9 @@ class FileProcessor:
                 "<p>Priority 2 (Development): BAM, CRAM, SAM, BCF, gVCF, all NGS-derived.</p>"
             )
             workflow["recommendations"].append(
-                "<p>Priority 2 (Development): FASTQ, short-read, single- or paired-end, up to 20 GB, aligned to GRCh38 first.</p>"
+                "<p>Priority 2 (Development): FASTQ, short-read, single- or "
+                f"paired-end, up to {FASTQ_MAX_UPLOAD_BYTES / 1024**3:g} GB, aligned "
+                "to GRCh38 first.</p>"
             )
             workflow["recommendations"].append(
                 "<p>Priority 3 (Research): Other sequencing and genotyping formats.</p>"
@@ -2353,7 +2360,7 @@ class FileProcessor:
         if combined > FASTQ_MAX_UPLOAD_BYTES:
             return refuse(
                 f"These two FASTQs total {combined / 1024 ** 3:.1f} GB, above the "
-                f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit. Align them yourself "
+                f"{FASTQ_MAX_UPLOAD_BYTES / 1024 ** 3:g} GB limit. Align them yourself "
                 "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM or CRAM."
             )
 

@@ -3257,14 +3257,41 @@ ALIGN_REFERENCE_FASTA = os.environ.get(
 )
 ALIGN_INDEX_IMAGE = os.environ.get("ALIGN_INDEX_IMAGE", f"{ALIGN_REFERENCE_FASTA}.img")
 
-# 20 GB of reads. Comfortably above a targeted panel and a modest exome, far below
-# whole-genome sizes, which would need several times their own size in scratch disk
-# (three BAMs are written) and many hours of alignment. Kept in step with
-# app/api/utils/file_processor.py's FASTQ_MAX_UPLOAD_BYTES, which makes the same
-# promise before the upload starts; tests/test_fastq_lane_planning.py pins the pair.
+# 20 GB of reads unless set. Comfortably above a targeted panel and a modest exome,
+# below whole-genome sizes. What bounds it is disk and time, not a measured memory
+# limit: alignment needs several times the reads' size in free disk (see
+# FASTQ_ALIGN_DISK_FACTOR) and a whole genome takes many hours. Whether
+# MarkDuplicatesSpark fits this container's memory limit at whole-genome scale has
+# not been tested. ONE setting: app/api/utils/file_processor.py reads the same
+# variable with the same default to make the same promise before the upload starts,
+# compose.yml passes both the same value, and tests/test_fastq_lane_planning.py pins it.
 FASTQ_MAX_UPLOAD_BYTES = int(
     os.environ.get("FASTQ_MAX_UPLOAD_BYTES", str(20 * 1024 ** 3))
 )
+
+# Free disk /align-fastq asks for before FastqToSam, as a multiple of the FASTQ's
+# size on disk (both mates). Nothing the lane writes is deleted before the request
+# ends (work_dir goes in its finally), so the peak is MarkDuplicatesSpark finishing,
+# with all of this on disk at once, in multiples of the reads gzipped (GATK writes
+# BAM at compression level 2):
+#   work_dir       unaligned.bam (FastqToSam)                             ~1x
+#   work_dir       aligned.bam (BwaSpark; alignment tags, unsorted)       ~1.5x
+#   work_dir       Spark's shuffle for the coordinate sort (--tmp-dir;
+#                  raw BAM records, LZF-compressed)                       ~3x
+#   /data/results  aligned_<id>.bam.parts/ and the BAM merged from them
+#                  (MarkDuplicatesSpark; both exist while it merges)      ~1.5x each
+# About 8.5x, rounded up. The input itself is linked from /data, or already on disk
+# when this is checked. Measured 2026-10-16 on 2% of NA12878's 30x reads (1.08 GB
+# gzipped, 7.6 M pairs; disk sampled every 5 s): the peak came as MarkDuplicatesSpark
+# finished, 5.5 GB in work_dir and 1.1 GB of output, about 6.1x, so 9 leaves room for
+# the samples it missed and for larger inputs, not yet measured at exome or genome
+# scale. An uncompressed FASTQ is several times its gzipped size, so it is asked for
+# more than it needs.
+FASTQ_ALIGN_DISK_FACTOR = 9
+# A plain FASTQ is several times its gzipped size (NA12878's binned qualities about
+# 5x; older, finer qualities compress less), and the factor above is per gzipped
+# byte. 3 errs toward asking too much, not too little.
+FASTQ_PLAIN_TO_GZIP = 3
 
 # Below this share of reads aligned, /align-fastq refuses. Human short-read data aligns
 # at well over 90% (this stack's panel runs: over 99%); half leaves room for a
@@ -3313,10 +3340,40 @@ def _fastq_over_budget():
         status_code=413,
         detail=(
             f"FASTQ upload exceeds the "
-            f"{FASTQ_MAX_UPLOAD_BYTES // 1024 ** 3} GB limit (both mates "
+            f"{FASTQ_MAX_UPLOAD_BYTES / 1024 ** 3:g} GB limit (both mates "
             "count together). Align whole-genome reads yourself "
             "(nf-core/sarek, or bwa-mem against GRCh38) and upload the BAM "
             "or CRAM."
+        ),
+    )
+
+
+def _alignment_disk_refusal(fastq_paths, work_dir, output_dir):
+    """A 507 if the disk cannot hold what aligning `fastq_paths` writes, else None.
+
+    Most of it lands in work_dir, on this container's writable layer (TMPDIR), and
+    the last BAM on /data. From in here there is no telling whether the two share a
+    disk underneath -- on a default install they do -- so each must have room for
+    the whole of it. A snapshot: another job writing at the same time can still use
+    the space up.
+    """
+    size = sum(os.path.getsize(path) for path in fastq_paths)
+    gzipped = sum(
+        os.path.getsize(path) / (1 if _looks_gzipped(path) else FASTQ_PLAIN_TO_GZIP)
+        for path in fastq_paths
+    )
+    needed = gzipped * FASTQ_ALIGN_DISK_FACTOR
+    free = min(shutil.disk_usage(work_dir).free, shutil.disk_usage(output_dir).free)
+    if free >= needed:
+        return None
+    gb = 1024 ** 3
+    return HTTPException(
+        status_code=507,
+        detail=(
+            f"Aligning these {size / gb:.1f} GB of reads needs about {needed / gb:.1f} "
+            f"GB of free disk for its intermediate files; {free / gb:.1f} GB is free. "
+            "Free some space, or align the reads yourself (nf-core/sarek, or bwa-mem "
+            "against GRCh38) and upload the BAM or CRAM."
         ),
     )
 
@@ -3582,6 +3639,14 @@ async def align_fastq(
         )
 
         output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        # Before any GATK work, so a FASTQ the disk cannot hold is refused in seconds
+        # rather than filling the disk an hour in. A full host disk takes more than
+        # this job with it: on 2026-10-13 it crashed the desktop session.
+        refusal = _alignment_disk_refusal(
+            [p for p in (input_path, mate_path) if p], work_dir, output_dir
+        )
+        if refusal is not None:
+            raise refusal
         unaligned = os.path.join(work_dir, "unaligned.bam")
         output_bam = os.path.join(output_dir, f"aligned_{local_job_id}.bam")
 
