@@ -3177,7 +3177,7 @@
                         const endedAs = String((data && data.status) || 'completed').toLowerCase();
                         const hasLinks = reportLinkKeys.some(key => data && data[key]);
                         if (endShown) {
-                            if (endShown === 'completed' && endedAs === 'completed' && hasLinks) {
+                            if (endShown === 'completed' && endedAs === 'completed' && hasLinks && !linksShown) {
                                 linksShown = true;
                                 showCompleted(data);
                             }
@@ -3221,13 +3221,18 @@
                             showCompleted(data);
                             return;
                         }
+                        // A fetch still out when another job is monitored drew this
+                        // job's card over that one's view.
+                        const stillMonitored = () => workflowMonitor && workflowMonitor.workflowId === jobId;
                         window.fetchReportLinks(jobId).then(links => {
-                            // The message with the links may have come meanwhile.
-                            if (!linksShown) {
+                            // The message with the links may have come meanwhile; if
+                            // these have links, a later one need not draw them again.
+                            if (stillMonitored() && !linksShown) {
+                                linksShown = reportLinkKeys.some(key => links[key]);
                                 showCompleted(links);
                             }
                         }, error => {
-                            if (linksShown) {
+                            if (!stillMonitored() || linksShown) {
                                 return;
                             }
                             console.warn('Could not load the report links:', error);
@@ -3247,6 +3252,11 @@
                     },
                     onError: (error) => {
                         console.error('Workflow error:', error);
+                        // After the end is shown nothing is left to report: a late
+                        // connection error reset the stage row the end had marked.
+                        if (endShown) {
+                            return;
+                        }
                         // Update stage indicators using simple glyph system
                         window.GlyphManager.updateStageIndicators('Error', 'failed');
                         window.addLogMessage(`Workflow error: ${error.message}`, 'danger');
