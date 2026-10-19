@@ -46,6 +46,8 @@ const document = {
   getElementById: () => null,
 };
 const fetch = async () => ({ok: true, json: async () => config});
+// Where the page reads /services-config through a shared loader instead.
+window.getServicesConfig = async () => config;
 const console = {
   log() {}, warn() {}, error: (...a) => process.stderr.write(a.join(" ")),
 };
