@@ -42,6 +42,7 @@ Each `build:` section in `compose.yml` builds the same image from source.
 | `./` | `/app` (app), `/workspace` (nextflow) | the working tree: the app and the pipeline run the checked-out code |
 | volume `pgdata` | `/var/lib/postgresql` (db) | the database |
 | volume `pharmcat-references` | `/pharmcat-references` (pharmcat) | PharmCAT's GRCh38 reference, downloaded on first start |
+| `./docker/fhir-server/packages` | `/fhir-packages` (fhir-server, read-only) | the HL7 Genomics Reporting IG and its dependencies, which HAPI installs (below) |
 
 Reports go to `/data/reports/<patient_id>/<job_id>/`. `zarohla` and `mtdna` run as uid 999,
 so `start-docker.sh` makes `data/temp` and `data/versions` world-writable (sticky) for them.
@@ -122,6 +123,88 @@ reads or writes them.
 PharmCAT writes its own `<job_id>_pgx_pharmcat.{html,json,tsv}` into the same directory;
 the mtDNA step adds `mtdna_result.json`, `mtdna_variants.vcf.gz` and, for alignments,
 `mtdna_report.html`. The app serves them under `/reports/<patient_id>/<job_id>/`.
+
+## The FHIR server's implementation guide
+
+`fhir-server` installs the HL7 Genomics Reporting IG 3.0.0, whose profiles the FHIR export
+follows, so that its `$validate` checks a bundle against them. The IG and the two packages it
+depends on are committed in `docker/fhir-server/packages/`, unmodified, and `compose.yml`
+mounts them read-only at `/fhir-packages`. Nothing is downloaded: each package is named by a
+`file:` URL, `fetchDependencies` is off, and the dependencies are listed at the versions the
+IG's `package.json` names. FHIR R4 itself is built into HAPI. A file missing on the start
+that installs it stops HAPI starting, and its log names the file (`HAPI-2031: Error loading
+"file:///fhir-packages/..."`).
+
+| File | Package | sha256 |
+|---|---|---|
+| `hl7.fhir.uv.genomics-reporting-3.0.0.tgz` | Genomics Reporting IG 3.0.0 (STU3), 0.6 MB | `7a42cdfae8d47f0d39a2ad5c46ec9028ede4848655600e7deaff440b44d4d221` |
+| `hl7.terminology.r4-6.1.0.tgz` | HL7 Terminology (THO) 6.1.0, 5.5 MB | `37d28e130903296267953f1e46f1acb5ed8ce2a485f1da53e7454d2df1b0585a` |
+| `hl7.fhir.uv.extensions.r4-5.1.0.tgz` | FHIR Extensions Pack 5.1.0, 3.2 MB | `f96eec24d8ad2c043cf295acdfab46b01e0e1fcc568740aab3fd1acee4cb0456` |
+
+Each was downloaded in October 2026 from `https://packages.fhir.org/<name>/<version>`;
+packages2.fhir.org served the same bytes, and their SHA-1s match the registry's. HL7
+publishes them under CC0 1.0. `SHA256SUMS` beside them holds the same hashes, for
+`sha256sum -c`.
+
+The IG is installed as resources (`STORE_AND_INSTALL`): its 42 profiles and extensions, 19
+value sets and 12 code systems can be read and searched, as in
+`GET /fhir/StructureDefinition?url=http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype`.
+THO and the extensions pack are only stored (`STORE_ONLY`): they stay in HAPI's package
+cache, where the validator looks them up, rather than becoming thousands of resources. A
+package installs on the first start whose database does not have it. That start takes 18 to
+25 seconds longer and adds about 46 MB to the `fhir` schema; later starts skip it
+(`reloadExisting=false`, the files are not read again) and take a second or two longer than
+without the IG. HAPI's background pre-expansion of value sets is off
+(`hapi.fhir.enable_task_pre_expand_value_sets=false`): it needs a search index (Hibernate
+Search) this server does not keep, failed on every value set of the IG and logged some 85
+errors on the first start. Validation expands the value sets it needs by itself.
+
+### Validating a bundle
+
+Nothing in the app calls `$validate`; it is there to check an export by hand. From the host:
+
+```bash
+curl -s -X POST -H 'Content-Type: application/fhir+json' \
+  --data-binary @data/reports/<patient_id>/<job_id>/<job_id>_pgx_fhir_report.json \
+  'http://127.0.0.1:8090/fhir/Bundle/$validate' > outcome.json
+jq '[.issue[] | select(.severity == "error" or .severity == "fatal")] | length' outcome.json
+```
+
+The answer is an OperationOutcome, and the bundle is not stored. Errors and fatal issues
+are where the bundle breaks a profile; those from the IG's name it (`...genotype|3.0.0`).
+With no terminology server, codes are checked only against what the packages hold: the IG's
+own codes and value sets and HL7's code systems. Whether a LOINC, SNOMED CT or HGNC code
+exists is not checked, so expect warnings such as "Unable to expand ValueSet because
+CodeSystem has CodeSystem.content=not-present but contents were not found:
+http://loinc.org", and HGNC codes reported as outside the IG's HGNC value set. A terminology
+server (HAPI's `hapi.fhir.remote_terminology_service`, tx.fhir.org for one) would check
+them, but every bundle validated would send its codes, a patient's genes and phenotypes,
+off the machine.
+
+### Updating the packages
+
+The IG's releases are years apart. To move to a new one:
+
+1. Find it at https://packages.fhir.org/hl7.fhir.uv.genomics-reporting (`dist-tags`).
+2. Download it into `docker/fhir-server/packages/` and read what it depends on:
+
+   ```bash
+   curl -fL -o hl7.fhir.uv.genomics-reporting-<version>.tgz \
+     https://packages.fhir.org/hl7.fhir.uv.genomics-reporting/<version>
+   tar -xzOf hl7.fhir.uv.genomics-reporting-<version>.tgz package/package.json
+   ```
+
+   Download each package under `dependencies` the same way, at the version given, and
+   their own dependencies in turn; `hl7.fhir.r4.core` is built into HAPI.
+3. Delete the old files, write the hashes (`sha256sum *.tgz > SHA256SUMS`) and update the
+   table above.
+4. Set the names, versions and file names in `compose.yml`'s
+   `hapi.fhir.implementationguides.*`, and the IG version in `tests/test_fhir_server_ig.py`.
+   That test checks that the files, `SHA256SUMS`, `compose.yml` and this table agree, that
+   every dependency is installed at the version asked for, and that the IG still defines
+   every profile the export names (`app/services/fhir/terminology.py`).
+5. Restart `fhir-server`. It installs the new versions beside the old ones; check that
+   `$validate`'s issues name the new version (`|<version>`).
 
 ## Code layout
 

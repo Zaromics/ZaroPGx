@@ -212,9 +212,12 @@ curated: true
 - Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
   an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
 - Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.
-- Load the Genomics Reporting IG into the bundled HAPI server so its `$validate` works
-  there too (`hapi.fhir.implementationguides.*` in `compose.yml`; it installs on the
-  server's next start).
+- [DONE Oct 2026, feat/hapi-genomics-ig] The bundled HAPI server loads the Genomics
+  Reporting IG 3.0.0 and the two packages it depends on, so its `$validate` checks a bundle
+  against the IG's profiles. They are pinned files in `docker/fhir-server/packages/`, not
+  downloads: the IG changes every year or two, so it is updated with the code (decided
+  2026-10-19). Offline, `$validate` does not check LOINC, SNOMED CT or HGNC codes. How to
+  call it and how to update the packages: docs/developer/architecture.md.
 - HAPI FHIR server: adjust `ddl-auto` appropriately for prod vs dev
 - Export to an outside EHR/PHR (a configurable server, authentication)
 - Explore Fasten as a bridge for import/export to HAPI FHIR
