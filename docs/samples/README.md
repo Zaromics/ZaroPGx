@@ -66,7 +66,7 @@ which phenotype is whose.
 | HLA with a part that is not `*NN:NN positive` or `negative` | text |
 | HLA-B naming only some of `*15:02`, `*57:01`, `*58:01` (e.g. `*15:02 negative` alone) | text |
 | increased / normal risk of aminoglycoside-induced hearing loss (MT-RNR1) | `LA19541-4` High risk / `LA19542-2` Low risk |
-| Malignant Hyperthermia Susceptible (RYR1, CACNA1S) | `LA19541-4` High risk |
+| Malignant Hyperthermia Susceptibility (RYR1, CACNA1S; also "Susceptible") | `LA19541-4` High risk |
 | ivacaftor responsive in CF patients (CFTR) | `LA6677-4` Responsive |
 | Likely / Possible Intermediate Metabolizer, Likely Poor Metabolizer, Possible Decreased Function | text: the value set has only the definite terms |
 | G6PD Normal, Deficient, Deficient with CNSHA, Variable | text: enzyme activity terms with no equivalent in the value set |

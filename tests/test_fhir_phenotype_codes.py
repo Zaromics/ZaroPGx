@@ -49,6 +49,7 @@ MAPPING = [
     ("increased risk of aminoglycoside-induced hearing loss", "LA19541-4"),
     ("normal risk of aminoglycoside-induced hearing loss", "LA19542-2"),
     ("uncertain risk of aminoglycoside-induced hearing loss", None),
+    ("Malignant Hyperthermia Susceptibility", "LA19541-4"),  # PharmCAT's word
     ("Malignant Hyperthermia Susceptible", "LA19541-4"),
     ("Uncertain Susceptibility", None),
     ("ivacaftor responsive in CF patients", "LA6677-4"),

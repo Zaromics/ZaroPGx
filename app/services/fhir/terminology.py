@@ -157,6 +157,9 @@ PHENOTYPE_ANSWERS = {
     "decreased function": "LA25395-7",
     "poor function": "LA25394-0",
     "ivacaftor responsive in cf patients": "LA6677-4",
+    # PharmCAT 3.4's RYR1 and CACNA1S tables write "Susceptibility"; "Susceptible"
+    # alone left an MH-susceptible result uncoded.
+    "malignant hyperthermia susceptibility": "LA19541-4",
     "malignant hyperthermia susceptible": "LA19541-4",
     "increased risk of aminoglycoside-induced hearing loss": "LA19541-4",
     "normal risk of aminoglycoside-induced hearing loss": "LA19542-2",
