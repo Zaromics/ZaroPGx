@@ -541,8 +541,8 @@ def test_the_subset_covers_the_mhc_hla_contigs_and_unmapped_reads(client, fake_t
     _post_bam(client)
 
     views = [c for c in fake_tools.calls if c[:3] == ["samtools", "view", "-b"]]
-    # samtools view -b -o OUT INPUT REGIONS...
-    placed, unplaced = views[0][6:], views[1][6:]
+    # samtools view -b -@ THREADS -o OUT INPUT REGIONS...
+    placed, unplaced = views[0][8:], views[1][8:]
     assert placed == [
         "chr6:28510120-33480577",
         "HLA-A*01:01:01:01",
@@ -693,3 +693,22 @@ def test_a_small_unprobeable_input_is_still_converted_whole(
 
     assert body["results"]["HLA-A"] == "A*01:01,A*02:01"
     assert job_steps[-1][0] == "completed"
+
+
+def test_samtools_runs_threaded_over_the_subset(client, fake_tools, zarohla):
+    """Tens of millions of unplaced reads go through view, collate and fastq: 411 s
+    single-threaded on NA12878's MHC plus 62 M unplaced reads, 165 s with 4 threads,
+    the same alleles from the same reads."""
+    fake_tools.state["reads"] = b"@r1\nACGT\n+\nIIII\n"
+    _post_bam(client)
+    threaded = {
+        tuple(c[:2])
+        for c in fake_tools.calls
+        if c[0] == "samtools"
+        and "-@" in c
+        and c[c.index("-@") + 1] == zarohla.SAMTOOLS_THREADS
+    }
+    assert {("samtools", "view"), ("samtools", "collate"), ("samtools", "fastq")} <= (
+        threaded
+    )
+    assert zarohla.SAMTOOLS_THREADS == "4"
