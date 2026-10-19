@@ -711,8 +711,8 @@ async def push_workflow_to_fhir_server(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Job {job_id} is {status}, not completed. Only a completed "
-                "job's FHIR bundle is pushed."
+                f"Job {job_id} has not completed (its status is {status}). Only "
+                "a completed job's FHIR bundle is pushed."
             ),
         )
 
