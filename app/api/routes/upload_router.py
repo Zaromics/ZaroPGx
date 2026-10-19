@@ -64,6 +64,7 @@ from app.api.utils.header_inspector import (
     inspect_header,
 )
 from app.genome.contig_names import (
+    RenamedCopyNotIndexed,
     rename_plan,
     renamed_path,
     write_renamed_copy,
@@ -75,6 +76,7 @@ from app.services.job_service import JobService, schedule_coroutine
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.utils.env import env_flag
 from app.utils.pharmcat_assume_ref import resolve_assume_ref_flags
+from app.utils.shared_input import current_index
 
 from ..utils.security import get_optional_user
 
@@ -1344,6 +1346,14 @@ async def use_ucsc_contig_names(
         renamed = await asyncio.to_thread(
             write_renamed_copy, file_path, input_type, plan
         )
+    except RenamedCopyNotIndexed as exc:
+        Path(renamed_path(file_path)).unlink(missing_ok=True)
+        raise RuntimeError(
+            "The file's chromosomes were renamed from NCBI accessions, but the renamed "
+            f"copy could not be indexed ({str(exc) or 'samtools index failed'}). An "
+            "alignment must be sorted by coordinate to be indexed: sort it "
+            "(samtools sort) and upload it again."
+        ) from exc
     except Exception as exc:
         Path(renamed_path(file_path)).unlink(missing_ok=True)
         detail = getattr(exc, "stderr", None)
@@ -1354,10 +1364,16 @@ async def use_ucsc_contig_names(
             f"{(detail or str(exc)).strip()[-500:]}"
         ) from exc
 
-    # Registered with the job so it is released with the upload when the job ends.
+    # Registered with the job, its index too, so both are released with the upload
+    # when the job ends (an unregistered index was left behind in /data/uploads).
+    index = current_index(Path(renamed))
     job = job_service.get_job(job_id)
     metadata = dict(getattr(job, "job_metadata", None) or {})
-    metadata["file_paths"] = [*(metadata.get("file_paths") or []), renamed]
+    metadata["file_paths"] = [
+        *(metadata.get("file_paths") or []),
+        renamed,
+        *([str(index[0])] if index else []),
+    ]
     metadata["contigs_renamed"] = len(plan)
     job_service.update_job(job_id, JobUpdate(metadata=metadata))
     if not env_flag("KEEP_UPLOADS"):
