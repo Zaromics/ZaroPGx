@@ -26,11 +26,11 @@ HIGH = ("LA19541-4", "High risk", "Abnormal/Priority/High Risk")
 LOW = ("LA19542-2", "Low risk", "Normal/Routine/Low Risk")
 
 # The phenotypes coded after CPIC's EHR priority, as docs/samples/README.md lists them.
+# (One HLA-B result alone is HLA-B cut short and stays uncoded; its three results
+# are under SEVERAL_RESULTS below.)
 RISK_CODED = [
-    ("*15:02 positive", HIGH),
     ("*31:01 positive", HIGH),
-    ("*57:01 negative", LOW),
-    ("*58:01 negative", LOW),
+    ("*31:01 negative", LOW),
     ("increased risk of aminoglycoside-induced hearing loss", HIGH),
     ("normal risk of aminoglycoside-induced hearing loss", LOW),
     ("Malignant Hyperthermia Susceptible", HIGH),
@@ -125,7 +125,11 @@ def test_the_note_names_the_call_as_reported_not_as_matched():
 DATA = {
     "pharmcat_version": "3.4.0",
     "genes": [
-        {"gene": "HLA-B", "diplotype": "*15:02/*57:01", "phenotype": "*15:02 positive"},
+        {
+            "gene": "HLA-B",
+            "diplotype": "*15:02/*57:01",
+            "phenotype": "*15:02 positive, *57:01 positive, *58:01 negative",
+        },
         {"gene": "CYP2D6", "diplotype": "*4/*4", "phenotype": "Poor Metabolizer"},
     ],
     "drugRecommendations": [
@@ -210,5 +214,8 @@ def test_the_xml_puts_the_note_where_fhir_wants_it():
     assert (
         observation.find(f"{NS}note/{NS}text")
         .get("value")
-        .startswith('ZaroPGx called this phenotype "*15:02 positive".')
+        .startswith(
+            'ZaroPGx called this phenotype "*15:02 positive, *57:01 positive, '
+            '*58:01 negative".'
+        )
     )
