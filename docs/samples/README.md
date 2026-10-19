@@ -66,6 +66,7 @@ which phenotype is whose.
 | HLA, any result positive: `*31:01 positive`, HLA-B `*15:02 negative, *57:01 positive, *58:01 negative` | `LA19541-4` High risk |
 | HLA, every result negative: `*31:01 negative`, HLA-B `*15:02 negative, *57:01 negative, *58:01 negative` | `LA19542-2` Low risk |
 | HLA with a part that is not `*NN:NN positive` or `negative` | text |
+| HLA-B naming only some of `*15:02`, `*57:01`, `*58:01` (e.g. `*15:02 negative` alone) | text |
 | increased / normal risk of aminoglycoside-induced hearing loss (MT-RNR1) | `LA19541-4` High risk / `LA19542-2` Low risk |
 | Malignant Hyperthermia Susceptible (RYR1, CACNA1S) | `LA19541-4` High risk |
 | ivacaftor responsive in CF patients (CFTR) | `LA6677-4` Responsive |
@@ -81,7 +82,10 @@ The risk statements take High or Low risk as CPIC's own EHR priority for them re
 phenotype, ignoring case and spacing. An HLA phenotype has one result per risk allele
 PharmCAT screens, joined with ", ": one for HLA-A (`*31:01`), three for HLA-B (`*15:02`,
 `*57:01`, `*58:01`). They hold at once, so one positive result makes the phenotype High
-risk, and it is Low risk only when every result is negative.
+risk, and it is Low risk only when every result is negative. An HLA-B phenotype that
+names only some of its three alleles is not coded: before ZaroPGx kept all three, it
+stored the first alone (`*15:02 negative`), and coding that would call a `*57:01` or
+`*58:01` carrier Low risk.
 
 The value set has no answer for an HLA allele found or not, a risk of hearing loss or a
 susceptibility, so for these rows the code states CPIC's priority for the result, not the
