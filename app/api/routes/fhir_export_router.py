@@ -665,6 +665,9 @@ class FHIRPushResponse(BaseModel):
     )
 
 
+FHIR_SERVER_REACHABLE_HEADER = "X-FHIR-Server-Reachable"
+
+
 def _read_bundle(path) -> dict:
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
@@ -683,7 +686,8 @@ async def push_workflow_to_fhir_server(
     Pushing a job again updates its resources on the server instead of adding
     copies, and deletes those of the job's resources (tagged with it on push) the
     bundle no longer has. A server that is down or refuses the bundle gives 502
-    with its reason; the job is not affected.
+    with its reason, and X-FHIR-Server-Reachable says which (false: it could not
+    be reached; true: it answered with an error); the job is not affected.
     """
     if not fhir_export_enabled():
         raise HTTPException(
@@ -717,7 +721,14 @@ async def push_workflow_to_fhir_server(
         summary = await asyncio.to_thread(fhir_push.push_bundle, bundle, job_id)
     except fhir_push.FHIRPushError as e:
         logger.warning(f"FHIR push of job {job_id} failed: {e}")
-        raise HTTPException(status_code=502, detail=str(e))
+        # Both are 502; the header tells a server that could not be reached
+        # from one that answered and refused, so the web page can say which
+        # without reading the message.
+        raise HTTPException(
+            status_code=502,
+            detail=str(e),
+            headers={FHIR_SERVER_REACHABLE_HEADER: "true" if e.reachable else "false"},
+        )
     except ValueError as e:
         # Unreadable JSON, or not a Bundle.
         raise HTTPException(

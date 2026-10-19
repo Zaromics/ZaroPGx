@@ -694,7 +694,24 @@ def test_endpoint_server_down_is_502_and_leaves_the_bundle_alone(
         endpoint()
     assert caught.value.status_code == 502
     assert "could not be reached" in caught.value.detail
+    # The web page tells "down" from "refused" by this, not by the wording.
+    assert caught.value.headers == {"X-FHIR-Server-Reachable": "false"}
     assert bundle_path.read_text() == saved
+
+
+def test_endpoint_refused_bundle_is_502_marked_reachable(
+    endpoint, tmp_path, monkeypatch
+):
+    _write_bundle(tmp_path)
+
+    def refused(bundle, job_id=None, server_url=None, client=None):
+        raise push.FHIRPushError("The FHIR server at X refused the bundle", True)
+
+    monkeypatch.setattr(endpoint.module.fhir_push, "push_bundle", refused)
+    with pytest.raises(HTTPException) as caught:
+        endpoint()
+    assert caught.value.status_code == 502
+    assert caught.value.headers == {"X-FHIR-Server-Reachable": "true"}
 
 
 def test_endpoint_is_off_with_the_export(endpoint, monkeypatch):
