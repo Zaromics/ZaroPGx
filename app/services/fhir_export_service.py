@@ -1270,9 +1270,17 @@ class FHIRExportService:
         Following the Genomic Report profile from HL7 Genomics Reporting IG.
         """
         report_id = self._stable_id("DiagnosticReport", run_id)
-        # The JSON lane's data has genes but no total_genes, and read "0 genes".
-        total_genes = pharmcat_data.get("total_genes") or len(
-            pharmcat_data.get("genes") or []
+        # The genes this bundle states a genotype for (one genotype observation
+        # each), counted the same whichever lane built the data. total_genes was
+        # PharmCAT's row count: 23 for a 30x NA12878 report whose bundle carries 91
+        # genotypes (PharmCAT's and PyPGx's), CPIC and DPWG rows both for PharmCAT
+        # 2.x (37 for 22 genes), and absent, so "0 genes", in the JSON lane's data.
+        total_genes = len(
+            {
+                str(gene.get("gene")).strip()
+                for gene in pharmcat_data.get("genes") or []
+                if isinstance(gene, dict) and str(gene.get("gene") or "").strip()
+            }
         )
         # Genes a guideline's prescribing change comes from (app.reports.actionable),
         # counted off the recommendations this bundle is built from, whichever lane

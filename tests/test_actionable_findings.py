@@ -454,3 +454,46 @@ def test_the_findings_are_the_genes_the_drug_network_draws(db_session, fixture):
             run_id=run_id, pharmcat_data=json_lane
         )
     )
+
+
+@pytest.mark.parametrize(
+    "data, analyzed",
+    [
+        # generate_report's data: PharmCAT counted 2 genes, the bundle states 4.
+        (
+            {
+                "total_genes": 2,
+                "genes": [
+                    {"gene": g, "diplotype": "*1/*1"}
+                    for g in ("CYP2C19", "CYP2D6", "NUDT15", "TPMT")
+                ],
+            },
+            "4 genes analyzed",
+        ),
+        # PharmCAT 2.x: a CPIC and a DPWG row for the same gene.
+        (
+            {
+                "total_genes": 3,
+                "genes": [
+                    {"gene": "CYP2C19", "diplotype": "*1/*1"},
+                    {"gene": "CYP2C19", "diplotype": "*1/*1"},
+                    {"gene": "DPYD", "diplotype": "Reference/Reference"},
+                ],
+            },
+            "2 genes analyzed",
+        ),
+        # The JSON lane's data: no total_genes at all.
+        ({"genes": [{"gene": "CYP2C9", "diplotype": "*1/*1"}]}, "1 gene analyzed"),
+    ],
+)
+def test_the_conclusion_counts_the_genes_the_bundle_states(data, analyzed):
+    """It counted PharmCAT's rows (total_genes): 23 for a 30x NA12878 bundle
+    carrying 91 genotypes, a gene twice on PharmCAT 2.x, and 0 in the JSON lane."""
+    from unittest.mock import MagicMock
+
+    result = FHIRExportService(MagicMock()).export_pgx_report(
+        run_id="run-1",
+        patient_info={"id": "p"},
+        pharmcat_data={"drugRecommendations": [], **data},
+    )
+    assert analyzed in _conclusion(result), _conclusion(result)
