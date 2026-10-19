@@ -925,9 +925,7 @@ class FHIRExportService:
         key = " ".join(text.lower().split())
         code = terminology.PHENOTYPE_ANSWERS.get(key)
         if code is None:
-            allele_result = re.fullmatch(r"\*\d+:\d+ (positive|negative)", key)
-            if allele_result:
-                code = terminology.HLA_ALLELE_RESULT_ANSWERS[allele_result.group(1)]
+            code = FHIRExportService._hla_results_code(key)
         if code is None:
             return {"text": text}
         return {
@@ -940,6 +938,23 @@ class FHIRExportService:
             ],
             "text": text,
         }
+
+    @staticmethod
+    def _hla_results_code(key: str) -> Optional[str]:
+        """High or Low risk for an HLA phenotype: one result per risk allele
+        screened, joined with ", " ("*31:01 negative"; HLA-B's "*15:02 negative,
+        *57:01 positive, *58:01 negative"). High risk if any result is positive,
+        Low risk only if every one is negative; None, so the phenotype stays
+        text, if any part is not an allele result. The results hold at once: by
+        the first alone, a *57:01 or *58:01 carrier would be Low risk."""
+        results = []
+        for part in key.split(","):
+            allele_result = re.fullmatch(r"\*\d+:\d+ (positive|negative)", part.strip())
+            if allele_result is None:
+                return None
+            results.append(allele_result.group(1))
+        result = "positive" if "positive" in results else "negative"
+        return terminology.HLA_ALLELE_RESULT_ANSWERS[result]
 
     def _create_therapeutic_implication(
         self,

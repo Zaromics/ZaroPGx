@@ -61,8 +61,9 @@ which phenotype is whose. Each drug's implication points at it instead (next sec
 |---|---|
 | Ultrarapid / Rapid / Normal / Intermediate / Poor Metabolizer | LOINC `LA10315-2` / `LA25390-8` / `LA25391-6` / `LA10317-8` / `LA9657-3` |
 | Increased / Normal / Decreased / Poor Function | `LA25392-4` / `LA25393-2` / `LA25395-7` / `LA25394-0` |
-| HLA `*15:02 positive` (any allele) | `LA19541-4` High risk |
-| HLA `*58:01 negative` (any allele) | `LA19542-2` Low risk |
+| HLA, any result positive: `*31:01 positive`, HLA-B `*15:02 negative, *57:01 positive, *58:01 negative` | `LA19541-4` High risk |
+| HLA, every result negative: `*31:01 negative`, HLA-B `*15:02 negative, *57:01 negative, *58:01 negative` | `LA19542-2` Low risk |
+| HLA with a part that is not `*NN:NN positive` or `negative` | text |
 | increased / normal risk of aminoglycoside-induced hearing loss (MT-RNR1) | `LA19541-4` High risk / `LA19542-2` Low risk |
 | Malignant Hyperthermia Susceptible (RYR1, CACNA1S) | `LA19541-4` High risk |
 | ivacaftor responsive in CF patients (CFTR) | `LA6677-4` Responsive |
@@ -75,7 +76,10 @@ which phenotype is whose. Each drug's implication points at it instead (next sec
 
 The risk statements take High or Low risk as CPIC's own EHR priority for them reads
 ("Abnormal/Priority/High Risk", "Normal/Routine/Low Risk"). The match is on the whole
-phenotype, ignoring case and spacing.
+phenotype, ignoring case and spacing. An HLA phenotype has one result per risk allele
+PharmCAT screens, joined with ", ": one for HLA-A (`*31:01`), three for HLA-B (`*15:02`,
+`*57:01`, `*58:01`). They hold at once, so one positive result makes the phenotype High
+risk, and it is Low risk only when every result is negative.
 
 ### 5. Observation — Therapeutic Implication (one per drug)
 - **Profile:** `therapeutic-implication`
