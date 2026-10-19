@@ -820,6 +820,9 @@ async def create_input_vcf(
             "vcf_path": str(output_vcf_gz),
             "tbi_path": str(output_vcf_gz) + ".tbi",
             "pharmcat_vcf_path": res.get("pharmcat_vcf"),
+            # Which PharmCAT positions were left out and why, one row each; main.nf
+            # publishes it beside PharmCAT's VCF as pharmcat_position_status.tsv.
+            "pharmcat_status_path": res.get("pharmcat_status"),
             "pharmcat_positions": res.get("pharmcat_positions"),
             "alt_locus_mapq0": res.get("alt_locus_mapq0"),
             "alt_realignment": res.get("alt_realignment"),
@@ -1754,6 +1757,14 @@ def realign_alt_loci(
 # * anything else -- no reads, too few, reads for another allele without a confident
 #   call -- is left out, which PharmCAT reads as a no-call.
 #
+# What was left out is kept by position as well as counted: "no_reads" when no read of
+# MAPQ >= 1 reaches any base of the record, "uncertain" for the rest (too few reads,
+# another allele beyond allowed_other_reads, a supported indel candidate, or a call
+# under GQ 20 over the span). The step row gets the counts per gene, PharmCAT's own
+# PX gene of each record; the per-position list goes to a file beside the VCF
+# (PHARMCAT_STATUS_COLUMNS) that main.nf publishes with it, and that the report reads
+# to say why the positions PharmCAT lists as missing were.
+#
 # Reference is decided from READ COUNTS, not from a genotype. The first version asked
 # bcftools for a genotype constrained to PharmCAT's alleles (call -C alleles), and a
 # constrained caller calls 0/0 whenever the reads show an allele it was not offered:
@@ -1782,11 +1793,73 @@ PHARMCAT_MIN_BASE_QUALITY = 13
 # How far around each position the pileup reaches, for an indel anchored upstream of
 # it or written at the far end of a repeat (bcftools norm then left-aligns it).
 PHARMCAT_PILEUP_PAD = 50
+# The per-position status file, one row per PharmCAT record. Reads are the evidence
+# over the record's REF span: the fewest reference reads at any base and the most
+# reads for anything else, blank where no base had a read.
+PHARMCAT_STATUS_COLUMNS = (
+    "chrom", "position", "rsid", "gene", "status", "reference_reads", "other_reads",
+)
 
 
 def allowed_other_reads(total: int) -> int:
     """Reads for another allele tolerated in a reference call, given all reads."""
     return int(total * PHARMCAT_MAX_OTHER_FRACTION)
+
+
+PHARMCAT_STATUS_KINDS = ("reference", "variant", "no_reads", "uncertain")
+
+
+def pharmcat_status_by_gene(status, genes_of) -> Dict[str, Dict[str, int]]:
+    """{gene: {positions, reference, variant, no_reads, uncertain}}, by PharmCAT's PX.
+
+    status:   {(chrom, pos): kind} for each PharmCAT record.
+    genes_of: {(chrom, pos): (gene, ...)}; a record whose PX names several genes
+              counts under each, and one with none (the POI record) under none.
+    """
+    by_gene: Dict[str, Dict[str, int]] = {}
+    for key, kind in status.items():
+        for gene in genes_of.get(key) or ():
+            tally = by_gene.setdefault(
+                gene, {"positions": 0, **{k: 0 for k in PHARMCAT_STATUS_KINDS}}
+            )
+            tally["positions"] += 1
+            tally[kind] += 1
+    return dict(sorted(by_gene.items()))
+
+
+def write_pharmcat_status(path, records, genes_of, status, base_reads) -> bool:
+    """Write the per-position status file (PHARMCAT_STATUS_COLUMNS); False if not.
+
+    records:    [(chrom, pos, id, ref, alleles)] in PharmCAT's order.
+    base_reads: {(chrom, pos): (reference reads, other reads)}, as for
+                classify_pharmcat_record.
+    Written beside and moved into place, so a failed write leaves no partial file
+    for the report to read: it only explains PharmCAT's VCF, and losing it must not
+    cost the step (main.nf publishes it as optional).
+    """
+    part = f"{path}.part"
+    try:
+        with open(part, "w", encoding="utf-8") as fh:
+            fh.write("\t".join(PHARMCAT_STATUS_COLUMNS) + "\n")
+            for c, p, rid, ref, _ in records:
+                span = [(c, q) for q in range(p, p + len(ref))]
+                seen = [base_reads[k] for k in span if k in base_reads]
+                ref_reads = str(min(e[0] for e in seen)) if seen else ""
+                other = str(max(e[1] for e in seen)) if seen else ""
+                genes = ",".join(genes_of.get((c, p)) or ())
+                fh.write(
+                    f"{c}\t{p}\t{rid or ''}\t{genes}\t{status[(c, p)]}\t"
+                    f"{ref_reads}\t{other}\n"
+                )
+        os.replace(part, path)
+        return True
+    except OSError as exc:
+        logger.warning(f"Could not write PharmCAT's position statuses to {path}: {exc}")
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        return False
 
 
 def classify_pharmcat_record(chrom, pos, ref, base_reads, indel_spans, calls) -> str:
@@ -1881,13 +1954,18 @@ def name_vcf_sample(vcf_gz: str, name: str) -> bool:
 
 
 def genotype_pharmcat_positions(
-    alignment_path: str, fasta: str, output_vcf_gz: str, positions: str = None
+    alignment_path: str,
+    fasta: str,
+    output_vcf_gz: str,
+    positions: str = None,
+    status_tsv: str = None,
 ) -> Dict[str, Any]:
     """Write PharmCAT's input VCF for an alignment. See the section comment above.
 
     Returns counts of what happened -- positions, reference, variant, no reads,
-    uncertain -- which /create-input-vcf records on the job step so the report can
-    state them rather than assume them.
+    uncertain, overall and per gene (by_gene) -- which /create-input-vcf records on
+    the job step so the report can state them rather than assume them. With
+    status_tsv, also writes each position's status there (PHARMCAT_STATUS_COLUMNS).
     """
     import pysam
 
@@ -1898,8 +1976,16 @@ def genotype_pharmcat_positions(
             "pharmcat image at /pharmcat/pharmcat_positions.vcf and must be copied to "
             "reference/pharmcat/ on every PharmCAT upgrade."
         )
+    # PharmCAT's genes for each record are its INFO PX (one each in 3.4.0); the one
+    # position of interest outside every allele definition (POI, rs12777823) has none.
+    records, genes_of = [], {}
     with pysam.VariantFile(positions) as known:
-        records = [(r.chrom, r.pos, r.id, r.ref, r.alleles) for r in known]
+        for r in known:
+            records.append((r.chrom, r.pos, r.id, r.ref, r.alleles))
+            px = r.info.get("PX") or ()
+            if isinstance(px, str):
+                px = px.split(",")
+            genes_of[(r.chrom, r.pos)] = tuple(str(g) for g in px if g)
 
     work = tempfile.mkdtemp(prefix="pharmcat_positions_")
     try:
@@ -2045,9 +2131,12 @@ def genotype_pharmcat_positions(
         )
         tabix_index(str(output_vcf_gz), force=True)
 
-        counts = {k: 0 for k in ("reference", "variant", "no_reads", "uncertain")}
+        counts = {k: 0 for k in PHARMCAT_STATUS_KINDS}
         for kind in status.values():
             counts[kind] += 1
+        if status_tsv:
+            write_pharmcat_status(status_tsv, records, genes_of, status, base_reads)
+
         return {
             "n_pharmcat_positions": len(status),
             "n_reference": counts["reference"],
@@ -2057,6 +2146,7 @@ def genotype_pharmcat_positions(
             "min_reference_reads": PHARMCAT_MIN_REF_READS,
             "max_other_fraction": PHARMCAT_MAX_OTHER_FRACTION,
             "min_variant_gq": PHARMCAT_MIN_VARIANT_GQ,
+            "by_gene": pharmcat_status_by_gene(status, genes_of),
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -2141,6 +2231,8 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
                 return {"success": False, "error": "Expected VCF output not found"}
 
         # The sample PyPGx's depth of coverage will name; see alignment_sample_name.
+        # From the alignment it reads: without read groups the name is the file's
+        # stem, and a patched alignment's stem is not the upload's.
         name = alignment_sample_name(calls_from)
         if name_vcf_sample(output_vcf_gz, name):
             logger.info(f"VCF sample named {name!r}, as PyPGx names this alignment")
@@ -2177,12 +2269,15 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         # PharmCAT's own input -- see genotype_pharmcat_positions. GRCh38 only, as
         # PharmCAT's positions are; a non-GRCh38 alignment is refused at upload, so
         # the None here only ever reaches main.nf as a missing output, which fails.
-        pharmcat_vcf, pharmcat_positions = None, None
+        pharmcat_vcf, pharmcat_positions, pharmcat_status = None, None, None
         if str(assembly) == "GRCh38":
             pharmcat_vcf = output_vcf_gz[: -len(".vcf.gz")] + ".pharmcat.vcf.gz"
+            pharmcat_status = output_vcf_gz[: -len(".vcf.gz")] + ".pharmcat.status.tsv"
             pharmcat_positions = genotype_pharmcat_positions(
-                calls_from, str(fasta), pharmcat_vcf
+                calls_from, str(fasta), pharmcat_vcf, status_tsv=pharmcat_status
             )
+            if not os.path.exists(pharmcat_status):  # not written: see its warning
+                pharmcat_status = None
             logger.info(f"PharmCAT positions called from the alignment: {pharmcat_positions}")
 
         return {
@@ -2194,6 +2289,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             "alt_realignment": alt_realignment,
             "sv_inputs": list(sv_inputs) if sv_inputs else None,
             "pharmcat_vcf": pharmcat_vcf,
+            "pharmcat_status": pharmcat_status,
             "pharmcat_positions": pharmcat_positions,
         }
     except subprocess.CalledProcessError as cpe:

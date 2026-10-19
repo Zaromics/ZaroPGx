@@ -550,6 +550,7 @@ def test_every_reader_in_the_step_reads_the_patched_alignment():
     for reader in (
         "str(output_vcf_gz), str(fasta), calls_from,",
         "uncovered_genes_in_alignment(calls_from,",
+        "alignment_sample_name(calls_from)",
         "alt_locus_mapq0(calls_from,",
         "prepare_sv_inputs(\n            calls_from,",
         "genotype_pharmcat_positions(\n                calls_from,",
