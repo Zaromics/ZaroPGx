@@ -163,7 +163,9 @@ PHENOTYPE_ANSWERS = {
 }
 
 # PharmCAT's HLA phenotypes name a risk allele and whether it was found
-# ("*15:02 positive", "*58:01 negative").
+# ("*31:01 negative"); HLA-B has one per allele it screens, which ZaroPGx joins
+# with ", " ("*15:02 negative, *57:01 positive, *58:01 negative"). High risk if
+# any is positive, Low risk if every one is negative (_hla_results_code).
 HLA_ALLELE_RESULT_ANSWERS = {
     "positive": "LA19541-4",
     "negative": "LA19542-2",

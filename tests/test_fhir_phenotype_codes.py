@@ -86,6 +86,73 @@ def test_each_phenotype_is_coded_only_where_the_ig_has_its_equivalent(phenotype,
         ]
 
 
+# PharmCAT gives HLA-B one result per risk allele it screens, always *15:02, *57:01,
+# *58:01; ZaroPGx states them joined with ", " (report_json.diplotype_phenotype).
+# They hold at once: any positive is High risk, and Low risk needs every one
+# negative. By the first alone, a *57:01 or *58:01 carrier would be Low risk.
+HLA_RESULTS = [
+    ("*31:01 negative", "LA19542-2"),  # HLA-A: one result
+    ("*15:02 negative, *57:01 negative, *58:01 negative", "LA19542-2"),
+    ("*15:02 negative, *57:01 positive, *58:01 negative", "LA19541-4"),
+    ("*15:02 negative, *57:01 negative, *58:01 positive", "LA19541-4"),
+    ("*15:02 positive, *57:01 negative, *58:01 negative", "LA19541-4"),
+    ("*15:02 POSITIVE,*57:01  negative , *58:01 negative", "LA19541-4"),
+]
+
+
+@pytest.mark.parametrize("phenotype, code", HLA_RESULTS)
+def test_an_hla_phenotype_is_high_risk_if_any_result_is_positive(phenotype, code):
+    concept = FHIRExportService._phenotype_concept(phenotype)
+    assert concept == {
+        "coding": [
+            {"system": "http://loinc.org", "code": code, "display": DISPLAYS[code]}
+        ],
+        "text": phenotype,
+    }
+
+
+# A part that is not an allele result: the phenotype is not what the rule reads,
+# so it is not coded, whatever the other parts say.
+NOT_HLA_RESULTS = [
+    "*15:02 negative, *57:01 positive, *58:01 unknown",
+    "*15:02 negative, *57:01 negative, *58:01",
+    "*15:02 negative, , *58:01 negative",
+    "*15:02 negative, *57:01 positive,",
+    "*15:02 negative, *57:01 positive or *57:01 negative, *58:01 negative",
+    "HLA-B*57:01 positive",
+    ",",
+    "",
+]
+
+
+@pytest.mark.parametrize("phenotype", NOT_HLA_RESULTS)
+def test_an_hla_phenotype_with_a_part_that_is_not_a_result_stays_text(phenotype):
+    assert FHIRExportService._phenotype_concept(phenotype) == {"text": phenotype}
+
+
+def test_an_hla_b_carrier_is_high_risk_in_the_bundle():
+    bundle = _bundle(
+        [
+            {
+                "gene": "HLA-B",
+                "diplotype": "*08:01/*57:01",
+                "phenotype": "*15:02 negative, *57:01 positive, *58:01 negative",
+            }
+        ]
+    )
+    (phenotype,) = [
+        e["resource"]
+        for e in _by_profile(bundle, "therapeutic-implication")
+        if e["resource"]["code"].get("text") == "HLA-B phenotype"
+    ]
+    assert phenotype["component"][0]["valueCodeableConcept"] == {
+        "coding": [
+            {"system": "http://loinc.org", "code": "LA19541-4", "display": "High risk"}
+        ],
+        "text": "*15:02 negative, *57:01 positive, *58:01 negative",
+    }
+
+
 def _bundle(genes):
     data = {
         "pharmcat_version": "3.4.0",
