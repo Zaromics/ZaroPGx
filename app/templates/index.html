@@ -2928,10 +2928,15 @@
             ];
             // The results card, with whichever report links `links` has.
             const showCompleted = (links) => {
-                // Extract patient_id from report URLs
+                // Extract patient_id from report URLs: any of them, not just
+                // the PDF's. A job with the custom report off has PharmCAT's
+                // links only, and lost its "Download All" button.
                 let patient_id = links.patient_id;
-                if (!patient_id && links.pdf_report_url) {
-                    const match = links.pdf_report_url.match(/\/reports\/([^\/]+)\//);
+                const reportUrl = reportLinkKeys
+                    .map(key => links[key])
+                    .find((url) => typeof url === 'string' && url);
+                if (!patient_id && reportUrl) {
+                    const match = reportUrl.match(/\/reports\/([^\/]+)\//);
                     if (match) {
                         patient_id = match[1];
                     }
