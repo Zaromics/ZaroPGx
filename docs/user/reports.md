@@ -125,10 +125,19 @@ resources its bundle no longer has: the recommendations a regenerated report dro
 whole older bundle written before October 2026. The answer says how many resources the
 server created, how many it already had and how many it deleted, and where the report is
 (`DiagnosticReport/<id>`). If the server is down or refuses the bundle, the request fails
-with the reason (HTTP 502), nothing is changed on the server, and the job is not affected.
-Credentials in `FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never
-shown. Nothing is pushed when a job ends, and the web page has no button for it yet.
-Sending to an outside health record system is not supported.
+with the reason (HTTP 502; the `X-FHIR-Server-Reachable` header is `false` for a server that
+could not be reached, `true` for one that answered with an error), nothing is changed on
+the server, and the job is not affected. Credentials in `FHIR_SERVER_URL`
+(`user:password@`) are sent as HTTP Basic auth and never shown. Nothing is pushed when a
+job ends. Sending to an outside health record system is not supported.
+
+On the web page, a finished job's results have a **Push to FHIR server** button while
+`HAPI_FHIR_ENABLED` and `FHIR_EXPORT_ENABLED` are both on. It makes the same request: it
+sends that job's bundle to this installation's FHIR server (`FHIR_SERVER_URL`, the bundled
+HAPI server), then shows what the server did, per resource type, or why nothing was
+pushed: the server could not be reached, or it did not accept the bundle. Pressing it
+again replaces what the job put on that server before: its resources are updated in
+place, and those the bundle no longer has are deleted. The page offers no other server.
 
 ## Using the results
 

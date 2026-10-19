@@ -1848,10 +1848,15 @@
                     `;
                 }
 
+                // Filled by offerFhirPush below, once /services-config says the
+                // FHIR server and the export are both on; empty and hidden until then.
+                resultsHtml += `<div id="fhirPushSection" class="mt-4 d-none"></div>`;
+
                 resultsHtml += `</div>`;
                 resultsDiv.innerHTML = resultsHtml;
                 resultsDiv.classList.remove('d-none');
-                
+                window.offerFhirPush(jobId);
+
                 // Hide the workflow analysis panel when showing results
                 const workflowPanel = document.getElementById('workflowAnalysisPanel');
                 if (workflowPanel) {
@@ -2369,6 +2374,130 @@
             addLogMessage('Download started for all reports', 'success');
         }
 
+        // Text from a response goes into innerHTML only through this.
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        // Push to FHIR server: sends a finished job's FHIR bundle to the stack's
+        // own FHIR server (FHIR_SERVER_URL, the bundled HAPI by default) through
+        // POST /fhir/push/workflow/{job_id}. The endpoint updates the job's
+        // resources in place on a second push, so the button can be pressed again.
+        const FHIR_PUSH_LABEL = '<i class="bi bi-cloud-upload" aria-hidden="true"></i> Push to FHIR server';
+
+        window.offerFhirPush = async function(jobId) {
+            const section = document.getElementById('fhirPushSection');
+            if (!section || !jobId) return;
+            const config = await window.getServicesConfig();
+            const services = (config && config.services) || {};
+            const enabled = (name) => !!(services[name] && services[name].enabled);
+            // HAPI_FHIR_ENABLED=false means this stack has no FHIR server to push
+            // to; FHIR_EXPORT_ENABLED=false means no bundle and no /fhir routes.
+            if (!enabled('hapi_fhir') || !enabled('fhir_export')) return;
+            // Another job's results may have replaced this card while the
+            // configuration was read; that card offers its own push.
+            if (document.getElementById('fhirPushSection') !== section) return;
+
+            section.innerHTML = `
+                <h5>FHIR Server</h5>
+                <p class="small mb-2">Sends this job's FHIR bundle to this installation's FHIR server.
+                    Pushing again replaces what this job put there before.</p>
+                <button type="button" id="fhirPushBtn" class="btn btn-primary">${FHIR_PUSH_LABEL}</button>
+                <div id="fhirPushResult" class="mt-2" role="status" aria-live="polite"></div>
+            `;
+            section.classList.remove('d-none');
+            document.getElementById('fhirPushBtn').addEventListener('click', () => window.pushJobToFhir(jobId));
+        };
+
+        window.pushJobToFhir = async function(jobId) {
+            const button = document.getElementById('fhirPushBtn');
+            const result = document.getElementById('fhirPushResult');
+            if (!button || !result) return;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Pushing...';
+            result.innerHTML = '';
+            try {
+                let response;
+                try {
+                    response = await fetch(`/fhir/push/workflow/${encodeURIComponent(jobId)}`, { method: 'POST' });
+                } catch (error) {
+                    result.innerHTML = fhirPushFailureHtml('Not pushed', `ZaroPGx did not answer: ${error.message}`);
+                    return;
+                }
+                let body = null;
+                try {
+                    body = await response.json();
+                } catch (e) {
+                    body = null;
+                }
+                if (response.ok && body && body.success) {
+                    result.innerHTML = fhirPushSuccessHtml(body);
+                    window.addLogMessage(`Pushed the job's FHIR bundle to ${body.server_url}`, 'success');
+                    return;
+                }
+                // The endpoint answers 502 both when the server is down and when
+                // it refuses the bundle; X-FHIR-Server-Reachable says which.
+                let title = 'Not pushed';
+                if (response.status === 502) {
+                    const reachable = response.headers.get('X-FHIR-Server-Reachable');
+                    if (reachable === 'false') title = 'Could not reach the FHIR server';
+                    if (reachable === 'true') title = 'The FHIR server did not accept the bundle';
+                }
+                const detail = (body && typeof body.detail === 'string')
+                    ? body.detail
+                    : `HTTP ${response.status} ${response.statusText || ''}`.trim();
+                result.innerHTML = fhirPushFailureHtml(title, detail);
+                window.addLogMessage(`FHIR push failed: ${title}`, 'danger');
+            } finally {
+                button.disabled = false;
+                button.innerHTML = FHIR_PUSH_LABEL;
+            }
+        };
+
+        // What the server did, per resource type: "existing" is a resource it
+        // already held and updated in place, except the Patient, which a push
+        // reuses as it is (app/services/fhir/push.py).
+        function fhirPushSuccessHtml(body) {
+            const rows = Object.entries(body.resources || {}).map(([type, counts]) => {
+                const parts = [];
+                if (counts.created) parts.push(`${counts.created} created`);
+                if (counts.existing) {
+                    parts.push(type === 'Patient'
+                        ? `${counts.existing} already there, reused`
+                        : `${counts.existing} updated`);
+                }
+                if (counts.deleted) parts.push(`${counts.deleted} deleted, no longer in this job's bundle`);
+                return `<li><strong>${escapeHtml(type)}</strong>: ${escapeHtml(parts.join('; ') || 'none')}</li>`;
+            }).join('');
+            const locations = [];
+            if (body.diagnostic_report) locations.push(`Report: ${escapeHtml(body.diagnostic_report)}`);
+            if (body.patient) locations.push(`Patient: ${escapeHtml(body.patient)}`);
+            return `
+                <div class="fhir-push-outcome border border-success-subtle rounded p-2 bg-body text-body">
+                    <div class="fw-semibold text-success-emphasis text-break">
+                        <i class="bi bi-check-circle-fill" aria-hidden="true"></i>
+                        Pushed to ${escapeHtml(body.server_url)}
+                    </div>
+                    <ul class="list-unstyled small mb-0 mt-1">${rows}</ul>
+                    ${locations.length ? `<div class="small mt-1 text-break">${locations.join(' &middot; ')}</div>` : ''}
+                </div>
+            `;
+        }
+
+        function fhirPushFailureHtml(title, detail) {
+            return `
+                <div class="fhir-push-outcome border border-danger-subtle rounded p-2 bg-body text-body">
+                    <div class="fw-semibold text-danger-emphasis">
+                        <i class="bi bi-x-circle-fill" aria-hidden="true"></i>
+                        ${escapeHtml(title)}
+                    </div>
+                    <div class="small mt-1 text-break">${escapeHtml(detail)}</div>
+                </div>
+            `;
+        }
+
         // Stage Popup and Toggle Functionality
         window.initializeStagePopups = function() {
             console.log('Initializing stage popups...');
@@ -2438,19 +2567,37 @@
             });
         };
 
+        // /services-config, read once: the stage switches use it when the page
+        // loads, and a finished job's results card uses it to decide whether to
+        // offer the FHIR push. null when it could not be read; the next caller
+        // then asks again.
+        let servicesConfigRequest = null;
+        window.getServicesConfig = function() {
+            if (!servicesConfigRequest) {
+                servicesConfigRequest = fetch('/services-config')
+                    .then((response) => (response.ok ? response.json() : null))
+                    .catch((error) => {
+                        console.error('Could not read /services-config:', error);
+                        return null;
+                    })
+                    .then((config) => {
+                        if (!config) servicesConfigRequest = null;
+                        return config;
+                    });
+            }
+            return servicesConfigRequest;
+        };
+
         // Initialize service toggles from backend configuration
         window.initializeServiceToggles = async function() {
             console.log('Initializing service toggles from backend configuration...');
-            
+
             try {
-                // Fetch service configuration from backend
-                const response = await fetch('/services-config');
-                if (!response.ok) {
+                const config = await window.getServicesConfig();
+                if (!config) {
                     console.warn('Failed to fetch service configuration, using defaults');
                     return;
                 }
-                
-                const config = await response.json();
                 console.log('Service configuration:', config);
                 
                 // Map backend service names to UI stage names
