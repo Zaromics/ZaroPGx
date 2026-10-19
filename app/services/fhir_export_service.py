@@ -19,6 +19,7 @@ from xml.dom import minidom
 
 from sqlalchemy.orm import Session
 
+from app.reports.actionable import actionable_genes
 from app.services.fhir import terminology
 from app.services.pharmcat_data_service import PharmCATDataService
 
@@ -1104,7 +1105,12 @@ class FHIRExportService:
         """
         report_id = str(uuid.uuid4())
         total_genes = pharmcat_data.get("total_genes", 0)
-        actionable_count = len(pharmcat_data.get("actionable_findings", []))
+        # Genes a guideline's prescribing change comes from (app.reports.actionable),
+        # counted off the recommendations this bundle is built from, whichever lane
+        # built them: the JSON lane's data has no actionable_findings and read 0.
+        actionable_count = len(
+            actionable_genes(pharmcat_data.get("drugRecommendations"))
+        )
 
         report = {
             "resourceType": "DiagnosticReport",

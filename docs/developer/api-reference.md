@@ -70,3 +70,35 @@ Then:
 
 The report router's own endpoints (`POST /reports/generate`, `GET /reports/{id}/status` and
 the like) are retired and return 501: reports are produced by an upload.
+
+## Actionable findings
+
+An actionable finding is a gene that a guideline's prescribing change for this sample comes
+from: a PharmCAT annotation recommends a different drug, a dose change or other prescribing
+guidance, and the change comes from that gene. These are the genes the interactive report's
+drug-gene network draws. A change resting only on a risk screen's all-clear (a negative HLA
+result, MT-RNR1's normal risk) is not one, and a drug's change is tied to the HLA result
+PharmCAT looked its guideline up by: phenytoin's guideline is looked up by HLA-B `*15:02`, so
+for a `*57:01` carrier whose phenytoin dose changes, the finding is CYP2C9, not HLA-B.
+
+The phenotype alone decides nothing. A Normal Metabolizer is a finding where the guideline
+changes the dose (CYP3A5 and tacrolimus, CYP2C19 and the proton-pump inhibitors), and so is
+RYR1's and CACNA1S's Uncertain Susceptibility, for which CPIC and the FDA labels guide the use
+of volatile anaesthetics and succinylcholine; a poor metabolizer is not one if no guideline
+in the run changes a prescription for it.
+
+Earlier versions counted, under the same names, every diplotype whose phenotype was not
+"n/a", "Normal Metabolizer" or "Uncertain Susceptibility", so Normal Function, G6PD Normal, a
+negative HLA result, Indeterminate and No Result counted. The fields keep their names and
+types, and each finding gains `drugs` and `prescribing_changes`; what they hold is:
+
+| Where | What it holds |
+|---|---|
+| `GET /api/pharmcat/actionable/{run_id}` | One finding per gene: `gene_symbol`, the call as the report states it (`diplotype_label`, `phenotype` with every HLA-B result, `activity_score`, `allele1_name`, `allele2_name`), and `drugs` and `prescribing_changes` behind it |
+| `GET /api/pharmcat/summary/{run_id}`, `GET /api/pharmcat/workflow/{workflow_id}/summary` | `actionable_findings` is their number, `actionable_findings_list` the findings |
+| `POST /api/pharmcat/load` | `actionable_findings` is their number |
+| The FHIR bundle's DiagnosticReport | `conclusion`: "N genes analyzed, M actionable findings identified", M their number |
+
+Runs stored earlier follow this definition too: it is applied to their stored PharmCAT
+annotations when read. The definition lives in one function,
+`app.reports.actionable.actionable_genes`.

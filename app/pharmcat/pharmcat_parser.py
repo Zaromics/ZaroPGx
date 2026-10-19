@@ -1110,29 +1110,20 @@ class PharmCATParser:
         ]
 
     def get_actionable_findings(self, run_id: str) -> List[Dict[str, Any]]:
-        """Get actionable findings (non-normal phenotypes) for a run"""
-        results = (
-            self.db_session.query(PharmCATDiplotype)
-            .filter(
-                PharmCATDiplotype.run_id == run_id,
-                PharmCATDiplotype.phenotype.notin_(
-                    ["n/a", "Normal Metabolizer", "Uncertain Susceptibility"]
-                ),
-            )
-            .all()
-        )
+        """A run's actionable findings: the genes a guideline's prescribing change
+        for this sample comes from (app.reports.actionable.actionable_genes), each
+        with its call as the report states it and the drugs and changes behind it.
 
-        return [
-            {
-                "gene_symbol": r.gene_symbol,
-                "diplotype_label": r.diplotype_label,
-                "phenotype": r.phenotype,
-                "activity_score": _as_float(r.activity_score),
-                "allele1_name": r.allele1_name,
-                "allele2_name": r.allele2_name,
-            }
-            for r in results
-        ]
+        It used to be every diplotype row whose phenotype was not "n/a", "Normal
+        Metabolizer" or "Uncertain Susceptibility", so Normal Function, a negative
+        HLA screen and No Result counted. The data service builds it from the rows
+        the report is built from, so the API and the FHIR export count what the
+        report's drug network draws.
+        """
+        # Imported here: the data service imports this module.
+        from app.services.pharmcat_data_service import PharmCATDataService
+
+        return PharmCATDataService(self.db_session).get_actionable_findings(run_id)
 
     def get_all_runs(self) -> List[Dict[str, Any]]:
         """Get all PharmCAT runs from the database"""

@@ -43,12 +43,12 @@ from app.services.fhir_export_service import FHIRExportService
 # its own LOINC code plus activity score and both alleles, a gene that falls back
 # to the generic LOINC code with an unusable activity score and no alleles, a
 # gene with only one allele, a drug with two recommendations (one carrying a
-# classification, one not) and a drug with none at all.
+# classification and a prescribing change, one neither) and a drug with none at
+# all.
 PHARMCAT_FIXTURE: Dict[str, Any] = {
     "run_id": "run-370",
     "pharmcat_version": "3.4.0",
     "total_genes": 3,
-    "actionable_findings": [{"gene": "CYP2C19"}, {"gene": "DPYD"}],
     "genes": [
         {
             "gene": "CYP2D6",
@@ -81,6 +81,8 @@ PHARMCAT_FIXTURE: Dict[str, Any] = {
                     "recommendation": "Alternative antiplatelet therapy recommended.",
                     "classification": "Strong",
                     "guideline_source": "CPIC",
+                    "prescribing_changes": ["alternative drug"],
+                    "change_genes": ["CYP2C19"],
                 },
                 {
                     "recommendation": "Consider prasugrel or ticagrelor.",
@@ -109,10 +111,13 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # after fix/fhir-loinc-codes, which changed what is emitted on purpose: one
 # genotype code (84413-4) for every gene instead of per-gene codes that named other
 # genes, official LOINC display names, a phenotype component without CYP2C9's
-# code, no "genomics-bundle" profile, SNOMED 405824009 as "Genetic test".
-GOLDEN_JSON_SHA256 = "d024582d7738974d447e83f5965d4b66fc0669d5b31c065b125adb4319243096"
+# code, no "genomics-bundle" profile, SNOMED 405824009 as "Genetic test". Re-taken
+# after fix/actionable-means-prescribing-change, whose only change to the bundle is
+# the conclusion's count: genes a prescribing change comes from (CYP2C19, 1), no
+# longer the length of the data's actionable_findings list (2).
+GOLDEN_JSON_SHA256 = "9134a538dd7634ce43ac67cc2862260c5d4b3930fb07134612c504150d4e9a8c"
 GOLDEN_JSON_BYTES = 21469
-GOLDEN_XML_SHA256 = "d5850427ac177e2ce5ec6568e8c26116a799821add0129c936399c695c2cc157"
+GOLDEN_XML_SHA256 = "f9cbf2199a0e2e3fc0177dd8fae07be6c16c292615cca20f8c1f9e2a638fe2d6"
 GOLDEN_XML_BYTES = 19645
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
