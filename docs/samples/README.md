@@ -8,7 +8,7 @@ title: FHIR R4 Sample Exports
 
 An example of the FHIR R4 bundle ZaroPGx writes with each report, for three genes. Its resources are modelled on the profiles of the **HL7 Genomics Reporting Implementation Guide**.
 
-**Reference:** [HL7 Genomics Reporting IG, STU3 (3.0.0)](http://hl7.org/fhir/uv/genomics-reporting/STU3/). The bundle is not yet validated against it; see the to-do list.
+**Reference:** [HL7 Genomics Reporting IG, STU3 (3.0.0)](http://hl7.org/fhir/uv/genomics-reporting/STU3/). The bundle validates against the IG's profiles with no errors: HAPI FHIR 8.12's `$validate` with the IG loaded and tx.fhir.org checking the LOINC and SNOMED CT codes (October 2026). The warnings it still gives are listed under [Validation](#validation).
 
 ## Files
 
@@ -23,7 +23,7 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 ### 1. DiagnosticReport (Genomic Report)
 - **Profile:** `genomic-report`
 - Top-level report that references all observations, links to the genomic study, and lists recommended actions via extensions
-- Includes `conclusion` text and `conclusionCode` for overall report status
+- Includes a `conclusion` text: how many genes were analysed and how many findings are actionable
 
 ### 2. Patient
 - **Profile:** `Patient`
@@ -32,19 +32,21 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 
 ### 3. Observation — Genotype (one per gene)
 - **Profile:** `genotype`
+- Categories "laboratory" and Genetics (`GE`), as the IG requires
 - Coded as "Genotype display name" (`84413-4`) for every gene
+- `valueCodeableConcept` carries the diplotype as text (`*1/*4`), as the IG's PharmVar example does
 - Components include:
-  - **Gene studied** (`48018-6`) — HGNC gene symbol
-  - **Phenotype** (text only for now) — e.g., "Intermediate Metabolizer"
-  - **Activity Score** (`activity-score`) — numeric score from PharmCAT
+  - **Gene studied** (`48018-6`) — the gene's HGNC id (`HGNC:2625`), its symbol as the display
+  - **Phenotype** (text) — e.g., "Intermediate Metabolizer"
+  - **Activity score** — LOINC's activity-score code for CYP2B6, CYP2C19, CYP2C9, CYP2D6 and DPYD (`104669-7` for CYP2D6), a text code for any other gene
   - **Haplotype name** (`84414-2`) — one per allele (allele1, allele2)
-- `valueCodeableConcept` carries the diplotype from PharmVar
 
 ### 4. Observation — Therapeutic Implication (one per drug)
 - **Profile:** `therapeutic-implication`
+- Categories "laboratory" and Genetics (`GE`)
 - Components include:
-  - **Medication assessed** (`51963-7`) — RxNorm-coded drug name
-  - **Conclusion string** — clinical recommendation text
+  - **Medication assessed** (`51963-7`) — the drug's name, as text: PharmCAT names drugs by ClinPGx id, not RxNorm code
+  - **Conclusion text** (`conclusion-string`) — the first recommendation's text
 - `derivedFrom` links back to the genotype observation(s) that informed the implication
 - Optional `extension` for related artifacts (CPIC/DPWG guideline citations)
 
@@ -54,52 +56,55 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 - `description` contains the actionable recommendation text
 - `for` → Patient reference
 - `reasonReference` → links to the corresponding Therapeutic Implication
-- `input` items for medication-assessed and evidence-level (Strong, Moderate, Optional)
+- `input` items for the medication assessed (`51963-7`) and CPIC's strength of recommendation (Strong, Moderate, Optional, No recommendation, or Unspecified for a guideline without one), as text under a text type: LOINC has no code for it, and its "Level of evidence" is another thing. None is sent when PharmCAT gave none
+- No `code`: the profile requires one of LOINC's medication usage suggestions (consider an alternative, decrease the dose, ...), and picking one would mean interpreting the guideline's text
 
 ### 6. Procedure — Genomic Study
 - **Profile:** `genomic-study`
-- SNOMED CT coded as "Genetic test" (`405824009`)
-- LOINC coded as "Genetic analysis report" (`51969-4`)
+- Category "laboratory", which the profile fixes
+- Coded as SNOMED CT "Genetic test" (`405824009`)
 - `note` records the PharmCAT version used
 
-## HAPI FHIR Compatibility
+## Sending a bundle to a FHIR server
 
-The Bundle is a `collection`, a standalone export. A FHIR server's base endpoint accepts
-only `transaction` and `batch` Bundles, so convert it first (below), then post it to the
-bundled HAPI server, which listens on `127.0.0.1:8090`:
+The Bundle is a `collection`, a standalone export. A FHIR server's base endpoint takes
+`transaction` Bundles, so the app converts it when asked to send a job's bundle:
 
 ```bash
-curl -X POST http://localhost:8090/fhir \
-  -H "Content-Type: application/fhir+json" \
-  -d @transaction_bundle.json
+curl -X POST http://127.0.0.1:8765/fhir/push/workflow/<job_id>
 ```
 
-### Key compatibility notes:
-- All resource IDs use valid UUID format
-- All `fullUrl` entries use `urn:uuid:` scheme for Bundle-internal references
-- Resources reference the HL7 Genomics Reporting IG's profiles; the Bundle itself claims none (the IG defines no Bundle profile)
-- The Bundle `type` is `collection` (standalone export, not a transaction)
-- To use as a transaction Bundle for HAPI FHIR, change `type` to `"transaction"` and add `request` objects to each entry
-
-### Converting to a Transaction Bundle
-
-To POST as a transaction (creating all resources on the server):
+posts the job's `<job_id>_pgx_fhir_report.json` to `FHIR_SERVER_URL` (the bundled HAPI
+server) as one transaction, every entry conditional on the resource's identifier (the
+entries' `request`s):
 
 ```json
-{
-  "type": "transaction",
-  "entry": [
-    {
-      "fullUrl": "urn:uuid:...",
-      "resource": { ... },
-      "request": {
-        "method": "POST",
-        "url": "DiagnosticReport"
-      }
-    }
-  ]
-}
+[
+  {"method": "POST", "url": "Patient",
+   "ifNoneExist": "identifier=urn:zaropgx:patient-id|<patient id>"},
+  {"method": "PUT",
+   "url": "DiagnosticReport?identifier=urn:zaropgx:report-id|<report id>"},
+  {"method": "PUT",
+   "url": "Observation?identifier=urn:ietf:rfc:3986|urn:uuid:<id>"}
+]
 ```
+
+so the Patient is created once and reused, and pushing a job again updates its report and
+resources instead of adding copies. Each resource but the Patient is tagged with the job
+(`meta.tag` `urn:zaropgx:job-id|<job_id>`); before posting, the push lists the job's tagged
+resources on the server and adds a `DELETE` for each one the bundle no longer has, so a
+regenerated report with fewer recommendations leaves none of the old ones behind.
+
+Notes:
+- Each resource's id is a name-based UUID of what it is (this report's CYP2D6 genotype),
+  so a job's bundle names its resources the same way each time it is written. The
+  observations, recommendations and study carry it as their identifier
+  (`urn:ietf:rfc:3986`, `urn:uuid:<id>`); the Patient and the report carry ZaroPGx's
+  patient and report ids
+- `fullUrl`s are `urn:uuid:` and Bundle-internal references use them; the server
+  replaces them with its own ids
+- Resources reference the HL7 Genomics Reporting IG's profiles; the Bundle itself claims
+  none (the IG defines no Bundle profile)
 
 ## Genes Included in Sample
 
@@ -115,13 +120,21 @@ The recommendation texts in the sample are illustrative, not PharmCAT's.
 
 | System | URI | Usage |
 |--------|-----|-------|
-| LOINC | `http://loinc.org` | Observation and component codes, each with its official display name |
-| SNOMED CT | `http://snomed.info/sct` | Procedure category |
-| PharmVar | `http://www.pharmvar.org` | Diplotype/haplotype codes |
-| HGNC | `http://www.genenames.org/geneId` | Gene identifiers |
-| RxNorm | `http://www.nlm.nih.gov/research/umls/rxnorm` | Medication codes |
-| HL7 Genomics IG | `http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs` | IG-specific codes |
+| LOINC | `http://loinc.org` | Report, observation, component and Task input codes, each with its official display name |
+| SNOMED CT | `http://snomed.info/sct` | The genomic study's procedure code |
+| HGNC | `http://www.genenames.org` | Gene ids (`HGNC:2625`) |
+| HL7 Genomics IG | `http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs` | `therapeutic-implication`, `conclusion-string` |
+| HL7 terminology | `http://terminology.hl7.org/CodeSystem/observation-category`, `.../v2-0074` | Categories ("laboratory", Genetics) |
 | ZaroPGx | `urn:zaropgx:*` | Internal identifiers |
+
+## Validation
+
+Errors: none. The validator's remaining warnings, and why they stay:
+
+- **No narrative** (`dom-6`, every resource): a best-practice rule. The PDF and HTML reports are the human-readable form; a generated `text` for each resource would repeat them.
+- **No performer** (every observation): ZaroPGx does not know the laboratory or clinician, and does not invent one.
+- **Recommendation matches two profiles**: the IG's `recommended-action` extension allows a medication or a follow-up recommendation, and a Task without a code fits both.
+- **HGNC codes cannot be checked**: no terminology server the validator can reach carries HGNC. The ids are HGNC's own (rest.genenames.org).
 
 ## Generation
 

@@ -175,8 +175,34 @@ curated: true
 
 ## FHIR & Exporting
 
-- HAPI FHIR server integration; adjust `ddl-auto` appropriately for prod vs dev
-- Implement export per HL7 Genomics Reporting IG v3 via FHIr r4
+- [DONE Oct 2026, feat/fhir-push-hapi] The FHIR bundle validates against the HL7 Genomics
+  Reporting IG 3.0.0 profiles with no errors (HAPI FHIR 8.12 `$validate` with the IG
+  loaded, tx.fhir.org for LOINC and SNOMED CT). The 30x NA12878 bundle had 731 errors:
+  observations without the Genetics category, a Task code outside LOINC LL4049-4, the
+  genomic study's category. The XML bundle is now FHIR XML; before, no FHIR parser could
+  read it. Warnings left: no narrative, no performer, recommendations matching two of the
+  IG's profiles, HGNC codes no reachable terminology server checks
+  (docs/samples/README.md).
+- [DONE Oct 2026, feat/fhir-push-hapi] `POST /fhir/push/workflow/{job_id}` sends a job's
+  bundle to the bundled HAPI server (`FHIR_SERVER_URL`) as a transaction, on request
+  only; pushing again updates in place and deletes the job's resources the bundle no
+  longer has (tagged `urn:zaropgx:job-id`). A server that is down gives 502; the job is
+  untouched. `tests/test_fhir_push_hapi.py` runs it against a throwaway HAPI
+  (`ZAROPGX_FHIR_TEST_URL`).
+- No UI for the push yet: an action on a finished job in the web page.
+- Push a finished job automatically when a deployment asks for it (a setting, off by
+  default)?
+- Phenotypes: the IG puts a phenotype in the therapeutic implication, coded from LOINC
+  (Poor metabolizer, LA9657-3, ...); ZaroPGx sends it as text on the genotype. Coding it
+  the IG's way is a content change to decide on.
+- Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
+  an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
+- Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.
+- Load the Genomics Reporting IG into the bundled HAPI server so its `$validate` works
+  there too (`hapi.fhir.implementationguides.*` in `compose.yml`; it installs on the
+  server's next start).
+- HAPI FHIR server: adjust `ddl-auto` appropriately for prod vs dev
+- Export to an outside EHR/PHR (a configurable server, authentication)
 - Explore Fasten as a bridge for import/export to HAPI FHIR
 
 ## Security & Privacy
