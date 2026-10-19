@@ -245,6 +245,60 @@ def test_a_positive_result_is_not_an_all_clear():
     assert change_genes(ABACAVIR) == ["HLA-B"]
 
 
+def _looked_up(lookup, diplotypes, **tags):
+    return {
+        "genotypes": [{"diplotypes": diplotypes}],
+        "dosingInformation": False,
+        "alternateDrugAvailable": False,
+        "otherPrescribingGuidance": False,
+        **tags,
+        "lookupKey": [lookup],
+    }
+
+
+def test_a_drug_is_judged_by_the_result_it_was_looked_up_by():
+    """Phenytoin's guideline is looked up by HLA-B's *15:02 result. For a *57:01
+    carrier whose dose change comes from CYP2C9, HLA-B is not a source of it: by
+    all three results it was, and the network tied HLA-B to the change."""
+    phenytoin = _looked_up(
+        {"HLA-B": "*15:02 negative", "CYP2C9": "0.0"},
+        [
+            {"gene": "CYP2C9", "label": "*3/*3", "phenotypes": ["Poor Metabolizer"]},
+            _diplotype(),
+        ],
+        dosingInformation=True,
+    )
+    assert change_genes(phenytoin) == ["CYP2C9"]
+
+
+def test_one_hla_gene_positive_does_not_implicate_the_other():
+    """Carbamazepine, looked up by HLA-A *31:01 positive and HLA-B *15:02 negative,
+    for a sample also *58:01 positive: the change is HLA-A's alone."""
+    carbamazepine = _looked_up(
+        {"HLA-A": "*31:01 positive", "HLA-B": "*15:02 negative"},
+        [
+            {
+                "gene": "HLA-A",
+                "label": "*31:01/*01:01",
+                "phenotypes": ["*31:01 positive"],
+            },
+            {
+                "gene": "HLA-B",
+                "label": "*58:01/*08:01",
+                "phenotypes": ["*15:02 negative", "*57:01 negative", "*58:01 positive"],
+            },
+        ],
+        alternateDrugAvailable=True,
+    )
+    assert change_genes(carbamazepine) == ["HLA-A"]
+
+
+def test_without_a_lookup_key_the_phenotypes_are_judged():
+    no_key = dict(ABACAVIR)
+    del no_key["lookupKey"]
+    assert change_genes(no_key) == ["HLA-B"]
+
+
 # ---------------------------------------------------------------------------
 # The colour: a positive result anywhere in the list is red
 # ---------------------------------------------------------------------------
