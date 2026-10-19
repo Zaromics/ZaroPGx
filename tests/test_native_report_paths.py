@@ -1,0 +1,66 @@
+"""native_report_paths: links to the reports the pipeline publishes itself.
+
+generate_report adds them to the reports it builds; a job with the custom report
+turned off gets them alone. Only a file that exists gets a link.
+"""
+
+import pytest
+
+import app.reports.generator as generator
+from app.reports.generator import NATIVE_REPORT_URL_KEYS, native_report_paths
+
+PREFIX = "/reports/patient/job"
+
+
+@pytest.fixture
+def all_pharmcat_reports(monkeypatch):
+    for flag in ("html", "json", "tsv"):
+        monkeypatch.setitem(
+            generator.REPORT_CONFIG, f"show_pharmcat_{flag}_report", True
+        )
+
+
+def test_links_each_published_file_and_nothing_else(tmp_path, all_pharmcat_reports):
+    for name in (
+        "job_pgx_pharmcat.html",
+        "job_pgx_pharmcat.tsv",
+        "mtdna_variants.vcf.gz",
+    ):
+        (tmp_path / name).write_text("x")
+
+    assert native_report_paths(str(tmp_path), "job", PREFIX) == {
+        "pharmcat_html_path": f"{PREFIX}/job_pgx_pharmcat.html",
+        "pharmcat_tsv_path": f"{PREFIX}/job_pgx_pharmcat.tsv",
+        "mtdna_vcf_path": f"{PREFIX}/mtdna_variants.vcf.gz",
+    }
+
+
+def test_pharmcat_raw_outputs_are_copied_under_the_served_names(
+    tmp_path, all_pharmcat_reports
+):
+    (tmp_path / "job.report.json").write_text("{}")
+    (tmp_path / "job.report.tsv").write_text("t")
+
+    paths = native_report_paths(str(tmp_path), "job", PREFIX)
+
+    assert (tmp_path / "job_pgx_pharmcat.json").read_text() == "{}"
+    assert (tmp_path / "job_pgx_pharmcat.tsv").read_text() == "t"
+    assert set(paths) == {"pharmcat_json_path", "pharmcat_tsv_path"}
+
+
+def test_a_pharmcat_report_turned_off_is_not_linked(tmp_path, monkeypatch):
+    monkeypatch.setitem(generator.REPORT_CONFIG, "show_pharmcat_html_report", False)
+    (tmp_path / "job_pgx_pharmcat.html").write_text("x")
+
+    assert "pharmcat_html_path" not in native_report_paths(str(tmp_path), "job", PREFIX)
+
+
+def test_every_key_has_the_url_key_the_page_reads():
+    assert set(NATIVE_REPORT_URL_KEYS.values()) == {
+        "pharmcat_html_report_url",
+        "pharmcat_json_report_url",
+        "pharmcat_tsv_report_url",
+        "mtdna_report_url",
+        "mtdna_haplogroups_url",
+        "mtdna_vcf_url",
+    }
