@@ -424,7 +424,12 @@ def test_the_force_call_writes_calls_and_leaves_the_rest_out(tmp_path):
 
     ns = _load_wrapper(
         CLASSIFY
-        + ["tabix_index", "PHARMCAT_POSITIONS_VCF", "genotype_pharmcat_positions"]
+        + [
+            "tabix_index",
+            "PHARMCAT_POSITIONS_VCF",
+            "alignment_sample_name",
+            "genotype_pharmcat_positions",
+        ]
     )
     out = tmp_path / "pharmcat.vcf.gz"
     stats = ns["genotype_pharmcat_positions"](
@@ -525,7 +530,12 @@ def test_evidence_the_caller_does_not_call_still_blocks_reference(tmp_path):
 
     ns = _load_wrapper(
         CLASSIFY
-        + ["tabix_index", "PHARMCAT_POSITIONS_VCF", "genotype_pharmcat_positions"]
+        + [
+            "tabix_index",
+            "PHARMCAT_POSITIONS_VCF",
+            "alignment_sample_name",
+            "genotype_pharmcat_positions",
+        ]
     )
     out = tmp_path / "pharmcat.vcf.gz"
     stats = ns["genotype_pharmcat_positions"](

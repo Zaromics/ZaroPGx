@@ -1819,6 +1819,67 @@ def classify_pharmcat_record(chrom, pos, ref, base_reads, indel_spans, calls) ->
     return "reference"
 
 
+def alignment_sample_name(alignment_path: str) -> str:
+    """The sample name PyPGx gives this alignment: its read groups' one SM tag, or,
+    with none, the file name's stem.
+
+    That is fuc's rule (CovFrame.from_bam) for the depth-of-coverage and control
+    statistics PyPGx's SV calls read. bcftools, which writes create-input-vcf's VCF,
+    names an alignment without read groups after the path it was given instead
+    (/data/temp/pypgx/<job>/<dir>/<file>.bam), and PyPGx draws each sample's
+    allele-fraction plot at <dir>/<sample>.png. That path does not exist, so every
+    gene with a variant failed: 64 of 66 on a whole genome whose BAM had no @RG
+    lines (2026-10-14). Many aligners and services write none.
+    """
+    import pysam
+
+    with pysam.AlignmentFile(str(alignment_path)) as aln:
+        names = {
+            rg["SM"] for rg in aln.header.to_dict().get("RG") or [] if rg.get("SM")
+        }
+    return names.pop() if len(names) == 1 else Path(str(alignment_path)).stem
+
+
+def name_vcf_sample(vcf_gz: str, name: str) -> bool:
+    """Rename a one-sample bgzipped VCF's sample to ``name``; True if it changed.
+
+    Its tabix index is removed with the old file; the caller indexes the new one.
+    """
+    import pysam
+    from pysam import bcftools
+
+    with pysam.VariantFile(str(vcf_gz)) as vf:
+        samples = list(vf.header.samples)
+    if len(samples) != 1 or samples[0] == name:
+        return False
+    names = f"{vcf_gz}.sample-name.txt"
+    renamed = f"{vcf_gz}.renamed.vcf.gz"
+    try:
+        # As an "old new" pair, each with its spaces and backslashes escaped: a bare
+        # new name holding a space was read as a pair, and an escaped one was written
+        # with its backslashes (bcftools 1.21, measured).
+        def escaped(text):
+            return text.replace("\\", "\\\\").replace(" ", "\\ ")
+
+        Path(names).write_text(
+            f"{escaped(samples[0])} {escaped(name)}\n", encoding="utf-8"
+        )
+        bcftools.reheader("-s", names, "-o", renamed, str(vcf_gz), catch_stdout=False)
+        with pysam.VariantFile(renamed) as vf:
+            written = list(vf.header.samples)
+        if written != [name]:
+            raise RuntimeError(f"bcftools reheader wrote sample {written}, not {name!r}")
+        os.replace(renamed, str(vcf_gz))
+    finally:
+        for leftover in (names, renamed):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+    for index in (f"{vcf_gz}.tbi", f"{vcf_gz}.csi"):
+        if os.path.exists(index):
+            os.remove(index)
+    return True
+
+
 def genotype_pharmcat_positions(
     alignment_path: str, fasta: str, output_vcf_gz: str, positions: str = None
 ) -> Dict[str, Any]:
@@ -1848,7 +1909,6 @@ def genotype_pharmcat_positions(
         # no-calls for G6PD rather than no PharmCAT file at all.
         with pysam.AlignmentFile(str(alignment_path)) as aln:
             present = set(aln.references)
-            read_groups = aln.header.to_dict().get("RG") or []
         spans = sorted(
             (c, max(0, p - 1 - PHARMCAT_PILEUP_PAD), p - 1 + len(ref) + PHARMCAT_PILEUP_PAD)
             for c, p, _, ref, _ in records
@@ -1865,7 +1925,8 @@ def genotype_pharmcat_positions(
             fh.writelines(f"{c}\t{s}\t{e}\n" for c, s, e in merged)
 
         base_reads, indel_spans, calls, variant_records = {}, [], [], []
-        sample = next((rg.get("SM") for rg in read_groups if rg.get("SM")), "SAMPLE")
+        # The pileups' sample (the BCFs are read by it); the output's, by PyPGx's rule.
+        sample = name = alignment_sample_name(str(alignment_path))
         contigs = sorted(present)
         if merged:
             common = ["-f", str(fasta), "-R", bed, "-a", "FORMAT/AD,FORMAT/DP", "-q", "1",
@@ -1957,15 +2018,15 @@ def genotype_pharmcat_positions(
         header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
         header.add_line('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">')
         header.add_line('##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">')
-        header.add_sample(sample)
+        header.add_sample(name)
         unsorted = os.path.join(work, "pharmcat.unsorted.vcf.gz")
         with pysam.VariantFile(unsorted, "wz", header=header) as out:
             for c, p, rid, ref, alleles in records:
                 if status[(c, p)] != "reference":
                     continue
                 rec = out.new_record(contig=c, start=p - 1, alleles=alleles, id=rid)
-                rec.samples[sample]["GT"] = (0, 0)
-                rec.samples[sample]["DP"] = min(
+                rec.samples[name]["GT"] = (0, 0)
+                rec.samples[name]["DP"] = min(
                     base_reads[(c, q)][0] for q in range(p, p + len(ref))
                 )
                 out.write(rec)
@@ -1974,9 +2035,9 @@ def genotype_pharmcat_positions(
                 if not any(c == chrom and s <= end and e >= pos for c, s, e in record_spans):
                     continue
                 rec = out.new_record(contig=chrom, start=pos - 1, alleles=alleles)
-                rec.samples[sample]["GT"] = gt
-                rec.samples[sample]["DP"] = dp
-                rec.samples[sample]["GQ"] = gq
+                rec.samples[name]["GT"] = gt
+                rec.samples[name]["DP"] = dp
+                rec.samples[name]["GQ"] = gq
                 out.write(rec)
         subprocess.run(
             ["bcftools", "sort", "-Oz", "-o", str(output_vcf_gz), unsorted],
@@ -2078,6 +2139,11 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
                 bgzip_in_place(raw_vcf)
             else:
                 return {"success": False, "error": "Expected VCF output not found"}
+
+        # The sample PyPGx's depth of coverage will name; see alignment_sample_name.
+        name = alignment_sample_name(calls_from)
+        if name_vcf_sample(output_vcf_gz, name):
+            logger.info(f"VCF sample named {name!r}, as PyPGx names this alignment")
 
         tbi_path = output_vcf_gz + ".tbi"
         if not os.path.exists(tbi_path):

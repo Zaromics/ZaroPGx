@@ -481,6 +481,11 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
             # subprocess sinks are checked for argv safety in
             # tests/test_pharmcat_explicit_calls.py.
             genotype_pharmcat_positions=lambda *a, **k: {},
+            # The VCF's sample name, read from the BAM header and set through pysam's
+            # bcftools in-process (no subprocess sink); covered in
+            # tests/test_pypgx_alignment_without_read_groups.py.
+            alignment_sample_name=lambda *a, **k: "SAMPLE",
+            name_vcf_sample=lambda *a, **k: False,
             # Re-aligning the ALT-covered loci, before the conversion, only when the
             # alignment has reads on their ALT contigs; its sinks are pysam and an
             # HTTP post (tests/test_realign_alt_loci.py). The upload, unchanged.
