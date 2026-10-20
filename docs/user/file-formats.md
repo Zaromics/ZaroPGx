@@ -11,7 +11,7 @@ title: Input formats
 | gVCF | GRCh38, GATK reference blocks | genotyped (GATK GenotypeGVCFs) |
 | BAM, SAM | GRCh38 | SAM converted to BAM (samtools) |
 | CRAM | GRCh38, written against one of three references (below) | converted to BAM (samtools) |
-| FASTQ | short reads, up to 20 GB | aligned to GRCh38 (bwa-mem) |
+| FASTQ | short reads, up to 20 GB by default | aligned to GRCh38 (bwa-mem) |
 | 23andMe, AncestryDNA, BED, FASTA, T2T-CHM13 | refused, with the reason | |
 
 One data file per analysis; a FASTQ's two mates count as one. A VCF, BCF or gVCF must hold
@@ -70,7 +70,9 @@ For aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT gets a call
 
 Structural variants (gene deletions, duplications and hybrids, such as *CYP2D6* \*5, \*36 and \*68, or *GSTM1*, *GSTT1* and *UGT2B17* deletions) are called by PyPGx from read depth, normalised against the *VDR* gene, for GRCh38 whole-genome data only: the alignment needs a median depth of at least 15x at a set of loci no pharmacogene panel targets. A targeted panel does not qualify, because depth across capture targets is too uneven to count gene copies from one sample, and its genes get calls from small variants alone.
 
-GRCh38 also carries alternate copies of some loci as ALT contigs, among them *CYP2D6*, *UGT2B15* and *HLA-A*, *-B* and *-C*. Align to a GRCh38 without ALT contigs (an analysis set such as NCBI's no-ALT set), or with BWA in ALT-aware mode (the reference's `.alt` file beside its index). An alignment to a GRCh38 with ALT contigs that was not ALT-aware gives most reads from those genes mapping quality 0, and PyPGx calls *CYP2D6* and *UGT2B15* from reads with mapping quality 1 or more and their copy number from the depth on the primary copy. The report flags *CYP2D6* or *UGT2B15* where more than half the reads had mapping quality 0, beside its call and under Alerts and Warnings: its call may be wrong. Measured on NA12878's reads, realigned: at most 16% of a gene's reads had mapping quality 0 when ALT-aware, and 73% (*CYP2D6*) and 82% (*UGT2B15*) when not. HLA typing is not flagged: OptiType is given every read in the MHC and on its ALT contigs, whatever its mapping quality.
+GRCh38 also carries alternate copies of some loci as ALT contigs, among them *CYP2D6*, *UGT2B17*/*UGT2B15* and *HLA-A*, *-B* and *-C*. PyPGx reads only the main chromosomes (and GSTT1's ALT contig), so a read whose alignment is on an ALT copy is a read it never sees. An alignment to a GRCh38 with ALT contigs that is not ALT-aware puts many of these genes' reads on the ALT copy as their primary alignment, and many of the rest at mapping quality 0, which PyPGx also ignores. Measured on NA12878's 30x genome: aligned without ALT-awareness, 529 reads over *CYP2D6* stayed on the main chromosome, 48% of them at mapping quality 0, where its published, ALT-aware alignment has 1,570, 5.8% at mapping quality 0; PyPGx would have had 275 usable *CYP2D6* reads instead of 1,479 (*UGT2B15*: 2,460 reads, 67% at mapping quality 0, instead of 5,106, 0.6%). In ALT-aware mode (the reference's `.alt` file beside its index, as NA12878's published 1000 Genomes BAM was made), BWA keeps a read's alignment on the main chromosomes whenever it has a hit there, and writes its hit on the ALT copy only as a supplementary record, a copy PyPGx does not need; only a read with no hit outside the ALT contigs is placed there (NA12878's BAM has 1 such read on these loci's ALT contigs, beside 16,404 supplementary copies). Such a file is normally read as it is.
+
+So when an alignment, ALT-aware or not, has reads on the *CYP2D6* or *UGT2B17*/*UGT2B15* ALT contigs (20 or more whose primary alignment is there; supplementary and secondary records are not counted), ZaroPGx aligns the reads of that locus again, to GRCh38's main chromosomes (BWA-MEM through GATK's BwaSpark, with the index the FASTQ lane uses, then duplicates marked), and PyPGx and PharmCAT's positions read those genes from the new alignments; every other gene is read as uploaded. The report says so under Alerts and Warnings, with each gene's read count and mapping-quality-0 share before and after. It needs the alignment index (`scripts/build-align-index.sh`). Without it, or if the re-alignment fails, the genes are flagged beside their calls and under Alerts and Warnings, with the reason: their calls may be wrong. Without reads on the ALT contigs, a gene is still flagged where more than half its reads had mapping quality 0. Aligning to a GRCh38 without ALT contigs (an analysis set such as NCBI's no-ALT set) avoids all of this, and BWA in ALT-aware mode (the reference's `.alt` file beside its index) nearly all. HLA typing is not affected: OptiType is given every read in the MHC and on its ALT contigs, whatever its mapping quality.
 
 ### Processing path: BAM
 ```
@@ -111,10 +113,11 @@ Upload both files of a paired-end run. R1 alone can miss heterozygous variants i
 Refused, with the reason:
 
 - **Long reads** (Oxford Nanopore, PacBio). Align them with minimap2 against GRCh38 and upload the BAM or CRAM.
-- **Over 20 GB in total.** This covers targeted panels and exomes, not whole genomes. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
+- **Over 20 GB in total**, unless `FASTQ_MAX_UPLOAD_BYTES` sets another limit ({doc}`configuration`). This covers targeted panels and exomes, not whole genomes. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
+- **More than the free disk can hold.** Alignment keeps several BAM-sized files at once until it finishes, up to about 9 times the gzipped FASTQ's size in all (measured: 6 times, on 1 GB of reads; an uncompressed FASTQ counts as a third of its size), so the GATK service checks the free disk before it starts and refuses with how much is needed and how much is free.
 - **No detectable sequencing platform.** The platform is read from the read names, which SRA re-exports lose. Upload the original run files, or align the reads yourself.
 
-Alignment is slow. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.
+The limit is about disk and time: alignment is slow, and a whole genome would take hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.
 
 ## Consumer genotyping arrays (23andMe, AncestryDNA): refused for now
 

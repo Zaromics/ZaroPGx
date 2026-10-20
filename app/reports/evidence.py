@@ -226,19 +226,40 @@ def _calls(annotation: Dict[str, Any]) -> Dict[str, Tuple[str, List[str]]]:
     return calls
 
 
+def _lookup_keys(annotation: Dict[str, Any]) -> Dict[str, List[str]]:
+    """gene -> the results PharmCAT looked the annotation up by (its lookupKey,
+    one mapping per candidate call)."""
+    entries = annotation.get("lookupKey") or []
+    if isinstance(entries, dict):
+        entries = [entries]
+    keys: Dict[str, List[str]] = {}
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        for gene, key in entry.items():
+            if isinstance(gene, str) and isinstance(key, str) and key.strip():
+                keys.setdefault(gene.strip(), []).append(key.strip())
+    return keys
+
+
 def _not_all_clear(annotation: Dict[str, Any]) -> List[str]:
     """annotation_genes less those whose result is a risk screen's all-clear
     (_ALL_CLEAR). A gene it gives no phenotype for (VKORC1 in warfarin's) stays:
-    nothing clears it."""
+    nothing clears it.
+
+    The result judged is the one PharmCAT looked the annotation up by, where its
+    lookupKey names one, else the gene's phenotypes. HLA-B's phenotypes are three
+    results, and phenytoin's guideline is looked up by "*15:02 negative" alone: by
+    all three, a *57:01 carrier's HLA-B was drawn as a source of phenytoin's change
+    (a CYP2C9 one) though the *57:01 result has nothing to do with phenytoin."""
     calls = _calls(annotation)
-    return [
-        gene
-        for gene in annotation_genes(annotation)
-        if not (
-            calls.get(gene, ("", []))[1]
-            and all(_ALL_CLEAR.search(p) for p in calls[gene][1])
-        )
-    ]
+    lookup = _lookup_keys(annotation)
+    cleared = []
+    for gene in annotation_genes(annotation):
+        results = lookup.get(gene) or calls.get(gene, ("", []))[1]
+        if results and all(_ALL_CLEAR.search(r) for r in results):
+            cleared.append(gene)
+    return [gene for gene in annotation_genes(annotation) if gene not in cleared]
 
 
 def change_genes(annotation: Any) -> List[str]:

@@ -38,6 +38,7 @@ from app.api.db import SessionLocal
 from app.pharmcat.report_json import (
     PharmCATSchemaError,
     detect_format,
+    diplotype_phenotype,
     iter_gene_blocks,
     validate_report,
 )
@@ -387,6 +388,31 @@ def unread_variants(gene_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]
     return found
 
 
+def position_coverage(gene_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """{n_positions, missing_positions} from one gene's JSON.
+
+    PharmCAT's report lists every position of the gene's allele definitions under
+    `variants`, with `call` null where it had no genotype (the matcher's
+    missingPositions), and the alleles defined there under `alleles`. Pure over the
+    stored gene JSON, like unread_variants.
+    """
+    variants = [
+        v for v in (gene_data or {}).get("variants") or [] if isinstance(v, dict)
+    ]
+    return {
+        "n_positions": len(variants),
+        "missing_positions": [
+            {
+                "position": f"{v.get('chromosome')}:{v.get('position')}",
+                "rsid": v.get("dbSnpId"),
+                "alleles": [str(a) for a in v.get("alleles") or [] if a],
+            }
+            for v in variants
+            if v.get("call") is None
+        ],
+    }
+
+
 class PharmCATParser:
     """Parse and load PharmCAT JSON results into PostgreSQL using SQLAlchemy 2"""
 
@@ -644,11 +670,9 @@ class PharmCATParser:
                 allele2_name=allele2.get("name") if allele2 else None,
                 allele2_function=allele2.get("function") if allele2 else None,
                 activity_score=activity_score,
-                phenotype=(
-                    diplotype.get("phenotypes", [None])[0]
-                    if diplotype.get("phenotypes")
-                    else None
-                ),
+                # Every result PharmCAT gives, not the first: HLA-B has one per
+                # risk allele (report_json.diplotype_phenotype).
+                phenotype=diplotype_phenotype(diplotype) or None,
                 match_score=diplotype.get("matchScore"),
                 outside_phenotype=diplotype.get("outsidePhenotype"),
                 outside_activity_score=diplotype.get("outsideActivityScore"),
@@ -1000,6 +1024,9 @@ class PharmCATParser:
                     (r.gene_full_data or {}).get("uncalledHaplotypes") or []
                 ),
                 "unread_variants": unread_variants(r.gene_full_data),
+                # The positions behind those alleles: how many of the gene's
+                # positions PharmCAT had no genotype for, out of how many.
+                **position_coverage(r.gene_full_data),
                 # Stored in the gene JSON only; the diplotypes table holds the
                 # source calls (see report_json.recommendation_call_for_display).
                 "recommendation_diplotypes": list(

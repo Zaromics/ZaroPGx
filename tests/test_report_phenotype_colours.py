@@ -4,9 +4,9 @@ get one.
 "Decreased Function" (SLCO1B1, ABCG2) matched none of the badge rules, which knew
 only metabolizer words, and printed in the neutral grey of "Indeterminate"; so did
 G6PD Deficient, an HLA risk allele found, Malignant Hyperthermia Susceptible and
-increased hearing-loss risk. CPIC's data ranks every phenotype by EHR priority,
-and the badges follow it. The three copies of the rule in the two templates are
-now one filter.
+increased hearing-loss risk. The badges colour the phenotype against what is
+typical (not CPIC's per-gene EHR priority, which ranks the need to act). The three
+copies of the rule in the two templates are now one filter.
 """
 
 from pathlib import Path
@@ -41,6 +41,9 @@ TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "reports" / "templates
         ("Variable", "intermediate-metabolizer"),
         ("Deficient", "poor-metabolizer"),
         ("Deficient with CNSHA", "poor-metabolizer"),
+        # PharmCAT 3.4's word (lexicon/phenotype-table.csv); the rule matched only
+        # "Susceptible", so an MH-susceptible RYR1 or CACNA1S badge was grey.
+        ("Malignant Hyperthermia Susceptibility", "poor-metabolizer"),
         ("Malignant Hyperthermia Susceptible", "poor-metabolizer"),
         ("increased risk of aminoglycoside-induced hearing loss", "poor-metabolizer"),
         ("normal risk of aminoglycoside-induced hearing loss", "normal-metabolizer"),

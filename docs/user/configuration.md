@@ -51,6 +51,7 @@ Where a template ships a different value from the code's default, both are given
 | `REF_CACHE_ENABLED` | `true` | Build the CRAM reference cache (3.2 GB download, 5.3 GB kept). Without it, only CRAMs written against UCSC hg38 decode |
 | `DOWNLOAD_ON_STARTUP` | `true` | Let the genome downloader stage references when it starts |
 | `NEXTFLOW_MAX_WAIT_SECONDS` | `86400` | How long the app waits for a pipeline run before failing the job |
+| `FASTQ_MAX_UPLOAD_BYTES` | `21474836480` (20 GB) | The largest FASTQ aligned, both mates together, in bytes; the app and the GATK service both read it. What limits it is disk and time: aligning needs about 9 times the FASTQ's size in free disk, which the GATK service checks before it starts, and a whole genome takes hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested |
 | `PYPGX_MEMORY_LIMIT`, `PYPGX_MAX_PARALLEL_GENES`, `PYPGX_BATCH_SIZE` | `7G`, `8`, `4` | PyPGx's memory and parallelism |
 | `PYPGX_PHARMCAT_PREFERENCE` | `auto` (templates: `pharmcat`) | Which genes PyPGx genotypes. `pharmcat`: not those PharmCAT calls itself (it still calls CYP2D6, which PharmCAT takes from it). `pypgx`: all 87. `auto`: the first for VCFs, the second for alignments |
 | `OUTSIDECALLSOVERRIDE` | off | Use a hand-written outside-calls file instead of the generated one |
@@ -65,7 +66,8 @@ Where a template ships a different value from the code's default, both are given
 | `PDF_ENGINE` | `weasyprint` | `weasyprint` or `reportlab` |
 | `PDF_FALLBACK` | `true` | Try the other engine if the first fails |
 | `AUTHOR_NAME`, `SOURCE_URL`, `ZAROPGX_VERSION` | from `pyproject.toml`, the GitHub URL | Shown in the reports' footer and Platform table |
-| `FHIR_EXPORT_ENABLED` | `true` | The `/fhir` endpoints and the FHIR bundles written with each report |
+| `FHIR_EXPORT_ENABLED` | `true` | The `/fhir` endpoints and the FHIR bundles written with each report. A job's bundle is sent to `FHIR_SERVER_URL` only when asked (`POST /fhir/push/workflow/{job_id}`) |
+| `HAPI_FHIR_ENABLED` | `true` | Whether this installation has a FHIR server to send bundles to. With `FHIR_EXPORT_ENABLED` on too, a finished job's results on the web page have a **Push to FHIR server** button ({doc}`reports`). The bundled HAPI server runs either way |
 | `KEEP_UPLOADS` | `false` | Keep an upload after its job ends. By default it is deleted when the job completes, fails or is cancelled |
 
 ## Storage
@@ -73,6 +75,7 @@ Where a template ships a different value from the code's default, both are given
 | Variable | Default | |
 |---|---|---|
 | `ZAROPGX_SCRATCH` | `./data/temp` | Where ZaroHLA works. HLA typing a whole genome needs tens of GB; point this at a large disk if `data/` is small |
+| `ZAROHLA_SAMTOOLS_THREADS` | `4` | Threads samtools uses as ZaroHLA extracts the HLA reads and converts them for OptiType. A genome with tens of millions of unplaced reads spends most of its HLA time there |
 | `ZAROPGX_ALIGN_REFERENCE` | `./reference/pypgx` | Where the FASTQ alignment index is read from |
 | `LOG_LEVEL` | `DEBUG` (`.env.production`: `INFO`) | The app's log level |
 

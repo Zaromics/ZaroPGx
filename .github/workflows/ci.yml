@@ -69,9 +69,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      # Pins the Node guarantee that tests/test_ui_workflow_flag_reads.py's two
-      # skipif(shutil.which("node") is None) tests currently get only by luck
-      # (the runner image happens to ship Node). Without this step they skip silently.
+      # Pins the Node guarantee that the tests running index.html's script in Node
+      # (tests/test_ui_workflow_flag_reads.py, tests/test_ui_fhir_push_button.py;
+      # skipif(shutil.which("node") is None)) currently get only by luck (the
+      # runner image happens to ship Node). Without this step they skip silently.
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
@@ -118,6 +119,11 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --extra dev
+
+      # tests/e2e/test_ui_smoke.py drives the page in Chromium. Its headless build is
+      # all it launches (--only-shell); --with-deps adds the system libraries.
+      - name: Install Playwright's Chromium
+        run: uv run playwright install --with-deps --only-shell chromium
 
       # PharmCAT's preprocessor needs its GRCh38 reference (reference.fna.bgz, 844 MB).
       # The pharmcat container downloaded it from Zenodo at startup into an empty

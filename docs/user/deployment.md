@@ -76,6 +76,10 @@ Analyses run on the host; uploads and reports stay in `data/`. Outside connectio
 - On first start: PharmCAT's reference data from Zenodo, and reference genomes and chain
   files for the genome downloader.
 
+The FHIR server's implementation guide is not downloaded: it is installed from files in the
+repository (`docker/fhir-server/packages/`), and its `$validate` checks bundles without a
+terminology server.
+
 The app's pages, its API explorer and the reports load nothing from other hosts: their
 scripts, styles and fonts are served by the app or carried in the report.
 

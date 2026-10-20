@@ -31,6 +31,7 @@ from app.reports.pdf_fit import (
     FitSection,
     _summary_cells,
     fit_sections,
+    room_under,
     section_fragments,
     section_pages,
     summary_pill_lines,
@@ -77,7 +78,14 @@ def _worst_case_tsv():
             "F2": _row("F2", "rs1799963 reference (G)/rs1799963 reference (G)"),
             "F5": _row("F5", "rs6025 reference (C)/rs6025 reference (C)"),
             "HLA-A": _row("HLA-A", "*02:01/*31:01", "*31:01 positive", outside="yes"),
-            "HLA-B": _row("HLA-B", "*15:02/*57:01", "*57:01 positive", outside="yes"),
+            # Every result PharmCAT gives HLA-B, one per risk allele: among the
+            # longest pills.
+            "HLA-B": _row(
+                "HLA-B",
+                "*15:02/*57:01",
+                "*15:02 positive, *57:01 positive, *58:01 negative",
+                outside="yes",
+            ),
             "MT-RNR1": _row(
                 "MT-RNR1",
                 "Reference",
@@ -288,7 +296,12 @@ def test_every_step_is_tighter_and_the_loosest_that_fits_is_used(monkeypatch, tm
             lambda render, css=css: (render(css), {}),
         )
         document, _ = generator_module.render_pdf_document(page)
-        one_page.append(len(section_pages(document, "exec-summary")) == 1)
+        # One page, and ending on it: not with its bottom padding run past the
+        # foot, which leaves the fill no room.
+        one_page.append(
+            len(section_pages(document, "exec-summary")) == 1
+            and room_under(document, "exec-summary") >= 0
+        )
         # Its height laid end to end, over however many pages it takes.
         heights.append(
             sum(
