@@ -161,9 +161,18 @@
             }
         }
         @container upload-form (max-width: 300px) {
-            .stage-row {
+            .stage-row .stage-indicator > span {
                 font-size: 0.75rem;
             }
+        }
+        /* Each stage is its own stacking context (position: relative; z-index: 1), so
+           a popup's z-index counts only inside it: four to a row, the second row's
+           stages, later in the page, painted over a first-row popup and took its
+           taps. The stage whose popup is open is raised above its neighbours, at
+           once: the stage's `transition: all` would otherwise ease z-index up too. */
+        .stage-indicator.popup-open {
+            z-index: 2;
+            transition-property: background-color, border-color, color, transform;
         }
         
         .stage-indicator.disabled:hover {
@@ -818,7 +827,7 @@
                                 </div>
                             </div>
                             
-                            <div class="d-flex gap-2 justify-content-between">
+                            <div class="d-flex flex-wrap gap-2 justify-content-between">
                                 <div class="d-flex gap-2">
                                     <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
 
@@ -2602,6 +2611,7 @@
                     document.querySelectorAll('.stage-popup').forEach(popup => {
                         if (popup !== this.querySelector('.stage-popup')) {
                             popup.style.display = 'none';
+                            popup.parentElement.classList.remove('popup-open');
                         }
                     });
                     
@@ -2610,7 +2620,12 @@
                     if (popup) {
                         const isVisible = popup.style.display === 'block';
                         popup.style.display = isVisible ? 'none' : 'block';
-                        if (!isVisible) window.keepPopupOnScreen(popup);
+                        if (isVisible) {
+                            this.classList.remove('popup-open');
+                        } else {
+                            this.classList.add('popup-open');
+                            window.keepPopupOnScreen(popup);
+                        }
                     }
                 });
             });
@@ -2659,6 +2674,7 @@
                 if (!e.target.closest('.stage-indicator')) {
                     document.querySelectorAll('.stage-popup').forEach(popup => {
                         popup.style.display = 'none';
+                        popup.parentElement.classList.remove('popup-open');
                     });
                 }
             });

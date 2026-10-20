@@ -244,6 +244,18 @@ def test_upload_progress_and_report_in_both_themes(e2e_client, e2e_base_url):
             browser.close()
 
 
+# Whether an open popup's heading is what a tap there reaches: four to a row, the
+# second row's stages painted over a first-row popup.
+POPUP_ON_TOP_JS = r"""
+(popup) => {
+  const heading = popup.querySelector('h6');
+  heading.scrollIntoView({block: 'center'});
+  const box = heading.getBoundingClientRect();
+  const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return popup.contains(hit);
+}
+"""
+
 # Where the upload card's stage row and an open popup sit, against the card and the
 # viewport (document.documentElement's client width, which leaves out a scrollbar).
 LAYOUT_JS = r"""
@@ -268,7 +280,9 @@ def test_the_upload_card_fits_a_narrow_screen(e2e_base_url, width):
     """The stage row's eight stages need about 500px. On a phone they ran off the
     card and the page scrolled sideways (at 375px the page was 530px wide); at
     768px PharmCAT and Report hung outside the card. Each stage's popup, 280px or
-    more and centred under its stage, ran off a phone's screen too."""
+    more and centred under its stage, ran off a phone's screen too. Four to a row,
+    the second row's stages painted over a first-row popup and took its taps; and
+    with a job running, the Cancel button pushed a 320px page wide."""
     with _sync_playwright()() as pw:
         browser = pw.chromium.launch()
         try:
@@ -285,7 +299,18 @@ def test_the_upload_card_fits_a_narrow_screen(e2e_base_url, width):
                 ]
                 assert not outside, f"stages outside the upload card: {outside}"
 
+                # While a job runs, the Cancel button joins the buttons' row.
+                page.evaluate(
+                    "document.getElementById('cancelButton').classList.remove('d-none')"
+                )
+                running = page.evaluate(LAYOUT_JS)
+                assert running["pageWidth"] <= running["viewport"], running
+                page.evaluate(
+                    "document.getElementById('cancelButton').classList.add('d-none')"
+                )
+
                 off_screen = {}
+                covered = []
                 stages = page.locator(".stage-indicator")
                 for i in range(stages.count()):
                     stage = stages.nth(i)
@@ -295,10 +320,13 @@ def test_the_upload_card_fits_a_narrow_screen(e2e_base_url, width):
                     box = popup.bounding_box()
                     if box["x"] < 0 or box["x"] + box["width"] > layout["viewport"]:
                         off_screen[stage.get_attribute("id")] = box
+                    if not popup.evaluate(POPUP_ON_TOP_JS):
+                        covered.append(stage.get_attribute("id"))
                     # Closed before the next: four to a row, a first-row popup
                     # lies over the second row.
                     page.evaluate("document.body.click()")
                 assert not off_screen, f"popups off the screen: {off_screen}"
+                assert not covered, f"popups painted over by another stage: {covered}"
             except BaseException:
                 ARTIFACTS.mkdir(parents=True, exist_ok=True)
                 page.screenshot(
