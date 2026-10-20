@@ -26,6 +26,7 @@ neither GATK nor htslib exists in the unit-test environment.
 """
 
 import gzip
+import hashlib
 import importlib.util
 import logging
 import os
@@ -144,11 +145,17 @@ def hg38_reference(gatk_api):
 
 
 @pytest.fixture()
-def chain_file(gatk_api):
+def chain_file(gatk_api, monkeypatch):
     path = Path(gatk_api.LIFTOVER_CHAIN_PATHS[("GRCh37", "GRCh38")])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(
         gzip.compress(b"chain 1 chr1 249250621 + 0 1 chr1 248956422 + 0 1 1\n")
+    )
+    # /liftover-vcf checks the chain against its pin; this stand-in is pinned here.
+    monkeypatch.setattr(
+        gatk_api,
+        "LIFTOVER_CHAIN_SHA256",
+        hashlib.sha256(path.read_bytes()).hexdigest(),
     )
     yield path
     path.unlink(missing_ok=True)
@@ -377,6 +384,36 @@ def test_missing_chain_file_is_a_clear_400(
     assert (
         fake_tools.argvs() == []
     ), "nothing may run before the prerequisites are checked"
+
+
+def test_a_chain_that_fails_its_pin_is_refused(
+    client, fake_tools, hg38_reference, chain_file, gatk_api
+):
+    """The shared /reference can change after genome-downloader checked it; a
+    tampered or hand-staged chain is refused, not used."""
+    chain_file.write_bytes(gzip.compress(b"chain 1 chr1 1 + 0 1 chrX 1 + 0 1 2\n"))
+
+    resp = _post_liftover(client, CHR_GRCH37_VCF)
+
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert "does not match its pinned SHA-256" in detail
+    assert "Restarting genome-downloader is enough" in detail
+    assert fake_tools.argvs() == [], "nothing may run on an unverified chain"
+
+
+def test_the_chain_pin_is_the_one_genome_downloader_uses(gatk_api):
+    from app.utils.liftover_chain import CHAIN_SHA256
+
+    assert gatk_api.LIFTOVER_CHAIN_SHA256 == CHAIN_SHA256
+    source = (
+        REPO_ROOT / "docker" / "genome-downloader" / "downloader_api.py"
+    ).read_text(encoding="utf-8")
+    assert f'"{CHAIN_SHA256}"' in source
+    dockerfile = (REPO_ROOT / "docker" / "gatk-api" / "Dockerfile.gatk-api").read_text(
+        encoding="utf-8"
+    )
+    assert "COPY app/utils/liftover_chain.py /app/" in dockerfile
 
 
 # ---------------------------------------------------------------------------
