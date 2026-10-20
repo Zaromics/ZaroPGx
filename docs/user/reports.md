@@ -47,8 +47,12 @@ it, so a double-sided print holds both on one sheet.
 
 **Genetic Results.** Every gene the run called: up to 91, PharmCAT's 25 and the other 66
 from PyPGx and OptiType. Columns: diplotype, phenotype, activity score, implications, and
-**Call**, the tool that made the call: C PharmCAT, P PyPGx, O OptiType, M mtDNA-Server 2,
-X an outside call whose tool was not recorded, – no call, ? not recorded. The guideline
+**Call**, the tool the run records for the gene: the one that made the call or, for a gene
+without a call, the one that tried. C PharmCAT, P PyPGx, O OptiType, M mtDNA-Server 2, X an
+outside call whose tool was not recorded, – no call made and no tool to name (PharmCAT made
+none and was given none), ? not recorded. The genes
+examined without a call keep their letter in the list after the table, and in the
+interactive report's Genes tab, which lists every gene. The guideline
 behind each recommendation (CPIC, DPWG or FDA) heads it under Drug Recommendations. The table
 has no guideline column: PharmCAT 3.1 and later record no guideline source per gene.
 

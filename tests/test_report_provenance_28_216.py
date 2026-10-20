@@ -477,6 +477,46 @@ def test_reportlab_gene_line_states_provenance_in_words():
     assert "[Called by PharmCAT]" in line
 
 
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_the_legend_holds_for_a_gene_without_a_call(template_name):
+    """A gene examined without a call keeps the letter of the tool that tried:
+    "ABCB1 (P)" in the PDF's list, a P in the interactive Genes tab. The legend
+    said "Tool that made this call", which no tool had."""
+    html = _render(template_name)
+    assert "Tool that made this call" not in html
+    assert (
+        "the one that made the call or, for a gene without a call, the one that "
+        "tried" in html
+    )
+    assert "&ndash;</strong> = no call made and no tool to name" in html
+
+
+def test_an_uncalled_row_s_tooltip_does_not_say_called_by():
+    """The interactive Genes tab lists every gene; a PyPGx gene with no call is a
+    row with a P whose tooltip said "Called by PyPGx"."""
+    rows = _ROWS + [
+        {
+            "gene": "ABCB1",
+            "diplotype": "Unknown",
+            "phenotype": "Unknown",
+            "called_by": CALLED_BY_PYPGX,
+            "called_by_label": "Called by PyPGx",
+        }
+    ]
+    html = _render("interactive_report.html", rows)
+    titles = dict(
+        re.findall(
+            r"<td>(\w+)</td>.*?<td class=\"narrow-col tool-source\" "
+            r'title="([^"]*)">',
+            html,
+            re.S,
+        )
+    )
+    assert titles["ABCB1"] == "No call; tried by PyPGx"
+    assert titles["CYP2C19"] == "Called by PharmCAT"
+    assert titles["ABCG2"] == "No call made for this gene"
+
+
 def test_reportlab_gene_line_is_honest_about_outside_and_unknown():
     from app.reports.pdf_generators import _diplotype_line
 
