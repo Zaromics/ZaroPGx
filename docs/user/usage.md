@@ -39,7 +39,11 @@ runs, whatever its switch says.
 Under **PharmCAT**, two options apply to VCF and BCF files only:
 
 - **Assume absent sites = reference** (`--absent-to-ref`): a PharmCAT position the file has
-  no record for is taken to be homozygous reference.
+  no record for is taken to be homozygous reference. It also lets MT-RNR1 be called
+  reference when no MT-RNR1 allele is found, but only where the file's chrM calls show
+  the gene was read (a variant inside it, and a haplogroup with none of its defining
+  variants missing). A VCF with no chrM calls gets no MT-RNR1 call and no haplogroup
+  either way.
 - **Assume unspecified sites = reference** (`--unspecified-to-ref`): a position whose
   genotype is `./.` is taken to be homozygous reference.
 

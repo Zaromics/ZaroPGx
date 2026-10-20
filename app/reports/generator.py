@@ -1228,9 +1228,11 @@ def mtdna_report_context(
             )
         elif reason_code == NO_CALL_NOT_CONSENTED:
             no_call_reason = (
-                "No MT-RNR1 variant was detected, and this VCF job did not "
-                "set pharmcat_absent_to_ref, so an absent record could not "
-                "be resolved to Reference."
+                "No MT-RNR1 variant was detected, and the run did not assume "
+                'the reference allele where the file has no record ("Assume '
+                'absent sites = reference", under PharmCAT on the upload page, '
+                "was off), so an absent record could not be resolved to "
+                "Reference."
             )
         elif reason_code == NO_CALL_UNRESOLVED_961_DELINS:
             no_call_reason = (

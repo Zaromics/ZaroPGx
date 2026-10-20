@@ -53,7 +53,7 @@ two letters:
 Genes examined without a call are listed after the table, with the reason when one is known.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
-call with its phenotype (aminoglycoside-induced hearing loss).
+call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
 
 **Drugs.** Every drug with guidance for this sample, marked by the strongest
 recommendation: Strong, Moderate or Optional (CPIC's strengths); Guideline available (DPWG

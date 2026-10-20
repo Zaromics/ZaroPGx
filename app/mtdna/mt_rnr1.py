@@ -357,7 +357,14 @@ def vcf_evidence(
     `_call_from_vcf`'s `vcf_carried_chrm_data` for that computation and its
     reasoning.
 
-    `absent_to_ref` is checked first, ahead of every other tier: it is the
+    Tier E (no chrM record) is checked first. Such a file promotes nothing,
+    whatever the user consented to, so it is the reason the reader is told:
+    the remedy is a file that keeps its chrM calls (or the BAM or CRAM), and
+    turning on absent_to_ref would change nothing. Checked second, it was
+    reported as NO_CALL_NOT_CONSENTED, which the report words as the option
+    being off (2026-10-19, a GRCh37 VCF with no chrM record).
+
+    `absent_to_ref` is checked next, ahead of Tiers C and D: it is the
     user's own consent to read an empty match as "no PGx allele present"
     rather than "untested". Without it, the call stays a no-call regardless
     of how strong the rest of the evidence is -- consent is a precondition
@@ -385,10 +392,10 @@ def vcf_evidence(
     `(NO_CALL_*, None)`. The caller passes this straight through to
     `resolve_mt_rnr1_call` as `evidence_reason` / `basis`.
     """
-    if not absent_to_ref:
-        return NO_CALL_NOT_CONSENTED, None
     if not carried_chrm_data:
         return NO_CALL_NO_CHRM_DATA, None
+    if not absent_to_ref:
+        return NO_CALL_NOT_CONSENTED, None
     tier_c_holds = (
         has_variant_in_gene(records)
         and haplogroup is not None

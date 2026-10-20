@@ -119,3 +119,18 @@ def test_no_chrm_data_claims_no_more_than_the_sidecar_measured(tmp_path):
     assert "header" not in text
     assert "no calls on the mitochondrial chromosome (chrM)" in text
     assert "BAM or CRAM" in text
+
+
+def test_the_option_off_is_named_as_the_upload_page_names_it(tmp_path):
+    """The reader was told the job "did not set pharmcat_absent_to_ref", a request
+    field nobody sees; the page calls it "Assume absent sites = reference", as the
+    report's own note on uncalled genes does (_unresolved_calls.html)."""
+    ctx = _context(
+        tmp_path, {"mt_rnr1": None, "mt_rnr1_no_call_reason": "absent_to_ref_not_set"}
+    )
+    text = ctx["no_call_reason"]
+    assert "pharmcat_absent_to_ref" not in text
+    assert (
+        '"Assume absent sites = reference", under PharmCAT on the upload page' in text
+    )
+    assert "could not be resolved to Reference" in text
