@@ -143,7 +143,8 @@ def test_genomic_observations_carry_both_required_categories(bundle):
     observations = _resources(bundle, "genotype") + _resources(
         bundle, "therapeutic-implication"
     )
-    assert len(observations) == 4
+    # 3 genotypes, their 3 phenotypes, 1 drug.
+    assert len(observations) == 7
     for observation in observations:
         pairs = [
             (c["coding"][0]["system"], c["coding"][0]["code"])
@@ -299,12 +300,22 @@ def test_clinical_content_survives(bundle):
         "NOVEL1 Genotype",
     ]
     cyp2d6 = genotypes[0]
-    phenotype = [c for c in cyp2d6["component"] if c["code"] == {"text": "Phenotype"}]
-    assert phenotype[0]["valueCodeableConcept"] == {"text": "Intermediate Metabolizer"}
     haplotypes = [c["valueCodeableConcept"] for c in _component(cyp2d6, "84414-2")]
     assert haplotypes == [{"text": "*1"}, {"text": "*4"}]
 
-    (implication,) = _resources(bundle, "therapeutic-implication")
+    implications = _resources(bundle, "therapeutic-implication")
+    phenotypes = {
+        o["derivedFrom"][0]["display"]: o["component"][0]["valueCodeableConcept"]
+        for o in implications
+        if not _component(o, "51963-7")
+    }
+    assert {k: v["text"] for k, v in phenotypes.items()} == {
+        "CYP2D6 *1/*4": "Intermediate Metabolizer",
+        "ABCG2 rs2231142 reference (G)/rs2231142 reference (G)": "Normal Function",
+        "NOVEL1 *1/*1": "Normal Metabolizer",
+    }
+
+    (implication,) = [o for o in implications if _component(o, "51963-7")]
     (drug,) = _component(implication, "51963-7")
     assert drug["valueCodeableConcept"] == {"text": "codeine"}
     (conclusion,) = _component(implication, "conclusion-string")

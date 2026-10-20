@@ -118,11 +118,13 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # specification's order) instead of a mirror of the JSON no FHIR parser could read.
 # And when each resource got a name-based id and an identifier to match a re-push
 # on (feat/fhir-push-hapi), and when CPIC's strength of recommendation stopped
-# being sent as LOINC's "Level of evidence".
-GOLDEN_JSON_SHA256 = "8ae0e8f792c890fda81e1d087b5f113ef33fa3db4a4d666ca9b81144409c74e7"
-GOLDEN_JSON_BYTES = 21704
-GOLDEN_XML_SHA256 = "fefa35ac8a9f37097a093ff25614a9276461291432d5e765d39e6606331fca18"
-GOLDEN_XML_BYTES = 21613
+# being sent as LOINC's "Level of evidence". And when each gene's phenotype moved
+# from a text component of its genotype to a therapeutic implication coded the
+# IG's way (feat/fhir-coded-implications).
+GOLDEN_JSON_SHA256 = "761b5a5dc87a5c882757bb59bbabed4c0253fd3fc102b903c5d1cd1690e3fa3a"
+GOLDEN_JSON_BYTES = 26521
+GOLDEN_XML_SHA256 = "107df5d961edaec269045deb0840c37f5939b840fdb82d6b7a5ef1132cf30de7"
+GOLDEN_XML_BYTES = 26206
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
@@ -130,22 +132,22 @@ GOLDEN_XML_BYTES = 21613
 GOLDEN_URI_CENSUS = {
     "http://hl7.org/fhir/StructureDefinition/Patient": 1,
     "http://hl7.org/fhir/StructureDefinition/workflow-relatedArtifact": 1,
-    "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs": 4,
+    "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs": 8,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study-reference": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype": 3,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action": 2,
-    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication": 2,
-    "http://loinc.org": 15,
+    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication": 4,
+    "http://loinc.org": 17,
     "http://snomed.info/sct": 1,
-    "http://terminology.hl7.org/CodeSystem/observation-category": 6,
-    "http://terminology.hl7.org/CodeSystem/v2-0074": 6,
+    "http://terminology.hl7.org/CodeSystem/observation-category": 8,
+    "http://terminology.hl7.org/CodeSystem/v2-0074": 8,
     "http://unitsofmeasure.org": 1,
     "http://www.genenames.org": 3,
     "https://www.clinpgx.org/guidelineAnnotations": 1,
-    "urn:ietf:rfc:3986": 8,
+    "urn:ietf:rfc:3986": 10,
     "urn:zaropgx:patient-id": 1,
     "urn:zaropgx:report-id": 1,
 }
@@ -257,6 +259,7 @@ OFFICIAL_LOINC_DISPLAYS = {
     "104668-9": "CYP2C9 Activity Score in Blood or Tissue",
     "104669-7": "CYP2D6 Activity Score in Blood or Tissue",
     "104665-5": "DPYD Activity Score in Blood or Tissue",
+    "LA10317-8": "Intermediate metabolizer",
 }
 
 
