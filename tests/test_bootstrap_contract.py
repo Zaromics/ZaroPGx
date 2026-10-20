@@ -672,3 +672,14 @@ def test_documented_alpine_entry_installs_bash_and_curl_first():
     installation = _text("docs/user/installation.md")
     for document in (readme, installation):
         assert "apk add --no-cache bash curl" in document
+
+
+def test_bash_update_refusal_says_stash_not_commit():
+    """A release install is a detached HEAD: a commit there is stranded by the
+    update's checkout, so the refusal says to stash and restore, with the path
+    quoted for copy-paste."""
+    script = (ROOT / "bootstrap.sh").read_text(encoding="utf-8")
+    assert "Commit or stash" not in script
+    assert "stash), re-run with --update" in script
+    assert "stash pop --index" in script
+    assert 'git -C \\"${TARGET_DIR}\\"' in script

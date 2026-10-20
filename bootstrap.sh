@@ -462,8 +462,12 @@ else
     # untracked one, git refuses the checkout and names the file (an ignored file
     # there is overwritten, as before).
     if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-      echo "Error: Tracked files have local changes; refusing to update." >&2
-      echo "       Commit or stash them first (git status lists them)." >&2
+      echo "Error: Tracked files have local changes; refusing to update:" >&2
+      git status --short --untracked-files=no >&2
+      # A release install is a detached HEAD at its tag, so a commit there is
+      # stranded by the checkout below: stash, update, then restore.
+      echo "       Stash them (git -C \"${TARGET_DIR}\" stash), re-run with --update," >&2
+      echo "       then git -C \"${TARGET_DIR}\" stash pop --index." >&2
       popd >/dev/null
       exit 1
     fi
