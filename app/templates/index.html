@@ -76,6 +76,25 @@
             transform: scale(1.05);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
+        /* The two 64px buttons, the gaps and "Pharmacogenomic" need about 380px: on a
+           320px phone the theme button hung off the screen. 44px is still a full
+           touch target. */
+        @media (max-width: 400px) {
+            .header {
+                padding: 1rem 0.75rem;
+            }
+            .header-inner {
+                gap: 0.5rem;
+            }
+            .header-icon-btn {
+                width: 44px;
+                height: 44px;
+                font-size: 1.25rem;
+            }
+            .header .lead {
+                font-size: 1rem;
+            }
+        }
         .card {
             margin-bottom: 1.5rem;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -120,6 +139,41 @@
         .stage-indicator.disabled {
             cursor: not-allowed;
         }
+
+        /* The stage row's eight stages need about 500px. In a narrower form (a phone,
+           or a tablet's centred column) they ran off the card and the page scrolled
+           sideways; there they sit four to a row. */
+        #uploadForm {
+            container: upload-form / inline-size;
+        }
+        .stage-row {
+            display: flex;
+            justify-content: space-between;
+        }
+        @container upload-form (max-width: 520px) {
+            .stage-row {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                row-gap: 0.5rem;
+            }
+            .stage-row .stage-indicator {
+                padding: 0;
+            }
+        }
+        @container upload-form (max-width: 300px) {
+            .stage-row .stage-indicator > span {
+                font-size: 0.75rem;
+            }
+        }
+        /* Each stage is its own stacking context (position: relative; z-index: 1), so
+           a popup's z-index counts only inside it: four to a row, the second row's
+           stages, later in the page, painted over a first-row popup and took its
+           taps. The stage whose popup is open is raised above its neighbours, at
+           once: the stage's `transition: all` would otherwise ease z-index up too. */
+        .stage-indicator.popup-open {
+            z-index: 2;
+            transition-property: background-color, border-color, color, transform;
+        }
         
         .stage-indicator.disabled:hover {
             background-color: rgba(108, 117, 125, 0.1);
@@ -131,7 +185,9 @@
         .stage-popup {
             position: absolute;
             top: 100%;
-            left: 50%;
+            /* --popup-shift: how far keepPopupOnScreen moved it to stay in the
+               viewport; the arrow moves back by as much, to point at its stage. */
+            left: calc(50% + var(--popup-shift, 0px));
             transform: translateX(-50%);
             background: white;
             /* This card is white in BOTH themes, so it has to set its own text
@@ -152,8 +208,8 @@
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             padding: 16px;
-            min-width: 280px;
-            max-width: 320px;
+            min-width: min(280px, calc(100vw - 16px));
+            max-width: min(320px, calc(100vw - 16px));
             z-index: 9999;
             margin-top: 8px;
             display: none;
@@ -163,7 +219,7 @@
             content: '';
             position: absolute;
             top: -8px;
-            left: 50%;
+            left: calc(50% - var(--popup-shift, 0px));
             transform: translateX(-50%);
             width: 0;
             height: 0;
@@ -176,7 +232,7 @@
             content: '';
             position: absolute;
             top: -9px;
-            left: 50%;
+            left: calc(50% - var(--popup-shift, 0px));
             transform: translateX(-50%);
             width: 0;
             height: 0;
@@ -612,7 +668,7 @@
                                 
                             
                             <!-- Stage indicators (always visible) -->
-                            <div class="d-flex justify-content-between small mb-3" style="overflow: visible;">
+                            <div class="stage-row small mb-3" style="overflow: visible;">
                                 <!-- Upload Stage -->
                                 <div id="stageUpload" class="stage-indicator text-center text-muted" data-stage="upload" data-toggleable="false">
                                     <div class="mb-1"><i class="bi bi-cloud-upload"></i></div>
@@ -771,7 +827,7 @@
                                 </div>
                             </div>
                             
-                            <div class="d-flex gap-2 justify-content-between">
+                            <div class="d-flex flex-wrap gap-2 justify-content-between">
                                 <div class="d-flex gap-2">
                                     <button type="submit" class="btn btn-primary" id="uploadButton">Upload</button>
 
@@ -2523,6 +2579,23 @@
             `;
         }
 
+        // A popup is centred under its stage and up to 320px wide, so on a phone the
+        // first and last stages' popups ran off the screen. Moved back in by as much
+        // as it overhangs, less an 8px margin.
+        window.keepPopupOnScreen = function(popup) {
+            popup.style.setProperty('--popup-shift', '0px');
+            const margin = 8;
+            const box = popup.getBoundingClientRect();
+            const viewport = document.documentElement.clientWidth;
+            let shift = 0;
+            if (box.left < margin) {
+                shift = margin - box.left;
+            } else if (box.right > viewport - margin) {
+                shift = viewport - margin - box.right;
+            }
+            popup.style.setProperty('--popup-shift', `${shift}px`);
+        };
+
         // Stage Popup and Toggle Functionality
         window.initializeStagePopups = function() {
             console.log('Initializing stage popups...');
@@ -2538,6 +2611,7 @@
                     document.querySelectorAll('.stage-popup').forEach(popup => {
                         if (popup !== this.querySelector('.stage-popup')) {
                             popup.style.display = 'none';
+                            popup.parentElement.classList.remove('popup-open');
                         }
                     });
                     
@@ -2546,7 +2620,20 @@
                     if (popup) {
                         const isVisible = popup.style.display === 'block';
                         popup.style.display = isVisible ? 'none' : 'block';
+                        if (isVisible) {
+                            this.classList.remove('popup-open');
+                        } else {
+                            this.classList.add('popup-open');
+                            window.keepPopupOnScreen(popup);
+                        }
                     }
+                });
+            });
+
+            // A turned phone or a resized window moves the stage under an open popup.
+            window.addEventListener('resize', function() {
+                document.querySelectorAll('.stage-popup').forEach(popup => {
+                    if (popup.style.display === 'block') window.keepPopupOnScreen(popup);
                 });
             });
             
@@ -2587,6 +2674,7 @@
                 if (!e.target.closest('.stage-indicator')) {
                     document.querySelectorAll('.stage-popup').forEach(popup => {
                         popup.style.display = 'none';
+                        popup.parentElement.classList.remove('popup-open');
                     });
                 }
             });
