@@ -7,14 +7,15 @@ gave the bundle of a VCF run of PharmCAT's example VCF 6 errors: the genotypes o
 F2, F5 and HLA-C had valueCodeableConcept.text "" ("value cannot be empty"). No tool
 reported those genes, so the report's gene list (app/reports/generator.py
 _build_canonical_diplotypes) held a placeholder row for each with diplotype "", and
-so would any run for any gene no tool reports, HLA from a VCF among them. Pushed as
-a transaction, HAPI took that bundle and stored the three genotypes with no value,
-which the IG's genotype profile requires.
+so would any run for any gene no tool reports (HLA-C from a VCF, which PharmCAT has
+no row for). Pushed as a transaction, HAPI took that bundle and stored the three
+genotypes with no value, which the IG's genotype profile requires.
 
-A gene no tool reported now states "Not performed", coded DataAbsentReason
-not-performed (tests/test_fhir_uncalled_reason.py). ``empty_elements`` walks a whole bundle; the tests run
-it over bundles built from the rows the report step produces, from blank inputs,
-and over the bundles the repository ships.
+A placeholder row now states "Not performed", coded DataAbsentReason not-performed;
+a blank diplotype on a row without that marker states "Unknown"
+(tests/test_fhir_uncalled_reason.py). ``empty_elements`` walks a whole bundle; the
+tests run it over bundles built from the rows the report step produces, from blank
+inputs, and over the bundles the repository ships.
 """
 
 from __future__ import annotations
@@ -126,12 +127,15 @@ def test_no_empty_element_when_no_gene_was_called():
 
 
 @pytest.mark.parametrize("diplotype", ["", "   ", None])
-def test_a_blank_or_missing_diplotype_states_not_performed(diplotype):
+def test_a_blank_or_missing_diplotype_states_unknown(diplotype):
+    """Without the placeholder's not_tested marker (a database-lane row with no
+    diplotype label), a blank says no call, not that nothing tested the gene."""
     bundle = _export(
         {"genes": [{"gene": "CYP2D6", "diplotype": diplotype}]},
     )["bundle"]
     value = _genotypes(bundle)["CYP2D6"]["valueCodeableConcept"]
-    assert value["text"] == "Not performed"
+    assert value["text"] == "Unknown"
+    assert value["coding"][0]["code"] == "unknown"
     assert empty_elements(bundle) == []
 
 

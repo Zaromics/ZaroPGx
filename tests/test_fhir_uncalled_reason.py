@@ -1,19 +1,26 @@
 """A genotype with no call says why, coded.
 
 Since fix/fhir-no-empty-values every gene the run did not call had the genotype
-valueCodeableConcept {"text": "Unknown"}, whether a tool reported the gene and could
-not call it or no tool reported it at all (HLA-C from a VCF; F2 and F5 where PyPGx has
-nothing for them). A reader could tell "not tested" from "tested, no call" only by
-matching text, and not even that: both read "Unknown".
+valueCodeableConcept {"text": "Unknown"}, whether a tool tested the gene and could not
+call it or nothing tested it at all (HLA from a VCF; F2 and F5 where PyPGx has nothing
+for them). A reader could tell "not tested" from "tested, no call" only by matching
+text, and not even that: both read "Unknown".
 
 The IG's genotype profile (Genomics Reporting 3.0.0) requires value[x] (1..1), with an
 example binding, and obs-6 forbids dataAbsentReason beside a value. So the reason goes
-in the value, as a coding of HL7's DataAbsentReason code system: not-performed for a
-gene no tool reported (the placeholder row app/reports/generator.py
-_build_canonical_diplotypes adds, diplotype ""), unknown for one a tool reported but
-could not call ("Unknown", "Unknown/Unknown"). HAPI FHIR 8.12's $validate, with the IG
-and HL7 Terminology 6.1.0 loaded, checks the code (a bogus one is an error) and gave
-the two release-candidate bundles rebuilt this way no errors.
+in the value, as a coding of HL7's DataAbsentReason code system, decided by markers the
+report step puts on the gene rows (app/reports/generator.py):
+
+- not-performed: not_tested. _build_canonical_diplotypes' placeholder rows (no tool
+  reported the gene), and the genes only an outside-call tool supplies when that tool
+  did not run: HLA-A, HLA-B and HLA-C without hla_result.json (no HLA typing, as in
+  every VCF run), MT-RNR1 without mtdna_result.json.
+- error: call_error. PyPGx tried the gene and failed ({"success": False}).
+- unknown: tested and not called -- "Unknown", "Unknown/Unknown", "Indeterminate".
+
+HAPI FHIR 8.12's $validate, with the IG and HL7 Terminology 6.1.0 loaded, checks the
+code (a bogus one is an error) and gave the two release-candidate bundles rebuilt this
+way no errors.
 """
 
 from __future__ import annotations
@@ -23,6 +30,8 @@ import tarfile
 from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
+
+import pytest
 
 from app.reports import generator as generator_module
 from app.services.fhir import terminology
@@ -38,6 +47,10 @@ NOT_PERFORMED = {
     "coding": [{"system": DAR, "code": "not-performed", "display": "Not Performed"}],
     "text": "Not performed",
 }
+ERROR = {
+    "coding": [{"system": DAR, "code": "error", "display": "Error"}],
+    "text": "Error",
+}
 
 
 def _unknown(text: str) -> Dict[str, Any]:
@@ -47,8 +60,8 @@ def _unknown(text: str) -> Dict[str, Any]:
     }
 
 
-# Rows as the report step builds them for the VCF run of PharmCAT's example VCF.
-REPORTED_ROWS: List[Dict[str, Any]] = [
+# Rows as the report step builds them from the VCF run of PharmCAT's example VCF.
+VCF_RUN_ROWS: List[Dict[str, Any]] = [
     # PharmCAT called it.
     {
         "gene": "CYP2C19",
@@ -56,15 +69,18 @@ REPORTED_ROWS: List[Dict[str, Any]] = [
         "phenotype": "Normal Metabolizer",
         "call_source": "MATCHER",
     },
-    # PharmCAT reported it, callSource NONE: "Unknown/Unknown".
+    # PharmCAT lists HLA-A and HLA-B, callSource NONE, with no outside call to take.
     {
         "gene": "HLA-A",
         "diplotype": "Unknown/Unknown",
         "phenotype": "Unknown",
         "call_source": "NONE",
     },
-    # PharmCAT reported it with no outside call to take.
+    {"gene": "HLA-B", "diplotype": "Unknown/Unknown", "call_source": "NONE"},
+    # The same for MT-RNR1, though mtDNA calling ran and found no chrM.
     {"gene": "MT-RNR1", "diplotype": "Unknown", "call_source": "NONE"},
+    # PharmCAT tested NAT2 and could not call it.
+    {"gene": "NAT2", "diplotype": "Unknown/Unknown", "call_source": "MATCHER"},
     # PyPGx reported it and made no call: the enrichment's "Unknown".
     {
         "gene": "ABCB1",
@@ -74,20 +90,32 @@ REPORTED_ROWS: List[Dict[str, Any]] = [
         "pyPgxOnly": True,
         "no_call_note": "No genotype in the VCF at any of PyPGx's positions",
     },
+    # PyPGx's own word for no call.
+    {"gene": "CYP2A6", "diplotype": "Indeterminate", "tool_source": "PyPGx"},
     # One allele called is a call (generator.gene_was_called).
     {"gene": "CYP2D6", "diplotype": "*1/Unknown", "tool_source": "PyPGx"},
 ]
 
 
+def _rows(raw, report_dir: Path, failed=None, files=("mtdna_result.json",)):
+    """The canonical rows as generate_report leaves them: built, then marked from
+    what the run left in its report directory."""
+    for name in files:
+        (report_dir / name).write_text("{}", encoding="utf-8")
+    rows = generator_module._build_canonical_diplotypes(
+        raw_gene_entries=[dict(row) for row in raw],
+        file_type="vcf",
+        workflow_config=None,
+    )
+    generator_module.mark_not_tested_and_failed(rows, str(report_dir), failed or {})
+    return rows
+
+
 def _bundle(rows: List[Dict[str, Any]], run_id: str = "run-uncalled"):
-    data = {
-        "genes": generator_module._build_canonical_diplotypes(
-            raw_gene_entries=rows, file_type="vcf", workflow_config=None
-        ),
-        "drugRecommendations": [],
-    }
     result = FHIRExportService(MagicMock()).export_pgx_report(
-        run_id=run_id, output_format="json", pharmcat_data=data
+        run_id=run_id,
+        output_format="json",
+        pharmcat_data={"genes": rows, "drugRecommendations": []},
     )
     assert result["success"], result.get("error")
     return result["bundle"]
@@ -102,42 +130,104 @@ def _genotypes(bundle: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     }
 
 
-def test_a_gene_no_tool_reported_is_coded_not_performed():
-    genotypes = _genotypes(_bundle(REPORTED_ROWS))
-    for gene in ("F2", "F5", "HLA-C"):
-        assert genotypes[gene]["valueCodeableConcept"] == NOT_PERFORMED, gene
+def _values(rows) -> Dict[str, Dict[str, Any]]:
+    return {g: o["valueCodeableConcept"] for g, o in _genotypes(_bundle(rows)).items()}
 
 
-def test_a_gene_reported_but_not_called_is_coded_unknown_in_the_tools_words():
-    genotypes = _genotypes(_bundle(REPORTED_ROWS))
-    assert genotypes["HLA-A"]["valueCodeableConcept"] == _unknown("Unknown/Unknown")
-    assert genotypes["MT-RNR1"]["valueCodeableConcept"] == _unknown("Unknown")
-    assert genotypes["ABCB1"]["valueCodeableConcept"] == _unknown("Unknown")
+def test_vcf_run_genes_nothing_tested_are_coded_not_performed(tmp_path):
+    """No tool reported F2, F5 or HLA-C; no HLA typing ran, so PharmCAT's uncalled
+    HLA-A and HLA-B were not tested either."""
+    values = _values(_rows(VCF_RUN_ROWS, tmp_path))
+    for gene in ("F2", "F5", "HLA-A", "HLA-B", "HLA-C"):
+        assert values[gene] == NOT_PERFORMED, gene
 
 
-def test_a_call_has_no_reason():
-    genotypes = _genotypes(_bundle(REPORTED_ROWS))
-    assert genotypes["CYP2C19"]["valueCodeableConcept"] == {"text": "*38/*38"}
-    assert genotypes["CYP2D6"]["valueCodeableConcept"] == {"text": "*1/Unknown"}
+def test_genes_tested_and_not_called_are_coded_unknown_in_the_tools_words(tmp_path):
+    values = _values(_rows(VCF_RUN_ROWS, tmp_path))
+    assert values["NAT2"] == _unknown("Unknown/Unknown")
+    assert values["MT-RNR1"] == _unknown("Unknown")
+    assert values["ABCB1"] == _unknown("Unknown")
+    assert values["CYP2A6"] == _unknown("Indeterminate")
 
 
-def test_every_genotype_keeps_a_value_and_no_data_absent_reason():
+def test_after_hla_typing_an_untyped_hla_gene_is_unknown(tmp_path):
+    """hla_result.json says OptiType ran: an HLA gene it typed none for was tested.
+    Without mtdna_result.json, mtDNA calling did not run: MT-RNR1 was not tested."""
+    rows = _rows(VCF_RUN_ROWS, tmp_path, files=("hla_result.json",))
+    values = _values(rows)
+    assert values["HLA-A"] == _unknown("Unknown/Unknown")
+    assert values["HLA-C"] == _unknown("Unknown")
+    assert values["MT-RNR1"] == NOT_PERFORMED
+    assert values["F2"] == NOT_PERFORMED
+
+
+def test_a_gene_pypgx_failed_on_is_coded_error_not_not_performed(tmp_path):
+    """A gene PyPGx raised on, alone or with its batch, is skipped by the enrichment
+    and would end as a placeholder; it was tested, and the tool failed."""
+    failed = generator_module.pypgx_failed_genes(
+        {
+            "F5": {"success": False, "error": "Batch processing error: boom"},
+            "CYP2D6": {"success": False, "error": "Traceback ..."},
+            "ABCB1": {"success": True, "diplotype": None},
+            "IFNL4": {"success": True, "diplotype": "Reference/Reference"},
+        }
+    )
+    assert set(failed) == {"F5", "CYP2D6"}
+    raw = [r for r in VCF_RUN_ROWS if r["gene"] != "CYP2D6"] + [
+        {"gene": "CYP2D6", "diplotype": "Unknown/Unknown", "call_source": "NONE"}
+    ]
+    rows = _rows(raw, tmp_path, failed=failed)
+    by_gene = {row["gene"]: row for row in rows}
+    assert by_gene["F5"]["call_error"].startswith("PyPGx failed: Batch processing")
+    assert "not_tested" not in by_gene["F5"]
+    values = _values(rows)
+    assert values["F5"] == ERROR
+    assert values["CYP2D6"] == ERROR
+    assert values["F2"] == NOT_PERFORMED
+    assert values["ABCB1"] == _unknown("Unknown")
+
+
+def test_a_call_is_left_alone_whatever_the_markers(tmp_path):
+    failed = {"CYP2C19": "PyPGx failed: x", "CYP2D6": "PyPGx failed: x"}
+    rows = _rows(VCF_RUN_ROWS, tmp_path, failed=failed)
+    values = _values(rows)
+    assert values["CYP2C19"] == {"text": "*38/*38"}
+    assert values["CYP2D6"] == {"text": "*1/Unknown"}
+    assert "call_error" not in {row["gene"]: row for row in rows}["CYP2C19"]
+
+
+@pytest.mark.parametrize(
+    "diplotype", ["Indeterminate", "indeterminate", "INDETERMINATE ", "unknown/unknown"]
+)
+def test_no_call_is_matched_without_regard_to_case(diplotype):
+    assert FHIRExportService._uncalled_reason({"diplotype": diplotype}) == "unknown"
+
+
+@pytest.mark.parametrize("diplotype", ["", None])
+def test_a_blank_without_the_marker_is_unknown_not_not_performed(diplotype):
+    """A database-lane gene stored without a diplotype label carries no marker; it
+    is not taken for one nothing tested."""
+    values = _values([{"gene": "CYP2D6", "diplotype": diplotype}])
+    assert values["CYP2D6"] == _unknown("Unknown")
+
+
+def test_every_genotype_keeps_a_value_and_no_data_absent_reason(tmp_path):
     """value[x] 1..1 in the IG's genotype profile; obs-6 forbids dataAbsentReason
     beside it."""
-    for gene, genotype in _genotypes(_bundle(REPORTED_ROWS)).items():
+    for gene, genotype in _genotypes(_bundle(_rows(VCF_RUN_ROWS, tmp_path))).items():
         assert genotype["valueCodeableConcept"]["text"].strip(), gene
         assert "dataAbsentReason" not in genotype, gene
 
 
-def test_the_report_lists_a_gene_not_tested_as_such():
-    report = _bundle(REPORTED_ROWS)["entry"][0]["resource"]
+def test_the_report_lists_a_gene_not_tested_as_such(tmp_path):
+    report = _bundle(_rows(VCF_RUN_ROWS, tmp_path))["entry"][0]["resource"]
     displays = {ref["display"] for ref in report["result"]}
-    assert {"F2 Not performed", "HLA-C Not performed", "ABCB1 Unknown"} <= displays
+    assert {"F2 Not performed", "HLA-A Not performed", "ABCB1 Unknown"} <= displays
 
 
-def test_the_ids_do_not_change_so_a_re_push_updates_in_place():
+def test_the_ids_do_not_change_so_a_re_push_updates_in_place(tmp_path):
     """A genotype's id is named by the report and the gene, not by its value."""
-    genotypes = _genotypes(_bundle(REPORTED_ROWS, run_id="run-ids"))
+    genotypes = _genotypes(_bundle(_rows(VCF_RUN_ROWS, tmp_path), run_id="run-ids"))
     for gene in ("F2", "HLA-A", "CYP2C19"):
         assert genotypes[gene]["id"] == FHIRExportService._stable_id(
             "genotype", "run-ids", gene
@@ -158,20 +248,22 @@ def test_the_codes_are_hl7_terminologys_with_its_displays():
             yield from concepts(node.get("concept", []))
 
     displays = {c["code"]: c["display"] for c in concepts(code_system["concept"])}
+    assert set(terminology.DATA_ABSENT_REASON_DISPLAYS) == {
+        "not-performed",
+        "error",
+        "unknown",
+    }
     for code, display in terminology.DATA_ABSENT_REASON_DISPLAYS.items():
         assert displays[code] == display
 
 
-def test_the_xml_bundle_carries_the_coding():
-    data = {
-        "genes": generator_module._build_canonical_diplotypes(
-            raw_gene_entries=REPORTED_ROWS, file_type="vcf", workflow_config=None
-        ),
-        "drugRecommendations": [],
-    }
+def test_the_xml_bundle_carries_the_coding(tmp_path):
+    rows = _rows(VCF_RUN_ROWS, tmp_path, failed={"F5": "PyPGx failed: x"})
     xml = FHIRExportService(MagicMock()).export_pgx_report(
-        run_id="run-uncalled", output_format="xml", pharmcat_data=data
+        run_id="run-uncalled",
+        output_format="xml",
+        pharmcat_data={"genes": rows, "drugRecommendations": []},
     )["content"]
     assert f'<system value="{DAR}" />' in xml
-    assert '<code value="not-performed" />' in xml
-    assert '<code value="unknown" />' in xml
+    for code in ("not-performed", "error", "unknown"):
+        assert f'<code value="{code}" />' in xml

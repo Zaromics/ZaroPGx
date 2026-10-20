@@ -152,9 +152,12 @@ and Low risk (HLA risk alleles, MT-RNR1, malignant hyperthermia) follow CPIC's E
 for the result, since the IG has no term for the result itself; such a phenotype carries a
 note saying so, and the mapping is provisional. A gene the run did not call still has a
 genotype, since the IG's genotype profile requires a value, and its value carries a code
-of HL7's DataAbsentReason saying why: `not-performed` (text "Not performed") for a gene
-no tool reported, such as HLA from a VCF, and `unknown` for one a tool reported but could
-not call (text as the tool put it, "Unknown" or "Unknown/Unknown"). The bundle validates against those
+of HL7's DataAbsentReason saying why. `not-performed` (text "Not performed"): nothing
+tested the gene. No tool reported it (F2 and F5 when PyPGx has nothing for them), or the
+run did no HLA typing (every VCF run, or OptiType turned off: HLA-A, HLA-B and HLA-C) or
+no mtDNA calling (MT-RNR1). `error` (text "Error"): the tool that tried the gene failed
+on it (a PyPGx error). `unknown`: a tool tested the gene and could not call it (text as
+the tool put it: "Unknown", "Unknown/Unknown", "Indeterminate"). The bundle validates against those
 profiles with no errors (HAPI FHIR's
 `$validate`, October 2026); {doc}`../samples/README` lists the warnings that remain and why.
 Bundles written before then do not validate, and their XML is not readable as FHIR. The
