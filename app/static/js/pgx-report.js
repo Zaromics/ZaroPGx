@@ -552,14 +552,16 @@ function createGeneInfoSection() {
             `;
         }
         
+        // Text from the report data goes in escaped: gene names, diplotypes and
+        // phenotypes come from the uploaded file and the tools' output.
         geneInfo.innerHTML = `
-            <h3>${d.gene} Information</h3>
-            ${description ? `<p><strong>Description:</strong> ${description}</p>` : ''}
-            <p><strong>Diplotype:</strong> ${diplotypeShown(d.diplotype)}</p>
-            <p><strong>Phenotype:</strong> ${d.phenotype}</p>
-            ${d.activityScore ? `<p><strong>Activity Score:</strong> ${d.activityScore}</p>` : ''}
+            <h3>${escapeHtml(d.gene)} Information</h3>
+            ${description ? `<p><strong>Description:</strong> ${escapeHtml(description)}</p>` : ''}
+            <p><strong>Diplotype:</strong> ${escapeHtml(diplotypeShown(d.diplotype))}</p>
+            <p><strong>Phenotype:</strong> ${escapeHtml(d.phenotype)}</p>
+            ${d.activityScore ? `<p><strong>Activity Score:</strong> ${escapeHtml(d.activityScore)}</p>` : ''}
             <h4>Clinical Implications</h4>
-            <p>${clinicalImplications}</p>
+            <p>${escapeHtml(clinicalImplications)}</p>
             ${relatedMedications ? `<h4>Related Medications</h4><ul>${relatedMedications}</ul>` : ''}
         `;
         
@@ -594,7 +596,10 @@ function geneDescription(gene) {
  * metabolizer phenotypes only, some of it wrong (a rapid metabolizer's "loss of
  * efficacy at standard doses" is the reverse for a prodrug such as clopidogrel or
  * codeine), and for every other phenotype "should be evaluated by a healthcare
- * professional", SLCO1B1's Decreased Function among them.
+ * professional", SLCO1B1's Decreased Function among them. A call whose candidates
+ * differ in phenotype ("A or B") gets the panel's own sentence; one whose
+ * candidates share a phenotype gets the table's line, which says so. Returns plain
+ * text; the caller escapes it.
  */
 function clinicalImplication(gene, phenotype, implication) {
     const text = String(phenotype || '');
@@ -605,6 +610,16 @@ function clinicalImplication(gene, phenotype, implication) {
         return `${implication}.`;
     }
     return 'See the drug recommendations under Recs.';
+}
+
+/** Text for innerHTML: &, <, >, " and ' as entities. */
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /** An unresolved call names its first candidate and counts the rest, as the tables do. */

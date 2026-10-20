@@ -51,12 +51,18 @@ FALLBACK = "See recommendations"
 
 # A gene the run did not call: the interactive report tables every gene, and the
 # PDF says the same of these under "Genes examined without a call".
-NOT_CALLED = "Not called: no phenotype or guidance follows"
+NOT_CALLED = "Not called: phenotype unknown, so no genotype-based guidance"
 
+# PyPGx's "Indeterminate" diplotype: it could not settle the genotype.
+NOT_DETERMINED = "Genotype not determined; no phenotype follows"
+
+# An unphased call PharmCAT could not narrow to one diplotype. report_json gives
+# the call one phenotype when every candidate has it, and "A or B" when not.
 UNRESOLVED = (
-    "Several diplotypes fit, each with its own phenotype: see the list below the"
+    "Several diplotypes fit, with different phenotypes: see the list below the"
     ' table, and guidance marked "Applies if"'
 )
+SHARED = "Every diplotype that fits has this phenotype: "
 
 # Metabolizer phenotypes: enzyme activity (Caudle et al. 2017). "Likely" (CYP2C19,
 # CPIC 2022) and "Possible" (TPMT, NUDT15, CYP3A5) qualify the same terms.
@@ -67,6 +73,7 @@ _METABOLIZER = {
     "likely intermediate metabolizer": (
         f"Likely reduced drug metabolism, between normal and poor; {RECS}"
     ),
+    # By gene below (_POSSIBLE_INTERMEDIATE); this for any other.
     "possible intermediate metabolizer": f"Possibly reduced drug metabolism; {RECS}",
     "poor metabolizer": f"Little to no drug metabolism by this enzyme; {RECS}",
     "likely poor metabolizer": (
@@ -78,12 +85,32 @@ _METABOLIZER = {
     ),
 }
 
+# CPIC's "Possible Intermediate Metabolizer" differs by gene (api.cpicpgx.org
+# gene_result). TPMT: one no-function allele and one of uncertain, unknown or
+# decreased function, "not likely to be any higher than that of an intermediate
+# metabolizer ... may be even lower"; NUDT15: one no-function and one
+# uncertain-function allele, so the same bound. CYP3A5: one normal-function allele
+# and one of uncertain or unknown function (*1/*8).
+_POSSIBLE_INTERMEDIATE = {
+    "TPMT": f"Reduced drug metabolism, no higher than intermediate and possibly lower; {RECS}",
+    "NUDT15": f"Reduced drug metabolism, no higher than intermediate and possibly lower; {RECS}",
+    "CYP3A5": (
+        "Possibly reduced drug metabolism (one allele's function uncertain or"
+        f" unknown); {RECS}"
+    ),
+}
+
 # Function phenotypes (SLCO1B1, ABCG2), with "{what}" the transporter's or, for a
 # gene not known to be one, the gene's.
 _FUNCTION = {
     "normal function": "Normal {what} expected",
     "decreased function": "Decreased {what}, between normal and poor; " + RECS,
-    "possible decreased function": "Possibly decreased {what}; " + RECS,
+    # CPIC (SLCO1B1): one no-function allele and one of uncertain or unknown
+    # function.
+    "possible decreased function": (
+        "Possibly decreased {what} (one no-function allele, one of uncertain or"
+        " unknown function); " + RECS
+    ),
     "poor function": "Little to no {what}; " + RECS,
     "increased function": "Increased {what}, above normal; " + RECS,
 }
@@ -128,14 +155,14 @@ _OTHER = {
         "No variant linked to aminoglycoside-induced hearing loss detected"
     ),
     "increased risk of aminoglycoside-induced hearing loss": (
-        f"Variant linked to aminoglycoside-induced hearing loss detected; {RECS}"
+        "Variant conferring increased risk of aminoglycoside-induced hearing loss"
+        f" detected; {RECS}"
     ),
     "uncertain risk of aminoglycoside-induced hearing loss": (
         "Variant of uncertain significance for aminoglycoside-induced hearing"
         f" loss; {RECS}"
     ),
-    # PyPGx's own terms for CFTR, F5 and IFNL3. It does not define them beyond the
-    # name, and they mean different things for each gene: say whose they are.
+    # PyPGx's own terms (_RESPONSE below by gene), for a gene not there.
     "favorable response": f"PyPGx's response category for this genotype; {RECS}",
     "unfavorable response": f"PyPGx's response category for this genotype; {RECS}",
     # The report's own labels (generator.wild_type_phenotype, NO_PHENOTYPE_STANDARD),
@@ -144,6 +171,30 @@ _OTHER = {
     "possibly wild type": "Reference genotype where the file has data",
     "n/a": "No phenotype defined for this gene",
     "unknown": f"No phenotype was reported for this call; {RECS}",
+}
+
+# PyPGx 0.27's "Favorable/Unfavorable Response", which it gives CFTR, F5 and IFNL3
+# (pypgx/api/data/diplotype-table.csv): CFTR favorable, an ivacaftor-responsive
+# variant on either copy, unfavorable only F508del/F508del; F5 favorable only
+# Reference/Reference, unfavorable a Factor V Leiden copy; IFNL3 favorable only
+# Reference/Reference (rs12979860 CC, CPIC's favorable response genotype),
+# unfavorable a rs12979860 T copy (CT or TT, CPIC's unfavorable one).
+_RESPONSE = {
+    ("CFTR", "favorable response"): (
+        f"Ivacaftor-responsive variant detected; relevant in cystic fibrosis ({RECS})"
+    ),
+    ("CFTR", "unfavorable response"): (
+        "No ivacaftor-responsive variant detected (F508del on both copies);"
+        " relevant only in cystic fibrosis"
+    ),
+    ("F5", "favorable response"): "Factor V Leiden not detected",
+    ("F5", "unfavorable response"): f"Factor V Leiden detected; {RECS}",
+    ("IFNL3", "favorable response"): (
+        f"rs12979860 CC, CPIC's favorable response genotype; {RECS}"
+    ),
+    ("IFNL3", "unfavorable response"): (
+        f"rs12979860 T carried, CPIC's unfavorable response genotype; {RECS}"
+    ),
 }
 
 # HLA-A/HLA-B: "*57:01 negative", "*15:02 negative, *57:01 positive, ...".
@@ -174,13 +225,25 @@ def phenotype_implication(
 ) -> str:
     """The Implications line for a call's phenotype."""
     text = re.sub(r"\s+", " ", str(phenotype or "")).strip()
-    if unresolved or " or " in text:
+    if " or " in text:
         return UNRESOLVED
+    if unresolved:
+        # Candidates, one phenotype: what that phenotype means, said of them all.
+        line = phenotype_implication(text, gene)
+        return SHARED + line[0].lower() + line[1:]
     key = text.lower()
+    gene_key = str(gene or "").strip().upper()
     if key.startswith("g6pd "):
         key = key[len("g6pd ") :]
     if not key:
         key = "unknown"
+    if (
+        key == "possible intermediate metabolizer"
+        and gene_key in _POSSIBLE_INTERMEDIATE
+    ):
+        return _POSSIBLE_INTERMEDIATE[gene_key]
+    if (gene_key, key) in _RESPONSE:
+        return _RESPONSE[(gene_key, key)]
     if key in _METABOLIZER:
         return _METABOLIZER[key]
     if key in _FUNCTION:
@@ -211,6 +274,8 @@ def row_implication(row: Any) -> str:
         or str(diplotype).strip().lower().startswith("unknown")
     ):
         return NOT_CALLED
+    if str(diplotype or "").strip().lower() == "indeterminate":
+        return NOT_DETERMINED
     return phenotype_implication(
         _field(row, "phenotype"),
         _field(row, "gene"),

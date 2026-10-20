@@ -22,6 +22,8 @@ import app.reports.generator as generator_module
 from app.reports.implications import (
     FALLBACK,
     NOT_CALLED,
+    NOT_DETERMINED,
+    SHARED,
     TRANSPORTER_GENES,
     UNRESOLVED,
     phenotype_implication,
@@ -253,7 +255,23 @@ def test_cpic_terms():
     assert "above normal" in say("Rapid Metabolizer", "CYP2C19")
     assert "above a rapid" in say("Ultrarapid Metabolizer", "CYP2D6")
     assert "Likely" in say("Likely Poor Metabolizer", "CYP2C19")
-    assert "Possibly" in say("Possible Intermediate Metabolizer", "TPMT")
+    # CPIC's "possible intermediate" by gene (api.cpicpgx.org gene_result).
+    for gene in ("TPMT", "NUDT15"):
+        assert say("Possible Intermediate Metabolizer", gene) == (
+            "Reduced drug metabolism, no higher than intermediate and possibly lower;"
+            " see recommendations"
+        )
+    assert say("Possible Intermediate Metabolizer", "CYP3A5") == (
+        "Possibly reduced drug metabolism (one allele's function uncertain or"
+        " unknown); see recommendations"
+    )
+    assert say("Possible Decreased Function", "SLCO1B1").startswith(
+        "Possibly decreased transporter function (one no-function allele, one of"
+        " uncertain or unknown function)"
+    )
+    assert say("increased risk of aminoglycoside-induced hearing loss").startswith(
+        "Variant conferring increased risk of aminoglycoside-induced hearing loss"
+    )
     assert "Little to no transporter function" in say("Poor Function", "SLCO1B1")
     assert say("Normal", "G6PD") == "Normal G6PD activity expected"
     assert say("G6PD Normal", "G6PD") == say("Normal", "G6PD")
@@ -287,20 +305,59 @@ def test_a_gene_not_called():
     for diplotype in ("Unknown/Unknown", "Unknown", ""):
         row = {"gene": "CYP2C9", "diplotype": diplotype, "phenotype": "Unknown"}
         assert row_implication(row) == NOT_CALLED
+    # Not "no concern": nothing is known.
+    assert NOT_CALLED == "Not called: phenotype unknown, so no genotype-based guidance"
     row = {"gene": "CYP2C9", "diplotype": "*1/*2", "phenotype": "Unknown"}
     assert row_implication(row) == phenotype_implication("Unknown")
 
 
+def test_pypgx_response_categories_by_gene():
+    """PyPGx 0.27's diplotype table: CFTR, F5 and IFNL3."""
+    say = phenotype_implication
+    assert say("Favorable Response", "IFNL3").startswith(
+        "rs12979860 CC, CPIC's favorable response genotype"
+    )
+    assert say("Unfavorable Response", "IFNL3").startswith("rs12979860 T carried")
+    assert say("Favorable Response", "F5") == "Factor V Leiden not detected"
+    assert say("Unfavorable Response", "F5").startswith("Factor V Leiden detected")
+    assert say("Favorable Response", "CFTR").startswith("Ivacaftor-responsive")
+    assert "F508del on both copies" in say("Unfavorable Response", "CFTR")
+
+
+def test_pypgx_genotype_not_determined():
+    row = {"gene": "CYP2D6", "diplotype": "Indeterminate", "phenotype": "Indeterminate"}
+    assert row_implication(row) == NOT_DETERMINED
+
+
 def test_an_unresolved_call():
+    """Candidates with different phenotypes, and candidates that share one
+    (report_json gives such a call that one phenotype)."""
     assert phenotype_implication("Normal Function or Poor Function", "SLCO1B1") == (
         UNRESOLVED
     )
+    assert "different phenotypes" in UNRESOLVED
+    candidates = [{"diplotype": "*1/*6"}, {"diplotype": "*4/*9"}]
     row = {
         "gene": "CYP2B6",
         "phenotype": "Intermediate Metabolizer",
-        "diplotype_candidates": [{"diplotype": "*1/*6"}, {"diplotype": "*4/*9"}],
+        "diplotype_candidates": candidates,
     }
+    assert row_implication(row) == (
+        "Every diplotype that fits has this phenotype: reduced drug metabolism,"
+        " between normal and poor; see recommendations"
+    )
+    row["phenotype"] = "Intermediate Metabolizer or Poor Metabolizer"
     assert row_implication(row) == UNRESOLVED
+
+
+def test_the_unphased_example(monkeypatch, tmp_path):
+    """CYP2B6 "*1/*6 or 14 other possible diplotypes", every one Intermediate;
+    SLCO1B1's candidates are Decreased or Poor Function."""
+    page = _page(monkeypatch, tmp_path, "pharmcat.unphased.example.report.json", "html")
+    start = page.index('class="gene-table"')
+    rows = _implications(page[start : page.index("</table>", start)])
+    assert rows["CYP2B6"].startswith(SHARED + "reduced drug metabolism")
+    assert rows["SLCO1B1"] == UNRESOLVED
 
 
 def _page(monkeypatch, tmp_path, name, kind):
