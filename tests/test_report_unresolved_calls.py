@@ -169,8 +169,10 @@ def test_the_executive_summary_shows_the_candidates_not_a_cut_string(
     summary = page[
         page.index('id="exec-summary"') : page.index("<h2>Genetic Results</h2>")
     ]
+    # The diplotype without the line under it: PharmCAT's own SLCO1B1 and CYP2B6
+    # calls carry "Copy number not assessed: see the notes" (copy_number.py).
     rows = {
-        _clean(g): (_clean(d), _clean(p), p)
+        _clean(g): (_clean(d).split(" ⚠")[0], _clean(p), p)
         for g, d, p in re.findall(
             r'class="exec-summary-gene">(.*?)</td>\s*<td class="exec-summary-diplotype[^"]*">'
             r'(.*?)</td>\s*<td class="exec-summary-phenotype">(.*?)</td>',

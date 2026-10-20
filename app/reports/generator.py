@@ -71,8 +71,10 @@ from app.reports.alt_locus import (
 )
 from app.reports.copy_number import (
     annotate_copy_number,
+    annotate_pharmcat_copy_number,
     copy_number_alert,
     genes_without_copy_number,
+    pharmcat_copy_number_alert,
     why_not_assessed,
 )
 from app.reports.credits import CreditRun, ref_numbers, report_credits
@@ -4032,18 +4034,40 @@ def generate_report(
         genes_without_copy_number(pypgx_results),
         copy_number_why,
     )
-    _copy_number_alert = copy_number_alert(
-        [
-            row["gene"]
-            for row in data.get("genes", [])
-            if isinstance(row, dict)
-            and row.get("copy_number_not_assessed")
-            and gene_was_called(row.get("diplotype"))
-        ],
-        copy_number_why,
-    )
-    if _copy_number_alert:
-        workflow_warnings = list(workflow_warnings) + [_copy_number_alert]
+    # PharmCAT's own calls of genes with structural alleles it says it cannot
+    # detect (CYP2B6 *29/*30, CYP2C19 *36/*37, CYP4F2 *16, SLCO1B1 *48/*49): the
+    # same notes and an alert of their own, on every input, since PharmCAT calls
+    # from small variants on a whole genome too. Its report.json carries no such
+    # message, so nothing here repeats one of PharmCAT's.
+    annotate_pharmcat_copy_number(data.get("genes", []), pypgx_results)
+    _noted = [
+        row
+        for row in data.get("genes", [])
+        if isinstance(row, dict)
+        and row.get("copy_number_not_assessed")
+        and gene_was_called(row.get("diplotype"))
+    ]
+    _copy_number_alerts = [
+        copy_number_alert(
+            [
+                row["gene"]
+                for row in _noted
+                if row["copy_number_not_assessed"].get("by") != "PharmCAT"
+            ],
+            copy_number_why,
+        ),
+        pharmcat_copy_number_alert(
+            [
+                row["gene"]
+                for row in _noted
+                if row["copy_number_not_assessed"].get("by") == "PharmCAT"
+            ]
+        ),
+    ]
+    if any(_copy_number_alerts):
+        workflow_warnings = list(workflow_warnings) + [
+            alert for alert in _copy_number_alerts if alert
+        ]
         template_data["workflow_warnings"] = workflow_warnings
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference

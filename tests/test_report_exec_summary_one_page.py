@@ -453,6 +453,11 @@ def test_an_uncalled_row_is_as_tall_as_a_called_one(monkeypatch, tmp_path):
     """ "Not called" had a plain line box, shorter than a pill's: the grey rows of a
     sparse summary were thinner than the rest."""
     data = json.loads(UNPHASED_JSON.read_text(encoding="utf-8"))
+    # Both called rows here (CYP2B6, SLCO1B1) would carry PharmCAT's copy-number
+    # line, a second line under the pill: not the one-line pill this compares.
+    monkeypatch.setattr(
+        generator_module, "annotate_pharmcat_copy_number", lambda *a, **k: None
+    )
     page = _report_html(
         monkeypatch, tmp_path, data, UNPHASED_TSV.read_text(encoding="utf-8")
     )

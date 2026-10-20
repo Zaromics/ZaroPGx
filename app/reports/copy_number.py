@@ -22,11 +22,18 @@ report says so beside each such call, in the Executive Summary's row and notes f
 a gene in PharmCAT's panel, and in one alert. A whole-genome run, whose genes all
 have a copy-number call, shows none of it.
 
-Only PyPGx's calls are noted: the rows whose Call is P (app/reports/provenance.py),
-its own genes and PharmCAT's rows it supplied as an outside call. A row PharmCAT
-called itself (CYP2B6, CYP4F2 and G6PD unless PYPGX_PHARMCAT_PREFERENCE gives them
-to PyPGx) or an outside call PyPGx did not make (OUTSIDECALLSOVERRIDE's file, a
-lab's CYP2D6 *1/*5) is not PyPGx's call, and a note on it would misstate it.
+These notes are for PyPGx's calls: the rows whose Call is P (app/reports/
+provenance.py), its own genes and PharmCAT's rows it supplied as an outside call.
+An outside call PyPGx did not make (OUTSIDECALLSOVERRIDE's file, a lab's CYP2D6
+*1/*5) is neither tool's, and gets no note: its maker may have measured copy number.
+
+PharmCAT's own calls (Call C) get notes of their own, on PharmCAT's authority.
+Its matcher calls star alleles from the small variants in its allele definitions,
+on every input, a whole genome included, and it names the structural alleles that
+leaves out (PHARMCAT_MISSED). Its own HTML report says so in a disclaimer; its
+report.json, which this report is built from, does not, so the report says it
+here, as for PyPGx's calls. G6PD gets no such note: PharmCAT lists no structural
+G6PD allele (one X chromosome or two is its "G6PD hemizygous samples" message).
 """
 
 from __future__ import annotations
@@ -34,7 +41,11 @@ from __future__ import annotations
 import html
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-from app.reports.provenance import CALLED_BY_PYPGX, resolve_called_by
+from app.reports.provenance import (
+    CALLED_BY_PHARMCAT,
+    CALLED_BY_PYPGX,
+    resolve_called_by,
+)
 
 # What a call from small variants alone cannot show, for each of PyPGx's genes with
 # SV-defined alleles: its gene table's SV and Target genes (lexicon/gene-table.csv;
@@ -83,6 +94,41 @@ NULL_DELETION: Dict[str, str] = {"GSTM1": "*0", "GSTT1": "*0", "UGT2B17": "*2"}
 # The genes PyPGx gives a phenotype (its gene table's PhenotypeMethod), which a
 # missed copy-number change can move.
 _PHENOTYPE_GENES = frozenset({"CYP2B6", "CYP2D6", "G6PD"})
+
+# The structural alleles PharmCAT 3.4.0 says it cannot detect, in its own words:
+# "Structural variation star alleles that cannot be detected using VCF file data:
+# CYP2B7-CYP2B6 hybrids: CYP2B6*29, CYP2B6*30; Partial and whole gene deletions:
+# CYP2C19*36, CYP2C19*37, CYP4F2*16, SLCO1B1*48, SLCO1B1*49" (its HTML report's
+# disclaimers, org/pharmgkb/pharmcat/reporter/disclaimers.hbs). None of them has an
+# allele definition in its matcher (definition/alleles/*_translation.json); each is
+# in its phenotype data, so it would be read from an outside call. PyPGx 0.27 calls
+# CYP2B6 *29 and duplications and the CYP4F2 deletion (*DEL) from read depth (MISSED
+# above); it has no copy-number model for CYP2C19 or SLCO1B1 (its gene table: SV
+# FALSE), and no state yields *30.
+PHARMCAT_MISSED: Dict[str, str] = {
+    "CYP2B6": "a CYP2B7-CYP2B6 hybrid (*29, *30)",
+    "CYP2C19": "a partial or whole-gene deletion (*36, *37)",
+    "CYP4F2": "a partial or whole-gene deletion (*16)",
+    "SLCO1B1": "a partial or whole-gene deletion (*48, *49)",
+}
+PHARMCAT_CALL_NOTE: Dict[str, str] = {
+    "CYP2B6": "would miss hybrids (*29, *30)",
+    "CYP2C19": "would miss deletions (*36, *37)",
+    "CYP4F2": "would miss a deletion (*16)",
+    "SLCO1B1": "would miss deletions (*48, *49)",
+}
+# The same, allele names first, for the alert's list.
+PHARMCAT_ALERT: Dict[str, str] = {
+    "CYP2B6": "CYP2B6 *29 and *30 (hybrids with CYP2B7)",
+    "CYP2C19": "CYP2C19 *36 and *37 (partial or whole-gene deletions)",
+    "CYP4F2": "CYP4F2 *16 (a partial or whole-gene deletion)",
+    "SLCO1B1": "SLCO1B1 *48 and *49 (partial or whole-gene deletions)",
+}
+# The genes whose phenotype PharmCAT's alleles above move: CYP2B6 *29 is decreased
+# function and *30 no function; CYP2C19 *36 and *37 and SLCO1B1 *48 and *49 are no
+# function (its phenotype data). CYP4F2 has no phenotype.
+_PHARMCAT_PHENOTYPE_GENES = frozenset({"CYP2B6", "CYP2C19", "SLCO1B1"})
+PHARMCAT_SHORT = "PharmCAT's call"
 
 # docker/pypgx's WGS_MIN_MEDIAN_DEPTH, for a run whose record does not carry it.
 MIN_MEDIAN_DEPTH = 15.0
@@ -242,6 +288,75 @@ def annotate_copy_number(
             }
 
 
+def pharmcat_called(row: Mapping[str, Any]) -> bool:
+    """Whether the row's call is PharmCAT's own: its Call letter is C."""
+    return resolve_called_by(row).letter == CALLED_BY_PHARMCAT
+
+
+def pypgx_copy_number(pypgx_results: Any, gene: str) -> Optional[str]:
+    """PyPGx's copy-number call for the gene in this run (its CNV column), if any."""
+    results = (
+        pypgx_results.get("results") if isinstance(pypgx_results, Mapping) else None
+    )
+    if not isinstance(results, Mapping):
+        return None
+    for name, result in results.items():
+        if str(name).strip().upper() != gene.upper() or not isinstance(result, Mapping):
+            continue
+        details = result.get("details")
+        if result.get("success") and isinstance(details, Mapping):
+            code = str(details.get("copy_number") or "").strip()
+            return code or None
+    return None
+
+
+def pharmcat_copy_number_note(gene: str, pypgx_code: Optional[str] = None) -> str:
+    """The note on PharmCAT's own call in the Notes to the Executive Summary."""
+    gene = gene.upper()
+    note = (
+        f"PharmCAT calls {gene} from small variants on every input, and lists "
+        f"{PHARMCAT_MISSED[gene]} among the structural alleles it cannot detect, so "
+        "this call cannot show one"
+    )
+    if gene in _PHARMCAT_PHENOTYPE_GENES:
+        note += ", which can change the phenotype"
+    note += "."
+    if pypgx_code:
+        note += (
+            f" PyPGx, which genotyped {gene} from read depth in this run too, called "
+            f"its copy number {pypgx_code}; the call shown is PharmCAT's."
+        )
+    return note + " See Alerts and Warnings."
+
+
+def pharmcat_copy_number_call_note(gene: str, pypgx_code: Optional[str] = None) -> str:
+    """The note under PharmCAT's own call, in a narrow table column."""
+    gene = gene.upper()
+    pypgx = f"; PyPGx: copy number {pypgx_code}" if pypgx_code else ""
+    return (
+        f"Copy number not assessed ({PHARMCAT_SHORT}): {PHARMCAT_CALL_NOTE[gene]}"
+        f"{pypgx} (see Alerts)"
+    )
+
+
+def annotate_pharmcat_copy_number(
+    genes: List[Dict[str, Any]], pypgx_results: Any = None
+) -> None:
+    """Put the notes on each of PharmCAT's own calls (Call C) of a gene in
+    PHARMCAT_MISSED, in place. A row already noted as PyPGx's call is left alone."""
+    for row in genes or []:
+        if not isinstance(row, dict) or row.get("copy_number_not_assessed"):
+            continue
+        gene = str(row.get("gene") or "").strip().upper()
+        if gene in PHARMCAT_MISSED and pharmcat_called(row):
+            code = pypgx_copy_number(pypgx_results, gene)
+            row["copy_number_not_assessed"] = {
+                "note": pharmcat_copy_number_note(gene, code),
+                "call_note": pharmcat_copy_number_call_note(gene, code),
+                "by": "PharmCAT",
+            }
+
+
 def _gene_list(genes: List[str]) -> str:
     named = [html.escape(str(g)) for g in genes]
     return " and ".join([", ".join(named[:-1]), named[-1]] if len(named) > 1 else named)
@@ -261,4 +376,24 @@ def copy_number_alert(genes: List[str], why: Mapping[str, str]) -> Optional[str]
         "note beside each call says what it would miss. Copy number is assessed for "
         f"a GRCh38 whole-genome BAM or CRAM with a median depth of {why['gate']}x or "
         "more.</p>"
+    )
+
+
+def pharmcat_copy_number_alert(genes: List[str]) -> Optional[str]:
+    """The Alerts and Warnings entry naming PharmCAT's own calls that cannot show a
+    structural allele, or None when there are none."""
+    genes = [g for g in genes if str(g).upper() in PHARMCAT_MISSED]
+    if not genes:
+        return None
+    alleles = "; ".join(html.escape(PHARMCAT_ALERT[g.upper()]) for g in genes)
+    return (
+        "<p>⚠️ <strong>Copy number not assessed in PharmCAT's calls:</strong> "
+        f"{_gene_list(genes)}. PharmCAT calls these genes itself, from the small "
+        "variants its allele definitions use, on every input, a whole genome "
+        "included, and lists structural alleles of theirs that it cannot detect: "
+        f"{alleles}. Its calls cannot show them; the note beside each call says what "
+        "it would miss. PyPGx measures copy number for CYP2B6 (not *30) and CYP4F2 "
+        "from a GRCh38 whole-genome BAM or CRAM where it is set to call those genes "
+        "(PYPGX_PHARMCAT_PREFERENCE); no tool here measures it for CYP2C19 or "
+        "SLCO1B1.</p>"
     )

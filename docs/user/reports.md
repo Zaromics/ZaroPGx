@@ -75,13 +75,22 @@ later), only that no read depth reached PyPGx. One entry under Alerts and Warnin
 the genes, and such a gene's row in the Executive Summary points to its note. A
 whole-genome alignment's report has none of these.
 
-Not every call of these genes is PyPGx's. PharmCAT calls *CYP2B6*, *CYP4F2* and *G6PD*
-itself, from small variants, on every input, a whole genome included, unless
+PharmCAT's own calls get the same note. PharmCAT calls *CYP2B6*, *CYP2C19*, *CYP4F2* and
+*SLCO1B1* itself, from small variants, on every input, a whole genome included, unless
 `PYPGX_PHARMCAT_PREFERENCE` gives them to PyPGx (`pypgx`, or `auto` for an alignment;
-{doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT does not measure
-copy number, so its call cannot show a *CYP2B6* \*29 hybrid or duplication, or a
-*CYP4F2* deletion, and it carries no note. Nor does an outside call PyPGx did not make,
-such as one from `OUTSIDECALLSOVERRIDE`'s file.
+{doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT 3.4 names the
+structural alleles it cannot detect from a VCF: the *CYP2B7*-*CYP2B6* hybrids *CYP2B6*
+\*29 and \*30, and the deletions *CYP2C19* \*36 and \*37, *CYP4F2* \*16 and *SLCO1B1*
+\*48 and \*49. It says so in its own HTML report's disclaimers, not in the report.json
+this report is built from. Each such call of PharmCAT's (Call C) is marked "Copy number not
+assessed (PharmCAT's call)", with the alleles it would miss; the Executive Summary points
+to the note, and one entry under Alerts and Warnings names the genes. These notes appear
+on a whole genome's report too. PyPGx measures copy number for *CYP2B6* (not \*30) and
+*CYP4F2* from a whole-genome alignment when it is set to call them; then the call is
+PyPGx's, and noted only if its copy number was not assessed. No tool here measures it for
+*CYP2C19* or *SLCO1B1*. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
+An outside call PyPGx did not make, such as one from `OUTSIDECALLSOVERRIDE`'s file, gets
+no note either.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
