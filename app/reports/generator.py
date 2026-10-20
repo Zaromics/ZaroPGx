@@ -3138,6 +3138,45 @@ def _vcf_has_records(path: str) -> bool:
         return False
 
 
+# mtDNA-Server 2's files by report_paths key: the name MtdnaCall publishes each under,
+# what it is, and the test of whether it holds a result (mtdna_report_paths says why).
+# Each test is cheap: the report by its size alone (8.9 MB for the NA12878 demo), the
+# VCF read up to its first record, the small result JSON whole.
+MTDNA_FILES = {
+    "mtdna_report_path": (
+        "mtdna_report.html",
+        "mtDNA-Server 2 report",
+        lambda path: os.path.getsize(path) > 0,
+    ),
+    "mtdna_haplogroups_path": (
+        "mtdna_result.json",
+        "mtDNA haplogroup result",
+        _mtdna_result_calls_something,
+    ),
+    "mtdna_vcf_path": ("mtdna_variants.vcf.gz", "mtDNA chrM VCF", _vcf_has_records),
+}
+
+
+def mtdna_file_holds_result(key: str, path: str) -> bool:
+    """True when the file at `path`, the mtDNA file of report_paths key `key`, exists
+    and holds a result by MTDNA_FILES' test for that key. Never raises."""
+    _name, what, has_content = MTDNA_FILES[key]
+    if not os.path.isfile(path):
+        return False
+    try:
+        linked = has_content(path)
+    except Exception as exc:
+        # Deciding a link must not fail the job (the final stage marks it
+        # failed on any error here): a file that cannot be read is not linked.
+        logger.warning(f"{what} not linked: could not read {path}: {exc}")
+        return False
+    if linked:
+        logger.info(f"{what} linked: {path} holds a result")
+    else:
+        logger.info(f"{what} not linked: {path} has no result in it")
+    return bool(linked)
+
+
 def mtdna_report_paths(report_dir: str, reports_url_prefix: str) -> Dict[str, str]:
     """Served paths of mtDNA-Server 2's files that hold a result, by report_paths key.
 
@@ -3160,40 +3199,14 @@ def mtdna_report_paths(report_dir: str, reports_url_prefix: str) -> Dict[str, st
     The report's mtDNA section says why there is no result (mtdna_report_context).
 
     native_report_paths adds these; GET /upload/reports/job/{job_id}'s fallback for
-    a job without stored reports uses them too.
+    a job without stored reports uses them too. A job stored before this rule keeps
+    its links in metadata["reports"]; upload_router checks those on read with
+    mtdna_file_holds_result.
     """
-    checks = (
-        (
-            "mtdna_report_path",
-            "mtdna_report.html",
-            "mtDNA-Server 2 report",
-            lambda path: os.path.getsize(path) > 0,
-        ),
-        (
-            "mtdna_haplogroups_path",
-            "mtdna_result.json",
-            "mtDNA haplogroup result",
-            _mtdna_result_calls_something,
-        ),
-        ("mtdna_vcf_path", "mtdna_variants.vcf.gz", "mtDNA chrM VCF", _vcf_has_records),
-    )
     paths: Dict[str, str] = {}
-    for key, name, what, has_content in checks:
-        path = os.path.join(report_dir, name)
-        if not os.path.isfile(path):
-            continue
-        try:
-            linked = has_content(path)
-        except Exception as exc:
-            # Deciding a link must not fail the job (the final stage marks it
-            # failed on any error here): a file that cannot be read is not linked.
-            logger.warning(f"{what} not linked: could not read {name}: {exc}")
-            continue
-        if linked:
+    for key, (name, _what, _has_content) in MTDNA_FILES.items():
+        if mtdna_file_holds_result(key, os.path.join(report_dir, name)):
             paths[key] = f"{reports_url_prefix}/{name}"
-            logger.info(f"{what} URL added: {paths[key]}")
-        else:
-            logger.info(f"{what} not linked: {name} has no result in it")
     return paths
 
 

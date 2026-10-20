@@ -470,6 +470,51 @@ def report_urls(reports: Dict[str, Any]) -> Dict[str, Optional[str]]:
     }
 
 
+def _report_file(url: Any) -> Optional[Path]:
+    """The file under REPORTS_DIR a served report path (/reports/{patient_id}/{file})
+    names, as app.main's serve_report_file resolves it; None for any other value."""
+    from app.api.utils.path_jail import resolve_under
+
+    if not isinstance(url, str) or not url.startswith("/reports/"):
+        return None
+    patient_id, _, filename = url[len("/reports/") :].partition("/")
+    if not patient_id or not filename:
+        return None
+    try:
+        return resolve_under(Path(REPORTS_DIR), patient_id, filename)
+    except PermissionError:
+        return None
+
+
+def without_empty_mtdna_links(reports: Dict[str, Any]) -> Dict[str, Any]:
+    """A job's stored reports without the mtDNA links whose file holds no result.
+
+    Since #145 generate_report links an mtDNA file only when it holds a result
+    (mtdna_report_paths). A job finished before it stored a link to every mtDNA file
+    that existed: a no-call mtdna_result.json and a header-only chrM VCF for a VCF
+    with no chrM record. Those links are checked here, on read, by the same test,
+    against the file each one serves; one that fails is left out. The stored metadata
+    is not changed. Returns a new dict; `reports` is not modified.
+    """
+    from app.reports.generator import (
+        MTDNA_FILES,
+        NATIVE_REPORT_URL_KEYS,
+        mtdna_file_holds_result,
+    )
+
+    checked = dict(reports)
+    for path_key in MTDNA_FILES:
+        # generate_report's *_path key, or the *_url key GET /reports/job/{job_id}'s
+        # fallback shape uses; the page reads either (fetchReportLinks).
+        for key in (path_key, NATIVE_REPORT_URL_KEYS[path_key]):
+            if key not in checked:
+                continue
+            path = _report_file(checked[key])
+            if path is None or not mtdna_file_holds_result(path_key, str(path)):
+                del checked[key]
+    return checked
+
+
 async def handle_final_stages_progression(
     job_service: JobService, job_id: str, outdir: str
 ):
@@ -2168,9 +2213,8 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         # looked for the *_url keys, which no job ever stored, and returned none.
         links = {}
         if job.status == "completed" and metadata.get("reports"):
-            links = {
-                key: url for key, url in report_urls(metadata["reports"]).items() if url
-            }
+            stored = without_empty_mtdna_links(metadata["reports"])
+            links = {key: url for key, url in report_urls(stored).items() if url}
 
         # Create response
         response = {
@@ -2392,12 +2436,14 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
         if job.status != JobStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Workflow not completed")
 
-        # Get report URLs from metadata
+        # Get report URLs from metadata. A job finished before #145 stored links to
+        # mtDNA files with no result in them; those are left out.
         metadata = job.job_metadata or {}
-        reports = metadata.get("reports", {})
+        stored = metadata.get("reports") or {}
+        reports = without_empty_mtdna_links(stored)
 
         # If no reports in metadata, try to construct URLs from patient_id + job_id
-        if not reports:
+        if not stored:
             patient_id = metadata.get("patient_id")
             if patient_id:
                 # Construct basic report URLs based on nested naming convention
