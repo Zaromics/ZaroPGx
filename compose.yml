@@ -41,6 +41,9 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - ZAROPGX_AUTH_MODE=${ZAROPGX_AUTH_MODE:-open}
+      # The FASTQ size cap: the app plans uploads against it and gatk-api enforces it,
+      # so both are handed this one value (see gatk-api below).
+      - FASTQ_MAX_UPLOAD_BYTES=${FASTQ_MAX_UPLOAD_BYTES:-21474836480}
       # INCLUDE_PHARMCAT_* and EXECSUM_USE_TSV come from env_file/.env only
     volumes:
       - ./:/app
@@ -254,6 +257,9 @@ services:
       - DATA_DIR=/data
       - ALIGN_REFERENCE=/reference/pypgx/pypgx_grch38.fasta
       - MAX_MEMORY=${MAX_MEMORY:-20g}
+      # The same value the app plans FASTQ uploads against (20 GiB unless .env sets
+      # it); a mismatch would accept an upload this service then refuses.
+      - FASTQ_MAX_UPLOAD_BYTES=${FASTQ_MAX_UPLOAD_BYTES:-21474836480}
       - PYTHONPATH=/app
       - UVICORN_RELOAD_EXCLUDES=".git/*,.venv/*"
     ports:
@@ -345,6 +351,7 @@ services:
       # discards). Keeping it off ./data lets a host put it on a larger disk --
       # set ZAROPGX_SCRATCH. Unset, it resolves to ./data/temp as before.
       - HLA_TEMP_DIR=/scratch
+      - ZAROHLA_SAMTOOLS_THREADS=${ZAROHLA_SAMTOOLS_THREADS:-4}
     volumes:
       - ./data:/data
       - ${ZAROPGX_SCRATCH:-./data/temp}:/scratch

@@ -22,12 +22,14 @@ from job_client import JobClient
 try:
     from shared_input import (  # pyright: ignore[reportMissingImports]
         SharedInputRefused,
+        current_index,
         link_shared_input,
         resolve_shared_input,
     )
 except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
     from app.utils.shared_input import (
         SharedInputRefused,
+        current_index,
         link_shared_input,
         resolve_shared_input,
     )
@@ -287,6 +289,14 @@ PROBE_MIN_MAPQ = 1
 # _extract_hla_reads.
 MHC_REGION = {"GRCh38": (28510120, 33480577)}
 
+# Threads for samtools as it extracts the HLA reads and turns them into FASTQ. A
+# genome aligned without decoy contigs leaves tens of millions of reads unplaced and
+# unmapped, and they all go to OptiType: on NA12878's MHC plus 62 M unplaced reads
+# (2026-10-16), view, collate and fastq took 411 s single-threaded and 165 s with
+# 4 threads, and OptiType called the same alleles from the same 931 reads. OptiType's
+# own mapping threads made little difference (173 s at its default 4, 163 s at 12).
+SAMTOOLS_THREADS = os.getenv("ZAROHLA_SAMTOOLS_THREADS", "4")
+
 # Converting a whole alignment is the fallback for one whose HLA reads cannot be
 # located or extracted. It takes several times the input in scratch -- `collate -u`
 # writes the alignment uncompressed, and the FASTQ is about as large again -- and
@@ -491,9 +501,12 @@ async def _probe_hla_read_count(
     if not loci:
         return None
 
-    # A region query needs an index, and main.nf posts the alignment without one.
-    if (await _samtools("index", str(input_path)))[0] != 0:
-        return None
+    # A region query needs an index. A shared input arrives with its current index
+    # beside it (app/utils/shared_input.py); indexing a whole genome again took
+    # minutes per step, so only an input without one is indexed here.
+    if current_index(input_path) is None:
+        if (await _samtools("index", str(input_path)))[0] != 0:
+            return None
 
     # Contig naming is not knowable in advance: `chr6` and `6` are both in the wild
     # and this sidecar sees whatever the caller aligned against.
@@ -567,8 +580,10 @@ async def _extract_hla_reads(
     subset = job_dir / "hla_subset.bam"
     regions = _hla_subset_regions(names, chr6, build)
     steps = (
-        ("view", "-b", "-o", str(placed), str(input_path), *regions),
-        ("view", "-b", "-o", str(unplaced), str(input_path), "*"),
+        ("view", "-b", "-@", SAMTOOLS_THREADS, "-o", str(placed), str(input_path),
+         *regions),
+        ("view", "-b", "-@", SAMTOOLS_THREADS, "-o", str(unplaced), str(input_path),
+         "*"),
         ("cat", "-o", str(subset), str(placed), str(unplaced)),
     )
     for step in steps:
@@ -766,6 +781,8 @@ async def call_hla(
                 collate_cmd = [
                     "samtools",
                     "collate",
+                    "-@",
+                    SAMTOOLS_THREADS,
                     "-u",
                     "-o",
                     str(collated_path),
@@ -791,6 +808,8 @@ async def call_hla(
                 cmd = [
                     "samtools",
                     "fastq",
+                    "-@",
+                    SAMTOOLS_THREADS,
                     "-1",
                     str(f1_path),
                     "-2",

@@ -98,3 +98,10 @@ def test_the_error_strategy_terminates_on_65_and_retries_the_rest():
     config = (PIPELINE / "nextflow.config").read_text(encoding="utf-8")
     assert "errorStrategy = { task.exitStatus == 65 ? 'terminate' : 'retry' }" in config
     assert "maxRetries = 1" in config
+
+
+@pytest.mark.parametrize("status, exit_code", [("507", 65), ("500", 1)])
+def test_too_little_disk_for_an_alignment_is_a_refusal_too(status, exit_code, tmp_path):
+    """/align-fastq's free-disk check answers 507; a retry finds the same disk."""
+    (block,) = [b for b in _call_sites() if "/align-fastq" in b]
+    assert _run(block, status, tmp_path).returncode == exit_code
