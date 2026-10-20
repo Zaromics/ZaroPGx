@@ -75,7 +75,7 @@ def test_the_column_widths_sum_to_one_hundred_percent():
             r"\.gene-table col\.c-[a-z]+\s*\{\s*width:\s*(\d+(?:\.\d+)?)%", _source()
         )
     ]
-    assert len(widths) == 7, f"expected 7 column widths, found {widths}"
+    assert len(widths) == 6, f"expected 6 column widths, found {widths}"
     assert sum(widths) == 100, f"widths sum to {sum(widths)}%, not 100: {widths}"
 
 

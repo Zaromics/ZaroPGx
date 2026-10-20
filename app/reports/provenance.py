@@ -1,4 +1,8 @@
-"""Per-gene provenance for the report's Call and Guide columns.
+"""Per-gene provenance for the report's Call column.
+
+``resolve_guideline_source`` read a guideline source per gene for the Guide
+column, since dropped: PharmCAT 3.1 and later record none. It and the code that
+stamps ``guideline_source`` on gene rows are no longer read by a template.
 
 The product rule: report what the run recorded. Every value here traces to
 something a tool actually emitted -- PharmCAT's ``callSource``, the TSV

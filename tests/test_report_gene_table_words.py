@@ -187,8 +187,8 @@ def test_long_names_break_only_where_they_may(monkeypatch):
     assert any("aminoglycoside-" in line for line in lines), lines
     assert any("CACNA1S" == line for line in lines), lines
     assert ")" not in lines, lines
-    # The headers too: "Guide" on one line, not "Guid/e".
-    for header in ("Activity", "Call", "Guide"):
+    # The headers too: "Activity" and "Call" on one line each.
+    for header in ("Activity", "Call"):
         assert header in lines, (header, lines)
 
 

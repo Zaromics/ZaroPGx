@@ -97,8 +97,8 @@
             /* Fixed layout with explicit widths, because `auto` let the long
                Implications text and the "Activity Score" header set a minimum
                width wider than the page: WeasyPrint has nowhere to scroll, so it
-               simply ran the last column off the right edge and the Guide column
-               was invisible in every PDF. Percentages sum to 100. */
+               simply ran the last column off the right edge, invisible in every
+               PDF. Percentages sum to 100. */
             table-layout: fixed;
             width: 100%;
         }
@@ -106,20 +106,21 @@
         /* Widths chosen against the real content, not guessed, measured in the
            PDF with their padding: the gene symbol CACNA1S; "(WholeDel1Hom)", a
            copy-number note's code, in Diplotype; "aminoglycoside-" (MT-RNR1) in
-           Phenotype; the "Activity", "Call" and "Guide" headers; and the generic
+           Phenotype; the "Activity" and "Call" headers; and the generic
            implications' lines ("Reference genotype -"). At 17% Diplotype and
            Phenotype broke the first two mid-word ("aminoglycosi/de-induced", a
            ")" alone on a line). Names wider than any column (PharmCAT's HGVS
            alleles, PyPGx's longer codes) break where the name_breaks and
            code_breaks filters allow; a single long word (Songklanagarind) still
-           breaks where it must. Sums to 100. */
-        .gene-table col.c-gene       { width: 12.5%; }
-        .gene-table col.c-diplotype  { width: 17.75%; }
-        .gene-table col.c-phenotype  { width: 19.5%; }
-        .gene-table col.c-activity   { width: 10.75%; }
-        .gene-table col.c-implication{ width: 25.25%; }
-        .gene-table col.c-call       { width: 6.25%; }
-        .gene-table col.c-guide      { width: 8%;  }
+           breaks where it must. The Guide column's share, since it was dropped
+           (always empty: PharmCAT 3.1 and later record no guideline per gene),
+           went to Implications, which takes a line fewer. Sums to 100. */
+        .gene-table col.c-gene       { width: 13%; }
+        .gene-table col.c-diplotype  { width: 19%; }
+        .gene-table col.c-phenotype  { width: 20%; }
+        .gene-table col.c-activity   { width: 11%; }
+        .gene-table col.c-implication{ width: 30%; }
+        .gene-table col.c-call       { width: 7%;  }
 
         /* Long diplotype strings ("rs2231142 reference (G)/...") have no spaces
            to break at, and under table-layout:fixed an unbreakable word overflows
@@ -191,7 +192,7 @@
            at all; and when corrected to `th.narrow-col`, WeasyPrint renders
            `vertical-rl` + `rotate(180deg)` upside down rather than bottom-to-top
            the way browsers do. The columns have explicit widths now, so "Call"
-           and "Guide" fit horizontally and no trick is needed. */
+           fits horizontally and no trick is needed. */
         /* Level with the other headers, in their size: at the bottom and in
            .narrow-col's 0.9em, "Call" sat low beside "Gene" and "Activity
            Score". */
@@ -1335,7 +1336,6 @@
         <div class="tool-key">
             <h4>Source Legend:</h4>
             <p><strong>Call:</strong> Tool that made this call, as recorded by the run - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call made, <strong>?</strong> = not recorded by this run</p>
-            <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB (now ClinPGx), blank = not recorded</p>
         </div>
         
         <div style="margin-bottom: 15px;"></div>
@@ -1353,7 +1353,7 @@
             <colgroup>
                 <col class="c-gene"><col class="c-diplotype"><col class="c-phenotype">
                 <col class="c-activity"><col class="c-implication">
-                <col class="c-call"><col class="c-guide">
+                <col class="c-call">
             </colgroup>
             <thead>
                 <tr>
@@ -1363,7 +1363,6 @@
                     <th>Activity Score</th>
                     <th>Implications</th>
                     <th class="narrow-col">Call</th>
-                    <th class="narrow-col">Guide</th>
                 </tr>
             </thead>
             <tbody>
@@ -1394,7 +1393,6 @@
                         {% endif %}
                     </td>
                     <td class="narrow-col tool-source" title="{{ d.called_by_label or '' }}">{{ d.called_by }}</td>
-                    <td class="narrow-col">{{ d.guideline_source if d.guideline_source else '' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

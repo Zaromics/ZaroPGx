@@ -381,7 +381,7 @@ def _gene_table_headers(html):
 
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
-def test_rendered_gene_table_has_seven_columns_and_no_data_column(template_name):
+def test_rendered_gene_table_has_six_columns_and_no_data_column(template_name):
     headers = _gene_table_headers(_render(template_name))
     assert headers == [
         "Gene",
@@ -390,7 +390,6 @@ def test_rendered_gene_table_has_seven_columns_and_no_data_column(template_name)
         "Activity Score",
         "Implications",
         "Call",
-        "Guide",
     ], headers
 
 
@@ -445,25 +444,18 @@ def test_rendered_call_cell_is_never_blank_and_self_explains(template_name):
 
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
-def test_rendered_guide_cell_is_blank_when_not_recorded(template_name):
+def test_there_is_no_guide_column(template_name):
+    """The Guide column, "the guideline behind the phenotype", was empty on every
+    row of every report: PharmCAT 3.1 and later record no guideline source per
+    gene (no phenotypeSource), so nothing fills it. It is gone, with its legend
+    line, even for a row that carries a letter (CYP2C19 here, as a PharmCAT 3.0
+    payload's would). The guideline behind each recommendation still heads it
+    under Drug Recommendations."""
     html = _render(template_name)
-    # CYP2C19 recorded "C"; the rest recorded nothing. Counted over the rows each
-    # lane actually tables, which is no longer the same set: the print report
-    # moves uncalled genes to an appendix (they have no Guide cell to leave
-    # blank), while the interactive report is a scrolling page with tabs and
-    # keeps every row. The divergence is deliberate -- a paginated document pays
-    # four pages for rows that say nothing, a scrolling one does not.
-    from app.reports.generator import gene_was_called
-
-    tabled = (
-        [r for r in _ROWS if gene_was_called(r.get("diplotype"))]
-        if template_name == "report_template.html"
-        else _ROWS
-    )
-    blank_guides = sum(1 for r in tabled if not r.get("guideline_source"))
-
-    assert html.count('<td class="narrow-col">C</td>') == 1
-    assert html.count('<td class="narrow-col"></td>') == blank_guides
+    assert any(r.get("guideline_source") for r in _ROWS)
+    assert ">Guide<" not in html
+    assert "Guideline source" not in html
+    assert '<td class="narrow-col">' not in html
 
 
 # ---------------------------------------------------------------------------
