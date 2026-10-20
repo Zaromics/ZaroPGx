@@ -15,13 +15,18 @@ An uploaded VCF has no such line, so only a gene on a chromosome with no record 
 escaped, through PyPGx's "invalid contig". With "Assume absent sites = reference" off
 (the default) PharmCAT reads the same absences as no-calls: the two tools disagreed.
 
-Now /genotype, given a VCF without coverage evidence and the job's absent_to_ref off,
-gives no call to a gene with no called genotype in PyPGx's own region for it. A ./.
-does not count: PyPGx hands it to Beagle, which fills it in (measured: the demo's 37
-NAT2 records, all 0/0, set to ./. gave NAT2 *5/*5, against *12/*12). main.nf sends the
-run's effective flag. A gVCF's converted VCF keeps no reference blocks, so gatk-api
-/gvcf-to-vcf writes the uncovered-genes line from the blocks (tests in
-tests/test_gvcf_to_vcf_endpoint.py), and its genes are called as an alignment's are.
+Now /genotype reads what the file holds at each gene's own allele-defining positions
+(PyPGx's allele table), not anywhere in its region: UGT1A4's and UGT1A6's regions span
+UGT1A1's exon 1, and UGT1A1's records alone had made them *1/*1 and Reference/
+Reference. Given a VCF without coverage evidence and the job's absent_to_ref off, a
+gene with no genotype at any of its positions gets no call, and a gene with some gets a
+call that says how many of the rest PyPGx read as the reference. A ./. does not count:
+PyPGx hands it to Beagle, which fills it in (measured: the demo's 37 NAT2 records, all
+0/0, set to ./. gave NAT2 *5/*5, against *12/*12), so no-calls are dropped from the
+file PyPGx reads, in every lane. main.nf sends the run's effective flag. A gVCF's
+converted VCF keeps no reference blocks, so gatk-api /gvcf-to-vcf writes the
+uncovered-genes line from the blocks (tests in tests/test_gvcf_to_vcf_endpoint.py),
+and its genes are called as an alignment's are.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import importlib.util
 import json
 import logging
 import re
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -46,6 +52,7 @@ REPO = Path(__file__).resolve().parents[1]
 WRAPPER = REPO / "docker" / "pypgx" / "pypgx_wrapper.py"
 GATK_API = REPO / "docker" / "gatk-api" / "gatk_api.py"
 GENE_TABLE = REPO / "lexicon" / "gene-table.csv"
+ALLELE_TABLE = REPO / "lexicon" / "allele-table.csv"
 MAIN_NF = REPO / "pipelines" / "pgx" / "main.nf"
 
 
@@ -106,13 +113,18 @@ def pypgx(tmp_path_factory):
 # VCFs
 # --------------------------------------------------------------------------
 
-# Inside PyPGx's GRCh38 regions (lexicon/gene-table.csv): CYP2D6 22:42116498-42155810,
-# CYP2E1 10:133517362-133549123, GSTM1 1:109684816-109696745.
-CYP2D6_38 = ("22", 42130692)
-CYP2E1_38 = ("10", 133530000)
-GSTM1_38 = ("1", 109690000)
-# CYP2E1's GRCh37 region is 10:135330866-135362620.
-CYP2E1_37 = ("10", 135340000)
+# Allele-defining positions in PyPGx 0.27's GRCh38 table (lexicon/allele-table.csv):
+# CYP2D6 *4 (22-42128945-C-T) and 22-42126611-C-G, CYP2E1 10-133526101-G-C, GSTM1 *B
+# (1-109690516-G-C, its only one), UGT1A1 2-233759924-C-T. CYP2E1's GRCh37 position
+# for the same variant is 10-135339605. 10:133530000 is inside CYP2E1's region and is
+# none of its positions.
+CYP2D6_38 = ("22", 42128945)
+CYP2D6_38_B = ("22", 42126611)
+CYP2E1_38 = ("10", 133526101)
+CYP2E1_REGION_ONLY = ("10", 133530000)
+GSTM1_38 = ("1", 109690516)
+UGT1A1_38 = ("2", 233759924)
+CYP2E1_37 = ("10", 135339605)
 
 
 def _vcf(path, records, prefix="chr", samples=("S",), form="plain"):
@@ -150,17 +162,28 @@ def _vcf(path, records, prefix="chr", samples=("S",), form="plain"):
     return gz
 
 
-REGIONS_38 = {
-    "CYP2D6": "22:42116498-42155810",
-    "CYP2E1": "10:133517362-133549123",
-    "GSTM1": "1:109684816-109696745",
-}
-
 FORMS = ["plain", "bgzip", "indexed"]
+
+# PyPGx's step on the demo VCF (app/static/demo/pharmcat.example.vcf), genes=ALL,
+# input_type vcf, the option off, measured in the shipped image on 2026-10-20: genes
+# called, of them some positions read as reference, and genes with no genotype.
+DEMO_CALLED = 2
+DEMO_PARTIAL = 1
+DEMO_NO_GENOTYPE = 62
+
+
+@pytest.fixture(scope="module")
+def positions38(pypgx):
+    return pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38")
+
+
+@pytest.fixture(scope="module")
+def three(positions38):
+    return {g: positions38[g] for g in ("CYP2D6", "CYP2E1", "GSTM1")}
 
 
 # --------------------------------------------------------------------------
-# PyPGx's regions
+# PyPGx's genes and positions
 # --------------------------------------------------------------------------
 
 
@@ -172,20 +195,41 @@ def test_the_regions_are_pypgx_own_for_each_assembly(pypgx):
     assert grch38["GSTM1"] == "1:109684816-109696745"
 
 
-def test_genes_pypgx_never_calls_from_a_vcf_are_left_to_say_so_themselves(pypgx):
+def test_genes_pypgx_never_calls_from_a_vcf_are_left_to_say_so_themselves(
+    pypgx, positions38
+):
     """GSTT1 and UGT2B17 have copy-number alleles only: PyPGx answers "No SNV/indel-
     based star alleles" for them whatever the VCF holds. The paralogs and the control
-    genes are not called at all."""
+    genes are not called at all. Every other gene has a defining variant."""
     regions = pypgx.load_gene_regions(GENE_TABLE, "GRCh38")
     for gene in ("GSTT1", "UGT2B17", "CYP2D7", "CYP2A7", "CYP2B7", "EGFR", "VDR"):
-        assert gene not in regions
+        assert gene not in regions and gene not in positions38
     assert len(regions) == 85
+    assert set(positions38) == set(regions)
 
 
-def test_the_lexicon_copy_is_pypgx_0_27_0s_table():
+def test_the_positions_are_the_defining_variants_ref_spans(pypgx, positions38):
+    """0-based half-open, one per position: a deletion's span is its REF."""
+    assert positions38["GSTM1"] == [("1", 109690515, 109690516)]
+    assert positions38["UGT1A6"] == [("2", 233693630, 233693631)]
+    # CYP2D6 *?: 22-42128198-CTCAG-C covers five bases.
+    assert ("22", 42128197, 42128202) in positions38["CYP2D6"]
+    # UGT1A4's twelve are its own, none of UGT1A1's, though its region spans UGT1A1.
+    ugt1a1 = set(positions38["UGT1A1"])
+    assert len(positions38["UGT1A4"]) == 12
+    assert not ugt1a1 & set(positions38["UGT1A4"])
+    # IFNL4's one position is also IFNL3's (rs12979860): data at it is data for both.
+    assert set(positions38["IFNL4"]) <= set(positions38["IFNL3"])
+    grch37 = pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh37")
+    assert ("10", 135339604, 135339605) in grch37["CYP2E1"]
+
+
+def test_the_lexicon_copies_are_pypgx_0_27_0s_tables():
     """gatk-api has no PyPGx and reads lexicon/gene-table.csv instead (Dockerfile.gatk-api
-    copies it in). Measured 2026-10-20: identical to the table inside the pypgx image's
-    PyPGx 0.27.0 but for MT-RNR1. A PyPGx bump must refresh the copy and this digest."""
+    copies it in); the tests read lexicon/allele-table.csv. Measured 2026-10-20: both
+    identical to the tables inside the pypgx image's PyPGx 0.27.0 but for MT-RNR1 (the
+    allele table after refreshing three rows). A PyPGx bump must refresh the copies and
+    these digests."""
     dockerfile = (REPO / "docker" / "pypgx" / "Dockerfile.pypgx").read_text()
     assert "pypgx==0.27.0" in dockerfile
     with open(GENE_TABLE, newline="", encoding="utf-8") as fh:
@@ -198,12 +242,26 @@ def test_the_lexicon_copy_is_pypgx_0_27_0s_table():
         hashlib.sha256(repr(rows).encode()).hexdigest()
         == "8599d92c84af46a5a791c2e0a1ee26994d20c14bd2312c1cc0a320c42f90ce77"
     )
+    with open(ALLELE_TABLE, newline="", encoding="utf-8-sig") as fh:
+        rows = [
+            (r["Gene"], r["StarAllele"], r["GRCh37Core"], r["GRCh38Core"])
+            for r in csv.DictReader(fh)
+        ]
+    assert len(rows) == 1338
+    assert (
+        hashlib.sha256(repr(rows).encode()).hexdigest()
+        == "963e859276edce6e49a0448c6d4e567a2bf5daba7ec20ec3df086cdac172509d"
+    )
     gatk_dockerfile = (REPO / "docker" / "gatk-api" / "Dockerfile.gatk-api").read_text()
     assert "COPY lexicon/gene-table.csv /app/pypgx-gene-table.csv" in gatk_dockerfile
 
 
 def test_both_sidecars_spell_the_header_keys_alike():
-    for key in ("UNCOVERED_GENES_HEADER_KEY", "COVERAGE_MEASURED_ON_HEADER_KEY"):
+    for key in (
+        "UNCOVERED_GENES_HEADER_KEY",
+        "COVERAGE_MEASURED_ON_HEADER_KEY",
+        "OFF_REFERENCE_HEADER_KEY",
+    ):
         values = [
             re.search(rf"^{key} = ['\"]([^'\"]+)['\"]", path.read_text(), re.M)
             for path in (WRAPPER, GATK_API)
@@ -213,72 +271,76 @@ def test_both_sidecars_spell_the_header_keys_alike():
 
 
 # --------------------------------------------------------------------------
-# Which genes have a genotype
+# What the file holds at each gene's positions
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("form", FORMS)
 @pytest.mark.parametrize("prefix", ["chr", ""])
-def test_a_gene_with_a_genotype_is_found_in_every_form(pypgx, tmp_path, form, prefix):
+def test_a_gene_with_a_genotype_is_found_in_every_form(
+    pypgx, tmp_path, three, form, prefix
+):
     vcf = _vcf(tmp_path / "in.vcf", [(*CYP2D6_38, "0/1")], prefix=prefix, form=form)
-    assert pypgx.genes_without_genotypes(vcf, REGIONS_38) == ["CYP2E1", "GSTM1"]
+    assert pypgx.genes_without_genotypes(vcf, three) == ["CYP2E1", "GSTM1"]
 
 
 @pytest.mark.parametrize("form", FORMS)
-def test_a_no_call_is_not_a_genotype(pypgx, tmp_path, form):
-    """./. is filled in by Beagle from its panel, not read from the sample."""
-    vcf = _vcf(
-        tmp_path / "in.vcf",
-        [(*CYP2D6_38, "./."), (*CYP2E1_38, "./."), (*GSTM1_38, ".")],
-        form=form,
-    )
-    assert pypgx.genes_without_genotypes(vcf, REGIONS_38) == [
-        "CYP2D6",
-        "CYP2E1",
-        "GSTM1",
-    ]
+def test_a_record_in_the_region_but_at_none_of_its_positions_is_no_data(
+    pypgx, tmp_path, three, form
+):
+    vcf = _vcf(tmp_path / "in.vcf", [(*CYP2E1_REGION_ONLY, "0/1")], form=form)
+    assert "CYP2E1" in pypgx.genes_without_genotypes(vcf, three)
 
 
 @pytest.mark.parametrize("form", FORMS)
-def test_no_calls_are_told_apart_from_no_record(pypgx, tmp_path, form):
-    """The option covers absence, not no-calls: /genotype needs to know which."""
+def test_a_neighbours_records_do_not_genotype_a_gene(
+    pypgx, tmp_path, positions38, form
+):
+    """Found on the demo VCF: UGT1A1's promoter and exon-1 records made UGT1A4 *1/*1
+    and UGT1A6 Reference/Reference through their regions alone."""
+    genes = {g: positions38[g] for g in ("UGT1A1", "UGT1A4", "UGT1A6")}
+    vcf = _vcf(tmp_path / "in.vcf", [(*UGT1A1_38, "0/0")], form=form)
+    assert pypgx.genes_without_genotypes(vcf, genes) == ["UGT1A4", "UGT1A6"]
+
+
+@pytest.mark.parametrize("form", FORMS)
+def test_the_positions_are_counted(pypgx, tmp_path, three, form):
     vcf = _vcf(
         tmp_path / "in.vcf",
-        [(*CYP2D6_38, "0/1"), (*CYP2E1_38, "./."), (*CYP2E1_38[:1], 133530100, "./.")],
+        [(*CYP2D6_38, "0/1"), (*CYP2D6_38_B, "./."), (*GSTM1_38, ".")],
         form=form,
     )
-    assert pypgx.genotype_evidence(vcf, REGIONS_38) == {
-        "CYP2D6": "genotype",
-        "CYP2E1": "no-calls",
-        "GSTM1": "no record",
-    }
+    counts = pypgx.position_evidence(vcf, three)
+    total = len(three["CYP2D6"])
+    assert counts["CYP2D6"] == {"positions": total, "genotyped": 1, "no_calls": 1}
+    assert counts["CYP2E1"] == {"positions": 7, "genotyped": 0, "no_calls": 0}
+    assert counts["GSTM1"] == {"positions": 1, "genotyped": 0, "no_calls": 1}
 
 
 @pytest.mark.parametrize("form", FORMS)
 @pytest.mark.parametrize("genotype", ["0/0", "0|0", "./1", "1"])
 def test_reference_half_and_haploid_calls_are_genotypes(
-    pypgx, tmp_path, form, genotype
+    pypgx, tmp_path, three, form, genotype
 ):
     vcf = _vcf(tmp_path / "in.vcf", [(*CYP2E1_38, genotype)], form=form)
-    assert "CYP2E1" not in pypgx.genes_without_genotypes(vcf, REGIONS_38)
+    assert "CYP2E1" not in pypgx.genes_without_genotypes(vcf, three)
 
 
 @pytest.mark.parametrize("form", FORMS)
 def test_a_record_without_gt_or_a_vcf_without_samples_is_no_genotype(
-    pypgx, tmp_path, form
+    pypgx, tmp_path, three, form
 ):
     no_gt = _vcf(tmp_path / "a.vcf", [(*CYP2E1_38, None)], form=form)
-    assert "CYP2E1" in pypgx.genes_without_genotypes(no_gt, REGIONS_38)
+    assert "CYP2E1" in pypgx.genes_without_genotypes(no_gt, three)
     sites = _vcf(tmp_path / "b.vcf", [(*CYP2E1_38, "0/1")], samples=(), form=form)
-    assert pypgx.genes_without_genotypes(sites, REGIONS_38) == sorted(REGIONS_38)
+    assert pypgx.genes_without_genotypes(sites, three) == sorted(three)
 
 
-def test_only_the_first_sample_counts(pypgx, tmp_path):
+def test_only_the_first_sample_counts(pypgx, tmp_path, three):
     """PyPGx's result is read from its first row (_first_pypgx_row), the first sample."""
     path = tmp_path / "two.vcf"
-    text = _vcf_text_two_samples(*CYP2E1_38, "./.", "0/1")
-    path.write_text(text, encoding="utf-8")
-    assert "CYP2E1" in pypgx.genes_without_genotypes(str(path), REGIONS_38)
+    path.write_text(_vcf_text_two_samples(*CYP2E1_38, "./.", "0/1"), encoding="utf-8")
+    assert "CYP2E1" in pypgx.genes_without_genotypes(str(path), three)
 
 
 def _vcf_text_two_samples(contig, pos, first, second):
@@ -292,70 +354,103 @@ def _vcf_text_two_samples(contig, pos, first, second):
 
 
 @pytest.mark.parametrize("form", FORMS)
-def test_grch37_is_read_against_grch37_regions(pypgx, tmp_path, form):
+def test_grch37_is_read_at_grch37_positions(pypgx, tmp_path, positions38, form):
     """A b37 VCF ("10", not "chr10") reaching /genotype unlifted, as hg19."""
     vcf = _vcf(tmp_path / "in.vcf", [(*CYP2E1_37, "0/1")], prefix="", form=form)
-    grch37 = pypgx.load_gene_regions(GENE_TABLE, "GRCh37")
-    grch38 = pypgx.load_gene_regions(GENE_TABLE, "GRCh38")
-    assert "CYP2E1" not in pypgx.genes_without_genotypes(
-        vcf, {"CYP2E1": grch37["CYP2E1"]}
-    )
-    # The same position is outside CYP2E1 on GRCh38.
-    assert pypgx.genes_without_genotypes(vcf, {"CYP2E1": grch38["CYP2E1"]}) == [
+    grch37 = pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh37")
+    assert pypgx.genes_without_genotypes(vcf, {"CYP2E1": grch37["CYP2E1"]}) == []
+    # The same position is none of CYP2E1's on GRCh38.
+    assert pypgx.genes_without_genotypes(vcf, {"CYP2E1": positions38["CYP2E1"]}) == [
         "CYP2E1"
     ]
 
 
 @pytest.mark.parametrize("form", FORMS)
 @pytest.mark.parametrize("prefix", ["chr", ""])
-def test_gstt1_is_looked_for_on_its_alt_contig(pypgx, tmp_path, form, prefix):
+def test_an_alt_contig_matches_under_either_naming(pypgx, tmp_path, form, prefix):
     """PyPGx's GRCh38 GSTT1 is on 22_KI270879v1_alt; a GATK VCF names it
-    chr22_KI270879v1_alt. (Left out of /genotype's regions, as PyPGx calls GSTT1
-    from copy number only; the gVCF lane measures it, see gatk-api.)"""
-    region = {"GSTT1": "22_KI270879v1_alt:267307-281486"}
+    chr22_KI270879v1_alt. (GSTT1 itself is left to PyPGx, which calls it from copy
+    number only; the gVCF and alignment lanes measure it.)"""
+    position = {"GSTT1": [("22_KI270879v1_alt", 269999, 270000)]}
     vcf = _vcf(
         tmp_path / "in.vcf",
         [("22_KI270879v1_alt", 270000, "0/1")],
         prefix=prefix,
         form=form,
     )
-    assert pypgx.genes_without_genotypes(vcf, region) == []
+    assert pypgx.genes_without_genotypes(vcf, position) == []
     primary = _vcf(tmp_path / "p.vcf", [("22", 270000, "0/1")], form=form)
-    assert pypgx.genes_without_genotypes(primary, region) == ["GSTT1"]
+    assert pypgx.genes_without_genotypes(primary, position) == ["GSTT1"]
 
 
 @pytest.mark.parametrize("form", FORMS)
-def test_overlap_is_decided_as_pysams_fetch_decides_it(pypgx, tmp_path, form):
-    """PyPGx slices with fetch(contig, start, end), start 0-based: a deletion starting
-    before the region and reaching into it is in; a record ending at its start is not.
-    """
-    start = 133517362  # CYP2E1's GRCh38 start, as the table gives it
-    reaching = _vcf(tmp_path / "a.vcf", [("10", start - 2, "0/1", "GGGG")], form=form)
-    assert "CYP2E1" not in pypgx.genes_without_genotypes(reaching, REGIONS_38)
-    short = _vcf(tmp_path / "b.vcf", [("10", start - 2, "0/1", "GGG")], form=form)
-    assert "CYP2E1" in pypgx.genes_without_genotypes(short, REGIONS_38)
+def test_overlap_is_decided_as_pysams_fetch_decides_it(pypgx, tmp_path, three, form):
+    """A deletion starting before a position and covering it is at it; one ending just
+    before it is not."""
+    pos = CYP2E1_38[1]
+    reaching = _vcf(tmp_path / "a.vcf", [("10", pos - 2, "0/1", "GGG")], form=form)
+    assert "CYP2E1" not in pypgx.genes_without_genotypes(reaching, three)
+    short = _vcf(tmp_path / "b.vcf", [("10", pos - 2, "0/1", "GG")], form=form)
+    assert "CYP2E1" in pypgx.genes_without_genotypes(short, three)
+
+
+def test_a_vcf_without_genotypes_keeps_its_records(pypgx, tmp_path):
+    """drop_no_calls runs bcftools only where there are genotypes to test."""
+    sites = _vcf(tmp_path / "s.vcf", [(*CYP2E1_38, "0/1")], samples=(), form="indexed")
+    assert pypgx.drop_no_calls(sites) == sites
+
+
+@pytest.mark.skipif(shutil.which("bcftools") is None, reason="bcftools not installed")
+def test_no_calls_are_dropped_and_half_calls_kept(pypgx, tmp_path, three):
+    vcf = _vcf(
+        tmp_path / "in.vcf",
+        [
+            (*CYP2D6_38, "./."),
+            (*CYP2D6_38_B, ".|."),
+            (*CYP2E1_38, "./1"),
+            (*GSTM1_38, "."),
+        ],
+        form="indexed",
+    )
+    kept = pypgx.drop_no_calls(vcf)
+    with pysam.VariantFile(kept) as handle:
+        assert [r.pos for r in handle] == [CYP2E1_38[1]]
 
 
 # --------------------------------------------------------------------------
-# What a gene without a call says
+# What a gene without a call, or with part of one, says
 # --------------------------------------------------------------------------
 
 
-def test_the_note_offers_the_option_except_where_it_would_call_a_deletion(pypgx):
-    note = pypgx.no_genotype_note("CYP2E1")
-    assert note.startswith("No genotype in the VCF over this gene")
+def test_the_note_offers_the_option_except_where_it_would_not_help(pypgx):
+    note = pypgx.no_genotype_note("CYP2E1", 7)
+    assert note.startswith(
+        "No genotype in the VCF at any of PyPGx's positions for this gene"
+    )
     assert "reference sequence" in note
     assert '"Assume absent sites = reference"' in note
-    deleted = pypgx.no_genotype_note("GSTM1")
-    assert deleted.startswith("No genotype in the VCF over this gene")
+    deleted = pypgx.no_genotype_note("GSTM1", 1)
+    assert deleted.startswith(
+        "No genotype in the VCF at any of PyPGx's positions for this gene"
+    )
     assert "both copies deleted (common for GSTM1)" in deleted
     assert "Assume absent" not in deleted
-    # The option does not cover no-calls, so it is not offered for them.
-    for gene in ("CYP2E1", "GSTM1"):
-        no_calls = pypgx.no_genotype_note(gene, no_calls=True)
-        assert no_calls.startswith("Only no-calls (./.) in the VCF over this gene")
-        assert "reference panel" in no_calls and "Assume absent" not in no_calls
-    assert "deleted" in pypgx.no_genotype_note("GSTM1", no_calls=True)
+    # The option does not cover no-calls: where every position is one, no offer.
+    for gene, n in (("CYP2E1", 7), ("GSTM1", 1)):
+        no_calls = pypgx.no_genotype_note(gene, n, no_calls=n)
+        assert no_calls.startswith(
+            "Only no-calls (./.) in the VCF at PyPGx's positions for this gene"
+        )
+        assert "Assume absent" not in no_calls
+    assert "deleted" in pypgx.no_genotype_note("GSTM1", 1, no_calls=1)
+    # Some no-calls, some absent: the absent ones are the option's to vouch for.
+    assert "Assume absent" in pypgx.no_genotype_note("CYP2E1", 7, no_calls=3)
+
+
+def test_a_partial_call_says_how_many_positions_were_read_as_reference(pypgx):
+    assert pypgx.positions_read_as_reference_note(120, 121) == (
+        "120 of 121 positions had no genotype in the file and were read as reference"
+    )
 
 
 def test_a_gvcfs_no_reads_note_names_the_gvcf(pypgx, tmp_path):
@@ -373,21 +468,72 @@ def test_a_gvcfs_no_reads_note_names_the_gvcf(pypgx, tmp_path):
     assert pypgx.coverage_measured_on(str(plain)) == "alignment"
 
 
+def test_a_gene_off_the_reference_is_not_called_a_possible_deletion(pypgx, tmp_path):
+    """GSTT1 on a GRCh38 without ALT contigs: no reads because none could map there."""
+    line = pypgx.genes_off_reference_header_line({"GSTT1": "22_KI270879v1_alt"})
+    assert line == "##ZaroPGx_genes_off_reference=GSTT1:22_KI270879v1_alt"
+    assert pypgx.genes_off_reference_header_line({}).endswith("=.")
+    path = tmp_path / "h.vcf"
+    path.write_text(f"##fileformat=VCFv4.2\n{line}\n#CHROM\n")
+    assert pypgx.genes_off_reference_from_vcf(str(path)) == {
+        "GSTT1": "22_KI270879v1_alt"
+    }
+    note = pypgx.off_reference_note("22_KI270879v1_alt", "gVCF")
+    assert note.startswith("The gVCF's reference has no 22_KI270879v1_alt contig")
+    assert "deleted" not in note
+
+
+def test_the_alignment_lane_names_the_genes_off_its_reference(pypgx, monkeypatch):
+    rows = [("22_KI270879v1_alt", "GSTT1"), ("22", "CYP2D6"), ("1", "GSTM1")]
+
+    class _Frame:
+        def __getitem__(self, columns):
+            return self
+
+        def itertuples(self, index=False):
+            return iter(rows)
+
+    utils = types.ModuleType("pypgx.api.utils")
+    utils.create_regions_bed = lambda assembly, add_chr_prefix: types.SimpleNamespace(
+        gr=types.SimpleNamespace(df=_Frame())
+    )
+    api = types.ModuleType("pypgx.api")
+    api.utils = utils
+    root = types.ModuleType("pypgx")
+    root.api = api
+    for name, module in (
+        ("pypgx", root),
+        ("pypgx.api", api),
+        ("pypgx.api.utils", utils),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    no_alt = ["chr1", "chr22"]
+    assert pypgx.genes_off_reference(no_alt, "GRCh38") == {"GSTT1": "22_KI270879v1_alt"}
+    assert pypgx.genes_off_reference(no_alt + ["chr22_KI270879v1_alt"], "GRCh38") == {}
+
+
 def test_the_step_counts_genes_without_a_genotype_apart(pypgx):
     """And genotyped means a diplotype came back: PyPGx's own no-call for GSTT1 (no
     small-variant alleles) is a successful result, and the demo VCF read "66 of 66
     genes genotyped" of 40 calls."""
-    panel = ["CYP2D6", "CYP2E1", "GSTM1", "GSTT1", "NAT1"]
+    panel = ["CYP2D6", "CYP2E1", "GSTM1", "GSTT1", "NAT1", "NAT2"]
     no_genotype = {g: {"success": True, "diplotype": None} for g in ("CYP2E1", "GSTM1")}
     results = dict(no_genotype)
-    results["CYP2D6"] = {"success": True, "diplotype": "*1/*1"}
+    results["CYP2D6"] = {
+        "success": True,
+        "diplotype": "*1/*1",
+        "details": {"positions": 121, "positions_without_genotype": 120},
+    }
+    results["NAT2"] = {"success": True, "diplotype": "*4/*4", "details": {}}
     results["GSTT1"] = {"success": True, "diplotype": None}
     results["NAT1"] = {"success": False, "error": "boom"}
     assert pypgx.step_gene_counts(panel, results, {}, no_genotype) == {
-        "total_genes": 5,
-        "successful_genes": 1,
+        "total_genes": 6,
+        "successful_genes": 2,
         "not_sequenced_genes": 0,
         "no_genotype_genes": 2,
+        "partially_genotyped_genes": 1,
+        "positions_without_genotype": 120,
         "failed_genes": 1,
     }
 
@@ -401,8 +547,8 @@ def test_the_step_counts_genes_without_a_genotype_apart(pypgx):
 def genotype(pypgx, monkeypatch):
     """POST /genotype with PyPGx itself faked: records what reaches the batches.
 
-    bgzip and tabix are not on the test host; pysam's own do the same job."""
-    seen = {"genes": [], "vcf": None, "prepared": []}
+    bgzip, tabix and bcftools are not on the test host; pysam does their jobs."""
+    seen = {"genes": [], "vcf": None, "prepared": [], "dropped": []}
 
     async def fake_batch(genes, vcf_path, job_dir, reference_genome, **kwargs):
         seen["genes"].extend(genes)
@@ -416,15 +562,20 @@ def genotype(pypgx, monkeypatch):
         pysam.tabix_index(gz, preset="vcf", force=True)
         return gz
 
+    def fake_drop(path):
+        seen["dropped"].append(path)
+        return path
+
     monkeypatch.setattr(pypgx, "process_gene_batch_parallel", fake_batch)
     monkeypatch.setattr(pypgx, "prepare_vcf_for_pypgx", fake_prepare)
+    monkeypatch.setattr(pypgx, "drop_no_calls", fake_drop)
     monkeypatch.setattr(
         pypgx,
-        "pypgx_gene_regions",
-        lambda assembly: pypgx.load_gene_regions(GENE_TABLE, assembly),
+        "pypgx_gene_positions",
+        lambda assembly: pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, assembly),
     )
 
-    def post(records, header="", **data):
+    def post(records, header="", genes="CYP2D6,CYP2E1,GSTM1", **data):
         path = Path(pypgx.TEMP_DIR) / "upload.vcf"
         _vcf(path, records)
         body = path.read_text(encoding="utf-8")
@@ -432,7 +583,7 @@ def genotype(pypgx, monkeypatch):
             body = body.replace(
                 "##fileformat=VCFv4.2\n", "##fileformat=VCFv4.2\n" + header
             )
-        fields = {"genes": "CYP2D6,CYP2E1,GSTM1", "reference_genome": "hg38", **data}
+        fields = {"genes": genes, "reference_genome": "hg38", **data}
         resp = TestClient(pypgx.app).post(
             "/genotype", files={"file": ("in.vcf", body, "text/plain")}, data=fields
         )
@@ -451,12 +602,31 @@ def test_with_the_option_off_a_gene_without_a_genotype_is_not_called(genotype):
     for gene in ("CYP2E1", "GSTM1"):
         result = body["results"][gene]
         assert result["success"] is True and result["diplotype"] is None
-        assert result["details"]["note"].startswith(
-            "No genotype in the VCF over this gene"
-        )
+        assert result["details"]["note"].startswith("No genotype in the VCF at")
     assert "deleted" in body["results"]["GSTM1"]["details"]["note"]
-    # The batches read the file the genotypes were looked for in.
-    assert seen["vcf"].endswith(".gz") and seen["prepared"]
+    # The batches read the prepared file, without its no-calls.
+    assert seen["vcf"] == seen["dropped"][0] and seen["vcf"].endswith(".gz")
+
+
+def test_a_partial_call_says_how_many_positions_were_read_as_reference(genotype):
+    """CYP2D6 from one genotyped position of its 121: called, and the call says so."""
+    seen, post = genotype
+    body = post([(*CYP2D6_38, "0/1")], absent_to_ref="false")
+    details = body["results"]["CYP2D6"]["details"]
+    total = details["positions"]
+    assert details["positions_without_genotype"] == total - 1
+    assert details["positions_note"] == (
+        f"{total - 1} of {total} positions had no genotype in the file and were read "
+        "as reference"
+    )
+
+
+def test_a_neighbours_records_do_not_call_a_gene(genotype):
+    seen, post = genotype
+    body = post([(*UGT1A1_38, "0/0")], genes="UGT1A1,UGT1A4,UGT1A6")
+    assert seen["genes"] == ["UGT1A1"]
+    assert body["results"]["UGT1A4"]["diplotype"] is None
+    assert body["results"]["UGT1A6"]["diplotype"] is None
 
 
 def test_without_the_field_the_option_is_off(genotype):
@@ -466,20 +636,26 @@ def test_without_the_field_the_option_is_off(genotype):
 
 
 def test_with_the_option_on_absent_genes_are_called_as_before(genotype):
-    """The uploader said the file lists every variant: absence is reference."""
+    """The uploader said the file lists every variant: absence is reference, and a call
+    resting on it needs no note."""
     seen, post = genotype
-    post([(*CYP2D6_38, "0/1")], absent_to_ref="true")
+    body = post([(*CYP2D6_38, "0/1")], absent_to_ref="true")
     assert sorted(seen["genes"]) == ["CYP2D6", "CYP2E1", "GSTM1"]
+    assert "positions_note" not in body["results"]["CYP2D6"].get("details", {})
 
 
-def test_with_the_option_on_a_gene_of_no_calls_is_still_not_called(genotype):
+def test_with_the_option_on_no_calls_are_still_not_vouched_for(genotype):
     """A ./. is not an absence: the option says nothing about it, and PyPGx would fill
     it in from its panel (NAT2 *5/*5 from 37 ./. records on the demo VCF)."""
     seen, post = genotype
-    body = post([(*CYP2D6_38, "0/1"), (*CYP2E1_38, "./.")], absent_to_ref="true")
-    assert sorted(seen["genes"]) == ["CYP2D6", "GSTM1"]
-    note = body["results"]["CYP2E1"]["details"]["note"]
-    assert note.startswith("Only no-calls (./.) in the VCF over this gene")
+    body = post(
+        [(*CYP2D6_38, "0/1"), (*CYP2D6_38_B, "./."), (*GSTM1_38, "./.")],
+        absent_to_ref="true",
+    )
+    assert sorted(seen["genes"]) == ["CYP2D6", "CYP2E1"]
+    note = body["results"]["GSTM1"]["details"]["note"]
+    assert note.startswith("Only no-calls (./.) in the VCF at PyPGx's positions")
+    assert body["results"]["CYP2D6"]["details"]["positions_without_genotype"] == 1
 
 
 @pytest.mark.parametrize(
@@ -490,11 +666,18 @@ def test_with_the_option_on_a_gene_of_no_calls_is_still_not_called(genotype):
     ],
 )
 def test_a_vcf_that_says_what_was_covered_is_not_second_guessed(genotype, header):
-    """An alignment's VCF and a gVCF's: absence there is reference where reads were."""
+    """An alignment's VCF and a gVCF's: absence there is reference where reads were.
+    Its no-calls are not (the gVCF lane writes one wherever the gVCF was not sure):
+    counted, and dropped before PyPGx."""
     seen, post = genotype
-    post([(*CYP2D6_38, "0/1")], header=header, absent_to_ref="false")
+    body = post(
+        [(*CYP2D6_38, "0/1"), (*CYP2D6_38_B, "./.")],
+        header=header,
+        absent_to_ref="false",
+    )
     assert sorted(seen["genes"]) == ["CYP2D6", "CYP2E1", "GSTM1"]
-    assert seen["prepared"] == []
+    assert body["results"]["CYP2D6"]["details"]["positions_without_genotype"] == 1
+    assert seen["vcf"] == seen["dropped"][0]
 
 
 def test_a_gvcfs_uncovered_gene_says_gvcf(genotype):
@@ -506,6 +689,21 @@ def test_a_gvcfs_uncovered_gene_says_gvcf(genotype):
     assert sorted(seen["genes"]) == ["CYP2D6", "GSTM1"]
     note = body["results"]["CYP2E1"]["details"]["note"]
     assert note == "No reads over this gene in the gVCF"
+
+
+def test_a_gene_off_the_inputs_reference_gets_that_note(genotype):
+    seen, post = genotype
+    body = post(
+        [(*CYP2D6_38, "0/1")],
+        header=(
+            "##ZaroPGx_uncovered_genes=GSTT1\n##ZaroPGx_coverage_measured_on=gVCF\n"
+            "##ZaroPGx_genes_off_reference=GSTT1:22_KI270879v1_alt\n"
+        ),
+        genes="CYP2D6,GSTT1",
+    )
+    assert seen["genes"] == ["CYP2D6"]
+    note = body["results"]["GSTT1"]["details"]["note"]
+    assert note.startswith("The gVCF's reference has no 22_KI270879v1_alt contig")
 
 
 # --------------------------------------------------------------------------
@@ -564,7 +762,16 @@ NO_CALLS = {
             "diplotype": None,
             "details": {"note": "No genotype in the VCF over this gene: GSTM1 note"},
         },
-        "ABCB1": {"success": True, "diplotype": "*1/*2", "details": {}},
+        "ABCB1": {
+            "success": True,
+            "diplotype": "*1/*2",
+            "details": {
+                "positions": 3,
+                "positions_without_genotype": 2,
+                "positions_note": "2 of 3 positions had no genotype in the file and "
+                "were read as reference",
+            },
+        },
     }
 }
 
@@ -651,17 +858,58 @@ def test_pharmcats_uncalled_cyp2d6_gets_pypgxs_reason(monkeypatch, tmp_path):
     assert "no_call_note" not in rows["CYP2C19"]
 
 
+@pytest.mark.parametrize("lane", ["write_html", "write_interactive_html"])
+def test_a_partial_call_carries_its_note_beside_the_diplotype(
+    monkeypatch, tmp_path, lane
+):
+    rows, page = _report(monkeypatch, tmp_path, lane)
+    assert rows["ABCB1"]["positions_note"].startswith("2 of 3 positions")
+    for tr in re.findall(r"<tr>(.*?)</tr>", page, re.S):
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)
+        if cells and _text(cells[0]).strip() == "ABCB1":
+            assert "2 of 3 positions had no genotype in the file" in _text(cells[1])
+            break
+    else:
+        raise AssertionError("no ABCB1 row")
+
+
+def test_an_outside_call_pypgx_made_carries_its_note(monkeypatch, tmp_path):
+    """CYP2D6 from a VCF reaches PharmCAT as PyPGx's outside call: PharmCAT's row is
+    PyPGx's call, and its note goes with it."""
+    note = "120 of 121 positions had no genotype in the file and were read as reference"
+    pypgx = {
+        "results": {
+            "CYP2D6": {
+                "success": True,
+                "diplotype": "*1/*4",
+                "details": {"positions_note": note},
+            }
+        }
+    }
+    genes = [{"gene": "CYP2D6", "diplotype": "*1/*4", "call_source": "OUTSIDE"}]
+    rows, _ = _report(monkeypatch, tmp_path, "write_html", genes, pypgx)
+    assert rows["CYP2D6"]["positions_note"] == note
+
+
 def test_the_workflow_diagram_counts_them_apart():
     from app.reports.generator import pypgx_gene_counts
 
     output = {
         "total_genes": 66,
-        "successful_genes": 4,
+        "successful_genes": DEMO_CALLED,
         "not_sequenced_genes": 0,
-        "no_genotype_genes": 62,
+        "no_genotype_genes": DEMO_NO_GENOTYPE,
+        "partially_genotyped_genes": DEMO_PARTIAL,
         "failed_genes": 0,
     }
-    assert pypgx_gene_counts(output) == (4, 66, 0, 62, 0)
+    assert pypgx_gene_counts(output) == (
+        DEMO_CALLED,
+        66,
+        0,
+        DEMO_NO_GENOTYPE,
+        0,
+        DEMO_PARTIAL,
+    )
 
 
 def test_gzip_header_helpers_read_the_same_line(pypgx, tmp_path):

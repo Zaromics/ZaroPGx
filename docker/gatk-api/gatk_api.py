@@ -4819,6 +4819,10 @@ def gvcf_contested_spans(job_label, staged_gvcf, positions_path, work_dir):
 # copies equal.
 UNCOVERED_GENES_HEADER_KEY = "ZaroPGx_uncovered_genes"
 COVERAGE_MEASURED_ON_HEADER_KEY = "ZaroPGx_coverage_measured_on"
+# "GENE:contig" for each gene whose contig the gVCF's reference does not have (GSTT1,
+# on 22_KI270879v1_alt, for a gVCF made against a GRCh38 without ALT contigs): no
+# reads there is not "not sequenced, or deleted".
+OFF_REFERENCE_HEADER_KEY = "ZaroPGx_genes_off_reference"
 
 
 def pypgx_gene_table_path():
@@ -4962,6 +4966,37 @@ def gvcf_uncovered_genes(job_label, staged_gvcf, table_path, work_dir):
         return sorted({gene for _, _, _, gene in spans})
     with _open_vcf_text(overlapping) as handle:
         return genes_without_gvcf_reads(handle, spans)
+
+
+def vcf_header_contigs(path):
+    """The contig IDs a (bgzipped) VCF's header declares."""
+    contigs = []
+    with _open_vcf_text(path) as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith("##contig=<"):
+                for field in line.strip()[len("##contig=<") :].rstrip(">").split(","):
+                    key, _, value = field.partition("=")
+                    if key.strip() == "ID" and value.strip():
+                        contigs.append(value.strip())
+    return contigs
+
+
+def genes_off_reference(header_contigs, spans):
+    """{gene: contig} for the genes in `spans` on an ALT contig the header does not
+    declare, with or without "chr". Empty for a header that declares none: it cannot
+    tell. Only ALT contigs (a "_" in the name) are judged, as only a reference without
+    them is common; a header declaring some chromosomes only would otherwise put every
+    gene on the rest off it."""
+    if not header_contigs:
+        return {}
+    names = {_pypgx_contig(c) for c in header_contigs}
+    return {
+        gene: contig
+        for contig, _, _, gene in spans
+        if "_" in contig and _pypgx_contig(contig) not in names
+    }
 
 
 def with_header_lines(vcf_lines, extra):
@@ -5125,6 +5160,10 @@ def judge_pgx_pass(pgx_vcf_text_lines, positions_path, contested=()):
                 for rid, ref, alt in pharmcat
             ]
 
+        # The general file keeps its no-calls, so the published VCF says what the gVCF
+        # said. PyPGx never reads them as such: Beagle would fill them in, so /genotype
+        # drops no-calls first and counts them in the call's note (pypgx_wrapper's
+        # drop_no_calls).
         def emit(pharmcat_rows, general_rows=None):
             out.extend(pharmcat_rows)
             general.extend(pharmcat_rows if general_rows is None else general_rows)
@@ -5343,9 +5382,17 @@ def convert_gvcf_to_vcf(
         job_label, staged, pypgx_gene_table_path(), work_dir
     )
     uncovered_line = f"##{UNCOVERED_GENES_HEADER_KEY}={','.join(uncovered) or '.'}"
+    off_reference = genes_off_reference(
+        vcf_header_contigs(staged), pypgx_gene_spans_grch38(pypgx_gene_table_path())
+    )
+    listed = ",".join(f"{g}:{c}" for g, c in sorted(off_reference.items()))
     general_lines = with_header_lines(
         general_lines,
-        [uncovered_line, f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF"],
+        [
+            uncovered_line,
+            f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
+            f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
+        ],
     )
     logger.info(
         f"Job {job_label}: {len(uncovered)} PyPGx gene(s) with no reads in the gVCF"

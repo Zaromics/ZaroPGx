@@ -252,6 +252,8 @@ def test_the_step_counts_genes_with_no_reads_apart():
         "successful_genes": 1,
         "not_sequenced_genes": 2,
         "no_genotype_genes": 0,
+        "partially_genotyped_genes": 0,
+        "positions_without_genotype": 0,
         "failed_genes": 1,
     }
 

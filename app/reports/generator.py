@@ -336,9 +336,9 @@ def _count(value) -> Optional[int]:
 
 def pypgx_gene_counts(
     output: Dict[str, Any],
-) -> Optional[Tuple[int, int, int, int, int]]:
-    """(genotyped, panel, with no reads, with no genotype in the VCF, failed) from the
-    PyPGx step's output.
+) -> Optional[Tuple[int, int, int, int, int, int]]:
+    """(genotyped, panel, with no reads, with no genotype in the VCF, failed, genotyped
+    with positions read as reference) from the PyPGx step's output.
 
     The wrapper's step_gene_counts records these directly, with
     ``not_sequenced_genes`` and ``no_genotype_genes``. Steps recorded before it counted
@@ -353,9 +353,10 @@ def pypgx_gene_counts(
     if "not_sequenced_genes" in output:
         no_reads = _count(output.get("not_sequenced_genes")) or 0
         no_genotype = _count(output.get("no_genotype_genes")) or 0
-        return done, of, no_reads, no_genotype, failed
+        partial = _count(output.get("partially_genotyped_genes")) or 0
+        return done, of, no_reads, no_genotype, failed, partial
     panel = done + failed
-    return of - failed, panel, max(panel - of, 0), 0, failed
+    return of - failed, panel, max(panel - of, 0), 0, failed, 0
 
 
 def workflow_run_facts(
@@ -434,8 +435,10 @@ def workflow_run_facts(
     pypgx = (by_name.get("pypgx_analysis") or {}).get("output") or {}
     counts = pypgx_gene_counts(pypgx)
     if counts:
-        done, of, no_reads, no_genotype, failed = counts
+        done, of, no_reads, no_genotype, failed, partial = counts
         line = f"{done} of {of} genes genotyped"
+        if partial:
+            line += f" ({partial} with positions read as reference)"
         if no_reads:
             line += f", {no_reads} with no reads"
         if no_genotype:
@@ -3753,6 +3756,8 @@ def generate_report(
                             row["tool_source"] = "PyPGx"
                             if record:
                                 row["pypgx"] = record
+                            if details.get("positions_note"):
+                                row["positions_note"] = str(details["positions_note"])
                         elif (
                             row is not None
                             and not gene_res.get("diplotype")
@@ -3796,6 +3801,11 @@ def generate_report(
                     # no_genotype_note), or no small-variant alleles to call.
                     if not diplotype and details.get("note"):
                         gene_entry["no_call_note"] = str(details["note"])
+                    # How many of the positions behind a call PyPGx read as the
+                    # reference with nothing in the file to say so (docker/pypgx's
+                    # positions_read_as_reference_note).
+                    if diplotype and details.get("positions_note"):
+                        gene_entry["positions_note"] = str(details["positions_note"])
                     # activity_score is already included in the gene_entry above
                     data.setdefault("genes", []).append(gene_entry)
                     existing_genes.add(gene_name.upper())

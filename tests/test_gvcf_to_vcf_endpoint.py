@@ -325,7 +325,17 @@ class FakeTools:
                         rows.append((f[0], int(f[1]), f[9].split(":")[0]))
                 self._write(self._flag_value(argv, "-o"), rows, extra)
             else:
-                self._write(self._flag_value(argv, "-o"), [("chr1", 1)])
+                # The staging re-encode: the upload's ##contig lines come along, as
+                # they do through `bcftools view`.
+                raw = Path(source).read_bytes()
+                if raw[:2] == b"\x1f\x8b":
+                    raw = gzip.decompress(raw)
+                contigs = [
+                    line
+                    for line in raw.decode("utf-8", "replace").splitlines()
+                    if line.startswith("##contig=")
+                ]
+                self._write(self._flag_value(argv, "-o"), [("chr1", 1)], contigs)
         elif tool == "bcftools" and sub == "concat":
             out = self._flag_value(argv, "-o")
             if self.payload is not None:
@@ -1711,3 +1721,37 @@ def test_the_gene_table_is_found_beside_the_module_or_in_the_repo(gatk_api):
     spans = gatk_api.pypgx_gene_spans_grch38(path)
     assert ("22", 42116498, 42155810, "CYP2D6") in spans
     assert len(spans) == 92
+
+
+def _gvcf_with_contigs(*contigs):
+    head, chrom = GVCF_BYTES.split(b"#CHROM", 1)
+    lines = b"".join(f"##contig=<ID={c},length=1000>\n".encode() for c in contigs)
+    return head + lines + b"#CHROM" + chrom
+
+
+@pytest.mark.parametrize(
+    "contigs, line",
+    [
+        (("chr1", "chr22"), "##ZaroPGx_genes_off_reference=GSTT1:22_KI270879v1_alt"),
+        (("chr1", "chr22", "chr22_KI270879v1_alt"), "##ZaroPGx_genes_off_reference=."),
+        # No ##contig lines: nothing to tell from.
+        ((), "##ZaroPGx_genes_off_reference=."),
+    ],
+)
+def test_a_gene_off_the_gvcfs_reference_is_named(client, tools, contigs, line):
+    """GSTT1 is on 22_KI270879v1_alt in PyPGx's GRCh38. A gVCF made against a GRCh38
+    without ALT contigs has no reads there because none could map there, which is not
+    "not sequenced, or both copies deleted"."""
+    resp = _post(client, body=_gvcf_with_contigs(*contigs))
+    assert resp.status_code == 200, resp.text
+    assert line in _merged_header(tools)
+
+
+def test_the_header_contigs_are_read_with_or_without_chr(gatk_api, tmp_path):
+    path = tmp_path / "h.vcf.gz"
+    path.write_bytes(gzip.compress(_gvcf_with_contigs("1", "22")))
+    assert gatk_api.vcf_header_contigs(str(path)) == ["1", "22"]
+    assert gatk_api.genes_off_reference(["1", "22"], SPANS) == {
+        "GSTT1": "22_KI270879v1_alt"
+    }
+    assert gatk_api.genes_off_reference([], SPANS) == {}
