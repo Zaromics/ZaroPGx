@@ -407,7 +407,7 @@ def test_rendered_legend_explains_every_glyph(template_name):
     html = _render(template_name)
     assert "X</strong> = outside call" in html
     assert "?</strong> = not recorded by this run" in html
-    assert "&ndash;</strong> = no call made" in html
+    assert "&ndash;</strong> = no call and no tool on record" in html
     # The Data column is gone, so the legend must not describe it.
     assert "Data:</strong>" not in html
     assert "Report data tool" not in html
@@ -488,7 +488,12 @@ def test_the_legend_holds_for_a_gene_without_a_call(template_name):
         "the one that made the call or, for a gene without a call, the one that "
         "tried" in html
     )
-    assert "&ndash;</strong> = no call made and no tool to name" in html
+    # True for HLA-C, which PharmCAT never handles, and for a PyPGx-only gene
+    # with nothing returned: "PharmCAT made none and was given none" alone is not.
+    assert (
+        "&ndash;</strong> = no call and no tool on record for the gene (PharmCAT "
+        "made none and was given none, or no tool returned a result for it)" in html
+    )
 
 
 def test_an_uncalled_row_s_tooltip_does_not_say_called_by():
@@ -515,6 +520,60 @@ def test_an_uncalled_row_s_tooltip_does_not_say_called_by():
     assert titles["ABCB1"] == "No call; tried by PyPGx"
     assert titles["CYP2C19"] == "Called by PharmCAT"
     assert titles["ABCG2"] == "No call made for this gene"
+
+
+def test_called_by_text_says_who_tried_when_there_is_no_call():
+    """One rule for the tooltips and the ReportLab lane (provenance.called_by_text)."""
+    from app.reports.provenance import called_by_text
+
+    called = {"gene": "CYP2C19", "diplotype": "*38/*38", "call_source": "MATCHER"}
+    assert called_by_text(called) == "Called by PharmCAT"
+    # Tried and could not: PharmCAT's matcher (NAT2 from a VCF), PyPGx's marker.
+    assert (
+        called_by_text(
+            {"gene": "NAT2", "diplotype": "Unknown/Unknown", "call_source": "MATCHER"}
+        )
+        == "No call; tried by PharmCAT"
+    )
+    assert (
+        called_by_text(
+            {"gene": "ABCB1", "diplotype": "Unknown", "tool_source": "PyPGx"}
+        )
+        == "No call; tried by PyPGx"
+    )
+    # The row's own letter and label, as the page shows them, when it has them.
+    assert (
+        called_by_text(
+            {
+                "gene": "ABCB1",
+                "diplotype": "",
+                "called_by": CALLED_BY_PYPGX,
+                "called_by_label": "Called by PyPGx",
+            }
+        )
+        == "No call; tried by PyPGx"
+    )
+    # No tool to name, or none recorded: unchanged.
+    assert (
+        called_by_text({"gene": "HLA-C", "diplotype": "", "call_source": "NONE"})
+        == "No call made for this gene"
+    )
+    assert (
+        called_by_text(
+            {"gene": "CYP2D6", "diplotype": "*1/*3", "call_source": "OUTSIDE"}
+        )
+        == "Outside call - producing tool not recorded by this run"
+    )
+
+
+def test_reportlab_gene_line_says_who_tried_when_there_is_no_call():
+    from app.reports.pdf_generators import _diplotype_line
+
+    line = _diplotype_line(
+        {"gene": "ABCB1", "diplotype": "Unknown", "tool_source": "PyPGx"}
+    )
+    assert "[No call; tried by PyPGx]" in line
+    assert "Called by" not in line
 
 
 def test_reportlab_gene_line_is_honest_about_outside_and_unknown():
