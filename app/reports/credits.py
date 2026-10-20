@@ -1052,18 +1052,25 @@ CREDITS: Tuple[Credit, ...] = (
         "gatk",
         "GATK",
         "software",
-        "gVCF genotyping, liftover and read alignment",
+        "gVCF genotyping, liftover, read alignment and re-alignment of the CYP2D6 "
+        "and UGT2B loci",
         "https://gatk.broadinstitute.org",
         "Apache-2.0",
-        lambda run: run.ran("gvcf_to_vcf", "liftover", "gatk_alignment"),
+        lambda run: run.ran(
+            "gvcf_to_vcf", "liftover", "gatk_alignment", "alt_realignment"
+        ),
         (GATK_BOOK_2020, MCKENNA_2010),
         service="gatk",
         papers_when=(("gvcf_to_vcf", POPLIN_2017),),
-        used_when="gVCF, GRCh37 VCF or BCF, FASTQ",
+        used_when=(
+            "gVCF, GRCh37 VCF or BCF, FASTQ; an alignment with reads on the CYP2D6 "
+            "or UGT2B ALT contigs"
+        ),
         uses=(
             (("gvcf_to_vcf",), "gVCF genotyping"),
             (("liftover",), "liftover"),
             (("gatk_alignment",), "read alignment"),
+            (("alt_realignment",), "re-alignment of the CYP2D6 and UGT2B loci"),
         ),
     ),
     Credit(
@@ -1087,14 +1094,20 @@ CREDITS: Tuple[Credit, ...] = (
         "bwa",
         "BWA-MEM",
         "software",
-        "Aligns the reads to GRCh38 (GATK BwaSpark)",
+        "Aligns to GRCh38, with GATK's BwaSpark, a FASTQ's reads and the CYP2D6 and "
+        "UGT2B loci's reads",
         "https://github.com/lh3/bwa",
         "Apache-2.0 (as built into GATK)",
-        lambda run: run.ran("gatk_alignment"),
+        lambda run: run.ran("gatk_alignment", "alt_realignment"),
         (BWA_MEM_2013,),
         service="gatk",
         component="bwa",
-        used_when="FASTQ",
+        used_when="FASTQ; an alignment with reads on the CYP2D6 or UGT2B ALT contigs",
+        uses=(
+            (("gatk_alignment",), "a FASTQ's reads"),
+            (("alt_realignment",), "the CYP2D6 and UGT2B loci's reads"),
+        ),
+        uses_lead="Aligns to GRCh38, with GATK's BwaSpark, ",
     ),
     Credit(
         "pypgx",

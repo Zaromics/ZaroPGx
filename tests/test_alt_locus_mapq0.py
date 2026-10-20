@@ -2,8 +2,8 @@
 alignment was not ALT-aware.
 
 Found 2026-10-13 on a whole genome aligned with plain ``bwa mem`` to NCBI's full GRCh38,
-which has ALT contigs and no ``.alt`` file beside the index. Two ALT contigs cover the
-whole of CYP2D6, one UGT2B15, and the seven MHC haplotypes HLA-A, -B and -C. A read
+which has ALT contigs and no ``.alt`` file beside the index. Three ALT contigs cover
+the whole of CYP2D6, one UGT2B15, and the seven MHC haplotypes HLA-A, -B and -C. A read
 from those genes matches two places equally, gets mapping quality 0 and lands on
 either. PyPGx calls CYP2D6 and UGT2B15 from reads at MAPQ >= 1 and their copy number
 from the primary copy's depth. NA12878's reads, realigned without ALT-awareness: 73%
@@ -155,7 +155,9 @@ def test_create_input_vcf_measures_and_records_the_counts():
     src = WRAPPER.read_text(encoding="utf-8")
     body = src[src.index("def run_pypgx_create_input_vcf") :]
     body = body[: body.index("\ndef ", 1)]
-    assert "alt_locus_mapq0(str(alignment_path), str(assembly))" in body
+    # On the reads the calls came from: the patched alignment when the ALT-covered
+    # loci were aligned again (tests/test_realign_alt_loci.py).
+    assert "alt_locus_mapq0(calls_from, str(assembly))" in body
     assert '"alt_locus_mapq0": alt_locus' in body
     route = src[src.index("async def create_input_vcf(") :]
     route = route[: route.index("\ndef ", 1)]

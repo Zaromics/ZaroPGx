@@ -32,7 +32,8 @@ positions the file did not cover were treated. The disclaimer follows.
 **Alerts and Warnings.** What qualifies these results: limits of the input type (a VCF
 cannot give HLA calls, for instance), genes called from partial coverage, variants PharmCAT
 could not read, positions assumed to be reference, genes whose reads mostly had mapping
-quality 0 (an alignment that was not ALT-aware), a PharmCAT version nobody has verified.
+quality 0 (an alignment that was not ALT-aware), the CYP2D6 and UGT2B loci when their reads
+were aligned again (or could not be), a PharmCAT version nobody has verified.
 Read these first.
 
 **Executive Summary.** The 25 genes PharmCAT reports on, on one page, the same genes in the
@@ -123,19 +124,26 @@ bundle.
 
 Writing the files sends nothing anywhere. To put a job's results on a FHIR server, ask for
 it: `POST /fhir/push/workflow/{job_id}` sends the job's bundle to `FHIR_SERVER_URL`, in
-Compose the bundled HAPI FHIR server (`127.0.0.1:8090/fhir` on the host). It goes as one
-transaction. The Patient is created once per ZaroPGx patient and reused by later pushes;
-the report and its resources are created the first time and updated in place when the job
-is pushed again, not copied. Every resource pushed for a job, the Patient aside, is tagged
+Compose the bundled HAPI FHIR server (`127.0.0.1:8090/fhir` on the host). Only a completed
+job is pushed (HTTP 409 for one that failed, was cancelled or is still running), and only
+one with a bundle: the bundle is written with the custom report, so a job run with that
+report turned off has none (HTTP 404). It goes as one transaction. The Patient is created
+once per ZaroPGx patient and reused by later pushes; the report and its resources are
+created the first time and updated in place when the job is pushed again, not copied.
+Every resource pushed for a job, the Patient aside, is tagged
 `urn:zaropgx:job-id|<job_id>`, and a push deletes, in the same transaction, the job's
 resources its bundle no longer has: the recommendations a regenerated report dropped, or a
 whole older bundle written before October 2026. The answer says how many resources the
 server created, how many it already had and how many it deleted, and where the report is
 (`DiagnosticReport/<id>`). If the server is down or refuses the bundle, the request fails
-with the reason (HTTP 502), nothing is changed on the server, and the job is not affected.
-Credentials in `FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never
-shown. Nothing is pushed when a job ends, and the web page has no button for it yet.
-Sending to an outside health record system is not supported.
+with the reason (HTTP 502) and nothing is changed on the server. If the bundle was sent
+and no answer came back (the server took more than five minutes, or the connection
+dropped), the request fails the same way, but the server may have stored the bundle, or
+may still be storing it; pushing again once it has finished is safe, since a push updates
+the job's resources in place. The job is not affected either way. Credentials in
+`FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never shown. Nothing
+is pushed when a job ends, and the web page has no button for it yet. Sending to an
+outside health record system is not supported.
 
 ## Using the results
 

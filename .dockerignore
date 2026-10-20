@@ -75,3 +75,7 @@ ENV/
 
 # Don't include the data directory, it's mounted at runtime
 data/
+
+# The FHIR server's IG packages: compose.yml mounts them into fhir-server; the app
+# does not read them.
+docker/fhir-server/packages/

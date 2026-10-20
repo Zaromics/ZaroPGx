@@ -20,8 +20,13 @@ curated: true
   (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
   gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
 - **FASTQ** (in testing): short-read, single- or paired-end, up to 20 GB. Aligned to GRCh38
-  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over 20 GB, long
-  reads (ONT, PacBio), or a platform that cannot be read from the read names.
+  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over the cap
+  (`FASTQ_MAX_UPLOAD_BYTES`, 20 GB by default), more than the free disk can hold (about 9x
+  the FASTQ, checked before alignment starts), long reads (ONT, PacBio), or a platform that
+  cannot be read from the read names. The cap is about scratch disk and run time. On 2% of
+  NA12878's 30x reads (1.08 GB, 7.6 M pairs) alignment took 11 minutes and peaked at 6.1x
+  the FASTQ's size in disk (Oct 2026), so a whole genome would take hours. Open: measure
+  disk and MarkDuplicatesSpark's memory on one whole-genome FASTQ.
 - **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
   pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
   that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
@@ -75,6 +80,19 @@ curated: true
   copy-number and allele-fraction plots. PyPGx does not fill gaps in PharmCAT's rows:
   PharmCAT stays the source of the phenotype for every gene it covers, and PyPGx's
   calls reach it as diplotype-only outside calls.
+
+- [DONE Oct 2026, feat/realign-alt-loci] Reads on GRCh38's ALT contigs. An alignment
+  made against a GRCh38 that has them (NCBI's full GRCh38, for one) without ALT-awareness
+  puts many CYP2D6 and UGT2B17/UGT2B15 reads there as their primary alignment (on
+  NA12878, 529 of CYP2D6's 1,570 stayed on chr22), where PyPGx never reads. ALT-aware,
+  BWA keeps a read with a hit on the main chromosomes there and writes its ALT hit as a
+  supplementary copy; only a read with no such hit is primary on the ALT (1 in
+  NA12878's BAM).
+  On NA12878 aligned so, CYP2D6 came out *1/*1 (truth *3/*68+*4) with no flag, at 48%
+  MAPQ 0. Those loci's reads are now aligned again to the main contigs (gatk-api
+  /realign-reads, BwaSpark) before PyPGx and PharmCAT's positions read them; the 66
+  PyPGx calls then match the published ALT-aware BAM's. Needs the alignment index;
+  without it the genes are flagged with the reason.
 
 ## Calling & Tools
 
@@ -140,13 +158,13 @@ curated: true
 - Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
 - Add preprocessing glyph (e.g., Liftover) where applicable & mtDNA glyph
 - Unify/clean redundant text
-- **Front-end test harness — nothing renders the page today.** What exists is
+- **Front-end test harness.** Until Oct 2026 nothing rendered the page. What existed was
   Node-executed *logic* tests: `tests/test_ui_workflow_flag_reads.py` and
   `tests/test_upload_story_coherence.py` pull the inline `<script>` out of
   `index.html`, run it against real API JSON, and assert on the HTML string (CI
   installs Node 22 so they cannot silently skip). Everything else is source-text
-  assertions. There is no `package.json`, no jsdom, and no browser driver, so
-  nothing computes a style, clicks anything, or looks at the page.
+  assertions. There was no `package.json`, no jsdom, and no browser driver, so
+  nothing computed a style, clicked anything, or looked at the page.
   That gap produced three bugs in one sitting on 2026-08-29, each invisible to
   the 1700-test suite:
   - PharmCAT popup text unreadable in dark mode (a white card inheriting the
@@ -157,9 +175,12 @@ curated: true
     the report links actually resolve.
   Cheapest useful order: (1) [DONE Oct 2026] every compose E2E lane fetches each
   `/reports/` link its completed job lists and requires a 200 with a body
-  (`tests/e2e/report_links.py`); (2) Playwright smoke over upload → progress →
-  report in both themes, with a contrast assertion on the popups; (3) only then
-  consider visual snapshots.
+  (`tests/e2e/report_links.py`); (2) [DONE Oct 2026] Playwright smoke over upload →
+  progress → report in both themes, with a contrast assertion on the popups and the
+  results card (`tests/e2e/test_ui_smoke.py`; with the 08-29 popup CSS put back, the
+  dark theme's labels measure 1.22:1 and it fails; its VCF is hg38, so the liftover
+  freeze above still needs a GRCh37 run watched); (3) only then consider visual
+  snapshots.
 
 ## Data & Database
 
@@ -195,12 +216,15 @@ curated: true
 - Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
   an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
 - Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.
+- [DONE Oct 2026, feat/hapi-genomics-ig] The bundled HAPI server loads the Genomics
+  Reporting IG 3.0.0 and the two packages it depends on, so its `$validate` checks a bundle
+  against the IG's profiles. They are pinned files in `docker/fhir-server/packages/`, not
+  downloads: the IG changes every year or two, so it is updated with the code (decided
+  2026-10-19). Offline, `$validate` does not check LOINC, SNOMED CT or HGNC codes. How to
+  call it and how to update the packages: docs/developer/architecture.md.
 - High/Low risk for the HLA, MT-RNR1 and malignant hyperthermia phenotypes is provisional:
   CPIC's EHR priority for the result, said in a note on each (Oct 2026, kept coded for
   now). Revisit if the IG, LOINC or CPIC gives these results terms of their own.
-- Load the Genomics Reporting IG into the bundled HAPI server so its `$validate` works
-  there too (`hapi.fhir.implementationguides.*` in `compose.yml`; it installs on the
-  server's next start).
 - HAPI FHIR server: adjust `ddl-auto` appropriately for prod vs dev
 - Export to an outside EHR/PHR (a configurable server, authentication)
 - Explore Fasten as a bridge for import/export to HAPI FHIR

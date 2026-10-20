@@ -64,6 +64,7 @@ from app.api.utils.header_inspector import (
     inspect_header,
 )
 from app.genome.contig_names import (
+    RenamedCopyNotIndexed,
     rename_plan,
     renamed_path,
     write_renamed_copy,
@@ -75,6 +76,7 @@ from app.services.job_service import JobService, schedule_coroutine
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.utils.env import env_flag
 from app.utils.pharmcat_assume_ref import resolve_assume_ref_flags
+from app.utils.shared_input import current_index
 
 from ..utils.security import get_optional_user
 
@@ -938,6 +940,18 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
             )
             job_service.log_job_event(job_id, log_data)
 
+            # The custom report is off, not PharmCAT's own: the page's Report toggle
+            # says "only PharmCAT's native report is provided". Those files, and
+            # mtDNA-Server 2's, are in patient_dir (found or reconciled above); without
+            # their links the job finished offering nothing at all.
+            from app.reports.generator import native_report_paths
+
+            response_data.update(
+                native_report_paths(
+                    str(patient_dir), str(job_id), f"/reports/{patient_id}/{job_id}"
+                )
+            )
+
         # Add provisional flag if the workflow was marked as provisional
         is_provisional = workflow_config.get("is_provisional", False)
 
@@ -1344,6 +1358,14 @@ async def use_ucsc_contig_names(
         renamed = await asyncio.to_thread(
             write_renamed_copy, file_path, input_type, plan
         )
+    except RenamedCopyNotIndexed as exc:
+        Path(renamed_path(file_path)).unlink(missing_ok=True)
+        raise RuntimeError(
+            "The file's chromosomes were renamed from NCBI accessions, but the renamed "
+            f"copy could not be indexed ({str(exc) or 'samtools index failed'}). An "
+            "alignment must be sorted by coordinate to be indexed: sort it "
+            "(samtools sort) and upload it again."
+        ) from exc
     except Exception as exc:
         Path(renamed_path(file_path)).unlink(missing_ok=True)
         detail = getattr(exc, "stderr", None)
@@ -1354,10 +1376,16 @@ async def use_ucsc_contig_names(
             f"{(detail or str(exc)).strip()[-500:]}"
         ) from exc
 
-    # Registered with the job so it is released with the upload when the job ends.
+    # Registered with the job, its index too, so both are released with the upload
+    # when the job ends (an unregistered index was left behind in /data/uploads).
+    index = current_index(Path(renamed))
     job = job_service.get_job(job_id)
     metadata = dict(getattr(job, "job_metadata", None) or {})
-    metadata["file_paths"] = [*(metadata.get("file_paths") or []), renamed]
+    metadata["file_paths"] = [
+        *(metadata.get("file_paths") or []),
+        renamed,
+        *([str(index[0])] if index else []),
+    ]
     metadata["contigs_renamed"] = len(plan)
     job_service.update_job(job_id, JobUpdate(metadata=metadata))
     if not env_flag("KEEP_UPLOADS"):
@@ -1716,7 +1744,8 @@ async def upload_genomic_data(
       cannot be lifted are dropped, and the run fails rather than continuing if an
       implausibly large share of the file fails to lift.
     - BAM/CRAM/SAM: BAM is processed by ZaroHLA then PyPGx, then PharmCAT. CRAM/SAM processed through GATK first for conversion to BAM.
-    - FASTQ: short-read, single-end or an R1/R2 pair uploaded together, up to 20 GB, is
+    - FASTQ: short-read, single-end or an R1/R2 pair uploaded together, up to the size
+      cap (FASTQ_MAX_UPLOAD_BYTES, 20 GB unless set), is
       aligned to GRCh38 (gatk-api's /align-fastq: FastqToSam, BwaSpark, MarkDuplicatesSpark)
       and then processed as a BAM. Rejected with 400: over the cap, long reads (ONT, PacBio),
       a platform that cannot be read from the read names, or two files that are not mates.
@@ -1796,6 +1825,12 @@ async def upload_genomic_data(
             report_enabled=report_enabled,
             mtdna_enabled=effective_mtdna_enabled,
         )
+        # Every part is saved under /data/uploads by now. Starlette keeps each part's
+        # spooled copy open until the response's background tasks end, and the whole
+        # pipeline runs in one: a 99 GB genome held its size again in temporary space
+        # (an unlinked file in /tmp) for the length of its job (2026-10-14).
+        for upload in files:
+            await upload.close()
 
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])

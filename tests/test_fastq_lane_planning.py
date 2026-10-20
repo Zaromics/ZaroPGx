@@ -8,7 +8,7 @@ be easy to accept everything now that something can align, and both remaining
 refusals are real:
 
 * above the byte cap, alignment would need several times the reads' size in scratch
-  disk (three BAMs are written) and many hours on one machine;
+  disk (several BAM-sized intermediates at once) and many hours on one machine;
 * with no detectable platform there is no honest ``@RG PL:``, which GATK and PyPGx
   both read.
 
@@ -18,7 +18,10 @@ BAM onward it *is* the BAM lane.
 
 from __future__ import annotations
 
+import ast
+import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -90,8 +93,8 @@ def test_above_the_cap_is_refused():
 
 
 def test_the_cap_refusal_says_what_it_is_for_and_what_to_do():
-    """It once said "memory", which was wrong: BwaSpark's footprint is the index
-    image, loaded whole for a panel too."""
+    """It once said "memory", which was never measured. What the cap bounds is
+    scratch disk and run time."""
     reason = _plan(FASTQ_MAX_UPLOAD_BYTES + 1, _GOOD)["unsupported_reason"].lower()
     assert "exome" in reason and "whole-genome" in reason
     assert "nf-core/sarek" in reason
@@ -132,15 +135,70 @@ def test_a_missing_platform_call_does_not_crash_or_default():
 # --------------------------------------------------------------------------
 
 
-def test_the_planner_cap_matches_the_endpoints_default():
-    """Two copies of the number, guarding different points. If they drift, the plan
-    promises an alignment /align-fastq then refuses while streaming."""
-    endpoint = (
-        Path(__file__).resolve().parent.parent / "docker" / "gatk-api" / "gatk_api.py"
-    ).read_text(encoding="utf-8")
+_REPO = Path(__file__).resolve().parent.parent
+_PLANNER_SOURCE = _REPO / "app" / "api" / "utils" / "file_processor.py"
+_ENDPOINT_SOURCE = _REPO / "docker" / "gatk-api" / "gatk_api.py"
 
-    assert "str(20 * 1024 ** 3)" in endpoint
-    assert FASTQ_MAX_UPLOAD_BYTES == 20 * 1024**3
+
+def _cap_expression(source: Path) -> ast.expr:
+    """The right-hand side of the module's one FASTQ_MAX_UPLOAD_BYTES assignment."""
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    found = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "FASTQ_MAX_UPLOAD_BYTES"
+            for target in node.targets
+        )
+    ]
+    assert len(found) == 1, f"{source.name} must set FASTQ_MAX_UPLOAD_BYTES once"
+    return found[0]
+
+
+def _cap_under(expression: ast.expr, environ: dict) -> int:
+    """Evaluate that expression as it would run with `environ` as the environment."""
+    code = compile(ast.Expression(expression), "<cap>", "eval")
+    return eval(code, {"os": types.SimpleNamespace(environ=environ)})
+
+
+def test_the_planner_and_the_endpoint_read_one_setting():
+    """Two copies of the read, guarding different points. If they drift, the plan
+    promises an alignment /align-fastq then refuses while streaming.
+
+    They used to be two literals that only a test kept equal, so raising the cap meant
+    finding both. Now both read one variable with one default, compared here as code
+    (formatting aside) and then run: unset gives the default, set gives the value.
+    """
+    planner = _cap_expression(_PLANNER_SOURCE)
+    endpoint = _cap_expression(_ENDPOINT_SOURCE)
+
+    assert ast.dump(planner) == ast.dump(endpoint)
+    assert _cap_under(planner, {}) == 20 * 1024**3
+    assert _cap_under(planner, {"FASTQ_MAX_UPLOAD_BYTES": "1000"}) == 1000
+
+
+def test_compose_hands_the_app_and_gatk_api_the_same_value():
+    """The app reads .env through env_file and gatk-api has no env_file, so a value
+    set only in .env would reach the app alone. Both get it from compose.yml, with
+    the code's own default when .env says nothing."""
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load((_REPO / "compose.yml").read_text(encoding="utf-8"))[
+        "services"
+    ]
+
+    def entry(name):
+        env = [str(e) for e in services[name].get("environment") or []]
+        matches = [e for e in env if e.startswith("FASTQ_MAX_UPLOAD_BYTES=")]
+        assert len(matches) == 1, f"compose.yml does not pass {name} the FASTQ cap"
+        return matches[0]
+
+    assert entry("app") == entry("gatk-api")
+    default = re.fullmatch(
+        r"FASTQ_MAX_UPLOAD_BYTES=\$\{FASTQ_MAX_UPLOAD_BYTES:-(\d+)\}", entry("app")
+    )
+    assert default, entry("app")
+    assert int(default.group(1)) == _cap_under(_cap_expression(_PLANNER_SOURCE), {})
 
 
 def test_the_endpoint_uses_gatks_own_bwa_rather_than_a_second_aligner():

@@ -810,6 +810,7 @@ async def create_input_vcf(
                 {
                     "pharmcat_positions": res.get("pharmcat_positions"),
                     "alt_locus_mapq0": res.get("alt_locus_mapq0"),
+                    "alt_realignment": res.get("alt_realignment"),
                 },
             )
 
@@ -819,8 +820,12 @@ async def create_input_vcf(
             "vcf_path": str(output_vcf_gz),
             "tbi_path": str(output_vcf_gz) + ".tbi",
             "pharmcat_vcf_path": res.get("pharmcat_vcf"),
+            # Which PharmCAT positions were left out and why, one row each; main.nf
+            # publishes it beside PharmCAT's VCF as pharmcat_position_status.tsv.
+            "pharmcat_status_path": res.get("pharmcat_status"),
             "pharmcat_positions": res.get("pharmcat_positions"),
             "alt_locus_mapq0": res.get("alt_locus_mapq0"),
+            "alt_realignment": res.get("alt_realignment"),
             "sv_inputs": res.get("sv_inputs"),
             "assembly": pypgx_assembly,
         }
@@ -1188,8 +1193,9 @@ def annotate_header_line(vcf_gz: str, line: str) -> None:
 # Genes GRCh38 also carries on ALT contigs: how many of their reads have MAPQ 0
 # ---------------------------------------------------------------------------
 #
-# GRCh38 holds alternate copies of some loci as ALT contigs. Two of them cover the
-# whole of CYP2D6 (chr22_KI270928v1_alt, chr22_KB663609v1_alt), one UGT2B15
+# GRCh38 holds alternate copies of some loci as ALT contigs. Three of them cover the
+# whole of CYP2D6 (chr22_KI270928v1_alt, chr22_KB663609v1_alt, chr22_GL383582v2_alt;
+# the third was missed here until 2026-10-16), one UGT2B15
 # (chr4_GL000257v2_alt), and the seven MHC haplotypes (chr6_GL000250v2_alt to
 # _GL000256v2_alt) HLA-A, -B and -C (NCBI's alt_scaffold_placement, aligned over each
 # gene body). An aligner that is not ALT-aware sees two equally good places for a read
@@ -1260,6 +1266,502 @@ def alt_locus_mapq0(alignment_path: str, assembly: str) -> Optional[Dict[str, Di
 
 
 # ---------------------------------------------------------------------------
+# The ALT-covered loci, re-aligned to main contigs when reads sit on their ALTs
+# ---------------------------------------------------------------------------
+#
+# PyPGx reads main contigs only (and chr22_KI270879v1_alt, GSTT1's): that is the whole
+# of reference/pypgx/pypgx_grch38.fasta. An alignment made against a GRCh38 that has
+# the ALT contigs, by an aligner that is not ALT-aware, puts many of these loci's reads
+# on them as their primary alignment, where PyPGx never looks, and many of the rest at
+# MAPQ 0. Measured 2026-10-20 on NA12878's published 1000 Genomes BAM with these loci's
+# reads aligned again (2026-10-16) by plain bwa mem 0.7.18 to GRCh38 with its ALT
+# contigs: over CYP2D6's gene body 529 primary reads stay of the published BAM's 1,570,
+# 254 of them (48%) at MAPQ 0; over UGT2B15's, 2,460 of 5,106, 1,656 (67%) at MAPQ 0.
+# PyPGx would read CYP2D6 from 275 reads where the published BAM gives it 1,479 (272
+# on the loci's reads alone, 2026-10-16) -- and at 48% MAPQ 0 the report's flag (over
+# half) did not fire.
+#
+# An ALT-aware aligner does not do this. bwa mem with the reference's .alt file makes a
+# read's hit on the main chromosomes its primary alignment whenever it has one, and
+# writes its ALT hit as a supplementary record (0x800); only a read with no hit off the
+# ALT contigs is written there as primary, its best ALT hit (bwa's README-alt.md).
+# PyPGx reads the first kind where it is. Measured 2026-10-20 on NA12878's published
+# BAM (bwa mem 0.7.15, ALT-aware, GRCh38_full_analysis_set_plus_decoy_hla): 16,405
+# records on the four ALT contigs below, all supplementary but one, a primary at MAPQ 0
+# on GL000257v2; by their SA tags, 16,241 of those reads have their primary alignment
+# on chr22 or chr4, and 15,222 have it at MAPQ 60.
+#
+# So where reads have their primary alignment on a locus's ALT contigs, the locus's
+# reads -- every read on its primary span and on its ALT contigs, with its mate (primary
+# records only: a supplementary or secondary record is a copy) -- are aligned
+# again to the alignment reference (gatk-api /realign-reads: BwaSpark, then
+# MarkDuplicatesSpark), and this step reads a patched alignment: the uploaded reads
+# over every region it reads (patched_alignment_regions), less the locus's reads, plus
+# their new alignments. Every other gene's reads are the uploaded ones, unchanged.
+#
+# The loci are NCBI's alt_scaffold_placement (GCA_000001405.15) for every ALT whose
+# placement overlaps a PyPGx gene region, with the primary span it stands for
+# (0-based, half-open). GL000257v2 is the UGT2B17 deletion haplotype; its span holds
+# UGT2B17 and UGT2B15. GSTT1's KI270879v1 is in the alignment reference, so it is not
+# here. UCSC names: an NCBI-named upload is renamed before this step.
+ALT_LOCI_GRCH38 = (
+    {
+        "locus": "CYP2D6",
+        "span": ("chr22", 42077655, 42253758),
+        "alts": ("chr22_KB663609v1_alt", "chr22_KI270928v1_alt", "chr22_GL383582v2_alt"),
+        "genes": ("CYP2D6",),
+    },
+    {
+        "locus": "UGT2B17-UGT2B15",
+        "span": ("chr4", 68306358, 69010457),
+        "alts": ("chr4_GL000257v2_alt",),
+        "genes": ("UGT2B17", "UGT2B15"),
+    },
+)
+# Reads with their primary alignment on a locus's ALT contigs that make it worth aligning
+# again: what the report's MAPQ 0 check asks of a gene before it judges
+# (app/reports/alt_locus.py MIN_READS). NA12878's published BAM has none on CYP2D6's
+# and 1 on UGT2B17's; its reads aligned without ALT-awareness, 34,282 and 72,925.
+ALT_REALIGN_MIN_READS = 20
+# Around the primary span, so a pair across its edge comes along whole.
+ALT_REALIGN_PAD = 1000
+GATK_API_URL = os.environ.get("GATK_API_URL", "http://gatk-api:5000")
+# Most of a request is BwaSpark loading its 5.4 GB index image; the reads take seconds.
+ALT_REALIGN_TIMEOUT_S = 1800
+# The read group given to reads from an alignment that has none: MarkDuplicatesSpark
+# refuses reads without one. Removed again in the patched alignment.
+ALT_REALIGN_READ_GROUP = "zaropgx-realign"
+
+
+def alt_loci_to_realign(alignment_path: str, assembly: str) -> List[Dict[str, Any]]:
+    """The ALT_LOCI_GRCH38 loci with reads on their ALT contigs, each with
+    ``alt_reads``: how many reads have their primary alignment there (mapped, not
+    secondary, not supplementary).
+
+    Counted record by record. The index's counts take every record, and an ALT-aware
+    alignment's records on these contigs are mostly supplementary copies of reads PyPGx
+    reads on the main chromosome: NA12878's published BAM has 16,405 there, 1 of them
+    primary, and by the index both loci went to be re-aligned (BwaSpark's 5.4 GB index
+    load and ~100 s) or, without the index image, were flagged. Only what lies on the
+    ALT contigs (74-586 kb) is read. Measured 2026-10-20 on two 41 GB 30x genomes:
+    0.04 s for that BAM, 0.13 s for its reads aligned without ALT-awareness (107,630
+    records there).
+    """
+    if assembly != "GRCh38":
+        return []
+    import pysam
+
+    found = []
+    with pysam.AlignmentFile(alignment_path) as bam:
+        present = set(bam.references)
+        for locus in ALT_LOCI_GRCH38:
+            reads = 0
+            for alt in locus["alts"]:
+                if alt not in present:
+                    continue
+                for read in bam.fetch(alt):
+                    if not (
+                        read.is_unmapped or read.is_secondary or read.is_supplementary
+                    ):
+                        reads += 1
+            if reads >= ALT_REALIGN_MIN_READS:
+                found.append(dict(locus, alt_reads=reads))
+    return found
+
+
+def _locus_regions(bam, loci):
+    """(contig, start, end) for each locus's padded primary span and ALT contigs."""
+    prefixed = any(c.startswith("chr") for c in bam.references)
+    present = set(bam.references)
+    for locus in loci:
+        chrom, start, end = locus["span"]
+        name = chrom if prefixed else chrom[len("chr"):]
+        if name in present:
+            length = bam.get_reference_length(name)
+            yield name, max(0, start - ALT_REALIGN_PAD), min(length, end + ALT_REALIGN_PAD)
+        for alt in locus["alts"]:
+            if alt in present:
+                yield alt, 0, bam.get_reference_length(alt)
+
+
+def _fetch_mates(bam, missing: Dict[str, Any]) -> Dict[str, Any]:
+    """The primary records of the mates of `missing` ({name: the read we have}).
+
+    Fetched contig by contig in merged windows around the mates' positions, each
+    window read once. One fetch per mate, in no order, took 360 s for 1,580 mates
+    of NA12878's loci (228 ms each); the windows took 6 s.
+    """
+    positions: Dict[int, List[int]] = {}
+    for read in missing.values():
+        if read.next_reference_id >= 0:
+            positions.setdefault(read.next_reference_id, []).append(
+                read.next_reference_start
+            )
+    found: Dict[str, Any] = {}
+    for tid, starts in positions.items():
+        windows: List[List[int]] = []
+        for start in sorted(starts):
+            if windows and start - windows[-1][1] <= 1000:
+                windows[-1][1] = start + 1
+            else:
+                windows.append([start, start + 1])
+        contig = bam.get_reference_name(tid)
+        for start, end in windows:
+            for other in bam.fetch(contig, start, end):
+                have = missing.get(other.query_name)
+                if (
+                    have is not None
+                    and other.is_read1 != have.is_read1
+                    and not other.is_secondary
+                    and not other.is_supplementary
+                    and other.reference_start == have.next_reference_start
+                ):
+                    found[other.query_name] = other
+    return found
+
+
+def collect_locus_reads(bam, loci) -> Tuple[Dict[str, list], int]:
+    """The primary records of every read in the loci, by name, and the orphans.
+
+    A pair is [read 1, read 2], its mate fetched by position when it lies outside the
+    loci; a single-end read is [read]. A pair whose mate cannot be found is left out
+    and counted: its record stays as uploaded.
+    """
+    reads: Dict[str, list] = {}
+    for chrom, start, end in _locus_regions(bam, loci):
+        for read in bam.fetch(chrom, start, end):
+            if read.is_secondary or read.is_supplementary:
+                continue
+            if read.is_paired:
+                pair = reads.setdefault(read.query_name, [None, None])
+                slot = 0 if read.is_read1 else 1
+                if pair[slot] is None:
+                    pair[slot] = read
+            else:
+                reads[read.query_name] = [read]
+    missing = {
+        name: pair[0] if pair[0] is not None else pair[1]
+        for name, pair in reads.items()
+        if len(pair) == 2 and (pair[0] is None or pair[1] is None)
+    }
+    mates = _fetch_mates(bam, missing)
+    orphans = 0
+    for name in missing:
+        mate = mates.get(name)
+        if mate is None:
+            del reads[name]
+            orphans += 1
+            continue
+        reads[name][0 if mate.is_read1 else 1] = mate
+    return reads, orphans
+
+
+def write_unaligned_reads(
+    reads: Dict[str, list], read_groups: List[Dict[str, str]], out_prefix: str
+) -> Dict[str, str]:
+    """Write the reads unaligned, as uploaded off the sequencer; {"paired": path,
+    "single": path} for whichever exist.
+
+    Sequence and qualities in the read's own orientation, each read's RG tag kept and
+    nothing else, pairs next to each other. With no read groups, every read gets
+    ALT_REALIGN_READ_GROUP.
+    """
+    import pysam
+
+    groups = read_groups or [{"ID": ALT_REALIGN_READ_GROUP, "SM": ALT_REALIGN_READ_GROUP}]
+    known = {rg["ID"] for rg in groups}
+    header = {"HD": {"VN": "1.6", "SO": "queryname"}, "RG": groups}
+    outputs: Dict[str, str] = {}
+    handles: Dict[str, Any] = {}
+    try:
+        for name in sorted(reads):
+            records = reads[name]
+            kind = "paired" if len(records) == 2 else "single"
+            if kind not in handles:
+                outputs[kind] = f"{out_prefix}.{kind}.bam"
+                handles[kind] = pysam.AlignmentFile(outputs[kind], "wb", header=header)
+            out = handles[kind]
+            for record in records:
+                read = pysam.AlignedSegment(out.header)
+                read.query_name = name
+                flag = 0x4
+                if kind == "paired":
+                    flag |= 0x1 | 0x8 | (0x40 if record.is_read1 else 0x80)
+                if record.is_qcfail:
+                    flag |= 0x200
+                read.flag = flag
+                read.query_sequence = record.get_forward_sequence()
+                read.query_qualities = record.get_forward_qualities()
+                group = record.get_tag("RG") if record.has_tag("RG") else None
+                read.set_tag("RG", group if group in known else groups[0]["ID"])
+                out.write(read)
+    finally:
+        for handle in handles.values():
+            handle.close()
+    return outputs
+
+
+def request_realignment(unaligned: str, paired: bool, out_path: str) -> None:
+    """Have gatk-api align `unaligned`; write the aligned BAM to `out_path`.
+
+    Raises RealignmentUnavailable when gatk-api cannot align at all (not running, or
+    its index image not built), RuntimeError on any other failure.
+    """
+    import requests
+
+    try:
+        with open(unaligned, "rb") as handle:
+            response = requests.post(
+                f"{GATK_API_URL}/realign-reads",
+                files={"file": ("reads.bam", handle, "application/octet-stream")},
+                data={"paired": "true" if paired else "false"},
+                stream=True,
+                timeout=ALT_REALIGN_TIMEOUT_S,
+            )
+    except requests.ConnectionError as exc:
+        raise RealignmentUnavailable(f"gatk-api is not reachable at {GATK_API_URL}") from exc
+    with response:
+        if response.status_code == 503:
+            raise RealignmentUnavailable(response.text[:500])
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"gatk-api /realign-reads answered {response.status_code}: {response.text[:500]}"
+            )
+        with open(out_path, "wb") as out:
+            for chunk in response.iter_content(UPLOAD_CHUNK_BYTES):
+                out.write(chunk)
+
+
+class RealignmentUnavailable(RuntimeError):
+    """gatk-api cannot align: not running, or its index image is not built."""
+
+
+def patched_alignment_regions(alignment_path: str, assembly: str) -> Dict[str, List[List[int]]]:
+    """Every region /create-input-vcf reads from an alignment, merged, by contig.
+
+    PyPGx's gene regions, its control genes' among them (create-input-vcf, the depth
+    of coverage, the control statistics, the uncovered-genes check); the whole-genome
+    depth probes (WGS_PROBE_WINDOWS_GRCH38); the ALT-locus gene bodies the MAPQ 0
+    count reads; each PharmCAT position's padded pileup span; and the re-aligned loci's
+    spans. Whatever else is added to this step's reading must be added here, or a
+    re-aligned run reads no reads there.
+    """
+    import pysam
+    from pypgx.api import utils as pypgx_utils
+
+    with pysam.AlignmentFile(alignment_path) as bam:
+        present = set(bam.references)
+        prefixed = any(c.startswith("chr") for c in present)
+
+    def name(chrom):
+        return chrom if prefixed else chrom[len("chr"):]
+
+    spans = []
+    genes = pypgx_utils.create_regions_bed(assembly=assembly, add_chr_prefix=prefixed).gr.df
+    for chrom, start, end in genes[["Chromosome", "Start", "End"]].itertuples(index=False):
+        # 1-based starts (fuc hands them to samtools as regions); fetch is 0-based.
+        spans.append((str(chrom), max(0, int(start) - 1), int(end)))
+    for chrom, start, end in WGS_PROBE_WINDOWS_GRCH38:
+        spans.append((name(chrom), start, end))
+    for _, chrom, start, end in ALT_LOCUS_GENES_GRCH38:
+        spans.append((name(chrom), start, end))
+    for locus in ALT_LOCI_GRCH38:
+        chrom, start, end = locus["span"]
+        spans.append((name(chrom), start, end))
+    if os.path.exists(PHARMCAT_POSITIONS_VCF):
+        with pysam.VariantFile(str(PHARMCAT_POSITIONS_VCF)) as known:
+            for rec in known:
+                spans.append(
+                    (
+                        name(rec.chrom),
+                        max(0, rec.pos - 1 - PHARMCAT_PILEUP_PAD),
+                        rec.pos - 1 + len(rec.ref) + PHARMCAT_PILEUP_PAD,
+                    )
+                )
+    merged: Dict[str, List[List[int]]] = {}
+    for chrom, start, end in sorted(s for s in spans if s[0] in present):
+        intervals = merged.setdefault(chrom, [])
+        if intervals and start <= intervals[-1][1]:
+            intervals[-1][1] = max(intervals[-1][1], end)
+        else:
+            intervals.append([start, end])
+    return merged
+
+
+def write_patched_alignment(
+    alignment_path: str,
+    realigned: List[str],
+    replaced: set,
+    regions: Dict[str, List[List[int]]],
+    out_path: str,
+    drop_read_group: bool,
+    keep_duplicates: bool = True,
+    qc_failed: frozenset = frozenset(),
+) -> Dict[str, int]:
+    """The uploaded reads over `regions` less those named in `replaced`, plus the
+    re-aligned BAMs' reads, sorted and indexed at `out_path`; counts of each, in
+    records (a read's supplementary and secondary records count too).
+
+    The uploaded header is kept, so every name and read group means what it meant; a
+    re-aligned read on a contig the upload's header lacks is dropped and counted.
+    The re-aligned reads are made to say what the upload's would: MarkDuplicatesSpark's
+    duplicate flags only when the upload marked duplicates too (`keep_duplicates`) --
+    else the loci's depth would lose its duplicates while the control gene's kept
+    them, and copy number would fall with the duplicate rate -- and the QC-fail flag,
+    which BwaSpark does not carry over, on the reads in `qc_failed`
+    ((name, is_read1) pairs).
+    """
+    import pysam
+
+    unsorted = out_path + ".unsorted.bam"
+    counts = {"kept": 0, "realigned": 0, "dropped": 0}
+    with pysam.AlignmentFile(alignment_path) as source:
+        header = source.header.to_dict()
+        programs = header.setdefault("PG", [])
+        ids = {pg.get("ID") for pg in programs}
+        pg_id = "zaropgx-realign"
+        while pg_id in ids:
+            pg_id += "-"
+        programs.append(
+            {"ID": pg_id, "PN": "ZaroPGx",
+             "DS": "reads of GRCh38's ALT-covered loci aligned again (BwaSpark)"}
+        )
+        contigs = set(source.references)
+        with pysam.AlignmentFile(unsorted, "wb", header=header) as out:
+            for chrom, intervals in regions.items():
+                previous_end = -1
+                for start, end in intervals:
+                    for read in source.fetch(chrom, start, end):
+                        # Written already, from the interval before, which it overlaps.
+                        if read.reference_start < previous_end:
+                            continue
+                        if read.query_name in replaced:
+                            continue
+                        out.write(read)
+                        counts["kept"] += 1
+                    previous_end = end
+            for path in realigned:
+                with pysam.AlignmentFile(path, check_sq=False) as aligned:
+                    for read in aligned.fetch(until_eof=True):
+                        record = read.to_dict()
+                        if record["ref_name"] != "*" and record["ref_name"] not in contigs:
+                            counts["dropped"] += 1
+                            continue
+                        if record["next_ref_name"] not in ("*", "=") and (
+                            record["next_ref_name"] not in contigs
+                        ):
+                            record["next_ref_name"], record["next_ref_pos"] = "*", "0"
+                        if drop_read_group:
+                            record["tags"] = [
+                                t for t in record.get("tags", []) if not t.startswith("RG:")
+                            ]
+                        new = pysam.AlignedSegment.from_dict(record, out.header)
+                        if not keep_duplicates:
+                            new.is_duplicate = False
+                        if (new.query_name, new.is_read1) in qc_failed:
+                            new.is_qcfail = True
+                        out.write(new)
+                        counts["realigned"] += 1
+    pysam.sort("-o", out_path, unsorted)
+    os.remove(unsorted)
+    pysam.index(out_path)
+    return counts
+
+
+def realign_alt_loci(
+    alignment_path: str, assembly: str, work_dir: str
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """(the alignment to call from, what was done), for /create-input-vcf.
+
+    The uploaded alignment and None when no locus has reads on its ALT contigs (as
+    their primary alignment: see alt_loci_to_realign). When one does: a patched
+    alignment in `work_dir` and status "realigned", or the uploaded one and status
+    "unavailable" (gatk-api cannot align) or "failed", with the reason. Never raises:
+    without re-alignment the step goes on as it did, and the report says why.
+    """
+    try:
+        loci = alt_loci_to_realign(alignment_path, assembly)
+    except Exception as exc:
+        logger.warning(f"Could not count reads on the ALT contigs: {exc}")
+        return alignment_path, None
+    if not loci:
+        return alignment_path, None
+    import pysam
+
+    info: Dict[str, Any] = {
+        "loci": [
+            {"locus": l["locus"], "genes": list(l["genes"]), "alt_reads": l["alt_reads"]}
+            for l in loci
+        ],
+    }
+    started = time.monotonic()
+    try:
+        os.makedirs(work_dir, exist_ok=True)
+        with pysam.AlignmentFile(alignment_path) as bam:
+            read_groups = bam.header.to_dict().get("RG") or []
+            reads, orphans = collect_locus_reads(bam, loci)
+        info["reads"] = {
+            "pairs": sum(1 for r in reads.values() if len(r) == 2),
+            "single": sum(1 for r in reads.values() if len(r) == 1),
+            "orphans": orphans,
+        }
+        logger.info(
+            f"Re-aligning {', '.join(l['locus'] for l in loci)}: {info['reads']} "
+            f"({sum(l['alt_reads'] for l in loci)} reads with their primary alignment "
+            "on their ALT contigs)"
+        )
+        if not reads:
+            # Every read on the ALT contigs lacked its mate (a sliced or filtered
+            # BAM): nothing to align, and the reads stay where PyPGx does not look.
+            raise RuntimeError(
+                "none of the reads on these loci's ALT contigs had its mate in the "
+                "alignment, so none could be aligned again"
+            )
+        # Whether the upload marked duplicates, judged on the loci's own reads.
+        keep_duplicates = any(r.is_duplicate for pair in reads.values() for r in pair)
+        qc_failed = frozenset(
+            (r.query_name, r.is_read1)
+            for pair in reads.values()
+            for r in pair
+            if r.is_qcfail
+        )
+        info["duplicates_marked"] = keep_duplicates
+        unaligned = write_unaligned_reads(
+            reads, read_groups, os.path.join(work_dir, "unaligned")
+        )
+        replaced = set(reads)
+        del reads
+        realigned = []
+        for kind, path in unaligned.items():
+            out = os.path.join(work_dir, f"realigned.{kind}.bam")
+            request_realignment(path, kind == "paired", out)
+            realigned.append(out)
+        patched = os.path.join(work_dir, "patched.bam")
+        counts = write_patched_alignment(
+            alignment_path,
+            realigned,
+            replaced,
+            patched_alignment_regions(alignment_path, assembly),
+            patched,
+            drop_read_group=not read_groups,
+            keep_duplicates=keep_duplicates,
+            qc_failed=qc_failed,
+        )
+        info["patched"] = counts
+        info["status"] = "realigned"
+        info["seconds"] = round(time.monotonic() - started)
+        logger.info(f"Re-aligned the ALT-covered loci: {info}")
+        return patched, info
+    except RealignmentUnavailable as exc:
+        info.update(status="unavailable", reason=str(exc))
+    except Exception as exc:
+        logger.exception("Re-aligning the ALT-covered loci failed")
+        info.update(status="failed", reason=str(exc)[:500])
+    logger.warning(f"ALT-covered loci not re-aligned: {info}")
+    return alignment_path, info
+
+
+# ---------------------------------------------------------------------------
 # PharmCAT's input for an alignment: a call at every PharmCAT position, or none
 # ---------------------------------------------------------------------------
 #
@@ -1290,6 +1792,14 @@ def alt_locus_mapq0(alignment_path: str, assembly: str) -> Optional[Dict[str, Di
 # * anything else -- no reads, too few, reads for another allele without a confident
 #   call -- is left out, which PharmCAT reads as a no-call.
 #
+# What was left out is kept by position as well as counted: "no_reads" when no read of
+# MAPQ >= 1 reaches any base of the record, "uncertain" for the rest (too few reads,
+# another allele beyond allowed_other_reads, a supported indel candidate, or a call
+# under GQ 20 over the span). The step row gets the counts per gene, PharmCAT's own
+# PX gene of each record; the per-position list goes to a file beside the VCF
+# (PHARMCAT_STATUS_COLUMNS) that main.nf publishes with it, and that the report reads
+# to say why the positions PharmCAT lists as missing were.
+#
 # Reference is decided from READ COUNTS, not from a genotype. The first version asked
 # bcftools for a genotype constrained to PharmCAT's alleles (call -C alleles), and a
 # constrained caller calls 0/0 whenever the reads show an allele it was not offered:
@@ -1318,11 +1828,73 @@ PHARMCAT_MIN_BASE_QUALITY = 13
 # How far around each position the pileup reaches, for an indel anchored upstream of
 # it or written at the far end of a repeat (bcftools norm then left-aligns it).
 PHARMCAT_PILEUP_PAD = 50
+# The per-position status file, one row per PharmCAT record. Reads are the evidence
+# over the record's REF span: the fewest reference reads at any base and the most
+# reads for anything else, blank where no base had a read.
+PHARMCAT_STATUS_COLUMNS = (
+    "chrom", "position", "rsid", "gene", "status", "reference_reads", "other_reads",
+)
 
 
 def allowed_other_reads(total: int) -> int:
     """Reads for another allele tolerated in a reference call, given all reads."""
     return int(total * PHARMCAT_MAX_OTHER_FRACTION)
+
+
+PHARMCAT_STATUS_KINDS = ("reference", "variant", "no_reads", "uncertain")
+
+
+def pharmcat_status_by_gene(status, genes_of) -> Dict[str, Dict[str, int]]:
+    """{gene: {positions, reference, variant, no_reads, uncertain}}, by PharmCAT's PX.
+
+    status:   {(chrom, pos): kind} for each PharmCAT record.
+    genes_of: {(chrom, pos): (gene, ...)}; a record whose PX names several genes
+              counts under each, and one with none (the POI record) under none.
+    """
+    by_gene: Dict[str, Dict[str, int]] = {}
+    for key, kind in status.items():
+        for gene in genes_of.get(key) or ():
+            tally = by_gene.setdefault(
+                gene, {"positions": 0, **{k: 0 for k in PHARMCAT_STATUS_KINDS}}
+            )
+            tally["positions"] += 1
+            tally[kind] += 1
+    return dict(sorted(by_gene.items()))
+
+
+def write_pharmcat_status(path, records, genes_of, status, base_reads) -> bool:
+    """Write the per-position status file (PHARMCAT_STATUS_COLUMNS); False if not.
+
+    records:    [(chrom, pos, id, ref, alleles)] in PharmCAT's order.
+    base_reads: {(chrom, pos): (reference reads, other reads)}, as for
+                classify_pharmcat_record.
+    Written beside and moved into place, so a failed write leaves no partial file
+    for the report to read: it only explains PharmCAT's VCF, and losing it must not
+    cost the step (main.nf publishes it as optional).
+    """
+    part = f"{path}.part"
+    try:
+        with open(part, "w", encoding="utf-8") as fh:
+            fh.write("\t".join(PHARMCAT_STATUS_COLUMNS) + "\n")
+            for c, p, rid, ref, _ in records:
+                span = [(c, q) for q in range(p, p + len(ref))]
+                seen = [base_reads[k] for k in span if k in base_reads]
+                ref_reads = str(min(e[0] for e in seen)) if seen else ""
+                other = str(max(e[1] for e in seen)) if seen else ""
+                genes = ",".join(genes_of.get((c, p)) or ())
+                fh.write(
+                    f"{c}\t{p}\t{rid or ''}\t{genes}\t{status[(c, p)]}\t"
+                    f"{ref_reads}\t{other}\n"
+                )
+        os.replace(part, path)
+        return True
+    except OSError as exc:
+        logger.warning(f"Could not write PharmCAT's position statuses to {path}: {exc}")
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        return False
 
 
 def classify_pharmcat_record(chrom, pos, ref, base_reads, indel_spans, calls) -> str:
@@ -1355,14 +1927,80 @@ def classify_pharmcat_record(chrom, pos, ref, base_reads, indel_spans, calls) ->
     return "reference"
 
 
+def alignment_sample_name(alignment_path: str) -> str:
+    """The sample name PyPGx gives this alignment: its read groups' one SM tag, or,
+    with none, the file name's stem.
+
+    That is fuc's rule (CovFrame.from_bam) for the depth-of-coverage and control
+    statistics PyPGx's SV calls read. bcftools, which writes create-input-vcf's VCF,
+    names an alignment without read groups after the path it was given instead
+    (/data/temp/pypgx/<job>/<dir>/<file>.bam), and PyPGx draws each sample's
+    allele-fraction plot at <dir>/<sample>.png. That path does not exist, so every
+    gene with a variant failed: 64 of 66 on a whole genome whose BAM had no @RG
+    lines (2026-10-14). Many aligners and services write none.
+    """
+    import pysam
+
+    with pysam.AlignmentFile(str(alignment_path)) as aln:
+        names = {
+            rg["SM"] for rg in aln.header.to_dict().get("RG") or [] if rg.get("SM")
+        }
+    return names.pop() if len(names) == 1 else Path(str(alignment_path)).stem
+
+
+def name_vcf_sample(vcf_gz: str, name: str) -> bool:
+    """Rename a one-sample bgzipped VCF's sample to ``name``; True if it changed.
+
+    Its tabix index is removed with the old file; the caller indexes the new one.
+    """
+    import pysam
+    from pysam import bcftools
+
+    with pysam.VariantFile(str(vcf_gz)) as vf:
+        samples = list(vf.header.samples)
+    if len(samples) != 1 or samples[0] == name:
+        return False
+    names = f"{vcf_gz}.sample-name.txt"
+    renamed = f"{vcf_gz}.renamed.vcf.gz"
+    try:
+        # As an "old new" pair, each with its spaces and backslashes escaped: a bare
+        # new name holding a space was read as a pair, and an escaped one was written
+        # with its backslashes (bcftools 1.21, measured).
+        def escaped(text):
+            return text.replace("\\", "\\\\").replace(" ", "\\ ")
+
+        Path(names).write_text(
+            f"{escaped(samples[0])} {escaped(name)}\n", encoding="utf-8"
+        )
+        bcftools.reheader("-s", names, "-o", renamed, str(vcf_gz), catch_stdout=False)
+        with pysam.VariantFile(renamed) as vf:
+            written = list(vf.header.samples)
+        if written != [name]:
+            raise RuntimeError(f"bcftools reheader wrote sample {written}, not {name!r}")
+        os.replace(renamed, str(vcf_gz))
+    finally:
+        for leftover in (names, renamed):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+    for index in (f"{vcf_gz}.tbi", f"{vcf_gz}.csi"):
+        if os.path.exists(index):
+            os.remove(index)
+    return True
+
+
 def genotype_pharmcat_positions(
-    alignment_path: str, fasta: str, output_vcf_gz: str, positions: str = None
+    alignment_path: str,
+    fasta: str,
+    output_vcf_gz: str,
+    positions: str = None,
+    status_tsv: str = None,
 ) -> Dict[str, Any]:
     """Write PharmCAT's input VCF for an alignment. See the section comment above.
 
     Returns counts of what happened -- positions, reference, variant, no reads,
-    uncertain -- which /create-input-vcf records on the job step so the report can
-    state them rather than assume them.
+    uncertain, overall and per gene (by_gene) -- which /create-input-vcf records on
+    the job step so the report can state them rather than assume them. With
+    status_tsv, also writes each position's status there (PHARMCAT_STATUS_COLUMNS).
     """
     import pysam
 
@@ -1373,8 +2011,16 @@ def genotype_pharmcat_positions(
             "pharmcat image at /pharmcat/pharmcat_positions.vcf and must be copied to "
             "reference/pharmcat/ on every PharmCAT upgrade."
         )
+    # PharmCAT's genes for each record are its INFO PX (one each in 3.4.0); the one
+    # position of interest outside every allele definition (POI, rs12777823) has none.
+    records, genes_of = [], {}
     with pysam.VariantFile(positions) as known:
-        records = [(r.chrom, r.pos, r.id, r.ref, r.alleles) for r in known]
+        for r in known:
+            records.append((r.chrom, r.pos, r.id, r.ref, r.alleles))
+            px = r.info.get("PX") or ()
+            if isinstance(px, str):
+                px = px.split(",")
+            genes_of[(r.chrom, r.pos)] = tuple(str(g) for g in px if g)
 
     work = tempfile.mkdtemp(prefix="pharmcat_positions_")
     try:
@@ -1384,7 +2030,6 @@ def genotype_pharmcat_positions(
         # no-calls for G6PD rather than no PharmCAT file at all.
         with pysam.AlignmentFile(str(alignment_path)) as aln:
             present = set(aln.references)
-            read_groups = aln.header.to_dict().get("RG") or []
         spans = sorted(
             (c, max(0, p - 1 - PHARMCAT_PILEUP_PAD), p - 1 + len(ref) + PHARMCAT_PILEUP_PAD)
             for c, p, _, ref, _ in records
@@ -1401,7 +2046,8 @@ def genotype_pharmcat_positions(
             fh.writelines(f"{c}\t{s}\t{e}\n" for c, s, e in merged)
 
         base_reads, indel_spans, calls, variant_records = {}, [], [], []
-        sample = next((rg.get("SM") for rg in read_groups if rg.get("SM")), "SAMPLE")
+        # The pileups' sample (the BCFs are read by it); the output's, by PyPGx's rule.
+        sample = name = alignment_sample_name(str(alignment_path))
         contigs = sorted(present)
         if merged:
             common = ["-f", str(fasta), "-R", bed, "-a", "FORMAT/AD,FORMAT/DP", "-q", "1",
@@ -1493,15 +2139,15 @@ def genotype_pharmcat_positions(
         header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
         header.add_line('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">')
         header.add_line('##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">')
-        header.add_sample(sample)
+        header.add_sample(name)
         unsorted = os.path.join(work, "pharmcat.unsorted.vcf.gz")
         with pysam.VariantFile(unsorted, "wz", header=header) as out:
             for c, p, rid, ref, alleles in records:
                 if status[(c, p)] != "reference":
                     continue
                 rec = out.new_record(contig=c, start=p - 1, alleles=alleles, id=rid)
-                rec.samples[sample]["GT"] = (0, 0)
-                rec.samples[sample]["DP"] = min(
+                rec.samples[name]["GT"] = (0, 0)
+                rec.samples[name]["DP"] = min(
                     base_reads[(c, q)][0] for q in range(p, p + len(ref))
                 )
                 out.write(rec)
@@ -1510,9 +2156,9 @@ def genotype_pharmcat_positions(
                 if not any(c == chrom and s <= end and e >= pos for c, s, e in record_spans):
                     continue
                 rec = out.new_record(contig=chrom, start=pos - 1, alleles=alleles)
-                rec.samples[sample]["GT"] = gt
-                rec.samples[sample]["DP"] = dp
-                rec.samples[sample]["GQ"] = gq
+                rec.samples[name]["GT"] = gt
+                rec.samples[name]["DP"] = dp
+                rec.samples[name]["GQ"] = gq
                 out.write(rec)
         subprocess.run(
             ["bcftools", "sort", "-Oz", "-o", str(output_vcf_gz), unsorted],
@@ -1520,9 +2166,12 @@ def genotype_pharmcat_positions(
         )
         tabix_index(str(output_vcf_gz), force=True)
 
-        counts = {k: 0 for k in ("reference", "variant", "no_reads", "uncertain")}
+        counts = {k: 0 for k in PHARMCAT_STATUS_KINDS}
         for kind in status.values():
             counts[kind] += 1
+        if status_tsv:
+            write_pharmcat_status(status_tsv, records, genes_of, status, base_reads)
+
         return {
             "n_pharmcat_positions": len(status),
             "n_reference": counts["reference"],
@@ -1532,6 +2181,7 @@ def genotype_pharmcat_positions(
             "min_reference_reads": PHARMCAT_MIN_REF_READS,
             "max_other_fraction": PHARMCAT_MAX_OTHER_FRACTION,
             "min_variant_gq": PHARMCAT_MIN_VARIANT_GQ,
+            "by_gene": pharmcat_status_by_gene(status, genes_of),
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1557,6 +2207,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
     FASTA and a ``.bai`` next to each BAM; there is no standalone ``samtools`` on PATH in
     this image, so index via pysam. Ensures the output is bgzipped and tabix-indexed.
     """
+    realign_dir = None
     try:
         import pysam
 
@@ -1578,10 +2229,25 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             logger.info(f"Indexing alignment (bai): {alignment_path}")
             pysam.index(str(alignment_path))
 
+        # Reads PyPGx never sees, on GRCh38's ALT contigs, are aligned again first; see
+        # ALT_LOCI_GRCH38. Everything below reads `calls_from`: the upload, or the
+        # patched alignment, which goes when this step ends.
+        realign_dir = str(Path(output_vcf_gz).parent / "alt-realign")
+        calls_from, alt_realignment = realign_alt_loci(
+            str(alignment_path), str(assembly), realign_dir
+        )
+        if alt_realignment and alt_realignment.get("status") == "realigned":
+            try:
+                alt_realignment["mapq0_before"] = alt_locus_mapq0(
+                    str(alignment_path), str(assembly)
+                )
+            except Exception as exc:
+                logger.warning(f"Could not count MAPQ 0 reads on the upload: {exc}")
+
         cmd = [
             "pypgx", "create-input-vcf",
             "--assembly", str(assembly),
-            str(output_vcf_gz), str(fasta), str(alignment_path),
+            str(output_vcf_gz), str(fasta), calls_from,
         ]
         logger.info(f"Running PyPGx create-input-vcf: {shlex.join(cmd)}")
         proc = subprocess.run(cmd, text=True, capture_output=True)
@@ -1599,6 +2265,13 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             else:
                 return {"success": False, "error": "Expected VCF output not found"}
 
+        # The sample PyPGx's depth of coverage will name; see alignment_sample_name.
+        # From the alignment it reads: without read groups the name is the file's
+        # stem, and a patched alignment's stem is not the upload's.
+        name = alignment_sample_name(calls_from)
+        if name_vcf_sample(output_vcf_gz, name):
+            logger.info(f"VCF sample named {name!r}, as PyPGx names this alignment")
+
         tbi_path = output_vcf_gz + ".tbi"
         if not os.path.exists(tbi_path):
             logger.info(f"Indexing VCF with tabix: {output_vcf_gz}")
@@ -1606,7 +2279,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
 
         # Which PyPGx genes this alignment never covered, recorded in the VCF's own
         # header so /genotype can decline to call them. See UNCOVERED_GENES_HEADER_KEY.
-        uncovered = uncovered_genes_in_alignment(str(alignment_path), str(assembly))
+        uncovered = uncovered_genes_in_alignment(calls_from, str(assembly))
         annotate_uncovered_genes(output_vcf_gz, uncovered)
         logger.info(
             f"Coverage: {len(uncovered)} PyPGx gene(s) with no reads in the alignment"
@@ -1615,7 +2288,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         # Reads over the genes GRCh38 also carries on ALT contigs, for the report.
         # See ALT_LOCUS_GENES_GRCH38. A failure here costs that check, not the step.
         try:
-            alt_locus = alt_locus_mapq0(str(alignment_path), str(assembly))
+            alt_locus = alt_locus_mapq0(calls_from, str(assembly))
             logger.info(f"MAPQ 0 over ALT-covered genes: {alt_locus}")
         except Exception as exc:
             logger.warning(f"Could not count MAPQ 0 reads over ALT-covered genes: {exc}")
@@ -1623,7 +2296,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
 
         # SV inputs for /genotype, carried the same way: in the VCF's own header.
         sv_inputs = prepare_sv_inputs(
-            str(alignment_path), output_vcf_gz[: -len(".vcf.gz")], str(assembly)
+            calls_from, output_vcf_gz[: -len(".vcf.gz")], str(assembly)
         )
         if sv_inputs:
             annotate_header_line(output_vcf_gz, sv_inputs_header_line(*sv_inputs))
@@ -1631,12 +2304,15 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         # PharmCAT's own input -- see genotype_pharmcat_positions. GRCh38 only, as
         # PharmCAT's positions are; a non-GRCh38 alignment is refused at upload, so
         # the None here only ever reaches main.nf as a missing output, which fails.
-        pharmcat_vcf, pharmcat_positions = None, None
+        pharmcat_vcf, pharmcat_positions, pharmcat_status = None, None, None
         if str(assembly) == "GRCh38":
             pharmcat_vcf = output_vcf_gz[: -len(".vcf.gz")] + ".pharmcat.vcf.gz"
+            pharmcat_status = output_vcf_gz[: -len(".vcf.gz")] + ".pharmcat.status.tsv"
             pharmcat_positions = genotype_pharmcat_positions(
-                str(alignment_path), str(fasta), pharmcat_vcf
+                calls_from, str(fasta), pharmcat_vcf, status_tsv=pharmcat_status
             )
+            if not os.path.exists(pharmcat_status):  # not written: see its warning
+                pharmcat_status = None
             logger.info(f"PharmCAT positions called from the alignment: {pharmcat_positions}")
 
         return {
@@ -1645,8 +2321,10 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             "tbi": tbi_path,
             "uncovered_genes": uncovered,
             "alt_locus_mapq0": alt_locus,
+            "alt_realignment": alt_realignment,
             "sv_inputs": list(sv_inputs) if sv_inputs else None,
             "pharmcat_vcf": pharmcat_vcf,
+            "pharmcat_status": pharmcat_status,
             "pharmcat_positions": pharmcat_positions,
         }
     except subprocess.CalledProcessError as cpe:
@@ -1655,6 +2333,9 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
     except Exception as e:
         logger.exception("Unexpected error running create-input-vcf")
         return {"success": False, "error": str(e)}
+    finally:
+        if realign_dir:
+            shutil.rmtree(realign_dir, ignore_errors=True)
 
 @app.post("/genotype")
 async def genotype(

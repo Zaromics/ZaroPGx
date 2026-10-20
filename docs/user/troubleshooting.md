@@ -49,6 +49,14 @@ chmod 1777 data/temp data/temp/mtdna data/versions
 **FASTQ: "The bwa-mem index image is not present".** Build the alignment index once:
 `./scripts/build-align-index.sh`.
 
+**The report flags CYP2D6 or UGT2B15 for reads on ALT contigs, not re-aligned.** The
+alignment put 20 or more of that locus's reads on GRCh38's ALT contigs as their primary
+alignment, and ZaroPGx could not align them again; the alert gives the reason. Most often
+the alignment index is missing: build it as above and run the sample again. Such reads
+usually mean the alignment was not ALT-aware. Supplementary records on the ALT contigs,
+the copies BWA's ALT-aware mode writes of reads it placed on the main chromosomes, are
+not counted ({doc}`file-formats`).
+
 **A CRAM is refused, naming contigs that cannot be decoded.** It was written against a
 reference ZaroPGx does not hold ({doc}`file-formats`). Convert it to BAM with its own
 reference (`samtools view -b -T <that FASTA> -o out.bam in.cram`) and upload the BAM.
