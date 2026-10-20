@@ -181,7 +181,8 @@ class FakeTools:
       `span_records` for the gVCF's own records at PharmCAT's positions, and those in
       `gene_records` for its records over PyPGx's genes (OUT `pypgx_gene_records.txt`).
     * `bcftools view -T ^ROWS ... -o OUT IN` writes IN's rows minus those at a position
-      ROWS lists.
+      ROWS lists, and refuses an empty ROWS as bcftools 1.24 does (exit 255, "Failed to
+      read the targets"; measured on a chrM-only gVCF cut from the demo reads).
     * `bcftools concat -a ... -o OUT A B` writes the union of what A and B hold,
       header lines included (measured: bcftools 1.24 carries a header line of either
       input into its output).
@@ -319,9 +320,16 @@ class FakeTools:
                     encoding="utf-8",
                 )
             elif "-T" in argv:
-                listed = Path(self._flag_value(argv, "-T").lstrip("^")).read_text(
-                    encoding="utf-8"
-                )
+                targets = self._flag_value(argv, "-T")
+                listed = Path(targets.lstrip("^")).read_text(encoding="utf-8")
+                if not listed.strip():
+                    # As bcftools 1.24 words it, the argument with its "^".
+                    return subprocess.CompletedProcess(
+                        argv,
+                        255,
+                        b"",
+                        f"Failed to read the targets: {targets}\n".encode("utf-8"),
+                    )
                 drop = {tuple(line.split("\t")) for line in listed.splitlines()}
                 self._write(
                     self._flag_value(argv, "-o"),
@@ -875,6 +883,39 @@ def test_an_empty_conversion_is_a_loud_error(client, tools):
     detail = resp.json()["detail"].lower()
     assert "empty" in detail
     assert "no variants found" in detail
+
+
+def test_a_gvcf_with_no_record_at_pharmcats_positions_is_converted(client, tools):
+    """A gVCF over chrM alone (cut from the demo reads): the PGx pass writes no row, so
+    there is nothing for the variant pass to give up. bcftools refuses an empty targets
+    file, and the conversion answered 500. Now the variant pass is kept whole, and the
+    counts the report reads say that none of PharmCAT's positions carried a call."""
+    tools.pgx_rows = []
+    tools.variant_rows = [("chrM", 263, "1/1"), ("chrM", 750, "1/1")]
+
+    resp = _post(client)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["n_pgx_positions_called"] == 0
+    assert body["n_positions_absent"] == body["n_pharmcat_positions"] > 0
+    assert not [argv for argv in tools.ran("bcftools", "view") if "-T" in argv]
+    concat = tools.ran("bcftools", "concat")[0]
+    merged = tools.rows_by_path[concat[concat.index("-o") + 1]]
+    assert [row[:2] for row in merged] == [("chrM", 263), ("chrM", 750)]
+
+
+def test_a_gvcf_with_records_at_pharmcats_positions_still_drops_them_once(
+    client, tools
+):
+    """The other side: rows at PharmCAT's positions, the variant pass loses them."""
+    tools.variant_rows = [PHARMCAT_POSITION_ROWS[0], ("chrM", 750)]
+
+    resp = _post(client)
+
+    assert resp.status_code == 200, resp.text
+    (dropped,) = [argv for argv in tools.ran("bcftools", "view") if "-T" in argv]
+    assert tools.rows_by_path[dropped[dropped.index("-o") + 1]] == [("chrM", 750)]
 
 
 def test_a_discarded_output_does_not_survive_the_refusal(client, tools):
