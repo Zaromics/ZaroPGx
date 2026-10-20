@@ -277,7 +277,7 @@ def test_canonical_rows_get_no_guideline_letter():
     )
     by_gene = {r["gene"]: r for r in rows}
     assert "guideline_source" not in by_gene["CYP2C19"]
-    assert by_gene["CYP2C9"].get("guideline_source") != "D"
+    assert by_gene["CYP2C9"]["guideline_source"] == "DPWG"
 
 
 def test_pypgx_only_row_keeps_its_tool_attribution():

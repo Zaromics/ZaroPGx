@@ -7,8 +7,10 @@ ran. Nothing is inferred from the gene name. When the run recorded nothing, say
 so with ``?`` rather than guessing.
 
 Replaces ``determine_called_by`` / ``determine_report_data_from`` /
-``determine_tool_source`` / ``determine_guideline_source`` (generator.py) and
-``_determine_called_by_letter`` (pharmcat_data_service.py) -- BACKLOG 28 + 216.
+``determine_tool_source`` (generator.py) and ``_determine_called_by_letter``
+(pharmcat_data_service.py) -- BACKLOG 28 + 216. (It also replaced
+``determine_guideline_source``, for the Guide column; that column and its letter
+are gone.)
 """
 
 from __future__ import annotations
