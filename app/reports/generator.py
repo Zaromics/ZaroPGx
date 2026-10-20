@@ -71,8 +71,12 @@ from app.reports.alt_locus import (
 )
 from app.reports.copy_number import (
     annotate_copy_number,
+    annotate_pharmcat_copy_number,
     copy_number_alert,
     genes_without_copy_number,
+    listed_alleles_note,
+    pharmcat_copy_number_alert,
+    positions_summary_note,
     why_not_assessed,
 )
 from app.reports.credits import CreditRun, ref_numbers, report_credits
@@ -86,8 +90,8 @@ from app.reports.pharmcat_tsv_parser import (
 )
 from app.reports.provenance import (
     CALLED_BY_NO_CALL,
+    called_by_text,
     resolve_called_by,
-    resolve_guideline_source,
 )
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.utils.env import env_flag
@@ -1504,10 +1508,13 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
     environment.filters["implication"] = row_implication
+    environment.filters["called_by_text"] = called_by_text
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel
     environment.globals["summary_rows"] = summary_rows
     environment.globals["inline_script"] = inline_script
+    environment.globals["listed_alleles_note"] = listed_alleles_note
+    environment.globals["positions_summary_note"] = positions_summary_note
 
 
 # The interactive report's scripts travel inside the file. It is downloaded (the
@@ -2695,6 +2702,188 @@ def _choose_better_gene_entry(
         return existing
 
 
+def _no_call(diplotype: Any) -> bool:
+    """No genotype in the row: blank, "Unknown..." (gene_was_called) or PyPGx's
+    "Indeterminate", which is no call at all (defines_no_phenotype)."""
+    text = str(diplotype or "").strip().lower()
+    return not gene_was_called(text) or text.startswith("indeterminate")
+
+
+# Why a gene has no call when its calling tool failed: call_error's text, which the
+# FHIR export puts in the genotype's note. Short and fixed: PyPGx's own error text
+# can carry paths and tracebacks, and stays in pypgx_result.json and the log.
+PYPGX_GENE_FAILED = "PyPGx failed on this gene; no genotype was called."
+PYPGX_STEP_FAILED = "PyPGx's step failed before it reported this gene."
+PYPGX_NO_RESULT = "PyPGx, turned on for this job, ended without a result for it."
+
+
+def pypgx_failed_genes(results: Any) -> Dict[str, str]:
+    """The genes PyPGx failed on, by upper-case symbol, with why (PYPGX_GENE_FAILED).
+
+    docker/pypgx's wrapper records a gene whose call raised, or every gene of a
+    batch that did, as {"success": False, "error": ...}. The enrichment skips those
+    results, so such a gene ends as a placeholder row, as if no tool had looked at
+    it; this says which genes PyPGx tried and could not do.
+    """
+    failed: Dict[str, str] = {}
+    if not isinstance(results, dict):
+        return failed
+    for gene, result in results.items():
+        if isinstance(result, dict) and not result.get("success"):
+            failed[str(gene).strip().upper()] = PYPGX_GENE_FAILED
+    return failed
+
+
+def _load_gene_set(name: str) -> List[str]:
+    """A named gene set of config/genes.json ("sets"), upper-case; [] when absent."""
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        with open(
+            os.path.join(project_root, "config", "genes.json"), "r", encoding="utf-8"
+        ) as f:
+            members = ((json.load(f) or {}).get("sets") or {}).get(name) or []
+    except (OSError, ValueError, AttributeError) as e:
+        logger.warning(f"Failed to load gene set {name} from genes.json: {e}")
+        return []
+    return [str(gene).strip().upper() for gene in members if str(gene).strip()]
+
+
+def pypgx_lane_failed_genes(
+    records: Optional[List[Dict[str, Any]]],
+    results: Any,
+    file_type: Optional[str] = None,
+) -> Dict[str, str]:
+    """PyPGx's genes it has no record for, when the job's own steps say it was to run.
+
+    Whether PyPGx was to run is the job's pypgx_analysis step, the record the
+    workflow diagram draws: app/services/workflow_registry.py mints it only when the
+    upload turned PyPGx on (needs_pypgx), so no step means PyPGx was switched off,
+    and "skipped" that it did not run. Both leave the genes not tested: {} here.
+
+    PyPGx was to run, and its genes have no record, when its step failed or when it
+    left no result file (`results` empty; main.nf writes {"results": {}} when the
+    service is down): the lane died. Each gene it was asked for that the results do
+    not name is then an error, not a gene nobody tested. It is asked, as
+    docker/pypgx's choose_gene_set does by default, for genes.json's
+    "pypgx_minus_pharmcat" after a VCF, BCF or gVCF (main.nf hands those over as a
+    VCF: its own genes and CYP2D6, which PharmCAT takes from it), and for all of
+    "pypgx" after an alignment. A gene the results do name keeps PyPGx's own record
+    (pypgx_failed_genes for one it failed on). A step that completed with results
+    leaves the rest alone: PyPGx did not set out to call those. No step rows at all
+    (no database) says nothing.
+    """
+    status = {
+        str(r.get("name")): str(r.get("status") or "").lower()
+        for r in records or ()
+        if isinstance(r, dict)
+    }
+    step = status.get("pypgx_analysis")
+    if step is None or step == "skipped":
+        return {}
+    reported = (
+        {str(gene).strip().upper() for gene in results}
+        if isinstance(results, dict)
+        else set()
+    )
+    if reported and step != "failed":
+        return {}
+    why = PYPGX_STEP_FAILED if step == "failed" else PYPGX_NO_RESULT
+    variant_input = str(file_type or "vcf").strip().lower() in {"vcf", "bcf", "gvcf"}
+    asked = _load_gene_set("pypgx_minus_pharmcat" if variant_input else "pypgx")
+    return {gene: why for gene in asked if gene not in reported}
+
+
+# The genes a run gets only as an outside call from a tool of its own, and the file
+# each such tool leaves in the report directory when it runs: OptiTypeHLAFromBAM's
+# hla_result.json and MtdnaCall's mtdna_result.json (pipelines/pgx/main.nf), each a
+# required output, published only when the tool ran. A VCF, BCF or gVCF run never
+# types HLA, nor does one with HLA typing turned off (--skip_hla); MtdnaCall runs
+# only when mtDNA calling is on. PharmCAT still lists HLA-A, HLA-B and MT-RNR1 then
+# ("Unknown/Unknown", callSource NONE): it reports the gene, but nothing tested it.
+_OUTSIDE_CALL_RESULT_FILES = (
+    ("HLA-", "hla_result.json"),
+    ("MT-RNR1", "mtdna_result.json"),
+)
+
+
+# PharmCAT's own report JSON, as the PharmCAT service copies it into the report
+# directory (docker/pharmcat/pharmcat.py; _MATCHER_METADATA_FILE_SUFFIXES), or under
+# its native name. Present, PharmCAT ran its matcher on every gene genes.json lists in
+# "pharmcat_can_call". It lists the 19 it annotates whether it calls them or not, but
+# F2 and F5 (unannotated genes since PharmCAT 3.2.0) only when it calls them, under
+# unannotatedGeneCalls: the NA12878 demo's has both, the example VCF run's neither.
+_PHARMCAT_JSON_GLOBS = ("*_pgx_pharmcat.json", "*_raw_report.json", "*.report.json")
+
+
+def _pharmcat_ran(report_dir: str) -> bool:
+    """Whether PharmCAT's report JSON is in the report directory."""
+    return any(
+        glob.glob(os.path.join(report_dir, pattern)) for pattern in _PHARMCAT_JSON_GLOBS
+    )
+
+
+# PharmCAT's other outside-call gene: CYP2D6, which it takes from PyPGx. Without a
+# PyPGx run PharmCAT lists it "Unknown/Unknown", callSource NONE, as it lists HLA-A,
+# HLA-B and MT-RNR1 without theirs.
+_PYPGX_OUTSIDE_CALL_GENES = ("CYP2D6",)
+
+
+def mark_not_tested_and_failed(
+    rows: List[Dict[str, Any]],
+    report_dir: str,
+    failed: Dict[str, str],
+    pypgx_ran: Optional[bool] = None,
+) -> None:
+    """Say, on each canonical row without a call, whether the gene was tested.
+
+    - call_error: a tool tried the gene and failed (pypgx_failed_genes), or its
+      lane died before saying anything about it (pypgx_lane_failed_genes).
+      PharmCAT's own matcher outranks it: a gene PharmCAT examined -- a row whose
+      call_source is MATCHER, or a "pharmcat_can_call" gene PharmCAT left out of a
+      report it wrote (F2 and F5 without a call) -- stays tested, not called, whatever
+      PyPGx did (an alignment run asks PyPGx for PharmCAT's genes too).
+    - not_tested: nothing tested it. _build_canonical_diplotypes sets it on its
+      placeholder rows (no tool reported the gene); here, for a gene only an outside
+      call tool supplies, it follows whether that tool ran: set when its result file
+      is missing (HLA-A and HLA-B, which PharmCAT lists uncalled after a VCF run),
+      cleared when the tool ran and called nothing for the gene (HLA-C, which
+      PharmCAT has no row for, after an OptiType run that typed none). CYP2D6 follows
+      `pypgx_ran` (whether the report read PyPGx results); None leaves it alone. A
+      "pharmcat_can_call" gene follows whether PharmCAT ran (_pharmcat_ran): its
+      placeholder is cleared when PharmCAT's JSON is in the report directory.
+    - neither: the gene was tested and not called.
+
+    The FHIR export codes these error, not-performed and unknown. A row with a
+    call is left alone.
+    """
+    pharmcat_genes = set(_load_gene_set("pharmcat_can_call"))
+    pharmcat_ran = _pharmcat_ran(report_dir)
+    for row in rows:
+        if not isinstance(row, dict) or not _no_call(row.get("diplotype")):
+            continue
+        gene = str(row.get("gene") or "").strip().upper()
+        pharmcat_examined = str(row.get("call_source") or "").upper() == "MATCHER" or (
+            pharmcat_ran and gene in pharmcat_genes
+        )
+        if pharmcat_examined:
+            row.pop("not_tested", None)
+        if gene in failed and not pharmcat_examined:
+            row["call_error"] = failed[gene]
+            row.pop("not_tested", None)
+            continue
+        if gene in _PYPGX_OUTSIDE_CALL_GENES and pypgx_ran is not None:
+            if pypgx_ran:
+                row.pop("not_tested", None)
+            else:
+                row["not_tested"] = True
+        for prefix, result_file in _OUTSIDE_CALL_RESULT_FILES:
+            if gene == prefix or (prefix.endswith("-") and gene.startswith(prefix)):
+                if os.path.isfile(os.path.join(report_dir, result_file)):
+                    row.pop("not_tested", None)
+                else:
+                    row["not_tested"] = True
+
+
 def _build_canonical_diplotypes(
     raw_gene_entries: List[Dict[str, Any]],
     file_type: str,
@@ -2742,11 +2931,6 @@ def _build_canonical_diplotypes(
                 provenance = resolve_called_by(row)
                 row["called_by"] = provenance.letter
                 row["called_by_label"] = provenance.label
-                guideline_letter = resolve_guideline_source(row)
-                if guideline_letter:
-                    row["guideline_source"] = guideline_letter
-                else:
-                    row.pop("guideline_source", None)
                 row.pop("report_data_from", None)
 
                 # Assign wild type phenotype labels based on file type
@@ -2775,7 +2959,10 @@ def _build_canonical_diplotypes(
         else:
             # Placeholder row for a gene with no result. The run recorded no
             # call, so it has no caller and no guideline attribution either --
-            # a guessed letter here was pure fabrication (28 + 216).
+            # a guessed letter here was pure fabrication (28 + 216). No tool
+            # reported the gene, so it was not tested (not_tested; the FHIR
+            # export codes it not-performed); mark_not_tested_and_failed refines
+            # that from what the run left behind.
             canonical_rows.append(
                 {
                     "gene": name,
@@ -2784,6 +2971,7 @@ def _build_canonical_diplotypes(
                     "activity_score": None,
                     "called_by": CALLED_BY_NO_CALL,
                     "called_by_label": "No call made for this gene",
+                    "not_tested": True,
                 }
             )
 
@@ -3140,6 +3328,52 @@ def _vcf_has_records(path: str) -> bool:
         return False
 
 
+# mtDNA-Server 2's files by report_paths key: the name MtdnaCall publishes each under,
+# what it is, and the test of whether it holds a result (mtdna_report_paths says why).
+# Each test is cheap: the report by its size alone (8.9 MB for the NA12878 demo), the
+# VCF read up to its first record, the small result JSON whole.
+MTDNA_FILES = {
+    "mtdna_report_path": (
+        "mtdna_report.html",
+        "mtDNA-Server 2 report",
+        lambda path: os.path.getsize(path) > 0,
+    ),
+    "mtdna_haplogroups_path": (
+        "mtdna_result.json",
+        "mtDNA haplogroup result",
+        _mtdna_result_calls_something,
+    ),
+    "mtdna_vcf_path": ("mtdna_variants.vcf.gz", "mtDNA chrM VCF", _vcf_has_records),
+}
+
+
+def mtdna_file_holds_result(key: str, path: str, level: int = logging.INFO) -> bool:
+    """True when the file at `path`, the mtDNA file of report_paths key `key`, exists
+    and holds a result by MTDNA_FILES' test for that key. Never raises.
+
+    Logged at `level`: INFO when a finishing job decides its links once, DEBUG when
+    upload_router checks a stored link on every read of a job.
+    """
+    _name, what, has_content = MTDNA_FILES[key]
+    if not os.path.isfile(path):
+        return False
+    try:
+        linked = has_content(path)
+    except Exception as exc:
+        # Deciding a link must not fail the job (the final stage marks it
+        # failed on any error here): a file that cannot be read is not linked.
+        logger.log(
+            max(level, logging.WARNING) if level >= logging.INFO else level,
+            f"{what} not linked: could not read {path}: {exc}",
+        )
+        return False
+    if linked:
+        logger.log(level, f"{what} linked: {path} holds a result")
+    else:
+        logger.log(level, f"{what} not linked: {path} has no result in it")
+    return bool(linked)
+
+
 def mtdna_report_paths(report_dir: str, reports_url_prefix: str) -> Dict[str, str]:
     """Served paths of mtDNA-Server 2's files that hold a result, by report_paths key.
 
@@ -3162,40 +3396,14 @@ def mtdna_report_paths(report_dir: str, reports_url_prefix: str) -> Dict[str, st
     The report's mtDNA section says why there is no result (mtdna_report_context).
 
     native_report_paths adds these; GET /upload/reports/job/{job_id}'s fallback for
-    a job without stored reports uses them too.
+    a job without stored reports uses them too. A job stored before this rule keeps
+    its links in metadata["reports"]; upload_router checks those on read with
+    mtdna_file_holds_result.
     """
-    checks = (
-        (
-            "mtdna_report_path",
-            "mtdna_report.html",
-            "mtDNA-Server 2 report",
-            lambda path: os.path.getsize(path) > 0,
-        ),
-        (
-            "mtdna_haplogroups_path",
-            "mtdna_result.json",
-            "mtDNA haplogroup result",
-            _mtdna_result_calls_something,
-        ),
-        ("mtdna_vcf_path", "mtdna_variants.vcf.gz", "mtDNA chrM VCF", _vcf_has_records),
-    )
     paths: Dict[str, str] = {}
-    for key, name, what, has_content in checks:
-        path = os.path.join(report_dir, name)
-        if not os.path.isfile(path):
-            continue
-        try:
-            linked = has_content(path)
-        except Exception as exc:
-            # Deciding a link must not fail the job (the final stage marks it
-            # failed on any error here): a file that cannot be read is not linked.
-            logger.warning(f"{what} not linked: could not read {name}: {exc}")
-            continue
-        if linked:
+    for key, (name, _what, _has_content) in MTDNA_FILES.items():
+        if mtdna_file_holds_result(key, os.path.join(report_dir, name)):
             paths[key] = f"{reports_url_prefix}/{name}"
-            logger.info(f"{what} URL added: {paths[key]}")
-        else:
-            logger.info(f"{what} not linked: {name} has no result in it")
     return paths
 
 
@@ -3552,11 +3760,6 @@ def generate_report(
                 provenance = resolve_called_by(diplotype)
                 diplotype["called_by"] = provenance.letter
                 diplotype["called_by_label"] = provenance.label
-                guideline_letter = resolve_guideline_source(diplotype)
-                if guideline_letter:
-                    diplotype["guideline_source"] = guideline_letter
-                else:
-                    diplotype.pop("guideline_source", None)
                 diplotype.pop("report_data_from", None)
                 enhanced_diplotypes.append(diplotype)
             else:
@@ -3867,6 +4070,11 @@ def generate_report(
         logger.warning(f"Failed to load genomic header text: {_e}")
 
     # Now that we know the report directory, try to load PyPGx results and augment data['genes']
+    pypgx_failed: Dict[str, str] = {}
+    pypgx_results_obj: Dict[str, Any] = {}
+    # Whether the report read PyPGx results (embedded, or either file name below);
+    # None until known. CYP2D6 is not tested without them (mark_not_tested_and_failed).
+    pypgx_ran: Optional[bool] = None
     try:
         # Prefer PyPGx results coming directly from workflow (if upstream provided it)
         pypgx_results = None
@@ -3889,6 +4097,7 @@ def generate_report(
                 logger.info(f"Found PyPGx results JSON for enrichment: {latest_path}")
                 with open(latest_path, "r", encoding="utf-8") as f:
                     pypgx_results = json.load(f)
+        pypgx_ran = bool(pypgx_results)
         if pypgx_results:
             logger.info("Proceeding to merge PyPGx results into report data...")
             results_obj = (
@@ -3901,6 +4110,10 @@ def generate_report(
                 for g in data.get("genes", [])
                 if isinstance(g, dict)
             }
+            # The genes PyPGx failed on are skipped below; the canonical rows say so.
+            pypgx_failed = pypgx_failed_genes(results_obj)
+            if isinstance(results_obj, dict):
+                pypgx_results_obj = results_obj
             added_count = 0
             # Every row of a gene: PharmCAT 2.x's JSON has one per guideline source
             # (CPIC, DPWG). Keyed to the last alone, only the DPWG row was PyPGx's,
@@ -4013,6 +4226,19 @@ def generate_report(
             workflow_config=workflow_config,
         )
         data["genes"] = canonical_diplotypes
+        # A lane that died leaves no per-gene record: the job's steps say whether
+        # PyPGx was to run (pypgx_lane_failed_genes). PyPGx's own record wins.
+        failed_calls = {
+            **pypgx_lane_failed_genes(
+                workflow_records,
+                pypgx_results_obj,
+                load_job_file_type(db_session, job_id) or input_file_type,
+            ),
+            **pypgx_failed,
+        }
+        mark_not_tested_and_failed(
+            canonical_diplotypes, report_dir, failed_calls, pypgx_ran
+        )
         logger.info(
             f"Canonical diplotypes prepared: total={len(canonical_diplotypes)} (alphabetical, deduplicated, full complement)"
         )
@@ -4034,18 +4260,35 @@ def generate_report(
         genes_without_copy_number(pypgx_results),
         copy_number_why,
     )
-    _copy_number_alert = copy_number_alert(
-        [
-            row["gene"]
-            for row in data.get("genes", [])
-            if isinstance(row, dict)
-            and row.get("copy_number_not_assessed")
-            and gene_was_called(row.get("diplotype"))
-        ],
-        copy_number_why,
-    )
-    if _copy_number_alert:
-        workflow_warnings = list(workflow_warnings) + [_copy_number_alert]
+    # Calls that cannot show a structural allele PharmCAT lists as undetectable
+    # (CYP2B6 *29/*30, CYP2C19 *36/*37, CYP4F2 *16, SLCO1B1 *48/*49): PharmCAT's own
+    # calls, on every input, a whole genome too; PyPGx's CYP2C19 and SLCO1B1, which
+    # it has no copy-number model for; PyPGx's CYP2B6, which cannot be *30. A note
+    # beside each and one alert of their own. PharmCAT's report.json carries no such
+    # message, so nothing here repeats one of PharmCAT's.
+    annotate_pharmcat_copy_number(data.get("genes", []), pypgx_results)
+    _noted = [
+        row
+        for row in data.get("genes", [])
+        if isinstance(row, dict)
+        and row.get("copy_number_not_assessed")
+        and gene_was_called(row.get("diplotype"))
+    ]
+    _copy_number_alerts = [
+        copy_number_alert(
+            [
+                row["gene"]
+                for row in _noted
+                if not row["copy_number_not_assessed"].get("listed")
+            ],
+            copy_number_why,
+        ),
+        pharmcat_copy_number_alert(_noted),
+    ]
+    if any(_copy_number_alerts):
+        workflow_warnings = list(workflow_warnings) + [
+            alert for alert in _copy_number_alerts if alert
+        ]
         template_data["workflow_warnings"] = workflow_warnings
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference

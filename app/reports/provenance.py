@@ -1,9 +1,5 @@
 """Per-gene provenance for the report's Call column.
 
-``resolve_guideline_source`` read a guideline source per gene for the Guide
-column, since dropped: PharmCAT 3.1 and later record none. It and the code that
-stamps ``guideline_source`` on gene rows are no longer read by a template.
-
 The product rule: report what the run recorded. Every value here traces to
 something a tool actually emitted -- PharmCAT's ``callSource``, the TSV
 ``Outside Call`` column, or a tool marker written by a ZaroPGx merge path that
@@ -11,8 +7,10 @@ ran. Nothing is inferred from the gene name. When the run recorded nothing, say
 so with ``?`` rather than guessing.
 
 Replaces ``determine_called_by`` / ``determine_report_data_from`` /
-``determine_tool_source`` / ``determine_guideline_source`` (generator.py) and
-``_determine_called_by_letter`` (pharmcat_data_service.py) -- BACKLOG 28 + 216.
+``determine_tool_source`` (generator.py) and ``_determine_called_by_letter``
+(pharmcat_data_service.py) -- BACKLOG 28 + 216. (It also replaced
+``determine_guideline_source``, for the Guide column; that column and its letter
+are gone.)
 """
 
 from __future__ import annotations
@@ -40,26 +38,18 @@ _TOOL_MARKERS = {
     "M": CALLED_BY_MTDNA,
 }
 
-_TOOL_LABELS = {
-    CALLED_BY_PHARMCAT: "Called by PharmCAT",
-    CALLED_BY_PYPGX: "Called by PyPGx",
-    CALLED_BY_OPTITYPE: "Called by OptiType",
-    CALLED_BY_MTDNA: "Called by mtDNA-server-2",
+_TOOL_NAMES = {
+    CALLED_BY_PHARMCAT: "PharmCAT",
+    CALLED_BY_PYPGX: "PyPGx",
+    CALLED_BY_OPTITYPE: "OptiType",
+    CALLED_BY_MTDNA: "mtDNA-server-2",
 }
+
+_TOOL_LABELS = {letter: f"Called by {name}" for letter, name in _TOOL_NAMES.items()}
 
 _LABEL_OUTSIDE = "Outside call - producing tool not recorded by this run"
 _LABEL_NO_CALL = "No call made for this gene"
 _LABEL_UNKNOWN = "Calling tool not recorded by this run"
-
-_GUIDELINE_LETTERS = {
-    "FDA": "F",
-    "F": "F",
-    "DPWG": "D",
-    "D": "D",
-    "CPIC": "C",
-    "C": "C",
-    "PHARMGKB": "P",
-}
 
 
 @dataclass(frozen=True)
@@ -122,7 +112,22 @@ def resolve_called_by(gene_row: Mapping[str, Any]) -> CallProvenance:
     return CallProvenance(CALLED_BY_UNKNOWN, _LABEL_UNKNOWN, False)
 
 
-def resolve_guideline_source(gene_row: Mapping[str, Any]) -> str:
-    """Letter for the guideline source the run recorded, or '' when it recorded none."""
-    raw = gene_row.get("guideline_source") or gene_row.get("phenotype_source") or ""
-    return _GUIDELINE_LETTERS.get(str(raw).strip().upper(), "")
+def called_by_text(gene_row: Mapping[str, Any]) -> str:
+    """The Call letter in words, for a row's tooltip or the ReportLab lane.
+
+    A gene examined without a call keeps the letter of the tool that tried, so
+    its words say that ("No call; tried by PyPGx"), not "Called by PyPGx". The
+    row's own letter and label are used when it has them, as the page shows
+    them; otherwise they are resolved from the row.
+    """
+    # Imported here: generator imports this module.
+    from app.reports.generator import gene_was_called
+
+    letter = gene_row.get("called_by")
+    label = gene_row.get("called_by_label")
+    if not letter or not label:
+        provenance = resolve_called_by(gene_row)
+        letter, label = provenance.letter, provenance.label
+    if letter in _TOOL_NAMES and not gene_was_called(gene_row.get("diplotype")):
+        return f"No call; tried by {_TOOL_NAMES[letter]}"
+    return label

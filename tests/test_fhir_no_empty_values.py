@@ -7,14 +7,15 @@ gave the bundle of a VCF run of PharmCAT's example VCF 6 errors: the genotypes o
 F2, F5 and HLA-C had valueCodeableConcept.text "" ("value cannot be empty"). No tool
 reported those genes, so the report's gene list (app/reports/generator.py
 _build_canonical_diplotypes) held a placeholder row for each with diplotype "", and
-so would any run for any gene no tool reports, HLA from a VCF among them. Pushed as
-a transaction, HAPI took that bundle and stored the three genotypes with no value,
-which the IG's genotype profile requires.
+so would any run for any gene no tool reports (HLA-C from a VCF, which PharmCAT has
+no row for). Pushed as a transaction, HAPI took that bundle and stored the three
+genotypes with no value, which the IG's genotype profile requires.
 
-A gene the run did not call now states "Unknown", as the genes a tool reported but
-could not call already did. ``empty_elements`` walks a whole bundle; the tests run
-it over bundles built from the rows the report step produces, from blank inputs,
-and over the bundles the repository ships.
+A placeholder row now states "Not performed", coded DataAbsentReason not-performed;
+a blank diplotype on a row without that marker states "Unknown"
+(tests/test_fhir_uncalled_reason.py). ``empty_elements`` walks a whole bundle; the
+tests run it over bundles built from the rows the report step produces, from blank
+inputs, and over the bundles the repository ships.
 """
 
 from __future__ import annotations
@@ -88,7 +89,7 @@ def test_the_placeholder_rows_are_what_the_bundle_was_built_from():
         assert rows[gene]["diplotype"] == ""
 
 
-def test_a_gene_no_tool_reported_states_unknown_like_an_uncalled_one():
+def test_a_gene_no_tool_reported_has_a_value():
     data = {
         "genes": _canonical_rows(
             [
@@ -102,14 +103,16 @@ def test_a_gene_no_tool_reported_states_unknown_like_an_uncalled_one():
     bundle = _export(data)["bundle"]
     genotypes = _genotypes(bundle)
 
-    for gene in UNREPORTED + ("ABCB1",):
-        assert genotypes[gene]["valueCodeableConcept"] == {"text": "Unknown"}, gene
+    for gene in UNREPORTED:
+        assert genotypes[gene]["valueCodeableConcept"]["text"] == "Not performed"
         assert "dataAbsentReason" not in genotypes[gene]
+    assert genotypes["ABCB1"]["valueCodeableConcept"]["text"] == "Unknown"
+    assert "dataAbsentReason" not in genotypes["ABCB1"]
     assert genotypes["CYP2C19"]["valueCodeableConcept"] == {"text": "*38/*38"}
 
     report = bundle["entry"][0]["resource"]
     displays = {ref["display"] for ref in report["result"]}
-    assert {"F2 Unknown", "F5 Unknown", "HLA-C Unknown"} <= displays
+    assert {"F2 Not performed", "F5 Not performed", "HLA-C Not performed"} <= displays
     assert empty_elements(bundle) == []
 
 
@@ -125,10 +128,14 @@ def test_no_empty_element_when_no_gene_was_called():
 
 @pytest.mark.parametrize("diplotype", ["", "   ", None])
 def test_a_blank_or_missing_diplotype_states_unknown(diplotype):
+    """Without the placeholder's not_tested marker (a database-lane row with no
+    diplotype label), a blank says no call, not that nothing tested the gene."""
     bundle = _export(
         {"genes": [{"gene": "CYP2D6", "diplotype": diplotype}]},
     )["bundle"]
-    assert _genotypes(bundle)["CYP2D6"]["valueCodeableConcept"] == {"text": "Unknown"}
+    value = _genotypes(bundle)["CYP2D6"]["valueCodeableConcept"]
+    assert value["text"] == "Unknown"
+    assert value["coding"][0]["code"] == "unknown"
     assert empty_elements(bundle) == []
 
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import app.reports.generator as generator_module
+import app.reports.provenance as provenance_module
 from app.reports.provenance import (
     CALLED_BY_NO_CALL,
     CALLED_BY_OUTSIDE,
@@ -17,7 +18,6 @@ from app.reports.provenance import (
     CALLED_BY_PYPGX,
     CALLED_BY_UNKNOWN,
     resolve_called_by,
-    resolve_guideline_source,
 )
 from app.services.pharmcat_data_service import PharmCATDataService
 
@@ -97,18 +97,12 @@ def test_every_provenance_carries_a_label():
         assert resolve_called_by(row).label.strip()
 
 
-def test_guideline_source_letters():
-    assert resolve_guideline_source({"phenotype_source": "DPWG"}) == "D"
-    assert resolve_guideline_source({"guideline_source": "CPIC"}) == "C"
-    assert resolve_guideline_source({"guideline_source": "FDA"}) == "F"
-    assert resolve_guideline_source({"guideline_source": "PharmGKB"}) == "P"
-    assert resolve_guideline_source({"guideline_source": "C"}) == "C"
-
-
-def test_guideline_source_blank_when_not_recorded():
-    assert resolve_guideline_source({}) == ""
-    assert resolve_guideline_source({"phenotype_source": None}) == ""
-    assert resolve_guideline_source({"guideline_source": "Whatever"}) == ""
+def test_no_guideline_letter_is_resolved_per_gene():
+    """The per-gene guideline letter fed the Guide column, dropped because
+    PharmCAT 3.1 and later record no guideline per gene. Its resolver went with
+    it; the guideline behind each recommendation is a recommendation's own."""
+    assert not hasattr(provenance_module, "resolve_guideline_source")
+    assert not hasattr(generator_module, "resolve_guideline_source")
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +126,8 @@ def test_db_lane_outside_gene_is_outside_not_pharmcat():
         ]
     )
     assert rows[0]["called_by"] == CALLED_BY_OUTSIDE
-    assert rows[0]["guideline_source"] == "C"
+    # No per-gene guideline letter: nothing reads one (the Guide column is gone).
+    assert "guideline_source" not in rows[0]
 
 
 def test_db_lane_no_call_gene_is_no_call():
@@ -263,9 +258,10 @@ def test_canonical_placeholder_rows_are_no_call_not_a_tool():
     assert {r["called_by"] for r in rows} == {CALLED_BY_NO_CALL}
 
 
-def test_canonical_rows_blank_an_unrecorded_guideline_source():
+def test_canonical_rows_get_no_guideline_letter():
     """The file lane used to render the word "CPIC" (straight from block.source)
-    into a letter column, and to guess "C" whenever it guessed the caller."""
+    into a letter column, and to guess "C" whenever it guessed the caller. The
+    column is gone, and so is the letter it was given."""
     rows = generator_module._build_canonical_diplotypes(
         raw_gene_entries=[
             {"gene": "CYP2C19", "diplotype": "*38/*38", "call_source": "MATCHER"},
@@ -280,8 +276,8 @@ def test_canonical_rows_blank_an_unrecorded_guideline_source():
         workflow_config=None,
     )
     by_gene = {r["gene"]: r for r in rows}
-    assert by_gene["CYP2C19"].get("guideline_source", "") == ""
-    assert by_gene["CYP2C9"]["guideline_source"] == "D"
+    assert "guideline_source" not in by_gene["CYP2C19"]
+    assert by_gene["CYP2C9"]["guideline_source"] == "DPWG"
 
 
 def test_pypgx_only_row_keeps_its_tool_attribution():
@@ -411,7 +407,7 @@ def test_rendered_legend_explains_every_glyph(template_name):
     html = _render(template_name)
     assert "X</strong> = outside call" in html
     assert "?</strong> = not recorded by this run" in html
-    assert "&ndash;</strong> = no call made" in html
+    assert "&ndash;</strong> = no call and no tool on record" in html
     # The Data column is gone, so the legend must not describe it.
     assert "Data:</strong>" not in html
     assert "Report data tool" not in html
@@ -479,6 +475,105 @@ def test_reportlab_gene_line_states_provenance_in_words():
     assert "<b>CYP2C19:</b> *38/*38" in line
     assert "(Phenotype: Normal Metabolizer)" in line
     assert "[Called by PharmCAT]" in line
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_the_legend_holds_for_a_gene_without_a_call(template_name):
+    """A gene examined without a call keeps the letter of the tool that tried:
+    "ABCB1 (P)" in the PDF's list, a P in the interactive Genes tab. The legend
+    said "Tool that made this call", which no tool had."""
+    html = _render(template_name)
+    assert "Tool that made this call" not in html
+    assert (
+        "the one that made the call or, for a gene without a call, the one that "
+        "tried" in html
+    )
+    # True for HLA-C, which PharmCAT never handles, and for a PyPGx-only gene
+    # with nothing returned: "PharmCAT made none and was given none" alone is not.
+    assert (
+        "&ndash;</strong> = no call and no tool on record for the gene (PharmCAT "
+        "made none and was given none, or no tool returned a result for it)" in html
+    )
+
+
+def test_an_uncalled_row_s_tooltip_does_not_say_called_by():
+    """The interactive Genes tab lists every gene; a PyPGx gene with no call is a
+    row with a P whose tooltip said "Called by PyPGx"."""
+    rows = _ROWS + [
+        {
+            "gene": "ABCB1",
+            "diplotype": "Unknown",
+            "phenotype": "Unknown",
+            "called_by": CALLED_BY_PYPGX,
+            "called_by_label": "Called by PyPGx",
+        }
+    ]
+    html = _render("interactive_report.html", rows)
+    titles = dict(
+        re.findall(
+            r"<td>(\w+)</td>.*?<td class=\"narrow-col tool-source\" "
+            r'title="([^"]*)">',
+            html,
+            re.S,
+        )
+    )
+    assert titles["ABCB1"] == "No call; tried by PyPGx"
+    assert titles["CYP2C19"] == "Called by PharmCAT"
+    assert titles["ABCG2"] == "No call made for this gene"
+
+
+def test_called_by_text_says_who_tried_when_there_is_no_call():
+    """One rule for the tooltips and the ReportLab lane (provenance.called_by_text)."""
+    from app.reports.provenance import called_by_text
+
+    called = {"gene": "CYP2C19", "diplotype": "*38/*38", "call_source": "MATCHER"}
+    assert called_by_text(called) == "Called by PharmCAT"
+    # Tried and could not: PharmCAT's matcher (NAT2 from a VCF), PyPGx's marker.
+    assert (
+        called_by_text(
+            {"gene": "NAT2", "diplotype": "Unknown/Unknown", "call_source": "MATCHER"}
+        )
+        == "No call; tried by PharmCAT"
+    )
+    assert (
+        called_by_text(
+            {"gene": "ABCB1", "diplotype": "Unknown", "tool_source": "PyPGx"}
+        )
+        == "No call; tried by PyPGx"
+    )
+    # The row's own letter and label, as the page shows them, when it has them.
+    assert (
+        called_by_text(
+            {
+                "gene": "ABCB1",
+                "diplotype": "",
+                "called_by": CALLED_BY_PYPGX,
+                "called_by_label": "Called by PyPGx",
+            }
+        )
+        == "No call; tried by PyPGx"
+    )
+    # No tool to name, or none recorded: unchanged.
+    assert (
+        called_by_text({"gene": "HLA-C", "diplotype": "", "call_source": "NONE"})
+        == "No call made for this gene"
+    )
+    assert (
+        called_by_text(
+            {"gene": "CYP2D6", "diplotype": "*1/*3", "call_source": "OUTSIDE"}
+        )
+        == "Outside call - producing tool not recorded by this run"
+    )
+
+
+def test_reportlab_gene_line_says_who_tried_when_there_is_no_call():
+    from app.reports.pdf_generators import _diplotype_line
+
+    line = _diplotype_line(
+        {"gene": "ABCB1", "diplotype": "Unknown", "tool_source": "PyPGx"}
+    )
+    assert "[No call; tried by PyPGx]" in line
+    assert "Called by" not in line
 
 
 def test_reportlab_gene_line_is_honest_about_outside_and_unknown():

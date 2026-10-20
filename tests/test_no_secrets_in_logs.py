@@ -74,13 +74,23 @@ def test_services_status_keeps_the_password_out_of_log_and_answer(
         raise httpx.ConnectError("no backend in this test")
 
     monkeypatch.setattr(httpx.AsyncClient, "get", no_backend)
-    monkeypatch.setenv(
-        "DATABASE_URL", f"postgresql+psycopg://zaropgx_user:{PASSWORD}@127.0.0.1:1/x"
-    )
-    with caplog.at_level(logging.DEBUG):
-        response = client.get(
-            "/services-status", headers={"Cookie": "zaropgx_session=abc123secret"}
-        )
+    url = f"postgresql+psycopg://zaropgx_user:{PASSWORD}@127.0.0.1:1/x"
+    monkeypatch.setenv("DATABASE_URL", url)
+    # The check runs on the app's engine: give it one that holds the password and
+    # cannot connect, so the failure path is what is logged and answered.
+    from sqlalchemy import create_engine
+
+    from app.api import db as app_db
+
+    unreachable = create_engine(url, connect_args={"connect_timeout": 2})
+    monkeypatch.setattr(app_db, "engine", unreachable)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            response = client.get(
+                "/services-status", headers={"Cookie": "zaropgx_session=abc123secret"}
+            )
+    finally:
+        unreachable.dispose()
     assert response.status_code == 200
     assert PASSWORD not in response.text
     assert PASSWORD not in caplog.text

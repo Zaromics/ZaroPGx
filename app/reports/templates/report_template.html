@@ -122,6 +122,22 @@
         .gene-table col.c-implication{ width: 30%; }
         .gene-table col.c-call       { width: 7%;  }
 
+        /* The mtDNA table's two columns, fixed. Sized by content, the labels took
+           about half the width beside a VCF's short values ("Not determined", "No
+           call") and under a third beside the demo's phenotype ("normal risk of
+           aminoglycoside-induced hearing loss"). Measured in the PDF: the widest
+           label, "Haplogroup quality", is 109pt of bold text, 117pt with its
+           padding, in a 157pt column at 32%; and 32% starts the values where the
+           Genetic Results table above starts its Phenotype column (Gene 13% +
+           Diplotype 19%). The demo's phenotype, 272pt, keeps to one line in the
+           325pt left for the values. */
+        .mtdna-table {
+            table-layout: fixed;
+            width: 100%;
+        }
+        .mtdna-table col.c-label { width: 32%; }
+        .mtdna-table col.c-value { width: 68%; }
+
         /* Long diplotype strings ("rs2231142 reference (G)/...") have no spaces
            to break at, and under table-layout:fixed an unbreakable word overflows
            its cell rather than widening it. */
@@ -701,6 +717,20 @@
             break-inside: avoid;
             page-break-inside: avoid;
         }
+        /* The footnotes to the uncalled genes' names, read as one block and kept
+           with the end of the names they number: on the example VCF's report
+           footnote 1 ended one page and 2 and 3 began the next. When they do not
+           fit under the names, the names' last lines go over with them. Only a
+           short block is kept whole (the template sets the class for up to 10
+           notes; the sidecars write about that many reasons): WeasyPrint does not
+           split a kept block taller than a page cleanly, it deals the names out a
+           couple of lines a page and starts the notes on a page of their own. */
+        .no-call-notes {
+            break-inside: avoid;
+            page-break-inside: avoid;
+            break-before: avoid;
+            page-break-before: avoid;
+        }
         /* Header section */
         .header-section {
             margin-top: 24px;
@@ -1221,6 +1251,12 @@
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set copy_number_genes = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
+    {# The line under each such call in the summary: "Copy number not assessed", or
+       "Structural alleles" where copy number was measured but an allele PharmCAT
+       lists still cannot show (copy_number.listed_alleles_entry). #}
+    {% set copy_number_markers = {} %}
+    {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call') %}{% set _ = copy_number_markers.update({d.gene: d.copy_number_not_assessed.marker or 'Copy number not assessed'}) %}{% endfor %}
+    {% set listed_rows = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel')|selectattr('copy_number_not_assessed.listed')|list %}
     {# A call with positions read as reference (positions_note): the same marker. #}
     {% set positions_genes = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
@@ -1237,12 +1273,22 @@
         {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
         {% endfor %}
-        {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') if not d.copy_number_not_assessed.listed %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
         {% endfor %}
-        {% for d in diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        {# One entry for every call that cannot show an allele PharmCAT lists: four
+           notes of their own ran the notes past their page. #}
+        {% if listed_rows %}{% set listed = listed_alleles_note(listed_rows) %}
+        <p class="header-note"><strong>⚠ {{ listed.genes }}</strong>: {{ listed.note }}</p>
+        {% endif %}
+        {% set positions_rows = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel')|list %}
+        {% if positions_rows|length == 1 %}{% set d = positions_rows[0] %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.positions_note }}, so a variant there would not have been seen and this call may be wrong. Genetic Results notes it beside the call.</p>
-        {% endfor %}
+        {% elif positions_rows %}{% set positions = positions_summary_note(positions_rows) %}
+        {# One entry for several: one a gene ran the notes past their page when
+           PyPGx called every gene of a thin alignment. #}
+        <p class="header-note"><strong>⚠ {{ positions.genes }}</strong>: {{ positions.note }}</p>
+        {% endif %}
         {{ unresolved.summary_legend(called) }}
         {{ unresolved.summary_uncalled(summary_uncalled_rows, missing_positions_not_assumed) }}
         {% if summary_beyond %}
@@ -1264,7 +1310,7 @@
                         <td class="exec-summary-number">{{ loop.index }}.</td>
                         <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
-                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_genes %}<div class="copy-number-note">⚠ Copy number not assessed: see the notes</div>{% endif %}</td>
+                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_markers %}<div class="copy-number-note">⚠ {{ copy_number_markers[r.gene] }}: see the notes</div>{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
                             {% set ph = r.phenotype %}
                             {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {{ ph|phenotype_badge_class }}">{{ ph|allele_results_unbroken }}</span>{% endif %}
@@ -1335,7 +1381,7 @@
         
         <div class="tool-key">
             <h4>Source Legend:</h4>
-            <p><strong>Call:</strong> Tool that made this call, as recorded by the run - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call made, <strong>?</strong> = not recorded by this run</p>
+            <p><strong>Call:</strong> The tool the run records for the gene: the one that made the call or, for a gene without a call, the one that tried - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call and no tool on record for the gene (PharmCAT made none and was given none, or no tool returned a result for it), <strong>?</strong> = not recorded by this run</p>
         </div>
         
         <div style="margin-bottom: 15px;"></div>
@@ -1383,7 +1429,7 @@
                        and G6PD's "Normal" metabolism wording, and every phenotype that
                        is not a metabolizer's "Consult clinical guidelines". #}
                     <td>{{ d|implication }}</td>
-                    <td class="narrow-col tool-source" title="{{ d.called_by_label or '' }}">{{ d.called_by }}</td>
+                    <td class="narrow-col tool-source" title="{{ d|called_by_text }}">{{ d.called_by }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -1409,9 +1455,13 @@
                one (59 on the old demo VCF, test_data/pharmcat.example2.vcf). #}
             {% set no_call_notes = uncalled_genes|selectattr('no_call_note')|map(attribute='no_call_note')|unique(case_sensitive=true)|list %}
             <p class="uncalled-list">{% for d in uncalled_genes %}{{ d.gene }} ({{ d.called_by or '?' }}){% if d.no_call_note %}<sup>{{ no_call_notes.index(d.no_call_note) + 1 }}</sup>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            {% if no_call_notes %}
+            <div{% if no_call_notes|length <= 10 %} class="no-call-notes"{% endif %}>
             {% for note in no_call_notes %}
             <p class="no-call-note"><sup>{{ loop.index }}</sup> {{ note }}.</p>
             {% endfor %}
+            </div>
+            {% endif %}
             {% if not summary_names_uncalled %}{{ unresolved.uncalled_reason(missing_positions_not_assumed) }}{% endif %}
         </div>
         {% endif %}
@@ -1425,7 +1475,8 @@
     <div class="section" style="page-break-inside: avoid;">
         <h2>Mitochondrial DNA</h2>
         <p>Mitochondrial variant calling and haplogroup assignment via mtDNA-Server 2, supplying the MT-RNR1 outside call: PharmCAT's own allele definitions carry no mitochondrial position, so nothing in its own pipeline can call this gene.</p>
-        <table>
+        <table class="mtdna-table">
+            <colgroup><col class="c-label"><col class="c-value"></colgroup>
             <tbody>
                 <tr><th>Haplogroup</th><td>{{ mtdna.haplogroup or 'Not determined' }}</td></tr>
                 <tr><th>Haplogroup quality</th><td>{{ mtdna.haplogroup_quality or '–' }}</td></tr>

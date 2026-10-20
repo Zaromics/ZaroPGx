@@ -24,6 +24,7 @@ from app.pharmcat.pharmcat_parser import (
 from app.pharmcat.report_json import (
     annotation_genes,
     guideline_source_name,
+    guideline_source_rank,
     recommendation_call_for_display,
 )
 from app.reports.actionable import actionable_findings
@@ -32,7 +33,7 @@ from app.reports.evidence import (
     classify_evidence,
     prescribing_changes,
 )
-from app.reports.provenance import resolve_called_by, resolve_guideline_source
+from app.reports.provenance import resolve_called_by
 from app.utils.literature import format_literature_reference
 
 logger = logging.getLogger(__name__)
@@ -386,7 +387,6 @@ class PharmCATDataService:
                     "diplotype": primary_diplotype.get("diplotype_label") or "",
                 }
             )
-            guideline_source = resolve_guideline_source(gene)
 
             report_gene = {
                 "gene": gene_symbol,
@@ -430,9 +430,6 @@ class PharmCATDataService:
 
             report_gene["called_by"] = provenance.letter
             report_gene["called_by_label"] = provenance.label
-
-            if guideline_source:
-                report_gene["guideline_source"] = guideline_source
 
             # Add all diplotypes for this gene
             if len(diplotype_data) > 1:
@@ -561,7 +558,14 @@ class PharmCATDataService:
         # Group recommendations by drug name
         drug_groups = {}
 
-        for rec in drug_recommendations:
+        # Each drug's annotations in PharmCAT's order of sources (CPIC, DPWG, FDA
+        # label, FDA PGx association), and within a source in the order given:
+        # PharmCAT's, as the parser reads the rows back. The report, the FHIR
+        # export and the interactive report list them in this order.
+        for rec in sorted(
+            drug_recommendations,
+            key=lambda r: guideline_source_rank(r.get("guideline_source")),
+        ):
             drug_name = rec.get("drug_name", "Unknown")
             gene_symbol = rec.get("gene_symbol", "Unknown")
             # gene_symbol holds one gene per annotation; the stored annotation
