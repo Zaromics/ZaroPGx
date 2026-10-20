@@ -24,6 +24,7 @@ from app.pharmcat.pharmcat_parser import (
 from app.pharmcat.report_json import (
     annotation_genes,
     guideline_source_name,
+    guideline_source_rank,
     recommendation_call_for_display,
 )
 from app.reports.actionable import actionable_findings
@@ -561,7 +562,14 @@ class PharmCATDataService:
         # Group recommendations by drug name
         drug_groups = {}
 
-        for rec in drug_recommendations:
+        # Each drug's annotations in PharmCAT's order of sources (CPIC, DPWG, FDA
+        # label, FDA PGx association), and within a source in the order given:
+        # PharmCAT's, as the parser reads the rows back. The report, the FHIR
+        # export and the interactive report list them in this order.
+        for rec in sorted(
+            drug_recommendations,
+            key=lambda r: guideline_source_rank(r.get("guideline_source")),
+        ):
             drug_name = rec.get("drug_name", "Unknown")
             gene_symbol = rec.get("gene_symbol", "Unknown")
             # gene_symbol holds one gene per annotation; the stored annotation

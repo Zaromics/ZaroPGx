@@ -1085,10 +1085,23 @@ class PharmCATParser:
         return [{"drug_name": r.drug_name, "drug_id": r.drug_id} for r in results]
 
     def get_drug_recommendations(self, run_id: str) -> List[Dict[str, Any]]:
-        """Get all drug recommendations for a run"""
+        """Get all drug recommendations for a run, in the order _parse_drugs
+        stored them: PharmCAT's own.
+
+        Without an ORDER BY, Postgres returns the rows in whatever order they lie
+        in the table, and that is not the order they were written: a row goes
+        wherever the free space map finds room for its size. Two runs of the same
+        input listed atomoxetine's DPWG and FDA label annotations, and
+        pantoprazole's DPWG and FDA PGx ones, in different orders. _parse_drugs
+        flushes one row at a time, so created_at is the order it wrote them in.
+        """
         results = (
             self.db_session.query(PharmCATDrugRecommendation)
             .filter(PharmCATDrugRecommendation.run_id == run_id)
+            .order_by(
+                PharmCATDrugRecommendation.created_at,
+                PharmCATDrugRecommendation.id,
+            )
             .all()
         )
 

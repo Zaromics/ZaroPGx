@@ -1052,3 +1052,13 @@ def guideline_source_name(value: Any) -> str:
     and anything unrecognised stays as given ("" for nothing)."""
     text = str(value or "").strip()
     return GUIDELINE_SOURCE_NAMES.get(text.upper(), text)
+
+
+def guideline_source_rank(value: Any) -> int:
+    """Where a guideline source (code or section name) comes in PharmCAT's order:
+    CPIC, DPWG, FDA label, FDA PGx association, as its report.json orders its
+    "drugs" sections and its HTML report lists a drug's annotations. A source it
+    does not know comes after them."""
+    order = list(GUIDELINE_SOURCE_NAMES.values())
+    name = guideline_source_name(value)
+    return order.index(name) if name in order else len(order)
