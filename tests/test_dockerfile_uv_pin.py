@@ -22,11 +22,13 @@ PIN = re.compile(
 # Any use of uv or uvx in a RUN step (the pinned COPY line itself is not a use).
 RUNS_UV = re.compile(
     r"(?m)^RUN\b.*(?:\buv (?:pip|venv|export|sync|run|tool|python|add)\b|\buvx\b)"
+    r'|^RUN\s*\[\s*"uvx?"'
 )
 # `pip install uv` (or `uv pip install … uv==…`) would put a second, unpinned uv on
-# PATH over the copied one.
+# PATH over the copied one. The package list ends at a shell separator, so the `uv`
+# that starts the next command (`pip install -U pip && uv pip install x`) is not one.
 PIP_INSTALLS_UV = re.compile(
-    r"\bpip3? install\b[^\n]*?(?<![\w./-])uv(?:\[[^\]]*\])?(?:[=<>!~]=?[^\s]*)?(?![\w.-])"
+    r"\bpip3? install\b[^\n&|;]*?(?<![\w./-])uv(?:\[[^\]]*\])?(?:[=<>!~]=?[^\s]*)?(?![\w.-])"
 )
 
 
@@ -75,6 +77,8 @@ def test_the_uv_pattern_sees_every_way_of_running_uv():
         "RUN uv add requests",
         "RUN uvx ruff check",
         "RUN cd /x && uv export --frozen > r.txt",
+        'RUN ["uv", "pip", "install", "--system", "x"]',
+        'RUN ["uvx", "ruff", "check"]',
     ):
         assert RUNS_UV.search(line), line
     for line in (
@@ -104,6 +108,8 @@ def test_the_pip_install_pattern_finds_uv_and_only_uv():
         "RUN uv pip install --system fastapi uvicorn httpx",
         "RUN pip install uvloop",
         "RUN uv pip install --system -r requirements.txt",
+        "RUN pip install --upgrade pip && uv pip install --system x",
+        "RUN pip install -U pip; uv pip install x",
     ):
         assert not PIP_INSTALLS_UV.search(line), line
 
@@ -130,6 +136,8 @@ def test_ci_installs_the_uv_the_images_copy():
         r"uses: astral-sh/setup-uv@\S+\n[ ]+with:\n((?:[ ]+[\w-]+: .*\n)+)", ci
     )
     assert steps, "ci.yml has no setup-uv step"
+    # A setup-uv step without a `with:` block would install the newest uv unseen.
+    assert len(steps) == ci.count("uses: astral-sh/setup-uv@")
     for with_block in steps:
         versions = re.findall(r'^\s+version: "([^"]+)"$', with_block, re.M)
         assert versions == [_pinned_version()], with_block
