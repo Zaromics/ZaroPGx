@@ -1768,7 +1768,7 @@ def test_a_position_under_a_block_without_reads_is_named(gatk_api):
     assert without == {}
 
 
-def test_the_merged_vcf_names_positions_without_reads(client, tools):
+def test_the_merged_vcf_names_positions_without_reads(client, tools, gatk_api):
     tools.gene_records = [_block("chr2", 233759700, 233761100)]
     resp = _post(client)
     assert resp.status_code == 200, resp.text
@@ -1781,6 +1781,16 @@ def test_the_merged_vcf_names_positions_without_reads(client, tools):
     assert unread["UGT1A6"] == "233693631"
     assert "UGT1A1" not in unread  # all four of its positions under the block
     assert "CYP2E1" not in unread  # no reads at all: an uncovered gene instead
+    # And the genes whose positions were measured: the lexicon's 85, not MT-RNR1,
+    # which it leaves out, so /genotype does not take MT-RNR1's for read.
+    line = next(
+        h
+        for h in _merged_header(tools)
+        if h.startswith("##ZaroPGx_positions_measured_for=")
+    )
+    measured = line.split("=", 1)[1].split(",")
+    assert measured == sorted(_lexicon_positions(gatk_api))
+    assert len(measured) == 85 and "UGT1A6" in measured and "MT-RNR1" not in measured
 
 
 def test_the_allele_table_is_found_beside_the_module_or_in_the_repo(gatk_api):

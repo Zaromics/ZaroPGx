@@ -4828,6 +4828,11 @@ OFF_REFERENCE_HEADER_KEY = "ZaroPGx_genes_off_reference"
 # reads at it (UGT1A4's and UGT1A6's regions span UGT1A1's exon 1). The wrapper reads
 # such a position as having no genotype (its position_evidence).
 POSITIONS_WITHOUT_READS_HEADER_KEY = "ZaroPGx_positions_without_reads"
+# The genes whose positions were measured here, "GENE,GENE": the line above says
+# nothing about a gene this side never measured, and the wrapper reads PyPGx's own
+# tables, which hold MT-RNR1, where this side reads the lexicon's, which do not. The
+# wrapper vouches for no position of a gene not named (its unmeasured_note).
+POSITIONS_MEASURED_HEADER_KEY = "ZaroPGx_positions_measured_for"
 
 
 def pypgx_gene_table_path():
@@ -4835,7 +4840,8 @@ def pypgx_gene_table_path():
 
     lexicon/gene-table.csv is PyPGx 0.27.0's own table without MT-RNR1, which no gene
     set asks PyPGx for (the mtDNA sidecar calls it); this image has no PyPGx to read
-    it from. Dockerfile.gatk-api copies it in.
+    it from. Dockerfile.gatk-api copies it in. MT-RNR1 is therefore not measured here,
+    and POSITIONS_MEASURED_HEADER_KEY says so.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     for candidate in (
@@ -5014,7 +5020,8 @@ def gvcf_reads_over(gvcf_record_lines, spans, positions):
 
 def gvcf_coverage(job_label, staged_gvcf, table_path, allele_table, work_dir):
     """gvcf_reads_over the staged gVCF's records in PyPGx's GRCh38 regions: the genes
-    with no reads, and the other genes' positions with none.
+    with no reads, the other genes' positions with none, and the genes whose positions
+    were measured (POSITIONS_MEASURED_HEADER_KEY).
 
     `bcftools view -R` with --regions-overlap record, so a block starting upstream is
     returned, through the tabix index. Each region is listed under both namings, `1`
@@ -5056,9 +5063,9 @@ def gvcf_coverage(job_label, staged_gvcf, table_path, allele_table, work_dir):
         "Reading the gVCF's records over PyPGx's genes (bcftools view)",
     )
     if not os.path.exists(overlapping):
-        return sorted({gene for _, _, _, gene in spans}), {}
+        return sorted({gene for _, _, _, gene in spans}), {}, sorted(positions)
     with _open_vcf_text(overlapping) as handle:
-        return gvcf_reads_over(handle, spans, positions)
+        return (*gvcf_reads_over(handle, spans, positions), sorted(positions))
 
 
 def vcf_header_contigs(path):
@@ -5381,8 +5388,8 @@ def convert_gvcf_to_vcf(
        judge_pgx_pass into PharmCAT's own file (`<output>.pharmcat.vcf.gz`, returned as
        pharmcat_vcf_path) and the rows the merged output carries. The merged output's
        header also says which PyPGx genes, and which of the other genes' positions, the
-       gVCF has no reads over (gvcf_coverage), the one thing its reference blocks tell
-       PyPGx.
+       gVCF has no reads over, and which genes' positions were measured (gvcf_coverage),
+       the one thing its reference blocks tell PyPGx.
     3. The variant pass: everything OUTSIDE that list, variants only -- for PyPGx
        (which reads the whole call set, not just PharmCAT's positions) and for the
        mtDNA sidecar (pharmcat_positions.vcf carries no chrM at all; see
@@ -5472,7 +5479,7 @@ def convert_gvcf_to_vcf(
     # UNCOVERED_GENES_HEADER_KEY), in the header of the file the merge starts from.
     # `bcftools concat` carries a header line of either input into its output
     # (measured, bcftools 1.24); the output is checked for it below.
-    uncovered, without_reads = gvcf_coverage(
+    uncovered, without_reads, measured = gvcf_coverage(
         job_label, staged, pypgx_gene_table_path(), pypgx_allele_table_path(), work_dir
     )
     uncovered_line = f"##{UNCOVERED_GENES_HEADER_KEY}={','.join(uncovered) or '.'}"
@@ -5491,6 +5498,7 @@ def convert_gvcf_to_vcf(
             f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
             f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
             f"##{POSITIONS_WITHOUT_READS_HEADER_KEY}={unread or '.'}",
+            f"##{POSITIONS_MEASURED_HEADER_KEY}={','.join(measured) or '.'}",
         ],
     )
     logger.info(
