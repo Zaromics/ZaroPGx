@@ -5535,19 +5535,36 @@ def convert_gvcf_to_vcf(
     # passes (measured with GATK 4.7.0.0: TCAA>T 1/1 GQ 15 at a PharmCAT SNV), and
     # `concat -D` keeps the variant pass's copy -- undoing the no-call. So the variant
     # pass loses every record at those positions first.
+    #
+    # A gVCF with no record at any PharmCAT position (one over chrM alone, say) leaves
+    # the PGx pass no row, and so nothing to drop. bcftools 1.24 refuses an empty
+    # targets file ("Failed to read the targets", exit 255), which turned that gVCF
+    # into a 500; the variant pass is then taken whole. Its PharmCAT positions are all
+    # no-calls, and the counts below say so (0 of PharmCAT's positions carried a call).
     pgx_rows = os.path.join(work_dir, 'pgx_positions.rows.tsv')
+    rows = [
+        f"{f[0]}\t{f[1]}\n"
+        for f in (line.split('\t', 2) for line in general_lines)
+        if not f[0].startswith('#') and len(f) > 2
+    ]
     with open(pgx_rows, 'w', encoding='utf-8') as fh:
-        fh.writelines(
-            f"{f[0]}\t{f[1]}\n"
-            for f in (line.split('\t', 2) for line in general_lines)
-            if not f[0].startswith('#') and len(f) > 2
+        fh.writelines(rows)
+    if rows:
+        outside = os.path.join(work_dir, 'variants.outside_pgx.vcf.gz')
+        _run_tool(
+            job_label,
+            [
+                'bcftools', 'view', '-T', f'^{pgx_rows}',
+                '-O', 'z', '-o', outside, variant_vcf,
+            ],
+            'Dropping variant-pass records the PGx pass decides (bcftools view)',
         )
-    outside = os.path.join(work_dir, 'variants.outside_pgx.vcf.gz')
-    _run_tool(
-        job_label,
-        ['bcftools', 'view', '-T', f'^{pgx_rows}', '-O', 'z', '-o', outside, variant_vcf],
-        'Dropping variant-pass records the PGx pass decides (bcftools view)',
-    )
+    else:
+        logger.info(
+            f"Job {job_label}: the gVCF has no record at any PharmCAT position; "
+            "keeping the whole variant pass"
+        )
+        outside = variant_vcf
     # `concat -a` opens every input through its index; GATK indexes its own outputs,
     # bcftools view does not.
     _run_tool(
