@@ -1751,10 +1751,11 @@ async def upload_genomic_data(
       a platform that cannot be read from the read names, or two files that are not mates.
     - FASTA/BED/unrecognised formats: rejected with 400. The pipeline has no working
       branch for them, so accepting one could only ever produce a failed job.
-    - 23andMe/AncestryDNA: rejected with 400, by decision rather than for want of a
-      converter. A chip carries under a third of PharmCAT's positions and cannot show
-      a gene duplication, and PyPGx reads the positions it lacks as homozygous
-      reference — so the report would be confidently wrong rather than incomplete.
+    - 23andMe/AncestryDNA: rejected with 400 for now; support is in development. A
+      converter is not what is missing. A chip carries under a third of PharmCAT's
+      positions and cannot show a gene duplication, and PyPGx reads the positions it
+      lacks as homozygous reference — so the report would be confidently wrong rather
+      than incomplete.
     - GVCF: genotyped, then processed exactly like a VCF. Detected from the name
       (.gvcf, .g.vcf, either gzipped) and, whatever the name, from a ##GVCFBlock record
       or the reference-confidence ALT allele in the content — the stored name is

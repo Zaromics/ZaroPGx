@@ -83,9 +83,10 @@ DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 # GRCh37 (so a match is decisive rather than merely suggestive).
 #
 # The T2T-CHM13v2 rows added 2026-08-31 are the one group NOT read out of a
-# shipped dictionary, because this deployment stages no CHM13 reference and is
-# never going to align against one -- they exist so a CHM13 file can be REFUSED
-# instead of analysed on GRCh38 coordinates (file_processor.determine_workflow).
+# shipped dictionary, because this deployment stages no CHM13 reference and does
+# not align against one (T2T support is in development) -- they exist so a CHM13
+# file can be REFUSED instead of analysed on GRCh38 coordinates
+# (file_processor.determine_workflow).
 # They were taken from UCSC's hs1.chrom.sizes and cross-checked against NCBI
 # GCF_009914755.1, and every one was checked against both builds above: no
 # CHM13 length collides with a GRCh37 or GRCh38 length here, which is what
