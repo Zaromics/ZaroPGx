@@ -1,8 +1,9 @@
 """A gene a VCF has no genotype in gets no PyPGx call -- not a reference one.
 
-Found 2026-10-20, running PyPGx 0.27 from the shipped image on the app's own demo VCF
-(app/static/demo/pharmcat.example.vcf, PharmCAT's example: records at PharmCAT's
-positions only). Genes with no record anywhere in the file came back called:
+Found 2026-10-20, running PyPGx 0.27 from the shipped image on the app's demo VCF of
+the time (PharmCAT's example, v0.3.2's app/static/demo/pharmcat.example.vcf; the same
+file is test_data/pharmcat.example2.vcf: records at PharmCAT's positions only). Genes
+with no record anywhere in the file came back called:
 
     CYP2E1  *7/*7      ABCB1   *2/*2      GSTM1   *A/*A
     NAT1    *4/*4      APOE    Reference/Reference
@@ -21,7 +22,7 @@ UGT1A1's exon 1, and UGT1A1's records alone had made them *1/*1 and Reference/
 Reference. Given a VCF without coverage evidence and the job's absent_to_ref off, a
 gene with no genotype at any of its positions gets no call, and a gene with some gets a
 call that says how many of the rest PyPGx read as the reference. A ./. does not count:
-PyPGx hands it to Beagle, which fills it in (measured: the demo's 37 NAT2 records, all
+PyPGx hands it to Beagle, which fills it in (measured: that VCF's 37 NAT2 records, all
 0/0, set to ./. gave NAT2 *5/*5, against *12/*12), so no-calls are dropped from the
 file PyPGx reads, in every lane. main.nf sends the run's effective flag. A gVCF's
 converted VCF keeps no reference blocks, so gatk-api /gvcf-to-vcf writes the
@@ -165,7 +166,7 @@ def _vcf(path, records, prefix="chr", samples=("S",), form="plain"):
 
 FORMS = ["plain", "bgzip", "indexed"]
 
-# PyPGx's step on the demo VCF (app/static/demo/pharmcat.example.vcf), genes=ALL,
+# PyPGx's step on the old demo VCF (test_data/pharmcat.example2.vcf), genes=ALL,
 # input_type vcf, the option off, measured in the shipped image on 2026-10-20: genes
 # called, of them some positions read as reference, and genes with no genotype.
 DEMO_CALLED = 2
@@ -299,8 +300,9 @@ def test_a_record_in_the_region_but_at_none_of_its_positions_is_no_data(
 def test_a_neighbours_records_do_not_genotype_a_gene(
     pypgx, tmp_path, positions38, form
 ):
-    """Found on the demo VCF: UGT1A1's promoter and exon-1 records made UGT1A4 *1/*1
-    and UGT1A6 Reference/Reference through their regions alone."""
+    """Found on the old demo VCF (test_data/pharmcat.example2.vcf): UGT1A1's promoter
+    and exon-1 records made UGT1A4 *1/*1 and UGT1A6 Reference/Reference through their
+    regions alone."""
     genes = {g: positions38[g] for g in ("UGT1A1", "UGT1A4", "UGT1A6")}
     vcf = _vcf(tmp_path / "in.vcf", [(*UGT1A1_38, "0/0")], form=form)
     assert pypgx.genes_without_genotypes(vcf, genes) == ["UGT1A4", "UGT1A6"]
@@ -532,7 +534,7 @@ def test_the_alignment_lane_names_the_genes_off_its_reference(pypgx, monkeypatch
 
 def test_the_step_counts_genes_without_a_genotype_apart(pypgx):
     """And genotyped means a diplotype came back: PyPGx's own no-call for GSTT1 (no
-    small-variant alleles) is a successful result, and the demo VCF read "66 of 66
+    small-variant alleles) is a successful result, and the old demo VCF read "66 of 66
     genes genotyped" of 40 calls."""
     panel = ["CYP2D6", "CYP2E1", "GSTM1", "GSTT1", "NAT1", "NAT2"]
     no_genotype = {g: {"success": True, "diplotype": None} for g in ("CYP2E1", "GSTM1")}
@@ -664,7 +666,7 @@ def test_with_the_option_on_absent_genes_are_called_as_before(genotype):
 
 def test_with_the_option_on_no_calls_are_still_not_vouched_for(genotype):
     """A ./. is not an absence: the option says nothing about it, and PyPGx would fill
-    it in from its panel (NAT2 *5/*5 from 37 ./. records on the demo VCF)."""
+    it in from its panel (NAT2 *5/*5 from 37 ./. records on the old demo VCF)."""
     seen, post = genotype
     body = post(
         [(*CYP2D6_38, "0/1"), (*CYP2D6_38_B, "./."), (*GSTM1_38, "./.")],
