@@ -54,6 +54,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.api import db as app_db
 from app.api.db import get_db
 from app.api.middleware.auth_gate import (
     AuthGateMiddleware,
@@ -1033,8 +1034,8 @@ async def services_status(
             "timeout": 5,
             "enabled": True,  # App is always enabled
         },
+        # Checked on the app's own engine (app.api.db), not a URL: no URL here.
         "database": {
-            "url": os.getenv("DATABASE_URL", ""),
             "timeout": 5,
             "enabled": True,  # Database is always enabled
         },
@@ -1107,11 +1108,12 @@ async def services_status(
             # Never log DATABASE_URL: it carries the password.
             logger.info("Checking database")
             try:
-                # Try to connect to the database
-                from sqlalchemy import create_engine, text
+                # On the app's shared engine, looked up now (the tests swap it).
+                # A create_engine() here made a new pool on every poll and never
+                # disposed of it.
+                from sqlalchemy import text
 
-                engine = create_engine(db_service["url"])
-                with engine.connect() as connection:
+                with app_db.engine.connect() as connection:
                     result = connection.execute(text("SELECT 1"))
                     if not result.fetchone():
                         logger.error("Database connection test failed")
