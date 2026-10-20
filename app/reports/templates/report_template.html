@@ -1251,6 +1251,12 @@
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set copy_number_genes = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
+    {# The line under each such call in the summary: "Copy number not assessed", or
+       "Structural alleles" where copy number was measured but an allele PharmCAT
+       lists still cannot show (copy_number.listed_alleles_entry). #}
+    {% set copy_number_markers = {} %}
+    {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call') %}{% set _ = copy_number_markers.update({d.gene: d.copy_number_not_assessed.marker or 'Copy number not assessed'}) %}{% endfor %}
+    {% set listed_rows = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel')|selectattr('copy_number_not_assessed.listed')|list %}
     {# A call with positions read as reference (positions_note): the same marker. #}
     {% set positions_genes = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
@@ -1267,12 +1273,22 @@
         {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
         {% endfor %}
-        {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') if not d.copy_number_not_assessed.listed %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
         {% endfor %}
-        {% for d in diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        {# One entry for every call that cannot show an allele PharmCAT lists: four
+           notes of their own ran the notes past their page. #}
+        {% if listed_rows %}{% set listed = listed_alleles_note(listed_rows) %}
+        <p class="header-note"><strong>⚠ {{ listed.genes }}</strong>: {{ listed.note }}</p>
+        {% endif %}
+        {% set positions_rows = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel')|list %}
+        {% if positions_rows|length == 1 %}{% set d = positions_rows[0] %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.positions_note }}, so a variant there would not have been seen and this call may be wrong. Genetic Results notes it beside the call.</p>
-        {% endfor %}
+        {% elif positions_rows %}{% set positions = positions_summary_note(positions_rows) %}
+        {# One entry for several: one a gene ran the notes past their page when
+           PyPGx called every gene of a thin alignment. #}
+        <p class="header-note"><strong>⚠ {{ positions.genes }}</strong>: {{ positions.note }}</p>
+        {% endif %}
         {{ unresolved.summary_legend(called) }}
         {{ unresolved.summary_uncalled(summary_uncalled_rows, missing_positions_not_assumed) }}
         {% if summary_beyond %}
@@ -1294,7 +1310,7 @@
                         <td class="exec-summary-number">{{ loop.index }}.</td>
                         <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
-                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_genes %}<div class="copy-number-note">⚠ Copy number not assessed: see the notes</div>{% endif %}</td>
+                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_markers %}<div class="copy-number-note">⚠ {{ copy_number_markers[r.gene] }}: see the notes</div>{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
                             {% set ph = r.phenotype %}
                             {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {{ ph|phenotype_badge_class }}">{{ ph|allele_results_unbroken }}</span>{% endif %}

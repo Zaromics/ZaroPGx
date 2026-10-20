@@ -71,8 +71,12 @@ from app.reports.alt_locus import (
 )
 from app.reports.copy_number import (
     annotate_copy_number,
+    annotate_pharmcat_copy_number,
     copy_number_alert,
     genes_without_copy_number,
+    listed_alleles_note,
+    pharmcat_copy_number_alert,
+    positions_summary_note,
     why_not_assessed,
 )
 from app.reports.credits import CreditRun, ref_numbers, report_credits
@@ -1507,6 +1511,8 @@ def register_report_template_helpers(environment) -> None:
     environment.tests["in_summary_panel"] = in_summary_panel
     environment.globals["summary_rows"] = summary_rows
     environment.globals["inline_script"] = inline_script
+    environment.globals["listed_alleles_note"] = listed_alleles_note
+    environment.globals["positions_summary_note"] = positions_summary_note
 
 
 # The interactive report's scripts travel inside the file. It is downloaded (the
@@ -4252,18 +4258,35 @@ def generate_report(
         genes_without_copy_number(pypgx_results),
         copy_number_why,
     )
-    _copy_number_alert = copy_number_alert(
-        [
-            row["gene"]
-            for row in data.get("genes", [])
-            if isinstance(row, dict)
-            and row.get("copy_number_not_assessed")
-            and gene_was_called(row.get("diplotype"))
-        ],
-        copy_number_why,
-    )
-    if _copy_number_alert:
-        workflow_warnings = list(workflow_warnings) + [_copy_number_alert]
+    # Calls that cannot show a structural allele PharmCAT lists as undetectable
+    # (CYP2B6 *29/*30, CYP2C19 *36/*37, CYP4F2 *16, SLCO1B1 *48/*49): PharmCAT's own
+    # calls, on every input, a whole genome too; PyPGx's CYP2C19 and SLCO1B1, which
+    # it has no copy-number model for; PyPGx's CYP2B6, which cannot be *30. A note
+    # beside each and one alert of their own. PharmCAT's report.json carries no such
+    # message, so nothing here repeats one of PharmCAT's.
+    annotate_pharmcat_copy_number(data.get("genes", []), pypgx_results)
+    _noted = [
+        row
+        for row in data.get("genes", [])
+        if isinstance(row, dict)
+        and row.get("copy_number_not_assessed")
+        and gene_was_called(row.get("diplotype"))
+    ]
+    _copy_number_alerts = [
+        copy_number_alert(
+            [
+                row["gene"]
+                for row in _noted
+                if not row["copy_number_not_assessed"].get("listed")
+            ],
+            copy_number_why,
+        ),
+        pharmcat_copy_number_alert(_noted),
+    ]
+    if any(_copy_number_alerts):
+        workflow_warnings = list(workflow_warnings) + [
+            alert for alert in _copy_number_alerts if alert
+        ]
         template_data["workflow_warnings"] = workflow_warnings
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference

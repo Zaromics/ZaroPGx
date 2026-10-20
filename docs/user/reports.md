@@ -79,13 +79,27 @@ later), only that no read depth reached PyPGx. One entry under Alerts and Warnin
 the genes, and such a gene's row in the Executive Summary points to its note. A
 whole-genome alignment's report has none of these.
 
-Not every call of these genes is PyPGx's. PharmCAT calls *CYP2B6*, *CYP4F2* and *G6PD*
-itself, from small variants, on every input, a whole genome included, unless
-`PYPGX_PHARMCAT_PREFERENCE` gives them to PyPGx (`pypgx`, or `auto` for an alignment;
-{doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT does not measure
-copy number, so its call cannot show a *CYP2B6* \*29 hybrid or duplication, or a
-*CYP4F2* deletion, and it carries no note. Nor does an outside call PyPGx did not make,
-such as one from `OUTSIDECALLSOVERRIDE`'s file.
+PharmCAT's own calls get the same kind of note. PharmCAT calls *CYP2B6*, *CYP2C19*,
+*CYP4F2* and *SLCO1B1* itself, from small variants, on every input, a whole genome
+included, unless `PYPGX_PHARMCAT_PREFERENCE` gives them to PyPGx (`pypgx`, or `auto` for an
+alignment; {doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT 3.4
+names the structural alleles it cannot detect from a VCF: the *CYP2B7*-*CYP2B6* hybrids
+*CYP2B6* \*29 and \*30, and the deletions *CYP2C19* \*36 and \*37, *CYP4F2* \*16 and
+*SLCO1B1* \*48 and \*49. It says so in its own HTML report's disclaimers, not in the
+report.json this report is built from. Each such call of PharmCAT's (Call C) is marked
+"Copy number not assessed (PharmCAT's call)", with the alleles it would miss. When PyPGx
+makes these calls instead, it cannot show them all either: it has no copy-number model for
+*CYP2C19* or *SLCO1B1* ("Copy number not assessed (PyPGx has no copy-number model for this
+gene)"), and none of its *CYP2B6* copy-number states is \*30, so even its whole-genome
+*CYP2B6* call is marked. Its *CYP4F2* call from a whole genome measures the gene's copy
+number, so it can show a whole-gene deletion (PyPGx's \*DEL), though not a partial one. If
+PyPGx measured a copy number other than normal for a gene whose call shown is PharmCAT's,
+the call may be wrong, and its row in the Executive Summary says "PyPGx found a structural
+allele". One entry under Alerts and Warnings, "Structural alleles not assessed", names the
+genes, and one note behind the Executive Summary covers them all. These notes appear on a
+whole genome's report too. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
+An outside call neither tool made, such as one from `OUTSIDECALLSOVERRIDE`'s file, gets no
+note either.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
