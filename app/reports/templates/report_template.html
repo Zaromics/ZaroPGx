@@ -1156,6 +1156,10 @@
        its proportions when it would run over (app/reports/pdf_fit.py). #}
     {% set rows = summary_rows(execsum_from_tsv or [], diplotypes) %}
     {% set called = rows|selectattr('called')|list %}
+    {% set summary_uncalled_rows = rows|rejectattr('called')|list %}
+    {# The notes name these genes and say why a variant-only file left them
+       uncalled; Genetic Results repeats the reason only when they name none. #}
+    {% set summary_names_uncalled = summary_uncalled_rows|rejectattr('diplotype', 'a_call')|list|length > 0 %}
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
@@ -1173,7 +1177,7 @@
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
         {% endfor %}
         {{ unresolved.summary_legend(called) }}
-        {{ unresolved.summary_uncalled(rows|rejectattr('called')|list, missing_positions_not_assumed) }}
+        {{ unresolved.summary_uncalled(summary_uncalled_rows, missing_positions_not_assumed) }}
         {% if summary_beyond %}
         <p class="header-note">The {{ summary_beyond|length }} other gene{{ 's' if summary_beyond|length != 1 }} this run called, outside the genes PharmCAT's guidelines use, {{ 'are' if summary_beyond|length != 1 else 'is' }} listed under Genetic Results.</p>
         {% endif %}
@@ -1350,7 +1354,7 @@
             {% for note in no_call_notes %}
             <p class="no-call-note"><sup>{{ loop.index }}</sup> {{ note }}.</p>
             {% endfor %}
-            {{ unresolved.uncalled_reason(missing_positions_not_assumed) }}
+            {% if not summary_names_uncalled %}{{ unresolved.uncalled_reason(missing_positions_not_assumed) }}{% endif %}
         </div>
         {% endif %}
     </div>

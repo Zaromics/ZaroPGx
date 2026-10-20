@@ -312,3 +312,13 @@ def test_the_reason_is_given_when_the_job_says_so(
     page = (tmp_path / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
     # Named as the upload page labels it, so it can be found there.
     assert ("Assume absent sites = reference" in page) is said
+    # Said once, as a note among the Executive Summary's notes, where the genes
+    # are named: Genetic Results printed it a second time.
+    assert page.count("This file lists variant sites only") == int(said)
+    if said:
+        notes = page[
+            page.index('id="exec-summary-notes"') : page.index(
+                "<h2>Genetic Results</h2>"
+            )
+        ]
+        assert '<p class="header-note">This file lists variant sites only' in notes

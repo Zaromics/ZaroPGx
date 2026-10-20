@@ -36,18 +36,21 @@ guidance. Every possibility is listed under Genetic Results.</p>
 
 {% macro uncalled_reason(missing_positions_not_assumed) -%}
 {%- if missing_positions_not_assumed %}
-<p>This file lists variant sites only, and the run did not assume the reference
-   allele where the file has no record ("Assume absent sites = reference", under
-   PharmCAT on the upload page, was off). So PharmCAT could not call a gene whose
-   defining positions are absent from the file, as they are wherever the sample
-   matches the reference, and PyPGx did not call a gene the file has no genotype
-   in. If the file is a whole-genome or whole-exome call set, running it again with
-   that option on calls the genes it has no record for, though GSTM1 then reads as
-   present even where both copies are deleted. A gene whose records are all
-   no-calls (<code>./.</code>) stays uncalled.</p>
+<p class="header-note">This file lists variant sites only, and the run did not
+   assume the reference allele where the file has no record ("Assume absent sites = reference",
+   under PharmCAT on the upload page, was off). So PharmCAT could not call a gene
+   whose defining positions are absent from the file, as they are wherever the
+   sample matches the reference, and PyPGx did not call a gene the file has no
+   genotype in. If the file is a whole-genome or whole-exome call set, running it
+   again with that option on calls the genes it has no record for, though GSTM1
+   then reads as present even where both copies are deleted. A gene whose records
+   are all no-calls (<code>./.</code>) stays uncalled.</p>
 {%- endif %}
 {%- endmacro %}
 
+{#- The summary's genes not called, and why. The PDF gives the reason here, and
+   under Genetic Results only when this names no gene, so it says it once
+   (report_template.html: summary_names_uncalled). -#}
 {% macro summary_uncalled(rows, missing_positions_not_assumed) -%}
 {%- set uncalled = rows|sort(attribute='gene')|rejectattr('diplotype', 'a_call')|list %}
 {%- if uncalled %}
