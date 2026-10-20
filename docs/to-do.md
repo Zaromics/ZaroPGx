@@ -282,14 +282,12 @@ curated: true
 
 ## Docker & CI/CD
 
-- Publish 0.4.0 before installs reach for it: main's `bootstrap.sh` clones `v0.4.0` and
-  `compose.yml` pulls `0.4.0` images (3b1fc3a), and neither the tag nor the images are
-  published yet (Docker Hub ends at 0.3.2, Oct 2026), so an install from main fails until
-  they are. 0.3.2's genome-downloader fails two stages on a fresh install, both fixed
-  since (fix/downloader-reference-staging): grch37 is fetched over `ftp://`, which
-  `requests` cannot do (every host), and the PharmCAT reference tarball's chown fails
-  under rootless or userns-remapped Docker. Found by running `bootstrap.sh` end to end on
-  a clean daemon (Oct 2026); the rest of the install and a VCF job were fine.
+- [DONE Oct 2026] 0.4.0 is published: the `v0.4.0` tag main's `bootstrap.sh` clones, and
+  the eight `zaromicsresearch/zaropgx-*` images at `0.4.0` (which `compose.yml` pulls,
+  3b1fc3a) and `latest`. It fixes the two stages 0.3.2's genome-downloader failed on a
+  fresh install (fix/downloader-reference-staging): grch37 was fetched over `ftp://`, which
+  `requests` cannot do, and the PharmCAT reference tarball's chown failed under rootless or
+  userns-remapped Docker. Found by running `bootstrap.sh` end to end on a clean daemon.
 - [DONE Oct 2026, fix/sidecars-read-shared-inputs] Services read an alignment on the
   shared /data volume in place instead of each storing an upload copy: on 30x NA12878
   the 41.2 GB copies in `data/temp/mtdna/` and `data/temp/zarohla/` (about 124 GB at

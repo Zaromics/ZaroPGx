@@ -131,6 +131,22 @@ Turn the option on only for a whole-genome call set, where a missing record does
 reference (`docs/user/usage.md`, *Options*; `docs/user/file-formats.md`, *Variant Call
 Format*). For alignments and gVCFs the option does nothing for PyPGx, as before.
 
+### PyPGx judges an alignment's or gVCF's genes at their own positions
+
+From an alignment (BAM, CRAM, SAM, or a FASTQ once aligned) or a gVCF, PyPGx used to call a
+gene when any read, or any covered gVCF block, fell anywhere in its region, and read the
+gene's positions without reads as the reference. On a targeted panel, reads over *UGT1A1*'s
+first exon made *UGT1A4* and *UGT1A6*, whose regions overlap it, look covered, and they were
+called \*1/\*1 from no data. A gene is now judged at the positions PyPGx defines its
+alleles at. With no reads at any of them it gets no call and a note; for *CYP2A6*, *CYP2D6*,
+*GSTM1*, *GSTT1*, *SULT1A1* and *UGT2B17* the note adds that both copies may be deleted,
+which the data cannot tell apart. With some of them unread it is called, with a note giving
+how many positions were read as the reference, and a ⚠ beside the gene in the Executive
+Summary. A 30x whole genome is not affected: NA12878's has reads at every one of the 1,169
+positions. A panel or exome analysed with 0.3.2 can come back with fewer PyPGx calls, and
+notes on some of the rest. This needs the 0.4.0 `pypgx`, `gatk-api` and `app` images (see
+*The image tag moves with the release*).
+
 ### The alignment index also re-aligns reads on ALT contigs
 
 The index `scripts/build-align-index.sh` builds for FASTQ (see v0.3.1 → v0.3.2) now serves
