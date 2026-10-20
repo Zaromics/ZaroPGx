@@ -1068,7 +1068,7 @@
                 </table>
                 {{ pypgx.na_legend(diplotypes) }}
                 {{ unresolved.candidates_note(diplotypes) }}
-        {{ pcmsg.gene_notes(diplotypes) }}
+        {{ pcmsg.gene_notes(diplotypes|sort(attribute='gene'), (pharmcat_notes or {}).general or []) }}
                 {{ unresolved.summary_uncalled(diplotypes, missing_positions_not_assumed) }}
                 {{ pypgx.evidence_panel(diplotypes) }}
 
@@ -1223,6 +1223,7 @@
                         </div>
                     {% endfor %}
                 </div>
+                {{ pcmsg.unplaced_drug_notes((pharmcat_notes or {}).drugs or []) }}
             </div>
             
             <div id="visualizations" class="tab-content">
@@ -1364,7 +1365,7 @@
         <div class="diplotype-data"
              data-gene="{{ d.gene }}"
              data-diplotype="{{ d.diplotype }}"
-             data-pharmcat-messages='{{ (d.pharmcat_messages|message_lines if d.diplotype is a_call else [])|tojson }}'
+             data-pharmcat-messages='{{ d.pharmcat_messages|message_lines|tojson }}'
              data-phenotype="{{ d.phenotype or '' }}"
              data-activity-score="{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}">
         </div>

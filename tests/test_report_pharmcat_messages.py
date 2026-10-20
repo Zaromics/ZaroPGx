@@ -19,11 +19,12 @@ import pytest
 import app.reports.generator as generator_module
 from app.pharmcat.pharmcat_messages import (
     LEFT_OUT,
-    REPORT_AS_GENOTYPE,
+    POSITIONS_RULES,
     api_messages,
     drug_messages,
     gene_messages,
     paragraphs,
+    shown,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -48,17 +49,37 @@ def test_an_ambiguous_call_keeps_pharmcats_words():
 
 
 def test_left_out_rules_are_the_ones_the_report_states_itself():
-    assert set(LEFT_OUT) == {
-        "reference-allele",
-        "missing-variants",
-        "pcat-outside-call",
-    }
+    assert set(LEFT_OUT) == {"reference-allele", "pcat-outside-call"}
+    assert POSITIONS_RULES == {"missing-variants"}
     for path in (EXAMPLE, UNPHASED, V340):
         report = _load(path)
         for entries in list(gene_messages(report).values()) + list(
             drug_messages(report).values()
         ):
-            assert not {m["rule"] for m in entries} & set(LEFT_OUT)
+            assert not {m["rule"] for m in entries} & (set(LEFT_OUT) | POSITIONS_RULES)
+
+
+def test_positions_notes_are_shown_when_the_report_has_no_positions_alert():
+    """The file lane (a report rebuilt from a report.json) has no positions alert:
+    PharmCAT's own notes on missing positions are then the only ones."""
+    report = _load(UNPHASED)
+    drugs = drug_messages(report, positions_stated=False)
+    assert any(m["rule"] == "missing-variants" for m in drugs["efavirenz"])
+    genes = gene_messages(report, positions_stated=False)
+    # reference-allele's "... or because the position is missing" form, too.
+    assert any(
+        m["rule"] == "reference-allele" and "missing" in m["paragraphs"][0]
+        for m in genes["CYP2B6"]
+    )
+    # Its plain form never: the call's name says it.
+    plain = {
+        "rule_name": "reference-allele",
+        "exception_type": "note",
+        "message": "The CYP2B6 *1 allele assignment is characterized by the absence "
+        "of variants at the positions that are included in the underlying allele "
+        "definitions.",
+    }
+    assert not shown(plain, positions_stated=False)
 
 
 def test_footnotes_and_notes_are_shown():
@@ -85,25 +106,70 @@ def test_a_drug_message_is_shown_once_across_sources():
 def test_markup_is_removed_and_the_words_kept():
     assert paragraphs(
         'Please follow the flow chart in figure 2 of the <a href="https://x">CPIC '
-        "warfarin guideline</a> to determine.<br><br>Second &amp; last."
+        "warfarin guideline</a> to determine.<br><br>Second &amp; last.<p>Third</p>"
     ) == [
-        "Please follow the flow chart in figure 2 of the CPIC warfarin guideline to "
-        "determine.",
+        "Please follow the flow chart in figure 2 of the CPIC warfarin guideline "
+        "(https://x) to determine.",
         "Second & last.",
+        "Third",
+    ]
+    # A link within PharmCAT's own report leads nowhere here: its words only.
+    assert paragraphs('See <a href="#CYP2C19">CYP2C19</a> in Section III') == [
+        "See CYP2C19 in Section III"
+    ]
+    # A literal "<" is text, not a tag.
+    assert paragraphs("AS < 1.5 and AS > 0.5") == ["AS < 1.5 and AS > 0.5"]
+
+
+def _highlighted(drugs, drug):
+    return [
+        m["paragraphs"][0] for m in drugs[drug] if m["kind"] == "report-as-genotype"
     ]
 
 
-def test_report_as_genotype_gives_the_variants_genotype():
-    """PharmCAT's cpic-warfarin-rs12777823 rule has no text: it reports the
-    variant's genotype with warfarin. The example's CYP2C9 has rs12777823 G/G."""
-    assert REPORT_AS_GENOTYPE == {"warfarin": (("CYP2C9", "rs12777823"),)}
-    drugs = drug_messages(_load(EXAMPLE))
-    lines = [
-        m["paragraphs"][0]
-        for m in drugs["warfarin"]
-        if m["kind"] == "report-as-genotype"
+def test_report_as_genotype_is_read_from_highlighted_variants():
+    """PharmCAT's cpic-warfarin-rs12777823 rule has no text: PharmCAT writes the
+    genotype into warfarin's annotations (highlightedVariants), once however many
+    sources carry it; "|" from phased input reads "/", and PharmCAT's "Unknown"
+    stays."""
+    assert _highlighted(drug_messages(_load(EXAMPLE)), "warfarin") == ["rs12777823:G/G"]
+    report = {
+        "drugs": {
+            source: {
+                "warfarin": {
+                    "name": "warfarin",
+                    "messages": [],
+                    "guidelines": [
+                        {"annotations": [{"highlightedVariants": [variant]}]}
+                    ],
+                }
+            }
+            for source, variant in (
+                ("CPIC Guideline Annotation", "rs12777823:G|A"),
+                ("DPWG Guideline Annotation", "rs12777823:G/A"),
+            )
+        }
+    }
+    assert _highlighted(drug_messages(report), "warfarin") == ["rs12777823:G/A"]
+    report["drugs"]["CPIC Guideline Annotation"]["warfarin"]["guidelines"][0][
+        "annotations"
+    ][0]["highlightedVariants"] = ["rs12777823:Unknown"]
+    assert "rs12777823:Unknown" in _highlighted(drug_messages(report), "warfarin")
+
+
+def test_a_drug_note_names_its_gene():
+    """An ambiguity's text names no gene; amitriptyline rests on two."""
+    drugs = drug_messages(_load(UNPHASED))
+    (entry,) = [m for m in drugs["efavirenz"] if m["rule"] == "CYP2B6 *1/*13 warning"]
+    assert entry["gene"] == "CYP2B6"
+
+
+def test_top_level_messages_are_read():
+    report = _load(V340)
+    report["messages"] = [
+        {"rule_name": "r", "exception_type": "note", "message": "A general note."}
     ]
-    assert lines == ["CYP2C9 rs12777823: G/G"]
+    assert gene_messages(report)[""][0]["paragraphs"] == ["A general note."]
 
 
 def test_the_api_returns_the_kinds_pharmcat_emits():
@@ -119,7 +185,11 @@ def test_the_api_returns_the_kinds_pharmcat_emits():
         {"exception_type": "note", "rule_name": "missing-variants", "message": "e"},
         {"exception_type": "warning", "rule_name": "z", "message": "f"},
     ]
+    # What the report shows, so the API and the report agree.
     assert [m["message"] for m in api_messages(messages)] == ["a", "b", "c", "f"]
+    assert api_messages([{"exception_type": "new-kind", "message": "g"}]) == [
+        {"exception_type": "new-kind", "message": "g"}
+    ]
 
 
 def _page(monkeypatch, tmp_path, path, kind):
@@ -159,8 +229,12 @@ def test_the_pdf_html_shows_gene_and_drug_messages(monkeypatch, tmp_path):
     )
     recs = page[page.index('id="drug-rec-efavirenz"') :]
     recs = _clean(recs[: recs.index('class="drug-recommendation"', 10)])
-    assert "PharmCAT: The assigned genotype is *1/*13" in recs
-    assert "reference allele assignment" not in _clean(page)
+    assert "PharmCAT (CYP2B6): The assigned genotype is *1/*13" in recs
+    # reference-allele's plain form is left out; its "... or missing" form is a
+    # positions note, shown here, where (no job) the report has no positions alert.
+    text = _clean(page)
+    assert "is characterized by the absence of variants" in text
+    assert "underlying allele definitions." not in text
 
 
 def test_the_interactive_report_shows_them(monkeypatch, tmp_path):
@@ -187,3 +261,85 @@ def test_every_report_renders_its_messages(monkeypatch, tmp_path, path):
             # A called gene's messages are under Genetic Results.
             if f"<td>{gene}</td>" in page:
                 assert m["paragraphs"][0] in page, (gene, m)
+
+
+# PharmCAT 3.4.0's only non-match rule (reporter/messages.json), which it adds to
+# RYR1 when RYR1 has data but no call, and to the seven anaesthetics.
+MH = {
+    "rule_name": "Malignant Hyperthermia Susceptibility warning",
+    "version": "2",
+    "matches": {
+        "gene": "RYR1",
+        "drugs": ["desflurane", "sevoflurane", "succinylcholine"],
+    },
+    "exception_type": "non-match",
+    "message": "If the RYR1 genotype is \u201cnot called\u201d and the drug section "
+    "reports RYR1:Unknown/Unknown, please refer to the RYR1 gene table in section III "
+    "for the variants included in the input VCF file. In case one or more variant(s) "
+    "with \u201cMalignant Hyperthermia associated\u201d function are present, please "
+    "refer to the guideline publication PMID:30499100 since halogenated volatile "
+    "anesthetics or depolarizing muscle relaxants succinylcholine are relatively "
+    "contraindicated in persons with Malignant Hyperthermia Susceptibility. ",
+}
+
+
+def _uncalled_ryr1(tmp_path):
+    """The unphased example (RYR1 Unknown/Unknown) with PharmCAT's warning on RYR1
+    and on desflurane, which has no annotation for this sample."""
+    report = _load(UNPHASED)
+    report["genes"]["RYR1"].setdefault("messages", []).append(MH)
+    report["drugs"]["CPIC Guideline Annotation"]["desflurane"] = {
+        "name": "desflurane",
+        "id": "PA164749136",
+        "source": "CPIC",
+        "messages": [MH],
+        "variants": [],
+        "urls": [],
+        "citations": [],
+        "guidelines": [{"id": "g", "name": "n", "source": "CPIC", "annotations": []}],
+    }
+    path = tmp_path / "ryr1.report.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    return path
+
+
+def test_an_uncalled_ryr1s_warning_reaches_both_reports(monkeypatch, tmp_path):
+    path = _uncalled_ryr1(tmp_path)
+    page = unescape(_page(monkeypatch, tmp_path / "html", path, "html"))
+    results = page[page.index("<h2>Genetic Results</h2>") :]
+    results = _clean(results[: results.index("<h2>", 10)])
+    assert "RYR1 (not called): If the RYR1 genotype is “not called”" in results
+    recs = _clean(page[page.index("<h2>Drug Recommendations</h2>") :])
+    assert "PharmCAT's notes on drugs without a recommendation for this sample" in recs
+    assert "Desflurane — PharmCAT (RYR1): If the RYR1 genotype" in recs
+    summary = page[
+        page.index('id="exec-summary"') : page.index("<h2>Genetic Results</h2>")
+    ]
+    assert "Malignant Hyperthermia associated" not in summary
+
+    page = _page(monkeypatch, tmp_path / "int", path, "interactive_html")
+    found = dict(
+        re.findall(
+            r'data-gene="([^"]+)"[^>]*?data-pharmcat-messages=\'([^\']*)\'', page, re.S
+        )
+    )
+    assert any(
+        "RYR1 genotype is" in line for line in json.loads(unescape(found["RYR1"]))
+    )
+    recs = unescape(page[page.index('<div id="recs"') :])
+    recs = _clean(recs[: recs.index('<div id="visualizations"')])
+    assert "Desflurane — PharmCAT (RYR1): If the RYR1 genotype" in recs
+
+
+def test_a_g6pd_note_on_a_drug_without_an_annotation(monkeypatch, tmp_path):
+    """The example's FDA chloroquine, glyburide, ...: no annotation for this sample,
+    PharmCAT's G6PD note on each. One entry names them all."""
+    page = unescape(_page(monkeypatch, tmp_path, EXAMPLE, "html"))
+    recs = _clean(page[page.index("<h2>Drug Recommendations</h2>") :])
+    entry = recs[recs.index("Chloroquine") :]
+    entry = entry[: entry.index("FAQs")]
+    assert (
+        "Glyburide" in entry
+        and "PharmCAT (G6PD): PharmCAT reports based on VCF" in entry
+    )
+    assert recs.count("Chloroquine, ") == 1

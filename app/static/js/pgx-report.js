@@ -663,8 +663,8 @@ function getPgxData() {
 
 /**
  * PharmCAT's own notes on this call (data-pharmcat-messages: its text, one string a
- * message), as its own report shows them with the gene. Escaped: the text comes
- * from PharmCAT's report.json.
+ * message, a line for each of its paragraphs), as its own report shows them with
+ * the gene. Escaped: the text comes from PharmCAT's report.json.
  */
 function pharmcatMessagesHtml(messages) {
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -676,6 +676,6 @@ function pharmcatMessagesHtml(messages) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-    return `<h4>PharmCAT's notes</h4><ul class="pharmcat-message-list">${messages.map(m => `<li>${escape(m)}</li>`).join('')}</ul>`;
+    return `<h4>PharmCAT's notes</h4><ul class="pharmcat-message-list">${messages.map(m => `<li>${escape(m).replace(/\n/g, '<br>')}</li>`).join('')}</ul>`;
 }
 

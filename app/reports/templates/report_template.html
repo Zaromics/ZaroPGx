@@ -704,6 +704,9 @@
         }
         .pharmcat-message-list li { margin: 0 0 4px 0; break-inside: avoid; page-break-inside: avoid; }
         .pharmcat-message-source { font-weight: bold; color: #555; }
+        /* A drug's notes stay with its heading and its first card: Warfarin and its
+           three notes ended page 74 with the cards on page 75. */
+        .drug-messages { break-inside: avoid; page-break-inside: avoid; break-after: avoid; page-break-after: avoid; }
         .header-note {
             font-size: 0.95em;
             color: #555;
@@ -1459,7 +1462,7 @@
         </table>
         {{ pypgx.na_legend(called_genes) }}
         {{ unresolved.candidates_note(called_genes) }}
-        {{ pcmsg.gene_notes(called_genes) }}
+        {{ pcmsg.gene_notes(diplotypes|sort(attribute='gene'), (pharmcat_notes or {}).general or []) }}
 
         {% if uncalled_genes %}
         <div class="uncalled-genes">
@@ -1625,6 +1628,7 @@
                 {% endfor %}
             </div>
         {% endfor %}
+        {{ pcmsg.unplaced_drug_notes((pharmcat_notes or {}).drugs or []) }}
     </div>
     
     
