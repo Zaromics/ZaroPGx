@@ -833,6 +833,17 @@ class FHIRExportService:
             }
         )
 
+        # Why a tool that tried the gene has no call for it (generator.py's short,
+        # fixed call_error text: PyPGx failed on the gene, or its run ended without
+        # a result), beside the error code.
+        if self._uncalled_reason(gene_data) == "error":
+            observation["note"] = [
+                {
+                    "text": _text(gene_data.get("call_error"))
+                    or "The tool that tried this gene failed; no genotype was called."
+                }
+            ]
+
         # No phenotype here: the genotype profile has no place for one, and the
         # IG states it as a therapeutic implication of the genotype
         # (_create_phenotype_implication). It was a text component.

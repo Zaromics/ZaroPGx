@@ -97,7 +97,9 @@ VCF_RUN_ROWS: List[Dict[str, Any]] = [
 ]
 
 
-def _rows(raw, report_dir: Path, failed=None, files=("mtdna_result.json",)):
+def _rows(
+    raw, report_dir: Path, failed=None, files=("mtdna_result.json",), pypgx_ran=None
+):
     """The canonical rows as generate_report leaves them: built, then marked from
     what the run left in its report directory."""
     for name in files:
@@ -107,7 +109,9 @@ def _rows(raw, report_dir: Path, failed=None, files=("mtdna_result.json",)):
         file_type="vcf",
         workflow_config=None,
     )
-    generator_module.mark_not_tested_and_failed(rows, str(report_dir), failed or {})
+    generator_module.mark_not_tested_and_failed(
+        rows, str(report_dir), failed or {}, pypgx_ran
+    )
     return rows
 
 
@@ -178,7 +182,7 @@ def test_a_gene_pypgx_failed_on_is_coded_error_not_not_performed(tmp_path):
     ]
     rows = _rows(raw, tmp_path, failed=failed)
     by_gene = {row["gene"]: row for row in rows}
-    assert by_gene["F5"]["call_error"].startswith("PyPGx failed: Batch processing")
+    assert by_gene["F5"]["call_error"] == generator_module.PYPGX_GENE_FAILED
     assert "not_tested" not in by_gene["F5"]
     values = _values(rows)
     assert values["F5"] == ERROR
@@ -286,7 +290,7 @@ PHARMCAT_ONLY_ROWS = [
 ]
 
 
-@pytest.mark.parametrize("status", ["completed", "failed", "running", ""])
+@pytest.mark.parametrize("status", ["completed", "failed", "running", "pending", ""])
 def test_pypgx_on_with_no_result_file_codes_its_genes_error(tmp_path, status):
     """The upload turned PyPGx on (its step exists), and it left no result file: the
     lane died, so its genes were not left untested; they are errors."""
@@ -297,7 +301,7 @@ def test_pypgx_on_with_no_result_file_codes_its_genes_error(tmp_path, status):
         assert values[gene] == ERROR, gene
     by_gene = {row["gene"]: row for row in rows}
     assert by_gene["ABCB1"]["call_error"].startswith("PyPGx")
-    # Not PyPGx's to call: PharmCAT's, and the genes nothing reported.
+    # Not PyPGx's to call after a VCF: PharmCAT's, and the genes nothing reported.
     assert values["CYP2C19"] == {"text": "*38/*38"}
     assert values["HLA-A"] == NOT_PERFORMED
     assert values["F2"] == NOT_PERFORMED
@@ -308,9 +312,50 @@ def test_pypgx_switched_off_leaves_its_genes_not_performed(tmp_path, steps):
     """No pypgx_analysis step (the upload left PyPGx off), or a skipped one: PyPGx
     was never to run, and its genes were not tested."""
     assert generator_module.pypgx_lane_failed_genes(steps, {}) == {}
-    values = _values(_rows(PHARMCAT_ONLY_ROWS, tmp_path))
+    values = _values(_rows(PHARMCAT_ONLY_ROWS, tmp_path, pypgx_ran=False))
     assert values["ABCB1"] == NOT_PERFORMED
+    # PharmCAT lists CYP2D6, but only PyPGx's outside call could have supplied it.
+    assert values["CYP2D6"] == NOT_PERFORMED
+
+
+def test_cyp2d6_without_a_call_after_pypgx_ran_is_unknown(tmp_path):
+    """PyPGx results were read: CYP2D6 was tested; PharmCAT's NONE is no call."""
+    values = _values(_rows(PHARMCAT_ONLY_ROWS, tmp_path, pypgx_ran=True))
     assert values["CYP2D6"] == _unknown("Unknown/Unknown")
+
+
+def test_a_pypgx_lane_that_died_is_error_for_cyp2d6_too(tmp_path):
+    """The failure is checked first: PyPGx was to run and left nothing."""
+    failed = generator_module.pypgx_lane_failed_genes(_steps("pending"), {})
+    values = _values(_rows(PHARMCAT_ONLY_ROWS, tmp_path, failed=failed, pypgx_ran=True))
+    assert values["CYP2D6"] == ERROR
+
+
+def test_a_pypgx_failure_leaves_pharmcat_s_own_no_call_unknown(tmp_path):
+    """After an alignment PyPGx is asked for PharmCAT's genes too. A gene PharmCAT's
+    matcher examined (call_source MATCHER) stays tested, not called, whatever
+    PyPGx did; a gene only PyPGx was asked for is an error."""
+    failed = generator_module.pypgx_lane_failed_genes(_steps("failed"), {}, "cram")
+    assert {"NAT2", "F2", "ABCB1", "CYP2D6"} <= set(failed)
+    values = _values(_rows(VCF_RUN_ROWS, tmp_path, failed=failed, pypgx_ran=True))
+    assert values["NAT2"] == _unknown("Unknown/Unknown")
+    assert values["F2"] == ERROR
+    per_gene = generator_module.pypgx_failed_genes(
+        {"NAT2": {"success": False, "error": "x"}}
+    )
+    values = _values(_rows(VCF_RUN_ROWS, tmp_path, failed=per_gene))
+    assert values["NAT2"] == _unknown("Unknown/Unknown")
+
+
+def test_an_error_genotype_says_why_in_a_short_note(tmp_path):
+    failed = generator_module.pypgx_failed_genes(
+        {"F5": {"success": False, "error": "Traceback /app/x.py line 3: boom"}}
+    )
+    genotypes = _genotypes(_bundle(_rows(VCF_RUN_ROWS, tmp_path, failed=failed)))
+    assert genotypes["F5"]["note"] == [{"text": generator_module.PYPGX_GENE_FAILED}]
+    assert "/app" not in json.dumps(genotypes["F5"])
+    for gene in ("F2", "ABCB1", "CYP2C19"):
+        assert "note" not in genotypes[gene], gene
 
 
 def test_pypgx_that_finished_leaves_the_codes_unchanged(tmp_path):
@@ -339,3 +384,64 @@ def test_no_step_record_says_nothing():
     """Without the job's steps (no database), absence alone decides nothing."""
     assert generator_module.pypgx_lane_failed_genes([], {}) == {}
     assert generator_module.pypgx_lane_failed_genes(None, None) == {}
+
+
+# generate_report itself: PyPGx's results read from the report directory, the job's
+# steps (load_job_step_records, monkeypatched: job_id=None has no database), and the
+# rows it hands the FHIR export.
+def _generate(monkeypatch, tmp_path, pypgx_file, step_status):
+    for key in (
+        "write_pdf",
+        "write_html",
+        "write_interactive_html",
+        "write_json",
+        "write_tsv",
+        "write_workflow_svg",
+        "write_workflow_png",
+        "show_pharmcat_html_report",
+        "show_pharmcat_json_report",
+        "show_pharmcat_tsv_report",
+    ):
+        monkeypatch.setitem(generator_module.REPORT_CONFIG, key, False)
+    monkeypatch.setattr(
+        generator_module,
+        "load_job_step_records",
+        lambda db_session, job_id: _steps(step_status),
+    )
+    (tmp_path / "pypgx_result.json").write_text(json.dumps(pypgx_file))
+    (tmp_path / "mtdna_result.json").write_text("{}")
+    genes = [dict(row) for row in PHARMCAT_ONLY_ROWS]
+    result = generator_module.generate_report(
+        {"data": {"genes": genes, "drugRecommendations": []}},
+        str(tmp_path),
+        {"id": "p1"},
+        job_id=None,
+    )
+    return {g["gene"]: g for g in result["processed_data"]["genes"] if g.get("gene")}
+
+
+def test_generate_report_with_pypgx_s_results_marks_no_error(monkeypatch, tmp_path):
+    results = {
+        "success": True,
+        "results": {
+            "ABCB1": {"success": True, "diplotype": None, "details": {}},
+            "CYP2A6": {"success": True, "diplotype": "*1/*1", "details": {}},
+        },
+    }
+    rows = _generate(monkeypatch, tmp_path, results, "completed")
+    assert not [g for g, row in rows.items() if row.get("call_error")]
+    assert rows["CYP2A6"]["diplotype"] == "*1/*1"
+    assert "not_tested" not in rows["ABCB1"] and "not_tested" not in rows["CYP2D6"]
+    assert rows["F2"]["not_tested"] is True
+
+
+def test_generate_report_with_nextflow_s_fallback_file_marks_error(
+    monkeypatch, tmp_path
+):
+    """main.nf writes this when the PyPGx service is down; the step is still pending."""
+    fallback = {"success": False, "error": "PyPGx service unavailable", "results": {}}
+    rows = _generate(monkeypatch, tmp_path, fallback, "pending")
+    for gene in ("ABCB1", "CYP2A6", "CYP2D6"):
+        assert rows[gene]["call_error"] == generator_module.PYPGX_NO_RESULT, gene
+    assert "call_error" not in rows["CYP2C19"]
+    assert rows["F2"]["not_tested"] is True

@@ -2700,8 +2700,16 @@ def _no_call(diplotype: Any) -> bool:
     return not gene_was_called(text) or text.startswith("indeterminate")
 
 
+# Why a gene has no call when its calling tool failed: call_error's text, which the
+# FHIR export puts in the genotype's note. Short and fixed: PyPGx's own error text
+# can carry paths and tracebacks, and stays in pypgx_result.json and the log.
+PYPGX_GENE_FAILED = "PyPGx failed on this gene; no genotype was called."
+PYPGX_STEP_FAILED = "PyPGx's step failed before it reported this gene."
+PYPGX_NO_RESULT = "PyPGx, turned on for this job, ended without a result for it."
+
+
 def pypgx_failed_genes(results: Any) -> Dict[str, str]:
-    """The genes PyPGx failed on, by upper-case symbol, with its error.
+    """The genes PyPGx failed on, by upper-case symbol, with why (PYPGX_GENE_FAILED).
 
     docker/pypgx's wrapper records a gene whose call raised, or every gene of a
     batch that did, as {"success": False, "error": ...}. The enrichment skips those
@@ -2713,8 +2721,7 @@ def pypgx_failed_genes(results: Any) -> Dict[str, str]:
         return failed
     for gene, result in results.items():
         if isinstance(result, dict) and not result.get("success"):
-            error = str(result.get("error") or "no error given").strip()
-            failed[str(gene).strip().upper()] = f"PyPGx failed: {error[:200]}"
+            failed[str(gene).strip().upper()] = PYPGX_GENE_FAILED
     return failed
 
 
@@ -2733,7 +2740,9 @@ def _load_gene_set(name: str) -> List[str]:
 
 
 def pypgx_lane_failed_genes(
-    records: Optional[List[Dict[str, Any]]], results: Any
+    records: Optional[List[Dict[str, Any]]],
+    results: Any,
+    file_type: Optional[str] = None,
 ) -> Dict[str, str]:
     """PyPGx's genes it has no record for, when the job's own steps say it was to run.
 
@@ -2743,12 +2752,16 @@ def pypgx_lane_failed_genes(
     and "skipped" that it did not run. Both leave the genes not tested: {} here.
 
     PyPGx was to run, and its genes have no record, when its step failed or when it
-    left no result file (`results` empty): the lane died. Each gene it calls (genes.json
-    "pypgx_minus_pharmcat": PyPGx's own genes and CYP2D6, which PharmCAT takes from
-    it) that the results do not name is then an error, not a gene nobody tested. A
-    gene the results do name keeps PyPGx's own record (pypgx_failed_genes for one it
-    failed on). A step that completed with results leaves the rest alone: PyPGx did
-    not set out to call those. No step rows at all (no database) says nothing.
+    left no result file (`results` empty; main.nf writes {"results": {}} when the
+    service is down): the lane died. Each gene it was asked for that the results do
+    not name is then an error, not a gene nobody tested. It is asked, as
+    docker/pypgx's choose_gene_set does by default, for genes.json's
+    "pypgx_minus_pharmcat" after a VCF, BCF or gVCF (main.nf hands those over as a
+    VCF: its own genes and CYP2D6, which PharmCAT takes from it), and for all of
+    "pypgx" after an alignment. A gene the results do name keeps PyPGx's own record
+    (pypgx_failed_genes for one it failed on). A step that completed with results
+    leaves the rest alone: PyPGx did not set out to call those. No step rows at all
+    (no database) says nothing.
     """
     status = {
         str(r.get("name")): str(r.get("status") or "").lower()
@@ -2765,16 +2778,10 @@ def pypgx_lane_failed_genes(
     )
     if reported and step != "failed":
         return {}
-    why = (
-        "PyPGx's step failed"
-        if step == "failed"
-        else f"PyPGx left no result (its step is {step or 'unrecorded'})"
-    )
-    return {
-        gene: f"{why}; no record for this gene"
-        for gene in _load_gene_set("pypgx_minus_pharmcat")
-        if gene not in reported
-    }
+    why = PYPGX_STEP_FAILED if step == "failed" else PYPGX_NO_RESULT
+    variant_input = str(file_type or "vcf").strip().lower() in {"vcf", "bcf", "gvcf"}
+    asked = _load_gene_set("pypgx_minus_pharmcat" if variant_input else "pypgx")
+    return {gene: why for gene in asked if gene not in reported}
 
 
 # The genes a run gets only as an outside call from a tool of its own, and the file
@@ -2790,19 +2797,32 @@ _OUTSIDE_CALL_RESULT_FILES = (
 )
 
 
+# PharmCAT's other outside-call gene: CYP2D6, which it takes from PyPGx. Without a
+# PyPGx run PharmCAT lists it "Unknown/Unknown", callSource NONE, as it lists HLA-A,
+# HLA-B and MT-RNR1 without theirs.
+_PYPGX_OUTSIDE_CALL_GENES = ("CYP2D6",)
+
+
 def mark_not_tested_and_failed(
-    rows: List[Dict[str, Any]], report_dir: str, failed: Dict[str, str]
+    rows: List[Dict[str, Any]],
+    report_dir: str,
+    failed: Dict[str, str],
+    pypgx_ran: Optional[bool] = None,
 ) -> None:
     """Say, on each canonical row without a call, whether the gene was tested.
 
     - call_error: a tool tried the gene and failed (pypgx_failed_genes), or its
       lane died before saying anything about it (pypgx_lane_failed_genes).
+      PharmCAT's own matcher outranks it: a row whose call_source is MATCHER was
+      examined by PharmCAT, and a PyPGx failure on the same gene (an alignment run
+      asks PyPGx for PharmCAT's genes too) leaves it tested, not called.
     - not_tested: nothing tested it. _build_canonical_diplotypes sets it on its
       placeholder rows (no tool reported the gene); here, for a gene only an outside
       call tool supplies, it follows whether that tool ran: set when its result file
       is missing (HLA-A and HLA-B, which PharmCAT lists uncalled after a VCF run),
       cleared when the tool ran and called nothing for the gene (HLA-C, which
-      PharmCAT has no row for, after an OptiType run that typed none).
+      PharmCAT has no row for, after an OptiType run that typed none). CYP2D6 follows
+      `pypgx_ran` (whether the report read PyPGx results); None leaves it alone.
     - neither: the gene was tested and not called.
 
     The FHIR export codes these error, not-performed and unknown. A row with a
@@ -2812,10 +2832,16 @@ def mark_not_tested_and_failed(
         if not isinstance(row, dict) or not _no_call(row.get("diplotype")):
             continue
         gene = str(row.get("gene") or "").strip().upper()
-        if gene in failed:
+        pharmcat_examined = str(row.get("call_source") or "").upper() == "MATCHER"
+        if gene in failed and not pharmcat_examined:
             row["call_error"] = failed[gene]
             row.pop("not_tested", None)
             continue
+        if gene in _PYPGX_OUTSIDE_CALL_GENES and pypgx_ran is not None:
+            if pypgx_ran:
+                row.pop("not_tested", None)
+            else:
+                row["not_tested"] = True
         for prefix, result_file in _OUTSIDE_CALL_RESULT_FILES:
             if gene == prefix or (prefix.endswith("-") and gene.startswith(prefix)):
                 if os.path.isfile(os.path.join(report_dir, result_file)):
@@ -4002,6 +4028,9 @@ def generate_report(
     # Now that we know the report directory, try to load PyPGx results and augment data['genes']
     pypgx_failed: Dict[str, str] = {}
     pypgx_results_obj: Dict[str, Any] = {}
+    # Whether the report read PyPGx results (embedded, or either file name below);
+    # None until known. CYP2D6 is not tested without them (mark_not_tested_and_failed).
+    pypgx_ran: Optional[bool] = None
     try:
         # Prefer PyPGx results coming directly from workflow (if upstream provided it)
         pypgx_results = None
@@ -4024,6 +4053,7 @@ def generate_report(
                 logger.info(f"Found PyPGx results JSON for enrichment: {latest_path}")
                 with open(latest_path, "r", encoding="utf-8") as f:
                     pypgx_results = json.load(f)
+        pypgx_ran = bool(pypgx_results)
         if pypgx_results:
             logger.info("Proceeding to merge PyPGx results into report data...")
             results_obj = (
@@ -4155,10 +4185,16 @@ def generate_report(
         # A lane that died leaves no per-gene record: the job's steps say whether
         # PyPGx was to run (pypgx_lane_failed_genes). PyPGx's own record wins.
         failed_calls = {
-            **pypgx_lane_failed_genes(workflow_records, pypgx_results_obj),
+            **pypgx_lane_failed_genes(
+                workflow_records,
+                pypgx_results_obj,
+                load_job_file_type(db_session, job_id) or input_file_type,
+            ),
             **pypgx_failed,
         }
-        mark_not_tested_and_failed(canonical_diplotypes, report_dir, failed_calls)
+        mark_not_tested_and_failed(
+            canonical_diplotypes, report_dir, failed_calls, pypgx_ran
+        )
         logger.info(
             f"Canonical diplotypes prepared: total={len(canonical_diplotypes)} (alphabetical, deduplicated, full complement)"
         )
