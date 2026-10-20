@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup, escape
 
 # Optional import: WeasyPrint needs native Pango/GObject libraries that are present in the
 # container but not on a bare host. Importing it at module scope makes `import app.main`
@@ -1424,6 +1425,50 @@ def phenotype_badge_class(phenotype) -> str:
     return ""
 
 
+# Where a long name in the Genetic Results table may break, given as <wbr>: no
+# column is as wide as PharmCAT's longest allele names or PyPGx's copy-number
+# codes, and without these the PDF broke them wherever the line ran out
+# ("c.13994_1399" / "5delTCinsCT", "(PartialDup1Hom" / ")").
+#
+# Only a word longer than WORD_FITS characters gets them: a column holds about
+# that many, and given a break point a shorter one was split where it would
+# have fitted on a line of its own ("(*4)/c.1627A" / ">G"). A word here runs
+# between spaces and the "/" of a diplotype, where the line breaker breaks
+# anyway. In a name: after "_", before ">", before an HGVS del, ins or dup, and
+# after "," and after a "/" before a digit, where the line breaker would not. In
+# a copy-number code: after "+", and before each of its words (Whole|Del1|Hom).
+# A single long word (Songklanagarind) still breaks where it must.
+WORD_FITS = 12
+_NAME_WORDS = re.compile(r"(\s+|(?<=/))")
+_NAME_BREAKS = re.compile(r"(?<=[_,])(?=\S)|(?=>)|(?<=[0-9A-Z])(?=(?:del|ins|dup))")
+_CODE_BREAKS = re.compile(r"(?<=\+)|(?<=[a-z0-9])(?=[A-Z][a-z])")
+_WBR = Markup("<wbr>")
+
+
+def _broken(word: str, breaks) -> Markup:
+    if len(word) <= WORD_FITS:
+        return escape(word)
+    return _WBR.join(escape(part) for part in breaks.split(word) if part)
+
+
+def name_breaks(value) -> Markup:
+    """A diplotype or allele name, escaped, with <wbr> where a long word in it
+    may break."""
+    out = Markup()
+    for piece in _NAME_WORDS.split(str(value or "")):
+        if not piece:
+            continue
+        if out.endswith("/") and piece[0].isdigit():
+            out += _WBR
+        out += escape(piece) if piece.isspace() else _broken(piece, _NAME_BREAKS)
+    return out
+
+
+def code_breaks(value) -> Markup:
+    """A PyPGx copy-number code, escaped, with <wbr> where a long one may break."""
+    return _broken(str(value or ""), _CODE_BREAKS)
+
+
 # An HLA allele and what was screened for it: "*57:01 positive".
 _ALLELE_RESULT = re.compile(r"(\*\d+:\d+) (positive|negative)\b")
 
@@ -1453,6 +1498,8 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["activity_score_num"] = activity_score_num
     environment.filters["phenotype_badge_class"] = phenotype_badge_class
     environment.filters["allele_results_unbroken"] = allele_results_unbroken
+    environment.filters["name_breaks"] = name_breaks
+    environment.filters["code_breaks"] = code_breaks
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
     environment.tests["a_call"] = gene_was_called
@@ -1709,6 +1756,7 @@ def read_position_statuses(report_dir: str) -> Dict[str, str]:
 # One warning the upload stored: a single plain paragraph, or plain text.
 _ONE_PARAGRAPH = re.compile(r"<p>(?P<body>(?:(?!</?p[\s>]).)*)</p>", re.S)
 _BLOCK_TAG = re.compile(r"</?(?:p|ul|ol|li|div|table|h[1-6])[\s>/]", re.I)
+_INLINE_TAG = re.compile(r"</?(?:strong|em|b|i|code|a|br|span|sup|sub)\b[^>]*>", re.I)
 _WARNING_MARK = "\u26a0\ufe0f"
 
 
@@ -1721,8 +1769,10 @@ def input_warnings_alert(warnings: List[Any]) -> List[str]:
     and one of them was the second sentence of the first ("The analysis can
     proceed, however, ..."), stored without the mark. A one-paragraph warning
     without the mark continues the one before it; with none before it, it is
-    given the mark. A warning of more than one paragraph or a list (the TSV
-    rescue's) keeps a box of its own, in its place.
+    given the mark. Only a paragraph continues: plain text (what v0.3 stored for
+    "Could not analyze original WGS file: ...") is a warning of its own, marked,
+    and escaped unless it carries inline markup. A warning of more than one
+    paragraph or a list (the TSV rescue's) keeps a box of its own, in its place.
     """
     alerts: List[Optional[str]] = []
     lines: List[str] = []
@@ -1735,7 +1785,7 @@ def input_warnings_alert(warnings: List[Any]) -> List[str]:
         if match:
             body = match.group("body").strip()
         elif not _BLOCK_TAG.search(text):
-            body = text
+            body = text if _INLINE_TAG.search(text) else html.escape(text)
         else:
             alerts.append(text)
             continue
@@ -1744,7 +1794,7 @@ def input_warnings_alert(warnings: List[Any]) -> List[str]:
             alerts.append(None)
         if body.startswith("\u26a0"):
             lines.append(body)
-        elif lines:
+        elif match and lines:
             lines[-1] = f"{lines[-1]} {body}"
         else:
             lines.append(f"{_WARNING_MARK} {body}")

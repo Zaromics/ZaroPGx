@@ -103,14 +103,16 @@
             width: 100%;
         }
 
-        /* Widths chosen against the real content, not guessed, each the widest
-           word its column holds plus its padding, measured in the PDF: the gene
-           symbol CACNA1S; "(WholeDel1Hom)", a copy-number note's code, in
-           Diplotype; "aminoglycoside-" (MT-RNR1) in Phenotype; the "Activity",
-           "Call" and "Guide" headers; and the generic implications' lines
-           ("Reference genotype -"). At 17% Diplotype and Phenotype broke those
-           words mid-word ("aminoglycosi/de-induced", a ")" alone on a line).
-           Sums to 100. */
+        /* Widths chosen against the real content, not guessed, measured in the
+           PDF with their padding: the gene symbol CACNA1S; "(WholeDel1Hom)", a
+           copy-number note's code, in Diplotype; "aminoglycoside-" (MT-RNR1) in
+           Phenotype; the "Activity", "Call" and "Guide" headers; and the generic
+           implications' lines ("Reference genotype -"). At 17% Diplotype and
+           Phenotype broke the first two mid-word ("aminoglycosi/de-induced", a
+           ")" alone on a line). Names wider than any column (PharmCAT's HGVS
+           alleles, PyPGx's longer codes) break where the name_breaks and
+           code_breaks filters allow; a single long word (Songklanagarind) still
+           breaks where it must. Sums to 100. */
         .gene-table col.c-gene       { width: 12.5%; }
         .gene-table col.c-diplotype  { width: 17.75%; }
         .gene-table col.c-phenotype  { width: 19.5%; }
@@ -138,6 +140,12 @@
         .gene-table td:last-child {
             padding-right: 0px; /* further reduced right margin to match left */
             padding-left: 5px; /* keep some left padding for readability */
+        }
+        /* ...except a one-letter column, which is centred. */
+        .gene-table th.narrow-col:last-child,
+        .gene-table td.narrow-col:last-child {
+            padding-left: 0px;
+            padding-right: 0px;
         }
         
         /* Prevent row splitting across pages */
@@ -184,9 +192,13 @@
            `vertical-rl` + `rotate(180deg)` upside down rather than bottom-to-top
            the way browsers do. The columns have explicit widths now, so "Call"
            and "Guide" fit horizontally and no trick is needed. */
+        /* Level with the other headers, in their size: at the bottom and in
+           .narrow-col's 0.9em, "Call" sat low beside "Gene" and "Activity
+           Score". */
         th.narrow-col {
             text-align: center;
-            vertical-align: bottom;
+            vertical-align: middle;
+            font-size: inherit;
             padding: 0.5em 0.2em;
         }
         
@@ -540,7 +552,9 @@
         /* The gauge is drawn in the badge's text colour, set on the SVG's own
            paths (the template's gauge_ink): WeasyPrint ignores `fill` in CSS and
            does not resolve currentColor in inline SVG, so both paths printed
-           black, and on the black 0.0 badge the icon was not there at all. */
+           black, and on the black 0.0 badge the icon was not there at all. Ring
+           and needle at full ink: the ring at half opacity fell under 3:1 on
+           five of the seven tiers. */
         .as-badge .as-gauge { display: inline-block; vertical-align: middle; }
         .as-tier-0 { background-color: #000000; color: #ffffff; } /* 0 - black with white text */
         .as-tier-1 { background-color: #dc3545; }          /* 0.25 - red */
@@ -917,6 +931,13 @@
                 padding-right: 0px !important;
                 padding-left: 5px !important;
             }
+            /* A one-letter column is centred: the last-child padding above
+               put its letter 2.5px right of centre. */
+            .gene-table th.narrow-col:last-child,
+            .gene-table td.narrow-col:last-child {
+                padding-left: 0px !important;
+                padding-right: 0px !important;
+            }
             
             /* PDF-specific styling to prevent row splitting */
             .gene-table tr {
@@ -1269,7 +1290,7 @@
                                 {% set gauge_ink = '#333333' if tier in (2, 3, 4, 6) else '#ffffff' %}
                                 <span class="as-badge as-tier-{{ tier }}" title="Activity Score">
                                     <svg class="as-gauge" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                                        <path d="M12 20a8 8 0 1 1 8-8h-2a6 6 0 1 0-6 6v2z" fill="{{ gauge_ink }}" fill-opacity="0.5"></path>
+                                        <path d="M12 20a8 8 0 1 1 8-8h-2a6 6 0 1 0-6 6v2z" fill="{{ gauge_ink }}"></path>
                                         <path d="M12 12l5-5" stroke="{{ gauge_ink }}" stroke-width="2" fill="none" stroke-linecap="round"></path>
                                     </svg>
                                     <span class="as-text">{{ s }}</span>
@@ -1349,7 +1370,7 @@
                 {% for d in called_genes %}
                 <tr>
                     <td>{{ d.gene }}</td>
-                    <td>{{ d.diplotype_display or d.diplotype }}{{ pypgx.call_notes(d) }}</td>
+                    <td>{{ (d.diplotype_display or d.diplotype)|name_breaks }}{{ pypgx.call_notes(d) }}</td>
                     <td>{{ d.phenotype or '' }}</td>
                     {# A truthiness test dropped an activity score of 0 -- 0.0,
                        Decimal("0.0000") and "0" are all falsy here, and 0 is the

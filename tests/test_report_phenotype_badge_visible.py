@@ -103,8 +103,9 @@ TIER_SCORES = {
 def test_the_score_gauge_is_drawn_in_its_badges_text_colour():
     """The gauge was `fill: currentColor` in CSS, which WeasyPrint ignores (it
     warned so), and currentColor on its needle came out black: on the black 0.0
-    badge the icon was not there at all. Each path now carries its badge's text
-    colour itself, which reads at 3:1 on every tier."""
+    badge the icon was not there at all. Each path, the ring and the needle, now
+    carries its badge's text colour itself, at full ink, and reads at 3:1 on every
+    tier (the ring at half opacity fell under it on five)."""
     from app.reports.generator import env
 
     page = env.get_template("report_template.html").render(
@@ -138,4 +139,6 @@ def test_the_score_gauge_is_drawn_in_its_badges_text_colour():
         stroke = re.search(r'stroke="(#\w+)"', svg).group(1)
         assert _luminance(fill) == _luminance(ink), (tier, fill, ink)
         assert _luminance(stroke) == _luminance(ink), (tier, stroke, ink)
-        assert _contrast(stroke, background) >= 3, (tier, stroke, background)
+        assert "opacity" not in svg, (tier, svg)
+        assert _contrast(fill, background) >= 3, ("ring", tier, fill, background)
+        assert _contrast(stroke, background) >= 3, ("needle", tier, stroke, background)

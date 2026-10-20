@@ -1018,7 +1018,7 @@
                         {% for d in diplotypes|sort(attribute='gene') %}
                         <tr>
                             <td>{{ d.gene }}</td>
-                            <td>{{ d.diplotype_display or d.diplotype }}{{ pypgx.call_notes(d) }}</td>
+                            <td>{{ (d.diplotype_display or d.diplotype)|name_breaks }}{{ pypgx.call_notes(d) }}</td>
                             <td>
                                 {% if d.diplotype_candidates %}<span class="phenotype-candidates">
                                     {{ d.phenotype or 'Unknown' }}

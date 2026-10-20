@@ -219,6 +219,21 @@ def test_a_titled_alert_keeps_its_own_box_in_its_place():
     assert input_warnings_alert([]) == []
 
 
+def test_plain_text_is_a_warning_of_its_own_and_escaped():
+    """Only a paragraph continues the line before it. v0.3 stored "Could not
+    analyze original WGS file: ..." as plain text, with the exception's message
+    in it; second in the list, it was glued onto the VCF warning."""
+    from app.reports.generator import input_warnings_alert
+
+    (alert,) = input_warnings_alert(
+        [LEGACY_VCF[0], "Could not analyze original WGS file: <class 'OSError'>."]
+    )
+    assert _lines(alert) == [
+        LEGACY_VCF[0][3:-4],
+        "⚠️ Could not analyze original WGS file: &lt;class &#x27;OSError&#x27;&gt;.",
+    ]
+
+
 def test_every_vcf_warning_the_upload_stores_is_marked():
     """At the source too: the second sentence is part of the first warning."""
     source = FILE_PROCESSOR.read_text(encoding="utf-8")
