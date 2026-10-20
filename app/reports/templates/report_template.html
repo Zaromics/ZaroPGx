@@ -122,6 +122,22 @@
         .gene-table col.c-implication{ width: 30%; }
         .gene-table col.c-call       { width: 7%;  }
 
+        /* The mtDNA table's two columns, fixed. Sized by content, the labels took
+           about half the width beside a VCF's short values ("Not determined", "No
+           call") and under a third beside the demo's phenotype ("normal risk of
+           aminoglycoside-induced hearing loss"). Measured in the PDF: the widest
+           label, "Haplogroup quality", is 109pt of bold text, 117pt with its
+           padding, in a 157pt column at 32%; and 32% starts the values where the
+           Genetic Results table above starts its Phenotype column (Gene 13% +
+           Diplotype 19%). The demo's phenotype, 272pt, keeps to one line in the
+           325pt left for the values. */
+        .mtdna-table {
+            table-layout: fixed;
+            width: 100%;
+        }
+        .mtdna-table col.c-label { width: 32%; }
+        .mtdna-table col.c-value { width: 68%; }
+
         /* Long diplotype strings ("rs2231142 reference (G)/...") have no spaces
            to break at, and under table-layout:fixed an unbreakable word overflows
            its cell rather than widening it. */
@@ -1452,7 +1468,8 @@
     <div class="section" style="page-break-inside: avoid;">
         <h2>Mitochondrial DNA</h2>
         <p>Mitochondrial variant calling and haplogroup assignment via mtDNA-Server 2, supplying the MT-RNR1 outside call: PharmCAT's own allele definitions carry no mitochondrial position, so nothing in its own pipeline can call this gene.</p>
-        <table>
+        <table class="mtdna-table">
+            <colgroup><col class="c-label"><col class="c-value"></colgroup>
             <tbody>
                 <tr><th>Haplogroup</th><td>{{ mtdna.haplogroup or 'Not determined' }}</td></tr>
                 <tr><th>Haplogroup quality</th><td>{{ mtdna.haplogroup_quality or '–' }}</td></tr>
