@@ -31,6 +31,7 @@ and its genes are called as an alignment's are.
 
 from __future__ import annotations
 
+import ast
 import csv
 import gzip
 import hashlib
@@ -261,6 +262,7 @@ def test_both_sidecars_spell_the_header_keys_alike():
         "UNCOVERED_GENES_HEADER_KEY",
         "COVERAGE_MEASURED_ON_HEADER_KEY",
         "OFF_REFERENCE_HEADER_KEY",
+        "POSITIONS_WITHOUT_READS_HEADER_KEY",
     ):
         values = [
             re.search(rf"^{key} = ['\"]([^'\"]+)['\"]", path.read_text(), re.M)
@@ -312,9 +314,24 @@ def test_the_positions_are_counted(pypgx, tmp_path, three, form):
     )
     counts = pypgx.position_evidence(vcf, three)
     total = len(three["CYP2D6"])
-    assert counts["CYP2D6"] == {"positions": total, "genotyped": 1, "no_calls": 1}
-    assert counts["CYP2E1"] == {"positions": 7, "genotyped": 0, "no_calls": 0}
-    assert counts["GSTM1"] == {"positions": 1, "genotyped": 0, "no_calls": 1}
+    assert counts["CYP2D6"] == {
+        "positions": total,
+        "genotyped": 1,
+        "no_calls": 1,
+        "no_reads": 0,
+    }
+    assert counts["CYP2E1"] == {
+        "positions": 7,
+        "genotyped": 0,
+        "no_calls": 0,
+        "no_reads": 0,
+    }
+    assert counts["GSTM1"] == {
+        "positions": 1,
+        "genotyped": 0,
+        "no_calls": 1,
+        "no_reads": 0,
+    }
 
 
 @pytest.mark.parametrize("form", FORMS)
@@ -704,6 +721,153 @@ def test_a_gene_off_the_inputs_reference_gets_that_note(genotype):
     assert seen["genes"] == ["CYP2D6"]
     note = body["results"]["GSTT1"]["details"]["note"]
     assert note.startswith("The gVCF's reference has no 22_KI270879v1_alt contig")
+
+
+# --------------------------------------------------------------------------
+# Reads at a gene's own positions, not anywhere in its region
+# --------------------------------------------------------------------------
+# A read anywhere in its region made a gene covered, and its positions with no record
+# were read as the reference. On a panel over UGT1A1, UGT1A4 and UGT1A6 (whose regions
+# span UGT1A1's exon 1) were called *1/*1 and Reference/Reference from no read at any
+# position of their own. The producers now name the positions with no reads.
+
+
+def _unread(positions38, genes, measured_on=None):
+    """The header an alignment's (or, with measured_on, a gVCF's) VCF carries when
+    ``genes`` -> [index into the gene's positions, or None for all] had no reads."""
+    listed = ",".join(
+        gene
+        + ":"
+        + ";".join(
+            str(span[1] + 1)
+            for i, span in enumerate(positions38[gene])
+            if which is None or i in which
+        )
+        for gene, which in genes.items()
+    )
+    header = "##ZaroPGx_uncovered_genes=.\n"
+    if measured_on:
+        header += f"##ZaroPGx_coverage_measured_on={measured_on}\n"
+    return header + f"##ZaroPGx_positions_without_reads={listed}\n"
+
+
+def test_a_neighbours_reads_do_not_call_a_gene(genotype, positions38):
+    """The panel case: reads over UGT1A1's exon 1 only."""
+    seen, post = genotype
+    body = post(
+        [(*UGT1A1_38, "0/0")],
+        header=_unread(positions38, {"UGT1A4": None, "UGT1A6": None}),
+        genes="UGT1A1,UGT1A4,UGT1A6",
+    )
+    assert seen["genes"] == ["UGT1A1"]
+    for gene in ("UGT1A4", "UGT1A6"):
+        result = body["results"][gene]
+        assert result["success"] is True and result["diplotype"] is None
+        assert result["details"]["note"] == (
+            "No reads at any of PyPGx's positions for this gene in the alignment"
+        )
+    assert "positions_note" not in body["results"]["UGT1A1"].get("details", {})
+
+
+def test_a_gene_with_reads_at_some_positions_is_called_with_a_count(
+    genotype, positions38
+):
+    seen, post = genotype
+    body = post(
+        [(*CYP2D6_38, "0/1")],
+        header=_unread(positions38, {"CYP2D6": [0, 1, 2]}),
+        genes="CYP2D6",
+    )
+    assert seen["genes"] == ["CYP2D6"]
+    details = body["results"]["CYP2D6"]["details"]
+    total = len(positions38["CYP2D6"])
+    assert details["positions_without_genotype"] == 3
+    assert details["positions_note"] == (
+        f"3 of {total} positions had no reads in the alignment and were read as "
+        "reference"
+    )
+
+
+def test_a_gvcfs_no_call_with_no_reads_is_counted_once(genotype, positions38):
+    """gatk-api writes a ./. at a PharmCAT position the gVCF had no reads over, and
+    names the position: one position without reads, not two unread."""
+    seen, post = genotype
+    b = next(i for i, s in enumerate(positions38["CYP2D6"]) if s[1] + 1 == 42126611)
+    body = post(
+        [(*CYP2D6_38, "0/1"), (*CYP2D6_38_B, "./.")],
+        header=_unread(positions38, {"CYP2D6": [b]}, measured_on="gVCF"),
+        genes="CYP2D6",
+    )
+    details = body["results"]["CYP2D6"]["details"]
+    assert details["positions_without_genotype"] == 1
+    assert "had no reads in the gVCF" in details["positions_note"]
+
+
+def test_no_calls_where_there_were_reads_keep_the_files_wording(genotype, positions38):
+    seen, post = genotype
+    body = post(
+        [(*CYP2D6_38, "0/1"), (*CYP2D6_38_B, "./.")],
+        header=_unread(positions38, {"CYP2D6": [5]}),
+        genes="CYP2D6",
+    )
+    details = body["results"]["CYP2D6"]["details"]
+    assert details["positions_without_genotype"] == 2
+    assert "had no genotype in the file" in details["positions_note"]
+
+
+def test_with_whole_genome_depth_a_copy_number_gene_is_left_to_pypgx(
+    genotype, positions38, monkeypatch, pypgx
+):
+    """CYP2D6 *5/*5 has no reads at any of its positions, and reads in its region's
+    flanks. With whole-genome depth PyPGx's copy-number model reads that as a deletion;
+    judged by positions it would have had no call."""
+    monkeypatch.setattr(pypgx, "sv_inputs_from_vcf", lambda *a: ("d.zip", "c.zip"))
+    monkeypatch.setattr(pypgx, "sv_target_genes", lambda: frozenset({"CYP2D6"}))
+    seen, post = genotype
+    body = post(
+        [(*UGT1A1_38, "0/0")],
+        header=_unread(positions38, {"CYP2D6": None, "UGT1A4": None}),
+        genes="CYP2D6,UGT1A1,UGT1A4",
+    )
+    assert sorted(seen["genes"]) == ["CYP2D6", "UGT1A1"]
+    assert "positions_note" not in body["results"]["CYP2D6"].get("details", {})
+    assert body["results"]["UGT1A4"]["diplotype"] is None
+
+
+def test_the_positions_header_round_trips(pypgx, tmp_path):
+    line = pypgx.positions_without_reads_header_line(
+        {"UGT1A6": [233693631], "CYP2D6": [42126611, 42126578], "NAT1": []}
+    )
+    assert line == (
+        "##ZaroPGx_positions_without_reads=CYP2D6:42126578;42126611,UGT1A6:233693631"
+    )
+    assert pypgx.positions_without_reads_header_line({}) == (
+        "##ZaroPGx_positions_without_reads=."
+    )
+    vcf = tmp_path / "h.vcf"
+    vcf.write_text(f"##fileformat=VCFv4.2\n{line}\n#CHROM\n", encoding="utf-8")
+    assert pypgx.positions_without_reads_from_vcf(str(vcf)) == {
+        "CYP2D6": {42126578, 42126611},
+        "UGT1A6": {233693631},
+    }
+    vcf.write_text("##fileformat=VCFv4.2\n#CHROM\n", encoding="utf-8")
+    assert pypgx.positions_without_reads_from_vcf(str(vcf)) is None
+
+
+def test_both_sidecars_read_the_same_positions(pypgx):
+    """gatk-api has no PyPGx: it reads the lexicon's copy of PyPGx's allele table with
+    its own copy of load_gene_positions."""
+    tree = ast.parse(GATK_API.read_text(encoding="utf-8"))
+    fn = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "pypgx_gene_positions_grch38"
+    )
+    ns = {}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(GATK_API), "exec"), ns)
+    assert ns["pypgx_gene_positions_grch38"](
+        GENE_TABLE, ALLELE_TABLE
+    ) == pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38")
 
 
 # --------------------------------------------------------------------------

@@ -129,6 +129,9 @@ def test_create_input_vcf_measures_and_records_coverage():
     body = body[: body.index("\ndef ", 1)]
     assert "uncovered_genes_in_alignment(" in body
     assert "annotate_uncovered_genes(" in body
+    # And, for the other genes, their own positions with no reads.
+    assert "alignment_positions_without_reads(" in body
+    assert "positions_without_reads_header_line(without_reads)" in body
 
 
 def test_the_genotyper_skips_uncovered_genes_before_batching():
@@ -219,10 +222,42 @@ def test_only_confidently_placed_primary_reads_cover_a_gene(tmp_path, monkeypatc
     for name, module in _regions_stub(rows).items():
         monkeypatch.setitem(__import__("sys").modules, name, module)
 
-    ns = _load(["uncovered_genes_in_alignment"])
+    ns = _load(["uncovered_genes_in_alignment", "_has_placed_read"])
     uncovered = ns["uncovered_genes_in_alignment"](bam, "GRCh38")
 
     assert uncovered == ["EMPTY", "MULTIMAPPER", "NO_CONTIG", "SECONDARY"]
+
+
+def test_a_gene_is_covered_at_its_own_positions(tmp_path):
+    """Found 2026-10-20 on a panel cut from the NA12878 demo CRAM, reads over UGT1A1's
+    exon 1 only: UGT1A4's and UGT1A6's regions span that exon, so its reads made them
+    covered, and PyPGx called them *1/*1 and Reference/Reference from no read at any
+    position of their own. Positions as pypgx_gene_positions gives them: 0-based,
+    half-open; the result is VCF POS."""
+    bam = _bam(
+        tmp_path,
+        [(100, 30, 0), (1000, 0, 0), (2000, 30, 256), (3000, 30, 0)],
+    )
+    ns = _load(
+        ["alignment_positions_without_reads", "_has_placed_read", "_canonical_contig"]
+    )
+    ns["pypgx_gene_positions"] = lambda assembly: {
+        "SELF": [("1", 120, 121)],  # under the MAPQ-30 read
+        "NEIGHBOUR": [("1", 400, 401), ("1", 500, 502)],  # in no read
+        "PART": [("1", 130, 131), ("1", 1020, 1021), ("1", 3049, 3051)],
+        "MULTIMAPPER": [("1", 1020, 1021)],  # MAPQ 0 only
+        "SECONDARY": [("1", 2020, 2021)],
+        "ELSEWHERE": [("2", 120, 121)],  # contig not in the BAM
+        "UNCOVERED": [("1", 9000, 9001)],  # left out: no reads in its region
+    }
+    without = ns["alignment_positions_without_reads"](bam, "GRCh38", ["UNCOVERED"])
+    assert without == {
+        "NEIGHBOUR": [401, 501],
+        "PART": [1021],  # a REF span over the last base of a 50 bp read at 3000 is read
+        "MULTIMAPPER": [1021],
+        "SECONDARY": [2021],
+        "ELSEWHERE": [121],
+    }
 
 
 def test_no_reads_on_a_commonly_deleted_gene_is_not_called_a_gap():

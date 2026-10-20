@@ -474,6 +474,10 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
             # is checked for argv safety below.
             uncovered_genes_in_alignment=lambda *a, **k: [],
             annotate_uncovered_genes=lambda *a, **k: None,
+            # Likewise the genes' positions with no reads, and its header line.
+            alignment_positions_without_reads=lambda *a, **k: {},
+            positions_without_reads_header_line=lambda *a, **k: "",
+            annotate_header_line=lambda *a, **k: None,
             # SV inputs (a whole-genome depth gate, then two pypgx commands) likewise;
             # covered in tests/test_pypgx_structural_variants.py.
             prepare_sv_inputs=lambda *a, **k: None,

@@ -52,9 +52,10 @@ two letters:
 - **Guide**: the guideline behind the phenotype. C CPIC, D DPWG, F FDA, P PharmGKB.
 
 Genes examined without a call are listed after the table, with the reason when one is known:
-for a PyPGx gene, no reads over it in the alignment or gVCF, or no genotype in a VCF. A PyPGx
-call made from only some of its positions says beside it how many of the rest were read as
-the reference.
+for a PyPGx gene, no reads over it, or at any of its positions, in the alignment or gVCF, or
+no genotype in a VCF. A PyPGx call made from only some of its positions says beside it how
+many of the rest were read as the reference, and why: no reads there, or no genotype in the
+file.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
