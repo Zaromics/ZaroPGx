@@ -263,6 +263,7 @@ def test_both_sidecars_spell_the_header_keys_alike():
         "COVERAGE_MEASURED_ON_HEADER_KEY",
         "OFF_REFERENCE_HEADER_KEY",
         "POSITIONS_WITHOUT_READS_HEADER_KEY",
+        "POSITIONS_MEASURED_HEADER_KEY",
     ):
         values = [
             re.search(rf"^{key} = ['\"]([^'\"]+)['\"]", path.read_text(), re.M)
@@ -901,9 +902,55 @@ def test_the_positions_header_round_trips(pypgx, tmp_path):
     assert pypgx.positions_without_reads_from_vcf(str(vcf)) is None
 
 
-def test_both_sidecars_read_the_same_positions(pypgx):
-    """gatk-api has no PyPGx: it reads the lexicon's copy of PyPGx's allele table with
-    its own copy of load_gene_positions."""
+def test_the_measured_genes_header_round_trips(pypgx, tmp_path):
+    line = pypgx.positions_measured_header_line(["UGT1A6", "CYP2D6", "UGT1A6"])
+    assert line == "##ZaroPGx_positions_measured_for=CYP2D6,UGT1A6"
+    assert pypgx.positions_measured_header_line([]) == (
+        "##ZaroPGx_positions_measured_for=."
+    )
+    vcf = tmp_path / "h.vcf"
+    vcf.write_text(f"##fileformat=VCFv4.2\n{line}\n#CHROM\n", encoding="utf-8")
+    assert pypgx.positions_measured_from_vcf(str(vcf)) == {"CYP2D6", "UGT1A6"}
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n##ZaroPGx_positions_measured_for=.\n#CHROM\n",
+        encoding="utf-8",
+    )
+    assert pypgx.positions_measured_from_vcf(str(vcf)) == set()
+    vcf.write_text("##fileformat=VCFv4.2\n#CHROM\n", encoding="utf-8")
+    assert pypgx.positions_measured_from_vcf(str(vcf)) is None
+
+
+# What /genotype and the alignment lane read: load_gene_positions over PyPGx 0.27.0's
+# own tables (pypgx/api/data), GRCh38. Read 2026-10-20 inside zaropgx-pypgx:rc-final
+# with the wrapper's own function: 86 genes, 1,191 positions, this sha256 of
+# repr(sorted(items)). gatk-api's pypgx_gene_positions_grch38 over the copies in
+# zaropgx-gatk-api:rc-final (/app/pypgx-*-table.csv, from lexicon/): 85 genes, 1,169
+# positions, the same at every one but for MT-RNR1's 22. The suite has no PyPGx, so
+# the installed side is pinned here.
+PYPGX_0_27_0_POSITIONS_GRCH38_SHA256 = (
+    "070ca904010fc9d0b7f6db70f0300cf50e3e2653a3b0ad87efbdc7c992eef311"
+)
+# MT-RNR1's in PyPGx 0.27.0's allele table (M-663-A-G ... M-1556-C-T; m.960C>del is
+# M-955-AC-A and m.961T>del M-960-CT-C), as load_gene_positions spans them.
+MT_RNR1_POSITIONS = sorted(
+    [("M", 954, 956), ("M", 959, 961)]
+    + [
+        ("M", pos - 1, pos)
+        for pos in (663, 669, 747, 786, 807, 827, 839, 896, 930, 951, 961, 988)
+        + (1095, 1189, 1243, 1494, 1520, 1537, 1555, 1556)
+    ]
+)
+# The genes /genotype reads that the gVCF lane does not measure, and why. gatk-api
+# leaves them out of its ##ZaroPGx_positions_measured_for= line, so /genotype vouches
+# for none of their positions (test_a_gene_the_gvcf_lane_did_not_measure_is_not_called).
+NOT_MEASURED_IN_THE_GVCF_LANE = {
+    "MT-RNR1": "lexicon/ leaves it out; no gene set asks PyPGx for it (mtDNA-Server 2 "
+    "calls it)",
+}
+
+
+def _gatk_api_positions():
+    """gatk-api's own pypgx_gene_positions_grch38, over the copies its image carries."""
     tree = ast.parse(GATK_API.read_text(encoding="utf-8"))
     fn = next(
         n
@@ -912,9 +959,125 @@ def test_both_sidecars_read_the_same_positions(pypgx):
     )
     ns = {}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), str(GATK_API), "exec"), ns)
-    assert ns["pypgx_gene_positions_grch38"](
-        GENE_TABLE, ALLELE_TABLE
-    ) == pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38")
+    return ns["pypgx_gene_positions_grch38"](GENE_TABLE, ALLELE_TABLE)
+
+
+def test_both_sidecars_read_the_same_positions_but_the_documented_exceptions(pypgx):
+    """What each side reads: gatk-api its copy of the lexicon's tables; /genotype and
+    the alignment lane PyPGx's installed ones, pinned above. Every position of every
+    gene the same, but for NOT_MEASURED_IN_THE_GVCF_LANE. A lexicon refresh, a PyPGx
+    bump or a new exception fails here first."""
+    gatk = _gatk_api_positions()
+    # The two spellings of the reader agree on the same tables.
+    assert gatk == pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38")
+    installed = {**gatk, "MT-RNR1": MT_RNR1_POSITIONS}
+    assert len(installed) == 86
+    assert sum(len(v) for v in installed.values()) == 1191
+    assert (
+        hashlib.sha256(repr(sorted(installed.items())).encode()).hexdigest()
+        == PYPGX_0_27_0_POSITIONS_GRCH38_SHA256
+    )
+    assert set(installed) - set(gatk) == set(NOT_MEASURED_IN_THE_GVCF_LANE)
+    assert not set(gatk) - set(installed)
+    gatk_dockerfile = (REPO / "docker" / "gatk-api" / "Dockerfile.gatk-api").read_text()
+    assert "COPY lexicon/gene-table.csv /app/pypgx-gene-table.csv" in gatk_dockerfile
+    assert (
+        "COPY lexicon/allele-table.csv /app/pypgx-allele-table.csv" in gatk_dockerfile
+    )
+
+
+def _gvcf_lane_header(measured):
+    """The coverage lines gatk-api writes over a gVCF with reads at every position of
+    the genes it measured."""
+    return (
+        "##ZaroPGx_uncovered_genes=.\n##ZaroPGx_coverage_measured_on=gVCF\n"
+        "##ZaroPGx_positions_without_reads=.\n"
+        + (
+            f"##ZaroPGx_positions_measured_for={','.join(sorted(measured))}\n"
+            if measured is not None
+            else ""
+        )
+    )
+
+
+@pytest.fixture
+def installed_positions(pypgx, monkeypatch):
+    """/genotype reading PyPGx's installed tables: the lexicon's and MT-RNR1."""
+    installed = {
+        **pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38"),
+        "MT-RNR1": MT_RNR1_POSITIONS,
+    }
+    monkeypatch.setattr(pypgx, "pypgx_gene_positions", lambda assembly: installed)
+    return installed
+
+
+def test_a_gene_the_gvcf_lane_did_not_measure_is_not_called(
+    genotype, installed_positions
+):
+    """MT-RNR1: reads in its region (chrM:263, in front of its first position, as the
+    demo's chrM:1-500 cut has them), none at its positions, and gatk-api never looked.
+    It was called as the reference from positions nobody measured; now it is read as
+    an uploaded VCF's gene is, with a note saying why. UGT1A1, measured, as before."""
+    seen, post = genotype
+    measured = set(installed_positions) - set(NOT_MEASURED_IN_THE_GVCF_LANE)
+    body = post(
+        [(*UGT1A1_38, "0/0"), ("M", 263, "1/1")],
+        header=_gvcf_lane_header(measured),
+        genes="MT-RNR1,UGT1A1",
+    )
+    assert seen["genes"] == ["UGT1A1"]
+    result = body["results"]["MT-RNR1"]
+    assert result["success"] is True and result["diplotype"] is None
+    assert result["details"]["note"] == (
+        "No genotype in the VCF at any of PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there, so nothing says they match "
+        "the reference"
+    )
+
+
+def test_the_unmeasured_note_keeps_the_deletion_caveat(pypgx):
+    """As no_genotype_note: for a gene whose both copies are commonly deleted, no
+    record may be that deletion. Only no-calls, without "any of", as there too."""
+    assert pypgx.unmeasured_note("GSTM1", "gVCF") == (
+        "No genotype in the VCF at any of PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there: either not covered, or both "
+        "copies deleted (common for GSTM1), which the VCF cannot tell apart"
+    )
+    assert pypgx.unmeasured_note("MT-RNR1", "gVCF", no_calls_only=True) == (
+        "Only no-calls (./.) in the VCF at PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there, so nothing says they match "
+        "the reference"
+    )
+
+
+def test_an_unmeasured_gene_with_a_genotype_is_called_with_the_files_count(
+    genotype, installed_positions
+):
+    seen, post = genotype
+    measured = set(installed_positions) - set(NOT_MEASURED_IN_THE_GVCF_LANE)
+    body = post(
+        [(*UGT1A1_38, "0/0"), ("M", 1555, "0/0")],
+        header=_gvcf_lane_header(measured),
+        genes="MT-RNR1,UGT1A1",
+    )
+    assert sorted(seen["genes"]) == ["MT-RNR1", "UGT1A1"]
+    assert body["results"]["MT-RNR1"]["details"]["positions_note"] == (
+        "21 of 22 positions had no genotype in the file and were read as reference"
+    )
+    assert "positions_note" not in body["results"]["UGT1A1"].get("details", {})
+
+
+def test_without_the_measured_genes_line_every_gene_is_taken_as_measured(
+    genotype, installed_positions
+):
+    """A VCF from a producer older than the line: read as before."""
+    seen, post = genotype
+    post(
+        [(*UGT1A1_38, "0/0"), ("M", 263, "1/1")],
+        header=_gvcf_lane_header(None),
+        genes="MT-RNR1,UGT1A1",
+    )
+    assert sorted(seen["genes"]) == ["MT-RNR1", "UGT1A1"]
 
 
 # --------------------------------------------------------------------------

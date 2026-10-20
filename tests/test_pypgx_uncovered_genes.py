@@ -132,6 +132,8 @@ def test_create_input_vcf_measures_and_records_coverage():
     # And, for the other genes, their own positions with no reads.
     assert "alignment_positions_without_reads(" in body
     assert "positions_without_reads_header_line(without_reads)" in body
+    # And which genes it measured: every one in PyPGx's own tables, /genotype's.
+    assert "positions_measured_header_line(pypgx_gene_positions(str(assembly)))" in body
 
 
 def test_the_genotyper_skips_uncovered_genes_before_batching():
