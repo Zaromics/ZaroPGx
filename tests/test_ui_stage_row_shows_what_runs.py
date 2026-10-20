@@ -8,7 +8,9 @@ after it, while data-enabled="false" still left it out of the next upload. Found
 
 Stages a job has no step for (OptiType for a VCF, GATK for a GRCh38 VCF) were not
 faded at all: they looked like stages still to come (docs/to-do.md, "grey-out
-non-applicable steps"). loadJobSteps reads the job's steps and fades the rest.
+non-applicable steps"). loadJobSteps reads the job's steps and fades the rest. With a
+job's steps shown, the job decides: a switch does not remove every step of its stage
+(GATK off still lifts a GRCh37 VCF over), and a stage that runs must not look off.
 
 The page's own GlyphManager runs here in Node, against fake stage elements.
 """
@@ -82,11 +84,23 @@ const snapshots = {};
     elements[id].setAttribute("data-enabled", "false");
     elements[id].classList.add("disabled");
   }
-  if (scenario.load) await gm.loadJobSteps("job-1");
+  if (scenario.load) {
+    const pending = gm.loadJobSteps("job-1");
+    // A new file chosen before the job's steps came back.
+    if (scenario.interrupt) gm.clearJobSteps();
+    await pending;
+  }
   snapshots.start = faded();
-  gm.updateStageIndicators("pharmcat_analysis", "running");
+  const update = scenario.update || "pharmcat_analysis";
+  gm.updateStageIndicators(update, "running");
   snapshots.afterUpdate = faded();
-  snapshots.running = elements.stagePharmcat.classList.contains("text-success");
+  const updated = elements[gm.stepMapping[update]];
+  snapshots.running = updated.classList.contains("text-success");
+  if (scenario.toggleOn) {
+    elements[scenario.toggleOn].setAttribute("data-enabled", "true");
+    gm.refreshFade(elements[scenario.toggleOn]);
+    snapshots.afterToggle = faded();
+  }
   gm.clearJobSteps();
   snapshots.afterClear = faded();
   process.stdout.write(JSON.stringify({snapshots, fetched}));
@@ -179,3 +193,37 @@ def test_an_alignment_job_fades_nothing_it_runs():
 
     # GATK: a BAM needs no conversion, so its stage is left out.
     assert snapshots["start"] == ["stageGATK"]
+
+
+@needs_node
+def test_a_switched_off_stage_that_still_runs_is_not_faded():
+    """GATK off on a GRCh37 VCF: the liftover still runs, under the GATK stage."""
+    steps = ["header_analysis", "liftover"] + VCF_JOB_STEPS[1:]
+    snapshots = _run(
+        switchedOff=["stageGATK"], steps=steps, load=True, update="liftover"
+    )["snapshots"]
+
+    assert snapshots["start"] == ["stageHLA"]
+    assert snapshots["afterUpdate"] == ["stageHLA"], snapshots
+    assert snapshots["running"]
+    # A new file: the switch says again.
+    assert snapshots["afterClear"] == ["stageGATK"]
+
+
+@needs_node
+def test_a_reply_for_a_job_no_longer_shown_is_dropped():
+    snapshots = _run(load=True, interrupt=True)["snapshots"]
+
+    assert snapshots["start"] == []
+    assert snapshots["afterUpdate"] == []
+
+
+@needs_node
+def test_switching_a_stage_on_does_not_unfade_what_the_job_leaves_out():
+    snapshots = _run(switchedOff=["stageHLA"], load=True, toggleOn="stageHLA")[
+        "snapshots"
+    ]
+
+    assert snapshots["afterToggle"] == ["stageHLA", "stageGATK"]
+    # No job shown, HLA switched back on: nothing is faded.
+    assert snapshots["afterClear"] == []
