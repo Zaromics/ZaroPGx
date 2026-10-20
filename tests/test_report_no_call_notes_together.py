@@ -38,6 +38,21 @@ NOTES = {
     ),
     "UGT2B17": "No SNV/indel-based star alleles available for this gene",
 }
+# Genes only PyPGx calls, enough for more notes than the block keeps whole.
+PYPGX_GENES = [
+    "ABCB1",
+    "CYP1A1",
+    "CYP1A2",
+    "CYP1B1",
+    "CYP2A13",
+    "CYP2E1",
+    "CYP2F1",
+    "CYP2J2",
+    "CYP2R1",
+    "CYP3A43",
+    "CYP4A11",
+    "CYP4B1",
+]
 BLOCK = '<div class="uncalled-genes">'
 LOOSE = (
     "<style>.no-call-notes { break-inside: auto !important; "
@@ -114,3 +129,39 @@ def test_the_footnotes_stay_together_with_the_names(monkeypatch, tmp_path):
     notes, names_end, _ = _layout(pushed)
     assert len({n[0] for n in notes}) == 1, notes
     assert names_end == notes[0][0], "the names' last lines go over with the notes"
+
+
+def test_only_a_short_block_of_notes_is_kept_whole(monkeypatch, tmp_path):
+    """A kept block taller than a page does not split cleanly in WeasyPrint: it deals
+    the names out a couple of lines a page and starts the notes on a page of their
+    own (review, 64 genes with 40 notes). Up to 10 notes, about as many reasons as
+    the sidecars write, are kept whole; more flow as separate notes."""
+    for key in list(generator_module.REPORT_CONFIG):
+        if key.startswith(("write_", "show_")):
+            monkeypatch.setitem(
+                generator_module.REPORT_CONFIG, key, key == "write_html"
+            )
+
+    def page(count):
+        genes = [
+            {
+                "gene": gene,
+                "diplotype": "",
+                "phenotype": "",
+                "no_call_note": f"Reason number {n} why no call was made",
+            }
+            for n, gene in enumerate(PYPGX_GENES[:count])
+        ]
+        out = tmp_path / f"n{count}"
+        out.mkdir()
+        result = generator_module.generate_report(
+            {"data": {"genes": genes, "drugRecommendations": []}},
+            str(out),
+            {"id": "p1"},
+        )
+        return (out / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
+
+    assert 'class="no-call-notes"' in page(10)
+    many = page(11)
+    assert 'class="no-call-notes"' not in many
+    assert many.count('class="no-call-note"') == 11

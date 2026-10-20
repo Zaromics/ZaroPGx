@@ -704,7 +704,11 @@
         /* The footnotes to the uncalled genes' names, read as one block and kept
            with the end of the names they number: on the example VCF's report
            footnote 1 ended one page and 2 and 3 began the next. When they do not
-           fit under the names, the names' last lines go over with them. */
+           fit under the names, the names' last lines go over with them. Only a
+           short block is kept whole (the template sets the class for up to 10
+           notes; the sidecars write about that many reasons): WeasyPrint does not
+           split a kept block taller than a page cleanly, it deals the names out a
+           couple of lines a page and starts the notes on a page of their own. */
         .no-call-notes {
             break-inside: avoid;
             page-break-inside: avoid;
@@ -1429,7 +1433,7 @@
             {% set no_call_notes = uncalled_genes|selectattr('no_call_note')|map(attribute='no_call_note')|unique(case_sensitive=true)|list %}
             <p class="uncalled-list">{% for d in uncalled_genes %}{{ d.gene }} ({{ d.called_by or '?' }}){% if d.no_call_note %}<sup>{{ no_call_notes.index(d.no_call_note) + 1 }}</sup>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>
             {% if no_call_notes %}
-            <div class="no-call-notes">
+            <div{% if no_call_notes|length <= 10 %} class="no-call-notes"{% endif %}>
             {% for note in no_call_notes %}
             <p class="no-call-note"><sup>{{ loop.index }}</sup> {{ note }}.</p>
             {% endfor %}
