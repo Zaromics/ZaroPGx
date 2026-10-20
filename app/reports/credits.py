@@ -1471,8 +1471,9 @@ CREDITS: Tuple[Credit, ...] = (
         lambda run: run.ran("hla_typing"),
         (IMGT_HLA_2026, IMGT_HLA_2013),
         # OptiType 1.5.0's data/hla_reference_dna.fasta (unchanged since 2014) holds
-        # 6,889 alleles; every ID and name is in IPD-IMGT/HLA's Allelelist.3130.txt.
-        # 3.12.0 lacks 236 of them and 3.14.0 renames 7 (Allelelist_history.txt).
+        # 6,889 alleles; every ID and name is in IPD-IMGT/HLA's Allelelist.3130.txt
+        # (github.com/ANHIG/IMGTHLA, branch 3130). 3.12.0 lacks 236 of them and
+        # 3.14.0 renames 7 (Allelelist_history.txt).
         release="3.13.0, in OptiType",
         notice=(
             "HLA allele sequences are from the IPD-IMGT/HLA Database, used under "

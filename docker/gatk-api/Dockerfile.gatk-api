@@ -70,6 +70,8 @@ COPY app/api/utils/fastq_platform.py /app/
 # over (gatk_api.gvcf_coverage). No PyPGx in this image.
 COPY lexicon/gene-table.csv /app/pypgx-gene-table.csv
 COPY lexicon/allele-table.csv /app/pypgx-allele-table.csv
+# PyPGx's MIT licence, which has to travel with its tables.
+COPY lexicon/LICENSE.pypgx /app/LICENSE.pypgx
 
 # Expose the API port
 EXPOSE 5000

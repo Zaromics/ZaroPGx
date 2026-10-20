@@ -133,7 +133,9 @@ genome-downloader:
                BSD-3-Clause); OpenJDK 21 from Debian (GPL-2.0-only WITH
                Classpath-exception-2.0), which the downloader does not use;
                FastAPI (MIT), Uvicorn (BSD-3-Clause), Requests (Apache-2.0) and
-               tqdm (MPL-2.0 AND MIT).
+               tqdm (MPL-2.0 AND MIT), with their dependencies, each under its
+               own licence (certifi, MPL-2.0, among them), installed by uv (MIT
+               OR Apache-2.0), which the image keeps.
 Unmodified upstream images: PostgreSQL 18.6 (PostgreSQL License), HAPI FHIR JPA
 Server 8.12.0 (Apache-2.0), Kroki 0.32.1 with Mermaid 11.16.0 (MIT).
 
@@ -158,6 +160,10 @@ Debian packages keep their copyright files under /usr/share/doc in each image.
 - DPWG guidelines (KNMP), through ClinPGx. FDA tables: U.S. Government work.
 - PharmCAT's GRCh38 reference FASTA: Woon M, Zenodo,
   doi:10.5281/zenodo.7288118, CC BY 4.0; derived from NCBI's GRCh38 analysis set.
+- PharmCAT's position list (pharmcat_positions_3.4.0.vcf, from its v3.4.0
+  release) and regions BED (pharmcat_regions.bed, from its development branch),
+  which the genome downloader fetches from GitHub: MPL-2.0,
+  https://github.com/PharmGKB/PharmCAT.
 - UCSC hg38 and hg19 FASTAs: freely available; UCSC asks that data be credited.
   The hg19ToHg38 liftover chain: "The UCSC Chain Files are property of The
   Regents of the University of California, and made available free for
