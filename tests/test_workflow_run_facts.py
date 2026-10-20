@@ -145,6 +145,29 @@ def test_genes_with_no_reads_are_counted_out_of_the_whole_panel():
     ]
 
 
+def test_genes_a_vcf_has_no_genotype_in_are_counted_as_such():
+    """The demo VCF (PharmCAT's example) with "Assume absent sites = reference" off:
+    PyPGx called the 4 genes it has genotypes in and none of the other 62. "With no
+    reads" would be wrong: a VCF has no reads."""
+    facts = _facts(
+        [
+            _record(
+                "pypgx_analysis",
+                output={
+                    "total_genes": 66,
+                    "successful_genes": 4,
+                    "not_sequenced_genes": 0,
+                    "no_genotype_genes": 62,
+                    "failed_genes": 0,
+                },
+            )
+        ]
+    )
+    assert facts.details["pypgx_analysis"] == [
+        "4 of 66 genes genotyped, 62 with no genotype in the VCF"
+    ]
+
+
 def test_a_step_recorded_before_the_fix_reads_the_same():
     """Jobs already run keep their old step record: genes with no reads counted as
     successful, and dropped from total_genes. Re-rendering one gives the true counts."""

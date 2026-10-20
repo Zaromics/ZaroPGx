@@ -65,6 +65,9 @@ COPY app/utils/shared_input.py /job-client/
 # The FASTQ platform detector, shared with the app so the pre-upload plan and
 # /align-fastq reach the same verdict about @RG PL:.
 COPY app/api/utils/fastq_platform.py /app/
+# PyPGx's gene table (PyPGx 0.27.0's, in lexicon/): /gvcf-to-vcf records which PyPGx
+# genes a gVCF has reads over (gatk_api.gvcf_uncovered_genes). No PyPGx in this image.
+COPY lexicon/gene-table.csv /app/pypgx-gene-table.csv
 
 # Expose the API port
 EXPOSE 5000

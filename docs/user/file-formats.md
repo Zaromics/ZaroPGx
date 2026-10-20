@@ -24,6 +24,16 @@ Alignments also get HLA typing, and a VCF made from their reads at every PharmCA
 
 ## Variant Call Format (VCF)
 
+A VCF usually lists only the sites where the sample differs from the reference, so a gene
+with no record in it may match the reference or may not have been sequenced at all. PyPGx
+reads it as the reference sequence ([pypgx#142](https://github.com/sbslee/pypgx/issues/142)).
+So a gene the file has no genotype in (no record in PyPGx's region for the gene, or only
+`./.` records) is not called, and the report says why. With "Assume absent sites =
+reference" on ({doc}`usage`), PyPGx calls a gene with no record as reference; one with
+only `./.` records stays uncalled, since PyPGx would fill those in from population data.
+Turn the option on only for a whole-genome call set. Even then, *GSTM1* is called
+present when both its copies are deleted, since a VCF does not record that deletion.
+
 ### Processing path: VCF
 ```
 VCF → [liftover, if GRCh37] → PyPGx and [mtDNA] → PharmCAT → reports
@@ -44,7 +54,7 @@ BCF → bcftools (VCF conversion) → [liftover, if GRCh37] → PyPGx and [mtDNA
 ## Genomic VCF (gVCF)
 A gVCF records *reference-confidence blocks* alongside the variant calls. PharmCAT refuses a gVCF, so ZaroPGx genotypes it first with GATK `GenotypeGVCFs`: over PharmCAT's positions, then over everything else. Reference genotypes at the pharmacogene positions come from your file's reference blocks rather than being assumed, which makes a gVCF a better input than a plain VCF.
 
-PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls.
+PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls. PyPGx reads the genotyped VCF, which keeps no reference blocks, so the conversion also records which of PyPGx's genes the blocks show reads over; a gene with none is not called.
 
 The report states:
 

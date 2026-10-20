@@ -51,7 +51,8 @@ two letters:
   X an outside call whose tool was not recorded, – no call, ? not recorded.
 - **Guide**: the guideline behind the phenotype. C CPIC, D DPWG, F FDA, P PharmGKB.
 
-Genes examined without a call are listed after the table, with the reason when one is known.
+Genes examined without a call are listed after the table, with the reason when one is known:
+for a PyPGx gene, no reads over it in the alignment or gVCF, or no genotype in a VCF.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.

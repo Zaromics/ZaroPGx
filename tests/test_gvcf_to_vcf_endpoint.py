@@ -68,7 +68,7 @@ PHARMCAT_POSITION_ROWS = [
 ]
 
 
-def _vcf_text(rows):
+def _vcf_text(rows, header_extra=()):
     """Rows are (chrom, pos) or (chrom, pos, genotype); the genotype defaults to 0/0.
 
     A sample column is written because the endpoint's coverage count reads the genotype
@@ -80,6 +80,8 @@ def _vcf_text(rows):
     a reference-block row, `REF ALT=.` with GT:DP:RGQ and a confident RGQ --
     rewrite_homref_to_pharmcat_alleles no-calls a 0/0 row it cannot stand behind -- and
     a position the gVCF had no block for is a bare `GT ./.`.
+
+    `header_extra` lines go before the #CHROM line, as a real header carries them.
     """
     lines = []
     for row in rows:
@@ -89,7 +91,9 @@ def _vcf_text(rows):
             lines.append(f"{chrom}\t{pos}\t.\tG\t.\t.\t.\t.\tGT:DP:RGQ\t0/0:30:99\n")
         else:
             lines.append(f"{chrom}\t{pos}\t.\tG\t.\t.\t.\t.\tGT\t{genotype}\n")
-    return VCF_HEADER + "".join(lines)
+    head, chrom_line = VCF_HEADER.rsplit("#CHROM", 1)
+    extra = "".join(f"{line}\n" for line in header_extra)
+    return head + extra + "#CHROM" + chrom_line + "".join(lines)
 
 
 def _positions_text(rows):
@@ -173,11 +177,14 @@ class FakeTools:
     * `bcftools view -O z -o OUT IN` writes a gzipped VCF (the staging re-encode).
     * `gatk GenotypeGVCFs -V IN ... -O OUT` writes `pgx_rows` when the argv carries
       `--include-non-variant-sites`, and `variant_rows` otherwise.
-    * `bcftools view -H -R BED ... -o OUT STAGED` (the gVCF's own records at
-      PharmCAT's positions) writes the text lines in `span_records`.
+    * `bcftools view -H -R BED ... -o OUT STAGED` writes the text lines in
+      `span_records` for the gVCF's own records at PharmCAT's positions, and those in
+      `gene_records` for its records over PyPGx's genes (OUT `pypgx_gene_records.txt`).
     * `bcftools view -T ^ROWS ... -o OUT IN` writes IN's rows minus those at a position
       ROWS lists.
-    * `bcftools concat -a ... -o OUT A B` writes the union of what A and B hold.
+    * `bcftools concat -a ... -o OUT A B` writes the union of what A and B hold,
+      header lines included (measured: bcftools 1.24 carries a header line of either
+      input into its output).
     * `bcftools index -t X` touches `X.tbi`.
 
     EVERY INPUT PATH IS OPENED, and a missing one fails the call the way the real tool
@@ -204,12 +211,16 @@ class FakeTools:
         self.variant_rows = [("chr1", 1000), ("chrM", 1555)]
         self.span_records = []
         self.span_beds = []
+        self.gene_records = []
+        self.gene_beds = []
         self.rows_by_path = {}
+        self.headers_by_path = {}
         # (tool, subcommand-or-None) -> exit code, for provoking one failure at a time.
         self.failing = {}
         self.stderr = b""
         # None means "write real gzip"; bytes are written verbatim by concat instead.
         self.payload = None
+        self.concat_drops_headers = False
         self.index_writes_tbi = True
 
     def argvs(self):
@@ -226,9 +237,12 @@ class FakeTools:
     def _flag_value(argv, flag):
         return argv[argv.index(flag) + 1]
 
-    def _write(self, path, rows):
+    def _write(self, path, rows, header_extra=()):
         self.rows_by_path[path] = list(rows)
-        Path(path).write_bytes(gzip.compress(_vcf_text(rows).encode("utf-8")))
+        self.headers_by_path[path] = list(header_extra)
+        Path(path).write_bytes(
+            gzip.compress(_vcf_text(rows, header_extra).encode("utf-8"))
+        )
 
     @staticmethod
     def _inputs(argv):
@@ -278,11 +292,13 @@ class FakeTools:
         elif tool == "bcftools" and sub == "view":
             source = argv[-1]
             if "-R" in argv:
-                self.span_beds.append(
-                    Path(self._flag_value(argv, "-R")).read_text(encoding="utf-8")
-                )
-                Path(self._flag_value(argv, "-o")).write_text(
-                    "".join(self.span_records), encoding="utf-8"
+                bed = Path(self._flag_value(argv, "-R")).read_text(encoding="utf-8")
+                out = self._flag_value(argv, "-o")
+                genes = out.endswith("pypgx_gene_records.txt")
+                (self.gene_beds if genes else self.span_beds).append(bed)
+                Path(out).write_text(
+                    "".join(self.gene_records if genes else self.span_records),
+                    encoding="utf-8",
                 )
             elif "-T" in argv:
                 listed = Path(self._flag_value(argv, "-T").lstrip("^")).read_text(
@@ -300,12 +316,14 @@ class FakeTools:
             elif source.endswith((".pharmcat_alleles.vcf", ".general.vcf")):
                 # The PharmCAT-alleles rewrite of the PGx pass: carry its rows, so the
                 # coverage count downstream reads what the rewrite actually wrote.
-                rows = []
+                rows, extra = [], []
                 for line in Path(source).read_text(encoding="utf-8").splitlines():
-                    if line and not line.startswith("#"):
+                    if line.startswith("##ZaroPGx"):
+                        extra.append(line)
+                    elif line and not line.startswith("#"):
                         f = line.split("\t")
                         rows.append((f[0], int(f[1]), f[9].split(":")[0]))
-                self._write(self._flag_value(argv, "-o"), rows)
+                self._write(self._flag_value(argv, "-o"), rows, extra)
             else:
                 self._write(self._flag_value(argv, "-o"), [("chr1", 1)])
         elif tool == "bcftools" and sub == "concat":
@@ -314,10 +332,11 @@ class FakeTools:
                 Path(out).write_bytes(self.payload)
                 self.rows_by_path[out] = []
             else:
-                merged = []
+                merged, extra = [], []
                 for source in argv[argv.index("-o") + 2 :]:
                     merged.extend(self.rows_by_path.get(source, []))
-                self._write(out, merged)
+                    extra.extend(self.headers_by_path.get(source, []))
+                self._write(out, merged, [] if self.concat_drops_headers else extra)
         elif tool == "bcftools" and sub == "index" and self.index_writes_tbi:
             Path(f"{argv[-1]}.tbi").write_bytes(b"TBI\x01")
 
@@ -1314,7 +1333,11 @@ def test_the_conversion_reads_the_gvcfs_own_records_across_pharmcats_spans(
     resp = _post(client)
     assert resp.status_code == 200, resp.text
 
-    reads = [argv for argv in tools.ran("bcftools", "view") if "-R" in argv]
+    reads = [
+        argv
+        for argv in tools.ran("bcftools", "view")
+        if "-R" in argv and not argv[argv.index("-o") + 1].endswith("gene_records.txt")
+    ]
     assert len(reads) == 1, tools.argvs()
     argv = reads[0]
     assert argv[argv.index("--regions-overlap") + 1] == "record"
@@ -1580,3 +1603,111 @@ def test_the_conversion_returns_pharmcats_own_file(client, tools):
     ]
     assert len(written) == 1 and written[0][-1].endswith(".pharmcat_alleles.vcf")
     assert [r[:2] for r in tools.rows_by_path[path]] == PHARMCAT_POSITION_ROWS
+
+
+# ---------------------------------------------------------------------------
+# Which PyPGx genes the gVCF has reads over, for /genotype
+# ---------------------------------------------------------------------------
+# The merged VCF keeps no reference blocks: outside PharmCAT's positions it holds
+# variants only. Given a VCF without coverage evidence, the pypgx wrapper leaves
+# uncalled every gene it has no genotype in -- which, here, is every gene the sample
+# matches the reference over. So the conversion reads the blocks over PyPGx's genes
+# and writes the alignment lanes' ##ZaroPGx_uncovered_genes= line
+# (tests/test_pypgx_vcf_without_genotypes.py has the wrapper's side).
+
+
+def _block(chrom, pos, end, gt="0/0", dp=30):
+    return (
+        f"{chrom}\t{pos}\t.\tA\t<NON_REF>\t.\t.\tEND={end}\t"
+        f"GT:DP:GQ:MIN_DP:PL\t{gt}:{dp}:42:{dp}:0,42,600\n"
+    )
+
+
+def _merged_header(tools):
+    merged = tools.ran("bcftools", "concat")[0]
+    return tools.headers_by_path[merged[merged.index("-o") + 1]]
+
+
+def test_the_merged_vcf_says_which_pypgx_genes_had_reads(client, tools, gatk_api):
+    """CYP2D6 under a block with reads; CYP2E1 under GATK's zero-depth block (0/0, DP
+    0), which says nothing was read; every other gene under nothing at all."""
+    tools.gene_records = [
+        _block("chr22", 42126000, 42200000),
+        _block("chr10", 133500000, 133600000, dp=0),
+    ]
+    resp = _post(client)
+    assert resp.status_code == 200, resp.text
+
+    header = _merged_header(tools)
+    line = next(h for h in header if h.startswith("##ZaroPGx_uncovered_genes="))
+    uncovered = set(line.split("=", 1)[1].split(","))
+    assert "CYP2D6" not in uncovered
+    assert {"CYP2E1", "GSTM1", "GSTT1", "NAT1"} <= uncovered
+    assert "##ZaroPGx_coverage_measured_on=gVCF" in header
+    # PharmCAT's own file is not where PyPGx looks; it carries neither line.
+    body = resp.json()
+    assert tools.headers_by_path[body["pharmcat_vcf_path"]] == []
+
+
+def test_the_genes_are_read_through_the_index_under_both_namings(client, tools):
+    _post(client)
+
+    reads = [
+        argv
+        for argv in tools.ran("bcftools", "view")
+        if "-R" in argv and argv[argv.index("-o") + 1].endswith("gene_records.txt")
+    ]
+    assert len(reads) == 1, tools.argvs()
+    argv = reads[0]
+    assert argv[argv.index("--regions-overlap") + 1] == "record"
+    assert argv[-1].endswith("staged.vcf.gz")
+    bed = tools.gene_beds[0].splitlines()
+    # PyPGx's own GRCh38 regions, BED-numbered as pysam's fetch reads them.
+    assert "22\t42116498\t42155810" in bed and "chr22\t42116498\t42155810" in bed
+    assert "chr22_KI270879v1_alt\t267307\t281486" in bed
+
+
+def test_a_merge_that_lost_the_line_is_refused(client, tools):
+    tools.concat_drops_headers = True
+    resp = _post(client)
+    assert resp.status_code == 500
+    assert "ZaroPGx_uncovered_genes" in resp.json()["detail"]
+
+
+SPANS = [
+    ("22", 42116498, 42155810, "CYP2D6"),
+    ("10", 133517362, 133549123, "CYP2E1"),
+    ("22_KI270879v1_alt", 267307, 281486, "GSTT1"),
+]
+
+
+@pytest.mark.parametrize(
+    "record, covered",
+    [
+        (_block("chr22", 42116000, 42117000), {"CYP2D6"}),  # starts upstream
+        (_block("chr22", 42100000, 42116498), set()),  # ends where the gene starts
+        (_block("chr22", 42120000, 42121000, dp=0), set()),  # no reads
+        (_block("chr22", 42120000, 42121000, gt="./."), set()),
+        (_block("22", 42120000, 42121000), {"CYP2D6"}),  # b37-style naming
+        (_block("chr22_KI270879v1_alt", 270000, 270100), {"GSTT1"}),
+        # A variant row: no END, its REF is its extent; DP decides.
+        ("chr10\t133530000\t.\tA\tG,<NON_REF>\t50\t.\t.\tGT:DP\t0/1:20\n", {"CYP2E1"}),
+        # A block with MIN_DP but no DP, and a call with neither: taken at its GT.
+        (
+            "chr10\t133530000\t.\tA\t<NON_REF>\t.\t.\tEND=133530100\tGT:MIN_DP\t0/0:0\n",
+            set(),
+        ),
+        ("chr10\t133530000\t.\tA\tG\t50\t.\t.\tGT\t1/1\n", {"CYP2E1"}),
+    ],
+)
+def test_which_gvcf_records_show_reads_over_a_gene(gatk_api, record, covered):
+    uncovered = gatk_api.genes_without_gvcf_reads([record], SPANS)
+    assert set(uncovered) == {"CYP2D6", "CYP2E1", "GSTT1"} - covered
+
+
+def test_the_gene_table_is_found_beside_the_module_or_in_the_repo(gatk_api):
+    path = gatk_api.pypgx_gene_table_path()
+    assert os.path.samefile(path, REPO_ROOT / "lexicon" / "gene-table.csv")
+    spans = gatk_api.pypgx_gene_spans_grch38(path)
+    assert ("22", 42116498, 42155810, "CYP2D6") in spans
+    assert len(spans) == 92

@@ -19,6 +19,11 @@
 {%- if d.pypgx and d.pypgx.alternative_phase %}
 <div class="call-note">Phase-dependent: with these variants on one chromosome PyPGx would also find {{ d.pypgx.alternative_phase|join(', ') }}</div>
 {%- endif %}
+{#- Why a gene has no call, where PyPGx said: no reads over it, or no genotype in the
+    VCF (generator: no_call_note). #}
+{%- if d.no_call_note and d.diplotype is not a_call %}
+<div class="call-note">{{ d.no_call_note }}.</div>
+{%- endif %}
 {%- endmacro %}
 
 {% macro na_legend(rows, attribute='phenotype') -%}
