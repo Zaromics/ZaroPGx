@@ -82,7 +82,8 @@ When the job completes, the page links to:
 - the PDF report and the interactive HTML report ({doc}`reports`);
 - PharmCAT's own HTML report, JSON and TSV;
 - for mitochondrial calling: the haplogroup result, the chrM VCF and, for alignments,
-  mtDNA-Server 2's own report;
+  mtDNA-Server 2's own report. A file with no mitochondrial data gets none of these;
+  the report's mtDNA section says why there is no result;
 - a ZIP of every report for this patient.
 
 With the FHIR server on, **Push to FHIR server** sends the job's FHIR bundle to it

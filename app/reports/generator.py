@@ -2,6 +2,7 @@ import base64
 import csv
 import dataclasses
 import glob
+import gzip
 import html
 import importlib.metadata
 import json
@@ -11,6 +12,7 @@ import re
 import shutil
 import struct
 import uuid
+import zlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -2927,7 +2929,8 @@ def native_report_paths(
 
     PharmCAT's own HTML, JSON and TSV, each as INCLUDE_PHARMCAT_* allows, and
     mtDNA-Server 2's files: all already in report_dir when the report step runs.
-    Only a file that exists gets a key, so the page never offers a dead link.
+    Only a file that exists gets a key, so the page never offers a dead link, and
+    an mtDNA file only when it holds a result (mtdna_report_paths).
 
     generate_report adds these to the reports it builds. A job whose custom report
     was turned off gets these alone (upload_router), which is what the page's
@@ -3005,31 +3008,89 @@ def native_report_paths(
             "PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable"
         )
 
-    # mtDNA-Server 2 artifacts. MtdnaCall (pipelines/pgx/main.nf) publishDir
-    # -copies these straight into report_dir under fixed names -- no
-    # report_id-prefixed rename step, unlike the PharmCAT files above -- so
-    # existence is all there is to check.
-    #
-    # mtdna_report.html exists only on an alignment input (BAM/CRAM/FASTQ):
-    # upstream's report needs coverage and contamination metrics a VCF-only
-    # call cannot produce, so its absence here is expected, not an error
-    # (see mtdna-server-2's own report_unavailable_reason). Leaving the key
-    # unset when the file is absent is what keeps the frontend's "mtDNA
-    # Reports" group from offering a dead link.
-    #
-    # mtdna_result.json carries the haplogroup call, its quality, and the
-    # matched MT-RNR1 variants, on both input paths -- the closest thing to
-    # a "haplogroup report" this pipeline produces today. The normalised chrM
-    # VCF (bcftools norm output) is available on both input paths too.
-    for key, name, what in (
-        ("mtdna_report_path", "mtdna_report.html", "mtDNA-Server 2 report"),
-        ("mtdna_haplogroups_path", "mtdna_result.json", "mtDNA haplogroup result"),
-        ("mtdna_vcf_path", "mtdna_variants.vcf.gz", "mtDNA chrM VCF"),
-    ):
-        if os.path.exists(os.path.join(report_dir, name)):
+    paths.update(mtdna_report_paths(report_dir, reports_url_prefix))
+    return paths
+
+
+def _mtdna_result_calls_something(path: str) -> bool:
+    """True when mtdna_result.json names a haplogroup, an MT-RNR1 result or variants."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            result = json.load(fh)
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Could not read {path}: {exc}")
+        return False
+    return isinstance(result, dict) and any(
+        result.get(key) for key in ("haplogroup", "mt_rnr1", "variants")
+    )
+
+
+def _vcf_has_records(path: str) -> bool:
+    """True when the bgzipped VCF at `path` holds a record, not only its header."""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
+            return any(line.strip() and not line.startswith("#") for line in fh)
+    except (OSError, EOFError, zlib.error) as exc:
+        logger.warning(f"Could not read {path}: {exc}")
+        return False
+
+
+def mtdna_report_paths(report_dir: str, reports_url_prefix: str) -> Dict[str, str]:
+    """Served paths of mtDNA-Server 2's files that hold a result, by report_paths key.
+
+    MtdnaCall (pipelines/pgx/main.nf) publishDir-copies these into report_dir
+    under fixed names, with no report_id prefix, unlike PharmCAT's files.
+
+    A file that exists is not enough. An upload with no mitochondrial data still
+    leaves mtdna_result.json, a no-call with no haplogroup (mt_rnr1_no_call_reason
+    "no_chrm_data" for a VCF, "no_mito_contig" or no reads for an alignment), and a
+    VCF upload leaves a chrM VCF that is only a header. Linked as "View Haplogroup
+    Report" and "Download chrM VCF" (index.html), they offered a haplogroup report
+    without a haplogroup and a VCF without a variant (PharmCAT's example VCF,
+    2026-10-20). So:
+      - mtdna_result.json is linked when it names a haplogroup, an MT-RNR1 result
+        or variants;
+      - mtdna_variants.vcf.gz when it holds a record;
+      - mtdna_report.html when it is not empty. It exists only for an alignment:
+        upstream's report needs coverage and contamination metrics a VCF cannot
+        give (mtdna-server-2's report_unavailable_reason).
+    The report's mtDNA section says why there is no result (mtdna_report_context).
+
+    native_report_paths adds these; GET /upload/reports/job/{job_id}'s fallback for
+    a job without stored reports uses them too.
+    """
+    checks = (
+        (
+            "mtdna_report_path",
+            "mtdna_report.html",
+            "mtDNA-Server 2 report",
+            lambda path: os.path.getsize(path) > 0,
+        ),
+        (
+            "mtdna_haplogroups_path",
+            "mtdna_result.json",
+            "mtDNA haplogroup result",
+            _mtdna_result_calls_something,
+        ),
+        ("mtdna_vcf_path", "mtdna_variants.vcf.gz", "mtDNA chrM VCF", _vcf_has_records),
+    )
+    paths: Dict[str, str] = {}
+    for key, name, what, has_content in checks:
+        path = os.path.join(report_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            linked = has_content(path)
+        except Exception as exc:
+            # Deciding a link must not fail the job (the final stage marks it
+            # failed on any error here): a file that cannot be read is not linked.
+            logger.warning(f"{what} not linked: could not read {name}: {exc}")
+            continue
+        if linked:
             paths[key] = f"{reports_url_prefix}/{name}"
             logger.info(f"{what} URL added: {paths[key]}")
-
+        else:
+            logger.info(f"{what} not linked: {name} has no result in it")
     return paths
 
 
