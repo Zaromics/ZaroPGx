@@ -86,3 +86,59 @@ def test_every_coloured_badge_reads_at_three_to_one():
         assert ratio >= 3, (selector, round(ratio, 2))
         checked += 1
     assert checked >= 10
+
+
+# One score per tier of the Executive Summary's activity score badge.
+TIER_SCORES = {
+    "CYP2D6": "0.0",
+    "CYP2C9": "0.25",
+    "CYP2C19": "0.5",
+    "DPYD": "0.75",
+    "CYP2B6": "1.0",
+    "TPMT": "2.0",
+    "NUDT15": "3.0",
+}
+
+
+def test_the_score_gauge_is_drawn_in_its_badges_text_colour():
+    """The gauge was `fill: currentColor` in CSS, which WeasyPrint ignores (it
+    warned so), and currentColor on its needle came out black: on the black 0.0
+    badge the icon was not there at all. Each path, the ring and the needle, now
+    carries its badge's text colour itself, at full ink, and reads at 3:1 on every
+    tier (the ring at half opacity fell under it on five)."""
+    from app.reports.generator import env
+
+    page = env.get_template("report_template.html").render(
+        diplotypes=[
+            {
+                "gene": gene,
+                "diplotype": "*1/*2",
+                "phenotype": "Intermediate Metabolizer",
+                "activity_score": score,
+            }
+            for gene, score in TIER_SCORES.items()
+        ],
+        recommendations=[],
+        report_id="test-report",
+        report_date="2026-10-20",
+        disclaimer="",
+    )
+    rules = _rules((TEMPLATES / "report_template.html").read_text(encoding="utf-8"))
+    names = {"white": "#ffffff"}
+    badges = re.findall(
+        r'<span class="as-badge as-tier-(\d)"[^>]*>\s*<svg[^>]*>(.*?)</svg>', page, re.S
+    )
+    assert sorted(tier for tier, _ in badges) == list("0123456"), badges
+    for tier, svg in badges:
+        assert "currentColor" not in svg, tier
+        body = rules[f".as-tier-{tier}"]
+        text = re.search(r"(?<![-\w])color:\s*(#\w+|white)", body)
+        ink = names.get(text.group(1), text.group(1)) if text else "#ffffff"
+        background = re.search(r"background-color:\s*(#\w+)", body).group(1)
+        fill = re.search(r'fill="(#\w+)"', svg).group(1)
+        stroke = re.search(r'stroke="(#\w+)"', svg).group(1)
+        assert _luminance(fill) == _luminance(ink), (tier, fill, ink)
+        assert _luminance(stroke) == _luminance(ink), (tier, stroke, ink)
+        assert "opacity" not in svg, (tier, svg)
+        assert _contrast(fill, background) >= 3, ("ring", tier, fill, background)
+        assert _contrast(stroke, background) >= 3, ("needle", tier, stroke, background)

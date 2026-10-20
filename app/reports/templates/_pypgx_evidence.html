@@ -19,7 +19,7 @@
 <div class="call-note copy-number-note">⚠ {{ d.copy_number_not_assessed.call_note }}</div>
 {%- endif %}
 {%- if d.pypgx and d.pypgx.copy_number and d.pypgx.copy_number != 'Normal' %}
-<div class="call-note">Copy number: {{ d.pypgx.copy_number_summary }} ({{ d.pypgx.copy_number }})</div>
+<div class="call-note">Copy number: {{ d.pypgx.copy_number_summary }} ({{ d.pypgx.copy_number|code_breaks }})</div>
 {%- endif %}
 {%- if d.pypgx and d.pypgx.alternative_phase %}
 <div class="call-note">Phase-dependent: with these variants on one chromosome PyPGx would also find {{ d.pypgx.alternative_phase|join(', ') }}</div>

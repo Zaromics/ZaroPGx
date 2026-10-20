@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup, escape
 
 # Optional import: WeasyPrint needs native Pango/GObject libraries that are present in the
 # container but not on a bare host. Importing it at module scope makes `import app.main`
@@ -1424,6 +1425,50 @@ def phenotype_badge_class(phenotype) -> str:
     return ""
 
 
+# Where a long name in the Genetic Results table may break, given as <wbr>: no
+# column is as wide as PharmCAT's longest allele names or PyPGx's copy-number
+# codes, and without these the PDF broke them wherever the line ran out
+# ("c.13994_1399" / "5delTCinsCT", "(PartialDup1Hom" / ")").
+#
+# Only a word longer than WORD_FITS characters gets them: a column holds about
+# that many, and given a break point a shorter one was split where it would
+# have fitted on a line of its own ("(*4)/c.1627A" / ">G"). A word here runs
+# between spaces and the "/" of a diplotype, where the line breaker breaks
+# anyway. In a name: after "_", before ">", before an HGVS del, ins or dup, and
+# after "," and after a "/" before a digit, where the line breaker would not. In
+# a copy-number code: after "+", and before each of its words (Whole|Del1|Hom).
+# A single long word (Songklanagarind) still breaks where it must.
+WORD_FITS = 12
+_NAME_WORDS = re.compile(r"(\s+|(?<=/))")
+_NAME_BREAKS = re.compile(r"(?<=[_,])(?=\S)|(?=>)|(?<=[0-9A-Z])(?=(?:del|ins|dup))")
+_CODE_BREAKS = re.compile(r"(?<=\+)|(?<=[a-z0-9])(?=[A-Z][a-z])")
+_WBR = Markup("<wbr>")
+
+
+def _broken(word: str, breaks) -> Markup:
+    if len(word) <= WORD_FITS:
+        return escape(word)
+    return _WBR.join(escape(part) for part in breaks.split(word) if part)
+
+
+def name_breaks(value) -> Markup:
+    """A diplotype or allele name, escaped, with <wbr> where a long word in it
+    may break."""
+    out = Markup()
+    for piece in _NAME_WORDS.split(str(value or "")):
+        if not piece:
+            continue
+        if out.endswith("/") and piece[0].isdigit():
+            out += _WBR
+        out += escape(piece) if piece.isspace() else _broken(piece, _NAME_BREAKS)
+    return out
+
+
+def code_breaks(value) -> Markup:
+    """A PyPGx copy-number code, escaped, with <wbr> where a long one may break."""
+    return _broken(str(value or ""), _CODE_BREAKS)
+
+
 # An HLA allele and what was screened for it: "*57:01 positive".
 _ALLELE_RESULT = re.compile(r"(\*\d+:\d+) (positive|negative)\b")
 
@@ -1453,6 +1498,8 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["activity_score_num"] = activity_score_num
     environment.filters["phenotype_badge_class"] = phenotype_badge_class
     environment.filters["allele_results_unbroken"] = allele_results_unbroken
+    environment.filters["name_breaks"] = name_breaks
+    environment.filters["code_breaks"] = code_breaks
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
     environment.tests["a_call"] = gene_was_called
@@ -1706,6 +1753,60 @@ def read_position_statuses(report_dir: str) -> Dict[str, str]:
         return {}
 
 
+# One warning the upload stored: a single plain paragraph, or plain text.
+_ONE_PARAGRAPH = re.compile(r"<p>(?P<body>(?:(?!</?p[\s>]).)*)</p>", re.S)
+_BLOCK_TAG = re.compile(r"</?(?:p|ul|ol|li|div|table|h[1-6])[\s>/]", re.I)
+_INLINE_TAG = re.compile(r"</?(?:strong|em|b|i|code|a|br|span|sup|sub)\b[^>]*>", re.I)
+_WARNING_MARK = "\u26a0\ufe0f"
+
+
+def input_warnings_alert(warnings: List[Any]) -> List[str]:
+    """The upload's standing warnings, one alert box for all of them, a line each,
+    every line opened by the warning mark.
+
+    The upload stores each as a paragraph of its own (file_processor), and the
+    report gave each a box of its own: a VCF's seven boxes filled most of a page,
+    and one of them was the second sentence of the first ("The analysis can
+    proceed, however, ..."), stored without the mark. A one-paragraph warning
+    without the mark continues the one before it; with none before it, it is
+    given the mark. Only a paragraph continues: plain text (what v0.3 stored for
+    "Could not analyze original WGS file: ...") is a warning of its own, marked,
+    and escaped unless it carries inline markup. A warning of more than one
+    paragraph or a list (the TSV rescue's) keeps a box of its own, in its place.
+    """
+    alerts: List[Optional[str]] = []
+    lines: List[str] = []
+    slot = None
+    for warning in warnings or []:
+        text = str(warning or "").strip()
+        if not text:
+            continue
+        match = _ONE_PARAGRAPH.fullmatch(text)
+        if match:
+            body = match.group("body").strip()
+        elif not _BLOCK_TAG.search(text):
+            body = text if _INLINE_TAG.search(text) else html.escape(text)
+        else:
+            alerts.append(text)
+            continue
+        if slot is None:
+            slot = len(alerts)
+            alerts.append(None)
+        if body.startswith("\u26a0"):
+            lines.append(body)
+        elif match and lines:
+            lines[-1] = f"{lines[-1]} {body}"
+        else:
+            lines.append(f"{_WARNING_MARK} {body}")
+    if slot is not None:
+        alerts[slot] = (
+            '<div class="input-warnings">'
+            + "".join(f"<p>{line}</p>" for line in lines)
+            + "</div>"
+        )
+    return [a for a in alerts if a is not None]
+
+
 def partial_coverage_alert(
     genes,
     input_type: Optional[str] = None,
@@ -1813,7 +1914,7 @@ def partial_coverage_alert(
     if not lines:
         return None
     note = (
-        f"<p>⚠️ Positions {verb}: {intro} some of the positions that define these "
+        f"<p>⚠️ <strong>Positions {verb}:</strong> {intro} some of the positions that define these "
         "genes' alleles, and PharmCAT matched each gene on the rest. An allele defined "
         "only there could not be assessed; one defined at other positions too was "
         "assessed on those alone."
@@ -1958,7 +2059,9 @@ def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
     if not parts:
         return None
     return (
-        "<p>⚠️ Positions PharmCAT did not use as found. " + ". ".join(parts) + ".</p>"
+        "<p>⚠️ <strong>Positions PharmCAT did not use as found.</strong> "
+        + ". ".join(parts)
+        + ".</p>"
     )
 
 
@@ -2144,7 +2247,7 @@ def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
             f"has been verified against (verified series: {known})."
         )
     return (
-        "<p><strong>Unverified PharmCAT version</strong></p>"
+        "<p>⚠️ <strong>Unverified PharmCAT version</strong></p>"
         f"<p>{claim} The structural checks on the PharmCAT output passed, so the "
         f"calls below are readable and are reported as PharmCAT made them; but "
         f"they have not been confirmed to match this pipeline's expectations for "
@@ -2189,7 +2292,7 @@ def pharmcat_tsv_rescue_alert(schema_gate_reason: Optional[str]) -> str:
             "further detail"
         )
     return (
-        "<p><strong>Report built from PharmCAT's TSV output</strong></p>"
+        "<p>⚠️ <strong>Report built from PharmCAT's TSV output</strong></p>"
         f"<p>{refusal}. The genotypes and drug recommendations below were read "
         "instead from PharmCAT's tab-delimited (TSV) output for the same run -- "
         "a separate file, parsed by separate code -- so the results below are "
@@ -3196,13 +3299,16 @@ def generate_report(
                 # it is actionable in a finished report, and the last one is
                 # actively contradicted a page later by the liftover step's real
                 # counts. Everything unmarked is a standing caveat that still
-                # qualifies these results, and stays.
-                workflow_warnings = [
-                    w
-                    for w in (workflow_config.get("warnings", []) or [])
-                    if "class='preflight'" not in str(w)
-                    and 'class="preflight"' not in str(w)
-                ]
+                # qualifies these results, and stays, in one alert box
+                # (input_warnings_alert).
+                workflow_warnings = input_warnings_alert(
+                    [
+                        w
+                        for w in (workflow_config.get("warnings", []) or [])
+                        if "class='preflight'" not in str(w)
+                        and 'class="preflight"' not in str(w)
+                    ]
+                )
                 logger.info(
                     f"Retrieved {len(workflow_warnings)} workflow warnings from job metadata"
                 )

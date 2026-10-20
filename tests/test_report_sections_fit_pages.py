@@ -152,6 +152,30 @@ def test_alerts_spilling_onto_a_second_page_are_pulled_back(monkeypatch, tmp_pat
     assert levels["alerts-heading"] >= 1
 
 
+def test_an_alert_that_fits_a_page_is_not_split_across_two(monkeypatch, tmp_path):
+    """A VCF's "Positions not in the VCF" broke at the foot of page 2, its box
+    running on empty to the foot. Wherever the alerts before it end, it moves to
+    the next page whole."""
+    items = "".join(
+        f"<li><strong>GENE{i}</strong>: 2 of 20 positions</li>" for i in range(16)
+    )
+    tall = ALERT.replace(
+        'class="alert-box"', 'id="tall-alert" class="alert-box"', 1
+    ).replace("</div>", f"<ul>{items}</ul></div>")
+    for count in (5, 7, 9):
+        html = re.sub(
+            r'(<div class="alerts-container"[^>]*>)(.*?)(</div>\s*</div>)',
+            lambda m: m.group(1) + ALERT * count + tall + m.group(3),
+            _html(monkeypatch, tmp_path),
+            count=1,
+            flags=re.S,
+        )
+        with monkeypatch.context() as m:
+            m.setattr(generator_module, "fit_sections", lambda render: (render(""), {}))
+            document, _ = generator_module.render_pdf_document(html)
+        assert len(pdf_fit.section_pages(document, "tall-alert")) == 1, count
+
+
 def _job(monkeypatch, file_type, steps, pypgx):
     """A job that ran ``steps``: what Platform and Citations credits follows them."""
     records = [
