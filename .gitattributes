@@ -25,6 +25,8 @@
 *.bz2  binary
 *.bam  binary
 *.bai  binary
+*.cram binary
+*.crai binary
 *.bcf  binary
 *.fna  binary
 *.fa   binary

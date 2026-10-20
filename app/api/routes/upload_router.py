@@ -2007,6 +2007,84 @@ async def upload_genomic_data(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
+# The Run Demo button's input: NA12878's reads from the 1000 Genomes 30x CRAM, cut to
+# the regions the pipeline reads (scripts/make-demo-cram.sh, which says what and why).
+# Reads rather than a VCF, so the demo runs every stage, and a sample whose answers are
+# published. The browser used to download the demo and upload it back; the server now
+# reads it from its own tree.
+DEMO_DIR = Path(__file__).resolve().parents[2] / "static" / "demo"
+DEMO_FILES = ("NA12878.pgx-demo.cram", "NA12878.pgx-demo.cram.crai")
+DEMO_SAMPLE_IDENTIFIER = "NA12878-demo"
+# The demo CRAM was written against the 1000 Genomes GRCh38 analysis set, and its reads
+# sit on 366 contigs, the HLA allele contigs among them. Only the genome downloader's
+# reference cache holds those sequences (UCSC hg38, the staged FASTA, has no HLA contigs
+# and writes IUPAC codes as N), so without it the job fails at the CRAM's conversion,
+# minutes in. The downloader writes this marker once the analysis set is cached; it is
+# missing while the 3.2 GB download runs, and for good with REF_CACHE_ENABLED=false.
+DEMO_REFERENCE_MARKER = (
+    Path(__file__).resolve().parents[3]
+    / "reference"
+    / "ref_cache"
+    / ".ref_cache_1kg_analysis_set.done"
+)
+
+
+@router.post("/demo", response_model=UploadResponse)
+async def run_demo(
+    background_tasks: BackgroundTasks,
+    optitype_enabled: Optional[str] = Form(None),
+    gatk_enabled: Optional[str] = Form(None),
+    pypgx_enabled: Optional[str] = Form(None),
+    report_enabled: Optional[str] = Form(None),
+    mtdna_enabled: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Analyse the bundled demo (DEMO_FILES) exactly as an upload of the same files.
+
+    The stage switches apply as they do to an upload. The assume-reference options are
+    off: the reads are genotyped at every position, so there is nothing to assume, and
+    an operator's PHARMCAT_ABSENT_TO_REF default does not reach the run either.
+    """
+    missing = [name for name in DEMO_FILES if not (DEMO_DIR / name).is_file()]
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"The demo's input is missing from this install: {', '.join(missing)}",
+        )
+    if not DEMO_REFERENCE_MARKER.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The demo is a CRAM written against the 1000 Genomes GRCh38 analysis "
+                "set, and this install has not cached that reference yet. The genome "
+                "downloader caches it after its other downloads, unless "
+                "REF_CACHE_ENABLED is false. Try again once it has."
+            ),
+        )
+    files = [
+        UploadFile(file=open(DEMO_DIR / name, "rb"), filename=name)
+        for name in DEMO_FILES
+    ]
+    try:
+        return await upload_genomic_data(
+            background_tasks,
+            files=files,
+            sample_identifier=DEMO_SAMPLE_IDENTIFIER,
+            reference_genome="hg38",
+            optitype_enabled=optitype_enabled,
+            gatk_enabled=gatk_enabled,
+            pypgx_enabled=pypgx_enabled,
+            report_enabled=report_enabled,
+            mtdna_enabled=mtdna_enabled,
+            pharmcat_absent_to_ref="false",
+            pharmcat_unspecified_to_ref="false",
+            db=db,
+        )
+    finally:
+        for upload in files:
+            upload.file.close()
+
+
 async def get_upload_status_by_data_id(data_id: str, db: Session):
     """
     Look up the most recent job whose job_metadata["data_id"] matches, then

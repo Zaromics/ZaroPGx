@@ -349,7 +349,7 @@ def vcf_evidence(
 
     `carried_chrm_data` is Tier E's evidence: whether the file carried any
     chrM record at all, as opposed to a plain nuclear-only PGx VCF that never
-    touched chrM (app/static/demo/pharmcat.example.vcf is exactly this).
+    touched chrM (test_data/pharmcat.example.vcf is exactly this).
     Deliberately not a chrM ##contig header alone -- GATK, DRAGEN and
     bcftools all write the full sequence dictionary regardless of whether
     chrM was ever covered, so a declared contig line is not proof the sample

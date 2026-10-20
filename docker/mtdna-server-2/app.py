@@ -529,7 +529,7 @@ async def _call_from_vcf(
 
     # Positive evidence the VCF actually carried mitochondrial data, as
     # opposed to a plain nuclear-only PGx VCF that never touched chrM at all
-    # (app/static/demo/pharmcat.example.vcf is exactly this: no ##contig
+    # (test_data/pharmcat.example.vcf is exactly this: no ##contig
     # chrM line, zero chrM rows -- but that is an unusually minimal header,
     # not the norm). `query` above is the full bcftools query over the whole
     # chrM contig -- NOT restricted to MT_RNR1_SPAN the way `records` is --
