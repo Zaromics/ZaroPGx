@@ -52,6 +52,11 @@ X an outside call whose tool was not recorded, – no call, ? not recorded. The 
 behind each recommendation (CPIC, DPWG or FDA) heads it under Drug Recommendations. The table
 has no guideline column: PharmCAT 3.1 and later record no guideline source per gene.
 
+**Implications** says what the phenotype means, as CPIC defines the term (for example
+"Decreased transporter function, between normal and poor" for *SLCO1B1* Decreased
+Function), and points to the drug recommendations for what follows from it; it names no
+dose or drug of its own. The interactive report's gene cards and panels say the same.
+
 Genes examined without a call are listed after the table, with the reason when one is known:
 for a PyPGx gene, no reads over it, or at any of its positions, in the alignment or gVCF, or
 no genotype in a VCF. For a gene PyPGx can find with both copies deleted (CYP2A6, CYP2D6,
