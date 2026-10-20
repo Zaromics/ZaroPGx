@@ -36,14 +36,14 @@ runs, whatever its switch says.
 | PyPGx | PyPGx's calls; CYP2D6 and the 65 genes outside PharmCAT's panel are then not called |
 | Report | the PDF and interactive reports; PharmCAT's own reports remain |
 
-Under **PharmCAT**, two options apply to VCF and BCF files only:
+Under **PharmCAT**, two options apply to VCF and BCF files:
 
 - **Assume absent sites = reference** (`--absent-to-ref`): a PharmCAT position the file has
   no record for is taken to be homozygous reference. It also lets MT-RNR1 be called
   reference when no MT-RNR1 allele is found, but only where the file's chrM calls show
   the gene was read (a variant inside it, and a haplogroup with none of its defining
   variants missing). A VCF with no chrM calls gets no MT-RNR1 call and no haplogroup
-  either way.
+  either way. This MT-RNR1 part applies to a gVCF too.
 - **Assume unspecified sites = reference** (`--unspecified-to-ref`): a position whose
   genotype is `./.` is taken to be homozygous reference.
 
@@ -52,8 +52,9 @@ the sites where the sample differs from the reference) leaves most of PharmCAT's
 absent, so without the first option PharmCAT cannot call many genes; with it, it calls
 them, but a position the file never covered reads as reference, which can over-call `*1`
 and normal phenotypes. The report says which was used, in its Methodology and in Alerts and
-Warnings. For alignments and gVCFs the options do nothing: ZaroPGx genotypes every
-PharmCAT position itself.
+Warnings. For alignments and gVCFs the options do nothing for PharmCAT: ZaroPGx genotypes
+every PharmCAT position itself. (A gVCF's MT-RNR1 still follows the first option, as
+above.)
 
 The defaults of all these come from `.env` ({doc}`configuration`).
 

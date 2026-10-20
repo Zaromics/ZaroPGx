@@ -361,8 +361,8 @@ def test_basis_is_never_set_on_a_no_call():
 # finding 1, 2026-08-30) because that module is not importable here (see
 # tests/test_mtdna_vcf_path.py's fixture docstring), so a test pinned against
 # its source text can only assert substrings are present -- which cannot fail
-# when a conjunction silently degrades to a disjunction, or when
-# absent_to_ref stops being checked first. These tests exercise the real
+# when a conjunction silently degrades to a disjunction, or when the no-chrM
+# and consent checks swap order. These tests exercise the real
 # function with real inputs instead.
 
 

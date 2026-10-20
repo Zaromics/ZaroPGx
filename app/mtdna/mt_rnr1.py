@@ -297,8 +297,9 @@ def resolve_mt_rnr1_call(
     empty. An empty match is not itself evidence of anything: it is equally
     what "genuinely reference" and "never sequenced" look like from here,
     which is exactly why the caller, not this function, supplies that
-    judgment (VCF path: a chrM contig header or a chrM record, gated on the
-    user's own pharmcat_absent_to_ref consent; alignment path: mean coverage
+    judgment (VCF path: a chrM record -- a chrM contig header alone does not
+    count -- then the user's own pharmcat_absent_to_ref consent and Tier C,
+    see vcf_evidence; alignment path: mean coverage
     across the gene at or above MIN_MEAN_COVERAGE).
 
     Even with positive evidence, `has_unresolved_961_deletion` can still
