@@ -17,12 +17,14 @@ is disturbed before checking what is read.
 from __future__ import annotations
 
 import copy
+import datetime
 import json
 from pathlib import Path
 
 import pytest
 from sqlalchemy import text
 
+from app.pharmcat import pharmcat_parser
 from app.pharmcat.pharmcat_parser import PharmCATParser
 from app.pharmcat.report_json import iter_gene_blocks
 from app.services.pharmcat_data_service import PharmCATDataService
@@ -153,3 +155,124 @@ def test_the_report_s_genes_and_messages_are_in_pharmcat_s_order(db_session, fix
             labels = [d["diplotype"] for d in gene["all_diplotypes"]]
             mine = [l for g, l in expected["diplotypes"] if g == gene["gene"]]
             assert labels == mine, gene["gene"]
+
+
+# Every table a load writes, and how to reach the load's rows in it.
+STAMPED = {
+    "gene_summary": "run_id = :run_id",
+    "diplotypes": "run_id = :run_id",
+    "drug_gene_map": "run_id = :run_id",
+    "messages": "run_id = :run_id",
+    "variants": "run_id = :run_id",
+    "drug_recommendations": "run_id = :run_id",
+    "unannotated_gene_calls": "run_id = :run_id",
+    "recommendation_conditions": (
+        "recommendation_id IN (SELECT id FROM pharmcat.drug_recommendations "
+        "WHERE run_id = :run_id)"
+    ),
+}
+
+
+class _StoppedClock(datetime.datetime):
+    """A wall clock that does not move: every row the column's own default
+    stamped would tie."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return datetime.datetime(2026, 10, 20, 12, 0, tzinfo=datetime.timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    ["pharmcat.example.report.json", "pharmcat.unphased.example.report.json"],
+)
+def test_a_load_stamps_its_rows_in_order_whatever_the_clock_does(
+    db_session, monkeypatch, fixture
+):
+    """The order is made by the parser, not by how far apart the rows happen to
+    be flushed: with a clock that stands still, every table's created_at still
+    strictly increases, and the lists still read in PharmCAT's order."""
+    monkeypatch.setattr(pharmcat_parser, "datetime", _StoppedClock)
+    report = _report(fixture)
+    _load_disturbed(db_session, report, "order")
+
+    for table, where in STAMPED.items():
+        rows, distinct = db_session.execute(
+            text(
+                f"SELECT count(*), count(DISTINCT created_at) FROM pharmcat.{table} "
+                f"WHERE {where}"
+            ),
+            {"run_id": "order"},
+        ).one()
+        assert rows == distinct, f"{table}: {rows} rows, {distinct} stamps"
+
+    parser = PharmCATParser(db_session)
+    expected = _pharmcat_order(report)
+    assert [g["gene_symbol"] for g in parser.get_gene_summary("order")] == expected[
+        "genes"
+    ]
+    assert [
+        (d["gene_symbol"], d["diplotype_label"]) for d in parser.get_diplotypes("order")
+    ] == expected["diplotypes"]
+    assert [
+        (m["gene_symbol"], m["message"]) for m in parser.get_messages("order")
+    ] == expected["messages"]
+
+
+def test_each_drug_s_annotations_from_one_source_keep_pharmcat_s_order(db_session):
+    """Within a source the data service keeps the order it is given, so that one
+    comes from the database: the live demo run listed aripiprazole lauroxil's two
+    FDA label annotations swapped. Every other annotation row is rewritten in
+    place (not deleted: its conditions would go with it), so its new version lies
+    after its neighbour's."""
+    report = json.loads((DATA / "pharmcat.example.report.json").read_text())
+    PharmCATParser(db_session).parse_and_load(report, run_id="order")
+    db_session.flush()
+    written = _ids(db_session, "drug_recommendations", "order", ordered=True)
+    db_session.execute(
+        text(
+            "UPDATE pharmcat.drug_recommendations SET drug_name = drug_name "
+            "WHERE id = ANY(:ids)"
+        ),
+        {"ids": written[::2]},
+    )
+    db_session.flush()
+
+    # The layout guarded against: a drug's two annotations from one source lie
+    # in the table the other way round.
+    lying = db_session.execute(
+        text(
+            "SELECT drug_name, guideline_source, created_at "
+            "FROM pharmcat.drug_recommendations WHERE run_id = :run_id"
+        ),
+        {"run_id": "order"},
+    ).all()
+    seen = {}
+    swapped = False
+    for drug, source, stamp in lying:
+        last = seen.get((drug, source))
+        swapped |= last is not None and stamp < last
+        seen[(drug, source)] = stamp
+    assert swapped, "some drug's same-source annotations should lie swapped"
+
+    data = PharmCATDataService(db_session).get_pharmcat_data_by_run_id("order")
+    got = {
+        drug["drug"]: [
+            (rec.get("guideline_source"), rec["recommendation"])
+            for rec in drug["recommendations"]
+        ]
+        for drug in data["drugRecommendations"]
+    }
+    expected = {}
+    for section, drugs in report["drugs"].items():
+        for drug, entry in drugs.items():
+            for guideline in entry.get("guidelines") or []:
+                for annotation in guideline.get("annotations") or []:
+                    expected.setdefault(drug, []).append(
+                        (
+                            section,
+                            annotation.get("drugRecommendation")
+                            or "See report for details",
+                        )
+                    )
+    assert got == expected

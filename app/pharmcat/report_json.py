@@ -1054,11 +1054,16 @@ def guideline_source_name(value: Any) -> str:
     return GUIDELINE_SOURCE_NAMES.get(text.upper(), text)
 
 
+# PharmCAT's order of its guideline sources: CPIC, DPWG, FDA label, FDA PGx
+# association, as its report.json orders its "drugs" sections and its HTML report
+# lists a drug's annotations.
+GUIDELINE_SOURCE_ORDER = tuple(GUIDELINE_SOURCE_NAMES.values())
+
+
 def guideline_source_rank(value: Any) -> int:
-    """Where a guideline source (code or section name) comes in PharmCAT's order:
-    CPIC, DPWG, FDA label, FDA PGx association, as its report.json orders its
-    "drugs" sections and its HTML report lists a drug's annotations. A source it
-    does not know comes after them."""
-    order = list(GUIDELINE_SOURCE_NAMES.values())
+    """Where a guideline source (code or section name) comes in PharmCAT's order
+    (GUIDELINE_SOURCE_ORDER). A source it does not know comes after them."""
     name = guideline_source_name(value)
-    return order.index(name) if name in order else len(order)
+    if name in GUIDELINE_SOURCE_ORDER:
+        return GUIDELINE_SOURCE_ORDER.index(name)
+    return len(GUIDELINE_SOURCE_ORDER)

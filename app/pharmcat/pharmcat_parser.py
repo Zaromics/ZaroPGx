@@ -4,11 +4,12 @@ PharmCAT JSON Parser and Database Loader for ZaroPGx
 Handles parsing and loading PharmCAT output into PostgreSQL using SQLAlchemy 2 and psycopg3
 """
 
+import itertools
 import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -416,13 +417,15 @@ def position_coverage(gene_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 def _written_order(model) -> tuple:
     """ORDER BY for a run's rows of ``model`` in the order the parser wrote them.
 
-    The parser walks PharmCAT's report.json in order and each row's created_at is
-    set as it is written, so this is PharmCAT's order: its genes, each gene's
-    diplotypes and messages, its unannotated calls, its drugs. Without an ORDER
-    BY, Postgres returns rows in the order they lie in the table, and a row goes
-    wherever the free space map finds room for it; PharmCAT's example report's
-    gene rows and annotations already lie out of the order they were written in.
-    id only breaks a tie.
+    The parser walks PharmCAT's report.json in order and stamps each row's
+    created_at from one clock per load, a microsecond apart in the order it makes
+    them (PharmCATParser._written_at), so this is PharmCAT's order: its genes,
+    each gene's diplotypes and messages, its unannotated calls, its drugs.
+    Without an ORDER BY, Postgres returns rows in the order they lie in the table,
+    and a row goes wherever the free space map finds room for it; PharmCAT's
+    example report's gene rows and annotations already lie out of the order they
+    were written in. Within a load created_at never ties; id (random) only keeps
+    the order total for rows stored before the stamps, which could tie.
     """
     return (model.created_at, model.id)
 
@@ -439,6 +442,7 @@ class PharmCATParser:
         """
         self.db_session = db_session
         self._session_created = False
+        self._clock: Optional[tuple] = None
 
         if self.db_session is None:
             # CLI-only path (see `if __name__ == "__main__":` below) --
@@ -526,6 +530,9 @@ class PharmCATParser:
                 logger.info(f"PharmCAT run {run_id} already exists, replacing it")
                 self._delete_run(existing_result)
 
+            # The rows below are stamped in the order they are made (_written_at).
+            self._start_clock()
+
             # Create main result record
             result = PharmCATResult(
                 run_id=run_id,
@@ -572,6 +579,20 @@ class PharmCATParser:
 
             logger.error(f"Full traceback: {traceback.format_exc()}")
             raise
+
+    def _start_clock(self) -> None:
+        """One clock per load: rows are stamped from it in the order they are made."""
+        self._clock = (datetime.now(timezone.utc), itertools.count())
+
+    def _written_at(self) -> datetime:
+        """created_at for the next row: the load's start plus one microsecond per
+        row made before it. The column's own default is evaluated when the rows
+        are flushed, together, a few microseconds apart or not at all, and the
+        wall clock can step back; this order holds by construction."""
+        if self._clock is None:
+            self._start_clock()
+        start, seq = self._clock
+        return start + timedelta(microseconds=next(seq))
 
     def _delete_run(self, result: "PharmCATResult") -> None:
         """Delete a run; the schema's ON DELETE CASCADE removes every row keyed to
@@ -647,6 +668,7 @@ class PharmCATParser:
         used to hold the bucket, which was a name collision (BACKLOG 28 + 216).
         """
         gene_summary = PharmCATGeneSummary(
+            created_at=self._written_at(),
             run_id=run_id,
             gene_symbol=gene_symbol,
             call_source=call_source,
@@ -676,6 +698,7 @@ class PharmCATParser:
             activity_score = _as_float(diplotype.get("activityScore"))
 
             diplotype_record = PharmCATDiplotype(
+                created_at=self._written_at(),
                 run_id=run_id,
                 gene_symbol=gene_symbol,
                 diplotype_label=diplotype.get("label"),
@@ -703,6 +726,7 @@ class PharmCATParser:
         """Parse drug-gene relationships"""
         for drug in drugs:
             drug_record = PharmCATDrugGeneMap(
+                created_at=self._written_at(),
                 run_id=run_id,
                 gene_symbol=gene_symbol,
                 drug_name=drug.get("name"),
@@ -716,6 +740,7 @@ class PharmCATParser:
         """Parse messages and warnings"""
         for message in messages:
             message_record = PharmCATMessage(
+                created_at=self._written_at(),
                 run_id=run_id,
                 gene_symbol=gene_symbol,
                 rule_name=message.get("rule_name"),
@@ -791,6 +816,7 @@ class PharmCATParser:
                 dbsnp_id = dbsnp_id[:30]
 
             variant_record = PharmCATVariant(
+                created_at=self._written_at(),
                 run_id=run_id,
                 gene_symbol=gene_symbol,
                 chromosome=variant.get("chromosome"),
@@ -856,6 +882,7 @@ class PharmCATParser:
 
                         # Create drug recommendation
                         recommendation = PharmCATDrugRecommendation(
+                            created_at=self._written_at(),
                             run_id=run_id,
                             drug_name=drug_name,
                             drug_id=drug_id,
@@ -948,6 +975,7 @@ class PharmCATParser:
                 for phenotype in phenotypes:
                     if phenotype and gene_symbol:
                         condition_record = PharmCATRecommendationCondition(
+                            created_at=self._written_at(),
                             recommendation_id=recommendation_id,
                             gene_symbol=gene_symbol,
                             phenotype=str(phenotype),
@@ -961,6 +989,7 @@ class PharmCATParser:
         """Parse recommendation conditions (legacy method for backward compatibility)"""
         for condition in conditions:
             condition_record = PharmCATRecommendationCondition(
+                created_at=self._written_at(),
                 recommendation_id=recommendation_id,
                 gene_symbol=condition.get("gene"),
                 phenotype=condition.get("phenotype"),
@@ -974,6 +1003,7 @@ class PharmCATParser:
         """Parse unannotated gene calls"""
         for call in unannotated_calls:
             call_record = PharmCATUnannotatedGeneCall(
+                created_at=self._written_at(),
                 run_id=run_id,
                 gene_symbol=call.get("geneSymbol"),
                 allele_definition_version=call.get("alleleDefinitionVersion"),
@@ -1111,8 +1141,8 @@ class PharmCATParser:
         in the table, and that is not the order they were written: a row goes
         wherever the free space map finds room for its size. Two runs of the same
         input listed atomoxetine's DPWG and FDA label annotations, and
-        pantoprazole's DPWG and FDA PGx ones, in different orders. _parse_drugs
-        flushes one row at a time, so created_at is the order it wrote them in.
+        pantoprazole's DPWG and FDA PGx ones, in different orders. Each row's
+        created_at is stamped in the order _parse_drugs makes them (_written_at).
         """
         results = (
             self.db_session.query(PharmCATDrugRecommendation)
