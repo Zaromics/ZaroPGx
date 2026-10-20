@@ -1867,7 +1867,8 @@
                 reportGroups.forEach(group => {
                     // Check if there are any reports in this group. A group with
                     // nothing available at all is omitted entirely -- e.g. mtDNA
-                    // disabled means none of its three keys were ever emitted.
+                    // disabled, or a file with no mitochondrial data: the server
+                    // links no mtDNA file without a result (mtdna_report_paths).
                     const availableReports = group.reports.filter(report => reportUrls[report.key]);
 
                     if (availableReports.length > 0) {

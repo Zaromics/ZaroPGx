@@ -2447,23 +2447,18 @@ async def get_report_urls(job_id: str, db: Session = Depends(get_db)):
                             f"/reports/{patient_id}/{job.id}/{pharmcat_tsv.name}"
                         )
 
-                    # mtDNA-Server 2 artifacts, published under fixed names (no
-                    # job.id prefix) -- see app/reports/generator.py.
-                    mtdna_report = patient_dir / "mtdna_report.html"
-                    mtdna_haplogroups = patient_dir / "mtdna_result.json"
-                    mtdna_vcf = patient_dir / "mtdna_variants.vcf.gz"
-                    if mtdna_report.exists():
-                        reports["mtdna_report_url"] = (
-                            f"/reports/{patient_id}/{job.id}/{mtdna_report.name}"
-                        )
-                    if mtdna_haplogroups.exists():
-                        reports["mtdna_haplogroups_url"] = (
-                            f"/reports/{patient_id}/{job.id}/{mtdna_haplogroups.name}"
-                        )
-                    if mtdna_vcf.exists():
-                        reports["mtdna_vcf_url"] = (
-                            f"/reports/{patient_id}/{job.id}/{mtdna_vcf.name}"
-                        )
+                    # mtDNA-Server 2's files, by the rule generate_report links
+                    # them by: only one with a result in it.
+                    from app.reports.generator import (
+                        NATIVE_REPORT_URL_KEYS,
+                        mtdna_report_paths,
+                    )
+
+                    mtdna_paths = mtdna_report_paths(
+                        str(patient_dir), f"/reports/{patient_id}/{job.id}"
+                    )
+                    for key, url in mtdna_paths.items():
+                        reports[NATIVE_REPORT_URL_KEYS[key]] = url
 
         return {
             # The resolved job's canonical UUID, not the raw path parameter: the URL may

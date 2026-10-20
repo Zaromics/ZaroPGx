@@ -19,10 +19,13 @@ would be swallowed and reported as an ordinary failure. Violations are recorded 
 fake and asserted afterwards, and every case asserts the job was not failed.
 """
 
+import json
+
 import pytest
 
 import app.api.routes.upload_router as ur
 from app.api.models import JobStatus
+from tests.mtdna_outputs import NA12878_RESULT, write_no_chrm_vcf_run
 
 JOB_ID = "job-skip-report"
 PATIENT_ID = "patient-skip-report"
@@ -158,9 +161,9 @@ def test_reports_off_still_offers_pharmcat_and_mtdna_reports(
         f"{JOB_ID}_pgx_pharmcat.html",
         f"{JOB_ID}_pgx_pharmcat.json",
         f"{JOB_ID}_pgx_pharmcat.tsv",
-        "mtdna_result.json",
     ):
         (job_dir / name).write_text("x")
+    (job_dir / "mtdna_result.json").write_text(json.dumps(NA12878_RESULT))
     broadcasts = []
     monkeypatch.setattr(ur, "schedule_coroutine", broadcasts.append)
 
@@ -185,3 +188,37 @@ def test_reports_off_still_offers_pharmcat_and_mtdna_reports(
     assert (
         final and final[-1]["pharmcat_html_report_url"] == reports["pharmcat_html_path"]
     )
+
+
+def test_a_file_without_chrm_data_is_offered_no_mtdna_link(
+    final_stage, monkeypatch, tmp_path
+):
+    """PharmCAT's example VCF: its mtDNA files hold no result, and neither the job's
+    stored reports nor the completion message the page draws its links from may
+    offer them."""
+    write_no_chrm_vcf_run(tmp_path / PATIENT_ID / JOB_ID)
+    broadcasts = []
+    monkeypatch.setattr(ur, "schedule_coroutine", broadcasts.append)
+
+    service, _ = final_stage({"needs_report": False})
+
+    reports = [
+        u.metadata["reports"]
+        for u in service.updates
+        if getattr(u, "metadata", None) and "reports" in u.metadata
+    ][-1]
+    assert not [key for key in reports if key.startswith("mtdna_")], reports
+    final = [
+        b[2]
+        for b in broadcasts
+        if isinstance(b, tuple) and b[2].get("status") == "completed"
+    ]
+    assert final
+    assert {
+        key: final[-1][key]
+        for key in ("mtdna_report_url", "mtdna_haplogroups_url", "mtdna_vcf_url")
+    } == {
+        "mtdna_report_url": None,
+        "mtdna_haplogroups_url": None,
+        "mtdna_vcf_url": None,
+    }
