@@ -70,7 +70,7 @@ from app.reports.generator import (
     register_report_template_helpers,
     report_branding_context,
 )
-from app.reports.provenance import resolve_called_by
+from app.reports.provenance import called_by_text
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def _diplotype_line(diplotype: dict) -> str:
     # still what gets printed, so stored precision is preserved.
     if activity_score_num(activity_score) is not None:
         text += f" (Activity Score: {activity_score})"
-    text += f" [{resolve_called_by(diplotype).label}]"
+    text += f" [{called_by_text(diplotype)}]"
     return text
 
 

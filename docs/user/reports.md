@@ -47,18 +47,22 @@ it, so a double-sided print holds both on one sheet.
 
 **Genetic Results.** Every gene the run called: up to 91, PharmCAT's 25 and the other 66
 from PyPGx and OptiType. Columns: diplotype, phenotype, activity score, implications, and
-**Call**, the tool that made the call: C PharmCAT, P PyPGx, O OptiType, M mtDNA-Server 2,
-X an outside call whose tool was not recorded, – no call, ? not recorded. The guideline
-behind each recommendation (CPIC, DPWG or FDA) heads it under Drug Recommendations. The table
-has no guideline column: PharmCAT 3.1 and later record no guideline source per gene.
+**Call**, the tool the run records for the gene: the one that made the call or, for a gene
+without a call, the one that tried. C PharmCAT, P PyPGx, O OptiType, M mtDNA-Server 2, X an
+outside call whose tool was not recorded, – no call and no tool on record for the gene
+(PharmCAT made none and was given none, or no tool returned a result for it), ? not
+recorded. The guideline behind each recommendation (CPIC, DPWG or FDA) heads it under Drug
+Recommendations. The table has no guideline column: PharmCAT 3.1 and later record no
+guideline source per gene.
 
-Genes examined without a call are listed after the table, with the reason when one is known:
-for a PyPGx gene, no reads over it, or at any of its positions, in the alignment or gVCF, or
-no genotype in a VCF. For a gene PyPGx can find with both copies deleted (CYP2A6, CYP2D6,
-GSTM1, GSTT1, SULT1A1, UGT2B17), no reads at its positions may be that deletion, and the
-reason says so. A PyPGx call made from only some of its positions says beside it how many
-of the rest were read as the reference, and why: no reads there, or no genotype in the
-file.
+Genes examined without a call are listed after the table, each with its Call letter (as
+they are in the interactive report's Genes tab, which lists every gene), and with the reason
+when one is known: for a PyPGx gene, no reads over it, or at any of its positions, in the
+alignment or gVCF, or no genotype in a VCF. For a gene PyPGx can find with both copies
+deleted (CYP2A6, CYP2D6, GSTM1, GSTT1, SULT1A1, UGT2B17), no reads at its positions may be
+that deletion, and the reason says so. A PyPGx call made from only some of its positions
+says beside it how many of the rest were read as the reference, and why: no reads there,
+or no genotype in the file.
 
 **Copy number not assessed.** Some alleles are structural variants: a whole-gene deletion, a
 duplication, or a hybrid with a neighbouring gene, such as *CYP2D6* \*5, \*1x2, \*36 and

@@ -1365,7 +1365,7 @@
         
         <div class="tool-key">
             <h4>Source Legend:</h4>
-            <p><strong>Call:</strong> Tool that made this call, as recorded by the run - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call made, <strong>?</strong> = not recorded by this run</p>
+            <p><strong>Call:</strong> The tool the run records for the gene: the one that made the call or, for a gene without a call, the one that tried - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call and no tool on record for the gene (PharmCAT made none and was given none, or no tool returned a result for it), <strong>?</strong> = not recorded by this run</p>
         </div>
         
         <div style="margin-bottom: 15px;"></div>
@@ -1422,7 +1422,7 @@
                             Consult clinical guidelines
                         {% endif %}
                     </td>
-                    <td class="narrow-col tool-source" title="{{ d.called_by_label or '' }}">{{ d.called_by }}</td>
+                    <td class="narrow-col tool-source" title="{{ d|called_by_text }}">{{ d.called_by }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

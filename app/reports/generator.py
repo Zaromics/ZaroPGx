@@ -83,7 +83,11 @@ from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
     unresolved_summary_call,
 )
-from app.reports.provenance import CALLED_BY_NO_CALL, resolve_called_by
+from app.reports.provenance import (
+    CALLED_BY_NO_CALL,
+    called_by_text,
+    resolve_called_by,
+)
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.utils.env import env_flag
 from app.utils.literature import (
@@ -1498,6 +1502,7 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["code_breaks"] = code_breaks
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
+    environment.filters["called_by_text"] = called_by_text
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel
     environment.globals["summary_rows"] = summary_rows

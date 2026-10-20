@@ -38,12 +38,14 @@ _TOOL_MARKERS = {
     "M": CALLED_BY_MTDNA,
 }
 
-_TOOL_LABELS = {
-    CALLED_BY_PHARMCAT: "Called by PharmCAT",
-    CALLED_BY_PYPGX: "Called by PyPGx",
-    CALLED_BY_OPTITYPE: "Called by OptiType",
-    CALLED_BY_MTDNA: "Called by mtDNA-server-2",
+_TOOL_NAMES = {
+    CALLED_BY_PHARMCAT: "PharmCAT",
+    CALLED_BY_PYPGX: "PyPGx",
+    CALLED_BY_OPTITYPE: "OptiType",
+    CALLED_BY_MTDNA: "mtDNA-server-2",
 }
+
+_TOOL_LABELS = {letter: f"Called by {name}" for letter, name in _TOOL_NAMES.items()}
 
 _LABEL_OUTSIDE = "Outside call - producing tool not recorded by this run"
 _LABEL_NO_CALL = "No call made for this gene"
@@ -108,3 +110,24 @@ def resolve_called_by(gene_row: Mapping[str, Any]) -> CallProvenance:
         return CallProvenance(CALLED_BY_NO_CALL, _LABEL_NO_CALL, True)
 
     return CallProvenance(CALLED_BY_UNKNOWN, _LABEL_UNKNOWN, False)
+
+
+def called_by_text(gene_row: Mapping[str, Any]) -> str:
+    """The Call letter in words, for a row's tooltip or the ReportLab lane.
+
+    A gene examined without a call keeps the letter of the tool that tried, so
+    its words say that ("No call; tried by PyPGx"), not "Called by PyPGx". The
+    row's own letter and label are used when it has them, as the page shows
+    them; otherwise they are resolved from the row.
+    """
+    # Imported here: generator imports this module.
+    from app.reports.generator import gene_was_called
+
+    letter = gene_row.get("called_by")
+    label = gene_row.get("called_by_label")
+    if not letter or not label:
+        provenance = resolve_called_by(gene_row)
+        letter, label = provenance.letter, provenance.label
+    if letter in _TOOL_NAMES and not gene_was_called(gene_row.get("diplotype")):
+        return f"No call; tried by {_TOOL_NAMES[letter]}"
+    return label
