@@ -135,6 +135,12 @@ def test_each_gene_names_the_sv_alleles_pypgx_calls():
             sv.setdefault(row["Gene"], set()).add(row["StarAllele"])
     for gene, text in MISSED.items():
         named = set(re.findall(r"\*\w+|\bMALE\b", text))
+        # An allele no state yields is named only as one PyPGx does not call.
+        named -= {
+            a
+            for g, a in NEVER_CALLED
+            if g == gene and f"{a}, which PyPGx does not call" in text
+        }
         expected = {a for a in sv.get(gene, set()) if (gene, a) not in NEVER_CALLED}
         assert named == expected, gene
 
@@ -730,7 +736,7 @@ def test_one_summary_note_for_all_of_them():
         "from a VCF: CYP2B6 *29 and *30 (hybrids with CYP2B7); CYP2C19 *36 and *37 "
         "(partial or whole-gene deletions); CYP4F2 *16 (a partial or whole-gene "
         "deletion); SLCO1B1 *48 and *49 (partial or whole-gene deletions). PharmCAT "
-        "called CYP2B6, CYP2C19, CYP4F2 and SLCO1B1 itself, from small variants, as "
+        "itself called CYP2B6, CYP2C19, CYP4F2 and SLCO1B1, from small variants, as "
         "it does on every input, a whole genome included. A missed allele can "
         "change the phenotype of CYP2B6, CYP2C19 and SLCO1B1. See Alerts and "
         "Warnings."
@@ -826,9 +832,14 @@ def test_the_notes_fit_one_page_in_the_worst_case(monkeypatch, tmp_path):
             if gene.startswith("HLA") or gene == "MT-RNR1":
                 continue
             row["call_source"], row["tool_source"] = "OUTSIDE", "PyPGx"
+            # Both reasons, three-digit counts: the longest grouped note (review).
+            why = (
+                "no reads in the alignment"
+                if len(gene) % 2
+                else "no genotype in the file"
+            )
             row["positions_note"] = (
-                "2 of 31 positions had no reads in the alignment and were read as "
-                "reference"
+                f"123 of 456 positions had {why} and were read as reference"
             )
         annotate_copy_number(genes, ["CYP2D6", "CYP2B6", "CYP4F2", "G6PD"], LOW_DEPTH)
         original(genes, pypgx_results)
@@ -852,6 +863,9 @@ def test_the_notes_fit_one_page_in_the_worst_case(monkeypatch, tmp_path):
     ((_, used),) = section_fragments(document, "exec-summary")
     assert used > 0.99, used
     assert len(section_pages(document, "exec-summary-notes")) == 1, notes
+    # With room to spare, not just inside the page.
+    ((_, notes_used),) = section_fragments(document, "exec-summary-notes")
+    assert notes_used < 0.9, notes_used
     assert "⚠ ABCG2, CACNA1S, CFTR" in notes
 
 
@@ -881,3 +895,40 @@ def test_several_positions_notes_are_one_entry():
         "were read as reference, so a variant there would not have been seen and "
         "these calls may be wrong. Genetic Results notes each beside its call."
     )
+
+
+def test_the_summary_notes_are_escaped_once():
+    """Review: listed_alleles_note and positions_summary_note escaped their text,
+    then the template's autoescape escaped it again ("&amp;amp;")."""
+    from jinja2 import Environment
+
+    from app.reports.copy_number import positions_summary_note
+
+    env = Environment(autoescape=True)
+    out = env.from_string("{{ n.genes }}: {{ n.note }}").render(
+        n=positions_summary_note(
+            [
+                {"gene": "A&B", "positions_note": "1 of 2 positions <x>"},
+                {"gene": "C<D", "positions_note": "1 of 2 positions <y>"},
+            ]
+        )
+    )
+    assert "A&amp;B" in out and "C&lt;D" in out and "&lt;x&gt;" in out, out
+    assert "&amp;amp;" not in out and "&amp;lt;" not in out, out
+
+
+def test_a_structural_allele_pypgx_found_beside_pharmcat_s_call_is_flagged(
+    monkeypatch,
+):
+    """Review: if PyPGx measured a copy number other than normal for a gene whose
+    call shown is PharmCAT's, the summary must not use the softer line."""
+    from app.reports import copy_number as cn
+
+    monkeypatch.setattr(cn, "pharmcat_called", lambda row: True)
+    monkeypatch.setattr(cn, "pypgx_copy_number", lambda results, gene: "Hybrid1")
+    entry = cn.listed_alleles_entry({"gene": "CYP2B6", "diplotype": "*1/*6"}, {})
+    assert entry["marker"] == cn.FOUND_MARKER, entry
+    assert "Hybrid1" in entry["call_note"] and "cannot show" in entry["call_note"]
+    monkeypatch.setattr(cn, "pypgx_copy_number", lambda results, gene: "Normal")
+    entry = cn.listed_alleles_entry({"gene": "CYP2B6", "diplotype": "*1/*6"}, {})
+    assert entry["marker"] == cn.LISTED_MARKER, entry

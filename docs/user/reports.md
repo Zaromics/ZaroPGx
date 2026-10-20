@@ -87,8 +87,11 @@ report.json this report is built from. Each such call of PharmCAT's (Call C) is 
 makes these calls instead, it cannot show them all either: it has no copy-number model for
 *CYP2C19* or *SLCO1B1* ("Copy number not assessed (PyPGx has no copy-number model for this
 gene)"), and none of its *CYP2B6* copy-number states is \*30, so even its whole-genome
-*CYP2B6* call is marked. Its *CYP4F2* call from a whole genome can show the deletion (its
-\*DEL). One entry under Alerts and Warnings, "Structural alleles not assessed", names the
+*CYP2B6* call is marked. Its *CYP4F2* call from a whole genome measures the gene's copy
+number, so it can show a whole-gene deletion (PyPGx's \*DEL), though not a partial one. If
+PyPGx measured a copy number other than normal for a gene whose call shown is PharmCAT's,
+the call may be wrong, and its row in the Executive Summary says "PyPGx found a structural
+allele". One entry under Alerts and Warnings, "Structural alleles not assessed", names the
 genes, and one note behind the Executive Summary covers them all. These notes appear on a
 whole genome's report too. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
 An outside call neither tool made, such as one from `OUTSIDECALLSOVERRIDE`'s file, gets no

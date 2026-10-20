@@ -42,6 +42,8 @@ import html
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from markupsafe import Markup
+
 from app.reports.provenance import (
     CALLED_BY_PHARMCAT,
     CALLED_BY_PYPGX,
@@ -59,7 +61,7 @@ from app.reports.provenance import (
 # not assessed (reason): ", for the note under the call in a narrow table column.
 MISSED: Dict[str, str] = {
     "CYP2A6": "a *4 deletion, a duplication or a CYP2A7 hybrid (*12, *34)",
-    "CYP2B6": "a *29 CYP2B7 hybrid or a duplication",
+    "CYP2B6": "a *29 CYP2B7 hybrid or a duplication (and *30, which PyPGx does not call)",
     "CYP2D6": "a *5 deletion, extra copies (x2, x3) or a CYP2D7 hybrid (*13, *36, *68)",
     "CYP2E1": "extra copies of the whole gene (x2, x3) or of part of it (*S1)",
     "CYP4F2": "a whole-gene deletion (*DEL)",
@@ -326,6 +328,9 @@ def pypgx_copy_number(pypgx_results: Any, gene: str) -> Optional[str]:
 # assessed" where nothing measured it.
 NOT_ASSESSED_MARKER = "Copy number not assessed"
 LISTED_MARKER = "Structural alleles"
+# PyPGx measured a copy number other than normal for a gene whose call shown is
+# PharmCAT's, which cannot show it: the call may be wrong.
+FOUND_MARKER = "PyPGx found a structural allele"
 
 
 def listed_alleles_entry(
@@ -340,11 +345,20 @@ def listed_alleles_entry(
         return None
     if pharmcat_called(row):
         code = pypgx_copy_number(pypgx_results, gene)
+        found = bool(code) and code.strip().lower() != "normal"
         if code:
             # PyPGx did measure it, but the call shown is PharmCAT's.
+            measured = f"PyPGx measured copy number {code}"
+            if found:
+                # generator imports this module, so its helper is imported here.
+                from app.reports.generator import copy_number_summary
+
+                plain = copy_number_summary(code)
+                if plain:
+                    measured += f" ({plain}), which this call cannot show"
             call_note = (
                 f"PharmCAT's call, from small variants: {PHARMCAT_CALL_NOTE[gene]}; "
-                f"PyPGx measured copy number {code} (see Alerts)"
+                f"{measured} (see Alerts)"
             )
         else:
             call_note = (
@@ -355,7 +369,11 @@ def listed_alleles_entry(
             "kind": "pharmcat",
             "pypgx_code": code,
             "call_note": call_note,
-            "marker": LISTED_MARKER if code else NOT_ASSESSED_MARKER,
+            "marker": (
+                FOUND_MARKER
+                if found
+                else LISTED_MARKER if code else NOT_ASSESSED_MARKER
+            ),
         }
     if not pypgx_called(row):
         return None
@@ -419,7 +437,7 @@ def _listed_body(entries: List[Tuple[str, Dict[str, Any]]]) -> str:
     if by_kind.get("pharmcat"):
         genes = by_kind["pharmcat"]
         text += (
-            f" PharmCAT called {_gene_list(genes)} itself, from small variants, as it "
+            f" PharmCAT itself called {_gene_list(genes)}, from small variants, as it "
             "does on every input, a whole genome included."
         )
         for g, e in entries:
@@ -451,13 +469,14 @@ def _listed_body(entries: List[Tuple[str, Dict[str, Any]]]) -> str:
 
 def listed_alleles_note(rows: Iterable[Mapping[str, Any]]) -> Dict[str, str]:
     """One entry for the Notes to the Executive Summary, for all the summary's
-    calls noted by listed_alleles_entry: {"genes", "note"} (HTML-escaped)."""
+    calls noted by listed_alleles_entry: {"genes", "note"}, escaped already and
+    marked safe, so the template's autoescape does not escape them twice."""
     entries = _listed(rows)
     if not entries:
         return {"genes": "", "note": ""}
     return {
-        "genes": _gene_list([g for g, _ in entries]),
-        "note": _listed_body(entries) + " See Alerts and Warnings.",
+        "genes": Markup(_gene_list([g for g, _ in entries])),
+        "note": Markup(_listed_body(entries) + " See Alerts and Warnings."),
     }
 
 
@@ -527,16 +546,21 @@ def positions_summary_note(rows: Iterable[Mapping[str, Any]]) -> Dict[str, str]:
         match = _POSITIONS.match(note)
         if match:
             unread, total, why = match.groups()
-            groups.setdefault(why, []).append(f"{gene} {unread} of {total}")
+            groups.setdefault(html.escape(why), []).append(
+                f"{html.escape(gene)} {unread} of {total}"
+            )
         else:
-            other.append(f"{gene}: {note}")
+            other.append(f"{html.escape(gene)}: {html.escape(note)}")
     parts = [
         f"{', '.join(counts)} positions had {why} and were read as reference"
         for why, counts in groups.items()
     ] + other
+    # Escaped here and marked safe, so the template does not escape it twice.
     return {
-        "genes": _gene_list(genes),
-        "note": "; ".join(parts)
-        + ", so a variant there would not have been seen and these calls may be "
-        "wrong. Genetic Results notes each beside its call.",
+        "genes": Markup(_gene_list(genes)),
+        "note": Markup(
+            "; ".join(parts)
+            + ", so a variant there would not have been seen and these calls may be "
+            "wrong. Genetic Results notes each beside its call."
+        ),
     }
