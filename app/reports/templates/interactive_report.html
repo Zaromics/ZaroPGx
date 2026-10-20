@@ -247,7 +247,7 @@
         
         /* th.narrow-col, NOT .narrow-col th -- the class is on the <th> itself, so
            the descendant form matched nothing and the rotation never applied. Same
-           defect as report_template.html, where it clipped the Guide column off
+           defect as report_template.html, where it clipped the last column off
            the printed page; here it only made the columns wider than intended. */
         th.narrow-col {
             writing-mode: vertical-rl;
@@ -1011,7 +1011,6 @@
                             <th>Activity Score</th>
                             <th>Implications</th>
                             <th class="narrow-col">Call</th>
-                            <th class="narrow-col">Guide</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1046,7 +1045,6 @@
                                 {% endif %}
                             </td>
                             <td class="narrow-col tool-source" title="{{ d.called_by_label or '' }}">{{ d.called_by }}</td>
-                            <td class="narrow-col">{{ d.guideline_source if d.guideline_source else '' }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -1059,7 +1057,6 @@
                 <div class="tool-key">
                     <h4>Source Legend:</h4>
                     <p><strong>Call:</strong> Tool that made this call, as recorded by the run - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call made, <strong>?</strong> = not recorded by this run</p>
-                    <p><strong>Guide:</strong> Guideline source - <strong>F</strong> = FDA, <strong>D</strong> = DPWG, <strong>C</strong> = CPIC, <strong>P</strong> = PharmGKB (now ClinPGx), blank = not recorded</p>
                 </div>
                 
                 <div id="geneInfoSection"></div>

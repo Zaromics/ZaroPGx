@@ -70,8 +70,8 @@ def _gene_row(html, gene):
             re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", c)).strip()
             for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S | re.I)
         ]
-        # The full diplotype table is the 7-column one; the Exec Summary is 4.
-        if len(cells) == 7 and cells[0] == gene:
+        # The full diplotype table is the 6-column one; the Exec Summary is 4.
+        if len(cells) == 6 and cells[0] == gene:
             return cells
     return None
 
@@ -90,7 +90,7 @@ def _activity_column_index(html):
 
 def _activity_cell(html, gene):
     cells = _gene_row(html, gene)
-    assert cells is not None, f"no 7-column gene row for {gene} in rendered output"
+    assert cells is not None, f"no 6-column gene row for {gene} in rendered output"
     return cells[_activity_column_index(html)]
 
 
